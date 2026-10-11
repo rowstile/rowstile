@@ -189,6 +189,7 @@ class Rel:
     where: bool = False  # a link table's `where {active}`
     by: str = ""  # shared: `shared by <permission>`
     shared_if: str = ""  # shared: `if {...}`, one of SHARED_IFS
+    named: bool = False  # table: its columns named, `(object: obj_id, subject: subj_id)` (named_columns())
 
 
 @dataclass
@@ -430,6 +431,7 @@ def make_plain(seed: int) -> Spec:
     custom_roles(spec, random.Random(f"genpolicy/{seed}/roles"))
     share_links(spec, random.Random(f"genpolicy/{seed}/links"))
     before_after(spec, random.Random(f"genpolicy/{seed}/before-after"))
+    named_columns(spec, random.Random(f"genpolicy/{seed}/named-columns"))
     return spec
 
 
@@ -534,6 +536,16 @@ def custom_roles(spec: Spec, x: random.Random) -> None:
 TOKENS = ["tok-a", "tok-b", "tok-c"]
 
 
+def named_columns(spec: Spec, x: random.Random) -> None:
+    """Some link tables with their columns named, `(object: obj_id, subject: subj_id)`, drawn apart (x): each by a
+    draw of its own, so a link table drawn by another draw (also()) changes no other's."""
+    base = x.random()
+    for o in spec.objs:
+        for rel in o.rels:
+            own = random.Random(f"{base}/{o.name}/{rel.name}/{','.join(rel.subjects)}")
+            rel.named = rel.kind == "table" and own.random() < 0.3
+
+
 def before_after(spec: Spec, x: random.Random) -> None:
     """Rules that say when they are checked, drawn apart from the rest (x): `update after : ...`, what must hold on
     the row as changed (beside the plain update rule, then checked before the change only), and a rule on a column
@@ -634,9 +646,12 @@ def policy_text(spec: Spec) -> str:
                 src = s.ref(f"c_{rel.name}") if to_objects else s.name(f"c_{rel.name}")
             elif rel.kind == "table":
                 subj_col = s.ref("subj_id") if to_objects else s.name("subj_id")
-                src = f"{s.policy_table(f'{o.name}_{rel.name}')}({s.ref('obj_id')} -> {subj_col})" + (
-                    f" where {active}" if rel.where else ""
+                cols = (
+                    f"object: {s.ref('obj_id')}, subject: {subj_col}"
+                    if rel.named
+                    else f"{s.ref('obj_id')} -> {subj_col}"
                 )
+                src = f"{s.policy_table(f'{o.name}_{rel.name}')}({cols})" + (f" where {active}" if rel.where else "")
             else:
                 src = "shared"
             if src == "shared":
