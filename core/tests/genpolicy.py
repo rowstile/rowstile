@@ -966,6 +966,14 @@ class GenPolicyGen(Gen):
             "SELECT setval(pg_get_serial_sequence('authz.roles', 'id'), 100);",
         ]
 
+    def shareable(self, subject: str, ids: Ids | None) -> list[str]:
+        """The keys a share may be on or to: subject_ids', but once there are ids only rows there are (a user that
+        is no row aside: GONE, named on purpose), as difftest.there() says why."""
+        name = subject.split("#")[0]
+        if ids is None or name in ("user", "user:*", "bot"):
+            return self.subject_ids(subject, ids)
+        return ids.get(name, [])
+
     def grant(self, ids: Ids | None) -> str:
         r = self.r
         if getattr(self, "role_ids", []) and r.random() < 0.3:  # a custom role given on an object
@@ -973,10 +981,13 @@ class GenPolicyGen(Gen):
             assert o.roles is not None
             subject = r.choice(o.roles[0])
             st, sr = subject.split("#")[0], subject.split("#")[1] if "#" in subject else ""
+            on, to = self.shareable(o.name, ids), self.shareable(subject, ids)
+            if not (on and to):
+                return difftest.NOTHING
             return (
                 f"INSERT INTO authz.shares ({difftest.SHARE_COLUMNS}) VALUES ({lit(o.name)}, "
-                f"{lit(r.choice(self.subject_ids(o.name, ids)))}, 'role:{rid}', {lit(st)}, "
-                f"{lit(r.choice(self.subject_ids(subject, ids)))}, {lit(sr)}, {', '.join(self.when())}) "
+                f"{lit(r.choice(on))}, 'role:{rid}', {lit(st)}, "
+                f"{lit(r.choice(to))}, {lit(sr)}, {', '.join(self.when())}) "
                 "ON CONFLICT DO NOTHING;"
             )
         shared = [(o, rel) for o in self.spec.objs for rel in o.rels if rel.kind == "shared"]
@@ -988,12 +999,16 @@ class GenPolicyGen(Gen):
             subject.split("#")[0] if "#" in subject else subject.split(":")[0],
             subject.split("#")[1] if "#" in subject else "",
         )
+        on = self.shareable(o.name, ids)
+        to = [] if subject in ("link", "user:*", "anyone") else self.shareable(subject, ids)
+        if not on or (subject not in ("link", "user:*", "anyone") and not to):
+            return difftest.NOTHING
         if subject == "link":  # a token's hash, as authz.share_link() writes it
             sid = f"encode(sha256(convert_to({lit(r.choice(TOKENS))}, 'UTF8')), 'hex')"
         else:
-            sid = lit("*" if subject in ("user:*", "anyone") else r.choice(self.subject_ids(subject, ids)))
+            sid = lit("*" if subject in ("user:*", "anyone") else r.choice(to))
         expires, starts = self.when()
-        oid = lit(r.choice(self.subject_ids(o.name, ids)))
+        oid = lit(r.choice(on))
         if self.spec.caveats:  # most carry none; some one of the policy's (with what it was made with), or another
             caveat, args = r.choice(
                 [("NULL", "NULL")] * 3
