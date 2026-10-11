@@ -9,16 +9,17 @@ shares, to users, the service, `user:*`, `anyone` and other types' members; perm
 `not`, conditions, `signed_in`, `anyone`, `nobody`, arrows to other types, inheritance (stopped by a condition or not,
 across two types or not) and a deny that inherits; rules, the write rules sometimes with a condition that reads
 another governed table (a subquery, a function called by a quoted name, an operator the app made); invariants.
-Some also say what no draw above does, drawn apart so that the rest stays as it was (also(), shared_if(), masks(),
-across(), perm_groups(), custom_roles(), share_links(), before_after()): a starting point with a `not` in a
-permission that inherits, a relation declared again for an earlier type through a link table (a `parent`, or a
-relation to users), a condition on the shares made of a relation (`shared by p1 if {...}`, which around.py's calls
-of authz.share() judge), a table read through a view the policy makes, a column masked there, a recursion through
-two types (an earlier type's rows inside a later one's too, through a link table, inheriting back what the later
-type inherits from it: one tree across both), a group named by a permission (`t1#p2`), custom roles, with and
-without `from` (roles, permissions that give them, manage_roles where they are made, and some given in the data),
-`link` among a shared relation's subjects (shares to a token's hash, TOKENS in each user's context), and rules that
-say when they are checked (`update after`, `update b1 before`, `update b1 after`).
+Some also say what no draw above does, drawn apart so that the rest stays as it was (also(), own_links(),
+shared_if(), masks(), across(), perm_groups(), custom_roles(), share_links(), before_after()): a starting point with
+a `not` in a permission that inherits, a relation declared again for an earlier type through a link table (a
+`parent`, or a relation to users), `parent` declared again for a type's own rows through a link table, a condition
+on the shares made of a relation (`shared by p1 if {...}`, which around.py's calls of authz.share() judge), a table
+read through a view the policy makes, a column masked there, a recursion through two types (an earlier type's rows
+inside a later one's too, through a link table, inheriting back what the later type inherits from it: one tree
+across both), a group named by a permission (`t1#p2`), custom roles, with and without `from` (roles, permissions
+that give them, manage_roles where they are made, and some given in the data), `link` among a shared relation's
+subjects (shares to a token's hash, TOKENS in each user's context), and rules that say when they are checked
+(`update after`, `update b1 before`, `update b1 after`).
 Then the tables it reads and their data. A third of the seeds name those tables and columns as an app's own may be
 (AWKWARD: capitals, words SQL reserves, a double quote, 63 bytes), the policy otherwise the same; nearly half give
 every key another type than bigint (KEYS: int, text or uuid), said on each type line; and a quarter of the others
@@ -453,6 +454,7 @@ def make_plain(seed: int) -> Spec:
         if inv not in spec.invariants:
             spec.invariants.append(inv)
     also(spec, random.Random(f"genpolicy/{seed}/also"))
+    own_links(spec, random.Random(f"genpolicy/{seed}/own-links"))
     shared_if(spec, random.Random(f"genpolicy/{seed}/shared-if"))
     masks(spec, random.Random(f"genpolicy/{seed}/masks"))
     across(spec, random.Random(f"genpolicy/{seed}/across"))
@@ -488,6 +490,16 @@ def also(spec: Spec, x: random.Random) -> None:
         others = [u for u in users if u != start]
         if earlier and others and x.random() < 0.2:
             o.rels.append(Rel(x.choice(others), "table", [x.choice(earlier)]))
+
+
+def own_links(spec: Spec, x: random.Random) -> None:
+    """`parent` declared again for a type's own rows, through a link table (sometimes `where {active}`), drawn
+    apart from the rest (x): a row inside others of its type by a table as well as by its column, as folders in
+    folders by a table of links. Where also() gave the type a parent table already, none."""
+    for o in spec.objs:
+        own = has(o, "parent") and not any(rel.name == "parent" and rel.kind == "table" for rel in o.rels)
+        if own and x.random() < 0.3:
+            o.rels.append(Rel("parent", "table", [o.name], x.random() < 0.5))
 
 
 def shared_if(spec: Spec, x: random.Random) -> None:

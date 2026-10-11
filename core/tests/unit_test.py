@@ -7353,6 +7353,7 @@ class GeneratedShapes(unittest.TestCase):
                 mock.patch.object(self.g, "also", lambda spec, x: None),
                 mock.patch.object(self.g, "across", lambda spec, x: None),
                 mock.patch.object(self.g, "custom_roles", lambda spec, x: None),
+                mock.patch.object(self.g, "own_links", lambda spec, x: None),
             ):
                 before = self.g.make(seed)
             after = self.g.make(seed)
@@ -7387,7 +7388,12 @@ class GeneratedShapes(unittest.TestCase):
             for o in variants[0][1].objs:
                 for rel in o.rels:
                     if rel.kind == "table" and any(x.name == rel.name and x.kind == "column" for x in o.rels):
-                        drawn.add("parent again" if rel.name == "parent" else "a relation to users again")
+                        own = rel.subjects == [o.name]
+                        drawn.add(
+                            ("own links" if own else "parent again")
+                            if rel.name == "parent"
+                            else "a relation to users again"
+                        )
                     drawn |= {"a group by a permission" for x in rel.subjects if "#p" in x}
                 for e in o.perms.values():
                     if not isinstance(e, str) and e[0] == "or" and not isinstance(e[1][0], str):
@@ -7418,7 +7424,8 @@ class GeneratedShapes(unittest.TestCase):
         self.assertLessEqual(
             {f"{k} keys" for k in self.g.KEYS}
             | {"composite keys", "caveats", "scopes", "masks"}
-            | {"custom roles", "custom roles from", "share links", "update after", "named link columns", "includes"},
+            | {"custom roles", "custom roles from", "share links", "update after", "named link columns", "includes"}
+            | {"own links"},
             drawn,
         )
         # a column rule said to be checked before or after the change: rarer, in the first sixty seeds
