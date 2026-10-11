@@ -491,7 +491,7 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
     """Each user's writes, tried as the app role in the world's session and undone, against the rules. direct:
     and the tables under a governed one, read and written directly."""
     w, db = checker.world, checker.db
-    snap = checker.snapshot_data_only()
+    snap = checker.snapshot_data_only(context=True)  # (the writes run in the user's session, its context set)
     governed = list(dict.fromkeys(r.table for r in checker.rules))
     children = under(db, governed) if direct else []
     column_rules: list[Rule] = [r for r in checker.rules if r.columns and r.command == "update"]

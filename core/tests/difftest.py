@@ -1301,14 +1301,19 @@ class Checker:
             self._nocontext, self._nocontext_all = out, out_all
         return (self._nocontext_all if everyone else self._nocontext).get((t.name, p, i), set())
 
-    def snapshot_data_only(self) -> Snapshot:
+    def snapshot_data_only(self, context: bool = False) -> Snapshot:
+        """The data each user's evaluation reads, without the request context (what who() and the invariants see),
+        or with it: what the user's own session sees (around's writes)."""
         lines: list[str] = []
         for u in self.users:
             kind, pid = evaluate.principal_of(u, self.types)
             lines.append(f"SET authz.user_id = {lit(pid)};")
             lines.append(f"SET authz.principal_type = {lit('' if kind == 'user' else kind)};")
+            ctx = self.context(u) if context else {}
+            lines += [f"SET authz_ctx.{k} = {lit(v)};" for k, v in ctx.items()]
             for key, sql in self.ref.data_queries():
                 lines.append(f"SELECT {lit(json.dumps([u, 'data', *key]))}, ({sql});")
+            lines += [f"RESET authz_ctx.{k};" for k in ctx]
         lines.append("RESET authz.user_id;")
         lines.append("RESET authz.principal_type;")
         return {tuple(json.loads(k)): json.loads(v) for k, v in self.db.rows("\n".join(lines))}
@@ -1403,6 +1408,17 @@ def ints(ids: Ids | None, name: str) -> list[int]:
     return [int(x) for x in (ids or {}).get(name, [])]
 
 
+NOTHING = "SELECT 1;"  # a change that changes nothing: a share with no row there to be on or to (there())
+
+
+def there(ids: Ids | None, name: str, first: int) -> list[int]:
+    """The rows of a type a share the generator writes may be on or to: those there are now (ids), or before any
+    change (no ids) the first data's 1..first. Never a row that is gone: rowstile forgets the shares on and to a row
+    when it goes and authz.share refuses one, so on such a share the database and the reference need not agree (a
+    column still naming the row counts it in one, not in the other). With none left, the generator writes NOTHING."""
+    return ints(ids, name) if ids is not None else list(range(1, first + 1))
+
+
 class DocsGen(Gen):
     """The example app (example/app_schema.sql). Its first data is steered toward what the decision ledger found
     never deciding an answer: user 8 starts an outsider (no org, nothing owned, alone in team 15, which no folder
@@ -1483,8 +1499,9 @@ class DocsGen(Gen):
 
     def grant(self, ids: Ids | None = None) -> str:
         r = self.r
-        folders = ints(ids, "folder") or list(range(1, 26))
-        files = ints(ids, "file") or list(range(1, 51))
+        folders, files = there(ids, "folder", 25), there(ids, "file", 50)
+        if not (folders and files):
+            return NOTHING
         # live, not started yet, expired, or live until tomorrow
         expires, starts = r.choice(
             [
@@ -1644,8 +1661,9 @@ class AltGen(Gen):
 
     def grant(self, ids: Ids | None = None) -> str:
         r = self.r
-        docs = ints(ids, "doc") or list(range(1, 31))
-        groups = ints(ids, "grp") or list(range(1, 6))
+        docs, groups = there(ids, "doc", 30), there(ids, "grp", 5)
+        if not (docs and groups):
+            return NOTHING
         k = r.random()
         if k < 0.12:  # a custom role: inside view's deny and publish's condition
             row = (
@@ -1871,8 +1889,14 @@ class MultiGen(Gen):
 
     def grant(self, ids: Ids | None = None) -> str:
         r = self.r
-        folders = ints(ids, "folder") or list(range(1, 21))
-        projects = ints(ids, "project") or list(range(1, 7))
+        folders, projects = there(ids, "folder", 20), there(ids, "project", 6)
+        docs = (
+            (ids or {}).get("doc", [])
+            if ids is not None
+            else [uid(d, "10000000-0000-4000-8000-") for d in range(1, 31)]
+        )
+        if not (folders and projects and docs):
+            return NOTHING
         k = r.random()
         if k < 0.3:
             obj, oid, rel = "project", r.choice(projects), "viewer"
@@ -1887,7 +1911,6 @@ class MultiGen(Gen):
             obj, oid, rel = "folder", r.choice(folders), f"role:{r.choice([1, 2, 3])}"
             st, sid, sr = self.subject(["user", "team"])
         elif k < 0.85:  # a doc's role: it counts while the doc lists its org (mt.doc_orgs, active)
-            docs = (ids or {}).get("doc") or [uid(d, "10000000-0000-4000-8000-") for d in range(1, 31)]
             obj, oid, rel = "doc", r.choice(docs), f"role:{r.choice([4, 5])}"
             st, sid, sr = self.subject(["user"])
         else:
@@ -2077,6 +2100,8 @@ class CompositeGen(Gen):
     def grant(self, ids: Ids | None = None) -> str:
         r = self.r
         folders = [tuple(map(int, row_of(x))) for x in (ids or {}).get("folder", [])] or [(1, 1)]
+        if ids is not None and not (ids.get("folder") and ids.get("team")):  # (see there())
+            return NOTHING
         o, f = r.choice(folders)
         if r.random() < 0.25:  # a team inside a team, by sharing
             (o1, s1), (o2, s2) = self.team(ids), self.team(ids)
@@ -2224,7 +2249,10 @@ class LoopGen(Gen):
     def grant(self, ids: Ids | None = None, when: tuple[str, str] | None = None) -> str:
         r = self.r
         expires, starts = when or r.choice(self.WHEN)
-        sid = r.choice(ints(ids, "setting") or list(range(1, 7)))
+        settings = there(ids, "setting", 6)
+        if not settings:
+            return NOTHING
+        sid = r.choice(settings)
         return (
             f"INSERT INTO authz.shares ({SHARE_COLUMNS}) VALUES ('setting', {sid}, 'admin', 'user', "
             f"{r.choice(self.users)}, '', {expires}, {starts}) ON CONFLICT DO NOTHING;"
@@ -2346,15 +2374,15 @@ class CrossGen(Gen):
 
     def grant(self, ids: Ids | None = None) -> str:
         r = self.r
-        folders, projects = ints(ids, "folder") or list(range(1, 11)), ints(ids, "project") or list(range(1, 5))
+        folders, projects, regions = there(ids, "folder", 10), there(ids, "project", 4), there(ids, "region", 4)
+        if not (folders and projects and regions):
+            return NOTHING
         if r.random() < 0.2:  # a region's chief by sharing, beside the one its column names
-            regions = ints(ids, "region") or list(range(1, 5))
             return (
                 f"INSERT INTO authz.shares VALUES ('region', {r.choice(regions)}, 'chief', 'user', "
                 f"{r.choice(self.users)}, '', {r.choice(['NULL', EXPIRED])}) ON CONFLICT DO NOTHING;"
             )
         if r.random() < 0.2:  # a region's guest: a user, or a link (nobody here presents its token)
-            regions = ints(ids, "region") or list(range(1, 5))
             token = lit(r.choice(["cx-a", "cx-b"]))
             kind, sid = r.choice(
                 [("user", r.choice(self.users)), ("link", f"encode(sha256(convert_to({token}, 'UTF8')), 'hex')")]
@@ -2426,6 +2454,8 @@ class CrossGen(Gen):
             lambda: (
                 f"INSERT INTO authz.shares VALUES ('project', {p}, 'host', 'folder', {f}, '', "
                 "now() + interval '1 day');"
+                if ints(ids, "project") and ints(ids, "folder")
+                else NOTHING  # (see there())
             ),
             # regions and sites, through tables only
             lambda: (
