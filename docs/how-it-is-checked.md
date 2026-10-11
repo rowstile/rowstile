@@ -34,16 +34,17 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   So is
   `authz.explain_rule`: nothing about such a row, and on the others, for an update or a delete, the rules' own
   answer.
-- **Random policies**: [`tests/genpolicy.py`](../core/tests/genpolicy.py) writes policies at random, with
-  their tables and data, and checks them the same way: twelve on each full run, and a hundred with new seeds
-  every night. A third of them name their tables and columns as an app's own may be: with capitals, with words
-  SQL reserves (`select`, `order`, `user`), or as long as Postgres allows. Every name the compiler writes into
-  SQL is then one it must quote. Nearly half give their keys another type than `bigint`: `int`, `text` or
-  `uuid`; some key their rows by two columns, an org's and the row's own. Some put two types' rows inside
-  each other, so that one recursion runs through both. Some have caveats, which some of their shares carry,
-  and some scopes, with which one user is asked again after each change. Some mask a column in a view, and some
-  give permissions by custom roles, or share by links; some rules say they are checked before or after the
-  change. A quarter are written in two files, one including the other.
+- **Random policies**: [`tests/genpolicy.py`](../core/tests/genpolicy.py) writes policies at random, with their
+  tables and data, and checks them the same way: on each full run, the few policies, of a thousand, in which
+  every two of the shapes below meet (sixteen), and a hundred with new seeds every night. A third of them name
+  their tables and columns as an app's own may be: with capitals, with words SQL reserves (`select`, `order`,
+  `user`), or as long as Postgres allows. Every name the compiler writes into SQL is then one it must quote.
+  Nearly half give their keys another type than `bigint`: `int`, `text` or `uuid`; some key their rows by two
+  columns, an org's and the row's own. Some put two types' rows inside each other, so that one recursion runs
+  through both. Some have caveats, which some of their shares carry, and some scopes, with which one user is
+  asked again after each change. Some mask a column in a view, and some give permissions by custom roles, or
+  share by links; some rules say they are checked before or after the change. A quarter are written in two
+  files, one including the other.
 - **Random worlds**: the two above compare answers in one setting: plain tables, and the owner's session
   switched to the app role. [`tests/around.py`](../core/tests/around.py) takes the random policies again and
   draws what is around each one too: tables that are partitioned, or have a table that inherits from them;
