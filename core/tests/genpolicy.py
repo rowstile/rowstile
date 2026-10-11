@@ -25,7 +25,8 @@ every key another type than bigint (KEYS: int, text or uuid), said on each type 
 key their object types by (org_id, id), every column that points at an object then naming one in its row's org
 (`[org_id, c_up]`, `(parent_type, [org_id, parent_id])`, link tables `([org_id, obj_id] -> [org_id, subj_id])`).
 Some have caveats (CAVEATS), which some of their shares carry, read in each user's context, and some scopes
-(draw_scopes()), with which the checks ask one user again each time: each of these drawn apart too.
+(draw_scopes()), with which the checks ask one user again each time; and a quarter are written in two files, the
+second included by the first (write_policy()): each of these drawn apart too.
 Now and then a seed's policy has a twin, checked after it over fewer steps (variants()): the same with no rule at
 all, or with no permission at all, its rules naming relations.
 
@@ -215,6 +216,7 @@ class Spec:
     # scopes, what a token limited to them may do: (name, [(kind, qualifier, word)]), kind cmd or perm, a command
     # qualified by a type's table (named by the type) and a permission by a type
     scopes: list[tuple[str, list[tuple[str, str, str]]]] = field(default_factory=list)
+    include: bool = False  # the policy in two files (write_policy())
 
     def obj(self, name: str) -> Obj:
         return next(o for o in self.objs if o.name == name)
@@ -266,7 +268,34 @@ def make(seed: int, respell: bool | None = None, keytype: str | None = None, com
     shared = any(rel.kind == "shared" for o in spec.objs for rel in o.rels)  # (caveats ride on shares)
     caveats = random.Random(f"genpolicy/{seed}/caveats").random() < 0.3 and shared
     scopes = draw_scopes(spec, random.Random(f"genpolicy/{seed}/scopes"))
-    return dataclasses.replace(spec, spelling=Spelling(awkward, keytype, composite), caveats=caveats, scopes=scopes)
+    include = random.Random(f"genpolicy/{seed}/include").random() < 0.25
+    return dataclasses.replace(
+        spec, spelling=Spelling(awkward, keytype, composite), caveats=caveats, scopes=scopes, include=include
+    )
+
+
+INCLUDED = "more.authz"  # where write_policy() puts the second half of a policy in two files
+
+
+def write_policy(path: str, text: str, include: bool) -> None:
+    """The policy's text into path; with include, in two files: from its last type on (that type, the scopes,
+    caveats, rules and invariants) in INCLUDED beside it, which the first file includes at its end."""
+    blocks: list[str] = []
+    for line in text.rstrip("\n").split("\n"):
+        if line.startswith(" ") and blocks:
+            blocks[-1] += "\n" + line
+        else:
+            blocks.append(line)
+    last = max((k for k, b in enumerate(blocks) if b.startswith("type ")), default=0)
+    files = {path: text}
+    if include and last:
+        files = {
+            path: "\n".join([*blocks[:last], f'include "{INCLUDED}"']) + "\n",
+            os.path.join(os.path.dirname(path), INCLUDED): "\n".join(blocks[last:]) + "\n",
+        }
+    for name, body in files.items():
+        with open(name, "w", encoding="utf-8") as fh:
+            fh.write(body)
 
 
 def draw_scopes(spec: Spec, x: random.Random) -> list[tuple[str, list[tuple[str, str, str]]]]:
@@ -1105,8 +1134,7 @@ def run(
     warns that its reads are slow to plan or the checks take more than `seconds`. With report: the parts of the
     policy (named name) that never decided an answer go there (tests/decisions.py)."""
     policy_path, schema_path = os.path.join(workdir, "gen.authz"), os.path.join(workdir, "gen_schema.sql")
-    with open(policy_path, "w", encoding="utf-8") as fh:
-        fh.write(policy_text(spec))
+    write_policy(policy_path, policy_text(spec), spec.include)
     with open(schema_path, "w", encoding="utf-8") as fh:
         fh.write(schema_text(spec))
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
