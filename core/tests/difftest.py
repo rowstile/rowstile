@@ -533,7 +533,7 @@ class Checker:
                             f"SELECT coalesce(json_agg(json_build_array(i, (SELECT e FROM authz.explain("
                             f"{lit(t.name)}, i, {lit(p)}, NULL) e LIMIT 1))), '[]') FROM unnest({ids}) i",
                         )
-                # authz.explain_rule's verdict on an update that changes nothing, and on a delete, as the app asks it
+                # authz.explain_rule's verdict on an update and on a delete, as the app asks it (without the changes)
                 for table in dict.fromkeys(r.table for r in self.rules):
                     t = self.ref.type_of_table(table)
                     ids = "ARRAY[" + ", ".join(lit(i) for i in sample[t.name]) + "]::text[]"
@@ -996,14 +996,11 @@ class Checker:
         return problems
 
     def rule_allows(self, state: evaluate.State, table: str, cmd: str, i: str) -> bool:
-        """Whether table's rules let cmd through on row i as it is: a delete by its rule; an update that changes
-        nothing by its rule on the row before and its after rule (or the update rule again) on the row after."""
+        """What authz.explain_rule's first line says of cmd on row i as it is, asked without the changes: whether
+        its rule lets it through (an update by the update rule alone: the call explains an update that matched no
+        rows; one that an `update after` rule refuses raises, with its own words)."""
         has = {r.command for r in self.rules if r.table == table and not r.columns}
-        if cmd not in has or i not in self.expected_rule(state, table, cmd):
-            return False
-        return cmd != "update" or i in self.expected_rule(
-            state, table, "update check" if "update check" in has else cmd
-        )
+        return cmd in has and i in self.expected_rule(state, table, cmd)
 
     def visible(self, state: evaluate.State, t: Type, i: str) -> bool:
         """Whether the user may select row i of t, as explain asks (authz_int.visible): by the table's select rule;

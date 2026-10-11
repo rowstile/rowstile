@@ -195,7 +195,11 @@ def with_write_rules(spec: Spec, seed: int) -> Spec:
         perms = list(o.perms)
         if "update" not in heads and r.random() < 0.7:
             rules.append(("update", r.choice(perms)))
-        if "update b1" not in heads and any(h == "update" for h, _ in rules) and r.random() < 0.8:
+        if (
+            not any(h.startswith("update b1") for h in heads)
+            and any(h == "update" for h, _ in rules)
+            and r.random() < 0.8
+        ):
             rules.append(("update b1", r.choice(perms)))
         if "delete" not in heads and r.random() < 0.5:
             rules.append(("delete", r.choice(perms)))
@@ -538,10 +542,17 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
             seen = rule_set(checker, state, table, "select")
             may = {"update": rule_set(checker, state, table, "update") & seen}
             may["delete"] = rule_set(checker, state, table, "delete") & seen
+            # `update after`: what must hold on the row as changed (here, as it was), else a refusal
+            after = any(r.table == table and r.command == "update check" and not r.columns for r in checker.rules)
+            held_after = rule_set(checker, state, table, "update check") if after else may["update"]
             for cmd in ("update", "delete"):
                 for i, outcome in got[(u, cmd, table)]:
-                    want = f"rows {int(i in may[cmd])}"
-                    if outcome != want:
+                    if cmd == "update" and i in may[cmd] and i not in held_after:
+                        ok, want = outcome.startswith("42501 ") and CHECK_REFUSED in outcome, "refused (update after)"
+                    else:
+                        want = f"rows {int(i in may[cmd])}"
+                        ok = outcome == want
+                    if not ok:
                         problems.append(f"{who}: {cmd} of {table} {i} as the app role: {outcome}, expected {want}")
             for n, r in enumerate(column_rules):
                 if r.table != table:

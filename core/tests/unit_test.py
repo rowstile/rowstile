@@ -7334,9 +7334,10 @@ class Respelling(unittest.TestCase):
 
 class GeneratedShapes(unittest.TestCase):
     """genpolicy's policies say now and then what no other draw does (also(), across(), perm_groups(), keys other than
-    bigint, composite keys, caveats, scopes, masks, custom roles, share links, and the twins of variants()), drawn
-    apart from the rest: a seed's policy keeps all it drew before, the twelve seeds of the full run draw each of
-    them (but across()), and their twins compile (one that didn't would only be counted as refused)."""
+    bigint, composite keys, caveats, scopes, masks, custom roles, share links, rules before and after, and the twins
+    of variants()), drawn apart from the rest: a seed's policy keeps all it drew before, the twelve seeds of the
+    full run draw each of them (but across()), and their twins compile (one that didn't would only be counted as
+    refused)."""
 
     def setUp(self) -> None:
         sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -7398,6 +7399,9 @@ class GeneratedShapes(unittest.TestCase):
             drawn |= {"masks"} if any(o.mask for o in variants[0][1].objs) else set()
             drawn |= {f"custom roles{' from' if o.roles[1] else ''}" for o in variants[0][1].objs if o.roles}
             drawn |= {"share links"} if self.g.links(variants[0][1]) else set()
+            drawn |= (
+                {"update after"} if any(h == "update after" for o in variants[0][1].objs for h, _ in o.rules) else set()
+            )
         self.assertLessEqual(
             {
                 "without rules",
@@ -7412,9 +7416,12 @@ class GeneratedShapes(unittest.TestCase):
         self.assertLessEqual(
             {f"{k} keys" for k in self.g.KEYS}
             | {"composite keys", "caveats", "scopes", "masks"}
-            | {"custom roles", "custom roles from", "share links"},
+            | {"custom roles", "custom roles from", "share links", "update after"},
             drawn,
         )
+        # a column rule said to be checked before or after the change: rarer, in the first sixty seeds
+        heads = {h for seed in range(1, 61) for o in self.g.make(seed).objs for h, _ in o.rules}
+        self.assertLessEqual({"update b1 before", "update b1 after"}, heads)
         # around.py's four seeds of each push have caveats too, which its sessions read from their context
         self.assertTrue(any(self.g.make(seed).caveats for seed in range(1, 5)))
 

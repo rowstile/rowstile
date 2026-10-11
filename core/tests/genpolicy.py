@@ -10,14 +10,15 @@ shares, to users, the service, `user:*`, `anyone` and other types' members; perm
 across two types or not) and a deny that inherits; rules, the write rules sometimes with a condition that reads
 another governed table (a subquery, a function called by a quoted name, an operator the app made); invariants.
 Some also say what no draw above does, drawn apart so that the rest stays as it was (also(), shared_if(), masks(),
-across(), perm_groups(), custom_roles(), share_links()): a starting point with a `not` in a permission that
-inherits, a relation declared again for an earlier type through a link table (a `parent`, or a relation to users), a
-condition on the shares made of a relation (`shared by p1 if {...}`, which around.py's calls of authz.share()
-judge), a table read through a view the policy makes, a column masked there, a recursion through two types (an
-earlier type's rows inside a later one's too, through a link table, inheriting back what the later type inherits
-from it: one tree across both), a group named by a permission (`t1#p2`), custom roles, with and without `from`
-(roles, permissions that give them, manage_roles where they are made, and some given in the data), and `link` among
-a shared relation's subjects (shares to a token's hash, TOKENS in each user's context).
+across(), perm_groups(), custom_roles(), share_links(), before_after()): a starting point with a `not` in a
+permission that inherits, a relation declared again for an earlier type through a link table (a `parent`, or a
+relation to users), a condition on the shares made of a relation (`shared by p1 if {...}`, which around.py's calls
+of authz.share() judge), a table read through a view the policy makes, a column masked there, a recursion through
+two types (an earlier type's rows inside a later one's too, through a link table, inheriting back what the later
+type inherits from it: one tree across both), a group named by a permission (`t1#p2`), custom roles, with and
+without `from` (roles, permissions that give them, manage_roles where they are made, and some given in the data),
+`link` among a shared relation's subjects (shares to a token's hash, TOKENS in each user's context), and rules that
+say when they are checked (`update after`, `update b1 before`, `update b1 after`).
 Then the tables it reads and their data. A third of the seeds name those tables and columns as an app's own may be
 (AWKWARD: capitals, words SQL reserves, a double quote, 63 bytes), the policy otherwise the same; nearly half give
 every key another type than bigint (KEYS: int, text or uuid), said on each type line; and a quarter of the others
@@ -428,6 +429,7 @@ def make_plain(seed: int) -> Spec:
     perm_groups(spec, random.Random(f"genpolicy/{seed}/perm-groups"))
     custom_roles(spec, random.Random(f"genpolicy/{seed}/roles"))
     share_links(spec, random.Random(f"genpolicy/{seed}/links"))
+    before_after(spec, random.Random(f"genpolicy/{seed}/before-after"))
     return spec
 
 
@@ -530,6 +532,20 @@ def custom_roles(spec: Spec, x: random.Random) -> None:
 
 # share links: a share to `link` names a token's hash; whoever holds the token (in the request's context) has it
 TOKENS = ["tok-a", "tok-b", "tok-c"]
+
+
+def before_after(spec: Spec, x: random.Random) -> None:
+    """Rules that say when they are checked, drawn apart from the rest (x): `update after : ...`, what must hold on
+    the row as changed (beside the plain update rule, then checked before the change only), and a rule on a column
+    said to be checked before the change (as it is anyway) or after it."""
+    for o in spec.objs:
+        heads = [h for h, _ in o.rules]
+        if "update" in heads and "update after" not in heads and x.random() < 0.3:
+            o.rules.append(("update after", x.choice(["p1", "p2", "p3"])))
+        o.rules = [
+            (x.choice(["update b1 before", "update b1 after"]) if h == "update b1" and x.random() < 0.5 else h, e)
+            for h, e in o.rules
+        ]
 
 
 def share_links(spec: Spec, x: random.Random) -> None:
