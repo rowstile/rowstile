@@ -95,7 +95,8 @@ class RefusalMixin(Core):
 
     def rule_why_sql(self, t: Type, table: str, alias: str, rule: Rule, name: str | None = None) -> str:
         """Lines explaining the rule for a row: yes/no per item, and for a missing rel.perm, authz.explain on
-        what the row points at; for a missing permission of the row itself (not on insert), its explain."""
+        what the row points at; for a missing permission of the row itself, its explain (not on insert, nor for an
+        `after` rule: the row isn't stored as it is checked, and authz.explain reads the row as stored)."""
         cmd = "update" if rule.command == "update check" else rule.command
         head = f"{lit(rule_name(rule) + ' : ' + rule.src + '  (')} || {self.line_sql(f'rule {table} {rule_name(rule)}', rule.loc)} || ')'"
         code = [
@@ -112,7 +113,9 @@ class RefusalMixin(Core):
             match node:
                 case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
                     return arrow(node, rel, perm, idx, pad)
-                case ("ref", name) if cmd != "insert" and name in self.public_perms(t):
+                case ("ref", name) if (
+                    cmd != "insert" and rule.command != "update check" and name in self.public_perms(t)
+                ):
                     return (
                         f"  IF NOT v[{idx}] THEN\n    RETURN QUERY SELECT {lit(pad)} || l FROM authz.explain("
                         f"{lit(t.name)}, ({self.key_text(t, alias)}), {lit(name)}) l "
