@@ -779,6 +779,11 @@ class Decisions:
                     refuses.up = f"{what} for {who}"
 
     # --- the report ------------------------------------------------------------------------------------------
+    def wanting(self) -> list[Key]:
+        """The parts that have decided no answer yet, as forcing tells: what a change steered toward them is for
+        (difftest's Gen.steer)."""
+        return [p.key for p in self.parts.values() if (p.ups or p.downs) and not p.up and not p.down]
+
     def report(self, name: str, only_decisive: bool = False, of: float | None = None) -> list[str]:
         """Each part that missed something, by name and line, and what it never did (only_decisive: those that never
         decided an answer, alone). of: how long the whole run took, to say what share of it this took."""
