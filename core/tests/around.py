@@ -827,8 +827,7 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
 def run(spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, seconds: float = 900) -> list[str]:
     """The problems found with this policy in this world (none: it passed). Refused and Slow as in genpolicy."""
     policy_path, schema_path = os.path.join(workdir, "around.authz"), os.path.join(workdir, "around_schema.sql")
-    with open(policy_path, "w", encoding="utf-8") as fh:
-        fh.write(policy_text(spec, w))
+    genpolicy.write_policy(policy_path, policy_text(spec, w), spec.include)
     with open(schema_path, "w", encoding="utf-8") as fh:
         fh.write(schema_text(spec, w))
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
