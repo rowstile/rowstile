@@ -42,7 +42,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   `uuid`; some key their rows by two columns, an org's and the row's own. Some put two types' rows inside
   each other, so that one recursion runs through both. Some have caveats, which some of their shares carry,
   and some scopes, with which one user is asked again after each change. Some mask a column in a view, and some
-  give permissions by custom roles.
+  give permissions by custom roles, or share by links.
 - **Random worlds**: the two above compare answers in one setting: plain tables, and the owner's session
   switched to the app role. [`tests/around.py`](../core/tests/around.py) takes the random policies again and
   draws what is around each one too: tables that are partitioned, or have a table that inherits from them;

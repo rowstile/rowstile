@@ -10,13 +10,14 @@ shares, to users, the service, `user:*`, `anyone` and other types' members; perm
 across two types or not) and a deny that inherits; rules, the write rules sometimes with a condition that reads
 another governed table (a subquery, a function called by a quoted name, an operator the app made); invariants.
 Some also say what no draw above does, drawn apart so that the rest stays as it was (also(), shared_if(), masks(),
-across(), perm_groups(), custom_roles()): a starting point with a `not` in a permission that inherits, a relation
-declared again for an earlier type through a link table (a `parent`, or a relation to users), a condition on the
-shares made of a relation (`shared by p1 if {...}`, which around.py's calls of authz.share() judge), a table read
-through a view the policy makes, a column masked there, a recursion through two types (an earlier type's rows inside
-a later one's too, through a link table, inheriting back what the later type inherits from it: one tree across
-both), a group named by a permission (`t1#p2`), and custom roles, with and without `from` (custom_roles(): roles,
-permissions that give them, manage_roles where they are made, and some given in the data).
+across(), perm_groups(), custom_roles(), share_links()): a starting point with a `not` in a permission that
+inherits, a relation declared again for an earlier type through a link table (a `parent`, or a relation to users), a
+condition on the shares made of a relation (`shared by p1 if {...}`, which around.py's calls of authz.share()
+judge), a table read through a view the policy makes, a column masked there, a recursion through two types (an
+earlier type's rows inside a later one's too, through a link table, inheriting back what the later type inherits
+from it: one tree across both), a group named by a permission (`t1#p2`), custom roles, with and without `from`
+(roles, permissions that give them, manage_roles where they are made, and some given in the data), and `link` among
+a shared relation's subjects (shares to a token's hash, TOKENS in each user's context).
 Then the tables it reads and their data. A third of the seeds name those tables and columns as an app's own may be
 (AWKWARD: capitals, words SQL reserves, a double quote, 63 bytes), the policy otherwise the same; nearly half give
 every key another type than bigint (KEYS: int, text or uuid), said on each type line; and a quarter of the others
@@ -426,6 +427,7 @@ def make_plain(seed: int) -> Spec:
     across(spec, random.Random(f"genpolicy/{seed}/across"))
     perm_groups(spec, random.Random(f"genpolicy/{seed}/perm-groups"))
     custom_roles(spec, random.Random(f"genpolicy/{seed}/roles"))
+    share_links(spec, random.Random(f"genpolicy/{seed}/links"))
     return spec
 
 
@@ -524,6 +526,22 @@ def custom_roles(spec: Spec, x: random.Random) -> None:
         # who makes the roles: whoever holds manage_roles on their owner, of up's type (`from up`) or of any type
         owner = spec.obj(up) if o.roles[1] else o
         owner.perms.setdefault("manage_roles", x.choice(["p1", "p2", "p3"]))
+
+
+# share links: a share to `link` names a token's hash; whoever holds the token (in the request's context) has it
+TOKENS = ["tok-a", "tok-b", "tok-c"]
+
+
+def share_links(spec: Spec, x: random.Random) -> None:
+    """`link` among the subjects of some shared relations, drawn apart from the rest (x)."""
+    for o in spec.objs:
+        for rel in o.rels:
+            if rel.kind == "shared" and "link" not in rel.subjects and x.random() < 0.3:
+                rel.subjects.append("link")
+
+
+def links(spec: Spec) -> bool:
+    return any("link" in rel.subjects for o in spec.objs for rel in o.rels)
 
 
 def denies(o: Obj) -> bool:
@@ -819,12 +837,13 @@ class GenPolicyGen(Gen):
         )
 
     def context(self, u: str) -> dict[str, str]:
-        """Where the policy has caveats, each user's request context: business hours for half of them, and an ip
-        of three."""
-        if not self.spec.caveats:
-            return {}
+        """Each user's request context, where the policy reads it: for caveats, business hours for half of them and
+        an ip of three; for share links, the tokens they hold (nobody too: a link is for whoever has it)."""
         i = self.users.index(u) if u in self.users else len(self.users)
-        return {"mode": "business" if i % 2 == 0 else "night", "ip": f"10.0.0.{i % 3}"}
+        ctx = {"mode": "business" if i % 2 == 0 else "night", "ip": f"10.0.0.{i % 3}"} if self.spec.caveats else {}
+        if links(self.spec):
+            ctx["links"] = ",".join(t for j, t in enumerate(TOKENS) if (i + j) % 3 == 0)
+        return ctx
 
     def grants(self) -> str:
         return "\n".join([*self.custom_roles(), *(self.grant(None) for _ in range(12))])
@@ -892,7 +911,10 @@ class GenPolicyGen(Gen):
             subject.split("#")[0] if "#" in subject else subject.split(":")[0],
             subject.split("#")[1] if "#" in subject else "",
         )
-        sid = "*" if subject in ("user:*", "anyone") else r.choice(self.subject_ids(subject, ids))
+        if subject == "link":  # a token's hash, as authz.share_link() writes it
+            sid = f"encode(sha256(convert_to({lit(r.choice(TOKENS))}, 'UTF8')), 'hex')"
+        else:
+            sid = lit("*" if subject in ("user:*", "anyone") else r.choice(self.subject_ids(subject, ids)))
         expires, starts = self.when()
         oid = lit(r.choice(self.subject_ids(o.name, ids)))
         if self.spec.caveats:  # most carry none; some one of the policy's (with what it was made with), or another
@@ -902,12 +924,12 @@ class GenPolicyGen(Gen):
             )
             return (
                 f"INSERT INTO authz.shares ({difftest.SHARE_COLUMNS}, caveat, caveat_args) VALUES ({lit(o.name)}, "
-                f"{oid}, {lit(rel.name)}, {lit(st)}, {lit(sid)}, {lit(sr)}, {expires}, {starts}, {caveat}, {args}) "
+                f"{oid}, {lit(rel.name)}, {lit(st)}, {sid}, {lit(sr)}, {expires}, {starts}, {caveat}, {args}) "
                 "ON CONFLICT DO NOTHING;"
             )
         return (
             f"INSERT INTO authz.shares ({difftest.SHARE_COLUMNS}) VALUES ({lit(o.name)}, "
-            f"{oid}, {lit(rel.name)}, {lit(st)}, {lit(sid)}, {lit(sr)}, "
+            f"{oid}, {lit(rel.name)}, {lit(st)}, {sid}, {lit(sr)}, "
             f"{expires}, {starts}) ON CONFLICT DO NOTHING;"
         )
 

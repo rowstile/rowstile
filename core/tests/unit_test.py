@@ -7334,9 +7334,9 @@ class Respelling(unittest.TestCase):
 
 class GeneratedShapes(unittest.TestCase):
     """genpolicy's policies say now and then what no other draw does (also(), across(), perm_groups(), keys other than
-    bigint, composite keys, caveats, scopes, masks, custom roles, and the twins of variants()), drawn apart from the
-    rest: a seed's policy keeps all it drew before, the twelve seeds of the full run draw each of them (but
-    across()), and their twins compile (one that didn't would only be counted as refused)."""
+    bigint, composite keys, caveats, scopes, masks, custom roles, share links, and the twins of variants()), drawn
+    apart from the rest: a seed's policy keeps all it drew before, the twelve seeds of the full run draw each of
+    them (but across()), and their twins compile (one that didn't would only be counted as refused)."""
 
     def setUp(self) -> None:
         sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -7397,6 +7397,7 @@ class GeneratedShapes(unittest.TestCase):
             drawn |= {"scopes"} if variants[0][1].scopes else set()
             drawn |= {"masks"} if any(o.mask for o in variants[0][1].objs) else set()
             drawn |= {f"custom roles{' from' if o.roles[1] else ''}" for o in variants[0][1].objs if o.roles}
+            drawn |= {"share links"} if self.g.links(variants[0][1]) else set()
         self.assertLessEqual(
             {
                 "without rules",
@@ -7411,7 +7412,7 @@ class GeneratedShapes(unittest.TestCase):
         self.assertLessEqual(
             {f"{k} keys" for k in self.g.KEYS}
             | {"composite keys", "caveats", "scopes", "masks"}
-            | {"custom roles", "custom roles from"},
+            | {"custom roles", "custom roles from", "share links"},
             drawn,
         )
         # around.py's four seeds of each push have caveats too, which its sessions read from their context
