@@ -4247,9 +4247,6 @@ BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update after : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.projects update after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on cx.projects'; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
-  IF NOT v[4] THEN
-    RETURN QUERY SELECT '    ' || l FROM authz.explain('project', ((p_row)."id"::text), 'edit') l LIMIT 20;
-  END IF;
 END $f$;
 
 CREATE FUNCTION authz_gen."cx.projects:update_after:refuse"(p_row "cx"."projects") RETURNS boolean

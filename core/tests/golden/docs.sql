@@ -2996,9 +2996,6 @@ BEGIN
   IF NOT v[5] THEN
     RETURN NEXT CASE WHEN v[6] THEN '    yes  ' ELSE '    no   ' END || '{parent_id is null}';
     RETURN NEXT CASE WHEN v[7] THEN '    yes  ' ELSE '    no   ' END || 'share';
-  IF NOT v[7] THEN
-    RETURN QUERY SELECT '      ' || l FROM authz.explain('folder', ((p_row)."id"::text), 'share') l LIMIT 20;
-  END IF;
   END IF;
 END $f$;
 

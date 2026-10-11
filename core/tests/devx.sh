@@ -161,6 +161,8 @@ out=$(then_as 3 "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (9
   "UPDATE app.files SET owner_id = 4 WHERE id = 90")
 case "$out" in *"42501: permission denied: user 3 may not update this row of app.files to these values"*"DETAIL:  no   update after : edit  (line "*"  no   edit"*"HINT:  rowstile help AZ709"*)
   ok "an update the after rule refuses says it is that rule, on the row after the change";; *) bad "refused by the after rule" "$out";; esac
+case "$out" in *"holds edit on file 90"*) bad "the after rule's reasons read the row as stored" "$out";;
+  *) ok "... and gives no reasons read from the row as stored, which the change alters";; esac
 # bob gives away his file in Design docs, which he edits: the update rule (share) wouldn't hold after it
 out=$(then_as 2 "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (91, 4, 2, 'his')" \
   "SELECT array_to_string(authz.explain_rule('app.files', 'update', '91', '{\"owner_id\": 7}'), '|')" \

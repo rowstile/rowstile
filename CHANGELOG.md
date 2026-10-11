@@ -114,6 +114,11 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- A write refused by an `after` rule (`update after : edit`, `update owner_id after : ...`) gave as its reasons
+  the permission on the row as stored, not as changed: giving your file away was refused with "no edit", then
+  "yes, user 3 holds edit on file 90: owner_id is you". Its reasons now stop at the permission the row as changed
+  lacks (what it points at, such as a folder, is still explained), and so does `authz.explain_rule`'s "after the
+  change". The next `rowstile migrate` (or `apply`) brings it.
 - `rowstile why`, Studio's how-to-grant and the MCP server's `why` turn JIT off for their own transaction. On a
   server with JIT on, Postgres could spend most of a second compiling each count of what someone holds, though
   the table held a few rows: Studio's own tests ran in 47 seconds instead of 129.
