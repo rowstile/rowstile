@@ -532,7 +532,7 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
     for u in checker.users:
         who = f"user {u or '(nobody)'}"
         data = evaluate.Data.of({tuple(k[2:]): v for k, v in snap.items() if k[0] == u and k[1] == "data"})
-        state = checker.ref.evaluate(data, u, set())
+        state = checker.ref.evaluate(data, u, checker.links_of(u))  # (the links the session holds count)
         for table in governed:
             t = checker.ref.type_of_table(table)
             seen = rule_set(checker, state, table, "select")
