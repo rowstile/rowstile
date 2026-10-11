@@ -87,6 +87,7 @@ EXPIRED = "now() - interval '1 hour'"
 # A generator gives one in place of one of its draws' live shares, so that its draws, and all it makes, stay the same
 LATER = "now() + interval '1 day'"
 SHARE_COLUMNS = "object_type, object_id, relation, subject_type, subject_id, subject_relation, expires_at, starts_at"
+STEER = 0.25  # of the changes, those aimed at a part of the policy that has decided no answer yet (Gen.steer)
 
 # How many sessions answer a snapshot's questions, side by side (DIFFTEST_SESSIONS=1: one after the other). The
 # questions are the same either way, each user's in one session from first to last: what it saves is the wait.
@@ -1344,13 +1345,59 @@ class Gen:
         """One random change, as SQL. ids: current ids by type."""
         raise NotImplementedError
 
+    tokens: ClassVar[list[str]] = []  # the share links' tokens the users' contexts hold, if the policy has links
+
+    def steer(self, key: tuple[str | int, ...], ids: Ids) -> str | None:
+        """A change aimed at a part of the policy that has decided no answer yet (the decision ledger's key), or
+        None: here, a share in the state the part names (expired, not started), of its relation, to its kind of
+        subject, on an object there is, and a custom role given so; a generator may know more."""
+        r = self.r
+        when = {"expired": (EXPIRED, "NULL"), "not started": ("NULL", LATER)}
+        if key[0] == "share" and key[1] in when:
+            _, why, tname, rname, _, st, sr = key
+            rel = str(rname)
+        elif key[0] == "role share" and key[1] in when:  # (the part is the type's roles, whatever they give)
+            _, why, tname, st, sr = key
+            rel = ""
+        else:
+            return None
+        objects = ids.get(str(tname)) or []
+        if not objects:
+            return None
+        st, sr = str(st), str(sr)
+        if st in ("anyone", "link") or sr == "*":
+            if st == "link" and not self.tokens:
+                return None
+            sid = f"encode(sha256(convert_to({lit(r.choice(self.tokens))}, 'UTF8')), 'hex')" if st == "link" else "'*'"
+        else:  # a group's members, or someone who signs in (the users the checks ask as, of that type)
+            kinds = [(u.split(":")[0] if ":" in u else "user", u.split(":")[-1]) for u in self.users if u]
+            pick = ids.get(st, []) if sr else [i for k, i in kinds if k == st]
+            if not pick:
+                return None
+            sid = lit(r.choice(pick))
+        expires, starts = when[str(why)]
+        oid = lit(r.choice(objects))
+        if rel:
+            return (
+                f"INSERT INTO authz.shares ({SHARE_COLUMNS}) VALUES ({lit(tname)}, {oid}, {lit(rel)}, {lit(st)}, "
+                f"{sid}, {lit(sr)}, {expires}, {starts}) ON CONFLICT DO NOTHING;"
+            )
+        return (  # one of the type's roles, if it has any
+            f"INSERT INTO authz.shares ({SHARE_COLUMNS}) SELECT {lit(tname)}, {oid}, 'role:' || ro.id, {lit(st)}, "
+            f"{sid}, {lit(sr)}, {expires}, {starts} FROM authz.roles ro WHERE ro.object_type = {lit(tname)} "
+            "ORDER BY random() LIMIT 1 ON CONFLICT DO NOTHING;"
+        )
+
 
 def ints(ids: Ids | None, name: str) -> list[int]:
     return [int(x) for x in (ids or {}).get(name, [])]
 
 
 class DocsGen(Gen):
-    """The example app (example/app_schema.sql)."""
+    """The example app (example/app_schema.sql). Its first data is steered toward what the decision ledger found
+    never deciding an answer: user 8 starts an outsider (no org, nothing owned, alone in team 15, which no folder
+    names), so a share that doesn't count, to user 8 or team 15, would decide had it counted; and folders 1 to 4 are
+    a chain whose top only user 7 owns, so user 7 edits folder 4 only three links up."""
 
     policy = "example/docs.authz"
     schema = "example/app_schema.sql"
@@ -1364,7 +1411,7 @@ class DocsGen(Gen):
         ]
         s.append("INSERT INTO app.users SELECT i, 'u' || i FROM generate_series(1, 8) i;")
         s.append("INSERT INTO app.orgs VALUES (1, 'o1'), (2, 'o2');")
-        for u in self.users:
+        for u in self.users[:7]:  # (user 8: the outsider)
             for o in (1, 2):
                 if r.random() < 0.45:
                     s.append(
@@ -1372,25 +1419,29 @@ class DocsGen(Gen):
                     )
         for i in range(10, 16):
             parent = r.choice([None, None] + list(range(10, i)))
+            parent = {11: 10, 12: 11, 13: 12, 15: None}.get(i, parent)  # 13 in 12 in 11 in 10; the outsider's alone
             s.append(f"INSERT INTO app.teams VALUES ({i}, {r.choice([1, 2])}, {parent or 'NULL'}, 't{i}');")
-        for u in self.users:
-            for t in r.sample(range(10, 16), r.choice([0, 1, 1, 2])):
+        for u in self.users[:7]:
+            for t in r.sample(range(10, 15), r.choice([0, 1, 1, 2])):
                 s.append(f"INSERT INTO app.team_members VALUES ({t}, {u});")
+        s.append("INSERT INTO app.team_members VALUES (15, 8);")
         for i in range(1, 26):
             parent = r.choice([None] + list(range(1, i)) * 3) if i > 1 else None
+            owner, inherit = r.choice(self.users[:6]), "false" if r.random() < 0.15 else "true"
+            if i <= 4:  # the chain: 4 in 3 in 2 in 1, whose owner is user 7's only folder
+                parent, owner, inherit = i - 1 if i > 1 else None, "7" if i == 1 else owner, "true"
             s.append(
                 f"INSERT INTO app.folders (id, org_id, parent_id, owner_id, name, inherit) VALUES "
-                f"({i}, {r.choice([1, 2])}, {parent or 'NULL'}, {r.choice(self.users)}, 'f{i}', "
-                f"{'false' if r.random() < 0.15 else 'true'});"
+                f"({i}, {r.choice([1, 2])}, {parent or 'NULL'}, {owner}, 'f{i}', {inherit});"
             )
         for i in range(1, 51):
             s.append(
                 f"INSERT INTO app.files (id, folder_id, owner_id, name, confidential) VALUES "
-                f"({i}, {r.randint(1, 25)}, {r.choice(self.users)}, 'x{i}', {'true' if r.random() < 0.15 else 'false'});"
+                f"({i}, {r.randint(1, 25)}, {r.choice(self.users[:7])}, 'x{i}', {'true' if r.random() < 0.15 else 'false'});"
             )
         for _ in range(8):
             s.append(
-                f"INSERT INTO app.folder_team_access VALUES ({r.randint(1, 25)}, {r.randint(10, 15)}, "
+                f"INSERT INTO app.folder_team_access VALUES ({r.randint(1, 25)}, {r.randint(10, 14)}, "
                 f"'{r.choice(['view', 'edit'])}') ON CONFLICT DO NOTHING;"
             )
         for _ in range(5):
@@ -1402,7 +1453,23 @@ class DocsGen(Gen):
         return "\n".join(s)
 
     def grants(self) -> str:
-        return "\n".join(self.grant() for _ in range(25))
+        # drawn, then shares that don't count (expired, not started) to the outsider, its team and an org, for each
+        # relation: had they counted, they would have decided something
+        r = self.r
+        targeted = []
+        for expires, starts in ((EXPIRED, "NULL"), ("NULL", LATER)):
+            for obj, rel, subjects in (
+                ("folder", "viewer", [("user", "8", ""), ("team", "15", "member"), ("org", "1", "member")]),
+                ("folder", "editor", [("user", "8", ""), ("team", "15", "member")]),
+                ("file", "viewer", [("user", "8", ""), ("team", "15", "member")]),
+            ):
+                for st, sid, sr in subjects:
+                    oid = r.randint(1, 25) if obj == "folder" else r.randint(1, 50)
+                    targeted.append(
+                        f"INSERT INTO authz.shares ({SHARE_COLUMNS}) VALUES ('{obj}', {oid}, '{rel}', '{st}', {sid}, "
+                        f"'{sr}', {expires}, {starts}) ON CONFLICT DO NOTHING;"
+                    )
+        return "\n".join([self.grant() for _ in range(25)] + targeted)
 
     def grant(self, ids: Ids | None = None) -> str:
         r = self.r
@@ -2443,7 +2510,9 @@ def main() -> None:
             t.name: [x[0] for x in db.rows(f"SELECT {idsql(t)} FROM {qt(t.table)} ORDER BY 1")]
             for t in checker.types.values()
         }
-        sql = gen.change(ids)
+        # now and then a change aimed at a part of the policy that has decided no answer yet (with --decisions)
+        wanting = checker.decisions.wanting() if checker.decisions is not None and gen.r.random() < STEER else []
+        sql = (gen.steer(gen.r.choice(wanting), ids) if wanting else None) or gen.change(ids)
         code, _, err = db.run(sql, check=False)
         if code != 0:
             if any(e in err for e in gen.expected_errors):
