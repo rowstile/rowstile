@@ -2133,14 +2133,20 @@ class LoopGen(Gen):
         s += [f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), 100);" for table, _, _ in self.tables.values()]
         return "\n".join(s)
 
-    def grants(self) -> str:
-        return "\n".join(self.grant() for _ in range(4))
+    WHEN: ClassVar[list[tuple[str, str]]] = [
+        ("NULL", "NULL"),
+        ("NULL", LATER),
+        (EXPIRED, "NULL"),
+        ("now() + interval '1 day'", "NULL"),
+    ]
 
-    def grant(self, ids: Ids | None = None) -> str:
+    def grants(self) -> str:
+        # one share in each state first (the decision ledger found no expired one in a run), then two drawn
+        return "\n".join([*(self.grant(None, when) for when in self.WHEN), self.grant(), self.grant()])
+
+    def grant(self, ids: Ids | None = None, when: tuple[str, str] | None = None) -> str:
         r = self.r
-        expires, starts = r.choice(
-            [("NULL", "NULL"), ("NULL", LATER), (EXPIRED, "NULL"), ("now() + interval '1 day'", "NULL")]
-        )
+        expires, starts = when or r.choice(self.WHEN)
         sid = r.choice(ints(ids, "setting") or list(range(1, 7)))
         return (
             f"INSERT INTO authz.shares ({SHARE_COLUMNS}) VALUES ('setting', {sid}, 'admin', 'user', "
