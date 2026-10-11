@@ -1030,6 +1030,10 @@ class Checker:
         for u in self.users:
             data = evaluate.Data.of({tuple(k[2:]): v for k, v in snap.items() if k[0] == u and k[1] == "data"})
             state = self.ref.evaluate(data, u, self.links_of(u))
+            # what each one holds anything on, for a change steered toward a share that would decide (Gen.steer)
+            self.gen.holding[u] = {
+                t.name: set().union(*(state[(t.name, p)] for p in t.perms)) for t in self.types.values()
+            }
             if self.decisions is not None:
                 # (the shares that don't count, by why: what --decisions asks besides)
                 shares: dict[tuple[str | int, ...], Answer] = {
@@ -1328,9 +1332,6 @@ class Gen:
         "violates unique constraint",
     )
 
-    def __init__(self, rnd: random.Random) -> None:
-        self.r = rnd
-
     def context(self, u: str) -> dict[str, str]:
         """The request context (authz_ctx.*) the user's session sets."""
         return {}
@@ -1346,6 +1347,10 @@ class Gen:
         raise NotImplementedError
 
     tokens: ClassVar[list[str]] = []  # the share links' tokens the users' contexts hold, if the policy has links
+
+    def __init__(self, rnd: random.Random) -> None:
+        self.r = rnd
+        self.holding: dict[str, dict[str, set[str]]] = {}  # who holds any permission on what (the checker's last)
 
     def steer(self, key: tuple[str | int, ...], ids: Ids) -> str | None:
         """A change aimed at a part of the policy that has decided no answer yet (the decision ledger's key), or
@@ -1369,12 +1374,17 @@ class Gen:
             if st == "link" and not self.tokens:
                 return None
             sid = f"encode(sha256(convert_to({lit(r.choice(self.tokens))}, 'UTF8')), 'hex')" if st == "link" else "'*'"
-        else:  # a group's members, or someone who signs in (the users the checks ask as, of that type)
-            kinds = [(u.split(":")[0] if ":" in u else "user", u.split(":")[-1]) for u in self.users if u]
-            pick = ids.get(st, []) if sr else [i for k, i in kinds if k == st]
-            if not pick:
+        elif sr:  # a group's members
+            if not ids.get(st):
                 return None
-            sid = lit(r.choice(pick))
+            sid = lit(r.choice(ids[st]))
+        else:  # someone who signs in (the users the checks ask as, of that type), where they hold nothing yet
+            people = [u for u in self.users if u and (u.split(":")[0] if ":" in u else "user") == st]
+            if not people:
+                return None
+            outside = [(o, u) for o in objects for u in people if o not in self.holding.get(u, {}).get(str(tname), ())]
+            obj, who = r.choice(outside) if outside else (r.choice(objects), r.choice(people))
+            objects, sid = [obj], lit(who.split(":")[-1])
         expires, starts = when[str(why)]
         oid = lit(r.choice(objects))
         if rel:
