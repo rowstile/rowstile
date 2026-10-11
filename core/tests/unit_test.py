@@ -7336,8 +7336,8 @@ class GeneratedShapes(unittest.TestCase):
     """genpolicy's policies say now and then what no other draw does (also(), across(), perm_groups(), keys other than
     bigint, composite keys, caveats, scopes, masks, custom roles, share links, rules before and after, named link
     columns, a policy in two files, and the twins of variants()), drawn apart from the rest: a seed's policy keeps
-    all it drew before, the twelve seeds of the full run draw each of them (but across()), and their twins compile
-    (one that didn't would only be counted as refused)."""
+    all it drew before, the first twelve seeds draw each of them (but across()), and their twins compile (one that
+    didn't would only be counted as refused)."""
 
     def setUp(self) -> None:
         sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -7435,7 +7435,7 @@ class GeneratedShapes(unittest.TestCase):
         self.assertTrue(any(self.g.make(seed).caveats for seed in range(1, 5)))
 
     def test_a_recursion_through_two_types(self) -> None:
-        """across(): about one seed in seven (the nightly soak's hundred meet it, the full run's twelve may not),
+        """across(): about one seed in seven (the nightly soak's hundred meet it, the first twelve may not),
         nearly all compiled, each into a tree across two types, some of them stopped by a link table's where
         alone."""
         drawn = compiled = alone = 0
@@ -7454,6 +7454,15 @@ class GeneratedShapes(unittest.TestCase):
         self.assertGreaterEqual(drawn, 10)
         self.assertGreaterEqual(compiled, drawn * 4 // 5)
         self.assertGreaterEqual(alone, 1)
+
+    def test_every_two_features_meet_in_the_full_runs_policies(self) -> None:
+        """--pairs 1000, what the full run checks: a few seeds the compiler takes, in which every two FEATURES meet
+        (all but APART meet in some policy of the pool), each feature drawn."""
+        seeds, unmet, never = self.g.covering(1000)
+        self.assertLessEqual(len(seeds), 20)
+        self.assertEqual((unmet, never), (set(), set()))
+        met = set().union(*(self.g.pairs(self.g.make(seed)) for seed in seeds))
+        self.assertEqual(met, set(itertools.combinations(sorted(self.g.FEATURES), 2)) - self.g.APART)
 
     def test_arounds_seeds_draw_each_shared_if(self) -> None:
         """around.py judges `shared if` by its calls of authz.share() to users: its four seeds on each push draw

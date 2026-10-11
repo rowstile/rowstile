@@ -2,6 +2,7 @@
 """genpolicy: random policies, each with its tables and data, checked like the fixed ones.
 
     python3 tests/genpolicy.py --db authz_gen --policies 20 --steps 20 --seed 1
+    python3 tests/genpolicy.py --db authz_gen --pairs 1000 --steps 8      # what the full run checks
 
 Each seed makes a small policy from the language: a user type (sometimes `where {active}`), one to three object
 types, sometimes a service that signs in; relations from columns, link tables (sometimes `where {active}`) and
@@ -37,6 +38,9 @@ counted and their seeds printed. For each of the others, after every one of a fe
   - difftest's checks (tests/difftest.py: list, can, explain, who, the rows each rule allows, verify)
   - authz.check_invariants() against the reference evaluator
 and at the end, `rowstile prove`: an invariant it says holds must not be broken by the data seen.
+With --pairs POOL, the seeds are chosen from 1..POOL instead (covering()): a few, the compiler taking each, in which
+every two FEATURES that meet in some policy of the pool meet; it says the pairs no policy there has (but APART:
+one key type each), and at the end which pairs met the reference evaluator in a policy that passed.
 A failing policy is shrunk (an invariant, a rule, a type, a part of a permission taken away while it still fails)
 and printed with its seed, so `--only SEED` runs it again. With --decisions, each policy's parts that never decided
 an answer in those checks are said after it (tests/decisions.py).
@@ -54,15 +58,16 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from itertools import combinations
 from typing import ClassVar, TypeAlias
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 import difftest  # noqa: E402
-from authzlib import evaluate, parse_policy, prove  # noqa: E402
+from authzlib import PolicyError, evaluate, parse_policy, prove  # noqa: E402
 from authzlib.sqlutil import q, qt  # noqa: E402
 from difftest import DB, Checker, Gen, Ids, idsql, lit  # noqa: E402
 
@@ -1258,6 +1263,99 @@ def shrink(spec: Spec, still: Callable[[Spec], bool]) -> Spec:
 
 
 # ----------------------------------------------------------------------
+# Pairs: features that meet in one policy
+# ----------------------------------------------------------------------
+def _rels(spec: Spec) -> list[tuple[Obj, Rel]]:
+    return [(o, rel) for o in spec.objs for rel in o.rels]
+
+
+def _atoms(spec: Spec) -> list[str]:
+    return [a for o in spec.objs for e in [*o.perms.values(), *(x for _, x in o.rules)] for a in atoms(e)]
+
+
+# What a policy may have, each a test on the seed's policy: --pairs chooses seeds so that every two of these that
+# meet in some policy meet in a chosen one. A new shape of genpolicy's gets its line here.
+FEATURES: dict[str, Callable[[Spec], bool]] = {
+    "awkward names": lambda s: s.spelling.awkward,
+    **{f"{k} keys": (lambda s, k=k: s.spelling.keytype == k and not s.spelling.composite) for k in KEYS},
+    "composite keys": lambda s: s.spelling.composite,
+    "users with a where": lambda s: s.user_where,
+    "a service": lambda s: s.bot,
+    "three types": lambda s: len(s.objs) == 3,
+    "a type's where": lambda s: any(o.where for o in s.objs),
+    "inheritance": lambda s: any(f"parent.{p}" in atoms(e) for o in s.objs for p, e in o.perms.items()),
+    "a deny": lambda s: any(denies(o) for o in s.objs),
+    "an arrow to another type": lambda s: any(a.startswith("up.") for a in _atoms(s)),
+    "a polymorphic parent": lambda s: any(r.name == "parent" and len(r.subjects) == 2 for _, r in _rels(s)),
+    "a parent table to another type": lambda s: any(
+        r.name == "parent" and r.kind == "table" and r.subjects != [o.name] for o, r in _rels(s)
+    ),
+    "a parent table to the type's own": lambda s: any(
+        r.name == "parent" and r.kind == "table" and r.subjects == [o.name] for o, r in _rels(s)
+    ),
+    "recursion through two types": lambda s: any(r.name == "inside" for _, r in _rels(s)),
+    "a link table's where": lambda s: any(r.kind == "table" and r.where for _, r in _rels(s)),
+    "named link columns": lambda s: any(r.named for _, r in _rels(s)),
+    "shares": lambda s: any(r.kind == "shared" for _, r in _rels(s)),
+    "groups": lambda s: any(x.endswith("#member") for _, r in _rels(s) for x in r.subjects),
+    "groups by a permission": lambda s: any("#p" in x for _, r in _rels(s) for x in r.subjects),
+    "user:*": lambda s: any("user:*" in r.subjects for _, r in _rels(s)),
+    "anyone": lambda s: any("anyone" in r.subjects for _, r in _rels(s)),
+    "share links": links,
+    "shared if": lambda s: any(r.shared_if for _, r in _rels(s)),
+    "caveats": lambda s: s.caveats,
+    "scopes": lambda s: bool(s.scopes),
+    "masks": lambda s: any(o.mask for o in s.objs),
+    "custom roles": lambda s: any(o.roles for o in s.objs),
+    "custom roles from": lambda s: any(o.roles and o.roles[1] for o in s.objs),
+    "update after": lambda s: any(h == "update after" for o in s.objs for h, _ in o.rules),
+    "a column rule": lambda s: any(h.startswith("update b1") for o in s.objs for h, _ in o.rules),
+    "a rule reading another table": lambda s: any(a in READS for o in s.objs for _, e in o.rules for a in atoms(e)),
+    "invariants": lambda s: bool(s.invariants),
+    "two files": lambda s: s.include,
+}
+# the features no policy has together, by how genpolicy draws: one key type each, composite keys only of bigint
+APART = {
+    *combinations(sorted(f"{k} keys" for k in KEYS), 2),
+    *((min(f"{k} keys", "composite keys"), max(f"{k} keys", "composite keys")) for k in KEYS),
+}
+
+
+def features(spec: Spec) -> set[str]:
+    return {name for name, holds in FEATURES.items() if holds(spec)}
+
+
+def pairs(spec: Spec) -> set[tuple[str, str]]:
+    return set(combinations(sorted(features(spec)), 2))
+
+
+def covering(pool: int) -> tuple[list[int], set[tuple[str, str]], set[tuple[str, str]]]:
+    """Seeds of 1..pool chosen, greedily, so that every pair of FEATURES that meets in a policy of the pool the
+    compiler takes meets in one of them; and the pairs that meet only in policies it refuses, and those that meet in
+    no policy of the pool (APART aside)."""
+    from authzlib import Compiler
+
+    met = {seed: pairs(make(seed)) for seed in range(1, pool + 1)}
+    occurring = set().union(*met.values())
+    chosen: list[int] = []
+    covered: set[tuple[str, str]] = set()
+    left = dict(met)
+    while left:
+        best = max(left, key=lambda seed: (len(left[seed] - covered), -seed))
+        if not left[best] - covered:
+            break
+        del left[best]
+        try:
+            Compiler(parse_policy(policy_text(make(best)), "gen.authz")).compile("gen.authz")
+        except PolicyError:
+            continue
+        chosen.append(best)
+        covered |= met[best]
+    never = set(combinations(sorted(FEATURES), 2)) - occurring - APART
+    return sorted(chosen), occurring - covered, never
+
+
+# ----------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default="authz_genpolicy")
@@ -1270,10 +1368,24 @@ def main() -> None:
     ap.add_argument(
         "--decisions", action="store_true", help="and say, for each policy, the parts that never decided an answer"
     )
+    ap.add_argument(
+        "--pairs",
+        type=int,
+        metavar="POOL",
+        help="instead of --policies: the seeds of 1..POOL in which every two features that meet there meet (covering)",
+    )
     args = ap.parse_args()
     os.chdir(os.path.dirname(HERE))
     db = DB(args.db)
-    seeds = [args.only] if args.only is not None else range(args.seed, args.seed + args.policies)
+    seeds: Sequence[int] = [args.only] if args.only is not None else range(args.seed, args.seed + args.policies)
+    unmet: set[tuple[str, str]] = set()
+    if args.pairs:
+        seeds, unmet, never = covering(args.pairs)
+        print(f"pairs: {len(seeds)} seeds of 1..{args.pairs} meet every pair of features that meets there", flush=True)
+        for what, these in (("only in policies the compiler refuses", unmet), ("in no policy of the pool", never)):
+            if these:
+                print(f"  pairs {what}: " + "; ".join(f"{a} + {b}" for a, b in sorted(these)), flush=True)
+    judged: set[tuple[str, str]] = set()  # the pairs a policy that passed had
     refused: dict[str, int] = {}
     failed = passed = 0
     slow: list[str] = []
@@ -1311,6 +1423,7 @@ def main() -> None:
                     print("\n".join(said), flush=True)
                 if not problems:
                     passed += 1
+                    judged |= set() if label else pairs(spec)
                     continue
                 failed += 1
                 print(f"{name}: the database and the evaluator disagree")
@@ -1329,6 +1442,15 @@ def main() -> None:
         + (f", {len(slow)} too slow to check ({', '.join(slow)})" if slow else "")
         + (f"; twins checked: {', '.join(f'{n} {k}' for k, n in sorted(twins.items()))}" if twins else "")
     )
+    if args.pairs:  # the ledger: which pairs met the reference evaluator in a policy that passed
+        wanted = set().union(*(pairs(make(seed)) for seed in seeds)) if seeds else set()
+        missed = wanted - judged
+        print(f"pairs judged: {len(judged & wanted)} of {len(wanted)}")
+        if missed:
+            print(
+                "  not judged (their policy failed, or was too slow): "
+                + "; ".join(f"{a} + {b}" for a, b in sorted(missed))
+            )
     sys.exit(1 if failed else 0)
 
 

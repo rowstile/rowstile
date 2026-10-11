@@ -352,12 +352,12 @@ done
 if part random; then
 if [ "$MODE" = full ]; then
   genpolicy() {
-  step "random policies, compared with the reference evaluator (12 policies)"
-  python3 tests/genpolicy.py --policies 12 --steps 8 --seed 1 --db authz_genpolicy --decisions
+  step "random policies, compared with the reference evaluator (every two features together, of 1000 seeds)"
+  python3 tests/genpolicy.py --pairs 1000 --steps 8 --db authz_genpolicy --decisions
   record $? "genpolicy"
   dropdb --if-exists authz_genpolicy >/dev/null 2>&1
   }
-  unit random 300 genpolicy   # not measured
+  unit random 430 genpolicy   # 7 minutes on pgdev, 2026-10-11
 fi
 # what is around the policy depends on the version of Postgres more than the policy does: a few on every run
 AROUND=4; [ "$MODE" = full ] && AROUND=16
