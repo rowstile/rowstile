@@ -22,10 +22,11 @@ that give them, manage_roles where they are made, and some given in the data), `
 subjects (shares to a token's hash, TOKENS in each user's context), and rules that say when they are checked
 (`update after`, `update b1 before`, `update b1 after`).
 Then the tables it reads and their data. A third of the seeds name those tables and columns as an app's own may be
-(AWKWARD: capitals, words SQL reserves, a double quote, 63 bytes), the policy otherwise the same; nearly half give
-every key another type than bigint (KEYS: int, text or uuid), said on each type line; and a quarter of the others
-key their object types by (org_id, id), every column that points at an object then naming one in its row's org
-(`[org_id, c_up]`, `(parent_type, [org_id, parent_id])`, link tables `([org_id, obj_id] -> [org_id, subj_id])`).
+(AWKWARD: capitals, words SQL reserves, a double quote, a letter outside ASCII, 63 bytes), the policy otherwise the
+same; nearly half give every key another type than bigint (KEYS: int, text or uuid), said on each type line; and a
+quarter of the others key their object types by (org_id, id), every column that points at an object then naming one
+in its row's org (`[org_id, c_up]`, `(parent_type, [org_id, parent_id])`, link tables `([org_id, obj_id] ->
+[org_id, subj_id])`).
 Some have caveats (CAVEATS), which some of their shares carry, read in each user's context, and some scopes
 (draw_scopes()), with which the checks ask one user again each time; and a quarter are written in two files, the
 second included by the first (write_policy()): each of these drawn apart too.
@@ -79,9 +80,11 @@ GONE = str(USERS + 1)  # an id the user table doesn't have: links may name it, a
 ROWS = 7  # rows of each object type at the start
 
 # The database's names as a third of the policies spell them, as an app's own may be named: capitals, words SQL
-# reserves, a double quote, a name as long as Postgres allows (63 bytes). The policy writes a name as it is, and the
-# compiler quotes it in the SQL it writes; these policies' conditions, the data and the checks quote it themselves. A name
-# quoted wrongly anywhere (a quoted function's name was one, an app's capitals another) is then met by the checks.
+# reserves, a double quote, a letter outside ASCII, a name as long as Postgres allows (63 bytes). The policy writes a
+# name as it is (its own names are ASCII words: the quote and the accent are in columns only conditions name), and
+# the compiler quotes it in the SQL it writes; these policies' conditions, the data and the checks quote it
+# themselves. A name quoted wrongly anywhere (a quoted function's name was one, an app's capitals another) is then
+# met by the checks.
 AWKWARD = {
     SCHEMA: "Gp",
     "users": "user",
@@ -98,7 +101,7 @@ AWKWARD = {
     "org_id": "OrgId",
     "obj_id": "Obj",
     "subj_id": "Subj",
-    "active": "Active",
+    "active": "Activé",  # a letter outside ASCII
     "note": "Note",
 }
 

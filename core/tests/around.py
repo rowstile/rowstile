@@ -8,6 +8,10 @@ tables, the owner's session switched to the app role, a database nobody else was
 holes the bug hunt found were not in the policy's logic but around it. So each seed here takes genpolicy's
 policy for that seed and draws a world for it:
 
+  the names     the seed's own, as genpolicy draws them: for a third of the seeds its tables and columns are
+                named as an app's own may be (genpolicy's AWKWARD: capitals, words SQL reserves, a quote, a
+                letter outside ASCII, 63 bytes). What the world makes beside them (the tables under them, the
+                decoys, a schema on the path) is named the same way, and every statement here quotes them
   the catalog   each object table is plain, partitioned by its key (hash or range: a key that changes puts the
                 row in another partition), or has a table that inherits from it, where half its rows are stored;
                 the owner's default privileges give new tables, functions and schemas to the app role, to PUBLIC
@@ -37,7 +41,7 @@ and checks, after each random change to the data:
     refuses, AZ612, for the schema others may create in) and then answers `unchanged`
 
 A failing seed is printed with its world and its policy; --only SEED runs it again. Then the world is made
-plainer, one thing at a time, while it still fails.
+plainer, one thing at a time, while it still fails (its names last: plain ones, if it fails with them too).
 """
 
 from __future__ import annotations
@@ -47,7 +51,6 @@ import dataclasses
 import json
 import os
 import random
-import re
 import subprocess
 import sys
 import tempfile
@@ -62,7 +65,7 @@ from authzlib import evaluate  # noqa: E402
 from authzlib.parse import Rule  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
 from difftest import DB, Checker, Snapshot, idsql, lit  # noqa: E402
-from genpolicy import SCHEMA, Refused, Slow, Spec  # noqa: E402
+from genpolicy import SCHEMA, Refused, Slow, Spec, Spelling  # noqa: E402
 
 MEMBER = "authz_around_member"  # logs in, a member of app_user
 SETROLE = "authz_around_setrole"  # logs in, a member that doesn't inherit: it has to SET ROLE app_user
@@ -149,6 +152,11 @@ class World:
         return "; ".join(parts)
 
 
+def described(spec: Spec, w: World) -> str:
+    """The world, and what of it the policy's own draw says: how its database is named."""
+    return ("names as an app's own may be (genpolicy's AWKWARD); " if spec.spelling.awkward else "") + w.describe()
+
+
 def draw(seed: int, spec: Spec) -> World:
     r = random.Random(f"around/{seed}")
     w = World(seed)
@@ -211,98 +219,117 @@ def with_write_rules(spec: Spec, seed: int) -> Spec:
 # The database of a world
 # ----------------------------------------------------------------------
 def policy_text(spec: Spec, w: World) -> str:
+    n = spec.spelling
     text = genpolicy.policy_text(spec)
     if w.unqualified:
-        text = text.replace(f'{SCHEMA}."Flag"(', '"Flag"(').replace(f" from {SCHEMA}.t1 x", " from t1 x")
+        text = text.replace(f'{n.sql(SCHEMA)}."Flag"(', '"Flag"(')
+        text = text.replace(f" from {n.table('t1')} x", f" from {n.sql('t1')} x")
     return text
 
 
 FOLLOWS = " ON DELETE CASCADE ON UPDATE CASCADE"
 
 
-def follow(link: str, column: str, target: str) -> list[str]:
+def follow(n: Spelling, link: str, column: str, target: str) -> list[str]:
     """What a foreign key with ON DELETE CASCADE ON UPDATE CASCADE does, for a table with one that inherits from
-    it: a foreign key to the table doesn't see the rows stored in the other, so triggers on both do its work."""
-    fn = f"{link}_{column}_follow"
+    it: a foreign key to the table doesn't see the rows stored in the other, so triggers on both do its work.
+    (link, column and target by genpolicy's plain names: the world spells what it makes as the policy's are.)"""
+    fn, tbl, col, i = n.table(f"{link}_{column}_follow"), n.table(link), n.sql(column), n.sql("id")
     return [
         f"CREATE FUNCTION {fn}() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $f$ BEGIN\n"
-        f"  IF TG_OP = 'DELETE' THEN DELETE FROM {link} WHERE {column} = OLD.id; RETURN OLD; END IF;\n"
-        f"  UPDATE {link} SET {column} = NEW.id WHERE {column} = OLD.id; RETURN NEW;\nEND $f$;",
+        f"  IF TG_OP = 'DELETE' THEN DELETE FROM {tbl} WHERE {col} = OLD.{i}; RETURN OLD; END IF;\n"
+        f"  UPDATE {tbl} SET {col} = NEW.{i} WHERE {col} = OLD.{i}; RETURN NEW;\nEND $f$;",
         *[
-            f"CREATE TRIGGER {link.split('.')[1]}_{column}_{op} AFTER {event} ON {tbl} FOR EACH ROW "
+            f"CREATE TRIGGER {n.sql(f'{link}_{column}_{op}')} AFTER {event} ON {under} FOR EACH ROW "
             f"EXECUTE FUNCTION {fn}();"
-            for tbl in (target, f"{target}_old")
-            for op, event in (("del", "DELETE"), ("upd", "UPDATE OF id"))
+            for under in (n.table(target), n.table(f"{target}_old"))
+            for op, event in (("del", "DELETE"), ("upd", f"UPDATE OF {i}"))
         ],
     ]
 
 
 def schema_text(spec: Spec, w: World) -> str:
+    """genpolicy's tables, each object table laid out as the world says. What the world makes beside them (the
+    tables under them, the decoys) is named as the policy's own are: plainly, or as AWKWARD's."""
+    n = spec.spelling
+    i, k = n.sql("id"), n.keytype
+    objects = {f"CREATE TABLE {n.table(o.name)} (": o.name for o in spec.objs}
+    links = {
+        f"CREATE TABLE {n.table(f'{o.name}_{rel.name}')} (": (f"{o.name}_{rel.name}", o.name, rel.subjects[0])
+        for o in spec.objs
+        for rel in o.rels
+        if rel.kind == "table"
+    }
     out: list[str] = []
     for line in genpolicy.schema_text(spec).splitlines():
-        m = re.match(rf"CREATE TABLE {SCHEMA}\.(t\d+_\w+) \((.*)\);$", line)
-        if m:  # a link table: its foreign keys to a table with one that inherits become triggers
-            link, follows = f"{SCHEMA}.{m.group(1)}", []
-            for column, target in re.findall(rf"(\w+) bigint REFERENCES ({SCHEMA}\.t\d+){FOLLOWS}", line):
-                if w.layout.get(target.split(".")[1]) == "inherits":
-                    line = line.replace(f"{column} bigint REFERENCES {target}{FOLLOWS}", f"{column} bigint")
-                    follows += follow(link, column, target)
+        made = next((head for head in (*links, *objects) if line.startswith(head)), "")
+        if made in links:  # a link table: its foreign keys to a table with one that inherits become triggers
+            link, obj, subject = links[made]
+            follows = []
+            for column, target in (("obj_id", obj), ("subj_id", subject.split("#")[0])):
+                key = f"{n.sql(column)} {k} REFERENCES {n.table(target)}{FOLLOWS}"
+                if w.layout.get(target) == "inherits" and key in line:
+                    line = line.replace(key, f"{n.sql(column)} {k}")
+                    follows += follow(n, link, column, target)
             out += [line, *follows]
             continue
-        m = re.match(rf"CREATE TABLE {SCHEMA}\.(t\d+) \((.*)\);$", line)
-        how = w.layout.get(m.group(1), "plain") if m else "plain"
-        if not m or how == "plain":
+        how = w.layout.get(objects[made], "plain") if made else "plain"
+        if how == "plain":
             out.append(line)
             continue
-        tbl = f"{SCHEMA}.{m.group(1)}"
+        name, columns = objects[made], line[len(made) : -len(");")]
+        tbl = n.table(name)
         if how == "hash":
-            out.append(f"CREATE TABLE {tbl} ({m.group(2)}) PARTITION BY HASH (id);")
+            out.append(f"CREATE TABLE {tbl} ({columns}) PARTITION BY HASH ({i});")
             out += [
-                f"CREATE TABLE {tbl}_h{n} PARTITION OF {tbl} FOR VALUES WITH (MODULUS 2, REMAINDER {n});"
-                for n in (0, 1)
+                f"CREATE TABLE {n.table(f'{name}_h{part}')} PARTITION OF {tbl} "
+                f"FOR VALUES WITH (MODULUS 2, REMAINDER {part});"
+                for part in (0, 1)
             ]
         elif how == "range":
-            out.append(f"CREATE TABLE {tbl} ({m.group(2)}) PARTITION BY RANGE (id);")
-            out.append(f"CREATE TABLE {tbl}_low PARTITION OF {tbl} FOR VALUES FROM (MINVALUE) TO (5);")
-            out.append(f"CREATE TABLE {tbl}_mid PARTITION OF {tbl} FOR VALUES FROM (5) TO ({TOP});")
+            out.append(f"CREATE TABLE {tbl} ({columns}) PARTITION BY RANGE ({i});")
+            out.append(f"CREATE TABLE {n.table(f'{name}_low')} PARTITION OF {tbl} FOR VALUES FROM (MINVALUE) TO (5);")
+            out.append(f"CREATE TABLE {n.table(f'{name}_mid')} PARTITION OF {tbl} FOR VALUES FROM (5) TO ({TOP});")
         else:
             out.append(line)
-            out.append(f"CREATE TABLE {tbl}_old () INHERITS ({tbl});")
+            out.append(f"CREATE TABLE {n.table(f'{name}_old')} () INHERITS ({tbl});")
     # the decoys: what a transaction that searches this schema first would find under the policy's own names
     out += [
         f"CREATE SCHEMA {SCRATCH};",
-        f"CREATE TABLE {SCRATCH}.t1 (id bigint, b2 boolean);",
-        f"INSERT INTO {SCRATCH}.t1 SELECT i, true FROM generate_series(1, 400) i;",
-        f"CREATE TABLE {SCRATCH}.users (id bigint, active boolean);",
-        f"INSERT INTO {SCRATCH}.users SELECT i, true FROM generate_series(1, 20) i;",
-        f"CREATE FUNCTION {SCRATCH}.\"Flag\"(p bigint) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT true';",
-        f'CREATE OPERATOR {SCRATCH}.=!= (FUNCTION = {SCRATCH}."Flag", RIGHTARG = bigint);',
+        f"CREATE TABLE {SCRATCH}.{n.sql('t1')} ({i} {k}, {n.sql('b2')} boolean);",
+        f"INSERT INTO {SCRATCH}.{n.sql('t1')} SELECT x, true FROM generate_series(1, 400) x;",
+        f"CREATE TABLE {SCRATCH}.{n.sql('users')} ({i} {k}, {n.sql('active')} boolean);",
+        f"INSERT INTO {SCRATCH}.{n.sql('users')} SELECT x, true FROM generate_series(1, 20) x;",
+        f"CREATE FUNCTION {SCRATCH}.\"Flag\"(p {k}) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT true';",
+        f'CREATE OPERATOR {SCRATCH}.=!= (FUNCTION = {SCRATCH}."Flag", RIGHTARG = {k});',
         f"CREATE FUNCTION {SCRATCH}.now() RETURNS timestamptz LANGUAGE sql IMMUTABLE AS "
         "'SELECT ''1970-01-01''::timestamptz';",
         f"GRANT USAGE ON SCHEMA {SCRATCH} TO PUBLIC;",
         f"GRANT SELECT ON ALL TABLES IN SCHEMA {SCRATCH} TO PUBLIC;",
         f"CREATE SCHEMA {OPEN};",
         # the role the policy doesn't name is given the app's tables, as the app role is
-        f"GRANT USAGE ON SCHEMA {SCHEMA} TO {OUTSIDER};",
-        f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {SCHEMA} TO {OUTSIDER};",
+        f"GRANT USAGE ON SCHEMA {n.sql(SCHEMA)} TO {OUTSIDER};",
+        f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {n.sql(SCHEMA)} TO {OUTSIDER};",
     ]
     return "\n".join(out) + "\n"
 
 
-def path_sql(db: DB, w: World, open_too: bool) -> str:
+def path_sql(db: DB, spec: Spec, w: World, open_too: bool) -> str:
     """The database's search path: the one the policy is applied with, and the checks' sessions start with."""
-    path = ([SCHEMA] if w.unqualified else []) + ([OPEN] if open_too else []) + ["public"]
+    path = ([spec.spelling.sql(SCHEMA)] if w.unqualified else []) + ([OPEN] if open_too else []) + ["public"]
     return f'ALTER DATABASE "{db.name}" SET search_path = {", ".join(path)};'
 
 
 def initial(gen: genpolicy.GenPolicyGen, w: World) -> str:
     """genpolicy's first rows; for a table with one that inherits from it, the rows with an even id are stored
     there (before the policy is applied: written there directly later, they would skip the table's triggers)."""
+    n = gen.spec.spelling
+    rows = {f"INSERT INTO {n.table(t)} ({n.sql('id')}, ": t for t, how in w.layout.items() if how == "inherits"}
     out = []
     for line in gen.initial().splitlines():
-        m = re.match(rf"INSERT INTO {SCHEMA}\.(t\d+) \(id, (.*)\) VALUES \((\d+), ", line)
-        if m and w.layout.get(m.group(1)) == "inherits" and int(m.group(3)) % 2 == 0:
-            line = line.replace(f"INSERT INTO {SCHEMA}.{m.group(1)} (", f"INSERT INTO {SCHEMA}.{m.group(1)}_old (", 1)
+        into = next((head for head in rows if line.startswith(head)), "")
+        if into and n.number(line.split(") VALUES (", 1)[1].split(", ", 1)[0].strip("'")) % 2 == 0:
+            line = line.replace(n.table(rows[into]), n.table(f"{rows[into]}_old"), 1)
         out.append(line)
     return "\n".join(out)
 
@@ -355,7 +382,7 @@ def login(w: World) -> str | None:
     return {"owner": None, "member": MEMBER, "set role": SETROLE}[w.session]
 
 
-def transaction(w: World, u: str, checker: Checker, body: list[str], reads: bool) -> str:
+def transaction(w: World, u: str, checker: AroundChecker, body: list[str], reads: bool) -> str:
     """One transaction of the app's, signed in as u, with the world's settings, running body."""
     kind, pid = evaluate.principal_of(u, checker.types)
     level = next((v for k, v in w.settings if k == "default_transaction_isolation"), "read committed")
@@ -375,7 +402,7 @@ def transaction(w: World, u: str, checker: Checker, body: list[str], reads: bool
     lines += [f"SET LOCAL {k} = {lit(v)};" for k, v in w.settings if k != "default_transaction_isolation"]
     lines += [f"SET LOCAL authz_ctx.{k} = {lit(v)};" for k, v in checker.context(u).items()]  # caveats read it
     if w.decoys:
-        lines.append(f"SET LOCAL search_path = {SCRATCH}, pg_catalog, {SCHEMA}, public;")
+        lines.append(f"SET LOCAL search_path = {SCRATCH}, pg_catalog, {checker.spec.spelling.sql(SCHEMA)}, public;")
     if w.read_only and reads:
         lines.append("SET TRANSACTION READ ONLY;")
     return "\n".join([*lines, *body, "COMMIT;"])
@@ -425,7 +452,7 @@ class AroundChecker(Checker):
                     )
             for table in dict.fromkeys(r.table for r in self.rules if r.command == "select"):
                 t = self.ref.type_of_table(table)
-                body.append(emit([u, "rls", table], f"SELECT coalesce(json_agg({idsql(t)}), '[]') FROM {table}"))
+                body.append(emit([u, "rls", table], f"SELECT coalesce(json_agg({idsql(t)}), '[]') FROM {qt(table)}"))
             for key, fn in self.as_app_keys():
                 body.append(emit([u, *key], f"SELECT {fn}()"))
             script.append(transaction(self.world, u, self, body, reads=True))
@@ -458,7 +485,7 @@ NOT_ALLOWED = "the policy does not allow this share"
 
 
 def tried(key: list[str], statement: str, ids: list[str]) -> str:
-    """statement (with %s for the row's id) tried on each row: [[id, outcome], ...]"""
+    """statement (with %L for the row's id) tried on each row: [[id, outcome], ...]"""
     return emit(
         key,
         f"SELECT coalesce(json_agg(json_build_array(i, pg_temp.around_try(format({lit(statement)}, i)))), '[]') "
@@ -467,12 +494,13 @@ def tried(key: list[str], statement: str, ids: list[str]) -> str:
 
 
 def under(db: DB, tables: list[str]) -> list[tuple[str, str]]:
-    """(table, a partition of it or a table that inherits from it), at any depth."""
+    """(table, a partition of it or a table that inherits from it), at any depth: the tables as the policy names
+    them, what is found as SQL names it."""
     return [
         (top, child)
         for top, child in db.rows(
             "WITH RECURSIVE d(top, oid) AS ("
-            f"  SELECT i.inhparent, i.inhrelid FROM pg_inherits i WHERE i.inhparent = ANY (ARRAY[{', '.join(lit(t) for t in tables)}]::regclass[])"
+            f"  SELECT i.inhparent, i.inhrelid FROM pg_inherits i WHERE i.inhparent = ANY (ARRAY[{', '.join(lit(qt(t)) for t in tables)}]::regclass[])"
             "  UNION SELECT d.top, i.inhrelid FROM pg_inherits i JOIN d ON i.inhparent = d.oid) "
             "SELECT top::regclass, oid::regclass FROM d ORDER BY 1, 2"
         )
@@ -490,7 +518,8 @@ def rule_set(checker: Checker, state: evaluate.State, table: str, command: str) 
 def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
     """Each user's writes, tried as the app role in the world's session and undone, against the rules. direct:
     and the tables under a governed one, read and written directly."""
-    w, db = checker.world, checker.db
+    w, db, n = checker.world, checker.db, checker.spec.spelling
+    i, b1, b2 = n.sql("id"), n.sql("b1"), n.sql("b2")
     snap = checker.snapshot_data_only(context=True)  # (the writes run in the user's session, its context set)
     governed = list(dict.fromkeys(r.table for r in checker.rules))
     children = under(db, governed) if direct else []
@@ -506,30 +535,34 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
     ]
     # who a share is tried with: user 1, user 2 and a user whose row is not active (the last, if none is), whom
     # genpolicy's `shared if`s tell apart (SHARED_IFS)
-    active = {i for (i,) in db.rows(f"SELECT {idsql(checker.types['user'])} FROM {SCHEMA}.users WHERE active")}
-    asleep = sorted(set(map(str, range(1, genpolicy.USERS + 1))) - active, key=int)
-    someone = list(dict.fromkeys(["1", "2", *(asleep[:1] or [str(genpolicy.USERS)])]))
+    users = [n.ident(k) for k in range(1, genpolicy.USERS + 1)]
+    active = {
+        row[0]
+        for row in db.rows(f"SELECT {idsql(checker.types['user'])} FROM {n.table('users')} WHERE {n.sql('active')}")
+    }
+    asleep = [k for k in users if k not in active]
+    someone = list(dict.fromkeys([users[0], users[1], *(asleep[:1] or users[-1:])]))
     script = []
     for u in checker.users:
         body = [TRY]
         for table in governed:
             t = checker.ref.type_of_table(table)
             ids = snap[(first, "data", "ids", t.name)]
-            body.append(tried([u, "update", table], f"UPDATE {table} SET b2 = b2 WHERE id = %s", ids))
-            body.append(tried([u, "delete", table], f"DELETE FROM {table} WHERE id = %s", ids))
-            for n, r in enumerate(column_rules):
+            tbl = qt(table)
+            body.append(tried([u, "update", table], f"UPDATE {tbl} SET {b2} = {b2} WHERE {i} = %L", ids))
+            body.append(tried([u, "delete", table], f"DELETE FROM {tbl} WHERE {i} = %L", ids))
+            for k, r in enumerate(column_rules):
                 if r.table == table:
-                    body.append(
-                        tried([u, "column", str(n)], f"UPDATE {table} SET b1 = (b1 IS NOT TRUE) WHERE id = %s", ids)
-                    )
+                    change = f"UPDATE {tbl} SET {b1} = ({b1} IS NOT TRUE) WHERE {i} = %L"
+                    body.append(tried([u, "column", str(k)], change, ids))
         for ot, rel, _, _ in shared:
             ids = snap[(first, "data", "ids", ot)]
             for to in someone:
-                call = f"SELECT authz.share({lit(ot)}, '%s', {lit(rel)}, 'user', {lit(to)})"
+                call = f"SELECT authz.share({lit(ot)}, %L, {lit(rel)}, 'user', {lit(to)})"
                 body.append(tried([u, "share", ot, rel, to], call, ids))
-        for n, (_, child) in enumerate(children):
-            body.append(tried([u, "under", str(n)], f"SELECT 1 FROM {child}", ["0"]))
-            body.append(tried([u, "under write", str(n)], f"DELETE FROM {child}", ["0"]))
+        for k, (_, child) in enumerate(children):
+            body.append(tried([u, "under", str(k)], f"SELECT 1 FROM {child}", ["0"]))
+            body.append(tried([u, "under write", str(k)], f"DELETE FROM {child}", ["0"]))
         script.append(transaction(w, u, checker, body, reads=False))
     got = answers(db, w, "\n".join(script))
     problems: list[str] = []
@@ -546,24 +579,24 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
             after = any(r.table == table and r.command == "update check" and not r.columns for r in checker.rules)
             held_after = rule_set(checker, state, table, "update check") if after else may["update"]
             for cmd in ("update", "delete"):
-                for i, outcome in got[(u, cmd, table)]:
-                    if cmd == "update" and i in may[cmd] and i not in held_after:
+                for row, outcome in got[(u, cmd, table)]:
+                    if cmd == "update" and row in may[cmd] and row not in held_after:
                         ok, want = outcome.startswith("42501 ") and CHECK_REFUSED in outcome, "refused (update after)"
                     else:
-                        want = f"rows {int(i in may[cmd])}"
+                        want = f"rows {int(row in may[cmd])}"
                         ok = outcome == want
                     if not ok:
-                        problems.append(f"{who}: {cmd} of {table} {i} as the app role: {outcome}, expected {want}")
-            for n, r in enumerate(column_rules):
+                        problems.append(f"{who}: {cmd} of {table} {row} as the app role: {outcome}, expected {want}")
+            for k, r in enumerate(column_rules):
                 if r.table != table:
                     continue
                 holds = checker.ref.eval_expr(state, t, r.expr) & checker.ref.ids(t) & checker.ref.valid(t)
-                for i, outcome in got[(u, "column", str(n))]:
+                for row, outcome in got[(u, "column", str(k))]:
                     refused = outcome.startswith(f"42501 changing {', '.join(r.columns)} of {table} ")
-                    if i not in may["update"]:
+                    if row not in may["update"]:
                         ok = outcome == "rows 0"
                         want = "rows 0 (no update of the row at all)"
-                    elif i not in holds:
+                    elif row not in holds:
                         ok, want = refused, f"refused by the rule on {', '.join(r.columns)} ({r.src})"
                     else:  # the rule holds; the update's check, on the row as changed, may still refuse
                         ok = outcome == "rows 1" or (
@@ -572,7 +605,7 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
                         want = "rows 1, or refused for the row as changed (the update rule, or the select rule)"
                     if not ok:
                         problems.append(
-                            f"{who}: update of {', '.join(r.columns)} of {table} {i} as the app role: "
+                            f"{who}: update of {', '.join(r.columns)} of {table} {row} as the app role: "
                             f"{outcome}, expected {want}"
                         )
         # authz.share: for whoever is signed in and holds, on the object, the permission that shares the relation
@@ -583,9 +616,9 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
         for ot, rel, by, needs in shared:
             cond = next(x.shared_if for x in checker.spec.obj(ot).rels if x.name == rel and x.kind == "shared")
             for to in someone:
-                for i, outcome in got[(u, "share", ot, rel, to)]:
-                    may_share = signed_in and all(i in state[(ot, perm)] for perm in [by, *needs])
-                    allowed = not cond or genpolicy.SHARED_IFS[cond](i, "user", to, active)
+                for row, outcome in got[(u, "share", ot, rel, to)]:
+                    may_share = signed_in and all(row in state[(ot, perm)] for perm in [by, *needs])
+                    allowed = not cond or genpolicy.SHARED_IFS[cond](row, "user", to, active)
                     if not may_share:
                         ok, want = outcome.startswith("42501 you cannot "), "a refusal: you cannot ..."
                     elif not allowed:
@@ -594,11 +627,11 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
                         ok, want = outcome == "rows 1", "the share"
                     if not ok:
                         problems.append(
-                            f"{who}: authz.share('{ot}', {i}, '{rel}', 'user', {to}) as the app role: {outcome}, "
+                            f"{who}: authz.share('{ot}', {row}, '{rel}', 'user', {to}) as the app role: {outcome}, "
                             f"expected {want} (shared by {by}; gives {', '.join(needs)})"
                         )
-        for n, (top, child) in enumerate(children):
-            for key, what in ((("under", str(n)), "read"), (("under write", str(n)), "written")):
+        for k, (top, child) in enumerate(children):
+            for key, what in ((("under", str(k)), "read"), (("under write", str(k)), "written")):
                 outcome = got[(u, *key)][0][1]
                 if outcome != "rows 0" and not outcome.startswith("42501 "):
                     problems.append(f"{who}: {child}, under {top}, {what} directly as the app role: {outcome}")
@@ -638,16 +671,16 @@ def share_problems(checker: AroundChecker) -> list[str]:
 # ----------------------------------------------------------------------
 # Who is not the app, and who didn't sign in
 # ----------------------------------------------------------------------
-def stranger_problems(checker: Checker) -> list[str]:
+def stranger_problems(checker: AroundChecker) -> list[str]:
     """A role the policy doesn't name, given the app's tables: no row of a governed table, read or written,
     through it or through what is under it, and none of rowstile's functions."""
-    db = checker.db
+    db, b2 = checker.db, checker.spec.spelling.sql("b2")
     governed = list(dict.fromkeys(r.table for r in checker.rules))
-    tables = governed + [child for _, child in under(db, governed)]
+    tables = [qt(t) for t in governed] + [child for _, child in under(db, governed)]
     body = ["BEGIN;", "SET LOCAL authz.user_id = '1';", TRY]
     for n, table in enumerate(tables):
         body.append(tried(["read", str(n)], f"SELECT 1 FROM {table}", ["0"]))
-        body.append(tried(["update", str(n)], f"UPDATE {table} SET b2 = b2", ["0"]))
+        body.append(tried(["update", str(n)], f"UPDATE {table} SET {b2} = {b2}", ["0"]))
         body.append(tried(["delete", str(n)], f"DELETE FROM {table}", ["0"]))
     body.append(tried(["act_as"], "SELECT authz.act_as('user', '1')", ["0"]))
     body.append(tried(["list"], f"SELECT authz.list({lit(next(iter(checker.types)))}, 'p1')", ["0"]))
@@ -677,7 +710,7 @@ def unsigned_problems(checker: Checker) -> list[str]:
     db = checker.db
     problems = []
     for table in dict.fromkeys(r.table for r in checker.rules if r.command == "select"):
-        read = f"SELECT pg_temp.around_try({lit(f'SELECT 1 FROM {table}')})"
+        read = f"SELECT pg_temp.around_try({lit(f'SELECT 1 FROM {qt(table)}')})"
         cases = {
             "nobody signed in": f"BEGIN;\n{read};\nCOMMIT;",
             "authz.user_id set directly": f"BEGIN;\nSET LOCAL authz.user_id = '1';\n{read};\nCOMMIT;",
@@ -749,12 +782,13 @@ def lint_errors(db: DB) -> list[str]:
 def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_path: str) -> list[str]:
     """Something changes behind the policy's back: lint has to say so, and `rowstile apply` to put it right
     (or to refuse, where it can't: someone may create in a schema of the search path)."""
-    w, db = checker.world, checker.db
+    w, db, n = checker.world, checker.db, checker.spec.spelling
     governed = list(dict.fromkeys(r.table for r in checker.rules))
     problems: list[str] = []
     for kind in w.drift:
         before = lint_errors(db)
-        table = rnd.choice(governed)
+        name = checker.ref.type_of_table(rnd.choice(governed)).name  # (an object type is named as its table)
+        table, i = n.table(name), n.sql("id")
         undo = ""
         reported = partition = True
         if kind == "grant":
@@ -762,14 +796,14 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
         elif kind == "rls off":
             what = f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY"
         elif kind == "child":
-            how = w.layout.get(table.split(".")[1], "plain")
+            how = w.layout.get(name, "plain")
             if how == "hash":
                 continue  # (a hash-partitioned table takes no more partitions)
             partition = how == "range"
             # a partition made later is often given nothing of its own: rows reach it through its table. Then
             # nothing is open, and lint has nothing to report (apply still turns row-level security on there)
             reported = not partition or rnd.random() < 0.5
-            child = f"{table}_{'top' if partition else 'newer'}"
+            child = n.table(f"{name}_{'top' if partition else 'newer'}")
             if partition:
                 what = f"CREATE TABLE {child} PARTITION OF {table} FOR VALUES FROM ({TOP}) TO ({TOP * 2})"
             else:
@@ -777,9 +811,9 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
             if reported:
                 what += f"; GRANT SELECT, INSERT, UPDATE, DELETE ON {child} TO app_user"
             if partition:  # ... and it takes a row: the one with the smallest key, which that changes
-                what += f"; UPDATE {table} SET id = id + {TOP} WHERE id = (SELECT min(id) FROM {table})"
+                what += f"; UPDATE {table} SET {i} = {i} + {TOP} WHERE {i} = (SELECT min({i}) FROM {table})"
         else:  # creator: a schema the policy's functions search, and someone else may create in
-            schema = SCHEMA if w.unqualified else "public"
+            schema = n.sql(SCHEMA) if w.unqualified else "public"
             who = rnd.choice(["app_user", OUTSIDER, "PUBLIC"])
             what, undo = f"GRANT CREATE ON SCHEMA {schema} TO {who}", f"REVOKE CREATE ON SCHEMA {schema} FROM {who}"
         db.run(what + ";")
@@ -845,12 +879,12 @@ def run(spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, sec
         d.recreate()
         roles(d)
         d.run(schema_text(spec, w))
-        d.run(path_sql(d, w, open_too=False))
+        d.run(path_sql(d, spec, w, open_too=False))
         d.run(data)
         if world:
             d.run(";\n".join(w.defaults) + ";" if w.defaults else "SELECT 1;")
             if w.open_to:
-                d.run(f"GRANT CREATE ON SCHEMA {OPEN} TO {w.open_to};\n" + path_sql(d, w, open_too=True))
+                d.run(f"GRANT CREATE ON SCHEMA {OPEN} TO {w.open_to};\n" + path_sql(d, spec, w, open_too=True))
                 code, word, out = command(d, "apply", policy_path)
                 if code == 0 or "AZ612" not in out:
                     problems.append(
@@ -918,11 +952,11 @@ def main() -> None:
                 return False
 
         for seed in seeds:
-            # plain names: the worlds rebuild genpolicy's tables from its schema's text, as it writes them plainly
-            spec = with_write_rules(genpolicy.make(seed, respell=False, keytype="bigint", composite=False), seed)
+            # the seed's names, as genpolicy draws them (a third as an app's own may be, AWKWARD); bigint keys
+            spec = with_write_rules(genpolicy.make(seed, keytype="bigint", composite=False), seed)
             w = draw(seed, spec)
             if args.only is not None:
-                print(f"world: {w.describe()}\n\n{policy_text(spec, w)}")
+                print(f"world: {described(spec, w)}\n\n{policy_text(spec, w)}")
             try:
                 problems = run(spec, w, db, control, args.steps, workdir, args.seconds)
             except Slow as e:
@@ -938,7 +972,7 @@ def main() -> None:
                 passed += 1
                 continue
             failed += 1
-            print(f"seed {seed}: {w.describe()}")
+            print(f"seed {seed}: {described(spec, w)}")
             for p in problems:
                 print("   ", p)
             if not args.no_shrink:
@@ -949,9 +983,12 @@ def main() -> None:
                         if fails(spec, smaller):
                             w, changed = smaller, True
                             break
+                plain = dataclasses.replace(spec, spelling=dataclasses.replace(spec.spelling, awkward=False))
+                if spec.spelling.awkward and fails(plain, w):
+                    spec = plain
                 spec = genpolicy.shrink(spec, lambda s, w=w: fails(s, w))
                 print(f"  the plainest world and the smallest policy found that still fail (seed {seed}):")
-                print(f"    world: {w.describe()}")
+                print(f"    world: {described(spec, w)}")
                 print("    " + policy_text(spec, w).replace("\n", "\n    ").rstrip())
                 for p in run(spec, w, db, control, args.steps, workdir):
                     print("   ", p)
