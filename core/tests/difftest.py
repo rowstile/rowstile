@@ -92,7 +92,7 @@ EXPIRED = "now() - interval '1 hour'"
 LATER = "now() + interval '1 day'"
 SHARE_COLUMNS = "object_type, object_id, relation, subject_type, subject_id, subject_relation, expires_at, starts_at"
 STEER = 0.25  # of the changes, those aimed at parts of the policy that have decided no answer yet (Gen.steered)
-AIMS = 3  # how many parts one such change aims at, at most
+AIMS = 3  # how many parts one such change aims at, at most; or an eighth of the parts left, when that is more
 
 # How many sessions answer a snapshot's questions, side by side (DIFFTEST_SESSIONS=1: one after the other). The
 # questions are the same either way, each user's in one session from first to last: what it saves is the wait.
@@ -1361,9 +1361,10 @@ class Gen:
         self.aimed: Counter[tuple[str | int, ...]] = Counter()  # how often at each
 
     def steered(self, ids: Ids) -> str | None:
-        """One change aimed at parts of the policy that have decided no answer yet, a few at once (AIMS), those
-        aimed at least often first; None when there is none, or nothing to do for them. Shares that don't count
-        change no answer, so several go together; of what moves the data about (a chain of links, a loop), one."""
+        """One change aimed at parts of the policy that have decided no answer yet, a few at once (AIMS; more
+        while many are left), those aimed at least often first; None when there is none, or nothing to do for
+        them. Shares that don't count change no answer, so several go together; of what moves the data about (a
+        chain of links, a loop), one."""
         if self.ledger is None:
             return None
         wanting = self.ledger.wanting()
@@ -1371,9 +1372,10 @@ class Gen:
         wanting.sort(key=lambda k: self.aimed[k])
         out: list[str] = []
         moved = aims = 0
+        most = max(AIMS, len(wanting) // 8)
         for key in wanting:
             moves = key[0] not in ("share", "role share")
-            if aims == AIMS or (moves and moved):
+            if aims == most or (moves and moved):
                 continue
             aims, moved = aims + 1, moved + moves
             self.aimed[key] += 1
@@ -1511,10 +1513,24 @@ class Gen:
                 f"{state}) {to}"
             )
         owner = f" AND ro.owner_id = {lit(gain.owner)}" if gain.owner else ""
+        giving = (
+            f"authz.roles ro JOIN authz.role_permissions rp ON rp.role_id = ro.id WHERE ro.object_type = {tname} "
+            f"AND rp.permission = {lit(gain.perm)}{owner}"
+        )
+        made = ""
+        owned_by = evaluate.role_owner_type(self.ledger.pol.types[str(key[2])]) if self.ledger else None
+        if gain.owner and owned_by:  # no role of that owner's gives it (the changes delete roles): one that does
+            made = (
+                "INSERT INTO authz.roles (owner_type, owner_id, object_type, name) "
+                f"SELECT {lit(owned_by)}, {lit(gain.owner)}, {tname}, 'steered' WHERE NOT EXISTS (SELECT 1 FROM {giving}) "
+                "ON CONFLICT DO NOTHING;\n"
+                f"INSERT INTO authz.role_permissions SELECT ro.id, {lit(gain.perm)} FROM authz.roles ro "
+                f"WHERE ro.object_type = {tname} AND ro.name = 'steered'{owner} "
+                f"AND NOT EXISTS (SELECT 1 FROM {giving}) ON CONFLICT DO NOTHING;\n"
+            )
         return (
-            f"{head} SELECT {tname}, {lit(gain.object)}, 'role:' || ro.id, {st}, {lit(gain.subject)}, {sr}, {state} "
-            f"FROM authz.roles ro JOIN authz.role_permissions rp ON rp.role_id = ro.id WHERE ro.object_type = {tname} "
-            f"AND rp.permission = {lit(gain.perm)}{owner} ORDER BY ro.id LIMIT 1 {to}"
+            f"{made}{head} SELECT {tname}, {lit(gain.object)}, 'role:' || ro.id, {st}, {lit(gain.subject)}, {sr}, "
+            f"{state} FROM {giving} ORDER BY ro.id LIMIT 1 {to}"
         )
 
 
@@ -1926,6 +1942,36 @@ class MultiGen(Gen):
 
     def maybe_user(self) -> str:
         return self.u() if self.r.random() < 0.8 else "NULL"
+
+    def steer(self, key: tuple[str | int, ...], ids: Ids) -> str | None:
+        """A share with a caveat, where the reference says the share alone would change an answer: one that holds
+        in that principal's session, or one that doesn't, as the part says. And when no share of the part's
+        would give anything: for a doc's roles, which count only by an org the doc lists, a few docs list an org;
+        for one to a team's members, someone joins a team; each for the next try."""
+        if key[0] in ("share", "role share") and key[1] in ("caveat false", "caveat true"):
+            gain = self.ledger.gain(key, self.r) if self.ledger else None
+            holds = key[1] == "caveat true"
+            sql = self.share(key, gain, "NULL", "NULL", self.caveat(gain.user, holds)) if gain else None
+        else:
+            sql = super().steer(key, ids)
+        if sql is None and key[0] == "role share" and key[2] == "doc":
+            return (
+                "INSERT INTO mt.doc_orgs SELECT d.id, o.id, true FROM (SELECT id FROM mt.docs ORDER BY random() "
+                "LIMIT 4) d, (SELECT id FROM mt.orgs ORDER BY random() LIMIT 1) o "
+                "ON CONFLICT (doc_id, org_id) DO UPDATE SET active = true;"
+            )
+        if sql is None and key[0] in ("share", "role share") and key[-2:] == ("team", "member"):
+            return f"INSERT INTO mt.team_members VALUES ({self.r.randint(1, 4)}, {self.u()}) ON CONFLICT DO NOTHING;"
+        return sql
+
+    def caveat(self, u: str, holds: bool) -> str:
+        """A caveat and its arguments, as SQL, that holds in a user's session (context()) or doesn't: business
+        hours where their mode says so, else the ip they come from, or another."""
+        ctx = self.context(u)
+        if (ctx["mode"] == "business") == holds:
+            return "'business_hours', NULL"
+        ip = ctx["ip"] if holds else f"10.0.0.{(int(ctx['ip'][-1]) + 1) % 3}"
+        return f"""'from_ip', '{{"ip": "{ip}"}}'"""
 
     def initial(self) -> str:
         r = self.r
