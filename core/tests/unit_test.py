@@ -5489,6 +5489,55 @@ class Decisions(unittest.TestCase):
         )
         self.assertIsNone(gen.steer(("depth", other, 2), {}))
 
+    def test_multi_steers_caveats_and_what_roles_and_teams_need_first(self) -> None:
+        import random
+
+        import difftest
+
+        gen = difftest.MultiGen(random.Random(1))
+        first, second = gen.users[0], gen.users[1]  # (the first's session says business, from 10.0.0.0)
+        self.assertEqual((gen.context(first)["mode"], gen.context(first)["ip"]), ("business", "10.0.0.0"))
+        self.assertEqual(gen.caveat(first, True), "'business_hours', NULL")
+        self.assertEqual(gen.caveat(first, False), """'from_ip', '{"ip": "10.0.0.1"}'""")
+        self.assertEqual(gen.caveat(second, False), "'business_hours', NULL")
+        self.assertEqual(gen.caveat(second, True), """'from_ip', '{"ip": "10.0.0.1"}'""")
+        gen.ledger = decisions.Decisions(parse_policy(read(gen.policy), gen.policy))
+        # a share where the reference says it would decide, with a caveat that holds there or doesn't
+        key = ("share", "caveat true", "project", "viewer", 0, "user", "")
+        with mock.patch.object(gen.ledger, "gain", lambda key, rnd: decisions.Gain(first, "3", first)):
+            sql = str(gen.steer(key, {}))
+            self.assertIn(
+                f"VALUES ('project', '3', 'viewer', 'user', '{first}', '', NULL, NULL, 'business_hours', NULL)", sql
+            )
+            self.assertIn(
+                """NULL, NULL, 'from_ip', '{"ip": "10.0.0.1"}')""",
+                str(gen.steer(("share", "caveat false", *key[2:]), {})),
+            )
+        # a custom role whose owner has none left that gives the permission: one is made, then given
+        with mock.patch.object(gen.ledger, "gain", lambda key, rnd: decisions.Gain(first, "7", first, "edit", "2")):
+            role = str(gen.steer(("role share", "expired", "folder", "user", ""), {}))
+        giving = "ro.object_type = 'folder' AND rp.permission = 'edit' AND ro.owner_id = '2'"
+        self.assertIn(
+            f"INSERT INTO authz.roles (owner_type, owner_id, object_type, name) SELECT 'org', '2', 'folder', 'steered' "
+            f"WHERE NOT EXISTS (SELECT 1 FROM authz.roles ro JOIN authz.role_permissions rp ON rp.role_id = ro.id WHERE {giving})",
+            role,
+        )
+        self.assertIn("INSERT INTO authz.role_permissions SELECT ro.id, 'edit' FROM authz.roles ro", role)
+        self.assertIn(
+            f"SELECT 'folder', '7', 'role:' || ro.id, 'user', '{first}', '', now() - interval '1 hour', NULL", role
+        )
+        # nowhere a share of the part would give anything (no snapshot yet): what it needs first. A doc's roles
+        # count by an org the doc lists; a share to a team's members, with someone in a team
+        self.assertIn(
+            "INSERT INTO mt.doc_orgs SELECT d.id, o.id, true",
+            str(gen.steer(("role share", "expired", "doc", "user", ""), {})),
+        )
+        self.assertRegex(
+            str(gen.steer(("share", "not started", "folder", "viewer", 0, "team", "member"), {})),
+            r"^INSERT INTO mt\.team_members VALUES \([1-4], '[0-9a-f-]{36}'\) ON CONFLICT DO NOTHING;$",
+        )
+        self.assertIsNone(gen.steer(("share", "not started", "folder", "viewer", 0, "user", ""), {}))
+
     def test_a_steered_change_aims_at_a_few_parts_the_least_tried_first(self) -> None:
         import random
 
@@ -5506,13 +5555,15 @@ class Decisions(unittest.TestCase):
         wanting = gen.ledger.wanting()
         with mock.patch.object(gen, "steer", steer):
             first = gen.steered({})
-            # three parts at most, of which one alone moves the data about (a depth, a loop, an expression's part)
-            self.assertEqual(len(aimed), difftest.AIMS)
+            # three parts at most (an eighth of those left, when that is more), of which one alone moves the data
+            # about (a depth, a loop, an expression's part)
+            most = max(difftest.AIMS, len(wanting) // 8)
+            self.assertEqual(len(aimed), most)
             self.assertLessEqual(sum(k[0] not in ("share", "role share") for k in aimed), 1)
             said = sum(k[0] != "loop" for k in aimed)
             self.assertEqual(
                 first,
-                "BEGIN;\n" + "\n".join(f"-- {n}" for n in range(1, 4) if aimed[n - 1][0] != "loop") + "\nCOMMIT;"
+                "BEGIN;\n" + "\n".join(f"-- {n}" for n in range(1, most + 1) if aimed[n - 1][0] != "loop") + "\nCOMMIT;"
                 if said
                 else None,
             )
