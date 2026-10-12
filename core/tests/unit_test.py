@@ -44,7 +44,9 @@ from authzlib.connection import Row, Value  # noqa: E402
 from authzlib.review import Review  # noqa: E402
 
 sys.path.insert(0, os.path.join(ROOT, "tests"))
+import around  # noqa: E402
 import decisions  # noqa: E402
+import genpolicy  # noqa: E402
 
 GOLDEN = os.path.join(ROOT, "tests", "golden")
 UPDATE = "--update" in sys.argv
@@ -7678,6 +7680,96 @@ class Respelling(unittest.TestCase):
             self.assertIn(f'"{name}"', sql)
         self.assertNotRegex(sql, r"(?<![\"\w])(Gp|parentId)(?![\"\w])", "a name unquoted")
         self.assertIn('"Arch""ived"', sql)  # a quote in a name, doubled
+        self.assertIn('"Activé"', sql)  # a letter outside ASCII
+        self.assertEqual(self.g.Spelling(awkward=True).cond("{active}"), '{"Activé"}')
+
+
+class Worlds(unittest.TestCase):
+    """around.py makes what is around a random policy: the tables under its tables, decoys, a search path. It
+    names what it makes as the seed's policy names its own, and reads genpolicy's SQL by those names."""
+
+    a, g = around, genpolicy
+
+    def world(self, seed: int, respell: bool, unqualified: bool = False) -> tuple[genpolicy.Spec, around.World]:
+        """The seed's policy, its first table with one that inherits from it, the next two partitioned."""
+        spec = self.g.make(seed, respell=respell, keytype="bigint", composite=False)
+        layout = dict(zip((o.name for o in spec.objs), ("inherits", "range", "hash"), strict=False))
+        return spec, self.a.World(seed, layout=layout, unqualified=unqualified)
+
+    def test_each_run_has_a_world_named_as_an_apps_own(self) -> None:
+        # (main() asks genpolicy for the seed's own names: its first four seeds, what every run checks)
+        self.assertIn("genpolicy.make(seed, keytype=", read(os.path.join(ROOT, "tests", "around.py")))
+        self.assertTrue(any(self.g.make(seed).spelling.awkward for seed in range(1, 5)))
+
+    def test_the_tables_under_a_table_are_named_as_the_policys(self) -> None:
+        for seed in range(1, 13):
+            spec, w = self.world(seed, respell=True)
+            sql = self.a.schema_text(spec, w)
+            self.assertIn('CREATE TABLE "Gp"."Link_t1_old" () INHERITS ("Gp"."select");', sql, seed)
+            if len(spec.objs) > 1:
+                self.assertIn(') PARTITION BY RANGE ("Id");', sql, seed)
+                self.assertIn('CREATE TABLE "Gp"."Link_t2_low" PARTITION OF "Gp"."T2" FOR VALUES', sql, seed)
+            if len(spec.objs) > 2:
+                self.assertIn(') PARTITION BY HASH ("Id");', sql, seed)
+            # the decoys are found under the policy's names, by a session that searches their schema first
+            self.assertIn('CREATE TABLE around_scratch."select" ("Id" bigint, "order" boolean);', sql)
+            self.assertIn('CREATE TABLE around_scratch."user" ("Id" bigint, "Activé" boolean);', sql)
+            self.assertNotRegex(sql, r"(?<![\"\w])(Gp|gp|t1|select|Id|id)(?![\"\w(])", "a name unquoted, or plain")
+            plain, w = self.world(seed, respell=False)
+            sql = self.a.schema_text(plain, w)
+            self.assertIn("CREATE TABLE gp.t1_old () INHERITS (gp.t1);", sql, seed)
+            self.assertIn("CREATE TABLE around_scratch.t1 (id bigint, b2 boolean);", sql, seed)
+
+    def test_a_link_table_follows_the_rows_stored_under_its_table(self) -> None:
+        """A foreign key to a table doesn't see the rows of a table that inherits from it: the world makes
+        triggers in its place, on both."""
+        met = 0
+        for seed in range(1, 13):
+            for respell in (False, True):
+                spec, w = self.world(seed, respell)
+                n = spec.spelling
+                for line in self.a.schema_text(spec, w).splitlines():
+                    if line.startswith("CREATE TABLE") and "REFERENCES" in line:
+                        self.assertNotIn(f"REFERENCES {n.table('t1')} ", line, seed)
+                links = [rel.name for rel in spec.objs[0].rels if rel.kind == "table"]
+                for rel in links:
+                    met += 1
+                    self.assertIn(
+                        f"CREATE TRIGGER {n.sql(f't1_{rel}_obj_id_upd')} AFTER UPDATE OF {n.sql('id')} ON "
+                        f"{n.table('t1_old')} FOR EACH ROW EXECUTE FUNCTION {n.table(f't1_{rel}_obj_id_follow')}();",
+                        self.a.schema_text(spec, w),
+                    )
+        self.assertGreater(met, 6)
+
+    def test_half_the_first_rows_are_stored_under_a_table_with_one_that_inherits(self) -> None:
+        for respell in (False, True):
+            spec, w = self.world(3, respell)
+            n = spec.spelling
+            import random
+
+            gen = self.g.gen_class(spec, "p.authz", "s.sql")(random.Random(3))
+            rows = [x for x in self.a.initial(gen, w).splitlines() if "_old" in x]
+            self.assertEqual(len(rows), self.g.ROWS // 2, rows)
+            for row in rows:
+                self.assertRegex(row, rf"^INSERT INTO {re.escape(n.table('t1_old'))} \(.*\) VALUES \([246], ")
+
+    def test_conditions_without_the_schema(self) -> None:
+        """Where the world's conditions leave the schema to the search path, they still name the seed's table."""
+        for respell, table in ((False, " from t1 x"), (True, ' from "select" x')):
+            texts = [
+                self.a.policy_text(spec, w)
+                for spec, w in (self.world(seed, respell, unqualified=True) for seed in range(1, 40))
+            ]
+            self.assertTrue(any(table in t for t in texts))
+            self.assertTrue(any(re.search(r'[{ (]"Flag"\(', t) for t in texts))
+            self.assertFalse(any('."Flag"(' in t for t in texts))
+            self.assertFalse(any(" x where" in t and table not in t for t in texts))
+            spec, w = self.world(1, respell, unqualified=True)
+            schema = '"Gp"' if respell else "gp"
+            self.assertEqual(
+                self.a.path_sql(self.a.DB("d"), spec, w, open_too=True),
+                f'ALTER DATABASE "d" SET search_path = {schema}, around_open, public;',
+            )
 
 
 class GeneratedShapes(unittest.TestCase):
