@@ -7720,7 +7720,64 @@ class Worlds(unittest.TestCase):
         self.assertEqual(databases, {"", *self.a.DATABASES})
         # what a seed's world drew before the database was drawn is as it was
         w = self.a.draw(7, self.g.make(7))
-        self.assertEqual((w.session, w.layout), ("member", {"t1": "range", "t2": "hash", "t3": "hash"}))
+        self.assertEqual(w.session, "member")
+        self.assertEqual({t: w.layout[t] for t in ("t1", "t2", "t3")}, {"t1": "range", "t2": "hash", "t3": "hash"})
+
+    def test_the_other_tables_are_laid_out_too(self) -> None:
+        """The users' table, the services' and the link tables: partitioned, or with a table that inherits from
+        them, where half their first rows are stored; drawn apart from the object types' layout."""
+        import random
+
+        drawn: dict[str, set[str]] = {"users": set(), "bots": set(), "links": set()}
+        gone = set()
+        for seed in range(1, 17):
+            spec = self.g.make(seed)
+            w = self.a.draw(seed, spec)
+            gone.add(w.gone)
+            self.assertEqual(set(w.layout), {*(o.name for o in spec.objs), *self.a.others(spec)}, seed)
+            for t in self.a.others(spec):
+                drawn[t if t in drawn else "links"].add(w.layout[t])
+        for layouts in drawn.values():
+            self.assertEqual(layouts, set(self.a.LAYOUTS))
+        self.assertEqual(gone, {"", "deleted", "rekeyed"})
+        for respell, composite in ((False, False), (True, False), (False, True)):
+            spec = next(
+                x
+                for x in (self.g.make(k, respell=respell, keytype="bigint", composite=composite) for k in range(1, 40))
+                if x.bot and len(self.a.link_tables(x)) > 1 and len(x.objs) > 1
+            )
+            n = spec.spelling
+            first, second = list(self.a.link_tables(spec))[:2]
+            w = self.a.World(
+                spec.seed, layout={"users": "range", "bots": "inherits", first: "inherits", second: "hash"}
+            )
+            sql = self.a.schema_text(spec, w)
+            self.assertIn(
+                f") PARTITION BY RANGE ({n.sql('id')});\nCREATE TABLE {n.table('users_low')} PARTITION OF", sql
+            )
+            self.assertIn(f"PARTITION OF {n.table('users')} FOR VALUES FROM (5) TO (MAXVALUE);", sql)
+            self.assertIn(f"CREATE TABLE {n.table('bots_old')} () INHERITS ({n.table('bots')});", sql)
+            by = f"{n.sql('org_id')}, {n.sql('obj_id')}" if composite else n.sql("obj_id")
+            self.assertIn(f") PARTITION BY HASH ({by});\nCREATE TABLE {n.table(f'{second}_h0')} PARTITION OF", sql)
+            # a foreign key is not inherited: the table under a link table has the link table's own
+            owner = self.a.link_tables(spec)[first][0]
+            self.assertIn(
+                f"CREATE TABLE {n.table(f'{first}_old')} () INHERITS ({n.table(first)});\n"
+                f"ALTER TABLE {n.table(f'{first}_old')} ADD FOREIGN KEY ({by}) REFERENCES {n.table(owner)} "
+                "ON DELETE CASCADE ON UPDATE CASCADE;",
+                sql,
+            )
+            gen = self.g.gen_class(spec, "p.authz", "s.sql")(random.Random(3))
+            rows = self.a.initial(gen, w).splitlines()
+            into = [x.startswith(f"INSERT INTO {n.table(f'{first}_old')} VALUES (") for x in rows]
+            beside = [x.startswith(f"INSERT INTO {n.table(first)} VALUES (") for x in rows]
+            self.assertEqual((sum(into), sum(beside)), (2, 2), rows)
+            self.assertIn(
+                f"WITH moved AS (DELETE FROM ONLY {n.table('bots')} WHERE {n.sql('id')}::text ~ '[02468]$' "
+                f"RETURNING *) INSERT INTO {n.table('bots_old')} SELECT * FROM moved;",
+                rows,
+            )
+            self.assertFalse(any(n.table("users_old") in x for x in rows))
 
     def test_partitions_and_followers_by_each_key(self) -> None:
         """A table partitioned by range is cut by its key's own type, a key moved past the cut stays one genpolicy
