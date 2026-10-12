@@ -1303,10 +1303,11 @@ class Checker:
             self._nocontext, self._nocontext_all = out, out_all
         return (self._nocontext_all if everyone else self._nocontext).get((t.name, p, i), set())
 
-    def snapshot_data_only(self, context: bool = False) -> Snapshot:
+    def snapshot_data_only(self, context: bool = False, after: str = "") -> Snapshot:
         """The data each user's evaluation reads, without the request context (what who() and the invariants see),
-        or with it: what the user's own session sees (around's writes)."""
-        lines: list[str] = []
+        or with it: what the user's own session sees (around's writes). after: as it would be after these
+        statements, which are undone."""
+        lines: list[str] = ["BEGIN;", after] if after else []
         for u in self.users:
             kind, pid = evaluate.principal_of(u, self.types)
             lines.append(f"SET authz.user_id = {lit(pid)};")
@@ -1318,6 +1319,7 @@ class Checker:
             lines += [f"RESET authz_ctx.{k};" for k in ctx]
         lines.append("RESET authz.user_id;")
         lines.append("RESET authz.principal_type;")
+        lines += ["ROLLBACK;"] if after else []
         return {tuple(json.loads(k)): json.loads(v) for k, v in self.db.rows("\n".join(lines))}
 
 

@@ -41,8 +41,10 @@ and checks, after each random change to the data:
     asked in the world's session
   - real writes as the app role, each undone: an update that changes nothing, an update of a column with a rule,
     a delete, calls of authz.share() to three users, on every row and for every user, against what the reference
-    evaluator says of the rules and of who may share, and what the relation's `shared if` says of the share; and
-    the tables under a governed one, read and written directly
+    evaluator says of the rules and of who may share, and what the relation's `shared if` says of the share;
+    inserts, of copies of a few rows under keys of their own, against what the insert rule says of each (refused
+    by the rule's own words, or by Postgres where the table has no insert rule); and the tables under a governed
+    one, read and written directly
   - no share is left on a row that is gone or whose key changed, nor to the user whose row went
   - a role the policy doesn't name gets no row of a governed table, whatever it was granted there, and a
     member of the app role that didn't sign in gets an error (28000) or nothing, never a row
@@ -83,6 +85,9 @@ SETROLE = "authz_around_setrole"  # logs in, a member that doesn't inherit: it h
 OUTSIDER = "authz_around_outsider"  # logs in, nothing to do with the policy
 SCRATCH = "around_scratch"  # the decoys' schema: never on the path the policy is applied with
 OPEN = "around_open"  # a schema on that path, which someone else may create in
+NEW = "around_new"  # where the rows an insert is tried with wait: copies of rows there are, under keys of their own
+FIRST_NEW = 500000  # those keys start here, ten apart (a condition that reads the next row finds none)
+INSERTS = 6  # how many rows of each table an insert is tried with
 TOP = 1000000  # range partitions end here: ids never get that far, a partition made later starts here
 
 LAYOUTS = ["plain", "plain", "hash", "range", "inherits", "inherits"]
@@ -415,6 +420,8 @@ def schema_text(spec: Spec, w: World) -> str:
         f"GRANT USAGE ON SCHEMA {SCRATCH} TO PUBLIC;",
         f"GRANT SELECT ON ALL TABLES IN SCHEMA {SCRATCH} TO PUBLIC;",
         f"CREATE SCHEMA {OPEN};",
+        f"CREATE SCHEMA {NEW};",
+        f"GRANT USAGE ON SCHEMA {NEW} TO PUBLIC;",
         # the role the policy doesn't name is given the app's tables, as the app role is
         f"GRANT USAGE ON SCHEMA {n.sql(SCHEMA)} TO {OUTSIDER};",
         f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {n.sql(SCHEMA)} TO {OUTSIDER};",
@@ -626,6 +633,36 @@ CHECK_REFUSED = " may not update this row of "
 UNREADABLE = "new row violates row-level security policy for table"
 # what authz.share() says when the relation's `shared if` doesn't hold for the share
 NOT_ALLOWED = "the policy does not allow this share"
+# what a refused insert says where the table has an insert rule (refusals.py), and Postgres itself where it has none
+INSERT_REFUSED = " may not insert this row into "
+NO_RULE = "new row violates row-level security policy for table"
+
+
+def new_rows(checker: AroundChecker, ids: dict[str, list[str]]) -> tuple[str, str, dict[str, list[str]]]:
+    """Rows to try inserts with: for each governed table, copies of up to INSERTS of its rows (ids: each type's)
+    under keys no row has, so that each says what its original says of itself (its columns, where it hangs) and
+    nothing is shared on it or points at it yet. Returns the statements that put them in NEW's tables (the app
+    role reads them there), the statements that insert them all, and each table's new keys."""
+    n = checker.spec.spelling
+    stage, insert, keys = [], [], {}
+    for table in dict.fromkeys(r.table for r in checker.rules):
+        t = checker.ref.type_of_table(table)
+        waiting = f"{NEW}.{n.sql(t.name)}"
+        stage += [
+            f"DROP TABLE IF EXISTS {waiting};",
+            f"CREATE TABLE {waiting} AS SELECT * FROM {qt(table)} WHERE false;",
+        ]
+        keys[table] = []
+        for k, old in enumerate(ids[t.name][:INSERTS]):
+            key = n.ident(FIRST_NEW + 10 * k)
+            keys[table].append(f"({genpolicy.GenPolicyGen.org(old)},{key})" if n.composite else key)
+            stage.append(
+                f"INSERT INTO {waiting} SELECT (jsonb_populate_record(r, jsonb_build_object({lit(n.name('id'))}, "
+                f"{lit(key)}))).* FROM {qt(table)} r WHERE {idsql(t, 'r')} = {lit(old)};"
+            )
+        stage.append(f"GRANT SELECT ON {waiting} TO PUBLIC;")
+        insert.append(f"INSERT INTO {qt(table)} SELECT * FROM {waiting};")
+    return "\n".join(stage), "\n".join(insert), keys
 
 
 def tried(key: list[str], statement: str, ids: list[str]) -> str:
@@ -660,8 +697,9 @@ def rule_set(checker: Checker, state: evaluate.State, table: str, command: str) 
 
 
 def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
-    """Each user's writes, tried as the app role in the world's session and undone, against the rules. direct:
-    and the tables under a governed one, read and written directly."""
+    """Each user's writes, tried as the app role in the world's session and undone, against the rules: an update
+    and a delete of every row, an insert of copies of some under new keys, shares. direct: and the tables under
+    a governed one, read and written directly."""
     w, db, n = checker.world, checker.db, checker.spec.spelling
     b1, b2 = n.sql("b1"), n.sql("b2")
     # the row a statement is tried on, by its key (two columns' as the row text reads: '(1,3)')
@@ -671,6 +709,11 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
     children = under(db, governed) if direct else []
     column_rules: list[Rule] = [r for r in checker.rules if r.columns and r.command == "update"]
     first = checker.users[0]
+    # the rows inserts are tried with, and the data as it would be with them all there: what the insert rule
+    # says of each is the reference's answer for a row that says what it says
+    stage, insert, new = new_rows(checker, {t: snap[(first, "data", "ids", t)] for t in checker.types})
+    db.run(stage)
+    with_new = checker.snapshot_data_only(context=True, after=insert)
     # the relations shared with users: (type, relation, the permission that shares it, the permissions it gives)
     shared: list[tuple[str, str, str, list[str]]] = [
         (ot, rel, by, json.loads(needs))
@@ -697,6 +740,10 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
             tbl = qt(table)
             body.append(tried([u, "update", table], f"UPDATE {tbl} SET {b2} = {b2} WHERE {it}", ids))
             body.append(tried([u, "delete", table], f"DELETE FROM {tbl} WHERE {it}", ids))
+            waiting = f"{NEW}.{n.sql(t.name)}"
+            body.append(
+                tried([u, "insert", table], f"INSERT INTO {tbl} SELECT * FROM {waiting} WHERE {it}", new[table])
+            )
             for k, r in enumerate(column_rules):
                 if r.table == table:
                     change = f"UPDATE {tbl} SET {b1} = ({b1} IS NOT TRUE) WHERE {it}"
@@ -714,6 +761,24 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
     problems: list[str] = []
     for u in checker.users:
         who = f"user {u or '(nobody)'}"
+        # inserts first: the reference with the new rows there (it holds the data it evaluated last)
+        data = evaluate.Data.of({tuple(k[2:]): v for k, v in with_new.items() if k[0] == u and k[1] == "data"})
+        state = checker.ref.evaluate(data, u, checker.links_of(u))
+        for table in governed:
+            ruled = any(r.table == table and r.command == "insert" and not r.columns for r in checker.rules)
+            allowed = rule_set(checker, state, table, "insert")
+            for row, outcome in got[(u, "insert", table)]:
+                if row in allowed:
+                    ok, want = outcome == "rows 1", "rows 1"
+                elif ruled:
+                    ok, want = outcome.startswith("42501 ") and INSERT_REFUSED in outcome, "refused (the insert rule)"
+                else:
+                    ok, want = outcome.startswith("42501 ") and NO_RULE in outcome, "refused (no insert rule)"
+                if not ok:
+                    problems.append(
+                        f"{who}: insert into {table} of a row like one there, as {row}, as the app role: {outcome}, "
+                        f"expected {want}"
+                    )
         data = evaluate.Data.of({tuple(k[2:]): v for k, v in snap.items() if k[0] == u and k[1] == "data"})
         state = checker.ref.evaluate(data, u, checker.links_of(u))  # (the links the session holds count)
         for table in governed:
