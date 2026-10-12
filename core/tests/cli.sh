@@ -48,6 +48,14 @@ run diff "$T/main.authz" --limit 1; n=$(echo "$out" | head -n 1 | sed 's/.*: \([
 [ "$(PSQL -c "SELECT authz.verify()")" = t ] && [ "$(PSQL -c "SELECT count(*) FROM authz.policy_versions")" = 1 ] && ok "diff changed nothing" || bad "diff changed something"
 cp example/docs.authz "$T/parts/all.authz"
 run diff "$T/main.authz"; case "$out" in *"0 changes (nobody gains"*) ok "diff of the policy in force: nothing";; *) bad "diff same" "$out";; esac
+# each diff makes the new policies and undoes them, which leaves dead rows in pg_policy: with many of them the
+# planner reads the catalog another way round. A table's name read back as a table is refused there for one of
+# pg_toast's ("permission denied for schema pg_toast") to an owner who is no superuser: diff finds each policy's
+# table by its oid
+PSQL -c "BEGIN" -c "CREATE TABLE public.undone (id int)" \
+  -c "DO \$\$ BEGIN FOR i IN 1..500 LOOP EXECUTE format('CREATE POLICY p%s ON public.undone USING (id = %s)', i, i); END LOOP; END \$\$" \
+  -c "ROLLBACK" >/dev/null
+run diff "$T/main.authz"; case "$out" in *"0 changes (nobody gains"*) ok "... and after many diffs undone, their policies dead in the catalog";; *) bad "diff after many undone" "$out";; esac
 
 echo "-- test"
 # the policy's tests expect the two shares the example scenario makes first
