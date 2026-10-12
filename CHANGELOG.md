@@ -114,6 +114,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- `rowstile diff`, and with it the Access part of `rowstile review`, could fail with "permission denied for schema
+  pg_toast" where the tables' owner is no superuser: on a database many diffs had run on (each one leaves dead
+  rows in the catalog, and Postgres then reads it another way round), the seventeenth in a row in one try. It
+  finds each policy's table by its oid now, never by a name read back as a table.
 - A write refused by an `after` rule (`update after : edit`, `update owner_id after : ...`) gave as its reasons
   the permission on the row as stored, not as changed: giving your file away was refused with "no edit", then
   "yes, user 3 holds edit on file 90: owner_id is you". Its reasons now stop at the permission the row as changed

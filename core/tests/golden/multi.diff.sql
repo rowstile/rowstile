@@ -24,20 +24,22 @@ BEGIN
     FOR p IN SELECT type, perm FROM authz_int.perms LOOP
       INSERT INTO pg_temp.authz_diff_before SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz.list(p.type, p.perm) x;
     END LOOP;
-    FOR pol IN SELECT format('%I.%I', pp.schemaname, pp.tablename) AS tbl, pp.qual, t.id_of
-               FROM pg_policies pp JOIN authz_int.types t ON to_regclass(t.tbl) = format('%I.%I', pp.schemaname, pp.tablename)::regclass
-               WHERE pp.policyname = 'authz_select' AND pp.qual IS NOT NULL LOOP
+    -- (each type's select policy by its table's oid, never by a name read back as a table: the planner may try that
+    -- on every table there is, and for one of pg_toast's it is refused to an owner who is no superuser)
+    FOR pol IN SELECT format('%I.%I', n.nspname, c.relname) AS tbl, pg_get_expr(pp.polqual, pp.polrelid) AS qual, t.id_of
+               FROM authz_int.types t JOIN pg_policy pp ON pp.polrelid = to_regclass(t.tbl) AND pp.polname = 'authz_select'
+               JOIN pg_class c ON c.oid = pp.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE pp.polqual IS NOT NULL LOOP
       EXECUTE format('INSERT INTO pg_temp.authz_diff_before SELECT $1, $2, ''rows readable'', x::text FROM '
                      '(SELECT %s AS x FROM %s WHERE %s) s', pol.id_of, pol.tbl, pol.qual)
         USING v_u, pol.tbl;
     END LOOP;
     -- masked columns: through the view while masked, else wherever the row is readable
-    FOR m IN SELECT c.tbl, c.col, t.id_of, mc.view, pp.qual
+    FOR m IN SELECT c.tbl, c.col, t.id_of, mc.view, pg_get_expr(pp.polqual, pp.polrelid) AS qual
              FROM (SELECT DISTINCT tbl, col FROM pg_temp.authz_diff_cols) c
              JOIN authz_int.types t ON to_regclass(t.tbl) = to_regclass(c.tbl)
              LEFT JOIN authz_int.masked_columns mc ON mc.tbl = c.tbl AND mc.col = c.col
-             LEFT JOIN pg_policies pp ON pp.policyname = 'authz_select'
-                  AND format('%I.%I', pp.schemaname, pp.tablename)::regclass = to_regclass(c.tbl) LOOP
+             LEFT JOIN pg_policy pp ON pp.polname = 'authz_select' AND pp.polrelid = to_regclass(c.tbl) LOOP
       IF m.view IS NOT NULL AND to_regclass(m.view) IS NOT NULL THEN
         EXECUTE format('INSERT INTO pg_temp.authz_diff_before SELECT $1, $2, $3, %s FROM %s WHERE %I IS NOT NULL',
                        m.id_of, m.view, m.col) USING v_u, to_regclass(m.tbl)::text, 'column ' || m.col || ' readable';
@@ -6183,20 +6185,22 @@ BEGIN
     FOR p IN SELECT type, perm FROM authz_int.perms LOOP
       INSERT INTO pg_temp.authz_diff_after SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz.list(p.type, p.perm) x;
     END LOOP;
-    FOR pol IN SELECT format('%I.%I', pp.schemaname, pp.tablename) AS tbl, pp.qual, t.id_of
-               FROM pg_policies pp JOIN authz_int.types t ON to_regclass(t.tbl) = format('%I.%I', pp.schemaname, pp.tablename)::regclass
-               WHERE pp.policyname = 'authz_select' AND pp.qual IS NOT NULL LOOP
+    -- (each type's select policy by its table's oid, never by a name read back as a table: the planner may try that
+    -- on every table there is, and for one of pg_toast's it is refused to an owner who is no superuser)
+    FOR pol IN SELECT format('%I.%I', n.nspname, c.relname) AS tbl, pg_get_expr(pp.polqual, pp.polrelid) AS qual, t.id_of
+               FROM authz_int.types t JOIN pg_policy pp ON pp.polrelid = to_regclass(t.tbl) AND pp.polname = 'authz_select'
+               JOIN pg_class c ON c.oid = pp.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE pp.polqual IS NOT NULL LOOP
       EXECUTE format('INSERT INTO pg_temp.authz_diff_after SELECT $1, $2, ''rows readable'', x::text FROM '
                      '(SELECT %s AS x FROM %s WHERE %s) s', pol.id_of, pol.tbl, pol.qual)
         USING v_u, pol.tbl;
     END LOOP;
     -- masked columns: through the view while masked, else wherever the row is readable
-    FOR m IN SELECT c.tbl, c.col, t.id_of, mc.view, pp.qual
+    FOR m IN SELECT c.tbl, c.col, t.id_of, mc.view, pg_get_expr(pp.polqual, pp.polrelid) AS qual
              FROM (SELECT DISTINCT tbl, col FROM pg_temp.authz_diff_cols) c
              JOIN authz_int.types t ON to_regclass(t.tbl) = to_regclass(c.tbl)
              LEFT JOIN authz_int.masked_columns mc ON mc.tbl = c.tbl AND mc.col = c.col
-             LEFT JOIN pg_policies pp ON pp.policyname = 'authz_select'
-                  AND format('%I.%I', pp.schemaname, pp.tablename)::regclass = to_regclass(c.tbl) LOOP
+             LEFT JOIN pg_policy pp ON pp.polname = 'authz_select' AND pp.polrelid = to_regclass(c.tbl) LOOP
       IF m.view IS NOT NULL AND to_regclass(m.view) IS NOT NULL THEN
         EXECUTE format('INSERT INTO pg_temp.authz_diff_after SELECT $1, $2, $3, %s FROM %s WHERE %I IS NOT NULL',
                        m.id_of, m.view, m.col) USING v_u, to_regclass(m.tbl)::text, 'column ' || m.col || ' readable';
