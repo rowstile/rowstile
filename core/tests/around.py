@@ -12,6 +12,10 @@ policy for that seed and draws a world for it:
                 named as an app's own may be (genpolicy's AWKWARD: capitals, words SQL reserves, a quote, a
                 letter outside ASCII, 63 bytes). What the world makes beside them (the tables under them, the
                 decoys, a schema on the path) is named the same way, and every statement here quotes them
+  the keys      the seed's own too: bigint, int, text or uuid, or two columns (an org's and the row's). A table
+                is partitioned by its key whatever its type, and a link table follows a key of two columns
+  the database  made as the server's others are, or with a locale and an encoding of its own (DATABASES): the C
+                locale, LATIN1, or Turkish (ICU), where lower('I') is not 'i'
   the catalog   each object table is plain, partitioned by its key (hash or range: a key that changes puts the
                 row in another partition), or has a table that inherits from it, where half its rows are stored;
                 the owner's default privileges give new tables, functions and schemas to the app role, to PUBLIC
@@ -19,9 +23,11 @@ policy for that seed and draws a world for it:
                 schema, which the database's search path supplies; a schema on that path that others may create in
   the session   who connects: the owner switched to the app role (as the other suites do), a login role that is
                 a member of the app role, or one that has to SET ROLE to it; the last two sign each user in with
-                authz.act_as(). Each sets the user's request context (authz_ctx.*), which caveats read. Settings of the app's transaction that must change no answer: planner switches,
-                read-only, how dates and identifiers are written, a search path that starts with a schema of
-                decoys (a table, a function and an operator named as the policy's, a now() of its own)
+                authz.act_as(). Each sets the user's request context (authz_ctx.*), which caveats read.
+                Settings of the app's transaction that must change no answer: planner switches, read-only, how
+                dates, numbers and identifiers are written (DateStyle, TimeZone, lc_*), a search path that
+                starts with a schema of decoys (a table, a function and an operator named as the policy's, a
+                now() of its own)
   later         halfway, something changes behind the policy's back: a grant on rowstile's own objects,
                 row-level security turned off, a table made under a governed one, CREATE on a schema of the path
 
@@ -41,7 +47,8 @@ and checks, after each random change to the data:
     refuses, AZ612, for the schema others may create in) and then answers `unchanged`
 
 A failing seed is printed with its world and its policy; --only SEED runs it again. Then the world is made
-plainer, one thing at a time, while it still fails (its names last: plain ones, if it fails with them too).
+plainer, one thing at a time, while it still fails (its names and keys last: plain names and bigint keys, if it
+fails with them too).
 """
 
 from __future__ import annotations
@@ -112,6 +119,16 @@ SETTINGS = [
     ("standard_conforming_strings", "off"),
     ("default_transaction_isolation", "repeatable read"),
 ]
+# ... nor these, where numbers, money and dates are written as another locale does (drawn apart, LOCALES)
+LOCALES = [("lc_monetary", "C"), ("lc_numeric", "C"), ("lc_time", "C")]
+# The world's database, where it is not made as the server's others are: its locale and its encoding. In the
+# Turkish one (ICU) lower('I') is a dotless i and 'I' ILIKE 'i' is false: nothing may fold a name's or an id's
+# case there. LATIN1 holds AWKWARD's accent, as one byte; the command and psql speak UTF-8 to it all the same.
+DATABASES = {
+    "C": ["--locale=C", "--encoding=UTF8"],
+    "latin1": ["--locale=C", "--encoding=LATIN1"],
+    "turkish": ["--locale=C", "--encoding=UTF8", "--locale-provider=icu", "--icu-locale=tr-TR"],
+}
 # grants made behind the policy's back, on what is rowstile's own
 GRANTS = [
     "GRANT SELECT ON ALL TABLES IN SCHEMA authz_int TO app_user",
@@ -131,6 +148,7 @@ class World:
     seed: int
     layout: dict[str, str] = field(default_factory=dict)  # object type -> plain | hash | range | inherits
     defaults: list[str] = field(default_factory=list)  # the owner's default privileges, before applying
+    database: str = ""  # its locale and encoding: one of DATABASES ('': as the server's others)
     unqualified: bool = False  # conditions name gp's table and function without the schema
     open_to: str = ""  # who may create in a schema of the path when the policy is first applied ('': nobody)
     session: str = "owner"  # owner | member | set role
@@ -141,6 +159,7 @@ class World:
 
     def describe(self) -> str:
         parts = [f"{t} {how}" for t, how in self.layout.items() if how != "plain"]
+        parts += [f"database: createdb {' '.join(DATABASES[self.database])}"] if self.database else []
         parts += self.defaults
         parts += ["conditions without the schema"] if self.unqualified else []
         parts += [f"{self.open_to} may create in a schema of the path"] if self.open_to else []
@@ -153,8 +172,18 @@ class World:
 
 
 def described(spec: Spec, w: World) -> str:
-    """The world, and what of it the policy's own draw says: how its database is named."""
-    return ("names as an app's own may be (genpolicy's AWKWARD); " if spec.spelling.awkward else "") + w.describe()
+    """The world, and what of it the policy's own draw says: how its database is named, and its keys."""
+    n = spec.spelling
+    names = "names as an app's own may be (genpolicy's AWKWARD); " if n.awkward else ""
+    keys = "keys of two columns; " if n.composite else f"{n.keytype} keys; " if n.keytype != "bigint" else ""
+    return names + keys + w.describe()
+
+
+def plainer_spellings(n: Spelling) -> list[Spelling]:
+    """The policy's names and keys with one thing made plain: what a failing seed is tried with, last."""
+    out = [dataclasses.replace(n, awkward=False)] if n.awkward else []
+    out += [dataclasses.replace(n, keytype="bigint")] if n.keytype != "bigint" else []
+    return out + ([dataclasses.replace(n, composite=False)] if n.composite else [])
 
 
 def draw(seed: int, spec: Spec) -> World:
@@ -169,6 +198,9 @@ def draw(seed: int, spec: Spec) -> World:
     w.read_only = r.random() < 0.3
     w.decoys = r.random() < 0.5
     w.drift = r.sample(DRIFTS, r.choice([0, 1, 1, 2]))
+    x = random.Random(f"around/{seed}/database")  # (drawn apart: a seed's world keeps what it drew before)
+    w.database = x.choice(["", "", "", *DATABASES])
+    w.settings += x.sample(LOCALES, x.choice([0, 0, 1, 2]))
     return w
 
 
@@ -184,6 +216,7 @@ def plainer(w: World) -> list[World]:
         out.append(dataclasses.replace(w, settings=w.settings[:i] + w.settings[i + 1 :]))
     for i in range(len(w.drift)):
         out.append(dataclasses.replace(w, drift=w.drift[:i] + w.drift[i + 1 :]))
+    out += [dataclasses.replace(w, database="")] if w.database else []
     out += [dataclasses.replace(w, unqualified=False)] if w.unqualified else []
     out += [dataclasses.replace(w, open_to="")] if w.open_to else []
     out += [dataclasses.replace(w, session="owner")] if w.session != "owner" else []
@@ -230,20 +263,46 @@ def policy_text(spec: Spec, w: World) -> str:
 FOLLOWS = " ON DELETE CASCADE ON UPDATE CASCADE"
 
 
+def cut(n: Spelling) -> tuple[str, str, str]:
+    """Where a table partitioned by range is cut, in SQL: between its two partitions, where the second ends (keys
+    don't get that far by themselves) and where a partition made later ends. Text keys sort as text ('10' before
+    '5'): any cut will do, each row is in one partition or the other."""
+    if n.keytype == "text":
+        return "'5'", "'9999'", "'99999999'"
+    return n.literal(n.ident(5)), n.literal(n.ident(TOP)), n.literal(n.ident(2 * TOP))
+
+
+def raised(n: Spelling) -> str:
+    """A row's key moved past where the second partition ends, in SQL: into a partition made later."""
+    i = n.sql("id")
+    if n.keytype == "text":
+        return f"'9999' || {i}"
+    return n.key_of(f"right({i}::text, 12)::bigint + {TOP}") if n.keytype == "uuid" else f"{i} + {TOP}"
+
+
 def follow(n: Spelling, link: str, column: str, target: str) -> list[str]:
     """What a foreign key with ON DELETE CASCADE ON UPDATE CASCADE does, for a table with one that inherits from
     it: a foreign key to the table doesn't see the rows stored in the other, so triggers on both do its work.
     (link, column and target by genpolicy's plain names: the world spells what it makes as the policy's are.)"""
-    fn, tbl, col, i = n.table(f"{link}_{column}_follow"), n.table(link), n.sql(column), n.sql("id")
+    fn, tbl, col, i, org = (
+        n.table(f"{link}_{column}_follow"),
+        n.table(link),
+        n.sql(column),
+        n.sql("id"),
+        n.sql("org_id"),
+    )
+    mine, old, new, key = col, f"OLD.{i}", f"NEW.{i}", i
+    if n.composite:  # the object's two columns, the link's org and the column
+        mine, old, new, key = f"({org}, {col})", f"(OLD.{org}, OLD.{i})", f"(NEW.{org}, NEW.{i})", f"{org}, {i}"
     return [
         f"CREATE FUNCTION {fn}() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $f$ BEGIN\n"
-        f"  IF TG_OP = 'DELETE' THEN DELETE FROM {tbl} WHERE {col} = OLD.{i}; RETURN OLD; END IF;\n"
-        f"  UPDATE {tbl} SET {col} = NEW.{i} WHERE {col} = OLD.{i}; RETURN NEW;\nEND $f$;",
+        f"  IF TG_OP = 'DELETE' THEN DELETE FROM {tbl} WHERE {mine} = {old}; RETURN OLD; END IF;\n"
+        f"  UPDATE {tbl} SET {mine} = {new} WHERE {mine} = {old}; RETURN NEW;\nEND $f$;",
         *[
             f"CREATE TRIGGER {n.sql(f'{link}_{column}_{op}')} AFTER {event} ON {under} FOR EACH ROW "
             f"EXECUTE FUNCTION {fn}();"
             for under in (n.table(target), n.table(f"{target}_old"))
-            for op, event in (("del", "DELETE"), ("upd", f"UPDATE OF {i}"))
+            for op, event in (("del", "DELETE"), ("upd", f"UPDATE OF {key}"))
         ],
     ]
 
@@ -252,7 +311,7 @@ def schema_text(spec: Spec, w: World) -> str:
     """genpolicy's tables, each object table laid out as the world says. What the world makes beside them (the
     tables under them, the decoys) is named as the policy's own are: plainly, or as AWKWARD's."""
     n = spec.spelling
-    i, k = n.sql("id"), n.keytype
+    i, k, org = n.sql("id"), n.keytype, n.sql("org_id")
     objects = {f"CREATE TABLE {n.table(o.name)} (": o.name for o in spec.objs}
     links = {
         f"CREATE TABLE {n.table(f'{o.name}_{rel.name}')} (": (f"{o.name}_{rel.name}", o.name, rel.subjects[0])
@@ -267,9 +326,12 @@ def schema_text(spec: Spec, w: World) -> str:
             link, obj, subject = links[made]
             follows = []
             for column, target in (("obj_id", obj), ("subj_id", subject.split("#")[0])):
-                key = f"{n.sql(column)} {k} REFERENCES {n.table(target)}{FOLLOWS}"
+                key, without = f"{n.sql(column)} {k} REFERENCES {n.table(target)}{FOLLOWS}", f"{n.sql(column)} {k}"
+                if n.composite:  # (a key of two columns is a constraint of its own, after the columns)
+                    key = f"FOREIGN KEY ({org}, {n.sql(column)}) REFERENCES {n.table(target)}{FOLLOWS}, "
+                    without = ""
                 if w.layout.get(target) == "inherits" and key in line:
-                    line = line.replace(key, f"{n.sql(column)} {k}")
+                    line = line.replace(key, without)
                     follows += follow(n, link, column, target)
             out += [line, *follows]
             continue
@@ -280,16 +342,19 @@ def schema_text(spec: Spec, w: World) -> str:
         name, columns = objects[made], line[len(made) : -len(");")]
         tbl = n.table(name)
         if how == "hash":
-            out.append(f"CREATE TABLE {tbl} ({columns}) PARTITION BY HASH ({i});")
+            out.append(f"CREATE TABLE {tbl} ({columns}) PARTITION BY HASH ({f'{org}, {i}' if n.composite else i});")
             out += [
                 f"CREATE TABLE {n.table(f'{name}_h{part}')} PARTITION OF {tbl} "
                 f"FOR VALUES WITH (MODULUS 2, REMAINDER {part});"
                 for part in (0, 1)
             ]
         elif how == "range":
+            five, top, _ = cut(n)
             out.append(f"CREATE TABLE {tbl} ({columns}) PARTITION BY RANGE ({i});")
-            out.append(f"CREATE TABLE {n.table(f'{name}_low')} PARTITION OF {tbl} FOR VALUES FROM (MINVALUE) TO (5);")
-            out.append(f"CREATE TABLE {n.table(f'{name}_mid')} PARTITION OF {tbl} FOR VALUES FROM (5) TO ({TOP});")
+            out += [
+                f"CREATE TABLE {n.table(f'{name}_{part}')} PARTITION OF {tbl} FOR VALUES FROM ({lo}) TO ({hi});"
+                for part, lo, hi in (("low", "MINVALUE", five), ("mid", five, top))
+            ]
         else:
             out.append(line)
             out.append(f"CREATE TABLE {n.table(f'{name}_old')} () INHERITS ({tbl});")
@@ -297,9 +362,9 @@ def schema_text(spec: Spec, w: World) -> str:
     out += [
         f"CREATE SCHEMA {SCRATCH};",
         f"CREATE TABLE {SCRATCH}.{n.sql('t1')} ({i} {k}, {n.sql('b2')} boolean);",
-        f"INSERT INTO {SCRATCH}.{n.sql('t1')} SELECT x, true FROM generate_series(1, 400) x;",
+        f"INSERT INTO {SCRATCH}.{n.sql('t1')} SELECT {n.key_of('x')}, true FROM generate_series(1, 400) x;",
         f"CREATE TABLE {SCRATCH}.{n.sql('users')} ({i} {k}, {n.sql('active')} boolean);",
-        f"INSERT INTO {SCRATCH}.{n.sql('users')} SELECT x, true FROM generate_series(1, 20) x;",
+        f"INSERT INTO {SCRATCH}.{n.sql('users')} SELECT {n.key_of('x')}, true FROM generate_series(1, 20) x;",
         f"CREATE FUNCTION {SCRATCH}.\"Flag\"(p {k}) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT true';",
         f'CREATE OPERATOR {SCRATCH}.=!= (FUNCTION = {SCRATCH}."Flag", RIGHTARG = {k});',
         f"CREATE FUNCTION {SCRATCH}.now() RETURNS timestamptz LANGUAGE sql IMMUTABLE AS "
@@ -324,14 +389,35 @@ def initial(gen: genpolicy.GenPolicyGen, w: World) -> str:
     """genpolicy's first rows; for a table with one that inherits from it, the rows with an even id are stored
     there (before the policy is applied: written there directly later, they would skip the table's triggers)."""
     n = gen.spec.spelling
-    rows = {f"INSERT INTO {n.table(t)} ({n.sql('id')}, ": t for t, how in w.layout.items() if how == "inherits"}
+    first = [n.sql("org_id"), n.sql("id")] if n.composite else [n.sql("id")]  # (a row's first columns: its key)
+    rows = {f"INSERT INTO {n.table(t)} ({', '.join(first)}, ": t for t, how in w.layout.items() if how == "inherits"}
     out = []
     for line in gen.initial().splitlines():
         into = next((head for head in rows if line.startswith(head)), "")
-        if into and n.number(line.split(") VALUES (", 1)[1].split(", ", 1)[0].strip("'")) % 2 == 0:
+        if into and n.number(line.split(") VALUES (", 1)[1].split(", ")[len(first) - 1].strip("'")) % 2 == 0:
             line = line.replace(n.table(rows[into]), n.table(f"{rows[into]}_old"), 1)
         out.append(line)
     return "\n".join(out)
+
+
+def has_icu() -> bool:
+    """Whether the server was built with ICU (the Turkish database needs it: made with the C locale otherwise)."""
+    p = subprocess.run(
+        ["psql", "-X", "-At", "-d", "postgres", "-c", "SELECT count(*) FROM pg_collation WHERE collprovider = 'i'"],
+        capture_output=True,
+        text=True,
+    )
+    return p.returncode == 0 and p.stdout.strip() not in ("", "0")
+
+
+def create(db: DB, how: str) -> None:
+    """The database made anew: as difftest makes it, or (how: one of DATABASES) with a locale and an encoding
+    of its own."""
+    if not how:
+        return db.recreate()
+    for cmd in (["dropdb", "--if-exists", db.name], ["createdb", "--template=template0", *DATABASES[how], db.name]):
+        subprocess.run(cmd, check=True, capture_output=True)
+    db.run(f'ALTER DATABASE "{db.name}" SET jit = off;')
 
 
 def roles(db: DB) -> None:
@@ -519,7 +605,9 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
     """Each user's writes, tried as the app role in the world's session and undone, against the rules. direct:
     and the tables under a governed one, read and written directly."""
     w, db, n = checker.world, checker.db, checker.spec.spelling
-    i, b1, b2 = n.sql("id"), n.sql("b1"), n.sql("b2")
+    b1, b2 = n.sql("b1"), n.sql("b2")
+    # the row a statement is tried on, by its key (two columns' as the row text reads: '(1,3)')
+    it = f"({n.sql('org_id')}, {n.sql('id')}) = %s" if n.composite else f"{n.sql('id')} = %L"
     snap = checker.snapshot_data_only(context=True)  # (the writes run in the user's session, its context set)
     governed = list(dict.fromkeys(r.table for r in checker.rules))
     children = under(db, governed) if direct else []
@@ -549,11 +637,11 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
             t = checker.ref.type_of_table(table)
             ids = snap[(first, "data", "ids", t.name)]
             tbl = qt(table)
-            body.append(tried([u, "update", table], f"UPDATE {tbl} SET {b2} = {b2} WHERE {i} = %L", ids))
-            body.append(tried([u, "delete", table], f"DELETE FROM {tbl} WHERE {i} = %L", ids))
+            body.append(tried([u, "update", table], f"UPDATE {tbl} SET {b2} = {b2} WHERE {it}", ids))
+            body.append(tried([u, "delete", table], f"DELETE FROM {tbl} WHERE {it}", ids))
             for k, r in enumerate(column_rules):
                 if r.table == table:
-                    change = f"UPDATE {tbl} SET {b1} = ({b1} IS NOT TRUE) WHERE {i} = %L"
+                    change = f"UPDATE {tbl} SET {b1} = ({b1} IS NOT TRUE) WHERE {it}"
                     body.append(tried([u, "column", str(k)], change, ids))
         for ot, rel, _, _ in shared:
             ids = snap[(first, "data", "ids", ot)]
@@ -674,15 +762,15 @@ def share_problems(checker: AroundChecker) -> list[str]:
 def stranger_problems(checker: AroundChecker) -> list[str]:
     """A role the policy doesn't name, given the app's tables: no row of a governed table, read or written,
     through it or through what is under it, and none of rowstile's functions."""
-    db, b2 = checker.db, checker.spec.spelling.sql("b2")
+    db, b2, one = checker.db, checker.spec.spelling.sql("b2"), lit(checker.spec.spelling.ident(1))
     governed = list(dict.fromkeys(r.table for r in checker.rules))
     tables = [qt(t) for t in governed] + [child for _, child in under(db, governed)]
-    body = ["BEGIN;", "SET LOCAL authz.user_id = '1';", TRY]
+    body = ["BEGIN;", f"SET LOCAL authz.user_id = {one};", TRY]
     for n, table in enumerate(tables):
         body.append(tried(["read", str(n)], f"SELECT 1 FROM {table}", ["0"]))
         body.append(tried(["update", str(n)], f"UPDATE {table} SET {b2} = {b2}", ["0"]))
         body.append(tried(["delete", str(n)], f"DELETE FROM {table}", ["0"]))
-    body.append(tried(["act_as"], "SELECT authz.act_as('user', '1')", ["0"]))
+    body.append(tried(["act_as"], f"SELECT authz.act_as('user', {one})", ["0"]))
     body.append(tried(["list"], f"SELECT authz.list({lit(next(iter(checker.types)))}, 'p1')", ["0"]))
     code, out, err = psql(db, OUTSIDER, "\n".join([*body, "COMMIT;"]))
     if code != 0:
@@ -702,22 +790,24 @@ def stranger_problems(checker: AroundChecker) -> list[str]:
     return problems
 
 
-def unsigned_problems(checker: Checker) -> list[str]:
+def unsigned_problems(checker: AroundChecker) -> list[str]:
     """A member of the app role that doesn't sign in, sets the user itself, or brings a signature from another
     transaction: never a row. An error (28000) wherever Postgres comes to ask who is signed in; no row and no
     error where it doesn't have to (a rule that is false whoever asks, `nobody and {b1}`, is folded to false
     when the read is planned; so is one whose own conditions no row passes)."""
     db = checker.db
+    one, two = (lit(checker.spec.spelling.ident(k)) for k in (1, 2))
     problems = []
     for table in dict.fromkeys(r.table for r in checker.rules if r.command == "select"):
         read = f"SELECT pg_temp.around_try({lit(f'SELECT 1 FROM {qt(table)}')})"
         cases = {
             "nobody signed in": f"BEGIN;\n{read};\nCOMMIT;",
-            "authz.user_id set directly": f"BEGIN;\nSET LOCAL authz.user_id = '1';\n{read};\nCOMMIT;",
+            "authz.user_id set directly": f"BEGIN;\nSET LOCAL authz.user_id = {one};\n{read};\nCOMMIT;",
             "a signature from the transaction before": (
-                "BEGIN;\nDO $$ BEGIN PERFORM authz.act_as('user', '1'); END $$;\n"
+                f"BEGIN;\nDO $$ BEGIN PERFORM authz.act_as('user', {one}); END $$;\n"
                 "SELECT current_setting('authz.session') AS sig \\gset\nCOMMIT;\n"
-                "BEGIN;\nSET LOCAL authz.user_id = '2';\nSELECT set_config('authz.session', :'sig', true) \\gset x_\n"
+                f"BEGIN;\nSET LOCAL authz.user_id = {two};\n"
+                "SELECT set_config('authz.session', :'sig', true) \\gset x_\n"
                 f"{read};\nCOMMIT;"
             ),
         }
@@ -805,13 +895,15 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
             reported = not partition or rnd.random() < 0.5
             child = n.table(f"{name}_{'top' if partition else 'newer'}")
             if partition:
-                what = f"CREATE TABLE {child} PARTITION OF {table} FOR VALUES FROM ({TOP}) TO ({TOP * 2})"
+                _, top, end = cut(n)
+                what = f"CREATE TABLE {child} PARTITION OF {table} FOR VALUES FROM ({top}) TO ({end})"
             else:
                 what = f"CREATE TABLE {child} () INHERITS ({table})"
             if reported:
                 what += f"; GRANT SELECT, INSERT, UPDATE, DELETE ON {child} TO app_user"
             if partition:  # ... and it takes a row: the one with the smallest key, which that changes
-                what += f"; UPDATE {table} SET {i} = {i} + {TOP} WHERE {i} = (SELECT min({i}) FROM {table})"
+                first = f"SELECT {i} FROM {table} ORDER BY {i} LIMIT 1"
+                what += f"; UPDATE {table} SET {i} = {raised(n)} WHERE {i} = ({first})"
         else:  # creator: a schema the policy's functions search, and someone else may create in
             schema = n.sql(SCHEMA) if w.unqualified else "public"
             who = rnd.choice(["app_user", OUTSIDER, "PUBLIC"])
@@ -876,7 +968,7 @@ def run(spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, sec
     problems: list[str] = []
     # the world's database, and one with the same tables, rows and policy and nothing else around it
     for d, world in ((control, False), (db, True)):
-        d.recreate()
+        create(d, w.database if world else "")
         roles(d)
         d.run(schema_text(spec, w))
         d.run(path_sql(d, spec, w, open_too=False))
@@ -939,6 +1031,8 @@ def main() -> None:
     ap.add_argument("--seconds", type=float, default=900, help="a seed that takes longer is given up (and said)")
     args = ap.parse_args()
     os.chdir(os.path.dirname(HERE))
+    os.environ["PGCLIENTENCODING"] = "UTF8"  # psql sends what Python wrote, whatever the database's encoding
+    icu = has_icu()
     db, control = DB(args.db), DB(args.db + "_plain")
     seeds = [args.only] if args.only is not None else range(args.seed, args.seed + args.policies)
     refused = failed = passed = 0
@@ -952,9 +1046,11 @@ def main() -> None:
                 return False
 
         for seed in seeds:
-            # the seed's names, as genpolicy draws them (a third as an app's own may be, AWKWARD); bigint keys
-            spec = with_write_rules(genpolicy.make(seed, keytype="bigint", composite=False), seed)
+            # the seed's own names and keys, as genpolicy draws them
+            spec = with_write_rules(genpolicy.make(seed), seed)
             w = draw(seed, spec)
+            if w.database == "turkish" and not icu:
+                w = dataclasses.replace(w, database="C")
             if args.only is not None:
                 print(f"world: {described(spec, w)}\n\n{policy_text(spec, w)}")
             try:
@@ -983,9 +1079,13 @@ def main() -> None:
                         if fails(spec, smaller):
                             w, changed = smaller, True
                             break
-                plain = dataclasses.replace(spec, spelling=dataclasses.replace(spec.spelling, awkward=False))
-                if spec.spelling.awkward and fails(plain, w):
-                    spec = plain
+                changed = True
+                while changed:
+                    changed = False
+                    for spelling in plainer_spellings(spec.spelling):
+                        if fails(dataclasses.replace(spec, spelling=spelling), w):
+                            spec, changed = dataclasses.replace(spec, spelling=spelling), True
+                            break
                 spec = genpolicy.shrink(spec, lambda s, w=w: fails(s, w))
                 print(f"  the plainest world and the smallest policy found that still fail (seed {seed}):")
                 print(f"    world: {described(spec, w)}")
@@ -999,6 +1099,7 @@ def main() -> None:
     print(
         f"around seeds {seeds[0]}..{seeds[-1]}: {passed} passed, {failed} failed, {refused} refused by the compiler"
         + (f", {len(slow)} too slow to check (seeds {', '.join(map(str, slow))})" if slow else "")
+        + ("" if icu else "; no ICU on this server: the Turkish databases were made with the C locale")
     )
     sys.exit(1 if failed else 0)
 
