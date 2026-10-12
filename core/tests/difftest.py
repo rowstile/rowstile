@@ -2442,10 +2442,23 @@ class CrossGen(Gen):
     policy = "tests/cross.authz"
     schema = "tests/cross_schema.sql"
     users: ClassVar[list[str]] = [str(i) for i in range(1, 7)]
+    tokens: ClassVar[list[str]] = ["cx-a", "cx-b"]
+    # the link tables whose rows count while active: what a steered link writes there
+    columns: ClassVar[dict[str, dict[str, str]]] = {
+        "cx.placements": {"active": "true"},
+        "cx.site_links": {"active": "true"},
+        "cx.site_regions": {"active": "true"},
+    }
     expected_errors: ClassVar[tuple[str, ...]] = (
         *Gen.expected_errors,
         "cannot expire, start later or have a caveat",  # a share that is a link: refused, as the docs say
     )
+
+    def context(self, u: str) -> dict[str, str]:
+        """Who presents which link's token: users 1 and 4 the first, 3 and 6 the second, 2 and 5 none, and nobody
+        signed in the first."""
+        i = self.users.index(u) if u else len(self.users)
+        return {"links": ",".join(t for j, t in enumerate(self.tokens) if (i + j) % 3 == 0)}
 
     def maybe_user(self) -> str:
         return self.r.choice([*self.users, "NULL"])
@@ -2497,6 +2510,20 @@ class CrossGen(Gen):
         ]
         return "\n".join(s)
 
+    def steer(self, key: tuple[str | int, ...], ids: Ids) -> str | None:
+        """What is filed comes down only to a folder nobody owns that sits in something, and few do: when no chain
+        can be planned through those there are, a few folders that sit in something lose their owner, for the
+        next try."""
+        sql = super().steer(key, ids)
+        if sql is not None or key[0] != "depth" or self.ledger is None:
+            return sql
+        if ("folder", "file") not in self.ledger.recursions[int(key[1])].names:
+            return None
+        return (
+            "UPDATE cx.folders SET owner_id = NULL WHERE id IN (SELECT id FROM cx.folders "
+            "WHERE parent_type IS NOT NULL ORDER BY random() LIMIT 4);"
+        )
+
     def backing(self) -> str:
         """A project backed by a folder or a region (now and then by a type the policy doesn't name: nothing)."""
         r = self.r
@@ -2510,7 +2537,7 @@ class CrossGen(Gen):
         # a link on each region to begin with: seen by whoever runs it, turned off only by its chiefs
         links = [
             f"INSERT INTO authz.shares VALUES ('region', {i}, 'guest', 'link', "
-            f"encode(sha256(convert_to({lit(self.r.choice(['cx-a', 'cx-b']))}, 'UTF8')), 'hex'), '', NULL);"
+            f"encode(sha256(convert_to({lit(self.r.choice(self.tokens))}, 'UTF8')), 'hex'), '', NULL);"
             for i in range(1, 5)
         ]
         return "\n".join(links + [self.grant() for _ in range(10)])
@@ -2525,8 +2552,8 @@ class CrossGen(Gen):
                 f"INSERT INTO authz.shares VALUES ('region', {r.choice(regions)}, 'chief', 'user', "
                 f"{r.choice(self.users)}, '', {r.choice(['NULL', EXPIRED])}) ON CONFLICT DO NOTHING;"
             )
-        if r.random() < 0.2:  # a region's guest: a user, or a link (nobody here presents its token)
-            token = lit(r.choice(["cx-a", "cx-b"]))
+        if r.random() < 0.2:  # a region's guest: a user, or a link (some present its token: context())
+            token = lit(r.choice(self.tokens))
             kind, sid = r.choice(
                 [("user", r.choice(self.users)), ("link", f"encode(sha256(convert_to({token}, 'UTF8')), 'hex')")]
             )
