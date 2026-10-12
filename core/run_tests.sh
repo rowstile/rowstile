@@ -101,6 +101,9 @@ if [ "$MODE" = soak ]; then
   python3 tests/genpolicy.py --policies 100 --steps 10 --seed "$((SEED * 1000))" --db authz_genpolicy --decisions
   record $? "genpolicy"
   dropdb --if-exists authz_genpolicy >/dev/null 2>&1
+  step "random policies rewritten: the review's \"grants the same\" against the database's answers (40 policies, seeds from $((SEED * 1000)))"
+  python3 tests/rewrites.py --policies 40 --seed "$((SEED * 1000))" --db authz_rewrites
+  record $? "rewrites"
   fi
   if part around; then
   step "random policies in random worlds: the catalog, the session and the role around them (60, seeds from $((SEED * 1000)))"
@@ -367,6 +370,14 @@ python3 tests/around.py --policies "$AROUND" --steps 6 --seed 1 --db authz_aroun
 record $? "around"
 }
 unit random $((37*AROUND)) around
+# the review reads no database for its "grants the same"; the diff it is held against is the database's own
+REWRITES=4; [ "$MODE" = full ] && REWRITES=12
+rewrites() {
+step "random policies rewritten: the review's \"grants the same\" against the database's answers ($REWRITES policies)"
+python3 tests/rewrites.py --policies "$REWRITES" --seed 1 --db authz_rewrites
+record $? "rewrites"
+}
+unit random $((12*REWRITES)) rewrites
 conditions() {
 step "simple conditions read as Postgres reads them (3000 made up)"
 python3 tests/conditions_test.py --cases 3000 --seed 1
