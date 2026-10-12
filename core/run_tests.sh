@@ -348,9 +348,32 @@ for gen in $GENS; do
   # answer there (tests/decisions.py: whose SQL the run never judged), a report that fails nothing
   case "$gen" in composite) part policy;; multi) part command;; *) part random;; esac || continue
   # the part it runs in, and how long it takes with 15 changes
-  case "$gen" in composite) p=policy secs=45;; multi) p=command secs=86;; docs) p=random secs=61;;
-    alt) p=random secs=59;; loop) p=random secs=14;; cross) p=random secs=38;; esac
+  case "$gen" in composite) p=policy secs=81;; multi) p=command secs=125;; docs) p=random secs=200;;
+    alt) p=random secs=130;; loop) p=random secs=25;; cross) p=random secs=45;; esac
   unit "$p" $((secs*STEPS/15)) difftest "$gen"
+done
+# what is around the policy depends on the version of Postgres more than the policy does: a few on every run
+# (the full run: the worlds in which every two of their features meet, twenty of a thousand seeds). In shares, each
+# with databases and login roles of its own: on the full run three lanes of the random part; else two, one with
+# each of the other parts, which are shorter (as difftest's composite and multi are)
+around() {
+if [ "$MODE" = full ]; then
+  step "random policies in random worlds: the catalog, the session and the role around them (every two features of the worlds together, of 1000 seeds: share $1 of 3)"
+  python3 tests/around.py --pairs 1000 --share "$1/3" --steps 4 --db "authz_around_$1"
+else
+  step "random policies in random worlds: the catalog, the session and the role around them (4 policies: share $1 of 2)"
+  python3 tests/around.py --policies 4 --share "$1/2" --steps 6 --seed 1 --db "authz_around_$1"
+fi
+record $? "around $1"
+}
+AROUND="1 2"; [ "$MODE" = full ] && AROUND="1 2 3"
+for share in $AROUND; do
+  # the part it runs in, and how long it takes: the full run's on pgdev (2026-10-12; two of its worlds have
+  # policies slow to plan, both in the second share), the others' on CI
+  case "$MODE $share" in "full 1") p=random secs=250;; "full 2") p=random secs=650;; "full 3") p=random secs=365;;
+    *" 1") p=command secs=140;; *) p=policy secs=215;; esac
+  part "$p" || continue
+  unit "$p" "$secs" around "$share"
 done
 if part random; then
 if [ "$MODE" = full ]; then
@@ -362,14 +385,6 @@ if [ "$MODE" = full ]; then
   }
   unit random 430 genpolicy   # 7 minutes on pgdev, 2026-10-11
 fi
-# what is around the policy depends on the version of Postgres more than the policy does: a few on every run
-AROUND=4; [ "$MODE" = full ] && AROUND=16
-around() {
-step "random policies in random worlds: the catalog, the session and the role around them ($AROUND policies)"
-python3 tests/around.py --policies "$AROUND" --steps 6 --seed 1 --db authz_around
-record $? "around"
-}
-unit random $((37*AROUND)) around
 # the review reads no database for its "grants the same"; the diff it is held against is the database's own
 REWRITES=4; [ "$MODE" = full ] && REWRITES=12
 rewrites() {
@@ -377,7 +392,7 @@ step "random policies rewritten: the review's \"grants the same\" against the da
 python3 tests/rewrites.py --policies "$REWRITES" --seed 1 --db authz_rewrites
 record $? "rewrites"
 }
-unit random $((12*REWRITES)) rewrites
+unit random $((33*REWRITES)) rewrites
 conditions() {
 step "simple conditions read as Postgres reads them (3000 made up)"
 python3 tests/conditions_test.py --cases 3000 --seed 1

@@ -7705,7 +7705,7 @@ class Worlds(unittest.TestCase):
 
     def test_the_worlds_draw_each_key_and_each_database(self) -> None:
         """Every run's four seeds meet a key that isn't bigint, a key of two columns and a database with a locale
-        of its own; the full run's sixteen each key type, and each of DATABASES."""
+        of its own; the first sixteen each key type, and each of DATABASES."""
 
         def drawn(seeds: range) -> tuple[set[str], set[str]]:
             specs = [self.g.make(seed) for seed in seeds]
@@ -7974,6 +7974,52 @@ class Worlds(unittest.TestCase):
         self.assertLess(text.index("END $$;"), text.index("SET LOCAL ROLE app_user;"))
         self.assertNotIn("login_", self.a.transaction(self.a.World(1, session="set role"), "1", checker, [], True))
 
+    def test_every_two_features_of_the_worlds_meet_in_the_full_runs(self) -> None:
+        """--pairs 1000, what the full run checks: twenty worlds (no fewer could: five kinds of key, four of
+        database) in which every two FEATURES meet but two values of what a world has one of; every feature is
+        one a world can have, and every world's features are FEATURES'."""
+        seeds, unmet, never = self.a.covering(1000)
+        self.assertLessEqual(len(seeds), 22)
+        self.assertEqual((unmet, never), (set(), set()))
+        for seed in seeds:  # each one's policy can be checked: compiled, and not slow to plan
+            sql = Compiler(parse_policy(self.a.policy_text(*self.a.world_of(seed)), "a.authz")).compile("a.authz")
+            self.assertNotIn(self.a.SLOW, sql, seed)
+        met = set().union(*(self.a.pairs(self.a.features(*self.a.world_of(seed))) for seed in seeds))
+        every = {(x, y) for x, y in itertools.combinations(sorted(self.a.FEATURES), 2) if not self.a.apart(x, y)}
+        self.assertEqual(met, every)
+        self.assertEqual(len(self.a.FEATURES), len(set(self.a.FEATURES)))
+        for seed in range(1, 200):
+            self.assertLessEqual(self.a.features(*self.a.world_of(seed)), set(self.a.FEATURES), seed)
+        self.assertTrue(self.a.apart("keys: uuid", "keys: text"))
+        self.assertFalse(self.a.apart("a governed table: hash", "a governed table: range"))
+        # each setting is of a kind, and the full run is asked for the pairs
+        w = self.a.World(1, settings=[*self.a.SETTINGS, *self.a.LOCALES])
+        kinds = {x for x in self.a.features(self.g.make(1), w) if x.startswith("settings") or x == "repeatable read"}
+        self.assertEqual(kinds, {x for x in self.a.FEATURES if x.startswith("settings") or x == "repeatable read"})
+        self.assertIn("tests/around.py --pairs 1000 ", read("run_tests.sh"))
+
+    def test_runs_side_by_side_share_no_role(self) -> None:
+        """A run's login roles are named after its database, and what names one of them is made again with it:
+        run_tests.sh gives each share of the seeds a lane and a database of its own."""
+        try:
+            self.a.name_roles("authz_around_2")
+            self.assertEqual(
+                (self.a.MEMBER, self.a.SETROLE, self.a.OUTSIDER),
+                ("authz_around_2_member", "authz_around_2_setrole", "authz_around_2_outsider"),
+            )
+            named = [x for x in (*self.a.DEFAULTS, *self.a.GRANTS) if "outsider" in x]
+            self.assertEqual(len(named), 4)
+            self.assertTrue(all(x.endswith(" TO authz_around_2_outsider") for x in named), named)
+            drawn = {self.a.draw(seed, self.g.make(seed)).open_to for seed in range(1, 40)}
+            self.assertEqual(drawn, {"", "app_user", "PUBLIC", "authz_around_2_outsider"})
+        finally:
+            self.a.name_roles("authz_around")
+        self.assertEqual(self.a.OUTSIDER, "authz_around_outsider")
+        script = read("run_tests.sh")
+        self.assertIn('--pairs 1000 --share "$1/3" --steps 4 --db "authz_around_$1"', script)
+        self.assertIn('--policies 4 --share "$1/2" --steps 6 --seed 1 --db "authz_around_$1"', script)
+        self.assertIn("seeds = seeds[share - 1 :: shares]", read("tests/around.py"))
+
     def test_conditions_without_the_schema(self) -> None:
         """Where the world's conditions leave the schema to the search path, they still name the seed's table."""
         for respell, table in ((False, " from t1 x"), (True, ' from "select" x')):
@@ -8127,15 +8173,19 @@ class GeneratedShapes(unittest.TestCase):
 
     def test_arounds_seeds_draw_each_shared_if(self) -> None:
         """around.py judges `shared if` by its calls of authz.share() to users: its four seeds on each push draw
-        one on a relation shared with users, and its sixteen of the full run each of the conditions."""
+        one on a relation shared with users, and the full run's (--pairs 1000) each of the conditions; some of
+        those have scopes, where the world signs in by API key and where it does by JWT."""
         drawn: dict[str, set[int]] = {}
-        for seed in range(1, 17):
-            for o in self.g.make(seed, respell=False).objs:
+        full = around.covering(1000)[0]
+        for seed in [*range(1, 5), *full]:
+            for o in self.g.make(seed).objs:
                 for rel in o.rels:
                     if rel.shared_if and "user" in rel.subjects:
                         drawn.setdefault(rel.shared_if, set()).add(seed)
-        self.assertEqual(set(drawn), set(self.g.SHARED_IFS))
+        self.assertEqual({cond for cond, seeds in drawn.items() if seeds & set(full)}, set(self.g.SHARED_IFS))
         self.assertTrue(any(seed <= 4 for seeds in drawn.values() for seed in seeds), drawn)
+        scoped = {w.signs for spec, w in map(around.world_of, full) if spec.scopes}
+        self.assertLessEqual({"api key", "jwt"}, scoped)
 
 
 class CheckCounts(unittest.TestCase):

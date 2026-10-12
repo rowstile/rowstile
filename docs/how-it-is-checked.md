@@ -60,7 +60,8 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   app role on every row and undoes them (updates, deletes, and inserts of rows like the ones there), shares too (against who may share and what the relation's
   `shared if` says of the share), checks that no share outlives its row, that a role the policy
   doesn't name gets nothing, and that `authz.lint()` reports what changed and `rowstile apply` puts it right.
-  A few on every run, sixty with new seeds every night.
+  A few on every run; on the full run the twenty worlds, of a thousand seeds, in which every two of those
+  features meet; sixty with new seeds every night.
 - **Answers worked out by hand**: `HandAnswers` in [`tests/unit_test.py`](../core/tests/unit_test.py) gives
   the evaluator small policies and worlds whose answers were worked out from
   [the language's reference](reference/language.md), by hand: `not` and parentheses, inheritance stopped by
