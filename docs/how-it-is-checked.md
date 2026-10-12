@@ -68,6 +68,14 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   So [`tests/conditions_test.py`](../core/tests/conditions_test.py) makes conditions up at
   random over columns of each kind, and each one the evaluator reads itself must get Postgres's answer on
   every row: three thousand on every run, fifty thousand with new seeds every night.
+- **The review, against the database**: `rowstile review` says whether a pull request that rewrites permissions
+  grants the same as before, from small worlds made up for the two policies; it reads no database for that.
+  [`tests/rewrites.py`](../core/tests/rewrites.py) holds that verdict against one. It rewrites a permission or a
+  select rule of random policies, in ways that change nothing by what `or`, `and` and `not` mean (its parts
+  turned round, a part said twice, a part absorbed) and in ways that may (an `and` for an `or`, a part dropped,
+  one relation in place of another). Where the review says "grants the same", the database's own answers on the
+  policy's data, for everyone, before and after the rewrite, are the same too; and a rewrite that changes
+  nothing is given no difference by either.
 
 ## The boundary
 

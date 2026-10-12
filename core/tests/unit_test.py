@@ -5148,6 +5148,105 @@ class HandAnswers(unittest.TestCase):
         self.assertIsNotNone(simple("size > " + "9" * 4300))
 
 
+class Rewrites(unittest.TestCase):
+    """tests/rewrites.py holds the review's "grants the same" against the database on rewrites of random policies.
+    Here, the rewrites themselves: those it lists as changing nothing change no truth table, each of the others
+    changes one somewhere, and a policy's rewrites each rewrite one permission or select rule of it."""
+
+    ATOMS: ClassVar[list[str]] = ["a", "b", "c"]
+    NODES: ClassVar[list[object]] = [
+        "a",
+        ("or", ["a", "b"]),
+        ("and", ["a", ("or", ["b", "c"])]),
+        ("and", ["a", "b", ("not", ["c"])]),
+        ("or", [("and", ["a", "b"]), "c", ("and", ["b", ("or", ["a", "c"]), ("not", ["a"])])]),
+    ]
+
+    def holds(self, n: object, facts: dict[str, bool]) -> bool:
+        if isinstance(n, str):
+            return {"anyone": True, "nobody": False}.get(n, facts.get(n, False))
+        assert isinstance(n, tuple)
+        op, parts = n
+        assert isinstance(parts, list)
+        values = [self.holds(x, facts) for x in parts]
+        return not values[0] if op == "not" else any(values) if op == "or" else all(values)
+
+    def tables(self, law: Callable[..., object]) -> list[tuple[object, object, list[bool], list[bool]]]:
+        """Each node a law rewrites (over a few draws), the node it gives, and the truth table of each."""
+        import random
+
+        import rewrites
+
+        out = []
+        names = [*self.ATOMS, *rewrites.CONDS[:3]]  # (and the conditions `and not` may add)
+        worlds = [dict(zip(names, v, strict=True)) for v in itertools.product([False, True], repeat=len(names))]
+        for n in self.NODES:
+            for seed in range(6):
+                new = law(n, random.Random(seed), self.ATOMS)
+                if new is not None:
+                    out.append((n, new, [self.holds(n, w) for w in worlds], [self.holds(new, w) for w in worlds]))
+        return out
+
+    def test_the_rewrites_that_change_nothing_change_no_truth_table(self) -> None:
+        import rewrites
+
+        self.assertEqual(len(rewrites.SAME), 6)
+        for name, law in rewrites.SAME.items():
+            made = self.tables(law)
+            self.assertTrue(made, name)  # (each has a node here it rewrites)
+            for n, new, before, after in made:
+                self.assertNotEqual(n, new, name)
+                self.assertEqual(before, after, (name, n, new))
+
+    def test_each_of_the_others_changes_one_somewhere(self) -> None:
+        import rewrites
+
+        self.assertEqual(len(rewrites.OTHER), 4)
+        for name, law in rewrites.OTHER.items():
+            self.assertTrue(any(before != after for _, _, before, after in self.tables(law)), name)
+
+    def test_a_part_under_a_not_is_left_as_it_is(self) -> None:
+        import random
+
+        import rewrites
+
+        n = ("and", ["a", ("not", [("or", ["b", "c"])])])
+        self.assertEqual(list(rewrites.paths(n)), [(), (0,), (1,), (1, 0), (1, 0, 0), (1, 0, 1)])
+        self.assertEqual([p for p in rewrites.paths(n) if rewrites.under_not(n, p)], [(1, 0), (1, 0, 0), (1, 0, 1)])
+        self.assertEqual(rewrites.with_part(n, (0,), "z"), ("and", ["z", ("not", [("or", ["b", "c"])])]))
+        # the `not` itself is no part to say twice or to turn round, and it stays last where the parts are turned
+        for law in rewrites.SAME.values():
+            self.assertIsNone(law(n[1][1], random.Random(1), self.ATOMS))
+        self.assertEqual(
+            rewrites.turned(("and", ["a", "b", ("not", ["c"])]), random.Random(1), []),
+            ("and", ["b", "a", ("not", ["c"])]),
+        )
+        # an `or` takes no `not`: an `and` that has one is not made an `or`, nor left with it alone
+        self.assertIsNone(rewrites.other_word(("and", ["a", ("not", ["c"])]), random.Random(1), []))
+        for seed in range(8):
+            left = rewrites.dropped(("and", ["a", ("not", ["c"])]), random.Random(seed), [])
+            self.assertIn(left, (None, "a"))
+
+    def test_a_policys_rewrites_each_rewrite_one_permission_or_select_rule(self) -> None:
+        import random
+
+        import genpolicy
+        import rewrites
+
+        spec = genpolicy.make(1)
+        made = rewrites.rewrites(spec, random.Random("rewrites/1"), 3)
+        self.assertEqual([rw.same for rw in made], [True] * 3 + [False] * 3)
+        text = genpolicy.policy_text(spec)
+        for rw in made:
+            new = genpolicy.policy_text(rw.spec)
+            lines = [(a, b) for a, b in zip(text.split("\n"), new.split("\n"), strict=True) if a != b]
+            self.assertEqual(len(lines), 1, rw.what)  # (one line of the policy, the one its name says)
+            head = lines[0][0].split("=")[0].split(":")[0].split()
+            where, _, law = rw.what.partition(": ")
+            self.assertIn(law, {**rewrites.SAME, **rewrites.OTHER})
+            self.assertEqual(head[-1], "select" if where.endswith("select rule") else where.split(".")[1], rw.what)
+
+
 class Decisions(unittest.TestCase):
     """tests/decisions.py, which says which parts of a policy decided an answer in difftest's worlds, on worlds made by
     hand (HandAnswers' facts): a part forced the other way that changes some answer decided it there; one that
