@@ -23,7 +23,10 @@ relations and permissions are sets of object ids, computed together as the
 least fixpoint of the policy. It shares only the parser with the compiler.
 
 With --decisions it says at the end which parts of the policy never decided an
-answer in those checks, whose SQL the run never judged (tests/decisions.py).
+answer in those checks, whose SQL the run never judged (tests/decisions.py),
+and a quarter of its changes aim at the parts that haven't yet: a share that
+doesn't count where the reference says it would decide had it counted, a chain
+of links as deep as the part says, a loop of them (Gen.steered).
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ import re
 import subprocess
 import sys
 import time
+from collections import Counter
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar
@@ -46,9 +50,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import compile_policy  # noqa: E402
 from authzlib import evaluate  # noqa: E402
-from authzlib.parse import Caveat, Cols, Policy, Rule, Type  # noqa: E402
+from authzlib.parse import Caveat, Cols, Policy, Rule, Source, Type  # noqa: E402
 from authzlib.sqlutil import q, qt  # noqa: E402  (names as the policy writes them, quoted: capitals, reserved words)
-from decisions import Decisions, allows, scope_items  # noqa: E402
+from decisions import Decisions, Gain, Plan, allows, scope_items  # noqa: E402
 
 # the database's answers, read back as JSON: their shape is what the checks compare
 Answer = Any
@@ -87,7 +91,8 @@ EXPIRED = "now() - interval '1 hour'"
 # A generator gives one in place of one of its draws' live shares, so that its draws, and all it makes, stay the same
 LATER = "now() + interval '1 day'"
 SHARE_COLUMNS = "object_type, object_id, relation, subject_type, subject_id, subject_relation, expires_at, starts_at"
-STEER = 0.25  # of the changes, those aimed at a part of the policy that has decided no answer yet (Gen.steer)
+STEER = 0.25  # of the changes, those aimed at parts of the policy that have decided no answer yet (Gen.steered)
+AIMS = 3  # how many parts one such change aims at, at most
 
 # How many sessions answer a snapshot's questions, side by side (DIFFTEST_SESSIONS=1: one after the other). The
 # questions are the same either way, each user's in one session from first to last: what it saves is the wait.
@@ -344,6 +349,7 @@ class Checker:
         self.ref = Reference(self.pol)
         # with decisions: which parts of the policy decided an answer, over every snapshot (tests/decisions.py)
         self.decisions = Decisions(self.pol, read(policy_path)) if decisions else None
+        gen.ledger = self.decisions
         self.decisions_queries = self.ref.decisions_queries() if decisions else []
         self._nocontext: dict[tuple[str, str, str], set[str]] | None = None
         self._nocontext_all: dict[tuple[str, str, str], set[str]] | None = None
@@ -1030,10 +1036,6 @@ class Checker:
         for u in self.users:
             data = evaluate.Data.of({tuple(k[2:]): v for k, v in snap.items() if k[0] == u and k[1] == "data"})
             state = self.ref.evaluate(data, u, self.links_of(u))
-            # what each one holds anything on, for a change steered toward a share that would decide (Gen.steer)
-            self.gen.holding[u] = {
-                t.name: set().union(*(state[(t.name, p)] for p in t.perms)) for t in self.types.values()
-            }
             if self.decisions is not None:
                 # (the shares that don't count, by why: what --decisions asks besides)
                 shares: dict[tuple[str | int, ...], Answer] = {
@@ -1355,53 +1357,180 @@ class Gen:
 
     def __init__(self, rnd: random.Random) -> None:
         self.r = rnd
-        self.holding: dict[str, dict[str, set[str]]] = {}  # who holds any permission on what (the checker's last)
+        self.ledger: Decisions | None = None  # the decision ledger, whose parts steer() aims at
+        self.aimed: Counter[tuple[str | int, ...]] = Counter()  # how often at each
+
+    def steered(self, ids: Ids) -> str | None:
+        """One change aimed at parts of the policy that have decided no answer yet, a few at once (AIMS), those
+        aimed at least often first; None when there is none, or nothing to do for them. Shares that don't count
+        change no answer, so several go together; of what moves the data about (a chain of links, a loop), one."""
+        if self.ledger is None:
+            return None
+        wanting = self.ledger.wanting()
+        self.r.shuffle(wanting)
+        wanting.sort(key=lambda k: self.aimed[k])
+        out: list[str] = []
+        moved = aims = 0
+        for key in wanting:
+            moves = key[0] not in ("share", "role share")
+            if aims == AIMS or (moves and moved):
+                continue
+            aims, moved = aims + 1, moved + moves
+            self.aimed[key] += 1
+            sql = self.steer(key, ids)
+            if sql:
+                out.append(sql)
+        return "BEGIN;\n" + "\n".join(out) + "\nCOMMIT;" if out else None
+
+    def alone(self, tname: str, rname: str, st: str = "user", sr: str = "") -> str | None:
+        """A share of a relation, to that kind of subject, where it alone changes an answer."""
+        sources = self.ledger.pol.types[tname].relations[rname].sources if self.ledger else []
+        for i, src in enumerate(sources):
+            if src.kind == "shared" and (st, sr or None) in src.subjects:
+                return self.live(("share", "", tname, rname, i, st, sr))
+        return None
+
+    def live(self, key: tuple[str | int, ...]) -> str | None:
+        """The share a share part's key names, one that counts, where it alone changes an answer (Decisions.gain)."""
+        gain = self.ledger.gain(key, self.r) if self.ledger else None
+        return self.share(key, gain, "NULL", "NULL") if gain else None
 
     def steer(self, key: tuple[str | int, ...], ids: Ids) -> str | None:
-        """A change aimed at a part of the policy that has decided no answer yet (the decision ledger's key), or
-        None: here, a share in the state the part names (expired, not started), of its relation, to its kind of
-        subject, on an object there is, and a custom role given so; a generator may know more."""
-        r = self.r
+        """Statements aimed at a part of the policy that has decided no answer yet (the decision ledger's key), or
+        None: here, a share in the state the part names (expired, not started), or a custom role given so, where
+        the reference says it would change an answer had it counted (Decisions.gain); a generator may know more."""
         when = {"expired": (EXPIRED, "NULL"), "not started": ("NULL", LATER)}
-        if key[0] == "share" and key[1] in when:
-            _, why, tname, rname, _, st, sr = key
-            rel = str(rname)
-        elif key[0] == "role share" and key[1] in when:  # (the part is the type's roles, whatever they give)
-            _, why, tname, st, sr = key
-            rel = ""
-        else:
+        if self.ledger is None:
             return None
-        objects = ids.get(str(tname)) or []
-        if not objects:
+        if key[0] in ("depth", "loop"):  # a chain of links that deep, or a loop of them, the only way down
+            plan = self.ledger.plan(key, self.r, lambda k, o, s: self.tie(k, o, s) is not None)
+            if plan:
+                return self.write(plan)
+            idle = self.ledger.idle(key)  # nobody holds anything of it: first a share that gives someone some
+            return self.live(self.r.choice(idle)) if idle else None
+        if key[0] not in ("share", "role share") or key[1] not in when:
             return None
-        st, sr = str(st), str(sr)
-        if st in ("anyone", "link") or sr == "*":
-            if st == "link" and not self.tokens:
-                return None
-            sid = f"encode(sha256(convert_to({lit(r.choice(self.tokens))}, 'UTF8')), 'hex')" if st == "link" else "'*'"
-        elif sr:  # a group's members
-            if not ids.get(st):
-                return None
-            sid = lit(r.choice(ids[st]))
-        else:  # someone who signs in (the users the checks ask as, of that type), where they hold nothing yet
-            people = [u for u in self.users if u and (u.split(":")[0] if ":" in u else "user") == st]
-            if not people:
-                return None
-            outside = [(o, u) for o in objects for u in people if o not in self.holding.get(u, {}).get(str(tname), ())]
-            obj, who = r.choice(outside) if outside else (r.choice(objects), r.choice(people))
-            objects, sid = [obj], lit(who.split(":")[-1])
-        expires, starts = when[str(why)]
-        oid = lit(r.choice(objects))
-        if rel:
+        gain = self.ledger.gain(key, self.r)
+        return self.share(key, gain, *when[str(key[1])]) if gain else None
+
+    # --- links, written as the policy's sources read them --------------------------------------------------
+    # what a row of a link table holds besides its two ends, for the sources whose `where` reads it
+    columns: ClassVar[dict[str, dict[str, str]]] = {}
+
+    def write(self, plan: Plan) -> str | None:
+        """A plan's links taken away and added, as SQL; None if one of them can't be written."""
+        out = [self.untie(k, o) for k, o in plan.cut] + [self.tie(k, o, s) for k, o, s in plan.add]
+        return None if None in out else "\n".join(x for x in out if x)
+
+    def source(self, k: evaluate.PairsKey) -> tuple[Type, Source, Type]:
+        """A source's type, the source, and the type of the subjects it links to."""
+        assert self.ledger is not None
+        types = self.ledger.pol.types
+        return types[k[0]], types[k[0]].relations[k[1]].sources[k[2]], types[k[3]]
+
+    def own(self, k: evaluate.PairsKey) -> bool:
+        """Whether a table source is the subjects' own table: each subject's row names the object it is in."""
+        _, src, st = self.source(k)
+        return src.table == st.table and cols(src.subj_col) == [c for c, _ in st.key]
+
+    def tie(self, k: evaluate.PairsKey, o: str, s: str) -> str | None:
+        """SQL that links object o to subject s through a source: a share, the object's columns, a row of a link
+        table (or the subject's own row, when the table is the subjects'); None if the two can't be linked so: a
+        column that is part of a key would change, or the table's rows count only under a `where` and `columns`
+        doesn't say what passes it."""
+        t, src, st = self.source(k)
+        if src.kind == "shared":
             return (
-                f"INSERT INTO authz.shares ({SHARE_COLUMNS}) VALUES ({lit(tname)}, {oid}, {lit(rel)}, {lit(st)}, "
-                f"{sid}, {lit(sr)}, {expires}, {starts}) ON CONFLICT DO NOTHING;"
+                "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, "
+                f"subject_relation) VALUES ({lit(k[0])}, {lit(o)}, {lit(k[1])}, {lit(k[3])}, {lit(s)}, {lit(k[4])}) "
+                "ON CONFLICT (object_type, object_id, relation, subject_type, subject_id, subject_relation) "
+                "DO UPDATE SET expires_at = NULL, starts_at = NULL, caveat = NULL, caveat_args = NULL;"
             )
-        return (  # one of the type's roles, if it has any
-            f"INSERT INTO authz.shares ({SHARE_COLUMNS}) SELECT {lit(tname)}, {oid}, 'role:' || ro.id, {lit(st)}, "
-            f"{sid}, {lit(sr)}, {expires}, {starts} FROM authz.roles ro WHERE ro.object_type = {lit(tname)} "
-            "ORDER BY random() LIMIT 1 ON CONFLICT DO NOTHING;"
+        kind = {src.type_col: k[3]} if src.type_col else {}
+        if src.kind == "column":
+            row, to = (
+                dict(zip([c for c, _ in t.key], parts(t, o), strict=True)),
+                dict(zip(cols(src.column), parts(st, s), strict=True)),
+            )
+            if any(row.get(c, v) != v for c, v in to.items()):
+                return None
+            new = {**{c: v for c, v in to.items() if c not in row}, **kind}
+            return f"UPDATE {qt(t.table)} SET {given(new, ', ')} WHERE {given(row)};" if new else None
+        table = qt(src.table or "")
+        ends = dict(zip(cols(src.obj_col), parts(t, o), strict=True))
+        there = dict(zip(cols(src.subj_col), parts(st, s), strict=True))
+        if any(ends.get(c, v) != v for c, v in there.items()) or (src.where and src.table not in self.columns):
+            return None  # (two values for one column; a `where` nobody said how to pass)
+        more = self.columns.get(src.table or "", {})
+        if self.own(k):
+            new = {c: v for c, v in ends.items() if c not in there}
+            sets = ", ".join([given(new, ", "), *(f"{q(c)} = {v}" for c, v in more.items())])
+            return f"UPDATE {table} SET {sets} WHERE {given(there)};" if new else None
+        row = {**ends, **there, **kind}
+        names = ", ".join(q(c) for c in [*row, *more])
+        values = ", ".join([*(lit(v) for v in row.values()), *more.values()])
+        return f"DELETE FROM {table} WHERE {given(row)};\nINSERT INTO {table} ({names}) VALUES ({values});"
+
+    def untie(self, k: evaluate.PairsKey, o: str) -> str | None:
+        """SQL that takes away each link of a source on object o."""
+        t, src, st = self.source(k)
+        if src.kind == "shared":
+            return (
+                f"DELETE FROM authz.shares WHERE object_type = {lit(k[0])} AND object_id = {lit(o)} "
+                f"AND relation = {lit(k[1])} AND subject_type = {lit(k[3])} AND subject_relation = {lit(k[4])};"
+            )
+        kind = {src.type_col: k[3]} if src.type_col else {}
+        if src.kind == "column":
+            row = dict(zip([c for c, _ in t.key], parts(t, o), strict=True))
+            gone = [c for c in [*cols(src.column), *kind] if c not in row]
+            sets = ", ".join(f"{q(c)} = NULL" for c in gone)
+            return f"UPDATE {qt(t.table)} SET {sets} WHERE {given({**row, **kind})};" if gone else None
+        table = qt(src.table or "")
+        ends = dict(zip(cols(src.obj_col), parts(t, o), strict=True))
+        if self.own(k):
+            gone = [c for c in ends if c not in [c for c, _ in st.key]]
+            sets = ", ".join(f"{q(c)} = NULL" for c in gone)
+            return f"UPDATE {table} SET {sets} WHERE {given(ends)};" if gone else None
+        return f"DELETE FROM {table} WHERE {given({**ends, **kind})};"
+
+    def share(self, key: tuple[str | int, ...], gain: Gain, expires: str, starts: str, more: str = "NULL, NULL") -> str:
+        """The share a part's key and a gain name (a relation's, or one of the type's roles that gives the gain's
+        permission and whose owner counts there), written in a state: when it expires and starts, its caveat and
+        the caveat's arguments. One that is there already takes that state."""
+        tname, st, sr = lit(key[2]), lit(key[-2]), lit("" if key[-1] == "*" else key[-1])  # (bot:* is to subject '*')
+        state = f"{expires}, {starts}, {more}"
+        to = (
+            "ON CONFLICT (object_type, object_id, relation, subject_type, subject_id, subject_relation) DO UPDATE "
+            "SET expires_at = EXCLUDED.expires_at, starts_at = EXCLUDED.starts_at, caveat = EXCLUDED.caveat, "
+            "caveat_args = EXCLUDED.caveat_args;"
         )
+        head = f"INSERT INTO authz.shares ({SHARE_COLUMNS}, caveat, caveat_args)"
+        if key[0] == "share":
+            return (
+                f"{head} VALUES ({tname}, {lit(gain.object)}, {lit(key[3])}, {st}, {lit(gain.subject)}, {sr}, "
+                f"{state}) {to}"
+            )
+        owner = f" AND ro.owner_id = {lit(gain.owner)}" if gain.owner else ""
+        return (
+            f"{head} SELECT {tname}, {lit(gain.object)}, 'role:' || ro.id, {st}, {lit(gain.subject)}, {sr}, {state} "
+            f"FROM authz.roles ro JOIN authz.role_permissions rp ON rp.role_id = ro.id WHERE ro.object_type = {tname} "
+            f"AND rp.permission = {lit(gain.perm)}{owner} ORDER BY ro.id LIMIT 1 {to}"
+        )
+
+
+def cols(columns: Cols | None) -> list[str]:
+    """A source's column, or its columns for a composite key, as a list."""
+    return [columns] if isinstance(columns, str) else list(columns or ())
+
+
+def parts(t: Type, i: str) -> list[str]:
+    """A row's id as its key columns' values: the id, or for a composite key the fields of the row's text."""
+    return [i] if len(t.key) == 1 else row_of(i)
+
+
+def given(values: dict[str, str], sep: str = " AND ") -> str:
+    """`a = '1' AND b = 'x'`: columns with their values, as a condition (or, joined by commas, as assignments)."""
+    return sep.join(f"{q(c)} = {lit(v)}" for c, v in values.items())
 
 
 def ints(ids: Ids | None, name: str) -> list[int]:
@@ -1703,6 +1832,20 @@ class AltGen(Gen):
         return (
             f"INSERT INTO authz.shares ({SHARE_COLUMNS}) VALUES ({vals}, {expires}, {starts}) ON CONFLICT DO NOTHING;"
         )
+
+    # the parts of an `and` that decide where a share alone gives the permission: a reader's view (blocked or not
+    # then decides), a writer's edit (viewing or not)
+    ALONE: ClassVar[dict[tuple[str, str], str]] = {
+        ("doc.view", "not blocked"): "reader",
+        ("doc.edit", "view"): "writer",
+    }
+
+    def steer(self, key: tuple[str | int, ...], ids: Ids) -> str | None:
+        if self.ledger is not None and key[0] == "expr":
+            part = self.ledger.parts[key]
+            if (part.what, part.text) in self.ALONE:
+                return self.alone("doc", self.ALONE[(part.what, part.text)])
+        return super().steer(key, ids)
 
     def change(self, ids: Ids) -> str:
         r = self.r
@@ -2522,6 +2665,7 @@ def main() -> None:
     started = time.monotonic()
 
     rnd = random.Random(args.seed)
+    sqlseed = random.Random(f"difftest/{args.seed}/sql")
     gen = GENERATORS[args.gen](rnd)
     db = DB(args.db)
     db.recreate()
@@ -2550,10 +2694,12 @@ def main() -> None:
             t.name: [x[0] for x in db.rows(f"SELECT {idsql(t)} FROM {qt(t.table)} ORDER BY 1")]
             for t in checker.types.values()
         }
-        # now and then a change aimed at a part of the policy that has decided no answer yet (with --decisions)
-        wanting = checker.decisions.wanting() if checker.decisions is not None and gen.r.random() < STEER else []
-        sql = (gen.steer(gen.r.choice(wanting), ids) if wanting else None) or gen.change(ids)
-        code, _, err = db.run(sql, check=False)
+        # now and then a change aimed at parts of the policy that have decided no answer yet (with --decisions)
+        sql = (gen.steered(ids) if checker.decisions is not None and gen.r.random() < STEER else None) or gen.change(
+            ids
+        )
+        # (what a change draws with SQL's random() is the seed's too: a run can be made again)
+        code, _, err = db.run(f"SELECT setseed({sqlseed.random():.6f});\n{sql}", check=False)
         if code != 0:
             if any(e in err for e in gen.expected_errors):
                 refused += 1

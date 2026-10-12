@@ -5326,6 +5326,182 @@ class Decisions(unittest.TestCase):
         viewer = t.parts[("source", "folder", "viewer", 0, "team", "member")]
         self.assertEqual((viewer.nevers(), viewer.up), ([], "folder.view on 3 for ann"))
 
+    def test_a_share_where_it_would_decide(self) -> None:
+        import random
+
+        policy = (
+            "type user = app.users\n  self : user = id\n  can manage_roles = self\n"
+            "type team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
+            "type doc = app.docs\n  owner : user = owner_id\n  viewer : user, team#member shared\n"
+            "  roles : user\n  can share = owner\n  can view = owner or viewer\n  can edit = owner or roles\n"
+        )
+        world = (
+            "user: ann, bo\nteam: 1, 2\nteam 2 member user bo\ndoc: 1, 2\ndoc 1 owner user ann\ndoc 2 owner user ann\n"
+        )
+        t = self.watch(policy, [world], ["ann", "bo"])
+        # ann owns both docs: only to bo would a viewer's share give anything, on either
+        for seed in range(8):
+            gain = t.gain(("share", "expired", "doc", "viewer", 0, "user", ""), random.Random(seed))
+            assert gain is not None
+            self.assertEqual((gain.user, gain.subject, gain.perm), ("bo", "bo", ""))
+            self.assertIn(gain.object, ("1", "2"))
+        # to a team: bo's, never the one he isn't in
+        team = t.gain(("share", "not started", "doc", "viewer", 0, "team", "member"), random.Random(1))
+        assert team is not None
+        self.assertEqual((team.user, team.subject), ("bo", "2"))
+        # a custom role: one that gives edit, the permission that names the roles
+        role = t.gain(("role share", "expired", "doc", "user", ""), random.Random(1))
+        assert role is not None
+        self.assertEqual((role.user, role.subject, role.perm, role.owner), ("bo", "bo", "edit", ""))
+        # asked of ann alone, who holds everything already: no share would decide
+        alone = self.watch(policy, [world], ["ann"])
+        self.assertIsNone(alone.gain(("share", "expired", "doc", "viewer", 0, "user", ""), random.Random(1)))
+
+    def test_a_chain_and_a_loop_planned_where_they_would_decide(self) -> None:
+        import random
+
+        world = "user: ann\nfolder: 1, 2, 3, 4, 5\nfolder 2 parent folder 1\nfolder 1 owner user ann\n"
+
+        def anything(k: evaluate.PairsKey, o: str, s: str) -> bool:
+            return True
+
+        t = self.watch(self.FOLDERS, [world], ["ann"])
+        self.assertEqual(t.parts[("depth", 0, 3)].nevers(), ["never decisive"])
+        plan = t.plan(("depth", 0, 3), random.Random(1), anything)
+        assert plan is not None
+        # three links down from a folder ann views with no link followed (1, her own), through folders she holds
+        # nothing on, each cut from whatever it hung by before
+        k = ("folder", "parent", 0, "folder", "")
+        self.assertEqual((plan.user, len(plan.add), plan.add[0][2]), ("ann", 3, "1"))
+        self.assertEqual([s for _, _, s in plan.add[1:]], [o for _, o, _ in plan.add[:2]])
+        self.assertEqual(plan.cut, [(k, o) for _, o, _ in plan.add])
+        self.assertNotIn("2", [o for _, o, _ in plan.add])
+        # written into the data, that depth decides: what the next snapshot sees
+        t.observe(t.planned(t.last["ann"], plan), "ann")
+        self.assertEqual(t.parts[("depth", 0, 3)].down, f"folder.view on {plan.add[2][1]} for ann")
+        # only by links the caller can write: none it can, no plan
+        self.assertIsNone(t.plan(("depth", 0, 3), random.Random(1), lambda k, o, s: False))
+        # a loop: one link down and one back up, where a source that isn't a column can close it
+        linked = self.FOLDERS.replace("= parent_id", "= app.folder_links(folder_id -> parent_id)")
+        tree = self.watch(linked, [world], ["ann"])
+        loop = tree.plan(("loop", 0), random.Random(1), anything)
+        assert loop is not None
+        (_, below, top), (_, back, under) = loop.add
+        self.assertEqual((top, back, under), ("1", "1", below))
+        tree.observe(tree.planned(tree.last["ann"], loop), "ann")
+        self.assertEqual(tree.parts[("loop", 0)].down, f"folder.view on {below} for ann")
+        # ann holding nothing anywhere, there is no top to hang a chain under
+        nobody = self.watch(self.FOLDERS, ["user: ann\nfolder: 1, 2, 3, 4\n"], ["ann"])
+        self.assertIsNone(nobody.plan(("depth", 0, 1), random.Random(1), anything))
+
+    def test_links_written_as_the_sources_read_them(self) -> None:
+        import random
+
+        import difftest
+
+        def made(kind: type[difftest.Gen]) -> difftest.Gen:
+            gen = kind(random.Random(1))
+            gen.ledger = decisions.Decisions(parse_policy(read(os.path.join(ROOT, gen.policy)), gen.policy))
+            return gen
+
+        gen = made(difftest.CompositeGen)
+        # a column pair naming a folder or a project, in a table keyed by two columns, one of them the pair's too
+        parent = ("folder", "parent", 0, "folder", "")
+        here = """WHERE "org_id" = '1' AND "id" = '2'"""
+        self.assertEqual(
+            gen.tie(parent, "(1,2)", "(1,3)"),
+            f"""UPDATE "cx"."folders" SET "parent_id" = '3', "parent_type" = 'folder' {here};""",
+        )
+        self.assertEqual(
+            gen.untie(parent, "(1,2)"),
+            f"""UPDATE "cx"."folders" SET "parent_id" = NULL, "parent_type" = NULL {here} AND "parent_type" = 'folder';""",
+        )
+        # a folder of another org: its key's column would change
+        self.assertIsNone(gen.tie(parent, "(1,2)", "(2,3)"))
+        # a link table
+        links = ("folder", "parent", 1, "folder", "")
+        row = """"org_id" = '1' AND "child_id" = '2'"""
+        self.assertEqual(
+            gen.tie(links, "(1,2)", "(1,3)"),
+            f"""DELETE FROM "cx"."folder_links" WHERE {row} AND "parent_id" = '3';\n"""
+            """INSERT INTO "cx"."folder_links" ("org_id", "child_id", "parent_id") VALUES ('1', '2', '3');""",
+        )
+        self.assertEqual(gen.untie(links, "(1,2)"), f"""DELETE FROM "cx"."folder_links" WHERE {row};""")
+        # the subjects' own table: the team inside names the team it is in
+        teams = ("team", "member", 1, "team", "member")
+        self.assertEqual(
+            gen.tie(teams, '(1,"a b")', "(1,plain)"),
+            """UPDATE "cx"."teams" SET "parent_slug" = 'a b' WHERE "org_id" = '1' AND "slug" = 'plain';""",
+        )
+        self.assertEqual(
+            gen.untie(teams, '(1,"a b")'),
+            """UPDATE "cx"."teams" SET "parent_slug" = NULL WHERE "org_id" = '1' AND "parent_slug" = 'a b';""",
+        )
+        # a share, as it is kept: one that counts, whatever state it was in
+        shared = gen.tie(("team", "member", 2, "team", "member"), '(1,"a b")', "(2,plain)")
+        assert shared is not None
+        self.assertIn("""VALUES ('team', '(1,"a b")', 'member', 'team', '(2,plain)', 'member') ON CONFLICT""", shared)
+        self.assertIn("DO UPDATE SET expires_at = NULL, starts_at = NULL, caveat = NULL", shared)
+        self.assertEqual(
+            gen.untie(("team", "member", 2, "team", "member"), '(1,"a b")'),
+            """DELETE FROM authz.shares WHERE object_type = 'team' AND object_id = '(1,"a b")' AND relation = 'member' """
+            "AND subject_type = 'team' AND subject_relation = 'member';",
+        )
+        # a link table whose rows count under a where: written only where the generator says what passes it
+        cross = made(difftest.CrossGen)
+        over = ("region", "over", 1, "region", "")
+        self.assertIn(
+            """INSERT INTO "cx"."region_links" ("region_id", "parent_id") VALUES ('1', '2');""",
+            str(cross.tie(over, "1", "2")),
+        )
+        with mock.patch.object(difftest.CrossGen, "columns", {}):
+            self.assertIsNone(cross.tie(("project", "inside", 0, "folder", ""), "3", "7"))
+        with mock.patch.object(difftest.CrossGen, "columns", {"cx.placements": {"active": "true"}}):
+            self.assertEqual(
+                cross.tie(("project", "inside", 0, "folder", ""), "3", "7"),
+                """DELETE FROM "cx"."placements" WHERE "project_id" = '3' AND "folder_id" = '7';\n"""
+                """INSERT INTO "cx"."placements" ("project_id", "folder_id", "active") VALUES ('3', '7', true);""",
+            )
+        self.assertEqual(
+            cross.untie(("project", "inside", 0, "folder", ""), "3"),
+            """DELETE FROM "cx"."placements" WHERE "project_id" = '3';""",
+        )
+
+    def test_a_steered_change_aims_at_a_few_parts_the_least_tried_first(self) -> None:
+        import random
+
+        import difftest
+
+        gen = difftest.AltGen(random.Random(1))
+        self.assertIsNone(gen.steered({}))  # (no ledger: nothing to aim at)
+        gen.ledger = decisions.Decisions(parse_policy(read(os.path.join(ROOT, gen.policy)), gen.policy))
+        aimed: list[tuple[str | int, ...]] = []
+
+        def steer(key: tuple[str | int, ...], ids: difftest.Ids) -> str | None:
+            aimed.append(key)
+            return None if key[0] == "loop" else f"-- {len(aimed)}"
+
+        wanting = gen.ledger.wanting()
+        with mock.patch.object(gen, "steer", steer):
+            first = gen.steered({})
+            # three parts at most, of which one alone moves the data about (a depth, a loop, an expression's part)
+            self.assertEqual(len(aimed), difftest.AIMS)
+            self.assertLessEqual(sum(k[0] not in ("share", "role share") for k in aimed), 1)
+            said = sum(k[0] != "loop" for k in aimed)
+            self.assertEqual(
+                first,
+                "BEGIN;\n" + "\n".join(f"-- {n}" for n in range(1, 4) if aimed[n - 1][0] != "loop") + "\nCOMMIT;"
+                if said
+                else None,
+            )
+            # the next ones aim elsewhere, until every part has had its turn
+            for _ in range(len(wanting)):
+                gen.steered({})
+            self.assertEqual(set(aimed), set(wanting))
+            self.assertLessEqual(
+                max(gen.aimed.values()) - min(gen.aimed[k] for k in wanting if k[0] in ("share", "role share")), 1
+            )
+
     def test_what_a_scope_let_through_and_left_out(self) -> None:
         policy = (
             "type user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n  can view = owner\n"
