@@ -7690,16 +7690,70 @@ class Worlds(unittest.TestCase):
 
     a, g = around, genpolicy
 
-    def world(self, seed: int, respell: bool, unqualified: bool = False) -> tuple[genpolicy.Spec, around.World]:
+    def world(
+        self, seed: int, respell: bool, unqualified: bool = False, keytype: str = "bigint", composite: bool = False
+    ) -> tuple[genpolicy.Spec, around.World]:
         """The seed's policy, its first table with one that inherits from it, the next two partitioned."""
-        spec = self.g.make(seed, respell=respell, keytype="bigint", composite=False)
+        spec = self.g.make(seed, respell=respell, keytype=keytype, composite=composite)
         layout = dict(zip((o.name for o in spec.objs), ("inherits", "range", "hash"), strict=False))
         return spec, self.a.World(seed, layout=layout, unqualified=unqualified)
 
     def test_each_run_has_a_world_named_as_an_apps_own(self) -> None:
-        # (main() asks genpolicy for the seed's own names: its first four seeds, what every run checks)
-        self.assertIn("genpolicy.make(seed, keytype=", read(os.path.join(ROOT, "tests", "around.py")))
+        # (main() asks genpolicy for the seed's own names and keys: its first four seeds, what every run checks)
+        self.assertIn("genpolicy.make(seed), seed)", read(os.path.join(ROOT, "tests", "around.py")))
         self.assertTrue(any(self.g.make(seed).spelling.awkward for seed in range(1, 5)))
+
+    def test_the_worlds_draw_each_key_and_each_database(self) -> None:
+        """Every run's four seeds meet a key that isn't bigint, a key of two columns and a database with a locale
+        of its own; the full run's sixteen each key type, and each of DATABASES."""
+
+        def drawn(seeds: range) -> tuple[set[str], set[str]]:
+            specs = [self.g.make(seed) for seed in seeds]
+            keys = {"two columns" if x.spelling.composite else x.spelling.keytype for x in specs}
+            return keys, {self.a.draw(x.seed, x).database for x in specs}
+
+        keys, databases = drawn(range(1, 5))
+        self.assertLess({"two columns"}, keys)
+        self.assertGreater(len(databases), 1)
+        keys, databases = drawn(range(1, 17))
+        self.assertEqual(keys, {*self.g.KEYS, "two columns"})
+        self.assertEqual(databases, {"", *self.a.DATABASES})
+        # what a seed's world drew before the database was drawn is as it was
+        w = self.a.draw(7, self.g.make(7))
+        self.assertEqual((w.session, w.layout), ("member", {"t1": "range", "t2": "hash", "t3": "hash"}))
+
+    def test_partitions_and_followers_by_each_key(self) -> None:
+        """A table partitioned by range is cut by its key's own type, a key moved past the cut stays one genpolicy
+        reads, and a link table follows both columns of a key of two."""
+        cuts = {k: self.a.cut(self.g.Spelling(keytype=k)) for k in self.g.KEYS}
+        self.assertEqual(cuts["bigint"], ("5", "1000000", "2000000"))
+        self.assertEqual(cuts["int"], cuts["bigint"])
+        self.assertEqual(cuts["text"], ("'5'", "'9999'", "'99999999'"))
+        self.assertEqual(cuts["uuid"][:2], (f"'{self.g.UUID.format(5)}'", f"'{self.g.UUID.format(1000000)}'"))
+        self.assertEqual(self.a.raised(self.g.Spelling(True, "text")), "'9999' || \"Id\"")
+        self.assertEqual(self.a.raised(self.g.Spelling()), "id + 1000000")
+        self.assertIn("right(id::text, 12)::bigint + 1000000", self.a.raised(self.g.Spelling(keytype="uuid")))
+        for keytype in ("text", "uuid", "int"):
+            spec, w = self.world(3, False, keytype=keytype)
+            sql = self.a.schema_text(spec, w)
+            self.assertIn(f"CREATE TABLE around_scratch.t1 (id {keytype}, b2 boolean);", sql)
+            self.assertIn(f"FOR VALUES FROM (MINVALUE) TO ({cuts[keytype][0]});", sql)
+        met = 0
+        for seed in range(1, 13):
+            spec, w = self.world(seed, True, composite=True)
+            sql = self.a.schema_text(spec, w)
+            self.assertNotIn('REFERENCES "Gp"."select" ', sql, seed)
+            if len(spec.objs) > 2:
+                self.assertIn(') PARTITION BY HASH ("OrgId", "Id");', sql, seed)
+            for rel in (rel.name for rel in spec.objs[0].rels if rel.kind == "table"):
+                met += 1
+                self.assertIn(
+                    f'UPDATE "Gp"."Link_t1_{rel}" SET ("OrgId", "Obj") = (NEW."OrgId", NEW."Id") '
+                    'WHERE ("OrgId", "Obj") = (OLD."OrgId", OLD."Id"); RETURN NEW;',
+                    sql,
+                )
+                self.assertIn('AFTER UPDATE OF "OrgId", "Id" ON "Gp"."Link_t1_old" FOR EACH ROW', sql)
+        self.assertGreater(met, 3)
 
     def test_the_tables_under_a_table_are_named_as_the_policys(self) -> None:
         for seed in range(1, 13):
@@ -7742,16 +7796,24 @@ class Worlds(unittest.TestCase):
         self.assertGreater(met, 6)
 
     def test_half_the_first_rows_are_stored_under_a_table_with_one_that_inherits(self) -> None:
+        import random
+
         for respell in (False, True):
             spec, w = self.world(3, respell)
             n = spec.spelling
-            import random
-
             gen = self.g.gen_class(spec, "p.authz", "s.sql")(random.Random(3))
             rows = [x for x in self.a.initial(gen, w).splitlines() if "_old" in x]
             self.assertEqual(len(rows), self.g.ROWS // 2, rows)
             for row in rows:
                 self.assertRegex(row, rf"^INSERT INTO {re.escape(n.table('t1_old'))} \(.*\) VALUES \([246], ")
+        # by the key's own writing: a uuid's last digits, the second column of a key of two
+        for keytype, composite, even in (("uuid", False, r"'[0-9-]+[246]', "), ("bigint", True, r"[12], [246], ")):
+            spec, w = self.world(3, False, keytype=keytype, composite=composite)
+            gen = self.g.gen_class(spec, "p.authz", "s.sql")(random.Random(3))
+            rows = [x for x in self.a.initial(gen, w).splitlines() if "_old" in x]
+            self.assertEqual(len(rows), self.g.ROWS // 2, rows)
+            for row in rows:
+                self.assertRegex(row, rf"^INSERT INTO gp\.t1_old \(.*\) VALUES \({even}")
 
     def test_conditions_without_the_schema(self) -> None:
         """Where the world's conditions leave the schema to the search path, they still name the seed's table."""

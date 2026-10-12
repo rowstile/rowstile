@@ -48,8 +48,9 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   files, one including the other.
 - **Random worlds**: the two above compare answers in one setting: plain tables, and the owner's session
   switched to the app role. [`tests/around.py`](../core/tests/around.py) takes the random policies again and
-  draws what is around each one too, under the names the policy drew (the awkward ones as well): tables that
-  are partitioned, or have a table that inherits from them;
+  draws what is around each one too, under the names and with the keys the policy drew (the awkward names,
+  `uuid` and `text` keys, keys of two columns): tables that are partitioned, or have a table that inherits
+  from them; a database in the C locale, in LATIN1, or in Turkish, where `lower('I')` is not `i`;
   default privileges of the owner's; a login role that is a member of the app role and signs each user in;
   planner settings, a read-only transaction, a search path that starts with a schema of decoys; and, halfway,
   something changed behind the policy's back (a grant on rowstile's own tables, row-level security turned
