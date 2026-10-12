@@ -25,11 +25,14 @@ policy for that seed and draws a world for it:
                 schema, which the database's search path supplies; a schema on that path that others may create in
   the session   who connects: the owner switched to the app role (as the other suites do), a login role that is
                 a member of the app role, or one that has to SET ROLE to it; the last two sign each user in with
-                authz.act_as(). Each sets the user's request context (authz_ctx.*), which caveats read.
-                Settings of the app's transaction that must change no answer: planner switches, read-only, how
-                dates, numbers and identifiers are written (DateStyle, TimeZone, lc_*), a search path that
-                starts with a schema of decoys (a table, a function and an operator named as the policy's, a
-                now() of its own)
+                authz.act_as(). Or, in half the worlds, with what the user sent: their API key
+                (authz.login_key) or a JWT (authz.login_jwt), which sign in only someone who is an active row
+                now; the one the checks ask again with a scope is then asked by a key, or a JWT, limited to it.
+                Each sets the user's request context (authz_ctx.*), which caveats read.
+                Settings of the app's transaction that must change no answer, set before signing in as a
+                connection that has them from its start: planner switches, read-only, how dates, numbers and
+                identifiers are written (DateStyle, TimeZone, lc_*), a search path that starts with a schema
+                of decoys (a table, a function and an operator named as the policy's, a now() of its own)
   later         a third of the way, in some worlds, a user's row goes: deleted, or given another key (which, in
                 a table partitioned by range, puts it in another partition). Halfway, something changes behind
                 the policy's back: a grant on rowstile's own objects, row-level security turned off, a table
@@ -47,7 +50,9 @@ and checks, after each random change to the data:
     one, read and written directly
   - no share is left on a row that is gone or whose key changed, nor to the user whose row went
   - a role the policy doesn't name gets no row of a governed table, whatever it was granted there, and a
-    member of the app role that didn't sign in gets an error (28000) or nothing, never a row
+    member of the app role that didn't sign in gets an error (28000) or nothing, never a row; nor one whose
+    token was refused (an API key that expired, was revoked or was never made; a JWT that expired, is signed
+    with another secret, or says it needs no signature)
   - the privileges on authz, authz_gen and authz_int are the ones a database with no world around it has
   - what changed behind the policy's back: authz.lint() reports it, and `rowstile apply` puts it right (or
     refuses, AZ612, for the schema others may create in) and then answers `unchanged`
@@ -60,7 +65,10 @@ fails with them too).
 from __future__ import annotations
 
 import argparse
+import base64
 import dataclasses
+import hashlib
+import hmac
 import json
 import os
 import random
@@ -88,6 +96,8 @@ OPEN = "around_open"  # a schema on that path, which someone else may create in
 NEW = "around_new"  # where the rows an insert is tried with wait: copies of rows there are, under keys of their own
 FIRST_NEW = 500000  # those keys start here, ten apart (a condition that reads the next row finds none)
 INSERTS = 6  # how many rows of each table an insert is tried with
+SECRET = "around.py's secret, which signs its JWTs"  # authz.settings' jwt_secret, in a world's database
+TYPE_CLAIM = "kind"  # ... and its jwt_type_claim: what a token for a service says
 TOP = 1000000  # range partitions end here: ids never get that far, a partition made later starts here
 
 LAYOUTS = ["plain", "plain", "hash", "range", "inherits", "inherits"]
@@ -168,6 +178,9 @@ class World:
     decoys: bool = False  # the app's transaction searches the decoys' schema first
     drift: list[str] = field(default_factory=list)  # what changes behind the policy's back, halfway
     gone: str = ""  # a user's row, a third of the way: deleted | rekeyed ('': it stays)
+    # how the app says who is asking: '' (authz.act_as, or the owner's session setting it), or with what the
+    # user sent, an 'api key' (authz.login_key) or a 'jwt' (authz.login_jwt)
+    signs: str = ""
 
     def describe(self) -> str:
         parts = [f"{t} {how}" for t, how in self.layout.items() if how != "plain"]
@@ -175,7 +188,7 @@ class World:
         parts += self.defaults
         parts += ["conditions without the schema"] if self.unqualified else []
         parts += [f"{self.open_to} may create in a schema of the path"] if self.open_to else []
-        parts += [f"session: {self.session}"]
+        parts += [f"session: {self.session}" + (f", signing in with each user's {self.signs}" if self.signs else "")]
         parts += [f"{k} = {v}" for k, v in self.settings]
         parts += ["read-only reads"] if self.read_only else []
         parts += ["decoys first on the search path"] if self.decoys else []
@@ -217,6 +230,7 @@ def draw(seed: int, spec: Spec) -> World:
     x = random.Random(f"around/{seed}/tables")  # the other tables' layout, drawn apart too
     w.layout.update({t: x.choice(LAYOUTS) for t in others(spec)})
     w.gone = x.choice(["", "", "deleted", "rekeyed"])
+    w.signs = ("", "api key", "", "jwt")[seed % 4]  # in turn: any four seeds in a row meet each
     return w
 
 
@@ -233,6 +247,7 @@ def plainer(w: World) -> list[World]:
     for i in range(len(w.drift)):
         out.append(dataclasses.replace(w, drift=w.drift[:i] + w.drift[i + 1 :]))
     out += [dataclasses.replace(w, gone="")] if w.gone else []
+    out += [dataclasses.replace(w, signs="")] if w.signs else []
     out += [dataclasses.replace(w, database="")] if w.database else []
     out += [dataclasses.replace(w, unqualified=False)] if w.unqualified else []
     out += [dataclasses.replace(w, open_to="")] if w.open_to else []
@@ -533,29 +548,88 @@ def login(w: World) -> str | None:
     return {"owner": None, "member": MEMBER, "set role": SETROLE}[w.session]
 
 
-def transaction(w: World, u: str, checker: AroundChecker, body: list[str], reads: bool) -> str:
-    """One transaction of the app's, signed in as u, with the world's settings, running body."""
+def api_key(u: str, scope: str = "", what: str = "") -> str:
+    """The API key of whoever signs in as u, limited to scope ('': to nothing); what: another of theirs (one that
+    expired, one revoked, one never made)."""
+    return "ak_around_" + hashlib.sha256(f"{u}/{scope}/{what}".encode()).hexdigest()[:40]
+
+
+def jwt(kind: str, pid: str, scope: str = "", secret: str = SECRET, lasts: int = 3600, alg: str = "HS256") -> str:
+    """A JWT for a principal, as an identity provider that holds the secret signs it (lasts: seconds from now)."""
+
+    def b64(raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    claims: dict[str, str | int] = {"sub": pid, "exp": int(time.time()) + lasts}
+    claims |= {TYPE_CLAIM: kind} if kind != "user" else {}
+    claims |= {"scope": scope} if scope else {}
+    signed = f"{b64(json.dumps({'alg': alg, 'typ': 'JWT'}).encode())}.{b64(json.dumps(claims).encode())}"
+    return f"{signed}.{b64(hmac.new(secret.encode(), signed.encode(), hashlib.sha256).digest())}"
+
+
+def tokens_sql(checker: AroundChecker) -> str:
+    """What signing in by token needs, written as the owner: for whoever the checks sign in, an API key, and one
+    limited to each scope (a hash each, as authz.create_api_key keeps them: that function makes a key only for
+    someone signed in, and the checks' users come and go); for the first user, one that expired and one revoked;
+    and the secret JWTs are signed with."""
+    keys = []
+    for u in checker.users:
+        kind, pid = evaluate.principal_of(u, checker.types)
+        for scope in ["", *sorted({"read", *checker.pol.scopes})] if pid else []:  # (`read` is built in)
+            keys.append((kind, pid, api_key(u, scope), scope, "NULL", "NULL"))
+    kind, pid = evaluate.principal_of(checker.users[0], checker.types)
+    keys.append((kind, pid, api_key(checker.users[0], what="expired"), "", "now() - interval '1 hour'", "NULL"))
+    keys.append((kind, pid, api_key(checker.users[0], what="revoked"), "", "NULL", "now()"))
+    rows = [
+        f"({lit(pid)}, {lit(kind)}, 'around', {lit(key[:10])}, encode(sha256(convert_to({lit(key)}, 'UTF8')), 'hex'), "
+        f"{lit(scope)}, {expires}, {revoked})"
+        for kind, pid, key, scope, expires, revoked in keys
+    ]
+    return (
+        "INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash, scopes, expires_at, revoked_at) "
+        f"VALUES {', '.join(rows)};\n"
+        f"INSERT INTO authz.settings (key, value) VALUES ('jwt_secret', {lit(SECRET)}), "
+        f"('jwt_type_claim', {lit(TYPE_CLAIM)});"
+    )
+
+
+def transaction(w: World, u: str, checker: AroundChecker, body: list[str], reads: bool, scope: str = "") -> str:
+    """One transaction of the app's, signed in as u, with the world's settings, running body. The settings and
+    the search path first, as a connection that has them from its start: signing in runs under them too. Where
+    the world signs in by token (scope: with one limited to it), the token is tried first: around.login says
+    'ok' or the refusal's words, and after a refusal the user is signed in as in the other worlds, so that the
+    questions are still asked (login_problems judges which it had to be)."""
     kind, pid = evaluate.principal_of(u, checker.types)
     level = next((v for k, v in w.settings if k == "default_transaction_isolation"), "read committed")
     lines = [f"BEGIN ISOLATION LEVEL {level.upper()};"]
-    if w.session == "owner":
-        # the owner's session says who is signed in by setting it, and is believed
-        lines += [
-            f"SET LOCAL authz.user_id = {lit(pid)};",
-            f"SET LOCAL authz.principal_type = {lit('' if kind == 'user' else kind)};",
-            f"SET LOCAL ROLE {checker.role};",
-        ]
-    else:
-        if w.session == "set role":
-            lines.append(f"SET LOCAL ROLE {checker.role};")
-        who = f"{lit(kind)}, {lit(pid)}" if pid else "NULL, NULL"
-        lines.append(f"DO $$ BEGIN PERFORM authz.act_as({who}); END $$;")
     lines += [f"SET LOCAL {k} = {lit(v)};" for k, v in w.settings if k != "default_transaction_isolation"]
-    lines += [f"SET LOCAL authz_ctx.{k} = {lit(v)};" for k, v in checker.context(u).items()]  # caveats read it
     if w.decoys:
         lines.append(f"SET LOCAL search_path = {SCRATCH}, pg_catalog, {checker.spec.spelling.sql(SCHEMA)}, public;")
     if w.read_only and reads:
         lines.append("SET TRANSACTION READ ONLY;")
+    if w.session == "owner":
+        # the owner's session says who is signed in by setting it, and is believed
+        by_hand = [
+            f"PERFORM set_config('authz.user_id', {lit(pid)}, true);",
+            f"PERFORM set_config('authz.principal_type', {lit('' if kind == 'user' else kind)}, true);",
+        ]
+    else:
+        if w.session == "set role":
+            lines.append(f"SET LOCAL ROLE {checker.role};")
+        by_hand = [f"PERFORM authz.act_as({f'{lit(kind)}, {lit(pid)}' if pid else 'NULL, NULL'});"]
+    if w.signs and pid:
+        token = api_key(u, scope) if w.signs == "api key" else jwt(kind, pid, scope)
+        call = f"authz.login_{'key' if w.signs == 'api key' else 'jwt'}({lit(token)})"
+        lines.append(
+            f"DO $$ BEGIN\n  PERFORM {call};\n  PERFORM set_config('around.login', 'ok', true);\n"
+            "EXCEPTION WHEN invalid_authorization_specification THEN\n"
+            f"  PERFORM set_config('around.login', SQLERRM, true);\n  {' '.join(by_hand)}\nEND $$;"
+        )
+    else:
+        lines.append(f"DO $$ BEGIN {' '.join(by_hand)} PERFORM set_config('around.login', '', true); END $$;")
+    if w.session == "owner":
+        lines.append(f"SET LOCAL ROLE {checker.role};")
+    lines += [f"SET LOCAL authz_ctx.{k} = {lit(v)};" for k, v in checker.context(u).items()]  # caveats read it
     return "\n".join([*lines, *body, "COMMIT;"])
 
 
@@ -578,6 +652,7 @@ class AroundChecker(Checker):
     since: int = 2**62  # a transaction id from before the last change (none yet)
     excused: set[str]  # shares the changes wrote on rows they had removed (share_problems)
     spec: Spec  # the policy (its `shared if`s)
+    last: Snapshot  # the last snapshot (login_problems reads it)
 
     def snapshot(self) -> Snapshot:
         snap = super().snapshot()  # (it makes difftest_app's functions too, which the questions below call)
@@ -606,9 +681,61 @@ class AroundChecker(Checker):
                 body.append(emit([u, "rls", table], f"SELECT coalesce(json_agg({idsql(t)}), '[]') FROM {qt(table)}"))
             for key, fn in self.as_app_keys():
                 body.append(emit([u, *key], f"SELECT {fn}()"))
+            body.append(emit([u, "login"], "SELECT to_json(current_setting('around.login'))"))
             script.append(transaction(self.world, u, self, body, reads=True))
+        # where the world signs in by token: the one difftest asked again with a scope (by setting it, in the
+        # owner's session) is asked by a token limited to that scope, and these answers are the ones judged
+        u, scope = self.scoped
+        kind, pid = evaluate.principal_of(u, self.types)
+        if self.world.signs and pid in snap[(u, "data", "valid", kind)]:
+            body = []
+            for t in self.types.values():
+                for p in t.perms:
+                    body.append(
+                        emit(
+                            ["scoped", "list", t.name, p],
+                            f"SELECT coalesce(json_agg(x ORDER BY x), '[]') FROM authz.list({lit(t.name)}, {lit(p)}) x",
+                        )
+                    )
+                    ids = ", ".join(lit(i) for i, _ in snap[("scoped", "can", t.name, p)])
+                    body.append(
+                        emit(
+                            ["scoped", "can", t.name, p],
+                            f"SELECT coalesce(json_agg(json_build_array(i, authz.can({lit(t.name)}, i, {lit(p)}))), '[]') "
+                            f"FROM unnest(ARRAY[{ids}]::text[]) i",
+                        )
+                    )
+            body.append(emit(["scoped", "login"], "SELECT to_json(current_setting('around.login'))"))
+            script.append(transaction(self.world, u, self, body, reads=True, scope=scope))
         snap.update(answers(self.db, self.world, "\n".join(script)))
+        self.last = snap
         return snap
+
+    def check(self) -> list[str]:
+        return super().check() + login_problems(self)
+
+
+# what a login says when it refuses: a key (unknown, expired, revoked, or of someone who is no active row now),
+# a token that names no active user
+REFUSALS = {"api key": ("invalid API key",), "jwt": ("the token names no active user",)}
+
+
+def login_problems(checker: AroundChecker) -> list[str]:
+    """Where the world signs in by token: a key or a JWT of someone who is a row now (one that passes its type's
+    where) signs them in, anyone else's is refused, by the login's own words."""
+    w, snap = checker.world, checker.last
+    problems = []
+    for u in checker.users if w.signs else []:
+        kind, pid = evaluate.principal_of(u, checker.types)
+        if not pid:
+            continue
+        outcome, there = snap[(u, "login")], pid in snap[(u, "data", "valid", kind)]
+        if (outcome == "ok") != there or (not there and outcome not in REFUSALS[w.signs]):
+            want = "it signs them in" if there else f"a refusal ({' or '.join(REFUSALS[w.signs])})"
+            problems.append(f"user {u} signs in with their {w.signs}: {outcome!r}, expected {want}")
+    if ("scoped", "login") in snap and snap[("scoped", "login")] != "ok":
+        problems.append(f"user {checker.scoped[0]} with a {w.signs} limited to a scope: {snap[('scoped', 'login')]!r}")
+    return problems
 
 
 # ----------------------------------------------------------------------
@@ -948,7 +1075,31 @@ def unsigned_problems(checker: AroundChecker) -> list[str]:
                 last = out.strip().splitlines()[-1] if out.strip() else err.strip()
                 if code != 0 or not (last.startswith("28000 ") or last == "rows 0"):
                     problems.append(f"{role}, {what}, reads {table}: {last}")
+            # a token that signs nobody in: the login refuses (28000), and the read after it is as nobody's
+            for what, call in bad_tokens(checker).items():
+                tried_login = f"SELECT pg_temp.around_try({lit(f'SELECT {call}')})"
+                code, out, err = psql(db, role, f"{first}{TRY}\nBEGIN;\n{tried_login};\n{read};\nCOMMIT;")
+                lines = out.strip().splitlines()
+                if code != 0 or len(lines) != 2 or not lines[0].startswith("28000 "):
+                    problems.append(f"{role} signs in with {what}: {(lines or [err.strip()])[0]}")
+                elif not (lines[1].startswith("28000 ") or lines[1] == "rows 0"):
+                    problems.append(f"{role}, after signing in with {what} was refused, reads {table}: {lines[1]}")
     return problems
+
+
+def bad_tokens(checker: AroundChecker) -> dict[str, str]:
+    """Logins that must refuse, for the first user: (what the token is, the call)."""
+    u = checker.users[0]
+    kind, pid = evaluate.principal_of(u, checker.types)
+    unsigned = jwt(kind, pid, alg="none").rsplit(".", 1)[0] + "."
+    return {
+        "an API key that expired": f"authz.login_key({lit(api_key(u, what='expired'))})",
+        "an API key that was revoked": f"authz.login_key({lit(api_key(u, what='revoked'))})",
+        "an API key nobody made": f"authz.login_key({lit(api_key(u, what='never made'))})",
+        "a JWT signed with another secret": f"authz.login_jwt({lit(jwt(kind, pid, secret='another secret'))})",
+        "a JWT that expired": f"authz.login_jwt({lit(jwt(kind, pid, lasts=-60))})",
+        "a JWT that says it needs no signature": f"authz.login_jwt({lit(unsigned)})",
+    }
 
 
 # ----------------------------------------------------------------------
@@ -1144,6 +1295,7 @@ def run(spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, sec
     problems += privilege_problems(db, plain, "after the first apply")
     checker = AroundChecker(db, policy_path, gen)
     checker.world, checker.excused, checker.spec = w, set(), spec
+    db.run(tokens_sql(checker))
     problems += stranger_problems(checker) + unsigned_problems(checker)
     if problems:
         return ["before any change:", *problems[:12]]

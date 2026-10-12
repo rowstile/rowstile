@@ -52,7 +52,8 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   `uuid` and `text` keys, keys of two columns): tables that are partitioned, or have a table that inherits
   from them (the governed tables, the users' table, the link tables); a database in the C locale, in LATIN1,
   or in Turkish, where `lower('I')` is not `i`;
-  default privileges of the owner's; a login role that is a member of the app role and signs each user in;
+  default privileges of the owner's; a login role that is a member of the app role and signs each user in,
+  with `authz.act_as` or with the user's own API key or JWT (limited to a scope, for the one asked with a scope);
   planner settings, a read-only transaction, a search path that starts with a schema of decoys; and, halfway,
   something changed behind the policy's back (a grant on rowstile's own tables, row-level security turned
   off, a new partition). <!-- checked: tests/around.py "class World"; tests/around.py "read-only reads" --> Besides the comparisons above, asked in that session, it tries real writes as the
