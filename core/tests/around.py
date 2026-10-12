@@ -57,6 +57,11 @@ and checks, after each random change to the data:
   - what changed behind the policy's back: authz.lint() reports it, and `rowstile apply` puts it right (or
     refuses, AZ612, for the schema others may create in) and then answers `unchanged`
 
+With --pairs POOL, the seeds are chosen from 1..POOL instead (covering()): a few, in whose worlds every two
+FEATURES that meet in some world of the pool meet (a table's layout by whose table it is, a setting by its kind;
+ONE_OF: what a world has one of); it says the pairs no world there has, and at the end which pairs were in a world
+whose checks passed. With --share K/N, only the Kth of every N seeds: N runs at once on one server, each with a
+--db of its own (its login roles are named after it), check them all.
 A failing seed is printed with its world and its policy; --only SEED runs it again. Then the world is made
 plainer, one thing at a time, while it still fails (its names and keys last: plain names and bigint keys, if it
 fails with them too).
@@ -76,7 +81,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from itertools import combinations
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -88,6 +95,7 @@ from authzlib.sqlutil import qt  # noqa: E402
 from difftest import DB, Checker, Snapshot, idsql, lit  # noqa: E402
 from genpolicy import SCHEMA, Refused, Slow, Spec, Spelling  # noqa: E402
 
+# The login roles of a run, named after its database (name_roles(): these are --db authz_around's)
 MEMBER = "authz_around_member"  # logs in, a member of app_user
 SETROLE = "authz_around_setrole"  # logs in, a member that doesn't inherit: it has to SET ROLE app_user
 OUTSIDER = "authz_around_outsider"  # logs in, nothing to do with the policy
@@ -96,20 +104,50 @@ OPEN = "around_open"  # a schema on that path, which someone else may create in
 NEW = "around_new"  # where the rows an insert is tried with wait: copies of rows there are, under keys of their own
 FIRST_NEW = 500000  # those keys start here, ten apart (a condition that reads the next row finds none)
 INSERTS = 6  # how many rows of each table an insert is tried with
+SLOW = "view definitions to plan"  # in the compiled policy: lint's warning that a select rule is slow to plan
 SECRET = "around.py's secret, which signs its JWTs"  # authz.settings' jwt_secret, in a world's database
 TYPE_CLAIM = "kind"  # ... and its jwt_type_claim: what a token for a service says
 TOP = 1000000  # range partitions end here: ids never get that far, a partition made later starts here
 
 LAYOUTS = ["plain", "plain", "hash", "range", "inherits", "inherits"]
-DEFAULTS = [
-    "ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO app_user",
-    "ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC",
-    f"ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO {OUTSIDER}",
-    f"ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO {OUTSIDER}",
-    "ALTER DEFAULT PRIVILEGES GRANT ALL ON SCHEMAS TO app_user",
-    "ALTER DEFAULT PRIVILEGES GRANT USAGE ON SCHEMAS TO PUBLIC",
-    "ALTER DEFAULT PRIVILEGES GRANT ALL ON SEQUENCES TO PUBLIC",
-]
+
+
+def default_privileges(outsider: str) -> list[str]:
+    """What the owner's default privileges may give, before the policy is applied."""
+    return [
+        "ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO app_user",
+        "ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC",
+        f"ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO {outsider}",
+        f"ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO {outsider}",
+        "ALTER DEFAULT PRIVILEGES GRANT ALL ON SCHEMAS TO app_user",
+        "ALTER DEFAULT PRIVILEGES GRANT USAGE ON SCHEMAS TO PUBLIC",
+        "ALTER DEFAULT PRIVILEGES GRANT ALL ON SEQUENCES TO PUBLIC",
+    ]
+
+
+def grants(outsider: str) -> list[str]:
+    """Grants made behind the policy's back, on what is rowstile's own."""
+    return [
+        "GRANT SELECT ON ALL TABLES IN SCHEMA authz_int TO app_user",
+        f"GRANT USAGE ON SCHEMA authz_int TO {outsider}",
+        "GRANT ALL ON authz.shares TO PUBLIC",
+        f"GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz TO {outsider}",
+        "GRANT UPDATE ON authz.settings TO app_user",
+        "GRANT CREATE ON SCHEMA authz_gen TO app_user",
+    ]
+
+
+DEFAULTS, GRANTS = default_privileges(OUTSIDER), grants(OUTSIDER)
+
+
+def name_roles(db: str) -> None:
+    """This run's login roles, named after its database: two runs side by side on one server (run_tests.sh's
+    lanes, each with a share of the seeds) have none in common, and one's end doesn't drop the other's."""
+    global MEMBER, SETROLE, OUTSIDER, DEFAULTS, GRANTS
+    MEMBER, SETROLE, OUTSIDER = f"{db}_member", f"{db}_setrole", f"{db}_outsider"
+    DEFAULTS, GRANTS = default_privileges(OUTSIDER), grants(OUTSIDER)
+
+
 # settings of the app's transaction: none may change an answer
 SETTINGS = [
     ("enable_hashjoin", "off"),
@@ -148,15 +186,6 @@ DATABASES = {
     "latin1": ["--locale=C", "--encoding=LATIN1"],
     "turkish": ["--locale=C", "--encoding=UTF8", "--locale-provider=icu", "--icu-locale=tr-TR"],
 }
-# grants made behind the policy's back, on what is rowstile's own
-GRANTS = [
-    "GRANT SELECT ON ALL TABLES IN SCHEMA authz_int TO app_user",
-    f"GRANT USAGE ON SCHEMA authz_int TO {OUTSIDER}",
-    "GRANT ALL ON authz.shares TO PUBLIC",
-    f"GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz TO {OUTSIDER}",
-    "GRANT UPDATE ON authz.settings TO app_user",
-    "GRANT CREATE ON SCHEMA authz_gen TO app_user",
-]
 DRIFTS = ["grant", "rls off", "child", "creator"]
 
 
@@ -231,7 +260,119 @@ def draw(seed: int, spec: Spec) -> World:
     w.layout.update({t: x.choice(LAYOUTS) for t in others(spec)})
     w.gone = x.choice(["", "", "deleted", "rekeyed"])
     w.signs = ("", "api key", "", "jwt")[seed % 4]  # in turn: any four seeds in a row meet each
+    # (one setting in twenty-eight is rarely drawn, and it is the only one of its kind: one world in five has it)
+    level = ("default_transaction_isolation", "repeatable read")
+    if level not in w.settings and random.Random(f"around/{seed}/isolation").random() < 0.2:
+        w.settings.append(level)
     return w
+
+
+# What a world may have, for --pairs: every two of these that can meet do meet in one of the worlds it chooses. A
+# setting counts by its kind (twenty-eight settings would make the pairs of one with another most of the count),
+# a table's layout by whose table it is. A new dimension of the worlds gets its lines in features() and FEATURES.
+PLANNER = ("from_collapse_limit", "join_collapse_limit", "plan_cache_mode", "work_mem")
+READING = ("quote_all_identifiers", "transform_null_equals", "standard_conforming_strings")
+# what a world has one of: two features of the same kind never meet
+ONE_OF = ("keys", "database", "session", "signing in", "a user's row")
+FEATURES = [
+    "names: awkward",
+    *[f"keys: {k}" for k in ("int", "text", "uuid", "two columns")],
+    *[f"database: {d}" for d in DATABASES],
+    *[f"session: {x}" for x in ("owner", "member", "set role")],
+    *[f"signing in: {x}" for x in ("api key", "jwt")],
+    *[f"a user's row: {x}" for x in ("deleted", "rekeyed")],
+    *[
+        f"{t}: {how}"
+        for t in ("a table of who signs in", "a governed table", "a link table")
+        for how in ("hash", "range", "inherits")
+    ],
+    "default privileges",
+    "conditions without the schema",
+    "a schema of the path others may create in",
+    *["settings: the planner's", "settings: how values are written", "settings: how SQL is read"],
+    "repeatable read",
+    "read-only reads",
+    "decoys first on the search path",
+    *[f"later: {d}" for d in DRIFTS],
+]
+
+
+def features(spec: Spec, w: World) -> set[str]:
+    """What this world has, of FEATURES."""
+    n, links = spec.spelling, link_tables(spec)
+    out = {"names: awkward"} if n.awkward else set()
+    out |= {"keys: two columns"} if n.composite else {f"keys: {n.keytype}"} if n.keytype != "bigint" else set()
+    out |= {f"database: {w.database}"} if w.database else set()
+    out |= {f"session: {w.session}"}
+    out |= {f"signing in: {w.signs}"} if w.signs else set()
+    out |= {f"a user's row: {w.gone}"} if w.gone else set()
+    whose = dict.fromkeys(("users", "bots"), "a table of who signs in")
+    out |= {
+        f"{whose.get(t, 'a link table' if t in links else 'a governed table')}: {how}"
+        for t, how in w.layout.items()
+        if how != "plain"
+    }
+    out |= {"default privileges"} if w.defaults else set()
+    out |= {"conditions without the schema"} if w.unqualified else set()
+    out |= {"a schema of the path others may create in"} if w.open_to else set()
+    for k, _ in w.settings:
+        if k == "default_transaction_isolation":
+            out.add("repeatable read")
+        elif k in READING:
+            out.add("settings: how SQL is read")
+        else:
+            out.add(
+                "settings: the planner's"
+                if k.startswith("enable_") or k in PLANNER
+                else "settings: how values are written"
+            )
+    out |= {"read-only reads"} if w.read_only else set()
+    out |= {"decoys first on the search path"} if w.decoys else set()
+    return out | {f"later: {d}" for d in w.drift}
+
+
+def pairs(have: set[str]) -> set[tuple[str, str]]:
+    return set(combinations(sorted(have), 2))
+
+
+def apart(a: str, b: str) -> bool:
+    """Two features no world has together: two values of what a world has one of."""
+    return any(a.startswith(f"{kind}: ") and b.startswith(f"{kind}: ") for kind in ONE_OF)
+
+
+def world_of(seed: int) -> tuple[Spec, World]:
+    """The seed's policy (genpolicy's, with its own names and keys, and more to write to) and its world."""
+    spec = with_write_rules(genpolicy.make(seed), seed)
+    return spec, draw(seed, spec)
+
+
+def covering(pool: int) -> tuple[list[int], set[tuple[str, str]], set[tuple[str, str]]]:
+    """Seeds of 1..pool chosen, greedily, so that every pair of FEATURES that meets in a world of the pool whose
+    policy can be checked meets in one of them (the compiler takes it, and doesn't warn that its reads are slow
+    to plan: run() gives those up); and the pairs that meet only in the other worlds, and those that meet in no
+    world of the pool (apart() aside)."""
+    from authzlib import Compiler, PolicyError, parse_policy
+
+    met = {seed: pairs(features(*world_of(seed))) for seed in range(1, pool + 1)}
+    occurring = set().union(*met.values())
+    chosen: list[int] = []
+    covered: set[tuple[str, str]] = set()
+    left = dict(met)
+    while left:
+        best = max(left, key=lambda seed: (len(left[seed] - covered), -seed))
+        if not left[best] - covered:
+            break
+        del left[best]
+        try:
+            sql = Compiler(parse_policy(policy_text(*world_of(best)), "around.authz")).compile("around.authz")
+        except PolicyError:
+            continue
+        if SLOW in sql:
+            continue
+        chosen.append(best)
+        covered |= met[best]
+    never = {(a, b) for a, b in combinations(sorted(FEATURES), 2) if not apart(a, b)} - occurring
+    return sorted(chosen), occurring - covered, never
 
 
 def plainer(w: World) -> list[World]:
@@ -1261,7 +1402,7 @@ def run(spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, sec
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
     if compiled.returncode != 0:
         raise Refused(compiled.stderr.strip().splitlines()[-1] if compiled.stderr.strip() else "refused")
-    if "view definitions to plan" in compiled.stdout:
+    if SLOW in compiled.stdout:
         raise Slow("authz.lint() warns that a select rule is slow to plan")
     started = time.monotonic()
     rnd = random.Random(f"around/run/{w.seed}")
@@ -1335,12 +1476,38 @@ def main() -> None:
     ap.add_argument("--only", type=int, help="run this one seed, and print its world and its policy")
     ap.add_argument("--no-shrink", action="store_true")
     ap.add_argument("--seconds", type=float, default=900, help="a seed that takes longer is given up (and said)")
+    ap.add_argument(
+        "--pairs",
+        type=int,
+        metavar="POOL",
+        help="instead of --policies: the seeds of 1..POOL in whose worlds every two features that meet there meet",
+    )
+    ap.add_argument(
+        "--share",
+        default="1/1",
+        metavar="K/N",
+        help="check only the Kth of every N seeds: N runs side by side, each with a --db of its own, check them all",
+    )
     args = ap.parse_args()
+    share, shares = (int(x) for x in args.share.split("/"))
+    name_roles(args.db)
     os.chdir(os.path.dirname(HERE))
     os.environ["PGCLIENTENCODING"] = "UTF8"  # psql sends what Python wrote, whatever the database's encoding
     icu = has_icu()
     db, control = DB(args.db), DB(args.db + "_plain")
-    seeds = [args.only] if args.only is not None else range(args.seed, args.seed + args.policies)
+    seeds: Sequence[int] = [args.only] if args.only is not None else range(args.seed, args.seed + args.policies)
+    if args.pairs:
+        seeds, unmet, never = covering(args.pairs)
+        mine = f" (this run: share {share} of {shares})" if shares > 1 else ""
+        print(
+            f"pairs: {len(seeds)} worlds of 1..{args.pairs} meet every pair of features that meets there{mine}",
+            flush=True,
+        )
+        for what, these in (("only where the policy can't be checked", unmet), ("in no world of the pool", never)):
+            if these:
+                print(f"  pairs {what}: " + "; ".join(f"{a} + {b}" for a, b in sorted(these)), flush=True)
+    seeds = seeds[share - 1 :: shares]
+    judged: set[tuple[str, str]] = set()  # the pairs a world that passed had
     refused = failed = passed = 0
     slow: list[int] = []
     with tempfile.TemporaryDirectory() as workdir:
@@ -1352,9 +1519,7 @@ def main() -> None:
                 return False
 
         for seed in seeds:
-            # the seed's own names and keys, as genpolicy draws them
-            spec = with_write_rules(genpolicy.make(seed), seed)
-            w = draw(seed, spec)
+            spec, w = world_of(seed)
             if w.database == "turkish" and not icu:
                 w = dataclasses.replace(w, database="C")
             if args.only is not None:
@@ -1372,6 +1537,7 @@ def main() -> None:
                 continue
             if not problems:
                 passed += 1
+                judged |= pairs(features(spec, w))
                 continue
             failed += 1
             print(f"seed {seed}: {described(spec, w)}")
@@ -1402,11 +1568,21 @@ def main() -> None:
     for d in (db, control):
         subprocess.run(["dropdb", "--if-exists", d.name], capture_output=True)
     drop_roles()
+    said = f"{seeds[0]}..{seeds[-1]}" if isinstance(seeds, range) and seeds.step == 1 else ", ".join(map(str, seeds))
     print(
-        f"around seeds {seeds[0]}..{seeds[-1]}: {passed} passed, {failed} failed, {refused} refused by the compiler"
+        f"around seeds {said}: {passed} passed, {failed} failed, {refused} refused by the compiler"
         + (f", {len(slow)} too slow to check (seeds {', '.join(map(str, slow))})" if slow else "")
         + ("" if icu else "; no ICU on this server: the Turkish databases were made with the C locale")
     )
+    if args.pairs:  # the ledger: which pairs were in a world whose checks passed
+        wanted = set().union(*(pairs(features(*world_of(seed))) for seed in seeds)) if seeds else set()
+        missed = wanted - judged
+        print(f"pairs judged: {len(judged & wanted)} of {len(wanted)}")
+        if missed:
+            print(
+                "  not judged (their world failed, or its policy was too slow): "
+                + "; ".join(f"{a} + {b}" for a, b in sorted(missed))
+            )
     sys.exit(1 if failed else 0)
 
 
