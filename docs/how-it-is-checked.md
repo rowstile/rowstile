@@ -56,7 +56,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   planner settings, a read-only transaction, a search path that starts with a schema of decoys; and, halfway,
   something changed behind the policy's back (a grant on rowstile's own tables, row-level security turned
   off, a new partition). <!-- checked: tests/around.py "class World"; tests/around.py "read-only reads" --> Besides the comparisons above, asked in that session, it tries real writes as the
-  app role on every row and undoes them, shares too (against who may share and what the relation's
+  app role on every row and undoes them (updates, deletes, and inserts of rows like the ones there), shares too (against who may share and what the relation's
   `shared if` says of the share), checks that no share outlives its row, that a role the policy
   doesn't name gets nothing, and that `authz.lint()` reports what changed and `rowstile apply` puts it right.
   A few on every run, sixty with new seeds every night.

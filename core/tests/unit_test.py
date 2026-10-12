@@ -7872,6 +7872,33 @@ class Worlds(unittest.TestCase):
             for row in rows:
                 self.assertRegex(row, rf"^INSERT INTO gp\.t1_old \(.*\) VALUES \({even}")
 
+    def test_rows_to_try_inserts_with(self) -> None:
+        """Copies of a few rows of each governed table under keys no row has, ten apart, in the row's own org
+        where keys are two columns: staged where the app role reads them, and inserted all at once for the
+        reference's answers."""
+        import difftest
+
+        for respell, keytype, composite in ((False, "bigint", False), (True, "uuid", False), (False, "bigint", True)):
+            spec = self.a.with_write_rules(self.g.make(3, respell=respell, keytype=keytype, composite=composite), 3)
+            n = spec.spelling
+            pol = parse_policy(self.g.policy_text(spec), "gen.authz")
+            checker = cast(
+                "around.AroundChecker", types.SimpleNamespace(spec=spec, rules=pol.rules, ref=difftest.Reference(pol))
+            )
+            old = ["(1,2)", "(2,3)"] if composite else [n.ident(2), n.ident(3)]
+            stage, insert, keys = self.a.new_rows(checker, {o.name: old for o in spec.objs})
+            governed = [o.name for o in spec.objs if o.rules]
+            self.assertEqual(len(keys), len(governed))
+            new = ["(1,500000)", "(2,500010)"] if composite else [n.ident(500000), n.ident(500010)]
+            self.assertEqual(set(map(tuple, keys.values())), {tuple(new)})
+            for name in governed:
+                waiting, table = f"around_new.{n.sql(name)}", self.a.qt(n.policy_table(name))
+                self.assertIn(f"CREATE TABLE {waiting} AS SELECT * FROM {table} WHERE false;", stage)
+                self.assertIn(f"GRANT SELECT ON {waiting} TO PUBLIC;", stage)
+                self.assertIn(f"INSERT INTO {table} SELECT * FROM {waiting};", insert)
+            self.assertIn(f"jsonb_build_object('{n.name('id')}', '{n.ident(500010)}')", stage)
+            self.assertEqual(stage.count("jsonb_populate_record(r, "), 2 * len(governed))
+
     def test_conditions_without_the_schema(self) -> None:
         """Where the world's conditions leave the schema to the search path, they still name the seed's table."""
         for respell, table in ((False, " from t1 x"), (True, ' from "select" x')):
