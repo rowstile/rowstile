@@ -5467,6 +5467,28 @@ class Decisions(unittest.TestCase):
             """DELETE FROM "cx"."placements" WHERE "project_id" = '3';""",
         )
 
+    def test_cross_presents_link_tokens_and_makes_room_for_what_is_filed(self) -> None:
+        import random
+
+        import difftest
+
+        gen = difftest.CrossGen(random.Random(1))
+        # some present a link's token, some none, and nobody signed in presents one: a link's share can count
+        self.assertEqual(
+            [gen.context(u)["links"] for u in [*gen.users, ""]], ["cx-a", "", "cx-b", "cx-a", "", "cx-b", "cx-a"]
+        )
+        gen.ledger = decisions.Decisions(parse_policy(read(gen.policy), gen.policy))
+        filed = next(c for c, rec in enumerate(gen.ledger.recursions) if ("folder", "file") in rec.names)
+        other = next(c for c, rec in enumerate(gen.ledger.recursions) if ("folder", "file") not in rec.names)
+        # no snapshot yet, so no chain can be planned: for what is filed, which comes down only to a folder nobody
+        # owns, a few folders lose their owner; for any other recursion, nothing
+        self.assertEqual(
+            gen.steer(("depth", filed, 2), {}),
+            "UPDATE cx.folders SET owner_id = NULL WHERE id IN (SELECT id FROM cx.folders "
+            "WHERE parent_type IS NOT NULL ORDER BY random() LIMIT 4);",
+        )
+        self.assertIsNone(gen.steer(("depth", other, 2), {}))
+
     def test_a_steered_change_aims_at_a_few_parts_the_least_tried_first(self) -> None:
         import random
 
