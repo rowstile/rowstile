@@ -7899,6 +7899,81 @@ class Worlds(unittest.TestCase):
             self.assertIn(f"jsonb_build_object('{n.name('id')}', '{n.ident(500010)}')", stage)
             self.assertEqual(stage.count("jsonb_populate_record(r, "), 2 * len(governed))
 
+    def test_signing_in_by_token(self) -> None:
+        """Worlds where the app signs each user in with what they sent: an API key or a JWT, tried under the
+        connection's settings, the refusal kept and the user then signed in as elsewhere."""
+        import base64
+        import hashlib
+        import hmac
+        import time
+
+        self.assertEqual({self.a.draw(seed, self.g.make(seed)).signs for seed in range(1, 5)}, {"", "api key", "jwt"})
+        # a JWT as an identity provider signs it: HS256 with the secret, who, until when, the scope, a service's type
+        signed, signature = self.a.jwt("bot", "7", "read").rsplit(".", 1)
+
+        def decoded(part: str) -> bytes:
+            return base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
+
+        head, claims = (json.loads(decoded(x)) for x in signed.split("."))
+        self.assertEqual(head, {"alg": "HS256", "typ": "JWT"})
+        self.assertEqual({k: v for k, v in claims.items() if k != "exp"}, {"sub": "7", "kind": "bot", "scope": "read"})
+        self.assertGreater(claims["exp"], time.time() + 3000)
+        self.assertEqual(decoded(signature), hmac.new(self.a.SECRET.encode(), signed.encode(), hashlib.sha256).digest())
+        self.assertLess(json.loads(decoded(self.a.jwt("user", "1", lasts=-60).split(".")[1]))["exp"], time.time())
+        self.assertNotIn("kind", json.loads(decoded(self.a.jwt("user", "1").split(".")[1])))
+        keys = {
+            self.a.api_key(u, scope, what) for u in ("1", "2") for scope in ("", "read") for what in ("", "expired")
+        }
+        self.assertEqual(len(keys), 8)
+        # what the owner writes: a key for whoever signs in and one for each scope, two that sign nobody in
+        # (a policy that says what `read` is itself: one key for it, not two)
+        spec = next(
+            x for x in map(self.g.make, range(1, 80)) if x.bot and "read" in dict(x.scopes) and len(x.scopes) > 1
+        )
+        pol = parse_policy(self.g.policy_text(spec), "gen.authz")
+        checker = cast(
+            "around.AroundChecker",
+            types.SimpleNamespace(
+                spec=spec,
+                pol=pol,
+                types=pol.types,
+                role="app_user",
+                users=["1", "bot:2", ""],
+                context=lambda u: {"mode": u},
+            ),
+        )
+        sql = self.a.tokens_sql(checker)
+        self.assertEqual(sql.count("encode(sha256("), 2 * (1 + len({"read", *pol.scopes})) + 2)
+        self.assertIn(f"('2', 'bot', 'around', '{self.a.api_key('bot:2')[:10]}', ", sql)
+        self.assertIn("'', now() - interval '1 hour', NULL)", sql)
+        self.assertIn("'', NULL, now())", sql)
+        self.assertIn("('jwt_type_claim', 'kind')", sql)
+        # the app's transaction: the connection's settings first, then the token, then the request's context
+        w = self.a.World(1, session="member", signs="api key", decoys=True, read_only=True)
+        w.settings = [("DateStyle", "German, DMY")]
+        text = self.a.transaction(w, "1", checker, ["SELECT 1;"], reads=True)
+        order = ["SET LOCAL DateStyle", "SET LOCAL search_path", "SET TRANSACTION READ ONLY", "authz.login_key("]
+        order += ["SET LOCAL authz_ctx.mode = '1'", "SELECT 1;", "COMMIT;"]
+        self.assertEqual(sorted(order, key=text.index), order)
+        self.assertIn(f"PERFORM authz.login_key('{self.a.api_key('1')}');", text)
+        self.assertIn(
+            "EXCEPTION WHEN invalid_authorization_specification THEN\n"
+            "  PERFORM set_config('around.login', SQLERRM, true);\n  PERFORM authz.act_as('user', '1');",
+            text,
+        )
+        self.assertIn(self.a.api_key("1", "read"), self.a.transaction(w, "1", checker, [], reads=True, scope="read"))
+        nobody = self.a.transaction(w, "", checker, [], reads=False)
+        self.assertNotIn("login_key", nobody)
+        self.assertNotIn("READ ONLY", nobody)
+        self.assertIn("PERFORM authz.act_as(NULL, NULL);", nobody)
+        # the owner's session: a service's JWT, else what it sets is believed; the app role after either
+        w = self.a.World(1, session="owner", signs="jwt")
+        text = self.a.transaction(w, "bot:2", checker, [], reads=True)
+        self.assertRegex(text, r"PERFORM authz\.login_jwt\('[\w-]+\.[\w-]+\.[\w-]+'\);")
+        self.assertIn("PERFORM set_config('authz.principal_type', 'bot', true);", text)
+        self.assertLess(text.index("END $$;"), text.index("SET LOCAL ROLE app_user;"))
+        self.assertNotIn("login_", self.a.transaction(self.a.World(1, session="set role"), "1", checker, [], True))
+
     def test_conditions_without_the_schema(self) -> None:
         """Where the world's conditions leave the schema to the search path, they still name the seed's table."""
         for respell, table in ((False, " from t1 x"), (True, ' from "select" x')):
