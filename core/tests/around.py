@@ -18,6 +18,8 @@ policy for that seed and draws a world for it:
                 locale, LATIN1, or Turkish (ICU), where lower('I') is not 'i'
   the catalog   each object table is plain, partitioned by its key (hash or range: a key that changes puts the
                 row in another partition), or has a table that inherits from it, where half its rows are stored;
+                so are the users' table, the services' and each link table (by the object it names; a table
+                that inherits from a link table has its foreign keys too, Postgres doesn't hand them down);
                 the owner's default privileges give new tables, functions and schemas to the app role, to PUBLIC
                 or to a role the policy doesn't name; conditions name the app's table and function without their
                 schema, which the database's search path supplies; a schema on that path that others may create in
@@ -28,8 +30,10 @@ policy for that seed and draws a world for it:
                 dates, numbers and identifiers are written (DateStyle, TimeZone, lc_*), a search path that
                 starts with a schema of decoys (a table, a function and an operator named as the policy's, a
                 now() of its own)
-  later         halfway, something changes behind the policy's back: a grant on rowstile's own objects,
-                row-level security turned off, a table made under a governed one, CREATE on a schema of the path
+  later         a third of the way, in some worlds, a user's row goes: deleted, or given another key (which, in
+                a table partitioned by range, puts it in another partition). Halfway, something changes behind
+                the policy's back: a grant on rowstile's own objects, row-level security turned off, a table
+                made under a governed one, CREATE on a schema of the path
 
 and checks, after each random change to the data:
 
@@ -39,7 +43,7 @@ and checks, after each random change to the data:
     a delete, calls of authz.share() to three users, on every row and for every user, against what the reference
     evaluator says of the rules and of who may share, and what the relation's `shared if` says of the share; and
     the tables under a governed one, read and written directly
-  - no share is left on a row that is gone or whose key changed
+  - no share is left on a row that is gone or whose key changed, nor to the user whose row went
   - a role the policy doesn't name gets no row of a governed table, whatever it was granted there, and a
     member of the app role that didn't sign in gets an error (28000) or nothing, never a row
   - the privileges on authz, authz_gen and authz_int are the ones a database with no world around it has
@@ -146,7 +150,9 @@ class World:
     """What is around one seed's policy."""
 
     seed: int
-    layout: dict[str, str] = field(default_factory=dict)  # object type -> plain | hash | range | inherits
+    # each table's layout, by genpolicy's plain name (an object type's, users, bots, a link table's t1_r1):
+    # plain | hash | range | inherits
+    layout: dict[str, str] = field(default_factory=dict)
     defaults: list[str] = field(default_factory=list)  # the owner's default privileges, before applying
     database: str = ""  # its locale and encoding: one of DATABASES ('': as the server's others)
     unqualified: bool = False  # conditions name gp's table and function without the schema
@@ -156,6 +162,7 @@ class World:
     read_only: bool = False
     decoys: bool = False  # the app's transaction searches the decoys' schema first
     drift: list[str] = field(default_factory=list)  # what changes behind the policy's back, halfway
+    gone: str = ""  # a user's row, a third of the way: deleted | rekeyed ('': it stays)
 
     def describe(self) -> str:
         parts = [f"{t} {how}" for t, how in self.layout.items() if how != "plain"]
@@ -167,6 +174,7 @@ class World:
         parts += [f"{k} = {v}" for k, v in self.settings]
         parts += ["read-only reads"] if self.read_only else []
         parts += ["decoys first on the search path"] if self.decoys else []
+        parts += [f"a user's row {self.gone}"] if self.gone else []
         parts += [f"later: {d}" for d in self.drift]
         return "; ".join(parts)
 
@@ -201,6 +209,9 @@ def draw(seed: int, spec: Spec) -> World:
     x = random.Random(f"around/{seed}/database")  # (drawn apart: a seed's world keeps what it drew before)
     w.database = x.choice(["", "", "", *DATABASES])
     w.settings += x.sample(LOCALES, x.choice([0, 0, 1, 2]))
+    x = random.Random(f"around/{seed}/tables")  # the other tables' layout, drawn apart too
+    w.layout.update({t: x.choice(LAYOUTS) for t in others(spec)})
+    w.gone = x.choice(["", "", "deleted", "rekeyed"])
     return w
 
 
@@ -216,6 +227,7 @@ def plainer(w: World) -> list[World]:
         out.append(dataclasses.replace(w, settings=w.settings[:i] + w.settings[i + 1 :]))
     for i in range(len(w.drift)):
         out.append(dataclasses.replace(w, drift=w.drift[:i] + w.drift[i + 1 :]))
+    out += [dataclasses.replace(w, gone="")] if w.gone else []
     out += [dataclasses.replace(w, database="")] if w.database else []
     out += [dataclasses.replace(w, unqualified=False)] if w.unqualified else []
     out += [dataclasses.replace(w, open_to="")] if w.open_to else []
@@ -307,57 +319,88 @@ def follow(n: Spelling, link: str, column: str, target: str) -> list[str]:
     ]
 
 
-def schema_text(spec: Spec, w: World) -> str:
-    """genpolicy's tables, each object table laid out as the world says. What the world makes beside them (the
-    tables under them, the decoys) is named as the policy's own are: plainly, or as AWKWARD's."""
-    n = spec.spelling
-    i, k, org = n.sql("id"), n.keytype, n.sql("org_id")
-    objects = {f"CREATE TABLE {n.table(o.name)} (": o.name for o in spec.objs}
-    links = {
-        f"CREATE TABLE {n.table(f'{o.name}_{rel.name}')} (": (f"{o.name}_{rel.name}", o.name, rel.subjects[0])
-        for o in spec.objs
-        for rel in o.rels
-        if rel.kind == "table"
+def link_tables(spec: Spec) -> dict[str, tuple[str, str]]:
+    """The policy's link tables, by genpolicy's plain names: (the type whose table it is, its first subject)."""
+    return {
+        f"{o.name}_{rel.name}": (o.name, rel.subjects[0]) for o in spec.objs for rel in o.rels if rel.kind == "table"
     }
-    out: list[str] = []
-    for line in genpolicy.schema_text(spec).splitlines():
-        made = next((head for head in (*links, *objects) if line.startswith(head)), "")
-        if made in links:  # a link table: its foreign keys to a table with one that inherits become triggers
-            link, obj, subject = links[made]
-            follows = []
-            for column, target in (("obj_id", obj), ("subj_id", subject.split("#")[0])):
-                key, without = f"{n.sql(column)} {k} REFERENCES {n.table(target)}{FOLLOWS}", f"{n.sql(column)} {k}"
-                if n.composite:  # (a key of two columns is a constraint of its own, after the columns)
-                    key = f"FOREIGN KEY ({org}, {n.sql(column)}) REFERENCES {n.table(target)}{FOLLOWS}, "
-                    without = ""
-                if w.layout.get(target) == "inherits" and key in line:
-                    line = line.replace(key, without)
-                    follows += follow(n, link, column, target)
-            out += [line, *follows]
-            continue
-        how = w.layout.get(objects[made], "plain") if made else "plain"
-        if how == "plain":
-            out.append(line)
-            continue
-        name, columns = objects[made], line[len(made) : -len(");")]
-        tbl = n.table(name)
-        if how == "hash":
-            out.append(f"CREATE TABLE {tbl} ({columns}) PARTITION BY HASH ({f'{org}, {i}' if n.composite else i});")
-            out += [
+
+
+def others(spec: Spec) -> list[str]:
+    """The tables a world lays out besides the object types': the users', the services', the link tables."""
+    return ["users", *(["bots"] if spec.bot else []), *link_tables(spec)]
+
+
+def laid(n: Spelling, name: str, head: str, line: str, how: str, by: str, column: str, last: str) -> list[str]:
+    """One of genpolicy's CREATE TABLEs (line, which starts with head), laid out as the world says: partitioned by
+    hash (by: its key's columns), by range (of column: two partitions, the second ending at last), or with a
+    table that inherits from it."""
+    if how == "plain":
+        return [line]
+    tbl, columns = n.table(name), line[len(head) : -len(");")]
+    if how == "hash":
+        return [
+            f"CREATE TABLE {tbl} ({columns}) PARTITION BY HASH ({by});",
+            *[
                 f"CREATE TABLE {n.table(f'{name}_h{part}')} PARTITION OF {tbl} "
                 f"FOR VALUES WITH (MODULUS 2, REMAINDER {part});"
                 for part in (0, 1)
-            ]
-        elif how == "range":
-            five, top, _ = cut(n)
-            out.append(f"CREATE TABLE {tbl} ({columns}) PARTITION BY RANGE ({i});")
-            out += [
+            ],
+        ]
+    if how == "range":
+        five = cut(n)[0]
+        return [
+            f"CREATE TABLE {tbl} ({columns}) PARTITION BY RANGE ({column});",
+            *[
                 f"CREATE TABLE {n.table(f'{name}_{part}')} PARTITION OF {tbl} FOR VALUES FROM ({lo}) TO ({hi});"
-                for part, lo, hi in (("low", "MINVALUE", five), ("mid", five, top))
-            ]
+                for part, lo, hi in (("low", "MINVALUE", five), ("mid", five, last))
+            ],
+        ]
+    return [line, f"CREATE TABLE {n.table(f'{name}_old')} () INHERITS ({tbl});"]
+
+
+def schema_text(spec: Spec, w: World) -> str:
+    """genpolicy's tables, each laid out as the world says: the object types', the users', the services' and the
+    link tables. What the world makes beside them (the tables under them, the decoys) is named as the policy's
+    own are: plainly, or as AWKWARD's."""
+    n = spec.spelling
+    i, k, org = n.sql("id"), n.keytype, n.sql("org_id")
+    objects = {f"CREATE TABLE {n.table(o.name)} (": o.name for o in spec.objs}
+    principals = {f"CREATE TABLE {n.table(t)} (": t for t in ("users", "bots")}
+    links = {f"CREATE TABLE {n.table(link)} (": link for link in link_tables(spec)}
+    out: list[str] = []
+    for line in genpolicy.schema_text(spec).splitlines():
+        made = next((head for head in (*links, *objects, *principals) if line.startswith(head)), "")
+        if made in links:
+            # a link table: its foreign keys to a table with one that inherits become triggers; laid out by the
+            # object it names. A table that inherits from it has its foreign keys too (they are not inherited)
+            link = links[made]
+            obj, subject = link_tables(spec)[link]
+            follows, kept = [], []
+            for column, target in (("obj_id", obj), ("subj_id", subject.split("#")[0])):
+                key, without = f"{n.sql(column)} {k} REFERENCES {n.table(target)}{FOLLOWS}", f"{n.sql(column)} {k}"
+                columns = n.sql(column)
+                if n.composite:  # (a key of two columns is a constraint of its own, after the columns)
+                    key = f"FOREIGN KEY ({org}, {n.sql(column)}) REFERENCES {n.table(target)}{FOLLOWS}, "
+                    without, columns = "", f"{org}, {n.sql(column)}"
+                if key not in line:
+                    continue
+                if w.layout.get(target) == "inherits":
+                    line = line.replace(key, without)
+                    follows += follow(n, link, column, target)
+                else:
+                    kept.append(f"FOREIGN KEY ({columns}) REFERENCES {n.table(target)}{FOLLOWS}")
+            how, column = w.layout.get(link, "plain"), n.sql("obj_id")
+            out += laid(n, link, made, line, how, f"{org}, {column}" if n.composite else column, column, "MAXVALUE")
+            out += [f"ALTER TABLE {n.table(f'{link}_old')} ADD {fk};" for fk in kept] if how == "inherits" else []
+            out += follows
+        elif made in objects:  # (its second partition ends where a partition made later starts: drift())
+            how, by = w.layout.get(objects[made], "plain"), f"{org}, {i}" if n.composite else i
+            out += laid(n, objects[made], made, line, how, by, i, cut(n)[1])
+        elif made:
+            out += laid(n, principals[made], made, line, w.layout.get(principals[made], "plain"), i, i, "MAXVALUE")
         else:
             out.append(line)
-            out.append(f"CREATE TABLE {n.table(f'{name}_old')} () INHERITS ({tbl});")
     # the decoys: what a transaction that searches this schema first would find under the policy's own names
     out += [
         f"CREATE SCHEMA {SCRATCH};",
@@ -386,17 +429,32 @@ def path_sql(db: DB, spec: Spec, w: World, open_too: bool) -> str:
 
 
 def initial(gen: genpolicy.GenPolicyGen, w: World) -> str:
-    """genpolicy's first rows; for a table with one that inherits from it, the rows with an even id are stored
-    there (before the policy is applied: written there directly later, they would skip the table's triggers)."""
+    """genpolicy's first rows; for a table with one that inherits from it, half are stored there: an object
+    type's rows with an even id, every other row of a link table, the users and services with an even id (before
+    the policy is applied: written there directly later, they would skip the table's triggers)."""
     n = gen.spec.spelling
+    stored = {t for t, how in w.layout.items() if how == "inherits"}
     first = [n.sql("org_id"), n.sql("id")] if n.composite else [n.sql("id")]  # (a row's first columns: its key)
-    rows = {f"INSERT INTO {n.table(t)} ({', '.join(first)}, ": t for t, how in w.layout.items() if how == "inherits"}
+    rows = {f"INSERT INTO {n.table(o.name)} ({', '.join(first)}, ": o.name for o in gen.spec.objs if o.name in stored}
+    links = {f"INSERT INTO {n.table(t)} VALUES (": t for t in link_tables(gen.spec) if t in stored}
+    seen: dict[str, int] = {}
     out = []
     for line in gen.initial().splitlines():
-        into = next((head for head in rows if line.startswith(head)), "")
-        if into and n.number(line.split(") VALUES (", 1)[1].split(", ")[len(first) - 1].strip("'")) % 2 == 0:
-            line = line.replace(n.table(rows[into]), n.table(f"{rows[into]}_old"), 1)
+        into = next((head for head in (*rows, *links) if line.startswith(head)), "")
+        if into in rows:
+            if n.number(line.split(") VALUES (", 1)[1].split(", ")[len(first) - 1].strip("'")) % 2 == 0:
+                line = line.replace(n.table(rows[into]), n.table(f"{rows[into]}_old"), 1)
+        elif into:
+            seen[into] = seen.get(into, 0) + 1
+            if seen[into] % 2 == 0:
+                line = line.replace(n.table(links[into]), n.table(f"{links[into]}_old"), 1)
         out.append(line)
+    out += [
+        f"WITH moved AS (DELETE FROM ONLY {n.table(t)} WHERE {n.sql('id')}::text ~ '[02468]$' RETURNING *) "
+        f"INSERT INTO {n.table(f'{t}_old')} SELECT * FROM moved;"
+        for t in ("users", "bots")
+        if t in stored
+    ]
     return "\n".join(out)
 
 
@@ -698,16 +756,24 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
                         )
         # authz.share: for whoever is signed in and holds, on the object, the permission that shares the relation
         # and every permission the relation gives (nobody gives more than they hold), where the relation's `shared
-        # if` holds for the share
+        # if` holds for the share. Its refusals come in an order: whoever may share nothing on the object is told
+        # only that (as for an object that isn't there); then the subject has to be a row (a user's row may be
+        # gone: user_gone()); then the relation's own permission, and what it gives; then its `shared if`
         kind, pid = evaluate.principal_of(u, checker.types)
         signed_in = bool(u) and pid in snap[(u, "data", "valid", kind)]
+        rows = set(snap[(u, "data", "ids", "user")])
         for ot, rel, by, needs in shared:
             cond = next(x.shared_if for x in checker.spec.obj(ot).rels if x.name == rel and x.kind == "shared")
+            sharing = [perm for perm in checker.share_perms.get(ot, {"share"}) if perm in checker.types[ot].perms]
             for to in someone:
                 for row, outcome in got[(u, "share", ot, rel, to)]:
                     may_share = signed_in and all(row in state[(ot, perm)] for perm in [by, *needs])
                     allowed = not cond or genpolicy.SHARED_IFS[cond](row, "user", to, active)
-                    if not may_share:
+                    if not (signed_in and any(row in state[(ot, perm)] for perm in sharing)):
+                        ok, want = outcome.startswith("42501 you cannot "), "a refusal: you cannot ..."
+                    elif to not in rows:
+                        ok, want = outcome == f"P0001 there is no user {to}", "a refusal: there is no such user"
+                    elif not may_share:
                         ok, want = outcome.startswith("42501 you cannot "), "a refusal: you cannot ..."
                     elif not allowed:
                         ok, want = outcome.startswith(f"42501 {NOT_ALLOWED}"), f"a refusal: {cond} does not hold"
@@ -947,6 +1013,26 @@ def drift(checker: AroundChecker, rnd: random.Random, plain: list[str], policy_p
     return problems
 
 
+def user_gone(checker: AroundChecker) -> list[str]:
+    """A user's row is deleted, or given another key (the one of genpolicy's GONE, who signs in and was no row):
+    the user most is shared with. The shares to them are forgotten with the row, wherever it was stored: in a
+    partition the new key takes it out of, or in a table that inherits."""
+    db, n = checker.db, checker.spec.spelling
+    tbl, i, gone = n.table("users"), n.sql("id"), n.ident(genpolicy.GONE)
+    shared = f"SELECT count(*) FROM authz.shares g WHERE g.subject_type = 'user' AND g.subject_id = u.{i}::text"
+    rows = db.rows(f"SELECT u.{i}::text, ({shared}) FROM {tbl} u WHERE u.{i}::text <> {lit(gone)} ORDER BY 2 DESC, 1")
+    if not rows or db.rows(f"SELECT count(*) FROM {tbl} u WHERE u.{i}::text = {lit(gone)}")[0][0] != "0":
+        return []
+    user, before = rows[0]
+    it = f"{i} = {n.literal(user)}"
+    what = f"DELETE FROM {tbl} WHERE {it}"
+    if checker.world.gone == "rekeyed":
+        what = f"UPDATE {tbl} SET {i} = {n.literal(gone)} WHERE {it}"
+    db.run(what + ";")
+    left = db.rows(f"SELECT count(*) FROM authz.shares WHERE subject_type = 'user' AND subject_id = {lit(user)}")[0][0]
+    return [f"after `{what}`, {left} of the {before} shares to user {user} are left"] if left != "0" else []
+
+
 # ----------------------------------------------------------------------
 # One seed
 # ----------------------------------------------------------------------
@@ -1000,6 +1086,9 @@ def run(spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, sec
         if time.monotonic() - started > seconds:
             raise Slow(f"over {seconds:.0f} s at step {step} of {steps}")
         problems = checker.check() + write_problems(checker) + share_problems(checker)
+        if w.gone and step == steps // 3 and not problems:
+            problems = user_gone(checker)
+            problems += [] if problems else checker.check()
         if step == steps // 2 and not problems:
             problems = drift(checker, rnd, plain, policy_path)
             problems += [] if problems else checker.check() + stranger_problems(checker)
