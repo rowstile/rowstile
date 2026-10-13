@@ -1,6 +1,6 @@
 {
   "name": "@rowstile/next",
-  "version": "0.1.0-dev",
+  "version": "0.1.0-alpha.7",
   "description": "rowstile with Next.js: signed-in reads kept out of caches, 403 and 404 from route handlers and server actions",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
@@ -20,7 +20,7 @@
   ],
   "sideEffects": true,
   "dependencies": {
-    "@rowstile/client": "0.1.0-dev"
+    "@rowstile/client": "0.1.0-alpha.7"
   },
   "peerDependencies": {
     "next": ">=15"
