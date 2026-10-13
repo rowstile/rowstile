@@ -8,6 +8,9 @@
 # database holds); and the next migration from the old lock file. Each database then holds what applying this
 # version on a new one leaves, the policy's tests and the docs scenario pass, and what the app made before is still
 # there and still in force. Where PyPI can't be reached, it says so and skips.
+# Right after a release this version makes just what the release before made (a new version alone is no
+# migration): then migrate has nothing to write, and that database stays as the release before's migrations left
+# it, which must still be what this version leaves on a new one. The checks are as many either way.
 #   PGHOST=... PGUSER=... tests/upgrade.sh
 set -u
 cd "$(dirname "$0")/.."
@@ -113,14 +116,24 @@ out=$(NEW --db "dbname=${DB}_reapply" reapply 2>&1)
 [ "$out" = "applied again" ] && ok "reapply: the policy a database the release before applied holds, applied again by this version" ||
   bad "reapply over the release before's database" "$out"
 out=$(NEW migrate --check 2>&1); rc=$?
+SAME=   # set when this version makes nothing differently: no migration to write
 case "$out" in *"policy.authz has changes no migration has"*"rowstile $OLD_VERSION -> $NEW_VERSION: what the new version makes differently"*)
   [ $rc -eq 1 ] && ok "migrate --check, on the lock file the release before wrote: exit 1, the new version makes something differently" ||
+    bad "migrate --check after the upgrade: exit" "$rc";;
+  "nothing to migrate: "*) SAME=1
+  [ $rc -eq 0 ] && ok "migrate --check, on the lock file the release before wrote: exit 0, the new version makes nothing differently" ||
     bad "migrate --check after the upgrade: exit" "$rc";;
   *) bad "migrate --check after the upgrade" "$out";; esac
 before=$(ls "$P/migrations" | wc -l)
 out=$(NEW migrate 2>&1); rc=$?
-[ $rc -eq 0 ] && [ "$(ls "$P/migrations" | wc -l)" -gt "$before" ] && ! cmp -s "$P/policy.lock" "$T/old.lock" &&
-  ok "migrate writes the migration from the old lock file to this version, and the lock file after it" || bad "migrate after the upgrade" "$out"
+if [ -n "$SAME" ]; then
+  [ $rc -eq 0 ] && [ "$(ls "$P/migrations" | wc -l)" = "$before" ] && cmp -s "$P/policy.lock" "$T/old.lock" &&
+    ok "migrate writes no migration, a new version alone being none, and leaves the lock file the release before wrote" ||
+    bad "migrate after the upgrade" "$out"
+else
+  [ $rc -eq 0 ] && [ "$(ls "$P/migrations" | wc -l)" -gt "$before" ] && ! cmp -s "$P/policy.lock" "$T/old.lock" &&
+    ok "migrate writes the migration from the old lock file to this version, and the lock file after it" || bad "migrate after the upgrade" "$out"
+fi
 out=$(migrate_db "${DB}_migrate") &&
   ok "the migration applies on the database the release before's migrations set up" || bad "the upgrade's migration" "$out"
 out=$(NEW migrate --check 2>&1); [ $? -eq 0 ] && ok "... and migrate --check passes again" || bad "migrate --check after migrating" "$out"
@@ -162,9 +175,12 @@ PY
 }
 for w in $WAYS; do
   db="${DB}_$w"
-  [ "$(PSQL "$db" -c "SELECT version FROM authz.policy_versions ORDER BY id DESC LIMIT 1")" = "$BUILD" ] &&
+  # with no migration to run, the database the migrations set up still records the release before
+  recorded=$BUILD whose="this version's"
+  [ "$w" = migrate ] && [ -n "$SAME" ] && recorded=$OLD_VERSION whose="the release before's, which this version makes the same"
+  [ "$(PSQL "$db" -c "SELECT version FROM authz.policy_versions ORDER BY id DESC LIMIT 1")" = "$recorded" ] &&
     [ "$(PSQL "$db" -c "SELECT authz.verify()")" = t ] &&
-    ok "$w: the policy in force is this version's, and the inheritance tables match a rebuild" ||
+    ok "$w: the policy in force is $whose, and the inheritance tables match a rebuild" ||
     bad "$w: the policy in force after" "$(PSQL "$db" -c "SELECT version FROM authz.policy_versions ORDER BY id DESC LIMIT 1" -c "SELECT authz.verify()" 2>&1)"
   out=$(differs "$db" "${DB}_fresh" 2>&1)
   n=$(echo "$out" | head -n 1)
