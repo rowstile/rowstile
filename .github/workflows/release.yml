@@ -127,13 +127,14 @@ jobs:
           # GitHub Packages takes scoped names only: while private, the launcher is on the GitHub release
           if [ "$PUBLISH" = public ]; then publish packaging/npm/out/rowstile; fi
           for d in sdk/typescript/*/; do publish "$d"; done
-      # while no final release exists, a plain install gets the newest alpha: npm's latest goes where next is. Each
-      # package's trusted publisher must allow it (Allow npm dist-tag); where one doesn't, this says which and
-      # the release stands. The `latest` job does it again by hand
+      # while no final release exists, a plain install gets the newest alpha: npm's latest goes where next is, once
+      # the registry shows this version there (minutes after the publish: read sooner, nothing looks left to
+      # move). Each package's trusted publisher must allow it (Allow npm dist-tag); where one doesn't, or the
+      # registry is too late, this says which and the release stands. The `latest` job does it again by hand
       - if: env.PUBLISH == 'public'
         continue-on-error: true
         env: {NODE_AUTH_TOKEN: ""}
-        run: python3 packaging/npm_latest.py --move
+        run: python3 packaging/npm_latest.py --move --published "$VERSION"
 
   # By hand, with latest=true, and alone: npm's latest goes where next is on every package, for a release whose
   # own run couldn't move it. It publishes nothing. From main, which the environment `npm` takes for this
