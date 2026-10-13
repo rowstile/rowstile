@@ -8851,7 +8851,45 @@ class Version(unittest.TestCase):
         for npm in installed:
             self.assertRegex(npm, r"^\d+\.\d+\.\d+$")
             self.assertTrue(npm_latest.new_enough(npm), npm)
-        self.assertEqual(release.count("        run: python3 packaging/npm_latest.py --move\n"), 2)
+        # the release's own run says which version it published and waits for the registry to show it; by hand,
+        # later, the registry is read as it is
+        self.assertEqual(release.count("        run: python3 packaging/npm_latest.py --move\n"), 1)
+        self.assertEqual(
+            release.count('        run: python3 packaging/npm_latest.py --move --published "$VERSION"\n'), 1
+        )
+        self.assertRegex(release, r"(?m)^  npm:\n(?:    .*\n|\n)*?    env:\n(?:      .*\n)*?      VERSION: ")
+        # the registry shows a publish late: read right after it, `next` is still the release before and `latest`
+        # is there already, so nothing would move (0.1.0-alpha.7's own run moved nothing on sixteen packages)
+        stale = ({"next": "0.1.0-alpha.6", "latest": "0.1.0-alpha.6"}, alphas)
+        fresh = ({"next": "0.1.0-alpha.7", "latest": "0.1.0-alpha.6"}, [*alphas, "0.1.0-alpha.7"])
+        self.assertIsNone(target(*stale)[0])
+        answers = [stale, stale, fresh]
+        slept: list[float] = []
+        found = npm_latest.shown(
+            "rowstile", "0.1.0-alpha.7", 100.0, lambda _: answers.pop(0), slept.append, lambda: float(sum(slept))
+        )
+        self.assertEqual(found, fresh)
+        self.assertEqual(slept, [npm_latest.EVERY] * 2)
+        self.assertEqual(target(*fresh)[0], "0.1.0-alpha.7")
+        # a package the registry never shows in time is given up, not moved to what it showed
+        slept.clear()
+        self.assertIsNone(
+            npm_latest.shown(
+                "rowstile", "0.1.0-alpha.7", 40.0, lambda _: stale, slept.append, lambda: float(sum(slept))
+            )
+        )
+        self.assertEqual(len(slept), 3)
+        # a release is published as `latest` itself: its run moves nothing, whatever the registry shows
+        out = io.StringIO()
+        with (
+            mock.patch.object(npm_latest, "published", side_effect=AssertionError("the registry was read")),
+            mock.patch("sys.stdout", out),
+        ):
+            npm_latest.main(["--move", "--published", "0.1.0"])
+        self.assertIn("0.1.0 is a release", out.getvalue())
+        for bad in (["--published", "0.1.0-alpha.7"], ["--move", "--published"], ["--move", "0.1.0-alpha.7"]):
+            with self.assertRaises(SystemExit):
+                npm_latest.main(bad)
         # by hand with latest=true nothing else runs: every other job needs `check`, which is skipped
         self.assertIn("  check:\n    if: ${{ !inputs.latest }}\n", release)
         self.assertIn("  latest:\n    if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest }}\n", release)

@@ -3,6 +3,8 @@
 
     python3 packaging/npm_latest.py          # says what it would move, package by package
     python3 packaging/npm_latest.py --move   # moves it (the release workflow, by npm's trusted publishing)
+    python3 packaging/npm_latest.py --move --published 0.1.0-alpha.7   # a release's own run: once the registry
+                                                                       # shows that version under next
 
 A release publishes an alpha or a candidate under `next`. `latest` is what a plain `npm i rowstile` gets and what
 a package's page on npmjs.com shows, and npm gave it to the first version ever published: left alone it stays
@@ -12,7 +14,12 @@ under `next`.
 
 Moving a tag by trusted publishing needs npm 11.21.0 or newer, and **Allow npm dist-tag** ticked in each
 package's trusted publisher on npmjs.com (off by default). Without it npm refuses, this says which packages,
-and nothing else is touched: what was published stays published. Standard library only.
+and nothing else is touched: what was published stays published.
+
+The registry shows a publish some minutes late, package by package. Read sooner, `next` is still the release
+before and `latest` looks as if it were there already: so the run that just published says which version
+(`--published`), and each package is waited for, twenty minutes in all. A package the registry still doesn't
+show is said, and the by-hand run moves it later. Standard library only.
 """
 
 from __future__ import annotations
@@ -24,10 +31,15 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+from collections.abc import Callable
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FINAL = re.compile(r"\d+\.\d+\.\d+")
 NEEDS = (11, 21, 0)
+# how long a release waits for the registry to show what it published, and how often it looks
+WAIT = 20 * 60
+EVERY = 15
 
 
 def names() -> list[str]:
@@ -71,6 +83,24 @@ def published(name: str) -> tuple[dict[str, str], list[str]]:
     return dict(said.get("dist-tags", {})), [versions] if isinstance(versions, str) else list(versions)
 
 
+def shown(
+    name: str,
+    expect: str,
+    until: float,
+    read: Callable[[str], tuple[dict[str, str], list[str]]] = published,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[dict[str, str], list[str]] | None:
+    """A package's tags and versions once the registry shows `expect` under `next`; None if it doesn't by `until`."""
+    while True:
+        tags, versions = read(name)
+        if tags.get("next") == expect:
+            return tags, versions
+        if clock() >= until:
+            return None
+        sleep(EVERY)
+
+
 def new_enough(version: str) -> bool:
     """Whether this npm moves a tag by trusted publishing: 11.21.0 or newer, and on 12 from 12.2.0."""
     found = tuple(int(n) for n in re.findall(r"\d+", version)[:3])
@@ -78,17 +108,30 @@ def new_enough(version: str) -> bool:
 
 
 def main(argv: list[str]) -> None:
-    if argv not in ([], ["--move"]):
+    expect = argv[2] if len(argv) == 3 and argv[:2] == ["--move", "--published"] else None
+    if argv not in ([], ["--move"]) and expect is None:
         raise SystemExit(__doc__)
-    move = argv == ["--move"]
+    move = argv[:1] == ["--move"]
+    if expect is not None and FINAL.fullmatch(expect):
+        # a release is published as `latest` itself: nothing follows `next`, and a registry read too soon would
+        # put `latest` back on the candidate before it
+        print(f"{expect} is a release: it is published as latest, nothing to move")
+        return
     if move and not new_enough(npm("--version").stdout.strip()):
         raise SystemExit(
             f"npm_latest.py: moving a tag by trusted publishing needs npm 11.21.0 or newer (12.2.0 on 12), this is "
             f"{npm('--version').stdout.strip()}"
         )
     refused = []
+    late = []
+    until = time.monotonic() + WAIT
     for name in names():
-        version, why = target(*published(name))
+        found = published(name) if expect is None else shown(name, expect, until)
+        if found is None:
+            late.append(name)
+            print(f"{name}: not moved, the registry doesn't show {expect} under next yet")
+            continue
+        version, why = target(*found)
         if version is None or not move:
             print(f"{name}: {why}" + ("" if version is None else " (not moved: run with --move)"))
             continue
@@ -99,15 +142,24 @@ def main(argv: list[str]) -> None:
             lines = (out.stderr.strip() or out.stdout.strip()).splitlines()
             refused.append(name)
             print(f"{name}: not moved, npm refused: {' '.join(lines[-3:])}")
+    unmoved = []
     if refused:
-        said = (
+        unmoved.append(
             f"npm's latest was not moved on {len(refused)} package(s): {', '.join(refused)}. Everything published "
             "stays published. If npm says the trusted publisher cannot manage dist-tags, tick Allow npm dist-tag in "
             "each package's settings on npmjs.com (Trusted publisher), then: gh workflow run release.yml -f latest=true"
         )
+    if late:
+        unmoved.append(
+            f"npm's latest was not moved on {len(late)} package(s): {', '.join(late)}. The registry didn't show "
+            f"{expect} under next within {WAIT // 60} minutes. Everything published stays published. Once "
+            "`python3 packaging/npm_latest.py` shows it there: gh workflow run release.yml -f latest=true"
+        )
+    for said in unmoved:
         if os.environ.get("GITHUB_ACTIONS"):
             print(f"::warning::{said}")
-        raise SystemExit(f"npm_latest.py: {said}")
+    if unmoved:
+        raise SystemExit("npm_latest.py: " + " ".join(unmoved))
 
 
 if __name__ == "__main__":
