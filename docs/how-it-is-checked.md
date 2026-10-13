@@ -171,8 +171,12 @@ one.
 ## When something is found
 
 Vulnerabilities are reported privately ([SECURITY.md](../SECURITY.md)) and published as advisories once
-fixed. There has been one so far: GHSA-6g93-673q-c29f, in `@rowstile/prisma`, found by the project itself, and
-fixed and published the same day.
+fixed. There have been six so far, each found by the project itself: GHSA-6g93-673q-c29f, in `@rowstile/prisma`,
+fixed and published the same day, and five fixed in 0.1.0-alpha.7 and published the day it came out. Two of
+those are rated high: a rule on a column that was not checked on the rows of a partition made since the last
+apply (GHSA-h92j-8v4p-93hc), and the command's Postgres client, which sent the password before it honoured
+`channel_binding=require` (GHSA-g2rq-h47r-5v2c). [The advisories](https://github.com/rowstile/rowstile/security/advisories)
+are all listed there.
 
 ## What this doesn't cover
 
