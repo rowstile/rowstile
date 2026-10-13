@@ -1,6 +1,6 @@
 {
   "name": "@rowstile/client",
-  "version": "0.1.0-dev",
+  "version": "0.1.0-alpha.7",
   "description": "rowstile for TypeScript apps: who each transaction acts for, refusals as errors, generated names",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",

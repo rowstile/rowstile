@@ -1,6 +1,6 @@
 {
   "name": "@rowstile/vitest",
-  "version": "0.1.0-dev",
+  "version": "0.1.0-alpha.7",
   "description": "rowstile with Vitest (and Jest): asUser, toBeRefused, a database per worker",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
@@ -20,7 +20,7 @@
   ],
   "sideEffects": false,
   "dependencies": {
-    "@rowstile/client": "0.1.0-dev"
+    "@rowstile/client": "0.1.0-alpha.7"
   },
   "peerDependencies": {
     "vitest": "^4.0.0 || ^5.0.0",

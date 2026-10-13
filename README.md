@@ -71,11 +71,11 @@ rowstile was called rowfence until 0.1.0-alpha.1; another product had the name f
 
 ## Installing
 
-Only an alpha is published so far, 0.1.0-alpha.6: ask for it.
+Only an alpha is published so far, 0.1.0-alpha.7: ask for it.
 
     npm i -D rowstile@next         # the command with its own Python: a TypeScript app needs none
     pip install --pre rowstile     # the command and the Python SDK: rowstile[fastapi], [sqlalchemy], ...
-    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-alpha.6 migrate
+    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-alpha.7 migrate
 
 `npm` brings the Python for Linux (glibc and musl, x64 and arm64), macOS (x64 and arm64) and Windows x64. The
 image runs as root unless told otherwise: `-u` makes the files it writes yours. [Installing](docs/installing.md)

@@ -6,11 +6,11 @@ the command writes migrations, and your migration tool runs them as the owner of
 
 ## The command
 
-Only an alpha is published so far, 0.1.0-alpha.6. Ask for it by name:
+Only an alpha is published so far, 0.1.0-alpha.7. Ask for it by name:
 
     npm i -D rowstile@next         # the command with its own Python: a TypeScript app needs none
     pip install --pre rowstile     # the command and the Python SDK: rowstile[fastapi], [sqlalchemy], ...
-    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-alpha.6 migrate
+    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-alpha.7 migrate
 
 Once 0.1.0 is out, the plain `npm i -D rowstile`, `pip install rowstile` and `ghcr.io/rowstile/rowstile` get
 it. Until then the two registries differ: a plain `pip install rowstile` takes the newest alpha (pip takes a

@@ -1,6 +1,6 @@
 {
   "name": "@rowstile/postgres",
-  "version": "0.1.0-dev",
+  "version": "0.1.0-alpha.7",
   "description": "rowstile with postgres.js: transactions signed in as the request's user",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
@@ -12,6 +12,6 @@
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "files": ["dist"],
   "sideEffects": false,
-  "dependencies": { "@rowstile/client": "0.1.0-dev" },
+  "dependencies": { "@rowstile/client": "0.1.0-alpha.7" },
   "peerDependencies": { "postgres": ">=3.4" }
 }
