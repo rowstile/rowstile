@@ -1,7 +1,7 @@
 # The demo
 
 `demo.gif`, at the top of the repository's README: a policy, its tests, a one-word change and what the review
-says of it, a refusal that says why, and what would grant it. About seventy-five seconds.
+says of it, a refusal that says why, and what would grant it. About eighty seconds.
 
 It is recorded, not drawn. `record.sh` starts a Postgres container with the app of
 [getting started](../docs/getting-started.md) (its tables, its rows, and one share), makes a folder with that
