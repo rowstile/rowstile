@@ -261,9 +261,11 @@ What changed since 0.1.0-alpha.6:
   as it does on Linux. On a port another program listens on, it says it didn't start and how to choose another
   port, where Windows let it start beside the other program; and no other program can bind its port while it
   runs.
+  Security advisory [GHSA-9gh9-rmmx-grpv](https://github.com/rowstile/rowstile/security/advisories/GHSA-9gh9-rmmx-grpv).
 - Studio's URL names 127.0.0.1, where it listens: `http://127.0.0.1:4983/?token=...`, where it said
   `localhost`. To a browser that is another address, so the page's remembered "view as" choice starts fresh
   once. A page opened at `localhost` by hand is still answered.
+  Security advisory [GHSA-9gh9-rmmx-grpv](https://github.com/rowstile/rowstile/security/advisories/GHSA-9gh9-rmmx-grpv).
 - `rowstile studio` printed a Python traceback when it couldn't start: on a database it can't reach (a server
   that isn't running, a database that isn't there), connected as a role that can't read rowstile's tables (an
   app's own `DATABASE_URL`, say), and on a port another program listens on. It says "can't connect: ..." as the
@@ -294,6 +296,7 @@ What changed since 0.1.0-alpha.6:
   trail still applies the trims made where it is published. `authz.lint()` warns when the guard isn't on in
   every replication role (a data-only `pg_restore --disable-triggers` leaves it on in ordinary sessions only),
   and says that `rowstile reapply` puts it back. **Upgrading**: apply the policy again (or the next migration).
+  Security advisory [GHSA-27xr-5hqr-j592](https://github.com/rowstile/rowstile/security/advisories/GHSA-27xr-5hqr-j592).
 - An invariant wasn't checked where a permission or a relation of its type was named `never_1` (`never_2` for
   the second invariant, and so on): `authz.check_invariants()` and the policy's tests said it held. Where only a
   mask named such a relation, applying failed instead. Each invariant has a view of its own now. **Upgrading**:
@@ -380,6 +383,7 @@ What changed since 0.1.0-alpha.6:
 - **Rows under a governed table.** Rowstile checks a rule on a column (`update owner_id : share`) with a
   row trigger, and forgets a row's shares when its key changes with another. Three kinds of rows escaped
   them. An app with neither partitions nor tables that inherit was not affected.
+  Security advisory [GHSA-h92j-8v4p-93hc](https://github.com/rowstile/rowstile/security/advisories/GHSA-h92j-8v4p-93hc).
   - *A partition made after the policy was last applied* (by a job that makes next month's, say): the rule
     on a column was not checked on its rows, so someone who may update a row could change a column the
     policy keeps for others. The trigger asked whether row-level security applies to the partition, where
@@ -483,6 +487,7 @@ What changed since 0.1.0-alpha.6:
   (`PGPASSFILE`), and the like. **Upgrading**: `sslmode=verify-ca` or `verify-full` with no root certificate,
   which the command checked against the system's roots, now needs one, as in libpq: `sslrootcert=system` with
   `verify-full` for a server whose certificate a public authority signed.
+  Security advisory [GHSA-g2rq-h47r-5v2c](https://github.com/rowstile/rowstile/security/advisories/GHSA-g2rq-h47r-5v2c).
 - `rowstile review` and `rowstile prove` missed two kinds of widening. One behind a long `and` of links:
   `can approve = owner and legal and finance and security and privacy`, five link tables, changed to `(owner or
   editor) and ...`, was "Meaning unchanged" with nothing flagged, and `never doc: approve and not owner` was said
@@ -557,6 +562,7 @@ What changed since 0.1.0-alpha.6:
   own, for the transaction it began last: a later transaction isn't answered about an earlier one's writes,
   and a block that wrote nothing isn't answered about writes made outside it. In `rowstile.fastapi` each
   request has its own, also when `Rowstile` isn't given `user=` (a sync endpoint's refused flush is 403).
+  Security advisory [GHSA-fwpc-v7vf-5qf7](https://github.com/rowstile/rowstile/security/advisories/GHSA-fwpc-v7vf-5qf7).
 - `rowstile why` (and Studio, where it may write) didn't offer to share again where a share had expired, starts
   later or has a caveat: it tried it as the share already there, which granted nothing. It tries it as
   `authz.share` makes it again. It offered a share the relation's `shared if` refuses, which `authz.share`
