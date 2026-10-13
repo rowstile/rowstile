@@ -5,12 +5,12 @@
   "description": "Check, test, prove and review a rowstile policy: access rules for Postgres row-level security",
   "repository": { "url": "https://github.com/rowstile/rowstile", "source": "github" },
   "websiteUrl": "https://rowstile.dev/reference/tools",
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-dev",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "rowstile",
-      "version": "0.1.0-alpha.7",
+      "version": "0.1.0-dev",
       "transport": { "type": "stdio" },
       "packageArguments": [{ "type": "positional", "value": "mcp" }]
     }
