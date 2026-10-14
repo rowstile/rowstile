@@ -63,6 +63,15 @@ class ProtocolError(Exception):
     pass
 
 
+class Unreachable(OSError):
+    """The server couldn't be reached (refused, no such socket, a name with no address, no answer): where the client
+    tried, a host and port or a socket's path, and why, in words."""
+
+    def __init__(self, where: str, why: str) -> None:
+        super().__init__(f"{where}: {why}")
+        self.where, self.why = where, why
+
+
 def _parse_array(text: str) -> list[str | None]:
     """Parse a one-dimensional Postgres array literal ({a,"b c",NULL}) into a list of str/None."""
     if not text.startswith("{") or text.startswith("{{"):  # an array of arrays starts {{: an element never does
@@ -1070,6 +1079,15 @@ def _socket(host: str, port: int, timeout: float) -> socket.socket:
     return sock
 
 
+def _why(e: OSError, timeout: float) -> str:
+    """What the system said of a connection that failed, in words: "connection refused", "no such file or
+    directory", "name or service not known"; for no answer, how long it waited."""
+    if isinstance(e, TimeoutError) and not e.strerror:
+        return f"no answer in {timeout:g} s (connect_timeout)"
+    said = e.strerror or str(e) or type(e).__name__
+    return said[:1].lower() + said[1:]
+
+
 def _libpq_file(name: str) -> str | None:
     """A file in libpq's own folder, where it looks for root.crt and root.crl: ~/.postgresql (HOME, else the
     user's own folder), or %APPDATA%\\postgresql on Windows. None: there is no folder to look in."""
@@ -1191,7 +1209,11 @@ def connect(
     target_session_attrs: str = "any",
     settings: dict[str, str] | None = None,
 ) -> Connection:
-    sock = _socket(host, port, timeout)
+    where = f"the socket {os.path.join(host, f'.s.PGSQL.{port}')}" if host.startswith("/") else f"{host} port {port}"
+    try:
+        sock = _socket(host, port, timeout)
+    except OSError as e:
+        raise Unreachable(where, _why(e, timeout)) from e
     try:
         if not host.startswith("/") and sslmode != "disable":
             sock = _tls(
@@ -1200,6 +1222,9 @@ def connect(
         # the timeout holds until it is signed in
         conn = Connection(sock, user, password, database or user, options, channel_binding, require_auth, settings)
         _target(conn, target_session_attrs)
+    except OSError as e:  # the connection broke, or nothing answered, before the session started
+        sock.close()
+        raise Unreachable(where, _why(e, timeout)) from e
     except BaseException:
         sock.close()
         raise

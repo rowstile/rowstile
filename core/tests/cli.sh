@@ -344,10 +344,14 @@ out=$(python3 cli/rowstile_cli.py --db "colour=blue" dev --once --no-studio "$T/
 out=$(PGDATABASE=$DB python3 cli/rowstile_cli.py test 2>&1); case "$out" in *"no policy is applied"*) ok "PGDATABASE is used when --db is left out";; *) bad "env" "${out:0:200}";; esac
 out=$(python3 cli/rowstile_cli.py --db "dbname=authz_no_such_db" graph "$T/main.authz" 2>&1); case "$out" in "%% Generated"*) ok "check, graph and client of a file need no database";; *) bad "no database" "${out:0:200}";; esac
 
-# a named database that doesn't answer is said as that (unit_test.py has the case where nothing names one)
-out=$(python3 cli/rowstile_cli.py --db "host=127.0.0.1 port=1 dbname=x connect_timeout=2" lint 2>&1)
-case "$out" in "can't connect: "*"no database was named"*) bad "a named database that doesn't answer" "$out";; "can't connect: "*) ok "... and a named one that doesn't answer is only that";;
-  *) bad "a named database that doesn't answer" "$out";; esac
+# a named database that doesn't answer is said as that, with where it tried (unit_test.py has the case where nothing
+# names one)
+out=$(python3 cli/rowstile_cli.py --db "host=127.0.0.1 port=1 dbname=x connect_timeout=2" lint 2>&1); rc=$?
+[ "$rc $out" = "2 can't connect to 127.0.0.1 port 1: connection refused" ] &&
+  ok "... and a named one that doesn't answer is only that, with the host and port it tried" || bad "a named database that doesn't answer" "$rc $out"
+out=$(python3 cli/rowstile_cli.py --db "host=/nowhere port=5433 dbname=x" lint 2>&1); rc=$?
+[ "$rc $out" = "2 can't connect to the socket /nowhere/.s.PGSQL.5433: no such file or directory" ] &&
+  ok "... and a socket that isn't there, with its path" || bad "a socket that isn't there" "$rc $out"
 
 echo "-- lint where it finds nothing"
 # an app role of its own (JIT off) that reads only the table the rules govern, and may change only its body

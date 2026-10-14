@@ -65,6 +65,12 @@ Each release upgrades from the one before it. How releases are numbered and made
   socket, which Windows doesn't have); elsewhere to the server's socket in `/var/run/postgresql` or `/tmp`,
   whichever has it (it tried only the first, Debian's; macOS's builds use `/tmp`). To connect as `postgres` as
   before, set `PGUSER=postgres` or `user=postgres`.
+- When it can't connect, the command says where it tried and what the system said, in words: `can't connect to
+  db.example.com port 5433: connection refused`, `can't connect to the socket /var/run/postgresql/.s.PGSQL.5432:
+  no such file or directory`, `... : no answer in 10 s (connect_timeout)`. It said only the system's error
+  (`can't connect: [Errno 111] Connection refused`), which names neither the host nor the port, though the
+  database may come from `rowstile.toml`, `DATABASE_URL`, a `.env` file or the `PG*` variables. So do `dev`,
+  Studio (503) and `review --db`.
 
 ### Fixed
 

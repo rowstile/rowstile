@@ -1125,23 +1125,27 @@ def main() -> None:
         (rc, out),
     )
     for label, target, said in (
-        ("a database that isn't there", f"dbname={db}_nowhere", f'3D000: database "{db}_nowhere" does not exist'),
-        ("a server that isn't there", "host=/nowhere dbname=x", "[Errno 2] No such file or directory"),
+        ("a database that isn't there", f"dbname={db}_nowhere", f': 3D000: database "{db}_nowhere" does not exist'),
+        (
+            "a server that isn't there",
+            "host=/nowhere dbname=x",
+            " to the socket /nowhere/.s.PGSQL.5432: no such file or directory",
+        ),
         (
             "an address it can't read",
             "postgres://a@localhost:port/x",
-            "the URL's port isn't a number: a #, ? or / in the password must be written %23, %3F, %2F",
+            ": the URL's port isn't a number: a #, ? or / in the password must be written %23, %3F, %2F",
         ),
         (
             "a setting it doesn't know",
             "colour=blue",
-            "unknown connection setting 'colour' (use host, port, user, password, dbname, sslmode)",
+            ": unknown connection setting 'colour' (use host, port, user, password, dbname, sslmode)",
         ),
     ):
         rc, out = command(target, "studio", "--port", str(free_port()))
         check(
             f"{label}: can't connect, as the other commands say it, exit 2",
-            (rc, out) == (2, f"can't connect: {said}\n"),
+            (rc, out) == (2, f"can't connect{said}\n"),
             (rc, out),
         )
     # a role that may log in and read nothing of rowstile's (an app's own DATABASE_URL, say)
@@ -1165,7 +1169,8 @@ def main() -> None:
         status, e = Client(gone).call("/api/overview")
         check(
             "the page is told it can't connect, as the command says it (503)",
-            status == 503 and e["detail"] == "can't connect: [Errno 2] No such file or directory",
+            status == 503
+            and e["detail"] == "can't connect to the socket /nowhere/.s.PGSQL.5432: no such file or directory",
             (status, e),
         )
     finally:
@@ -1246,7 +1251,7 @@ def main() -> None:
         status, e = Client(via).call("/api/overview")
         check(
             "the server gone between two requests: 503, can't connect",
-            (status, e["detail"]) == (503, "can't connect: [Errno 111] Connection refused"),
+            (status, e["detail"]) == (503, f"can't connect to 127.0.0.1 port {between.port}: connection refused"),
             (status, e),
         )
         between.again()
