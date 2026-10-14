@@ -557,6 +557,40 @@ def main() -> None:
             got == (403, {"title": "Problem", "status": 403, "detail": refused}),
             got,
         )
+        # ... for a while only: a client that goes on sending after the answer is cut off once that time is over
+        with (
+            mock.patch.object(studio, "LINGER_SECONDS", 0.5),
+            socket.create_connection(("127.0.0.1", ro.port), timeout=10) as conn,
+        ):
+            conn.sendall(
+                f"POST /api/share HTTP/1.1\r\nHost: 127.0.0.1:{ro.port}\r\nX-Studio-Token: {ro.token}\r\n"
+                "Content-Length: 300\r\n\r\n".encode()
+            )
+            cut: list[float] = []  # when the connection stopped taking bytes
+
+            def flood() -> None:
+                with contextlib.suppress(OSError):
+                    while True:
+                        conn.sendall(b" " * 1024)
+                cut.append(time.monotonic())
+
+            flooding = threading.Thread(target=flood, daemon=True)
+            flooding.start()
+            answer = b""
+            with contextlib.suppress(OSError):
+                while data := conn.recv(65536):
+                    answer += data
+            answered = time.monotonic()
+            flooding.join(10)
+        took = cut[0] - answered if cut else None
+        check(
+            "... and a client that goes on sending after that answer is let go once the wait is over",
+            answer.startswith(b"HTTP/1.0 403 ")
+            and json.loads(answer.partition(b"\r\n\r\n")[2])["detail"] == refused
+            and took is not None
+            and 0.3 < took < 4,
+            (answer[:300], took),
+        )
         status, t = c.call("/api/test?as=user:3&type=folder&id=3&perm=edit&expect=cannot")
         check(
             "a test from what should hold: the check on the data there now",
