@@ -921,9 +921,11 @@ def main() -> None:
             (rc, out),
         )
     # a role that may log in and read nothing of rowstile's (an app's own DATABASE_URL, say)
-    psql(db, "DROP ROLE IF EXISTS authz_studio_login; CREATE ROLE authz_studio_login LOGIN")
-    rc, out = command(f"dbname={db} user=authz_studio_login", "studio", "--port", str(free_port()))
-    psql(db, "DROP ROLE authz_studio_login")
+    # (roles are the server's, not a database's: named after this run's database, so two runs side by side differ)
+    login = f"{db}_login"
+    psql(db, f"DROP ROLE IF EXISTS {login}; CREATE ROLE {login} LOGIN")
+    rc, out = command(f"dbname={db} user={login}", "studio", "--port", str(free_port()))
+    psql(db, f"DROP ROLE {login}")
     check(
         "connected as a role that can't read rowstile's tables: the database's words, exit 1",
         (rc, out) == (1, "rowstile studio: permission denied for schema authz\n"),
@@ -1271,7 +1273,7 @@ def main() -> None:
     print("-- Studio through an app role the owner may not take, with no rules, and users keyed by text")
     # since PostgreSQL 16 a role that makes another gets ADMIN on it, not SET (the suites' owner has
     # createrole_self_grant, which would hide it): as on managed Postgres until the owner grants itself the role
-    plain, app = f"{db}_plain", "authz_studio_plain_app"
+    plain, app = f"{db}_plain", f"{db}_plain_app"
     subprocess.run(["dropdb", "--if-exists", plain], capture_output=True)
     psql("postgres", f"DROP ROLE IF EXISTS {app}")
     subprocess.run(["createdb", plain], check=True)
