@@ -23,8 +23,9 @@ subjects (shares to a token's hash, TOKENS in each user's context), and rules th
 (`update after`, `update b1 before`, `update b1 after`).
 Then the tables it reads and their data. A third of the seeds name those tables and columns as an app's own may be
 (AWKWARD: capitals, words SQL reserves, a double quote, a letter outside ASCII, 63 bytes), the policy otherwise the
-same; nearly half give every key another type than bigint (KEYS: int, text or uuid), said on each type line; and a
-quarter of the others key their object types by (org_id, id), every column that points at an object then naming one
+same; nearly half give every key another type than bigint (KEYS: int, text or uuid), said on each type line, and half
+of those with text keys make them words, not numerals (WORDS: spaces, quotes, capitals, accents, a dotted and a
+dotless i, an order that depends on the collation, one a prefix of another); and a quarter of the others key their object types by (org_id, id), every column that points at an object then naming one
 in its row's org (`[org_id, c_up]`, `(parent_type, [org_id, parent_id])`, link tables `([org_id, obj_id] ->
 [org_id, subj_id])`).
 Some have caveats (CAVEATS), which some of their shares carry, read in each user's context, and some scopes
@@ -110,6 +111,15 @@ AWKWARD = {
 KEYS = ("bigint", "int", "text", "uuid")
 UUID = "00000000-0000-4000-8000-{:012d}"  # row n's key, where keys are uuids
 ORGS = 2  # where object types are keyed by (org_id, id): the orgs their rows are in
+# Text keys that aren't numerals, for half the seeds whose keys are text (drawn apart): row n's key is the nth word,
+# and past the last one a word and n ('ab11'). A space, quotes of both kinds, capitals, an accent, a dotted and a
+# dotless i, and words whose order depends on the collation: 'B' before 'ab' in the C locale, after it in others;
+# 'ab' is a prefix of 'ab c', which sorts before 'ab11' in Turkish and after it in English; lower() makes 'iz' of
+# the dotted capital I's 'İz' (user 2) in Turkish and in English, as of user 5's own 'iz', and the dotless i's of 'Iz'
+# in Turkish. A key folded, compared in another collation, or written into SQL unquoted, is then met by the checks.
+WORDS = ("ab", "\u0130z", "ab c", "O'Neil", "iz", 'say "hi"', "Émile", "\u0131z", "B", "Iz")  # (a dotted, a dotless i)
+# ... as a LATIN1 database can hold them (around.py's): an accented i for the dotted and the dotless ones
+WORDS_LATIN1 = ("ab", "Íz", "ab c", "O'Neil", "iz", 'say "hi"', "Émile", "ìz", "B", "Iz")
 
 
 @dataclass(frozen=True)
@@ -117,11 +127,13 @@ class Spelling:
     """How a policy writes its database: its tables and columns named as genpolicy's plain names (gp.t1, b1), or
     AWKWARD's; and the type of its keys (KEYS), every type's the same. Row n's key is n, its text where keys are
     text, UUID's where they are uuids. composite: the object types are keyed by (org_id, id) instead, both bigint
-    (their ids are the row's text, '(1,3)'), and whatever points at an object names one in its own row's org."""
+    (their ids are the row's text, '(1,3)'), and whatever points at an object names one in its own row's org.
+    words: where keys are text, row n's key is a word instead (WORDS, or WORDS_LATIN1)."""
 
     awkward: bool = False
     keytype: str = "bigint"
     composite: bool = False
+    words: tuple[str, ...] = ()
 
     def name(self, plain: str) -> str:
         """The name, as the policy writes it."""
@@ -159,21 +171,50 @@ class Spelling:
 
     def ident(self, n: int | str) -> str:
         """Row n's key, as text (as the checks read ids)."""
+        if self.worded:
+            k, w = int(n), self.words
+            return w[k - 1] if 1 <= k <= len(w) else f"{w[(k - 1) % len(w)]}{k}"
         return UUID.format(int(n)) if self.keytype == "uuid" else str(n)
 
     def number(self, ident: str) -> int:
         """The n of row n's key."""
+        if self.worded:
+            if ident in self.words:
+                return self.words.index(ident) + 1
+            digits = re.search(r"[0-9]+$", ident)
+            assert digits is not None, ident
+            return int(digits.group())
         return int(ident[-12:]) if self.keytype == "uuid" else int(ident)
 
     def literal(self, ident: str) -> str:
         """A key in SQL: a number as it is, text and uuids quoted."""
         return ident if self.keytype in ("bigint", "int") else lit(ident)
 
+    @property
+    def worded(self) -> bool:
+        """Whether keys are words (text keys only)."""
+        return bool(self.words) and self.keytype == "text"
+
+    def words_sql(self) -> str:
+        return f"ARRAY[{', '.join(lit(w) for w in self.words)}]::text[]"
+
     def key_of(self, n: str) -> str:
         """The key of row n, n an SQL integer."""
         if self.keytype == "uuid":
             return f"('{UUID.split('{')[0]}' || lpad(({n})::text, 12, '0'))::uuid"
+        if self.worded:
+            w, k = self.words_sql(), len(self.words)
+            return (
+                f"(CASE WHEN ({n}) BETWEEN 1 AND {k} THEN ({w})[({n})::int] "
+                f"ELSE ({w})[((({n}) - 1) % {k} + 1)::int] || ({n}) END)"
+            )
         return f"({n})::text" if self.keytype == "text" else n
+
+    def number_of(self, key: str) -> str:
+        """The n of a key, in SQL (key: text SQL, a text key's)."""
+        if self.worded:
+            return f"coalesce(array_position({self.words_sql()}, {key}), substring({key} from '[0-9]+$')::bigint)"
+        return f"{key}::bigint"
 
     def cond(self, plain: str) -> str:
         """One of genpolicy's {conditions}, with its names spelled (they are SQL: quoted). Where keys are text or
@@ -262,24 +303,38 @@ SHARED_IFS: dict[str, Callable[[str, str, str, set[str]], bool]] = {
 CAVEATS = {"c_mode": "{authz.ctx('mode') = 'business'}", "c_ip": "{authz.ctx('ip') = arg('ip')}"}
 
 
-def make(seed: int, respell: bool | None = None, keytype: str | None = None, composite: bool | None = None) -> Spec:
+def make(
+    seed: int,
+    respell: bool | None = None,
+    keytype: str | None = None,
+    composite: bool | None = None,
+    words: bool | None = None,
+) -> Spec:
     """The seed's policy. Its names are AWKWARD's for a third of the seeds (respell: for this one, or not), its keys
     are int, text or uuid for about one seed in seven each, bigint otherwise (keytype: these), and a quarter of
-    those with bigint keys key their object types by (org_id, id) (composite: these, or not), each drawn apart from
-    the rest, so that a seed's policy is the same either way."""
+    those with bigint keys key their object types by (org_id, id) (composite: these, or not), half of those with
+    text keys are words (WORDS; words: these, or not), each drawn apart from the rest, so that a seed's policy is the
+    same either way."""
     awkward = random.Random(f"genpolicy/{seed}/spelling").random() < 1 / 3 if respell is None else respell
+    if words is None:  # (where the keys' type is drawn: a caller that says text keys gets numerals, unless it says)
+        words = keytype is None and random.Random(f"genpolicy/{seed}/words").random() < 0.5
     if keytype is None:
         x = random.Random(f"genpolicy/{seed}/keys").random()
         keytype = KEYS[3 if x < 0.15 else 2 if x < 0.3 else 1 if x < 0.45 else 0]
     if composite is None:
         composite = keytype == "bigint" and random.Random(f"genpolicy/{seed}/composite").random() < 0.25
+    words = words and keytype == "text"
     spec = make_plain(seed)
     shared = any(rel.kind == "shared" for o in spec.objs for rel in o.rels)  # (caveats ride on shares)
     caveats = random.Random(f"genpolicy/{seed}/caveats").random() < 0.3 and shared
     scopes = draw_scopes(spec, random.Random(f"genpolicy/{seed}/scopes"))
     include = random.Random(f"genpolicy/{seed}/include").random() < 0.25
     return dataclasses.replace(
-        spec, spelling=Spelling(awkward, keytype, composite), caveats=caveats, scopes=scopes, include=include
+        spec,
+        spelling=Spelling(awkward, keytype, composite, WORDS if words else ()),
+        caveats=caveats,
+        scopes=scopes,
+        include=include,
     )
 
 
@@ -788,7 +843,7 @@ def schema_text(spec: Spec) -> str:
         )
         s.append(f'CREATE OPERATOR public.=!= (FUNCTION = {n.sql(SCHEMA)}."Flag", RIGHTARG = {k});')
     if k in ("text", "uuid"):
-        number = "p::bigint" if k == "text" else "right(p::text, 12)::bigint"
+        number = n.number_of("p") if k == "text" else "right(p::text, 12)::bigint"
         s.append(
             f"CREATE FUNCTION {n.sql(SCHEMA)}.nxt(p {k}) RETURNS {k} LANGUAGE sql IMMUTABLE "
             f"AS $$SELECT {n.key_of(number + ' + 1')}$$;"
@@ -1140,8 +1195,10 @@ def invariant_problems(checker: Checker) -> list[str]:
         got[(i, user)] = json.loads(ids)
     snap = checker.snapshot_data_only()
     problems: list[str] = []
+    gen = checker.gen
+    gone = gen.spec.spelling.ident(GONE) if isinstance(gen, GenPolicyGen) else GONE
     for u in checker.users:
-        if u in (GONE, UUID.format(int(GONE))):  # asked as each row of a principal type, and as nobody
+        if u in (GONE, UUID.format(int(GONE)), gone):  # asked as each row of a principal type, and as nobody
             continue
         data = evaluate.Data.of({tuple(k[2:]): v for k, v in snap.items() if k[0] == u and k[1] == "data"})
         state = checker.ref.evaluate(data, u, set())
@@ -1298,6 +1355,7 @@ FEATURES: dict[str, Callable[[Spec], bool]] = {
     "awkward names": lambda s: s.spelling.awkward,
     **{f"{k} keys": (lambda s, k=k: s.spelling.keytype == k and not s.spelling.composite) for k in KEYS},
     "composite keys": lambda s: s.spelling.composite,
+    "word keys": lambda s: s.spelling.worded,
     "users with a where": lambda s: s.user_where,
     "a service": lambda s: s.bot,
     "three types": lambda s: len(s.objs) == 3,
@@ -1333,10 +1391,13 @@ FEATURES: dict[str, Callable[[Spec], bool]] = {
     "invariants": lambda s: bool(s.invariants),
     "two files": lambda s: s.include,
 }
-# the features no policy has together, by how genpolicy draws: one key type each, composite keys only of bigint
+# the features no policy has together, by how genpolicy draws: one key type each, composite keys only of bigint,
+# words only of text
 APART = {
     *combinations(sorted(f"{k} keys" for k in KEYS), 2),
     *((min(f"{k} keys", "composite keys"), max(f"{k} keys", "composite keys")) for k in KEYS),
+    *((min(other, "word keys"), max(other, "word keys")) for other in ("bigint keys", "int keys", "uuid keys")),
+    ("composite keys", "word keys"),
 }
 
 

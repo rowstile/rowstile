@@ -255,6 +255,7 @@ def replay(spec: Spec, base: review.Side, new: str, m: review.Meaning, sql: str,
         raise Unloadable("a rule's difference, or one in conditions the review can't read")
     if spec.spelling.keytype == "uuid":
         raise Unloadable("uuid keys (a world's ids are numbers)")
+    spec = dataclasses.replace(spec, spelling=dataclasses.replace(spec.spelling, words=()))  # (numbers, not words)
     head = parse_policy(new, "new.authz")
     first = evaluate.first_difference(base.pol, head, worlds=worlds)
     assert first is not None and first[0] == found, (first, found)  # (the review's own, found again)

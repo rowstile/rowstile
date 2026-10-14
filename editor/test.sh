@@ -2,7 +2,8 @@
 # test.sh: the editors' side, each in a container:
 #   - the Tree-sitter grammar (tree-sitter-authz): src/ is what grammar.js generates, its corpus passes, and
 #     every .authz file in the repository parses without an error, the queries included; and it reads each of
-#     them, and 200 random policies, as core/authzlib/parse.py does (core/tests/parse_agreement.py)
+#     them, 200 random policies and core/tests/small.py's set up to size 4 (each written two ways), as
+#     core/authzlib/parse.py does (core/tests/parse_agreement.py)
 #   - the third evaluator (core/tests/third_compare.py), which reads policies through the grammar, against the
 #     reference evaluator: every policy in the repository and the cases worked out by hand, in many worlds each
 #   - the Zed extension builds (WebAssembly, as Zed builds it)
@@ -10,9 +11,12 @@
 #   editor/test.sh                  all of it (each push)
 #   editor/test.sh --third "ARGS"   the third evaluator only, on the policies third_compare.py's ARGS choose
 #                                   (nightly: --gen 250 --seed N, small.py's set: --small 5 --slice K/4)
+#   editor/test.sh --agree "ARGS"   the grammar and the parser only, on small.py's set as parse_agreement.py's
+#                                   ARGS choose it (nightly: all of it, --small 6 --slice K/4)
 set -u
-THIRD=""
+THIRD="" AGREE=""
 [ "${1:-}" = "--third" ] && THIRD="${2:?--third ARGS}"
+[ "${1:-}" = "--agree" ] && AGREE="${2:?--agree ARGS}"
 cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1
 REPO=$(pwd -W 2>/dev/null || pwd)
@@ -37,6 +41,20 @@ if [ -n "$THIRD" ]; then
   exit $?
 fi
 
+if [ -n "$AGREE" ]; then
+  echo "-- the grammar and the parser: $AGREE"
+  # (many files: parsed in chunks, each an XML of its own, compared together)
+  docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz node:24-trixie bash -c '
+    npm ci --no-audit --no-fund >/dev/null 2>&1 || { echo "FAIL  npm ci"; exit 1; }
+    python3 /repo/core/tests/parse_agreement.py --write /tmp/agree 0 $1 &&
+      find /tmp/agree -name "*.authz" | sort > /tmp/paths && split -l 4000 /tmp/paths /tmp/chunk_ || exit 1
+    for c in /tmp/chunk_*; do npx tree-sitter parse --xml --paths "$c" > "$c.xml" 2>/dev/null || { echo "FAIL  tree-sitter parse"; exit 1; }; done
+    python3 /repo/core/tests/parse_agreement.py /tmp/chunk_*.xml > /tmp/agree.log 2>&1 &&
+      echo "ok    $(tail -n 1 /tmp/agree.log)" || { tail -n 40 /tmp/agree.log; echo "FAIL  the grammar and the parser read a policy differently"; exit 1; }
+  ' agree "$AGREE"
+  exit $?
+fi
+
 echo "-- the grammar"
 docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz node:24-trixie bash -c '
   npm ci --no-audit --no-fund >/dev/null 2>&1 || { echo "FAIL  npm ci"; exit 1; }
@@ -48,8 +66,8 @@ docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz
   npx tree-sitter parse -q $files 2>/dev/null && echo "ok    every policy in the repository parses ($(echo "$files" | wc -l) files)" ||
     { npx tree-sitter parse -q $files; echo "FAIL  a policy has a parse error"; exit 1; }
   # the grammar was written apart from core/authzlib/parse.py, which the compiler and the reference evaluator
-  # share: each policy, and 200 random ones, read alike by both (core/tests/parse_agreement.py)
-  python3 /repo/core/tests/parse_agreement.py --write /tmp/gen 200 &&
+  # share: each policy, 200 random ones and the small ones up to size 4, read alike by both (core/tests/parse_agreement.py)
+  python3 /repo/core/tests/parse_agreement.py --write /tmp/gen 200 --small 4 &&
     { echo "$files"; ls /tmp/gen/*.authz; } > /tmp/paths && npx tree-sitter parse --xml --paths /tmp/paths > /tmp/all.xml 2>/dev/null &&
     python3 /repo/core/tests/parse_agreement.py /tmp/all.xml > /tmp/agree.log 2>&1 &&
     echo "ok    $(tail -n 1 /tmp/agree.log)" || { cat /tmp/agree.log; echo "FAIL  the grammar and the parser read a policy differently"; exit 1; }

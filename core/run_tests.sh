@@ -274,7 +274,7 @@ record $? "migrations"
 }
 unit command 47 migrations
 # ROWSTILE_UPGRADES=every (nightly): from every release on PyPI older than this version, each with a world of data
-# that this version's answers on it are judged by; else from the release before
+# that this version's answers on it are judged by; else from the release before, with the world too
 if [ "${ROWSTILE_UPGRADES:-}" = every ]; then
 upgrade() {
 step "upgrading from every release (from PyPI): the docs app's databases and a world of data, upgraded by this version"
@@ -284,11 +284,11 @@ record $? "upgrade from every release"
 unit command 540 upgrade
 else
 upgrade() {
-step "upgrading: databases the release before made (from PyPI), pushed to, applied and migrated by this version"
-tests/upgrade.sh
+step "upgrading: databases the release before made (from PyPI), pushed to, applied and migrated by this version, and a world of data"
+tests/upgrade.sh --world
 record $? "upgrade"
 }
-unit command 16 upgrade
+unit command 60 upgrade
 fi
 review() {
 step "rowstile review and fmt: a pull request in a git repository, with a review database"
@@ -405,7 +405,7 @@ for gen in $GENS; do
   unit "$p" $((secs*STEPS/15)) difftest "$gen"
 done
 # what is around the policy depends on the version of Postgres more than the policy does: a few on every run
-# (the full run: the worlds in which every two of their features meet, twenty of a thousand seeds). In shares, each
+# (the full run: the worlds in which every two of their features meet, twenty-five of a thousand seeds). In shares, each
 # with databases and login roles of its own: on the full run three lanes of the random part; else two, one with
 # each of the other parts, which are shorter (as difftest's composite and multi are)
 around() {

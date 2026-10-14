@@ -106,6 +106,7 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
+      max-parallel: 8   # (several soaks asked for at once: pull requests keep runners)
       matrix:
         soak: ${{ fromJSON(needs.soak-plan.outputs.soaks) }}
         part: [changes-1, changes-2, policies, around, small, races]
@@ -185,7 +186,9 @@ jobs:
   # The third evaluator (core/tests/third.py, written apart from the reference evaluator, reading policies through the
   # editors' grammar) against the reference evaluator, in four parts side by side: each 250 of genpolicy's policies,
   # new seeds each night (from the run's id), and a quarter of core/tests/small.py's set up to size 5 where it is
-  # there (editor/test.sh --third; each push: the repository's policies and the hand cases)
+  # there (editor/test.sh --third; each push: the repository's policies and the hand cases). Then the grammar and the
+  # parser on a quarter of small.py's whole set, each policy written two ways (editor/test.sh --agree; each push: up
+  # to size 4)
   third:
     if: ${{ !inputs.only || inputs.only == 'third' }}
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
@@ -199,6 +202,8 @@ jobs:
       - run: >-
           bash editor/test.sh --third "--gen 250 --seed $(( ${{ github.run_id }} % 1000000 * 1000 + ${{ matrix.part }} * 250 ))
           --small 5 --slice ${{ matrix.part }}/4 --no-hand --no-repository"
+      - if: ${{ !cancelled() }}
+        run: bash editor/test.sh --agree "--small 6 --slice ${{ matrix.part }}/4"
   # Each statement and branch of rowstile's PL/pgSQL the suites run, on 16: core/ci.sh --statements preloads
   # plpgsql_check's profiler (in the coverage image only; rowstile needs no extension) and keeps its counts, in the
   # parts run_tests.sh names, side by side. The counts are kept when a check fails too: they are worth reading then
