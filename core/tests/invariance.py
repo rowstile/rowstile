@@ -738,6 +738,10 @@ def check(spec: Spec, db: DB, db2: DB, steps: int, workdir: str) -> tuple[list[s
         base_sql = compiled(text, files)
     except PolicyError as e:
         raise Skipped(str(e)) from None
+    except database.Error as e:  # (migratable() says the compiler's refusal so: 42P17, "policy line N: ...")
+        if e.sqlstate != "42P17":
+            raise
+        raise Skipped(str(e)) from None
     if "view definitions to plan" in base_sql:
         raise Skipped("authz.lint() warns that a select rule is slow to plan")
     r = random.Random(f"invariance/{spec.seed}")
