@@ -1213,9 +1213,16 @@ class Listing:
         return self.steps > STEPS and self.whole >= ALWAYS
 
     def said(self) -> str:
-        """What was listed, in words: '1,105 listed: every one of up to 3 rows of each type with at most 2 links'."""
+        """What was listed, in words: '1,105 listed: every one of up to 3 rows of each type with at most 2 links',
+        and where columns read together had more combinations of values than CLASS_CHOICES, that only those were
+        tried."""
         most = "" if self.complete else f" with at most {self.whole} link" + ("" if self.whole == 1 else "s")
-        return f"{self.listed:,} listed: every one of up to {MOST_ROWS} rows of each type{most}"
+        cut = (
+            f"; of columns read together, only the first {CLASS_CHOICES:,} combinations of their values"
+            if self.cut
+            else ""
+        )
+        return f"{self.listed:,} listed: every one of up to {MOST_ROWS} rows of each type{most}{cut}"
 
     def conditions(self, pol: Policy) -> list[CondKey]:
         if id(pol) not in self._conditions or self._conditions[id(pol)][0] is not pol:

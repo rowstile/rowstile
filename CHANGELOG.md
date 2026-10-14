@@ -90,7 +90,8 @@ Each release upgrades from the one before it. How releases are numbered and made
   it lists the worlds of up to 3 rows of each type, the fewest links first, each row with every answer its
   conditions can give, and tries every one with no link or one link, then more up to 3,000 worlds. "Meaning
   unchanged" says how far it got: "200 small worlds and 3,000 listed: every one of up to 3 rows of each type with
-  at most 2 links". A review of a typical policy takes 1 to 4 seconds more.
+  at most 2 links", and where columns read together have more than 4,096 combinations of values, that it tried the
+  first 4,096 only. A review of a typical policy takes 1 to 4 seconds more.
 - `rowstile review` could show a difference for a rewrite that changes nothing. In the small worlds where every
   condition holds, or none does, it chose a row's column values for each policy's own conditions, so where the
   rewrite read a column beside another (`{not b1} or ({b1 and b2} and nobody)` for `{not b1}`) the two
