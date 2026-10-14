@@ -120,7 +120,8 @@ what).
 - [`tests/identity.sh`](../core/tests/identity.sh) covers API keys and JWTs: a bad signature, an expired
   token, one without an expiry, `alg: none`.
 - Every refusal the runtime can raise is asked for by its words by some check, not only by its error code (two
-  guards that answer with the same code look alike): `Guards` in
+  guards that answer with the same code look alike), and words several functions raise (`no type ... in the
+  policy`) beside the name of each function of the API that raises them: `Guards` in
   [`tests/unit_test.py`](../core/tests/unit_test.py) fails when one isn't. <!-- checked: tests/unit_test.py "test_each_guard_is_asked_for_by_its_words" -->
 
 ## Trees, under load
