@@ -9,7 +9,8 @@ suite cut short. run_tests.sh's log says how many checks each one passed (a line
 `Ran N tests`, `N of N cases`) before the step's `--- passed: NAME` line, and check_counts.txt says how many each
 one passes: no fewer and no more, so that a count that changes is in the diff, like the golden SQL. A suite a log
 doesn't have (a part of the run, a shorter mode) isn't asked. The random ones (difftest, genpolicy, around, the
-conditions, the parser fuzzer, the stress test) check as many things as their seeds draw: they aren't counted. Nor
+invariance, the conditions, the parser fuzzer, the stress test) check as many things as their seeds draw: they
+aren't counted (the invariance of the fixed policies is, but not the full run's answers to them). Nor
 are the upgrades from every release (nightly), as many as PyPI has releases: that suite checks each passes as many.
 """
 
@@ -24,7 +25,9 @@ from collections.abc import Sequence
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXPECTED = os.path.join(HERE, "check_counts.txt")
 # the suites that check as many things on every run: not the random ones
-FIXED = re.compile(r"^(?!difftest|genpolicy|around|conditions|fuzz parser|stress|upgrade from every release)")
+FIXED = re.compile(
+    r"^(?!difftest|genpolicy|around|invariance(?! of the fixed policies$)|conditions|fuzz parser|stress|upgrade from every release)"
+)
 # a line that says how many checks passed: a scenario's, a filtered suite's (run_tests.sh's quiet_ok), the unit
 # tests', the policy errors'
 COUNT = re.compile(r"^\s*(\d+) checks passed$|^Ran (\d+) tests? in |^policy errors: (\d+) of \d+ cases")
