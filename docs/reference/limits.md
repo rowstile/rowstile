@@ -128,7 +128,7 @@ rowstile is a preview until 1.0. A minor release (0.1 to 0.2) may change the pol
 functions, the SDKs, the error codes and the file formats (`rowstile.toml`, the lock file). What it does keep:
 
 - **Each release upgrades from the one before it**: a database applied by 0.1 is migrated by 0.2, and the
-  suites test it. <!-- checked: tests/upgrade.sh "the migration applies on the database the release before's migrations set up"; tests/upgrade.sh "a database the release before applied is applied again, not taken as up to date"; tests/upgrade.sh "it holds what applying this version on a new database leaves"; tests/upgrade.sh "the shares made before still grant" -->
+  suites test it. <!-- checked: tests/upgrade.sh "the migration applies on the database"; tests/upgrade.sh "applied is applied again, not taken as up to date"; tests/upgrade.sh "it holds what applying this version on a new database leaves"; tests/upgrade.sh "the shares made before still grant" -->
   Skipping a release is not tested.
 - **The changelog says what changed**, and its **Upgrading** says what to do: a policy line to rewrite, a call
   to rename, a migration to make.

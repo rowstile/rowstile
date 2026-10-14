@@ -10,6 +10,7 @@
 #   ROWSTILE_PART=command ./run_tests.sh --quick                   # one part of a run (below: the parts of each)
 #   ROWSTILE_LANES=1 ./run_tests.sh --quick                        # each step after the other (below: lanes)
 #   ROWSTILE_COVERAGE=/abs/dir ./run_tests.sh --quick              # also measure what the suites run (below)
+#   ROWSTILE_UPGRADES=every ./run_tests.sh --quick                 # upgrades from every release, not only the one before
 # Needs psql, createdb, dropdb and python3. Creates and drops databases named authz_*, as a non-superuser.
 # Each step's result line says how long it took.
 set -u
@@ -247,12 +248,23 @@ tests/migrations.sh
 record $? "migrations"
 }
 unit command 47 migrations
+# ROWSTILE_UPGRADES=every (nightly): from every release on PyPI older than this version, each with a world of data
+# that this version's answers on it are judged by; else from the release before
+if [ "${ROWSTILE_UPGRADES:-}" = every ]; then
+upgrade() {
+step "upgrading from every release (from PyPI): the docs app's databases and a world of data, upgraded by this version"
+tests/upgrade.sh --every
+record $? "upgrade from every release"
+}
+unit command 540 upgrade
+else
 upgrade() {
 step "upgrading: databases the release before made (from PyPI), pushed to, applied and migrated by this version"
 tests/upgrade.sh
 record $? "upgrade"
 }
 unit command 16 upgrade
+fi
 review() {
 step "rowstile review and fmt: a pull request in a git repository, with a review database"
 tests/review.sh

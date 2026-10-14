@@ -131,6 +131,11 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   the app would, and each holds what applying this version on a new database leaves, down to the columns of the
   tables rowstile keeps across applies; the policy's tests and the scenario pass, and what the app made before
   still works. <!-- checked: tests/upgrade.sh "it holds what applying this version on a new database leaves"; tests/upgrade.sh "the API key made before still signs dave in" -->
+  Every night it does the same from every release on PyPI (six alphas today), and each also makes a world of
+  data the way the random checks do: shares in every state, links, moves, through that release's own triggers
+  and `authz.share`. After the upgrade, by `reapply` and by the next migration, `authz.can` answers every user,
+  object and permission (1,277 checks) as on a new database with the same rows, all of difftest's questions get
+  the reference evaluator's answers, and the catalog and the inheritance rows are the new database's. <!-- checked: tests/upgrade_world.py "answers as on a new database"; tests/upgrade.sh "it holds what applying this version on a new database with its rows leaves" -->
 - **The parser**: [`tests/fuzz_parser.py`](../core/tests/fuzz_parser.py) feeds it thousands of broken
   policies; each is accepted, or refused with a line number, never a crash. <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
 - **The docs**: the getting-started guide runs as written, every line the cookbook shows is in a policy that

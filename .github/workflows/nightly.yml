@@ -1,6 +1,7 @@
 # What ci.yml leaves out of each push, every night on main: every suite on PostgreSQL 17 and 18 (ci.yml runs
-# them all on 16, and only what depends on the version on 17 and 18), the race and stress tests on each, the
-# random checks long with a new seed (soak), the SDKs' conformance suites on 17 and 18, and the scale benchmark last.
+# them all on 16, and only what depends on the version on 17 and 18), with upgrades from every release (each push:
+# from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
+# SDKs' conformance suites on 17 and 18, and the scale benchmark last.
 # On GitHub's runners, as ci.yml (or the one the repository variable RUNNER names). Run by hand too
 # (workflow_dispatch), all of it or one job: `gh workflow run nightly.yml -f only=bench`. And several soaks at
 # once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7`.
@@ -37,8 +38,9 @@ jobs:
         part: [unit, policy, command, random]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      # (the part command upgrades from every release on PyPI, not only the one before: core/tests/upgrade.sh --every)
       - run: bash core/ci.sh ${{ matrix.pg }}
-        env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}", ROWSTILE_PART: "${{ matrix.part }}"}
+        env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}", ROWSTILE_PART: "${{ matrix.part }}", ROWSTILE_UPGRADES: every}
       # a cancelled job may stop before ci.sh removes its container: this job's own (the label names the job)
       - if: always()
         run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
