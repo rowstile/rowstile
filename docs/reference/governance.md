@@ -27,6 +27,14 @@
   approval makes a share that ends after the requested time. <!-- checked: tests/governance.sh "erin (who may share Secrets) sees it to decide"; tests/governance.sh "the share ends after the requested week" -->
   Requesters can't
   decide their own, and asking doesn't reveal whether a hidden object exists. <!-- checked: tests/governance.sh "carol cannot approve her own request"; tests/adversarial.sh "request_access('file', ID, 'viewer', 'curious') IS NOT NULL"; tests/governance.sh "a request for a missing object reaches no approver" -->
+  A pending request goes with its requester's row and with its object's: deleting either, giving it a new id or
+  emptying its table cancels the request (`status` cancelled, the `note` says why), so it never reaches whoever
+  later has that id, and approving it is refused. <!-- checked: tests/governance.sh "a pending request is cancelled when its requester is deleted, its object is, or its object gets a new id, and says why"; tests/governance.sh "a later user with the id has none of the old one's requests"; tests/governance.sh "approving the old request for a later folder with the id is refused" -->
+  Decided requests stay as they were. <!-- checked: tests/governance.sh "a decided one stays as it was" -->
+  Applying the policy cancels those of requesters whose rows went while nothing watched them. <!-- checked: tests/governance.sh "applying the policy cancels the pending requests of requesters whose row is gone" -->
+  A request made while its requester is deleted waits for the delete and is refused; a delete in REPEATABLE READ
+  or SERIALIZABLE whose snapshot is older than a request on the row fails with a serialization error (40001), to
+  retry. <!-- checked: tests/governance.sh "a request made while its requester is deleted waits for the delete, then is refused"; tests/governance.sh "and leaves no request behind"; tests/governance.sh "a delete with an older snapshot than a request on the folder gets a serialization error" -->
 - **Break glass**: short, audited, announced self-service access for people the policy
   names with `can break_glass`. <!-- checked: tests/governance.sh "it lasts one day at most"; tests/governance.sh "the trail has it, with the reason"; tests/governance.sh "carol breaks the glass, and the alert goes out" -->
   They pick the relation, among those the policy lets be shared with a user:

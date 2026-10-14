@@ -25,46 +25,21 @@ SESSION_SIG = (
 SESSION_OK = "authz_int.session_ok()"
 
 
-# A principal's API keys go with its row (key_forget_sql). A key is made under a lock on the principal's row (FOR
-# KEY SHARE), so a delete waits for it, and in READ COMMITTED the trigger that deletes the row's keys then sees it. A
-# transaction whose snapshot is older than the key (REPEATABLE READ, SERIALIZABLE) doesn't, so making a key also
-# writes a new version of a mark row for its principal, and a delete, a new id or a TRUNCATE in such a transaction
-# writes the same mark first: where a key it can't see was made since its snapshot, that fails to serialize (40001)
-# instead of committing and leaving the key to whoever later has that id. One mark per principal with keys made,
-# removed with the row.
-KEY_MARKS = """-- a mark for each principal a key was made for (authz_int.mark_key), until its row is gone (keys_gone)
-CREATE TABLE authz_int.key_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));
-CREATE FUNCTION authz_int.mark_key(p_type text, p_id text) RETURNS void
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-  INSERT INTO authz_int.key_marks AS m (type, id) VALUES (p_type, p_id)
-  ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1 $f$;
--- whether a principal's row is there, locked (FOR KEY SHARE) until the transaction ends
-CREATE FUNCTION authz_int.lock_principal(p_type text, p_id text) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE v_tbl text; v_find text; v_found boolean;
-BEGIN
-  SELECT t.tbl, t.find INTO v_tbl, v_find FROM authz_int.types t WHERE t.name = p_type AND t.principal;
-  -- (the key's type by a subquery, as authz_int.hold reads it: a variable would keep its first value)
-  IF v_tbl IS NULL OR p_id IS NULL
-     OR NOT pg_catalog.pg_input_is_valid(p_id, (SELECT t.keytype FROM authz_int.types t WHERE t.name = p_type)) THEN
-    RETURN false;
-  END IF;
-  EXECUTE pg_catalog.format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s FOR KEY SHARE)', v_tbl, v_find) INTO v_found
-    USING p_id;
-  RETURN v_found;
-END $f$;
--- the keys of principals that are gone, or whose id changed (p_ids; NULL: every one of the type, TRUNCATE) are
--- deleted, each in the audit trail. In a transaction whose snapshot may be older than a key made for one of them
--- (not READ COMMITTED), their marks are written first: if a key was made since, that fails to serialize (40001)
+# A principal's API keys go with its row (key_forget_sql). A key is made under a lock on the principal's row and marks
+# it (authz_int.hold, mark_row: output.ROW_MARKS), so a delete waits for it, or, with an older snapshot, fails to
+# serialize instead of leaving the key to whoever later has that id.
+KEYS_GONE = """-- the keys of principals that are gone, or whose id changed (p_ids; NULL: every one of the type, TRUNCATE) are
+-- deleted, each in the audit trail, with the rows' marks (forget_marks: in a transaction whose snapshot may be older
+-- than a key made for one of them, that fails to serialize, 40001)
 CREATE FUNCTION authz_int.keys_gone(p_type text, p_ids text[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE k record;
 BEGIN
-  IF p_ids IS NOT NULL AND pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    INSERT INTO authz_int.key_marks AS m (type, id) SELECT DISTINCT p_type, x FROM unnest(p_ids) x
-    ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1;
+  IF p_ids IS NULL THEN
+    DELETE FROM authz_int.row_marks WHERE type = p_type;
+  ELSE
+    PERFORM authz_int.forget_marks(p_type, p_ids);
   END IF;
-  DELETE FROM authz_int.key_marks WHERE type = p_type AND (p_ids IS NULL OR id = ANY (p_ids));
   FOR k IN DELETE FROM authz.api_keys WHERE principal_type = p_type AND (p_ids IS NULL OR user_id = ANY (p_ids))
            RETURNING id, user_id, name LOOP
     PERFORM authz_int.audit('delete_api_key', p_type, k.user_id, NULL, NULL, NULL, NULL,
@@ -307,7 +282,7 @@ LANGUAGE sql {DEF} AS $f$
               WHERE NOT EXISTS (SELECT 1 FROM {tbl} s WHERE {this} AND s.{sc} = w.m) RETURNING 1)
       SELECT (SELECT count(*) FROM ins)::int, (SELECT count(*) FROM del)::int INTO added, removed;""")
         sync = "\n".join(sync_cases) if sync_cases else "    WHEN NULL THEN NULL;"
-        return f"""{KEY_MARKS}
+        return f"""{KEYS_GONE}
 
 -- API keys: a signed-in user's own, or a principal's (a service's) made by someone holding
 -- manage_keys on it; only a hash is kept
@@ -325,12 +300,12 @@ BEGIN
   -- for the delete, which leaves no principal to make it for (a delete with an older snapshot: keys_gone)
   IF p_principal_id IS NULL THEN
     v_id := authz.uid()::text;
-    IF v_type <> 'user' OR v_id IS NULL OR NOT authz_int.lock_principal('user', v_id) THEN
+    IF v_type <> 'user' OR v_id IS NULL OR NOT authz_int.hold('user', v_id) THEN
       RAISE EXCEPTION 'sign in to create an API key' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ714';
     END IF;
   ELSE
     v_id := authz_int.canon(v_type, p_principal_id);
-    PERFORM authz_int.lock_principal(v_type, v_id);
+    PERFORM authz_int.hold(v_type, v_id);
     PERFORM authz_int.check_manage_keys(v_type, v_id);
   END IF;
   SELECT string_agg(x, ', ') INTO v_bad FROM unnest(v_scopes) x
@@ -342,7 +317,7 @@ BEGIN
   INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash, scopes, expires_at)
   VALUES (v_id, v_type, p_name, left(v_token, 10), encode(sha256(convert_to(v_token, 'UTF8')), 'hex'),
           array_to_string(v_scopes, ','), p_expires_at);
-  PERFORM authz_int.mark_key(v_type, v_id);
+  PERFORM authz_int.mark_row(v_type, v_id);
   PERFORM authz_int.audit('create_api_key', v_type, v_id, NULL, NULL, NULL, NULL,
                           jsonb_build_object('name', p_name, 'scopes', v_scopes, 'expires_at', p_expires_at));
   RETURN v_token;
