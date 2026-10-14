@@ -40,7 +40,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
     - `statements.py` — the compiled SQL read back as statements (quotes, dollar quotes, BEGIN ATOMIC), and the
       object each one makes
     - `evaluate.py` — the reference evaluator (sets of ids, a least fixpoint, straight from the policy) and small
-      worlds made up for two policies at once (`compare`: the review's refactor check); difftest uses it
+      worlds made up for two policies at once (`compare`: the review's refactor check; drawn ones, and `Listing`:
+      every world of up to 3 rows a type, the fewest links first); difftest uses it
     - `review.py` — `rowstile review`: meaning, access, risk, tests, deploy; markdown, text, JSON,
       annotations
     - `fmt.py` — `rowstile fmt`: one layout, refused if it would change what the policy says

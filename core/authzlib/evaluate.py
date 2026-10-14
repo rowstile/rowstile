@@ -21,10 +21,10 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import random
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import TypeAlias, TypedDict, TypeVar, cast
+from typing import NamedTuple, TypeAlias, TypedDict, TypeVar, cast
 
 from .conditions import Node, Scalar, columns_of, simple, truth, uses_uid
 from .parse import KEYWORDS, ROLES, Expr, Or, Policy, Relation, Rule, Source, Type
@@ -121,6 +121,7 @@ class Reference:
         self.of_table: dict[str, Type] = {}  # a table's type (one, where it has rules: AZ401)
         for t in pol.types.values():
             self.of_table.setdefault(t.table, t)
+        self.graph: dict[Name, set[Name]] = {}
         self.order = self.strata()
         self.data = Data()
         self.links: set[str] = set()
@@ -199,6 +200,7 @@ class Reference:
                 visit(v)
         # what a `not` reads comes before it: the compiler refuses a not inside a recursion (AZ302)
         assert not any((a, b) in negated for comp in order for a in comp for b in comp), "a not inside a recursion"
+        self.graph = graph
         return order
 
     def conditions(self) -> list[CondKey]:
@@ -228,7 +230,20 @@ class Reference:
         return self.of_table[table]
 
     # evaluation ----------------------------------------------------------
-    def evaluate(self, data: Data, user: str, links: Iterable[str] = ()) -> State:
+    def reads(self, names: Iterable[Name]) -> set[Name]:
+        """These names and every name they read, themselves or through what they read."""
+        out: set[Name] = set()
+        todo = [n for n in names if n in self.graph]
+        while todo:
+            n = todo.pop()
+            if n not in out:
+                out.add(n)
+                todo += self.graph[n]
+        return out
+
+    def evaluate(self, data: Data, user: str, links: Iterable[str] = (), names: set[Name] | None = None) -> State:
+        """What each relation and permission holds in the data for this user (holding these share links); with
+        names, only those and what they read are worked out (the others hold nothing in the state)."""
         self.data, self.links = data, set(links)
         kind, pid = principal_of(user, self.types)
         self.principal = (kind, pid) if kind in self.types and pid in set(data.valid[kind]) else None
@@ -236,6 +251,8 @@ class Reference:
             (t.name, name): frozenset() for t in self.types.values() for name in list(t.relations) + list(t.perms)
         }
         for comp in self.order:
+            if names is not None and not names.intersection(comp):
+                continue
             # a least fixpoint: no `not` in the group reads a name of it (strata), so each round only adds, and the
             # rounds end
             changed = True
@@ -938,9 +955,448 @@ def rare_worlds(pols: Sequence[Policy], worlds: int, seed: str) -> Iterable[Worl
             yield World(f"{seed}/chain/{k}", min(deep + 2, LONGEST), pols=pols, density=density, chained=True)
 
 
-def worlds_to_try(pols: Sequence[Policy], worlds: int, seed: str, max_size: int = 4) -> Iterable[World]:
+# --- every small world, listed ----------------------------------------------------------------------
+# A draw rarely makes a world where many conditions each say one thing on one row (a change behind a long `and`), nor
+# two linked rows on which one condition says one thing and another the other. So beside the drawn worlds, those of a
+# few rows that two policies may be told apart in are listed, every one of them, the smallest first (Listing).
+MOST_ROWS = 3  # the rows of one type a listed world has at most
+LISTED = 3000  # the listed worlds a comparison tries, after the drawn ones, once ...
+ALWAYS = 1  # ... it has tried every world with at most this many links, however many they are
+CLASS_CHOICES = 4096  # the values a group of columns read together may take, for its classes to be listed whole
+STEPS = 100_000  # the steps of looking for links a listing takes at most
+
+
+class RowClass(NamedTuple):
+    """What the conditions read of a type say of one of its rows: the values of the columns its simple conditions
+    read (one choice of them for each different answer the conditions give), and the other conditions (and a `where`
+    the evaluator doesn't read as a fact about the row) that hold on it."""
+
+    columns: tuple[tuple[str, Scalar], ...]
+    holds: frozenset[str]
+
+
+Link: TypeAlias = "tuple[tuple[object, ...], str, str]"  # (what the source reads: source_key, the object, the subject)
+
+
+class Candidate(NamedTuple):
+    link: Link
+    subject_type: str | None  # the type of the subject's row, if it is one
+    column: tuple[object, ...] | None  # a column source: the column, which names one subject a row at most
+    source: str  # the source, as text (to order links by)
+
+
+class Cone(NamedTuple):
+    """What a world needs to tell two policies apart: the types, conditions and relations the permissions and rules
+    they define differently read, themselves or through what they name."""
+
+    types: set[str]
+    conds: set[CondKey]
+    relations: set[tuple[str, str]]
+
+
+def shape(pol: Policy) -> dict[str, object]:
+    """A policy's types and relations, as the worlds see them (what each source reads; not where it is written)."""
+    return {
+        t.name: (
+            t.table,
+            t.where,
+            t.principal,
+            t.roles,
+            t.roles_from,
+            {
+                r.name: [(source_key(t, r.name, s, st, sr), s.kind) for s in r.sources for st, sr in s.subjects]
+                for r in t.relations.values()
+            },
+        )
+        for t in pol.types.values()
+    }
+
+
+def cone(pols: Sequence[Policy]) -> Cone | None:
+    """What the permissions and rules two policies define differently read (Cone). None when they differ in more
+    than permissions and rules, or are more or fewer than two: a world may then tell them apart anywhere."""
+    if len(pols) != 2 or shape(pols[0]) != shape(pols[1]):
+        return None
+    a, b = pols
+    start: list[tuple[Policy, Type, Expr]] = []
+    for t in a.types.values():
+        tb = b.types[t.name]
+        for name in sorted(set(t.perms) | set(tb.perms)):
+            pa, pb = t.perms.get(name), tb.perms.get(name)
+            if pa is None or pb is None or pa.expr != pb.expr:
+                start += [
+                    (p, p.types[t.name], p.types[t.name].perms[name].expr)
+                    for p in pols
+                    if name in p.types[t.name].perms
+                ]
+    for p, other in ((a, b), (b, a)):
+        governing: dict[str, Type] = {}
+        for t in p.types.values():
+            governing.setdefault(t.table, t)
+        theirs = {(r.table, r.command, r.columns): r.expr for r in other.rules}
+        for r in p.rules:
+            if theirs.get((r.table, r.command, r.columns)) != r.expr:
+                start.append((p, governing[r.table], r.expr))
+    out = Cone(set(), set(), set())
+    seen: set[tuple[int, str, str]] = set()
+
+    def visit(p: Policy, t: Type, name: str) -> None:
+        if (id(p), t.name, name) in seen:
+            return
+        seen.add((id(p), t.name, name))
+        out.types.add(t.name)
+        if name in t.perms:
+            walk(p, t, t.perms[name].expr)
+        elif name in t.relations:
+            out.relations.add((t.name, name))
+            for st, sr in t.relations[name].subjects():
+                if st in p.types:
+                    out.types.add(st)
+                    if sr and sr != "*":
+                        visit(p, p.types[st], sr)
+
+    def walk(p: Policy, t: Type, node: Expr) -> None:
+        out.types.add(t.name)
+        match node:
+            case ("cond", sql):
+                out.conds.add((t.name, sql))
+            case ("ref", name) if name == ROLES:
+                pass  # custom roles: the drawn worlds hold them, not the listed ones
+            case ("ref", name):
+                visit(p, t, name)
+            case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
+                visit(p, t, rel)
+                for st, _ in t.relations[rel].subjects():
+                    if st in p.types:
+                        visit(p, p.types[st], perm)
+            case ("not", item):
+                walk(p, t, item)
+            case ("and", items) | ("or", items):
+                for x in items:
+                    walk(p, t, x)
+
+    for p, t, expr in start:
+        walk(p, t, expr)
+    out.types.update(t.name for p in pols for t in p.types.values() if t.principal)  # (who asks)
+    return out
+
+
+class Listing:
+    """Every world of up to MOST_ROWS rows of each type that policies may be told apart in, the smallest first:
+    those with no link, then those with one, then two, and so on. A world holds the rows its links name, numbered
+    from 1 (one row of a type no link names); each row is of every class its type's conditions make (RowClass), but
+    for a type no link names and nobody signs in as, whose row is of each class in turn (alone, its row's answers
+    depend on nothing else). Only what the permissions and rules the policies define differently read (cone) varies.
+    Two worlds that are one with rows renamed are listed once.
+
+    As worlds() goes: listed, how many it gave; whole, the most links of the worlds it gave every one of (-1: not
+    all of those with none); cut, a group of columns had more values than CLASS_CHOICES (a world's columns didn't
+    take them all)."""
+
+    def __init__(self, pols: Sequence[Policy]) -> None:
+        self.pols = list(pols)
+        self.types: dict[str, Type] = {}
+        for p in self.pols:
+            for t in p.types.values():
+                self.types.setdefault(t.name, t)
+        self.listed, self.whole, self.cut, self.steps, self.complete = 0, -1, False, 0, False
+        self._renamings: dict[tuple[tuple[str, int], ...], list[dict[str, dict[str, str]]]] = {}
+        self._conditions: dict[int, tuple[Policy, list[CondKey]]] = {}
+        found = cone(self.pols)
+        if found is None:
+            every = {(t.name, r) for t in self.types.values() for r in t.relations}
+            conds = {c for p in self.pols for c in Reference(p).conditions()}
+            found = Cone(set(self.types), conds, every)
+        self.cone = found
+        # a simple condition on a column a relation reads reads its links (Reference.row_values): they vary too
+        linked: dict[tuple[str, str], str] = {}
+        for t in self.types.values():
+            for r in t.relations.values():
+                for src in r.sources:
+                    col = linked_column(src)
+                    if col is not None:
+                        linked.setdefault((t.name, col), r.name)
+        self.linked = linked
+        for tname, cond in found.conds:
+            node = simple(cond)
+            if node is not None:
+                found.relations.update((tname, linked[(tname, c)]) for c in columns_of(node) if (tname, c) in linked)
+        domains = World("listing", MOST_ROWS, pols=self.pols, density=0.5).domains(self.pols[0])
+        self.classes = {t.name: self.classes_of(t, domains) for t in self.types.values()}
+        self.candidates = self.links_of()
+
+    def classes_of(self, t: Type, domains: dict[tuple[str, str], list[Scalar]]) -> list[RowClass]:
+        """The classes of t's rows: every different answer of the conditions the cone reads of t (or of its where
+        alone, outside it)."""
+        conds = {c for tn, c in self.cone.conds if tn == t.name} if t.name in self.cone.types else set()
+        if t.where:
+            conds.add(t.where)
+        plain: list[tuple[Node, bool]] = []
+        opaque: list[str] = []
+        for c in sorted(conds):
+            node = simple(c)
+            if c in KEYWORDS.values():
+                continue
+            if node is None or (c == t.where and uses_uid(node)):
+                opaque.append(c)
+            elif not any((t.name, col) in self.linked for col in columns_of(node)):
+                plain.append((node, True))
+        users = [str(i) for i in range(1, MOST_ROWS + 1)]
+        parts: list[list[tuple[tuple[str, Scalar], ...]]] = []
+        for group in groups(plain):
+            cols = sorted({col for node, _ in group for col in columns_of(node)})
+            uids: list[str | None] = [*users, None] if any(uses_uid(node) for node, _ in group) else [None]
+            choices = itertools.product(*[domains.get((t.name, col), [None]) for col in cols])
+            total = 1
+            for col in cols:
+                total *= len(domains.get((t.name, col), [None]))
+            if total > CLASS_CHOICES:
+                self.cut = True
+                choices = itertools.islice(choices, CLASS_CHOICES)
+            answers: dict[tuple[bool, ...], tuple[tuple[str, Scalar], ...]] = {}
+            for values in choices:
+                row = dict(zip(cols, values, strict=True))
+                said = tuple(truth(node, row, uid) is True for node, _ in group for uid in uids)
+                answers.setdefault(said, tuple(row.items()))
+            parts.append(list(answers.values()))
+        out: list[RowClass] = []
+        for columns in itertools.product(*parts):
+            for holds in itertools.product((True, False), repeat=len(opaque)):
+                out.append(
+                    RowClass(
+                        tuple(kv for part in columns for kv in part),
+                        frozenset(c for c, h in zip(opaque, holds, strict=True) if h),
+                    )
+                )
+        return out
+
+    def links_of(self) -> list[Candidate]:
+        """Each link a world may hold: of each source the cone reads, from each row to each subject it may name
+        (a row of the subject's type; `*` for anyone or type:*; a share link's first token), between low rows
+        first."""
+        rows = [str(i) for i in range(1, MOST_ROWS + 1)]
+        out: list[Candidate] = []
+        seen: set[tuple[object, ...]] = set()
+        for p in self.pols:
+            for t in p.types.values():
+                for r in t.relations.values():
+                    if (t.name, r.name) not in self.cone.relations:
+                        continue
+                    for src in r.sources:
+                        if src.kind == "roles":
+                            continue
+                        for st, sr in src.subjects:
+                            key = source_key(t, r.name, src, st, sr)
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            column = (t.name, src.column, src.type_col) if src.kind == "column" else None
+                            if st == "anyone" or sr == "*":
+                                subjects, stype = ["*"], None
+                            elif st == "link":
+                                subjects, stype = ["tok1"], None
+                            elif st in self.types:
+                                subjects, stype = rows, st
+                            else:
+                                subjects, stype = ["1"], None
+                            out += [Candidate((key, o, s), stype, column, repr(key)) for o in rows for s in subjects]
+
+        def low(c: Candidate) -> tuple[int, int]:
+            (_, o, s) = c.link
+            n = int(s) if c.subject_type else 1
+            return (max(int(o), n), int(o) + n)
+
+        return sorted(out, key=low)
+
+    def spent(self) -> bool:
+        """Whether the steps of looking for links are spent (never before every world with ALWAYS links is listed)."""
+        return self.steps > STEPS and self.whole >= ALWAYS
+
+    def said(self) -> str:
+        """What was listed, in words: '1,105 listed: every one of up to 3 rows of each type with at most 2 links'."""
+        most = "" if self.complete else f" with at most {self.whole} link" + ("" if self.whole == 1 else "s")
+        return f"{self.listed:,} listed: every one of up to {MOST_ROWS} rows of each type{most}"
+
+    def conditions(self, pol: Policy) -> list[CondKey]:
+        if id(pol) not in self._conditions or self._conditions[id(pol)][0] is not pol:
+            self._conditions[id(pol)] = (pol, Reference(pol).conditions())
+        return self._conditions[id(pol)][1]
+
+    def worlds(self) -> Iterator[Listed]:
+        """The listed worlds, those with fewer links first, and of those, fewer rows first; up to STEPS steps of
+        looking for links."""
+        types = sorted(self.types)
+        for k in range(len(self.candidates) + 1):
+            # the rows of each type the links name (0: none, a row of its own); each link names two at most
+            counts = sorted(
+                (v for v in itertools.product(range(MOST_ROWS + 1), repeat=len(types)) if sum(v) <= 2 * k),
+                key=sum,
+            )
+            for v in counts:
+                if k > 0 and not any(v):
+                    continue
+                rows = dict(zip(types, v, strict=True))
+                named = self.named(rows)
+                cands = [c for c in self.candidates if self.ends(c) <= named]
+                for combo in self.covering(cands, k, named):
+                    autos = self.automorphisms(rows, combo)
+                    if autos is None:
+                        continue  # (listed as the world it is renamed)
+                    for w in self.classed(rows, combo, autos):
+                        self.listed += 1
+                        yield w
+                if self.spent():
+                    return  # (this level isn't whole)
+            self.whole = k
+        self.complete = True
+
+    @staticmethod
+    def named(rows: dict[str, int]) -> frozenset[tuple[str, str]]:
+        """The rows the links of a world with these counts name."""
+        return frozenset((t, str(i)) for t, m in rows.items() for i in range(1, m + 1))
+
+    @staticmethod
+    def ends(c: Candidate) -> frozenset[tuple[str, str]]:
+        """The rows a link names: its object's, and its subject's when that is a row."""
+        (key, o, s) = c.link
+        return frozenset({(str(key[0]), o), *([(c.subject_type, s)] if c.subject_type else [])})
+
+    def covering(
+        self, cands: list[Candidate], k: int, rows: frozenset[tuple[str, str]]
+    ) -> Iterator[tuple[Candidate, ...]]:
+        """Every k of the links that name every one of these rows between them, a column naming one subject a
+        row."""
+
+        def go(
+            start: int, picked: tuple[Candidate, ...], named: frozenset[tuple[str, str]], cols: frozenset[object]
+        ) -> Iterator[tuple[Candidate, ...]]:
+            self.steps += 1
+            left = k - len(picked)
+            if left == 0:
+                if named == rows:
+                    yield picked
+                return
+            if len(rows - named) > 2 * left or self.spent():
+                return
+            for i in range(start, len(cands) - left + 1):
+                c = cands[i]
+                col = (c.column, c.link[1]) if c.column is not None else None
+                if col is not None and col in cols:
+                    continue
+                more = cols | {col} if col is not None else cols
+                yield from go(i + 1, (*picked, c), named | self.ends(c), more)
+
+        yield from go(0, (), frozenset(), frozenset())
+
+    def renamings(self, rows: dict[str, int]) -> list[dict[str, dict[str, str]]]:
+        """Every renaming of the rows of each type a link names (more than one of them), but the one that keeps
+        them all."""
+        many = tuple((t, m) for t, m in sorted(rows.items()) if m > 1)
+        if many not in self._renamings:
+            out = []
+            for perms in itertools.product(*[list(itertools.permutations(range(1, m + 1))) for _, m in many]):
+                ren = {
+                    t: {str(i): str(j) for i, j in enumerate(perm, 1)} for (t, _), perm in zip(many, perms, strict=True)
+                }
+                if any(a != b for r in ren.values() for a, b in r.items()):
+                    out.append(ren)
+            self._renamings[many] = out
+        return self._renamings[many]
+
+    @staticmethod
+    def renamed(combo: Sequence[Candidate], ren: dict[str, dict[str, str]]) -> tuple[tuple[str, str, str], ...]:
+        out = []
+        for c in combo:
+            (key, o, s) = c.link
+            t = str(key[0])
+            o2 = ren.get(t, {}).get(o, o)
+            s2 = ren.get(c.subject_type, {}).get(s, s) if c.subject_type else s
+            out.append((c.source, o2, s2))
+        return tuple(sorted(out))
+
+    def automorphisms(self, rows: dict[str, int], combo: Sequence[Candidate]) -> list[dict[str, dict[str, str]]] | None:
+        """The renamings that leave the links as they are; None if another renaming gives links that come first
+        (the same world is listed as that one)."""
+        mine = self.renamed(combo, {})
+        same: list[dict[str, dict[str, str]]] = []
+        for ren in self.renamings(rows):
+            theirs = self.renamed(combo, ren)
+            if theirs < mine:
+                return None
+            if theirs == mine:
+                same.append(ren)
+        return same
+
+    def classed(
+        self, rows: dict[str, int], combo: Sequence[Candidate], autos: list[dict[str, dict[str, str]]]
+    ) -> Iterator[Listed]:
+        """The worlds of these links: every class of each row (each class in turn, for the row of a type no link
+        names and nobody signs in as), each once up to the renamings that keep the links."""
+        varied = [
+            (t, str(i)) for t, m in rows.items() for i in range(1, max(m, 1) + 1) if m > 0 or self.types[t].principal
+        ]
+        alone = [t for t, m in rows.items() if m == 0 and not self.types[t].principal]
+        turns = max([len(self.classes[t]) for t in alone], default=1)
+        links = [c.link for c in combo]
+        place = {row: k for k, row in enumerate(varied)}
+        for choice in itertools.product(*[range(len(self.classes[t])) for t, _ in varied]):
+            if any(tuple(choice[place[(t, ren.get(t, {}).get(i, i))]] for t, i in varied) < choice for ren in autos):
+                continue  # (this world renamed comes first)
+            for turn in range(turns):
+                classes = {row: self.classes[row[0]][c] for row, c in zip(varied, choice, strict=True)}
+                for t in alone:
+                    classes[(t, "1")] = self.classes[t][turn % len(self.classes[t])]
+                yield Listed(self, {t: max(m, 1) for t, m in rows.items()}, classes, links)
+
+
+class Listed(World):
+    """One world of a Listing: its rows, each row's class and its links."""
+
+    def __init__(
+        self, listing: Listing, rows: dict[str, int], classes: dict[tuple[str, str], RowClass], links: list[Link]
+    ) -> None:
+        super().__init__("listed", MOST_ROWS, pols=listing.pols)
+        self.listing, self.rows, self.classes, self.links_held = listing, rows, classes, links
+
+    def ids(self, tname: str) -> list[str]:
+        return [str(i) for i in range(1, self.rows.get(tname, 1) + 1)]
+
+    def data(self, pol: Policy) -> Data:
+        out = Data()
+        for t in pol.types.values():
+            ids = self.ids(t.name)
+            out.ids[t.name] = ids
+            out.columns[t.name] = {i: dict(self.classes[(t.name, i)].columns) for i in ids}
+            where = simple(t.where) if t.where else None
+            if t.where and where is not None and not uses_uid(where):
+                out.valid[t.name] = [i for i in ids if truth(where, out.columns[t.name][i], None) is True]
+            else:
+                out.valid[t.name] = [i for i in ids if not t.where or t.where in self.classes[(t.name, i)].holds]
+            for r in t.relations.values():
+                for k, src in enumerate(r.sources):
+                    for st, sr in src.subjects:
+                        key = source_key(t, r.name, src, st, sr)
+                        out.pairs[(t.name, r.name, k, st, sr or "")] = [
+                            (o, s) for x, o, s in self.links_held if x == key
+                        ]
+            if t.roles:
+                subjects, perms, _ = t.roles
+                for p in perms:
+                    for st, sr in subjects:
+                        out.rolepairs[(t.name, p, st, sr or "")] = []
+        for tname, cond in self.listing.conditions(pol):
+            if cond in KEYWORDS.values():
+                out.cond[(tname, cond)] = []
+            elif simple(cond) is None:
+                out.cond[(tname, cond)] = [i for i in out.ids[tname] if cond in self.classes[(tname, i)].holds]
+        return out
+
+
+def worlds_to_try(
+    pols: Sequence[Policy], worlds: int, seed: str, max_size: int = 4, listing: Listing | None = None
+) -> Iterable[World]:
     """The worlds a comparison of policies goes through: drawn ones, smallest first, then the corners, then the
-    rare ones (rare_worlds)."""
+    listed ones (up to LISTED of them, with a listing), then the rare ones (rare_worlds)."""
     for size in range(1, max_size + 1):
         for k in range(max(1, worlds // max_size)):
             yield World(f"{seed}/{size}/{k}", size, pols=pols)
@@ -949,35 +1405,112 @@ def worlds_to_try(pols: Sequence[Policy], worlds: int, seed: str, max_size: int 
         for size in range(1, max_size + 1):
             for k in range(3):
                 yield World(f"{seed}/corner{n}/{size}/{k}", size, corner, pols=pols)
+    if listing is not None:
+        for w in listing.worlds():
+            yield w
+            if listing.listed >= LISTED and listing.whole >= ALWAYS:
+                break
     yield from rare_worlds(pols, worlds, seed)
 
 
-def compare(pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_size: int = 4) -> Difference | None:
+def compare(
+    pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_size: int = 4, listing: Listing | None = None
+) -> Difference | None:
     """None if the two policies grant the same in every world tried (each permission of either, for everyone
     who signs in, and each rule), else the first difference found in the smallest world: what differs, for
-    whom, on which object, before and after, and the world."""
-    found = first_difference(pol_a, pol_b, worlds, seed, max_size)
+    whom, on which object, before and after, and the world. The worlds tried: drawn ones, and those listing lists
+    (a Listing of the two; one is made if none is given: its counts say what was listed)."""
+    found = first_difference(pol_a, pol_b, worlds, seed, max_size, listing)
     return found[0] if found else None
 
 
+RuleKey: TypeAlias = "tuple[str, str, tuple[str, ...]]"  # (table, command, columns)
+
+
+def rule_key(rule: Rule) -> RuleKey:
+    return (rule.table, rule.command, tuple(rule.columns))
+
+
+def expr_reads(ref: Reference, rule: Rule) -> set[Name]:
+    """The relations and permissions a rule reads itself (Reference.reads gives what they read)."""
+    out: set[Name] = set()
+
+    def walk(t: Type, node: Expr) -> None:
+        match node:
+            case ("ref", name):
+                out.add((t.name, name))
+            case ("arrow", rel, perm):
+                out.add((t.name, rel))
+                out.update((st, perm) for st, _ in t.relations[rel].subjects() if st in ref.types)
+            case ("not", item):
+                walk(t, item)
+            case ("and", items) | ("or", items):
+                for x in items:
+                    walk(t, x)
+
+    walk(ref.type_of_table(rule.table), rule.expr)
+    return out
+
+
+def apart(pol_a: Policy, pol_b: Policy) -> tuple[set[Name], set[RuleKey]] | None:
+    """The permissions and rules two policies may answer differently: those they define differently, and those that
+    read one of them, themselves or through what they read. The others read the same, defined the same way, in the
+    same world: they answer alike. None when the policies differ in more than permissions and rules."""
+    if shape(pol_a) != shape(pol_b):
+        return None
+    differ: set[Name] = set()
+    for t in pol_a.types.values():
+        tb = pol_b.types[t.name]
+        for p in set(t.perms) | set(tb.perms):
+            if p not in t.perms or p not in tb.perms or t.perms[p].expr != tb.perms[p].expr:
+                differ.add((t.name, p))
+    perms: set[Name] = set(differ)
+    rules: set[RuleKey] = set()
+    for pol, other in ((pol_a, pol_b), (pol_b, pol_a)):
+        ref = Reference(pol)
+        perms.update(n for n in ref.graph if ref.reads({n}) & differ)
+        theirs = {rule_key(r): r.expr for r in other.rules}
+        rules.update(
+            rule_key(r)
+            for r in pol.rules
+            if theirs.get(rule_key(r)) != r.expr or ref.reads(expr_reads(ref, r)) & differ
+        )
+    return perms, rules
+
+
 def first_difference(
-    pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_size: int = 4
+    pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_size: int = 4, listing: Listing | None = None
 ) -> tuple[Difference, Data, Data] | None:
     """compare()'s difference, with the world it was found in, as each policy's data (tests/rewrites.py loads it as
     rows, to see the database answer as the review says)."""
     ref_a, ref_b = Reference(pol_a), Reference(pol_b)
+    told = apart(pol_a, pol_b)
     perms = sorted(
-        {(t.name, p) for pol in (pol_a, pol_b) for t in pol.types.values() for p in t.perms if not t.perms[p].hidden}
+        {
+            (t.name, p)
+            for pol in (pol_a, pol_b)
+            for t in pol.types.values()
+            for p in t.perms
+            if not t.perms[p].hidden and (told is None or (t.name, p) in told[0])
+        }
     )
-    rules_a = {(r.table, r.command, r.columns): r for r in pol_a.rules if r.command != "mask"}
-    rules_b = {(r.table, r.command, r.columns): r for r in pol_b.rules if r.command != "mask"}
+    rules_a = {rule_key(r): r for r in pol_a.rules if r.command != "mask" and (told is None or rule_key(r) in told[1])}
+    rules_b = {rule_key(r): r for r in pol_b.rules if r.command != "mask" and (told is None or rule_key(r) in told[1])}
+    # what is worked out in each world: those permissions and rules, and what they read
+    names_a = names_b = None
+    if told is not None:
+        names_a, names_b = (
+            ref.reads({*told[0], *(n for r in rules.values() for n in expr_reads(ref, r))})
+            for ref, rules in ((ref_a, rules_a), (ref_b, rules_b))
+        )
     n = 0
-    for w in worlds_to_try((pol_a, pol_b), worlds, str(seed), max_size):
+    listed = listing if listing is not None else Listing((pol_a, pol_b))
+    for w in worlds_to_try((pol_a, pol_b), worlds, str(seed), max_size, listed):
         n += 1
         da, db = w.data(pol_a), w.data(pol_b)
         for user in w.principals((pol_a, pol_b)):
             links = ("tok1",)
-            sa, sb = ref_a.evaluate(da, user, links), ref_b.evaluate(db, user, links)
+            sa, sb = ref_a.evaluate(da, user, links, names_a), ref_b.evaluate(db, user, links, names_b)
             for tname, p in perms:
                 ga = sa.get((tname, p))
                 gb = sb.get((tname, p))

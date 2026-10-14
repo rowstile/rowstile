@@ -75,7 +75,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 from authzlib import Compiler, PolicyError, evaluate, parse_policy  # noqa: E402
 from authzlib.conditions import Scalar, columns_of, simple, truth  # noqa: E402
-from authzlib.evaluate import Data, State  # noqa: E402
+from authzlib.evaluate import Data, Name, State  # noqa: E402
 from authzlib.parse import Policy  # noqa: E402
 from authzlib.sqlutil import q, qt  # noqa: E402
 from difftest import DB, Checker, Gen, lit  # noqa: E402
@@ -622,7 +622,7 @@ class Shallow(evaluate.Reference):
     """The reference evaluator with each recursion followed one step only (inheritance one level deep): two rounds
     of each group of names that depend on each other, not as many as it takes."""
 
-    def evaluate(self, data: Data, user: str, links: Iterable[str] = ()) -> State:
+    def evaluate(self, data: Data, user: str, links: Iterable[str] = (), names: set[Name] | None = None) -> State:
         self.data, self.links = data, set(links)
         kind, pid = evaluate.principal_of(user, self.types)
         self.principal = (kind, pid) if kind in self.types and pid in set(data.valid[kind]) else None
@@ -630,6 +630,8 @@ class Shallow(evaluate.Reference):
             (t.name, name): frozenset() for t in self.types.values() for name in list(t.relations) + list(t.perms)
         }
         for comp in self.order:
+            if names is not None and not names.intersection(comp):
+                continue
             for _ in range(2):
                 for tname, name in comp:
                     t = self.types[tname]

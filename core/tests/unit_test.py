@@ -7,6 +7,7 @@ files, what the rowstile command runs against a database, its file reading, and 
                                           # tests/golden/*.sql, then read the diff before committing
 """
 
+import collections
 import dataclasses
 import fnmatch
 import glob
@@ -2157,7 +2158,11 @@ class Review(unittest.TestCase):
                 "can edit  = editor or share or ({inherit} and parent.edit)",
             )
         )
-        self.assertEqual(r["meaning"]["equivalent"], "120 small worlds")
+        # and the worlds listed: every one of a few rows, with at most two links here (then the time is up)
+        self.assertEqual(
+            r["meaning"]["equivalent"],
+            "120 small worlds and 3,000 listed: every one of up to 3 rows of each type with at most 2 links",
+        )
         md = self.review.markdown(r)
         self.assertIn("unchanged: every permission and rule grants the same", md)
         self.assertNotIn("<details>", md)
@@ -2254,7 +2259,7 @@ class Review(unittest.TestCase):
         base = replaced(self.text, old, old[:-1] + " and {size >= 1})")
         quoted = (replaced(self.text, old, old[:-1] + ' and {"size" >= 1})'), {}, {})
         r = self.review.review((base, {}, {}), quoted, None, None, None, worlds=120)
-        self.assertEqual(r["meaning"]["equivalent"], "120 small worlds")
+        self.assertRegex(r["meaning"]["equivalent"] or "", "^120 small worlds")
         # on a numeric column, a file of size 1 loses view: not unchanged (a double precision column would differ)
         longer = (replaced(self.text, old, old[:-1] + " and {size >= 1.00000000000000001})"), {}, {})
         r = self.review.review((base, {}, {}), longer, None, None, None, worlds=120)
@@ -2548,7 +2553,10 @@ test
 
     def test_a_base_in_the_language_before_is_read_as_it_meant(self) -> None:
         r = self.review.review((self.OLD, {}, {}), (self.NEW, {}, {}), worlds=120)
-        self.assertEqual(r["meaning"]["equivalent"], "120 small worlds")
+        # (each permission and rule read as it meant is the same: nothing to tell apart in a listed world)
+        self.assertEqual(
+            r["meaning"]["equivalent"], "120 small worlds and 1 listed: every one of up to 3 rows of each type"
+        )
         self.assertEqual(r["risk"], [])
         self.assertEqual(
             r.get("base_previous"),
@@ -4963,6 +4971,55 @@ class Confidence(unittest.TestCase):
             for k in range(8):
                 w = evaluate.World(f"s/{n}/{k}", 4, corner, pols=[a, b])
                 self.assertEqual(w.columns(a), w.columns(b), corner)
+
+    def test_a_condition_added_to_a_long_and_is_found(self) -> None:
+        # what shows it is a row where every other condition holds and this one doesn't (or does): no drawn world
+        # had it (one row in hundreds), nor a corner (every condition holds there, or none); a listed world does
+        long = "owner and not {archived} and {tier = 2} and {level = 3} and {zone = 4} and {year = 2024}"
+        doc = "type doc = app.docs\n  owner : user = owner_id\n  can view = "
+        rules = "\nrules app.docs\n  select : view\n"
+        self.assertFalse(self.same(doc + long + rules, doc + long + " and not {hidden}" + rules))
+        self.assertFalse(self.same(doc + long + " and not {hidden}" + rules, doc + long + rules))
+
+    def test_conditions_that_differ_between_two_linked_rows_are_found(self) -> None:
+        # the child (b1 false, b2 false) of a parent with b1: only nobody signed in, through the parent's b1, holds
+        # p on it before; a world of two linked rows, each with its own values
+        t1 = "type t1 = app.t1\n  parent : t1 = parent_id\n  can p = "
+        self.assertFalse(
+            self.same(
+                t1 + "({b1} or parent.p) and {not b3}\n", t1 + "({b1} or (parent.p and not {not b2})) and {not b3}\n"
+            )
+        )
+
+    def test_the_small_worlds_are_listed(self) -> None:
+        # a row of a document is of two classes ({a} holds or not); with no link, then each document's owner. A world
+        # that is another with its rows renamed is listed once: two documents of one owner, both {a} or one of them
+        # or neither (3), and of two owners (3); three: 14. Every one of them, then: a document has one owner
+        from authzlib import evaluate
+
+        doc = self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n  can view = "
+        a, b = parse_policy(doc + "owner and {a}\n", "a.authz"), parse_policy(doc + "{a} and owner\n", "b.authz")
+        listing = evaluate.Listing((a, b))
+        self.assertEqual(collections.Counter(len(w.links_held) for w in listing.worlds()), {0: 2, 1: 2, 2: 6, 3: 14})
+        self.assertTrue(listing.complete)
+        self.assertEqual(listing.said(), "24 listed: every one of up to 3 rows of each type")
+        # only what the permissions defined differently read varies: here, nothing of tag
+        tag = "type tag = app.tags\n  owner : user = owner_id\n  can see = owner and {b} and {c}\n"
+        listing = evaluate.Listing(
+            (parse_policy(doc + "owner\n" + tag, "a"), parse_policy(doc + "owner or {a}\n" + tag, "b"))
+        )
+        self.assertEqual({t: len(c) for t, c in listing.classes.items()}, {"user": 1, "doc": 2, "tag": 1})
+        self.assertEqual(sorted(listing.cone.relations), [("doc", "owner")])
+        # more than LISTED: every world with one link at most, then up to LISTED in all
+        many = " and ".join(f"{{k{i} = {i}}}" for i in range(10))
+        a, b = (
+            parse_policy(doc + f"owner and {many}\n", "a.authz"),
+            parse_policy(doc + f"{many} and owner\n", "b.authz"),
+        )
+        listing = evaluate.Listing((a, b))
+        self.assertIsNone(evaluate.compare(a, b, listing=listing))
+        self.assertEqual((listing.whole, listing.complete), (1, False))
+        self.assertEqual(listing.said(), "3,000 listed: every one of up to 3 rows of each type with at most 1 link")
 
     def test_the_evaluator_refuses_data_it_cannot_read(self) -> None:
         from authzlib import evaluate
