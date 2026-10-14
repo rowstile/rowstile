@@ -707,10 +707,8 @@ class Studio:
                 deadline = time.monotonic() + WAIT_SECONDS
                 try:
                     while len(got) < n:
-                        left = deadline - time.monotonic()
-                        if left <= 0:
-                            raise TimeoutError
-                        self.connection.settimeout(left)
+                        # past the deadline, a wait so short the read times out unless the bytes are there
+                        self.connection.settimeout(max(deadline - time.monotonic(), 0.001))
                         chunk = self.rfile.read1(n - len(got))
                         if not chunk:
                             raise Problem(f"the body ended after {len(got)} of its {n} bytes")
