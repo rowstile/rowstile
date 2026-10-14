@@ -8229,7 +8229,9 @@ class Guards(unittest.TestCase):
     """Each refusal the SQL authzlib writes can raise is asked for by its own words in some suite: a check that asks
     only for an SQLSTATE can't tell which guard refused (two that answer 42501 look alike). A guard's own words are
     four in a row of the parts of its message that don't vary, which no other guard's message has, or its code
-    ([AZ6xx]) when no other has that code."""
+    ([AZ6xx]) when no other has that code. A guard whose words another's message has too is asked for by them once
+    for each function of the API (authz.*) that raises it, a check naming that function beside them (within WINDOW
+    characters): which functions raise it, the compiled policies in tests/golden say."""
 
     REPO = os.path.dirname(ROOT)
     N = 4
@@ -8265,6 +8267,42 @@ class Guards(unittest.TestCase):
     # guards with no message of their own, in the text: a column rule's refusal, whose message is made in Python
     # (principals.sh and children.sh ask for its words), and the named tests' end, never shown (AZT00)
     NO_MESSAGE = 2
+    # guards their own function catches, whose callers see another message: asked for by that one's words
+    CAUGHT: ClassVar[dict[str, str]] = {"bad": "invalid token"}
+    WINDOW = 200
+
+    def raisers(self) -> dict[str, set[str]]:
+        """For each guard in SHARED, the functions of the API (authz.*) that raise it in the compiled policies of
+        tests/golden; a message the words of two guards fit is the one's with the most words of its own."""
+
+        def literal(m: str) -> int:
+            return len(re.sub(r"%|\{[^{}]*\}", "", m))
+
+        fits = {
+            m: re.compile(
+                "".join(
+                    ".*?" if re.fullmatch(r"%|\{[^{}]*\}", p) else re.escape(p)
+                    for p in re.split(r"(%|\{[^{}]*\})", m.replace("''", "'"))
+                    if p
+                )
+                + "$"
+            )
+            for m in self.SHARED
+        }
+        out: dict[str, set[str]] = {m: set() for m in self.SHARED}
+        for path in sorted(glob.glob(os.path.join(ROOT, "tests", "golden", "*.sql"))):
+            fn = ""
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    made = re.search(r'CREATE (?:OR REPLACE )?FUNCTION\s+((?:"[^"]+"|\w+)\.(?:"[^"]+"|\w+))', line)
+                    if made:
+                        fn = made.group(1).replace('"', "")
+                    for r in re.finditer(r"RAISE EXCEPTION '((?:[^']|'')*)'", line):
+                        said = r.group(1).replace("''", "'")
+                        best = max((m for m, f in fits.items() if f.match(said)), key=literal, default=None)
+                        if best is not None and fn.startswith("authz."):
+                            out[best].add(fn)
+        return out
 
     def guards(self) -> list[tuple[str, str | None]]:
         """(file:line, the message's text as the source writes it) for each RAISE EXCEPTION in authzlib."""
@@ -8319,6 +8357,7 @@ class Guards(unittest.TestCase):
             for c in set(re.findall(r"\[(AZ\d{3})\]", message or "")):
                 codes[c] = codes.get(c, 0) + 1
         text = self.suites()
+        raisers = self.raisers()
         unasked, shared, no_message = [], set(), 0
         for where, message in guards:
             if message is None:
@@ -8327,11 +8366,18 @@ class Guards(unittest.TestCase):
             own = {r for r in self.runs(message) if seen[r] == 1}
             own_codes = {c for c in re.findall(r"\[(AZ\d{3})\]", message) if codes[c] == 1}
             if not own and not own_codes:
-                # its words are another's too: some check still asks for them, all of them, in order
+                # its words are another's too: some check still asks for them, all of them, in order, beside the
+                # name of each function of the API that raises it
                 shared.add(message)
-                parts = [p.strip() for p in re.split(r"%|\{[^{}]*\}", message.replace("''", "'")) if p.strip()]
-                if not re.search(r"[^\n]{0,80}?".join(re.escape(p) for p in parts), text):
+                said = self.CAUGHT.get(message, message).replace("''", "'")
+                parts = [p.strip() for p in re.split(r"%|\{[^{}]*\}", said) if p.strip()]
+                asked = [m.span() for m in re.finditer(r"[^\n]{0,80}?".join(re.escape(p) for p in parts), text)]
+                if not asked:
                     unasked.append(f"{where}: {message[:100]} (words another guard has too)")
+                for fn in sorted(raisers.get(message, set())):
+                    name = re.compile(re.escape(fn) + r"\b")
+                    if not any(name.search(text, max(0, a - self.WINDOW), b + self.WINDOW) for a, b in asked):
+                        unasked.append(f"{where}: {message[:100]} (words another guard has too: no check names {fn})")
             elif not any(r in text for r in own) and not any(re.search(c + r"\b", text) for c in own_codes):
                 unasked.append(f"{where}: {message[:100]}")
         return unasked, shared, no_message
@@ -8349,6 +8395,14 @@ class Guards(unittest.TestCase):
         )
         self.assertEqual(self.runs("no type % in the policy"), {"in the policy"})
         self.assertEqual(self.runs("bad"), set())
+        raisers = self.raisers()
+        self.assertTrue(
+            {"authz.can", "authz.list", "authz.who", "authz.explain"} <= raisers["no permission %.% in the policy"]
+        )
+        # each message to the guard it is most like: 'with a user' is not 'with %'
+        self.assertNotIn("authz.share", raisers["the policy does not allow sharing %.% with a user"])
+        self.assertNotIn("authz.break_glass", raisers["the policy does not allow sharing %.% with %"])
+        self.assertEqual(raisers["% cannot be moved inside itself"], set())  # (the trees' own, in authz_int)
         self.assertIn("doesn't own", " ".join(self.runs("role % belongs to % %, which doesn''t own % %")))
 
 
