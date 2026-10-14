@@ -718,6 +718,18 @@ BEGIN
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;
 END $f$;
+-- custom roles, access requests, break-glass, a key of one's own and view-as are for users: a service signed in
+-- (another principal type) is refused, saying so, even one the policy gives the permission the call asks for
+CREATE FUNCTION authz_int.users_only(p_what text) RETURNS void
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_type text; v_id text;
+BEGIN
+  SELECT p.principal_type, p.principal_id INTO v_type, v_id FROM authz.principal() p;
+  IF v_type <> 'user' THEN
+    RAISE EXCEPTION '% is for users, not services (% % is signed in)', p_what, v_type, v_id
+      USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ715';
+  END IF;
+END $f$;
 -- the role that called (inside SECURITY DEFINER functions current_user is the owner)
 CREATE FUNCTION authz_int.caller_role() RETURNS text
 LANGUAGE sql STABLE AS $f$
@@ -5243,6 +5255,7 @@ CREATE OR REPLACE FUNCTION authz.create_role(p_owner_type text, p_owner_id text,
 DECLARE v_id bigint; v_bad text;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.create_role');
   IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles') THEN
     RAISE EXCEPTION '% has no manage_roles permission in the policy', p_owner_type USING HINT = 'rowstile help AZ707';
   END IF;
@@ -5276,6 +5289,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v authz.roles; v_bad text;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.set_role_permissions');
   SELECT * INTO v FROM authz.roles WHERE id = p_role;
   IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz.can(v.owner_type, v.owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage role %', p_role USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
@@ -5290,6 +5304,7 @@ CREATE OR REPLACE FUNCTION authz.delete_role(p_role bigint) RETURNS void LANGUAG
 DECLARE v authz.roles;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.delete_role');
   SELECT * INTO v FROM authz.roles WHERE id = p_role;
   IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz.can(v.owner_type, v.owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage role %', p_role USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
@@ -5300,6 +5315,7 @@ CREATE OR REPLACE FUNCTION authz.roles_of(p_owner_type text, p_owner_id text)
 RETURNS TABLE (id bigint, object_type text, name text, permissions text[])
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
+  PERFORM authz_int.users_only('authz.roles_of');
   IF authz.uid() IS NULL OR NOT (
        (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles')
         AND authz.can(p_owner_type, p_owner_id, 'manage_roles'))
@@ -6639,6 +6655,7 @@ BEGIN
   -- the principal's row is locked (FOR KEY SHARE) before it is checked: a delete of it waits for this key, or this
   -- for the delete, which leaves no principal to make it for (a delete with an older snapshot: keys_gone)
   IF p_principal_id IS NULL THEN
+    PERFORM authz_int.users_only('authz.create_api_key for oneself');
     v_id := authz.uid()::text;
     IF v_type <> 'user' OR v_id IS NULL OR NOT authz_int.hold('user', v_id) THEN
       RAISE EXCEPTION 'sign in to create an API key' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ714';
@@ -6859,6 +6876,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := nullif(current_setting('authz.user_id', true), '');
         v_pt text := coalesce(current_setting('authz.principal_type', true), ''); v_actor text := authz_int.actor();
 BEGIN
+  PERFORM authz_int.users_only('authz.view_as');
   IF coalesce(current_setting('authz.acting_user', true), '') <> '' THEN
     RAISE EXCEPTION 'already viewing as someone' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;
@@ -6981,6 +6999,7 @@ DECLARE v_id bigint; v_tbl text; v_there boolean;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.request_access');
   -- the requester's row is locked (FOR KEY SHARE) before it is checked, and the object's if it is there (without
   -- saying whether it is): a delete of either waits for the request, or the request for the delete (then the
   -- requester is nobody, or the object is gone: requests_gone)
@@ -7032,7 +7051,10 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 CREATE OR REPLACE FUNCTION authz.pending_requests()
 RETURNS TABLE (id bigint, object_type text, object_id text, relation text, requester text, reason text,
                duration interval, created_at timestamptz, mine boolean)
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  PERFORM authz_int.users_only('authz.pending_requests');
+  RETURN QUERY
   SELECT r.id, r.object_type, r.object_id, r.relation, r.requester, r.reason, r.duration, r.created_at,
          r.requester = authz.uid()::text
   FROM authz.requests r
@@ -7041,7 +7063,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f
          OR (r.requester IS DISTINCT FROM authz.uid()::text
              AND authz_int.may_manage(r.object_type, r.object_id, r.relation,
                                       CASE WHEN r.relation LIKE 'role:%' THEN NULL ELSE 'user' END)))
-  ORDER BY r.id $f$;
+  ORDER BY r.id;
+END $f$;
 
 -- Approve (it becomes a share, made by you, that ends after the requested time) or deny
 CREATE OR REPLACE FUNCTION authz.decide_request(p_id bigint, p_approve boolean, p_note text DEFAULT NULL) RETURNS void
@@ -7049,6 +7072,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE r authz.requests;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.decide_request');
   IF p_approve IS NULL THEN RAISE EXCEPTION 'approve (true) or deny (false)' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
   SELECT * INTO r FROM authz.requests WHERE id = p_id AND status = 'pending' FOR UPDATE;
   IF r.id IS NULL THEN RAISE EXCEPTION 'no pending request %', p_id USING HINT = 'rowstile help AZ708'; END IF;
@@ -7073,6 +7097,7 @@ CREATE OR REPLACE FUNCTION authz.cancel_request(p_id bigint) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.cancel_request');
   UPDATE authz.requests SET status = 'cancelled', decided_at = now()
   WHERE id = p_id AND status = 'pending' AND requester = authz.uid()::text;
   IF NOT FOUND THEN RAISE EXCEPTION 'no pending request % of yours', p_id USING HINT = 'rowstile help AZ708'; END IF;
@@ -7088,6 +7113,7 @@ DECLARE g authz.shares; v_until timestamptz; v_audit bigint; v_held boolean;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.break_glass');
   IF coalesce(btrim(p_reason), '') = '' THEN RAISE EXCEPTION 'say why (it is kept in the audit trail)' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
   IF p_duration IS NULL OR p_duration <= interval '0' OR p_duration > interval '1 day' THEN
     RAISE EXCEPTION 'emergency access lasts more than nothing and one day at most' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';

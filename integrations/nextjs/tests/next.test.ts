@@ -143,9 +143,9 @@ describe("route handlers and server actions", () => {
   });
 
   // 16: a refusal by the database's own code is 403 (AZ705: the shares of a project bo may not share; AZ704: a key
-  // made in a session signed in with a key that may only read); the app's mistakes stay errors: a share the policy
-  // doesn't declare (AZ706), a name not in the policy (AZ707), who is signed in changed by hand (AZ702, not
-  // NotSignedIn)
+  // made in a session signed in with a key that may only read; AZ715: a key a service makes for itself); the app's
+  // mistakes stay errors: a share the policy doesn't declare (AZ706), a name not in the policy (AZ707), who is
+  // signed in changed by hand (AZ702, not NotSignedIn)
   test("16: a refusal by the database's code is 403; the app's mistakes are thrown", async () => {
     const refused = (detail: string, code: string) => ({ type: "https://rowstile.dev/problems/refused", title: "Forbidden",
       status: 403, detail, table: null, command: null, why: [], code });
@@ -171,6 +171,16 @@ describe("route handlers and server actions", () => {
     })());
     expect([scoped.status, await scoped.json()]).toEqual(
       [403, refused("this session is read-only (viewing as someone else, or a read-only token)", "AZ704")]);
+    // a call that is for users, made by a service (rowstile help AZ715): a refusal too
+    const service = await actingAs("1", () => route(async () => {
+      await rowstile(one).transaction(async (c) => {
+        await c.query("SELECT authz.act_as('service', '1')");
+        return c.query("SELECT authz.create_api_key('mine')");
+      });
+      return new Response(null, { status: 204 });
+    })());
+    expect([service.status, await service.json()]).toEqual(
+      [403, refused("authz.create_api_key for oneself is for users, not services (service 1 is signed in)", "AZ715")]);
     const thrown = async (who: string, call: () => Promise<unknown>) => {
       const e = await actingAs(who, () => route(async () => { await call(); return new Response(null, { status: 204 }); })())
         .catch((err: unknown) => err);

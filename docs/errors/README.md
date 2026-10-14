@@ -92,5 +92,6 @@ Every mistake rowstile reports ends with its code: `line 4: folder.owner: unknow
 - [AZ712](AZ712.md): The change feed was trimmed
 - [AZ713](AZ713.md): Moved inside itself
 - [AZ714](AZ714.md): Sign in first
+- [AZ715](AZ715.md): For users only
 
 These pages are written from `core/authzlib/errors.py`; edit it, then `python3 core/tests/unit_test.py --update`.

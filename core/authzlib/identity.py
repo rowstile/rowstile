@@ -232,6 +232,18 @@ BEGIN
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;
 END $f$;
+-- custom roles, access requests, break-glass, a key of one's own and view-as are for users: a service signed in
+-- (another principal type) is refused, saying so, even one the policy gives the permission the call asks for
+CREATE FUNCTION authz_int.users_only(p_what text) RETURNS void
+LANGUAGE plpgsql STABLE {DEF} AS $f$
+DECLARE v_type text; v_id text;
+BEGIN
+  SELECT p.principal_type, p.principal_id INTO v_type, v_id FROM authz.principal() p;
+  IF v_type <> 'user' THEN
+    RAISE EXCEPTION '% is for users, not services (% % is signed in)', p_what, v_type, v_id
+      USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ715';
+  END IF;
+END $f$;
 -- the role that called (inside SECURITY DEFINER functions current_user is the owner)
 CREATE FUNCTION authz_int.caller_role() RETURNS text
 LANGUAGE sql STABLE AS $f$
@@ -299,6 +311,7 @@ BEGIN
   -- the principal's row is locked (FOR KEY SHARE) before it is checked: a delete of it waits for this key, or this
   -- for the delete, which leaves no principal to make it for (a delete with an older snapshot: keys_gone)
   IF p_principal_id IS NULL THEN
+    PERFORM authz_int.users_only('authz.create_api_key for oneself');
     v_id := authz.uid()::text;
     IF v_type <> 'user' OR v_id IS NULL OR NOT authz_int.hold('user', v_id) THEN
       RAISE EXCEPTION 'sign in to create an API key' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ714';
@@ -519,6 +532,7 @@ LANGUAGE plpgsql {DEF} AS $f$
 DECLARE v_me text := nullif(current_setting('authz.user_id', true), '');
         v_pt text := coalesce(current_setting('authz.principal_type', true), ''); v_actor text := authz_int.actor();
 BEGIN
+  PERFORM authz_int.users_only('authz.view_as');
   IF coalesce(current_setting('authz.acting_user', true), '') <> '' THEN
     RAISE EXCEPTION 'already viewing as someone' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;

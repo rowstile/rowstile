@@ -893,10 +893,16 @@ class Checker:
         """The custom roles API as u, a user or a service, tried it (when it was their turn): making, changing and
         deleting a role needs a user signed in who holds manage_roles on its owner (by the reference); then what the
         policy alone says, in the guards' order (whose roles count on the type, what a role there may give).
-        roles_of: the owner's roles, to whoever manages it or may view it. These ask authz.uid(): a service is
-        refused, whatever the policy gives it."""
+        roles_of: the owner's roles, to whoever manages it or may view it. These are for users: a service signed
+        in is told so first (AZ715), whatever the policy gives it."""
         problems: list[str] = []
         user_in = signed_in and evaluate.principal_of(u, self.types)[0] == "user"
+        who = self.ref.principal
+
+        def users_only(call: str) -> str | None:
+            if who is None or who[0] == "user":
+                return None
+            return f"42501: authz.{call} is for users, not services ({who[0]} {who[1]} is signed in)"
 
         def holds(owner: str, i: str, perm: str) -> bool:
             t = self.types[owner]
@@ -911,7 +917,10 @@ class Checker:
             for tname, perms in self.role_perms.items():
                 from_type = self.ref.role_owner_type(self.types[tname])
                 for i, got in snap.get((u, "create_role", tname, owner), []):
-                    if not holds(owner, i, "manage_roles"):
+                    service = users_only("create_role")
+                    if service:
+                        want = service
+                    elif not holds(owner, i, "manage_roles"):
                         want = f"42501: you cannot manage roles of {owner} {i}"
                     elif from_type and from_type != owner:
                         want = (
@@ -926,7 +935,10 @@ class Checker:
                             f"expected {want!r}"
                         )
             for i, got in snap.get((u, "roles_of", owner), []):
-                if holds(owner, i, "manage_roles") or holds(owner, i, "view"):
+                service = users_only("roles_of")
+                if service:
+                    want = service
+                elif holds(owner, i, "manage_roles") or holds(owner, i, "view"):
                     mine = [rid for rid, (o, oid, _) in self.roles_now.items() if o == owner and oid == i]
                     want = "ok " + ",".join(sorted(mine, key=int))
                 else:
@@ -939,7 +951,10 @@ class Checker:
                 continue
             cannot = f"42501: you cannot manage role {rid}"
             role = self.roles_now.get(rid)
-            if role is None or not holds(role[0], role[1], "manage_roles"):
+            service = users_only("set_role_permissions")
+            if service:
+                want = [service, users_only("delete_role") or ""]
+            elif role is None or not holds(role[0], role[1], "manage_roles"):
                 want = [cannot, cannot]
             else:
                 want = [cannot_grant(role[2], self.role_perms.get(role[2], [])) or "ok", "ok"]

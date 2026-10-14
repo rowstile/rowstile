@@ -7,6 +7,18 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ## Unreleased
 
+### Changed
+
+- The calls that are for users refuse a service signed in with words that say so, and a code of their own:
+  "authz.create_role is for users, not services (service 8 is signed in)", AZ715 (403 in the SDKs). They are the
+  custom roles API (`create_role`, `set_role_permissions`, `delete_role`, `roles_of`), access requests
+  (`request_access`, `pending_requests`, `decide_request`, `cancel_request`), `break_glass`, a key for oneself
+  (`create_api_key` without a principal) and `view_as`. A service was refused most of them already, with a
+  message that said it lacked a permission `authz.can` said it held ("you cannot manage roles of team 1"), or
+  that nobody was signed in; `pending_requests` gave it an empty list, and `view_as` let a service the policy
+  gave `impersonate` view as that user. A service still shares as itself, and a user holding `manage_keys` on
+  it makes its keys. Apply the policy again (or the next migration) to take it.
+
 ### Fixed
 
 - The command lost its connection right after signing in, before its first statement, with a traceback. It

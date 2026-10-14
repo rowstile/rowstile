@@ -410,6 +410,7 @@ DECLARE v_id bigint; v_tbl text; v_there boolean;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.request_access');
   -- the requester's row is locked (FOR KEY SHARE) before it is checked, and the object's if it is there (without
   -- saying whether it is): a delete of either waits for the request, or the request for the delete (then the
   -- requester is nobody, or the object is gone: requests_gone)
@@ -461,7 +462,10 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 CREATE FUNCTION authz.pending_requests()
 RETURNS TABLE (id bigint, object_type text, object_id text, relation text, requester text, reason text,
                duration interval, created_at timestamptz, mine boolean)
-LANGUAGE sql STABLE {DEF} AS $f$
+LANGUAGE plpgsql STABLE {DEF} AS $f$
+BEGIN
+  PERFORM authz_int.users_only('authz.pending_requests');
+  RETURN QUERY
   SELECT r.id, r.object_type, r.object_id, r.relation, r.requester, r.reason, r.duration, r.created_at,
          r.requester = authz.uid()::text
   FROM authz.requests r
@@ -470,7 +474,8 @@ LANGUAGE sql STABLE {DEF} AS $f$
          OR (r.requester IS DISTINCT FROM authz.uid()::text
              AND authz_int.may_manage(r.object_type, r.object_id, r.relation,
                                       CASE WHEN r.relation LIKE 'role:%' THEN NULL ELSE 'user' END)))
-  ORDER BY r.id $f$;
+  ORDER BY r.id;
+END $f$;
 
 -- Approve (it becomes a share, made by you, that ends after the requested time) or deny
 CREATE FUNCTION authz.decide_request(p_id bigint, p_approve boolean, p_note text DEFAULT NULL) RETURNS void
@@ -478,6 +483,7 @@ LANGUAGE plpgsql {DEF} AS $f$
 DECLARE r authz.requests;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.decide_request');
   IF p_approve IS NULL THEN RAISE EXCEPTION 'approve (true) or deny (false)' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
   SELECT * INTO r FROM authz.requests WHERE id = p_id AND status = 'pending' FOR UPDATE;
   IF r.id IS NULL THEN RAISE EXCEPTION 'no pending request %', p_id USING HINT = 'rowstile help AZ708'; END IF;
@@ -502,6 +508,7 @@ CREATE FUNCTION authz.cancel_request(p_id bigint) RETURNS void
 LANGUAGE plpgsql {DEF} AS $f$
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.cancel_request');
   UPDATE authz.requests SET status = 'cancelled', decided_at = now()
   WHERE id = p_id AND status = 'pending' AND requester = authz.uid()::text;
   IF NOT FOUND THEN RAISE EXCEPTION 'no pending request % of yours', p_id USING HINT = 'rowstile help AZ708'; END IF;
@@ -517,6 +524,7 @@ DECLARE g authz.shares; v_until timestamptz; v_audit bigint; v_held boolean;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.break_glass');
   IF coalesce(btrim(p_reason), '') = '' THEN RAISE EXCEPTION 'say why (it is kept in the audit trail)' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
   IF p_duration IS NULL OR p_duration <= interval '0' OR p_duration > interval '1 day' THEN
     RAISE EXCEPTION 'emergency access lasts more than nothing and one day at most' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
