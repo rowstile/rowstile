@@ -96,8 +96,11 @@ class RefusalMixin(Core):
     def rule_why_sql(self, t: Type, table: str, alias: str, rule: Rule, name: str | None = None) -> str:
         """Lines explaining the rule for a row: yes/no per item, and for a missing rel.perm, authz.explain on
         what the row points at; for a missing permission of the row itself, its explain (not on insert, nor for an
-        `after` rule: the row isn't stored as it is checked, and authz.explain reads the row as stored)."""
+        `after` rule: the row isn't stored as it is checked, and authz.explain reads the row as stored). A plain
+        update rule is checked on both rows: its function takes p_stored, false for the row after the change, which
+        then has no such explain either."""
         cmd = "update" if rule.command == "update check" else rule.command
+        both = self.checked_on_both(rule)
         head = f"{lit(rule_name(rule) + ' : ' + rule.src + '  (')} || {self.line_sql(f'rule {table} {rule_name(rule)}', rule.loc)} || ')'"
         code = [
             f"  RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || {head};",
@@ -117,7 +120,8 @@ class RefusalMixin(Core):
                     cmd != "insert" and rule.command != "update check" and name in self.public_perms(t)
                 ):
                     return (
-                        f"  IF NOT v[{idx}] THEN\n    RETURN QUERY SELECT {lit(pad)} || l FROM authz.explain("
+                        f"  IF NOT v[{idx}]{' AND p_stored' if both else ''} THEN\n"
+                        f"    RETURN QUERY SELECT {lit(pad)} || l FROM authz.explain("
                         f"{lit(t.name)}, ({self.key_text(t, alias)}), {lit(name)}) l "
                         f"LIMIT {EXPLAIN_LINES};\n  END IF;".replace(f"{alias}.", "(p_row).")
                     )
@@ -152,13 +156,19 @@ class RefusalMixin(Core):
                     i += 1
                 code.append("  END IF;")
         body = "\n".join(c for c in code if c)
-        return f"""CREATE FUNCTION {self.rule_fn(table, name or rule.command, "why")}(p_row {qt(table)}) RETURNS SETOF text
+        stored = ", p_stored boolean" if both else ""
+        return f"""CREATE FUNCTION {self.rule_fn(table, name or rule.command, "why")}(p_row {qt(table)}{stored}) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE v boolean[] := {self.rule_fn(table, name or rule.command, "items")}(p_row); v_t record;
 BEGIN
 {body}
 END $f$;"""
+
+    @staticmethod
+    def checked_on_both(rule: Rule) -> bool:
+        """A plain update rule (no columns): Postgres checks it on the row before the change and on the row after."""
+        return rule.command == "update" and not rule.columns
 
     def refuse_sql(self, t: Type, table: str, rule: Rule) -> str:
         """The function a WITH CHECK calls when the write is refused: it raises, with the explanation."""
@@ -174,13 +184,14 @@ END $f$;"""
             else "rowstile help AZ709"
         )
         constraint = "authz_insert" if rule.command == "insert" else "authz_update"
+        after = ", false" if self.checked_on_both(rule) else ""  # (a WITH CHECK reads the row after the change)
         return f"""CREATE FUNCTION {self.rule_fn(table, rule.command, "refuse")}(p_row {qt(table)}) RETURNS boolean
 LANGUAGE plpgsql VOLATILE SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_who text := CASE WHEN coalesce(current_setting('authz.user_id', true), '') = '' THEN 'someone not signed in'
   ELSE coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || current_setting('authz.user_id', true) END;
 BEGIN
   BEGIN
-    v_lines := (SELECT string_agg(l, E'\\n') FROM {self.rule_fn(table, rule.command, "why")}(p_row) l);
+    v_lines := (SELECT string_agg(l, E'\\n') FROM {self.rule_fn(table, rule.command, "why")}(p_row{after}) l);
   EXCEPTION WHEN OTHERS THEN
     v_lines := 'no explanation: ' || SQLERRM;
   END;
@@ -209,6 +220,10 @@ END $f$;"""
         def why(cmd: str, row: str) -> str:
             return f"ARRAY(SELECT * FROM {self.rule_fn(table, cmd, 'why')}({row}))"
 
+        def stored(cmd: str, row: str, is_stored: bool) -> str:
+            """The arguments of cmd's why function for a row: whether it is the row as stored, for a plain update."""
+            return f"{row}, {'true' if is_stored else 'false'}" if self.checked_on_both(by_cmd[cmd]) else row
+
         def none(cmd: str) -> str:
             return (
                 f"ARRAY[{lit('no   there is no ' + cmd + ' rule for ' + table + ': nobody may ' + cmd + ' its rows')}]"
@@ -225,8 +240,9 @@ END $f$;"""
             # update rule (the WITH CHECK is that rule's)
             after = "update check" if "update check" in by_cmd else "update"
             update = (
-                f"{why('update', 'r_old')} || CASE WHEN p_row IS NULL THEN '{{}}'::text[] ELSE "
-                f"ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM {self.rule_fn(table, after, 'why')}(r_new) l) END"
+                f"{why('update', stored('update', 'r_old', True))} || CASE WHEN p_row IS NULL THEN '{{}}'::text[] ELSE "
+                f"ARRAY['after the change:'] || "
+                f"ARRAY(SELECT '  ' || l FROM {self.rule_fn(table, after, 'why')}({stored(after, 'r_new', False)}) l) END"
             )
         else:
             update = none("update")

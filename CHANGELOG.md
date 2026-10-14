@@ -130,6 +130,11 @@ Each release upgrades from the one before it. How releases are numbered and made
   app that shows the database's words showed the code. The code is now in the HINT, `rowstile help AZ605`, as for
   every other error an app can meet; the SDKs read it there. Apply the policy again (or the next migration) to
   take it.
+- For a plain `update` rule (no `update after`), what `authz.explain_rule` said "after the change", and the DETAIL
+  of an update the rule refused on the row after the change, explained a permission the changed row lacks with
+  `authz.explain` on the row as stored: a "yes" under a "no" ("no   edit", then "yes  user 2 holds edit on folder
+  4"). The row after the change now gets no such explanation, as for inserts and `update after` rules: only the
+  rule's items, yes or no. Apply the policy again (or the next migration) to take it.
 
 ## 0.1.0 (alpha)
 

@@ -4007,7 +4007,7 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "folders";
 END;
 
-CREATE FUNCTION authz_gen."cx.folders:update:why"(p_row "cx"."folders") RETURNS SETOF text
+CREATE FUNCTION authz_gen."cx.folders:update:why"(p_row "cx"."folders", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE v boolean[] := authz_gen."cx.folders:update:items"(p_row); v_t record;
@@ -4016,7 +4016,7 @@ BEGIN
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on cx.folders'; END IF;
   IF NOT v[3] THEN RETURN NEXT '  no   the row fails the folder type''s where {not archived}'; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
-  IF NOT v[4] THEN
+  IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('folder', ((p_row)."id"::text), 'edit') l LIMIT 20;
   END IF;
 END $f$;
@@ -4027,7 +4027,7 @@ DECLARE v_lines text; v_who text := CASE WHEN coalesce(current_setting('authz.us
   ELSE coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || current_setting('authz.user_id', true) END;
 BEGIN
   BEGIN
-    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.folders:update:why"(p_row) l);
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.folders:update:why"(p_row, false) l);
   EXCEPTION WHEN OTHERS THEN
     v_lines := 'no explanation: ' || SQLERRM;
   END;
@@ -4086,7 +4086,7 @@ BEGIN
     RETURN ARRAY(SELECT * FROM authz_gen."cx.folders:delete:why"(r_old));
   END IF;
   r_new := jsonb_populate_record(r_old, coalesce(p_row, '{}'));
-  RETURN ARRAY(SELECT * FROM authz_gen."cx.folders:update:why"(r_old)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."cx.folders:update:why"(r_new) l) END;
+  RETURN ARRAY(SELECT * FROM authz_gen."cx.folders:update:why"(r_old, true)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."cx.folders:update:why"(r_new, false) l) END;
 END $f$;
 
 -- cx.folders select (line 65): view
@@ -4155,7 +4155,7 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "regions";
 END;
 
-CREATE FUNCTION authz_gen."cx.regions:update:why"(p_row "cx"."regions") RETURNS SETOF text
+CREATE FUNCTION authz_gen."cx.regions:update:why"(p_row "cx"."regions", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE v boolean[] := authz_gen."cx.regions:update:items"(p_row); v_t record;
@@ -4163,7 +4163,7 @@ BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : rename  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.regions update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on cx.regions'; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'rename';
-  IF NOT v[4] THEN
+  IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('region', ((p_row)."id"::text), 'rename') l LIMIT 20;
   END IF;
 END $f$;
@@ -4174,7 +4174,7 @@ DECLARE v_lines text; v_who text := CASE WHEN coalesce(current_setting('authz.us
   ELSE coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || current_setting('authz.user_id', true) END;
 BEGIN
   BEGIN
-    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.regions:update:why"(p_row) l);
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.regions:update:why"(p_row, false) l);
   EXCEPTION WHEN OTHERS THEN
     v_lines := 'no explanation: ' || SQLERRM;
   END;
@@ -4201,7 +4201,7 @@ BEGIN
     RETURN ARRAY['no   there is no delete rule for cx.regions: nobody may delete its rows'];
   END IF;
   r_new := jsonb_populate_record(r_old, coalesce(p_row, '{}'));
-  RETURN ARRAY(SELECT * FROM authz_gen."cx.regions:update:why"(r_old)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."cx.regions:update:why"(r_new) l) END;
+  RETURN ARRAY(SELECT * FROM authz_gen."cx.regions:update:why"(r_old, true)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."cx.regions:update:why"(r_new, false) l) END;
 END $f$;
 
 -- cx.regions select (line 70): run
@@ -4250,7 +4250,7 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "sites";
 END;
 
-CREATE FUNCTION authz_gen."cx.sites:update:why"(p_row "cx"."sites") RETURNS SETOF text
+CREATE FUNCTION authz_gen."cx.sites:update:why"(p_row "cx"."sites", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE v boolean[] := authz_gen."cx.sites:update:items"(p_row); v_t record;
@@ -4259,7 +4259,7 @@ BEGIN
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on cx.sites'; END IF;
   IF NOT v[3] THEN RETURN NEXT '  no   the row fails the site type''s where {not exists (select 1 from cx.closed c where c.site_id = this.id)}'; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'guard';
-  IF NOT v[4] THEN
+  IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('site', ((p_row)."id"::text), 'guard') l LIMIT 20;
   END IF;
 END $f$;
@@ -4270,7 +4270,7 @@ DECLARE v_lines text; v_who text := CASE WHEN coalesce(current_setting('authz.us
   ELSE coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || current_setting('authz.user_id', true) END;
 BEGIN
   BEGIN
-    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.sites:update:why"(p_row) l);
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.sites:update:why"(p_row, false) l);
   EXCEPTION WHEN OTHERS THEN
     v_lines := 'no explanation: ' || SQLERRM;
   END;
@@ -4297,7 +4297,7 @@ BEGIN
     RETURN ARRAY['no   there is no delete rule for cx.sites: nobody may delete its rows'];
   END IF;
   r_new := jsonb_populate_record(r_old, coalesce(p_row, '{}'));
-  RETURN ARRAY(SELECT * FROM authz_gen."cx.sites:update:why"(r_old)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."cx.sites:update:why"(r_new) l) END;
+  RETURN ARRAY(SELECT * FROM authz_gen."cx.sites:update:why"(r_old, true)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."cx.sites:update:why"(r_new, false) l) END;
 END $f$;
 
 -- cx.sites select (line 74): run
@@ -4348,7 +4348,7 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "projects";
 END;
 
-CREATE FUNCTION authz_gen."cx.projects:update:why"(p_row "cx"."projects") RETURNS SETOF text
+CREATE FUNCTION authz_gen."cx.projects:update:why"(p_row "cx"."projects", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE v boolean[] := authz_gen."cx.projects:update:items"(p_row); v_t record;
@@ -4356,7 +4356,7 @@ BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule cx.projects update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on cx.projects'; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
-  IF NOT v[4] THEN
+  IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('project', ((p_row)."id"::text), 'edit') l LIMIT 20;
   END IF;
 END $f$;
@@ -4367,7 +4367,7 @@ DECLARE v_lines text; v_who text := CASE WHEN coalesce(current_setting('authz.us
   ELSE coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || current_setting('authz.user_id', true) END;
 BEGIN
   BEGIN
-    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.projects:update:why"(p_row) l);
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."cx.projects:update:why"(p_row, false) l);
   EXCEPTION WHEN OTHERS THEN
     v_lines := 'no explanation: ' || SQLERRM;
   END;
@@ -4460,7 +4460,7 @@ BEGIN
     RETURN ARRAY(SELECT * FROM authz_gen."cx.projects:delete:why"(r_old));
   END IF;
   r_new := jsonb_populate_record(r_old, coalesce(p_row, '{}'));
-  RETURN ARRAY(SELECT * FROM authz_gen."cx.projects:update:why"(r_old)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."cx.projects:update_after:why"(r_new) l) END;
+  RETURN ARRAY(SELECT * FROM authz_gen."cx.projects:update:why"(r_old, true)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."cx.projects:update_after:why"(r_new) l) END;
 END $f$;
 
 -- cx.projects select (line 78): view

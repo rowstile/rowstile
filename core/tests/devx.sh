@@ -174,6 +174,11 @@ out=$(as 6 "SELECT authz.explain_rule('app.files', 'update', '11') IS NULL")
 [ "$out" = t ] && ok "... and one the user can't see: NULL too" || bad "explain invisible" "$out"
 out=$(as 2 "SELECT array_to_string(authz.explain_rule('app.files', 'update', '12', '{\"name\": \"x\"}'), '|')")
 case "$out" in "no   update : edit"*"after the change:"*) ok "an update the user may not make: no, before and after the change";; *) bad "explain update" "$out";; esac
+# bob edits folder 4, but not once it is in folder 2: after the change, the plain update rule's reasons are the
+# changed row's, so none read from the row as stored (authz.explain), which says he edits it
+out=$(as 2 "SELECT array_to_string(authz.explain_rule('app.folders', 'update', '4', '{\"parent_id\": 2}'), '|')")
+case "$out" in "yes  update : edit  (line "*"|after the change:|  no   update : edit  (line "*")|    no   edit")
+  ok "a plain update rule after the change: its reasons are the changed row's, not the stored row's";; *) bad "explain update after the change" "$out";; esac
 out=$(as 1 "SELECT authz.explain_rule('app.nothing', 'insert')")
 case "$out" in *"no rules for table app.nothing"*) ok "a table without rules is named";; *) bad "no rules" "$out";; esac
 
@@ -201,6 +206,14 @@ out=$(then_as 2 "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (9
   bad "allowed by the after rule" "$out"
 case "$out" in "yes  update : share  (line "*"|after the change:|  yes  update after : edit  (line "*) ok "... which explain_rule says: after the change, the after rule";;
   *) bad "explain_rule with an update after rule" "$out";; esac
+# without a rule on folder_id, a file moved where its editor edits nothing is refused by the update rule itself,
+# on the row after the change: bob edits file 11 in Design docs, not in Handbook
+sed '/^  update folder_id after  *: folder.edit$/d' example/docs.authz > "$T/moves.authz"
+run apply "$T/moves.authz"; case "$out" in *": applied") ;; *) bad "the policy without a rule on folder_id applies" "$out";; esac
+out=$(as 2 "UPDATE app.files SET folder_id = 2 WHERE id = 11")
+case "$out" in *"42501: permission denied: user 2 may not update this row of app.files to these values"*"DETAIL:  no   update : edit  (line "*")"$'\n'"  no   edit"$'\n'"HINT:  the update rule must hold on the row after the change too"*)
+  ok "the update rule refusing the row after the change: its reasons are that row's, none read from the row as stored";;
+  *) bad "the update rule refusing the row after the change" "$out";; esac
 bash tests/coverage_functions.sh "$DB"
 CLI apply example/docs.authz >/dev/null 2>&1
 
