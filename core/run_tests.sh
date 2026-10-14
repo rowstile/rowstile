@@ -2,7 +2,7 @@
 # run_tests.sh: every test, from scratch, against the Postgres the PG* variables point at.
 #   PGHOST=... PGPORT=... PGUSER=postgres ./run_tests.sh           # the full run (long)
 #   ./run_tests.sh --quick                                         # meant to stay under 10 minutes
-#   ./run_tests.sh --proofs                                        # the race and stress tests, short
+#   ./run_tests.sh --proofs                                        # every order of two tree writes, and the stress test (short)
 #   ./run_tests.sh --short                                         # what depends on the Postgres version: --quick
 #                         without the checks that need no database, one random-change run, no migrate vs apply
 #   SOAK_SEED=N ./run_tests.sh --soak                              # the random checks (random policies too), long, with a new seed
@@ -319,6 +319,15 @@ tests/concurrency.sh
 record $? "concurrency"
 }
 unit policy 10 concurrency
+# every order of two tree writes in READ COMMITTED (the full run has every level, in the races part below)
+if [ "$MODE" != full ]; then
+interleavings_rc() {
+step "every order of two tree writes, in READ COMMITTED"
+python3 tests/interleave.py --levels "read committed" --db authz_interleave_rc | quiet_ok
+record "${PIPESTATUS[0]}" "interleavings (read committed)"
+}
+unit policy 45 interleavings_rc
+fi
 
 moves() {
 step "moves and links of folders with many below them"
@@ -429,14 +438,14 @@ fi
 for p in $PARTS; do run_lanes "$p"; done
 fi
 
-# Tree writes under concurrency: every pair raced at each isolation level, and a concurrent stress run;
+# Tree writes under concurrency: every order of two of them at each isolation level, and a concurrent stress run;
 # the inheritance tables must stay exact throughout.
 # --proofs runs a short version on its own (--quick leaves it out, so each stays under 10 minutes).
 if { [ "$MODE" = full ] || [ "$MODE" = proofs ] || [ "$MODE" = soak ]; } && part races; then
   STRESS=100; [ "$MODE" = proofs ] && STRESS=15; [ "$MODE" = soak ] && STRESS=300
-  step "tree writes raced in pairs"
-  tests/races.sh | quiet_ok
-  record "${PIPESTATUS[0]}" "races"
+  step "every order of two tree writes, at each isolation level"
+  python3 tests/interleave.py | quiet_ok
+  record "${PIPESTATUS[0]}" "interleavings"
   step "tree writes under stress (${STRESS}s per isolation level)"
   tests/stress.sh $STRESS
   record $? "stress"

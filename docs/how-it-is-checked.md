@@ -110,10 +110,17 @@ what).
 
 ## Trees, under load
 
-Inherited permissions are kept in tables by triggers, and those tables must match the tree at every commit. <!-- checked: tests/races.sh "50 races, inheritance tables exact after each"; tests/stress.sh "the inheritance tables match a rebuild" -->
-[`tests/races.sh`](../core/tests/races.sh) races every pair of tree writes in two sessions at each isolation
-level, and [`tests/stress.sh`](../core/tests/stress.sh) lets sixteen clients write one tree at once; after
-each, the tables are compared with a rebuild, and the biggest moves on the tree they leave are timed alone.
+Inherited permissions are kept in tables by triggers, and those tables must match the tree at every commit. <!-- checked: tests/interleave.py "inheritance tables exact after each"; tests/stress.sh "the inheritance tables match a rebuild" -->
+[`tests/interleave.py`](../core/tests/interleave.py) runs two writes to a folder tree in two sessions (a folder
+created, moved, linked, unlinked, deleted, given a new id, shared, unshared): each of the 36 pairs in every order
+of their steps that Postgres allows (a read, the write, the commit: 558 of the 720 orders written out), with each
+session at each isolation level, 5,022 schedules. It sends one step at a time and asks Postgres which session
+waits for a lock, so no order depends on timing. After each, the tables are compared with a rebuild, what
+`authz.list` says with the reference evaluator, and in SERIALIZABLE the rows with the two transactions run one
+after the other. In READ COMMITTED no write ever needs a retry. <!-- checked: tests/interleave.py "none needing a retry" -->
+Each change runs it in READ COMMITTED, and every night at all three levels on 16, 17 and 18.
+[`tests/stress.sh`](../core/tests/stress.sh) lets sixteen clients write one tree at once; after it, the tables
+are compared with a rebuild, and the biggest moves on the tree it leaves are timed alone.
 
 ## Proofs in small worlds
 
@@ -160,7 +167,8 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   Every block of code in the reference runs too, or says why it can't, and each promise these pages make, and
   the reference's, names the check that holds it in a comment readers don't see, or says why none does. <!-- checked: tests/reference.sh "every block of the reference runs, or says why not"; tests/unit_test.py "test_every_promise_says_what_holds_it"; tests/unit_test.py "test_each_tag_names_checks_that_are_there" -->
 - **Three versions of Postgres**: every suite on PostgreSQL 16 for each change, and on 17 and 18
-  [every night](../.github/workflows/nightly.yml), with the races, the stress test and the random policies.
+  [every night](../.github/workflows/nightly.yml), with every order of two tree writes, the stress test and the
+  random policies.
 - **The suites themselves**: each passes as many checks as
   [`tests/check_counts.txt`](../core/tests/check_counts.txt) says, no fewer and no more, or the run fails. A
   suite that stopped checking something (a glob that matches nothing, a loop over an empty list) can't stay

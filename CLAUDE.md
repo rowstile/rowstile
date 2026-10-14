@@ -237,7 +237,7 @@ For one suite, start a container and run it inside:
   trigger needs a statement trigger beside it for partitioned tables (`trigger_if_partitioned`, as
   `<type>__forget` has). `tests/children.sh` checks both: a new row trigger gets a case there.
 - Tree writes take the type-wide lock.
-  `tests/races.sh` and `tests/stress.sh` (`run_tests.sh --proofs`) must stay green for any locking change.
+  `tests/interleave.py` and `tests/stress.sh` (`run_tests.sh --proofs`) must stay green for any locking change.
 - Two ways to evaluate a permission, which must agree (the random-change tests check): views (`set_sql`) and
   row checks (`row_sql`). Select rules and `authz.list` use row checks without `point` (lookups into the views,
   which Postgres hashes once for many rows; a recursive permission is first checked against its `__direct` view,
