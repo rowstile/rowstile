@@ -924,7 +924,13 @@ def parse_dsn(text: str | None) -> ConnectArgs:
         ):
             if v is not None:
                 out[k] = urllib.parse.unquote(v) if isinstance(v, str) else str(v)
-        for k, v in urllib.parse.parse_qsl(u.query, keep_blank_values=True):
+        # the query as libpq reads it: key=value&..., each decoded %XX and nothing else (a + stays a +: a web
+        # form's space isn't libpq's)
+        for part in u.query.split("&"):
+            if not part:
+                continue
+            k, _, v = part.partition("=")
+            k, v = urllib.parse.unquote(k), urllib.parse.unquote(v)
             if k == "ssl":  # JDBC's way to ask for TLS, which libpq takes in a URL, in its place among the others
                 if v != "true":
                     raise ValueError(

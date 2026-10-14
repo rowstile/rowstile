@@ -157,6 +157,9 @@ Each release upgrades from the one before it. How releases are numbered and made
   `authz.explain` on the row as stored: a "yes" under a "no" ("no   edit", then "yes  user 2 holds edit on folder
   4"). The row after the change now gets no such explanation, as for inserts and `update after` rules: only the
   rule's items, yes or no. Apply the policy again (or the next migration) to take it.
+- A `+` in a `postgresql://` URL's query (`?dbname=`, `?password=`, `?options=`) is a `+`, as libpq reads it:
+  the command read it as a space, so a password with a `+` was changed before it was sent, and it didn't connect
+  where `psql` does with the same URL.
 
 ## 0.1.0 (alpha)
 

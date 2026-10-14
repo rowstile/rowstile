@@ -3493,6 +3493,12 @@ class Wire(unittest.TestCase):
             (got["host"], got["database"], got["user"], got["password"]), ("h", "my db", "it's", "a\\b'c\"d")
         )
         self.assertEqual(parse("host=h password='it\\'s'")["password"], "it's")  # as the message below shows it
+        # a URL's query decoded as libpq decodes it: %XX, and nothing else; a + is a + (a web form's space isn't)
+        got = parse("postgresql://me@h/?dbname=a+b&password=x+y%2Bz&options=-c%20search_path%3Da+b&sslmode=require")
+        self.assertEqual(
+            (got["database"], got["password"], got["options"], got["sslmode"]),
+            ("a+b", "x+y+z", "-c search_path=a+b", "require"),
+        )
 
     def test_a_urls_ssl_option_as_libpq_reads_it(self) -> None:
         # libpq reads ssl=true in a URL's query as sslmode=require (JDBC's way to ask for TLS), in its place among
