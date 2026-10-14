@@ -163,6 +163,37 @@ class Client:
                 return e.code, raw.decode()
 
 
+class Raw(NamedTuple):
+    """What Studio answered a request sent by hand: its status (0: no answer), its answer, and the seconds it took."""
+
+    status: int
+    answer: Answer
+    seconds: float
+
+
+def by_hand(
+    s: studio.Studio, head: dict[str, str], body: bytes = b"", path: str = "/api/share", wait: float = 8
+) -> Raw:
+    """A POST as no browser sends it: these headers (the token's and the host's besides), then this much of the
+    body, the connection left open. Read until Studio closes it, or `wait` seconds pass."""
+    headers = {"Host": f"127.0.0.1:{s.port}", "X-Studio-Token": s.token, **head}
+    request = f"POST {path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers.items()) + "\r\n"
+    started = time.monotonic()
+    got = b""
+    with socket.create_connection(("127.0.0.1", s.port), timeout=wait) as conn:
+        conn.sendall(request.encode() + body)
+        with contextlib.suppress(OSError):  # the wait over (no answer), or the connection reset
+            while data := conn.recv(65536):
+                got += data
+    seconds = time.monotonic() - started
+    status, _, rest = got.partition(b"\r\n")
+    answer = rest.partition(b"\r\n\r\n")[2]
+    try:
+        return Raw(int(status.split()[1]) if status else 0, json.loads(answer) if answer else None, seconds)
+    except ValueError:
+        return Raw(0, got.decode(errors="replace"), seconds)
+
+
 def waiting(db: str, s: studio.Studio, path: str, body: object, lock: str, then: Callable[[str], object]) -> Answer:
     """(status, answer, what Studio printed meanwhile) for a request to Studio that waits behind a lock the test
     holds (LOCK TABLE <lock>), once then(the waiting session's process id) has run. A request that never waits
@@ -506,6 +537,26 @@ def main() -> None:
             },
         )
         check("read-only: no shares made", status == 403 and "read-only" in e["detail"] and shares() == before, e)
+        # read-only, a change is refused before its body is read: none of it sent here, and Studio answers at once
+        refused = "Studio is read-only here: start it with --write (or use rowstile dev) to change shares"
+        for length in ("300", str(64 * 1024 * 1024)):
+            r = by_hand(ro, {"Content-Type": "application/json", "Content-Length": length})
+            check(
+                f"read-only: a change of {length} bytes refused before its body is read: 403, at once",
+                r.status == 403 and r.answer["detail"] == refused and r.seconds < 5,
+                r,
+            )
+        # a client that sends its whole body before it reads (as urllib does) still gets the answer: Studio reads and
+        # drops what comes after it, rather than closing on bytes unread, which resets the connection under it
+        try:
+            got = c.call("/api/share", b'{"as": "user:1"' + b" " * (1 << 20) + b"}")
+        except OSError as e:
+            got = (0, repr(e))
+        check(
+            "... and a client that sends its whole body (1 MB) first still gets that answer, not a reset",
+            got == (403, {"title": "Problem", "status": 403, "detail": refused}),
+            got,
+        )
         status, t = c.call("/api/test?as=user:3&type=folder&id=3&perm=edit&expect=cannot")
         check(
             "a test from what should hold: the check on the data there now",
@@ -797,9 +848,10 @@ def main() -> None:
             status, e = c.call(path, sent)
             check(f"{label}: 400, missing or wrong", status == 400 and e["detail"] == f"missing or wrong: {words}", e)
         # a body nested deeper than Python's JSON reader goes, or a field nested deeper than the command's client
-        # sends to the database: the caller's mistake, said as a body that isn't JSON is, and no traceback
+        # sends to the database (each within the cap on a body's size): the caller's mistake, said as a body that
+        # isn't JSON is, and no traceback
         for label, sent in (
-            ("a body nested deeper than JSON's reader goes", b"[" * 100000 + b"]" * 100000),
+            ("a body nested deeper than JSON's reader goes", b"[" * 30000 + b"]" * 30000),
             (
                 "a body with a field nested too deep to send",
                 b'{"as": "user:1", "type": '
@@ -852,6 +904,103 @@ def main() -> None:
         )
         status, _ = c.call("/api/unshare", {**body, "as": "user:1"})
         check("... and unsharing it", status == 200 and shares() == before)
+        # a body's size: the changes the page sends are a few hundred bytes. One over the cap is refused unread, one
+        # that doesn't come whole is given up on, and either way the thread is let go
+        json_head = {"Content-Type": "application/json"}
+        limit = studio.BODY_LIMIT
+        for label, head, sent, want in (
+            (
+                "a body over the cap, refused before it is read: 413",
+                {"Content-Length": str(1 << 30)},
+                b"{}",
+                (413, f"the body is {1 << 30} bytes: Studio takes {limit} at most"),
+            ),
+            (
+                "a body one byte over the cap: 413",
+                {"Content-Length": str(limit + 1)},
+                b"",
+                (413, f"the body is {limit + 1} bytes: Studio takes {limit} at most"),
+            ),
+            (
+                "a length that isn't one: 400",
+                {"Content-Length": "-1"},
+                b"{}",
+                (400, "Content-Length '-1' is not a length"),
+            ),
+            (
+                "no length: 411",
+                {},
+                b"{}",
+                (411, "a change needs its body's Content-Length"),
+            ),
+            (
+                "a body sent in chunks: 411",
+                {"Transfer-Encoding": "chunked"},
+                b"2\r\n{}\r\n0\r\n\r\n",
+                (411, "a change needs its body's Content-Length"),
+            ),
+        ):
+            r = by_hand(rw, {**json_head, **head}, sent)
+            check(
+                f"{label}, and says so, at once",
+                (r.status, r.answer and r.answer["detail"]) == want and r.seconds < 5 and shares() == before,
+                r,
+            )
+        try:
+            got = c.call("/api/share", b'{"as": "user:1"' + b" " * (1 << 20) + b"}")
+        except OSError as e:
+            got = (0, repr(e))
+        check(
+            "a client that sends its whole body (1 MB) first still gets the 413, not a reset",
+            got
+            == (
+                413,
+                {
+                    "title": "Problem",
+                    "status": 413,
+                    "detail": f"the body is {(1 << 20) + 16} bytes: Studio takes {limit} at most",
+                },
+            ),
+            got,
+        )
+        with mock.patch.object(studio, "WAIT_SECONDS", 1.0):
+            r = by_hand(rw, {**json_head, "Content-Length": "100"}, b'{"as": "user:1",')
+            check(
+                "a body that doesn't come whole: 408 once the wait is over, and the thread let go",
+                (r.status, r.answer and r.answer["detail"])
+                == (408, "the body didn't come: 16 of its 100 bytes in 1 seconds")
+                and r.seconds < 5,
+                r,
+            )
+            with socket.create_connection(("127.0.0.1", rw.port), timeout=8) as idle:
+                started = time.monotonic()
+                with contextlib.suppress(OSError):
+                    idle.recv(1)
+                check("a connection that sends nothing is closed once the wait is over", time.monotonic() - started < 5)
+        # the body ends (the client closes its side) before its length
+        with socket.create_connection(("127.0.0.1", rw.port), timeout=8) as conn:
+            conn.sendall(
+                f"POST /api/share HTTP/1.1\r\nHost: 127.0.0.1:{rw.port}\r\nX-Studio-Token: {rw.token}\r\n"
+                'Content-Length: 50\r\n\r\n{"as": "user:1"}'.encode()
+            )
+            conn.shutdown(socket.SHUT_WR)
+            got = b""
+            while data := conn.recv(65536):
+                got += data
+        check(
+            "a body shorter than its length: 400, and says so",
+            got.startswith(b"HTTP/1.0 400 ")
+            and json.loads(got.partition(b"\r\n\r\n")[2])["detail"] == "the body ended after 16 of its 50 bytes",
+            got,
+        )
+        # the largest body the cap takes is read, and answered as any change is
+        padded = b'{"as": "user:1"' + b" " * (limit - 16) + b"}"
+        r = by_hand(rw, {**json_head, "Content-Length": str(len(padded))}, padded)
+        check(
+            f"a body of {limit} bytes, the cap, is read: answered as a change (here one that names nothing)",
+            len(padded) == limit and (r.status, r.answer["detail"]) == (400, "missing or wrong: 'type'"),
+            r,
+        )
         psql(
             db,
             "SELECT authz.act_as('user', '2'); SELECT authz.request_access('folder', '5', 'viewer', 'for the audit')",
