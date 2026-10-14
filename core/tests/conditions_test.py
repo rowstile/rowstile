@@ -6,8 +6,9 @@
 `rowstile prove` and the review's refactor check read a simple condition (`{not archived}`, `{size > 10}`,
 `{owner_id = authz.uid()}`) as a fact about a made-up row (authzlib/conditions.py); difftest never does, it asks
 the database for each condition's rows. So this asks both: conditions made up at random over columns of each kind
-(boolean, integer, numeric, text, and a column a relation reads, whose values the evaluator holds as the ids'
-text), every one Postgres accepts asked on the same rows, signed in as each user and as nobody. Whatever
+(boolean, integer, numeric, double precision, text, and a column a relation reads, whose values the evaluator
+holds as the ids' text; some named only in quotes, "B" beside b, "order"), every one Postgres accepts asked on the
+same rows, signed in as each user and as nobody. Whatever
 conditions.py takes as simple must give Postgres's answer on every row: true, false or NULL. One it doesn't take
 (a function, arithmetic, a cast) is left to the database, as any other condition.
 """
@@ -17,8 +18,10 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import re
 import subprocess
 import sys
+from decimal import Decimal
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -31,19 +34,31 @@ from authzlib.conditions import Scalar, simple, truth  # noqa: E402
 COLUMNS: dict[str, tuple[str, list[Scalar]]] = {
     "b": ("boolean", [True, False, None]),
     "n": ("integer", [-1, 0, 1, 9, 10, 11, None]),
-    "x": ("numeric", [0.5, 1, 1.5, 10, None]),
+    # a decimal is read exactly, as numeric holds it; one with more digits than a double keeps is not read
+    "x": ("numeric", [Decimal("0.5"), 1, Decimal("1.5"), 10, Decimal("0.1"), Decimal("1.00000000000000001"), None]),
+    "f": ("double precision", [Decimal("0.5"), 1, Decimal("1.5"), Decimal("0.1"), Decimal("0.3"), None]),
     "s": ("text", ["a", "b", "A", "B", "ab", "x", "it's", "10", "9", "", " a", None]),
     # a relation's column (`owner : user = o`): the evaluator holds its values as the linked ids' text
     "o": ("bigint", ["1", "2", "10", None]),
+    # columns named in quotes: case kept ("B" is not b), a word SQL keeps for itself, a quote inside
+    "B": ("boolean", [False, None, True]),
+    "order": ("integer", [1, 2, None]),
+    'a"b': ("text", ["a", "b", None]),
 }
+BOOLEANS = ("b", "B")
 USERS = ["1", "2", "10", None]  # who is signed in: authz.uid(); None, nobody
 # the constants a condition compares each column with: some of another kind, as SQL allows ('10' for a number)
 CONSTANTS: dict[str, list[str]] = {
     "b": ["true", "false", "TRUE", "'true'", "'t'", "'f'", "'yes'", "null"],
     "n": ["-1", "0", "1", "9", "10", "11", "9.5", "10.0", "'10'", "'010'", "'9'", "1e1", "'x'", "null"],
-    "x": ["0.5", "1", "1.0", "1.50", "10", "'1.5'", "'1.50'", "1e1", "1.5e0", "null"],
+    "x": ["0.5", "1", "1.0", "1.50", "10", "'1.5'", "'1.50'", "1e1", "1.5e0", "0.1", "0.10", "null"]
+    + ["1.00000000000000001", "1.000000000000001", "100.000000000000000000", "0.000000000000001", "0.0000000000000001"],
+    "f": ["0.5", "1", "1.50", "0.1", "0.3", "0.30000000000000001", "0.1000000000000001", "100000000000000.1", "null"],
     "s": ["'a'", "'b'", "'A'", "'B'", "'ab'", "'it''s'", "'10'", "'9'", "''", "' a'", "10", "null"],
     "o": ["1", "2", "10", "'1'", "'10'", "9", "null"],
+    "B": ["true", "false", "'t'", "null"],
+    "order": ["1", "2", "1.5", "'2'", "null"],
+    'a"b': ["'a'", "'b'", "'A'", "null"],
 }
 OPS = ["=", "<>", "!=", "<", "<=", ">", ">="]
 
@@ -62,8 +77,15 @@ def word(rng: random.Random, w: str) -> str:
     return rng.choice([w, w.upper(), w.capitalize()])
 
 
+def quoted(c: str) -> str:
+    return '"' + c.replace('"', '""') + '"'
+
+
 def column(rng: random.Random, c: str) -> str:
-    return rng.choice([c, c, f"this.{c}", f"THIS.{c}", c.upper()])
+    if re.fullmatch(r"[a-z_][a-z0-9_]*", c) and c != "order":
+        return rng.choice([c, c, f"this.{c}", f"THIS.{c}", c.upper(), quoted(c)])
+    # (`order` bare is not a name, B bare is b: Postgres refuses the one, reads the other column)
+    return rng.choice([quoted(c), quoted(c), f"this.{quoted(c)}", f"THIS . {quoted(c)}", c])
 
 
 def atom(rng: random.Random) -> str:
@@ -71,7 +93,7 @@ def atom(rng: random.Random) -> str:
     k = rng.choice(CONSTANTS[c])
     col = column(rng, c)
     form = rng.randrange(12)
-    if form == 0 and c == "b":
+    if form == 0 and c in BOOLEANS:
         return col
     if form <= 4:
         op = rng.choice(OPS)
@@ -88,16 +110,20 @@ def atom(rng: random.Random) -> str:
         # what conditions.py leaves to the database: it must say so, not read it some other way
         return rng.choice(
             [
-                f"{col} + 1 > 2" if c in "nx" else f"coalesce({col}, {k}) = {k}",
+                f"{col} + 1 > 2" if c in ("n", "x", "f", "order") else f"coalesce({col}, {k}) = {k}",
                 f"{col} between {k} and {k}",
-                f"{col} is true" if c == "b" else f"{col} = -1",
+                f"{col} is true" if c in BOOLEANS else f"{col} = -1",
                 "n = x",
                 "1 = 1",
                 f"{col} = {k}::text",
                 f"lower({col}) = 'a'" if c == "s" else f"{col}::text = '1'",
                 f"{col} {word(rng, 'is')} {word(rng, 'distinct')} from {k}",
                 f"{col} is not distinct from {k}",
-                f"{col} like 'a%'" if c == "s" else f"{col} is unknown" if c == "b" else f"{col} not between 1 and 2",
+                f"{col} like 'a%'"
+                if c == "s"
+                else f"{col} is unknown"
+                if c in BOOLEANS
+                else f"{col} not between 1 and 2",
             ]
         )
     return f"{col} {rng.choice(OPS)} {k}" + rng.choice(["", "", "  "])  # now and then with spaces after
@@ -143,7 +169,7 @@ def main() -> None:
     subprocess.run(["createdb", args.db], check=True)
     conn = pgwire.connect(**pgwire.parse_dsn(f"dbname={args.db}"))
     data = rows(rng, 150)
-    cols = ", ".join(f"{c} {ty}" for c, (ty, _) in COLUMNS.items())
+    cols = ", ".join(f"{quoted(c)} {ty}" for c, (ty, _) in COLUMNS.items())
     conn.script(
         "CREATE SCHEMA authz;\n"
         "CREATE FUNCTION authz.uid() RETURNS bigint LANGUAGE sql STABLE AS "

@@ -67,6 +67,7 @@ import tempfile
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from decimal import Decimal
 from typing import ClassVar, NamedTuple, TypeAlias
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -815,7 +816,7 @@ def sql_value(v: Scalar) -> str:
         return "NULL"
     if isinstance(v, bool):
         return "true" if v else "false"
-    return str(v) if isinstance(v, (int, float)) else lit(v)
+    return str(v) if isinstance(v, (int, Decimal)) else lit(v)
 
 
 def load_sql(pol: Policy, data: evaluate.Data, principals: bool = True, rows_decide: bool = False) -> tuple[str, str]:

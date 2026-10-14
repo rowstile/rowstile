@@ -108,6 +108,14 @@ Each release upgrades from the one before it. How releases are numbered and made
   option meant for another tool, so the connection used `sslmode=prefer`, which goes on without TLS when the
   server, or anything between, says it has none. Any other value of `ssl` (`ssl=false`, `ssl=1`) is refused, as
   libpq refuses it.
+- `rowstile prove` and the review read a decimal in a condition (`{price >= 1.5}`) as a float, so
+  `1.00000000000000001` was 1: prove gave counterexamples a `numeric` column can't have, and the review said
+  "Meaning unchanged" when `{price >= 1}` became `{price >= 1.00000000000000001}`. They now read numbers exactly,
+  as `numeric` does, and leave a number written with more than 15 digits (more than a `double precision` column
+  keeps) to the database, as any condition they can't read.
+- `rowstile prove` and the review didn't read quoted column names in conditions (`{"done"}`, `{not "archived"}`,
+  `{"order" = 2}`): such a condition was one they couldn't read, so `{"done"}` and `{not "done"}` could both hold
+  on one row, and quoting a column was a change of meaning. They now read them as Postgres does, case kept.
 
 ## 0.1.0 (alpha)
 

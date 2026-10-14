@@ -11,11 +11,17 @@ The grammar: or < and < not < a comparison (`=`, `<>`, `!=`, `<`, `<=`, `>`, `>=
 `[not] in (...)`, of a column (`col`, `this.col`) with a constant (`'text'`, a number, `true`, `false`, `null`)
 or `authz.uid()`; a column alone is a boolean. Values follow SQL's three-valued logic: NULL compares to nothing.
 
+A column is named as Postgres reads it: a bare name in lower case (`Archived` is `archived`), a quoted one as
+written (`"Archived"`, `"order"`, `"a""b"` for a"b). A number is read exactly, as Postgres reads it (numeric:
+`1.10` is `1.1`, a Decimal).
+
 Only what means the same whatever the column's type and collation, which a condition doesn't say: no text in
 order (`{name < 'b'}` follows the database's collation), no text Postgres would read as the column's number or
-boolean (`{size = '10'}`, `{done = 't'}`), no order against authz.uid() (the user key's type decides it). Those
-are left to the database too. A column a relation reads holds the linked ids' text: compared with a number, as a
-number (tests/conditions_test.py asks Postgres the same questions).
+boolean (`{size = '10'}`, `{done = 't'}`), no number written with more digits than a double precision column keeps
+(`{price = 1.00000000000000001}` is false of 1 on a numeric column, true on a double precision one), no order
+against authz.uid() (the user key's type decides it). Those are left to the database too. A column a relation
+reads holds the linked ids' text: compared with a number, as a number (tests/conditions_test.py asks Postgres the
+same questions).
 """
 
 from __future__ import annotations
@@ -26,8 +32,12 @@ from decimal import Decimal
 from functools import cache
 from typing import NamedTuple, TypeAlias
 
-# a column's value in a made-up row
-Scalar: TypeAlias = "str | int | float | bool | None"
+# a column's value in a made-up row (a number with a decimal point: a Decimal, exact, as Postgres's numeric)
+Scalar: TypeAlias = "str | int | Decimal | bool | None"
+
+# the most digits a number may be written with for the evaluator to read it: what a double precision column keeps
+# (15), so that the made-up rows' numbers are as far apart there as they are in a numeric one
+DIGITS = 15
 
 
 class Col(NamedTuple):
@@ -68,7 +78,8 @@ Node: TypeAlias = "Col | Const | Uid | Cmp | IsNull | In | Bool"
 
 TOKEN = re.compile(
     r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<num>\d+(?:\.\d+)?)(?![\w.])|"
-    r"(?P<uid>authz\s*\.\s*uid\s*\(\s*\))|(?P<name>(?:this\s*\.\s*)?[A-Za-z_][A-Za-z0-9_]*)|"
+    r'(?P<uid>authz\s*\.\s*uid\s*\(\s*\))|(?P<quoted>(?:this\s*\.\s*)?"(?:[^"]|"")+")|'
+    r"(?P<name>(?:this\s*\.\s*)?[A-Za-z_][A-Za-z0-9_]*)|"
     r"(?P<op><>|!=|<=|>=|=|<|>)|(?P<p>[(),]))",
     re.IGNORECASE,
 )
@@ -93,6 +104,9 @@ def tokens(sql: str) -> list[tuple[str, str]]:
         if kind == "name":
             name = re.sub(r"^this\s*\.\s*", "", text, flags=re.IGNORECASE)
             kind, text = ("word", name.lower()) if name.lower() in WORDS and name == text else ("name", name.lower())
+        elif kind == "quoted":  # a quoted name: as written, its case kept ("B1", "order", "a""b")
+            name = re.sub(r"^this\s*\.\s*", "", text, flags=re.IGNORECASE)
+            kind, text = "name", name[1:-1].replace('""', '"')
         out.append((kind, text))
         i = m.end()
     return out
@@ -183,10 +197,10 @@ class Parser:
             return self.take("str")[1:-1].replace("''", "'")
         if self.peek("num"):
             text = self.take("num")
-            try:
-                return float(text) if "." in text else int(text)
-            except ValueError:  # more digits than Python reads as a whole number (4300): the database's to read
-                raise NotSimple(text[:40]) from None
+            exact = Decimal(text)
+            if written(exact) > DIGITS:  # a double precision column reads it otherwise: the database's to read
+                raise NotSimple(text[:40])
+            return exact if "." in text else int(text)
         if self.peek("word", "true") or self.peek("word", "false"):
             return self.take("word") == "true"
         if self.peek("word", "null"):
@@ -213,12 +227,23 @@ def plain(v: Scalar) -> bool:
     return not (CASTS.fullmatch(v) or (word and any(b.startswith(word) for b in BOOLEANS)))
 
 
+def written(d: Decimal) -> int:
+    """How many digits d takes written out, without its sign, leading zeros or zeros after its last digit:
+    1.50 -> 2, 0.001 -> 4 (0.001), 1000 -> 4."""
+    d = abs(d).normalize()
+    exponent = d.as_tuple().exponent
+    assert isinstance(exponent, int)  # (a number the parser read: not NaN or infinity)
+    return max(d.adjusted(), 0) - min(exponent, 0) + 1
+
+
 def number(v: Scalar) -> Decimal | None:
     """A number as one, and so a linked id's text that is one ('10': owner_id holds the id of its user)."""
     if isinstance(v, bool) or v is None:
         return None
-    # (Decimal reads every int and float as text, and every run of digits, whatever the script)
-    return Decimal(str(v)) if isinstance(v, (int, float)) or re.fullmatch(r"-?\d+", v) else None
+    if isinstance(v, Decimal):
+        return v
+    # (Decimal reads every int as text, and every run of digits, whatever the script)
+    return Decimal(str(v)) if isinstance(v, int) or re.fullmatch(r"-?\d+", v) else None
 
 
 @cache
