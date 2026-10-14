@@ -126,6 +126,8 @@ expect_code "... and a duration must be given" "22023: emergency access lasts mo
   -c "SELECT authz.break_glass('folder', '6', 'viewer', 'outage', NULL)"
 expect_code "... a positive one" "22023: emergency access lasts more than nothing and one day at most" -c "SET authz.user_id = 3" \
   -c "SELECT authz.break_glass('folder', '6', 'viewer', 'outage', '-1 hour')"
+expect_code "... more than nothing: none at all is refused too" "22023: emergency access lasts more than nothing and one day at most" \
+  -c "SET authz.user_id = 3" -c "SELECT authz.break_glass('folder', '6', 'viewer', 'outage', '0')"
 expect_code "frank (Globex) cannot break the glass on an Acme folder" "42501: you cannot break the glass on folder 6" -c "SET authz.user_id = 6" \
   -c "SELECT authz.break_glass('folder', '6', 'viewer', 'outage')"
 got=$(psql -X -q -At -d "$DB" -c "LISTEN authz_alerts" -c "SET ROLE app_user" -c "SET authz.user_id = 3" \

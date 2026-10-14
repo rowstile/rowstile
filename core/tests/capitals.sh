@@ -110,6 +110,54 @@ case "$out" in *'"Folder" was governed by the removed policy, and row-level secu
 [ "$(PSQL -c "SELECT to_regnamespace('authz_gen') IS NULL, (SELECT count(*) FROM pg_policy), (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgrelid IN ('public.\"Folder\"'::regclass, 'public.\"Note\"'::regclass, 'public.\"TeamMember\"'::regclass))")" = "t|0|0" ] &&
   ok "... and leaves no policy and no trigger on them" || bad "after remove"
 
+echo "-- a tree across two types, through a link table named with capitals"
+# a folder may be filed inside a note (a row of "FolderInNote"), a note sits in a folder: view goes down through
+# both types at once, one closure table for the two, kept by triggers on the link table too
+DB3=authz_capitals_link
+L() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB3" "$@"; }
+dropdb --if-exists "$DB3" 2>/dev/null; createdb "$DB3" || exit 1
+L >/dev/null <<'SQL' || exit 1
+CREATE TABLE "User" (id serial PRIMARY KEY);
+CREATE TABLE "Folder" (id serial PRIMARY KEY, "ownerId" integer NOT NULL REFERENCES "User");
+CREATE TABLE "Note" (id serial PRIMARY KEY, "folderId" integer NOT NULL REFERENCES "Folder");
+CREATE TABLE "FolderInNote" (
+  "folderId" integer NOT NULL REFERENCES "Folder", "noteId" integer NOT NULL REFERENCES "Note",
+  PRIMARY KEY ("folderId", "noteId"));
+CREATE INDEX "FolderInNote_noteId_idx" ON "FolderInNote" ("noteId");
+CREATE INDEX "Note_folderId_idx" ON "Note" ("folderId");
+GRANT SELECT ON "User", "Folder", "Note", "FolderInNote" TO app_user;
+INSERT INTO "User" (id) VALUES (1), (2);
+INSERT INTO "Folder" (id, "ownerId") VALUES (1, 1), (2, 2);
+INSERT INTO "Note" (id, "folderId") VALUES (1, 1), (2, 2);
+SQL
+cat > "$T/link.authz" <<'EOF'
+app role app_user
+
+type user = public.User (id int)
+
+type folder = public.Folder (id int)
+  owner : user = ownerId
+  in    : note = public.FolderInNote(folderId -> noteId)   -- a folder filed inside a note
+  can view = owner or in.view
+
+type note = public.Note (id int)
+  folder : folder = folderId
+  can view = folder.view
+EOF
+run --db "dbname=$DB3" apply "$T/link.authz"
+case "$out" in *"link.authz: applied") [ "$(L -c "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgrelid = 'public.\"FolderInNote\"'::regclass AND tgname LIKE '%tree%'")" -ge 2 ] &&
+  ok "apply: the closure table's triggers are on the link table, by its quoted name" || bad "triggers on the link table";; *) bad "apply, a link table named with capitals" "$out";; esac
+can_1() { L -c "SET authz.user_id = 1" -c "SELECT authz.can('note', '2', 'view')"; }
+[ "$(can_1)" = f ] && ok "ann may not view bo's note" || bad "before the link" "$(can_1)"
+L -c 'INSERT INTO "FolderInNote" ("folderId", "noteId") VALUES (2, 1)'
+[ "$(can_1)" = t ] && [ "$(L -c "SELECT authz.verify()")" = t ] &&
+  ok "... until bo's folder is filed in her note: through her folder, her note, his folder" || bad "a link row added" "$(can_1)"
+[ "$(L -c "SELECT count(*) FROM authz.lint() WHERE severity IN ('error', 'warning')")" = 0 ] && ok "... lint: no error, no warning" ||
+  bad "lint, the two-type tree" "$(L -c "SELECT * FROM authz.lint() WHERE severity IN ('error', 'warning')")"
+L -c 'DELETE FROM "FolderInNote"'
+[ "$(can_1)" = f ] && [ "$(L -c "SELECT authz.verify()")" = t ] && ok "... and the link row deleted, the access is gone" || bad "a link row deleted" "$(can_1)"
+[ -z "${KEEP:-}" ] && dropdb "$DB3"
+
 rm -rf "$T"
 [ -z "${KEEP:-}" ] && dropdb "$DB" && dropdb "$DB2"
 if [ $fails -eq 0 ]; then echo "capitals: all passed"; else echo "capitals: $fails failed"; exit 1; fi

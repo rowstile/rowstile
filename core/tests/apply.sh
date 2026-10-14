@@ -138,6 +138,23 @@ run apply "$T/web.authz"
   [ "$(PSQL -c "SELECT has_schema_privilege('app_user', 'authz', 'USAGE') OR has_schema_privilege('app_user', 'authz_gen', 'USAGE')")" = f ] &&
   ok "re-applying for another app role takes the old one's access away: no row, none of rowstile's functions" ||
   bad "the app role the policy no longer names" "$out"
+# lint looks at the app role itself and at the roles it is a member of: row-level security doesn't hold for a role
+# with BYPASSRLS, nor for one that inherits it (only a superuser may give BYPASSRLS; the role is this suite's own)
+if [ -n "${PGSUPERUSER:-}" ]; then
+  SU() { psql -X -q -U "$PGSUPERUSER" -d postgres "$@" >/dev/null 2>&1; }
+  applint() { PSQL -c "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE object = 'authz_apply_web' ORDER BY problem"; }
+  [ -z "$(applint)" ] && ok "lint finds nothing to say of an app role without BYPASSRLS" || bad "lint, the app role" "$(applint)"
+  SU -c "DROP ROLE IF EXISTS authz_apply_bypass" -c "CREATE ROLE authz_apply_bypass NOLOGIN BYPASSRLS" \
+    -c "GRANT authz_apply_bypass TO authz_apply_web"
+  [ "$(applint)" = "error|authz_apply_web|is a member of authz_apply_bypass, which bypasses row-level security" ] &&
+    ok "lint reports an app role that is a member of a role with BYPASSRLS: an error" || bad "lint, a member of a BYPASSRLS role" "$(applint)"
+  SU -c "REVOKE authz_apply_bypass FROM authz_apply_web" -c "DROP ROLE authz_apply_bypass" -c "ALTER ROLE authz_apply_web BYPASSRLS"
+  [ "$(applint)" = "error|authz_apply_web|is a superuser or has BYPASSRLS: row-level security does not apply to it at all" ] &&
+    ok "... and one that has BYPASSRLS itself" || bad "lint, an app role with BYPASSRLS" "$(applint)"
+  SU -c "ALTER ROLE authz_apply_web NOBYPASSRLS"
+else
+  echo "skip  lint on an app role with BYPASSRLS: only a superuser may give it (PGSUPERUSER)"
+fi
 run apply "$T/docs.authz"; [ $rc -eq 0 ] || bad "applying for app_user again" "$out"
 psql -X -q -d postgres -c "DROP ROLE authz_apply_web" >/dev/null || bad "dropping the role the policy named for a while"
 psql -X -q -d "$DB" -c "BEGIN" -c "LOCK app.files IN ACCESS SHARE MODE" -c "SELECT pg_sleep(20)" -c "COMMIT" >/dev/null 2>&1 &
