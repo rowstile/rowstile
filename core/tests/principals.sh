@@ -168,8 +168,11 @@ expect_code "authz.create_api_key for oneself is for users: a service is told so
 expect_code "authz.view_as is for users: a service is told so" \
   "42501: authz.view_as is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.view_as('3', 'ticket 12')"
 REV=$(state -c "$AS_USER" -c "SELECT authz.start_review('doc', 1)")
-check "its owner starts a review of doc 1, which service 7 may share too" "$REV|2|true" \
-  "$AS_SVC SELECT '$REV|' || (SELECT count(*) FROM authz.review_items($REV)) || '|' || authz.can('doc', 1, 'share');"
+check "its owner starts a review of doc 1 and reads its items" "$REV|2" \
+  "$AS_USER SELECT '$REV|' || (SELECT count(*) FROM authz.review_items($REV));"
+check "... and service 7 may share doc 1 too" "t" "$AS_SVC SELECT authz.can('doc', 1, 'share');"
+expect_code "authz.review_items is for users: a service is told so" \
+  "42501: authz.review_items is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT * FROM authz.review_items($REV)"
 expect_code "authz.start_review is for users: a service is told so" \
   "42501: authz.start_review is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.start_review('doc', 1)"
 expect_code "authz.review_decide is for users: a service is told so" \
