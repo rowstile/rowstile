@@ -89,6 +89,18 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   one relation in place of another). Where the review says "grants the same", the database's own answers on the
   policy's data, for everyone, before and after the rewrite, are the same too; and a rewrite that changes
   nothing is given no difference by either.
+- **Changes that change nothing**: a policy written another way says the same, and data renumbered is the same
+  data. [`tests/invariance.py`](../core/tests/invariance.py) writes each random policy three other ways: its
+  blocks, the lines in each and the operands of every `or` and `and` in another order; its blocks spread over
+  files it includes, one included from a folder below; its expressions broken over lines, then formatted by
+  `rowstile fmt`. Each compiles to the same objects, read back as migrations read them, each made by the same
+  SQL but for the order things come in, the lines they are on and the names the compiler numbers as it meets
+  them. Each is applied, and every answer on the policy's data is the same: lists (whole, and in pages of
+  two), checks, the rows each select rule shows, who holds what, why a write would be refused, the
+  invariants. <!-- checked: tests/invariance.py "the same answers" --> Then every key of each type is replaced by another drawn at random, in the rows, the link
+  tables, the shares and the custom roles, and the answers are the same, mapped back. One policy and the nine
+  fixed policies' SQL on every run; eight policies, and the fixed policies' answers, on the full run; twenty
+  with new seeds every night.
 
 ## The boundary
 

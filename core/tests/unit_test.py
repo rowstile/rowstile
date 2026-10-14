@@ -5722,6 +5722,72 @@ class Rewrites(unittest.TestCase):
             self.assertEqual(head[-1], "select" if where.endswith("select rule") else where.split(".")[1], rw.what)
 
 
+class Invariance(unittest.TestCase):
+    """tests/invariance.py writes policies another way and renumbers their data, and wants the same SQL and the same
+    answers. Here, what it compares by: a policy written each way compiles to the same objects, one that says
+    something else doesn't, and keys renumbered map back."""
+
+    def test_the_docs_policy_written_each_way_compiles_to_the_same_sql(self) -> None:
+        import random
+
+        import invariance
+
+        text = read("example/docs.authz")
+        base = invariance.objects(text, {})
+        for name, transform in invariance.TRANSFORMS.items():
+            new_text, files = transform(text, {}, random.Random(1))
+            self.assertNotEqual(new_text, text, name)
+            self.assertEqual(bool(files), name == "included", name)
+            diffs, counts = invariance.sql_differences(base, invariance.objects(new_text, files))
+            self.assertEqual(diffs, [], name)
+            self.assertGreater(counts["same"], 300, name)
+
+    def test_a_policy_that_says_something_else_is_another_sql(self) -> None:
+        import invariance
+
+        text = read("example/docs.authz")
+        other = text.replace("can edit  = share or editor or", "can edit  = share or")
+        self.assertNotEqual(other, text)
+        diffs, _ = invariance.sql_differences(invariance.objects(text, {}), invariance.objects(other, {}))
+        self.assertIn('view authz_int."folder__editor": made 1 times before the change, 0 after', diffs)
+        self.assertTrue(any(d.startswith('function authz_int."folder__edit__why"') for d in diffs), diffs)
+
+    def test_operands_written_alike_stay_alike(self) -> None:
+        import random
+
+        import invariance
+
+        e = authzlib.parse.ExprParser("(a or b or c) and (a or b or c) and not d", authzlib.parse.Loc(None, 0)).parse()
+        for seed in range(6):
+            new = authzlib.parse.written(invariance.shuffled_expr(e, invariance.ranks(random.Random(seed))))
+            first, second, last = new.split(" and ")
+            self.assertEqual(first, second)
+            self.assertEqual(last, "not d")  # (what a `not` takes away from stays before it)
+
+    def test_keys_renumbered_map_back(self) -> None:
+        import random
+
+        import invariance
+
+        pol = authzlib.parse.parse_policy(genpolicy.policy_text(genpolicy.make(2)), "gen.authz", {})
+        t1 = pol.types["t1"]
+        self.assertTrue(t1.composite)
+        ren = invariance.Renumbering(pol, random.Random(1))
+        for ident in ("(1,2)", "(2,3)"):
+            for k, p in enumerate(invariance.parts(t1, ident)):
+                ren.see(invariance.domain(t1, k), p)
+        ren.see("user", "1")
+        ren.see("bot", "2")
+        ren.draw()
+        for ident in ("(1,2)", "(2,3)"):
+            new = ren.ident(t1, ident)
+            self.assertNotEqual(new, ident)
+            self.assertEqual(ren.ident(t1, new, back=True), ident)
+        self.assertEqual(ren.ident(t1, "999999"), "999999")  # (an id no row had stays as it is)
+        self.assertEqual(ren.principal(ren.principal("bot:2"), back=True), "bot:2")
+        self.assertEqual(ren.principal(""), "")
+
+
 class Decisions(unittest.TestCase):
     """tests/decisions.py, which says which parts of a policy decided an answer in difftest's worlds, on worlds made by
     hand (HandAnswers' facts): a part forced the other way that changes some answer decided it there; one that

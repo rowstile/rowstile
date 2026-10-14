@@ -105,6 +105,9 @@ if [ "$MODE" = soak ]; then
   step "random policies rewritten: the review's \"grants the same\" against the database's answers (40 policies, seeds from $((SEED * 1000)))"
   python3 tests/rewrites.py --policies 40 --seed "$((SEED * 1000))" --db authz_rewrites
   record $? "rewrites"
+  step "random policies written another way and their data renumbered: the same SQL and answers (20 policies, seeds from $((SEED * 1000)))"
+  python3 tests/invariance.py --policies 20 --seed "$((SEED * 1000))" --db authz_invariance
+  record $? "invariance"
   fi
   if part around; then
   step "random policies in random worlds: the catalog, the session and the role around them (60, seeds from $((SEED * 1000)))"
@@ -130,6 +133,12 @@ python3 tests/interrupt.py
 record $? "cuts half way"
 }
 unit unit 90 interrupt
+invariance_sql() {
+step "the fixed policies written another way (reordered, in included files, laid out and formatted): the same SQL"
+python3 tests/invariance.py --fixed
+record $? "invariance of the fixed policies"
+}
+unit unit 10 invariance_sql
 fi
 if part policy; then
 if every_version; then
@@ -427,6 +436,25 @@ python3 tests/rewrites.py --policies "$REWRITES" --seed 1 --db authz_rewrites
 record $? "rewrites"
 }
 unit random $((33*REWRITES)) rewrites
+# changes to a policy and its data that must change nothing: the same SQL, the same answers (renumbered: mapped)
+# (each run seed 2: keys of two columns, awkward names)
+INVARIANCE=1; INVARIANCE_SEED=2; [ "$MODE" = full ] && INVARIANCE=8 INVARIANCE_SEED=1
+invariance() {
+step "random policies written another way and their data renumbered: the same SQL and answers ($INVARIANCE, seeds from $INVARIANCE_SEED)"
+python3 tests/invariance.py --policies "$INVARIANCE" --seed "$INVARIANCE_SEED" --db authz_invariance
+record $? "invariance"
+}
+if every_version; then
+unit random $((40*INVARIANCE)) invariance
+fi
+if [ "$MODE" = full ]; then
+  invariance_fixed() {
+  step "the fixed policies written another way: the same answers on difftest's data"
+  python3 tests/invariance.py --fixed --steps 5 --db authz_invariance_fixed
+  record $? "invariance of the fixed policies, answered"
+  }
+  unit random 490 invariance_fixed
+fi
 conditions() {
 step "simple conditions read as Postgres reads them (3000 made up)"
 python3 tests/conditions_test.py --cases 3000 --seed 1
