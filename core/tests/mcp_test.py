@@ -6,14 +6,17 @@ database: check, prove, push, test, why, lint.
     PGHOST=... PGUSER=... python3 tests/mcp_test.py [--db authz_mcp]     (--no-db: only what needs none)
 """
 
+import contextlib
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from typing import Any
 from unittest import mock
 
@@ -38,14 +41,19 @@ def check(label: str, ok: object, detail: object = "") -> None:
         print(f"FAIL  {label}{': ' + str(detail)[:800] if detail else ''}")
 
 
+STARTED: list[subprocess.Popen[bytes]] = []  # every server the suite started, to wait for at its end
+
+
 class Client:
-    def __init__(self, cwd: str, *args: str) -> None:
+    def __init__(self, cwd: str, *args: str, log: bool = False) -> None:
         self.p = subprocess.Popen(
             [sys.executable, os.path.join(ROOT, "cli", "rowstile_cli.py"), *args, "mcp"],
             cwd=cwd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE if log else None,
         )
+        STARTED.append(self.p)
         assert self.p.stdin is not None and self.p.stdout is not None
         self.stdin, self.stdout = self.p.stdin, self.p.stdout
         self.n = 0
@@ -62,11 +70,50 @@ class Client:
         self.stdin.write((obj if isinstance(obj, str) else json.dumps(obj)).encode() + b"\n")
         self.stdin.flush()
 
-    def read(self) -> Answer:
+    def read(self, wait: float = WAIT) -> Answer:
         try:
-            return json.loads(self.lines.get(timeout=WAIT))
+            return json.loads(self.lines.get(timeout=wait))
         except queue.Empty:
-            raise AssertionError(f"no answer in {WAIT} s") from None
+            raise AssertionError(f"no answer in {wait} s") from None
+
+    def until(self, mid: str, wait: float = WAIT) -> list[Answer]:
+        """The answers that come, up to the one to request mid (an empty list if it doesn't come in time)."""
+        got: list[Answer] = []
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            try:
+                got.append(json.loads(self.lines.get(timeout=max(0.01, end - time.monotonic()))))
+            except queue.Empty:
+                return []
+            if isinstance(got[-1], dict) and got[-1].get("id") == mid:
+                return got
+        return []
+
+    def children(self) -> list[int]:
+        """The server's child processes, the commands its calls run (Linux: /proc)."""
+        found: list[int] = []
+        for task in os.listdir(f"/proc/{self.p.pid}/task"):
+            with contextlib.suppress(OSError), open(f"/proc/{self.p.pid}/task/{task}/children", encoding="ascii") as fh:
+                found += [int(pid) for pid in fh.read().split()]
+        return found
+
+    def command(self, wait: float = 20) -> int | None:
+        """The process id of the command a call started, once it has started (None if none did in time)."""
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            if found := self.children():
+                return found[0]
+            time.sleep(0.05)
+        return None
+
+    def ended(self, pid: int, wait: float) -> bool:
+        """Whether the server's child pid ended (and the server took note of it) within wait seconds."""
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            if pid not in self.children():
+                return True
+            time.sleep(0.05)
+        return False
 
     def request(self, method: str, params: object = None) -> Answer:
         self.n += 1
@@ -225,6 +272,87 @@ def protocol(folder: str) -> None:
     )
 
 
+def cancelling(folder: str) -> None:
+    print("-- a call cancelled, and the messages that come while a call runs")
+    # a policy whose invariant holds: prove tries every world it is asked for (some ten thousand: half a minute)
+    with open(os.path.join(folder, "db", "policy.authz"), encoding="utf-8") as fh:
+        holds = re.sub(r"(?m)^  never folder: .*$", "  never folder: share and not view", fh.read())
+    with open(os.path.join(folder, "db", "holds.authz"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(holds)
+    c = Client(folder, log=True)
+    c.request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}})
+    c.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    prove = {"name": "prove", "arguments": {"policy": "db/holds.authz", "worlds": 10000}}
+    c.send({"jsonrpc": "2.0", "id": "long", "method": "tools/call", "params": prove})
+    pid = c.command()
+    c.send({"jsonrpc": "2.0", "id": "p1", "method": "ping"})
+    got = c.until("p1", 5)
+    check(
+        "a ping while a call runs: answered at once, the call still running",
+        pid is not None and got == [{"jsonrpc": "2.0", "id": "p1", "result": {}}] and pid in c.children(),
+        [pid, got],
+    )
+    c.send({"jsonrpc": "2.0", "id": "l1", "method": "tools/list"})
+    got = c.until("l1", 5)
+    check("... and tools/list", [a.get("id") for a in got] == ["l1"] and got[0]["result"]["tools"], got)
+    cancel = {"requestId": "long", "reason": "the agent moved on"}
+    c.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": cancel})
+    check(
+        "notifications/cancelled: the call's command stopped (its process ended, the server waited for it)",
+        pid is not None and c.ended(pid, 15),
+        [pid, c.children()],
+    )
+    time.sleep(0.5)  # an answer the server would still send comes before the ping's
+    c.send({"jsonrpc": "2.0", "id": "p2", "method": "ping"})
+    got = c.until("p2", 60)
+    check(
+        "... and no answer for it: the next answer is the ping's",
+        got == [{"jsonrpc": "2.0", "id": "p2", "result": {}}],
+        got,
+    )
+    # a cancellation for a request that has ended, or one the server never had: let be
+    r = c.request("tools/call", {"name": "check", "arguments": {}})
+    c.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": c.n}})
+    c.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": "nothing"}})
+    c.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": "long"})
+    check(
+        "a cancellation of a call answered already, of a request it never had, or with no request: no answer",
+        r["result"]["structuredContent"]["ok"] and c.request("ping")["result"] == {},
+        r,
+    )
+    # two calls at once: each answered, the quick one first
+    c.send({"jsonrpc": "2.0", "id": "slow", "method": "tools/call", "params": prove})
+    pid = c.command()
+    c.send({"jsonrpc": "2.0", "id": "slow", "method": "tools/call", "params": prove})
+    c.send({"jsonrpc": "2.0", "id": "quick", "method": "tools/call", "params": {"name": "check", "arguments": {}}})
+    got = c.until("quick", 30)
+    check(
+        "a call while another runs: run beside it, and answered first; an id that is in use is refused",
+        [(a.get("id"), a.get("error", {}).get("message")) for a in got]
+        == [("slow", 'request "slow" is running already: each request has an id of its own'), ("quick", None)]
+        and got[1]["result"]["structuredContent"]["ok"],
+        got,
+    )
+    c.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": "slow"}})
+    check("... and the first cancelled then", pid is not None and c.ended(pid, 15), pid)
+    # the end of the input: the call running is answered, then the server ends
+    c.send({"jsonrpc": "2.0", "id": "last", "method": "tools/call", "params": {"name": "check", "arguments": {}}})
+    c.stdin.close()
+    got = c.until("last", 30)
+    check(
+        "the end of the input with a call running: answered, then the server ends",
+        len(got) == 1 and got[0]["result"]["structuredContent"]["ok"] and c.p.wait(timeout=30) == 0,
+        got,
+    )
+    said = c.p.stderr.read().decode() if c.p.stderr else ""
+    check(
+        "the server's log says what was cancelled, and why",
+        'rowstile mcp: request "long" cancelled: the agent moved on\n' in said
+        and 'rowstile mcp: request "slow" cancelled\n' in said,
+        said,
+    )
+
+
 def without_db(folder: str) -> None:
     print("-- check and prove (no database)")
     c = Client(folder)
@@ -304,7 +432,7 @@ def with_db(folder: str, db: str) -> None:
         capture_output=True,
         env=dict(os.environ, PGOPTIONS="-c client_min_messages=error"),
     )
-    c = Client(folder, "--db", f"dbname={db}")
+    c = Client(folder, "--db", f"dbname={db}", log=True)
     r = c.tool("test")
     check(
         "test before a policy is applied: says so",
@@ -357,6 +485,7 @@ def with_db(folder: str, db: str) -> None:
     )
     r = c.tool("lint")
     check("lint: the example leaves nothing open", r["structuredContent"]["ok"], r)
+    cancelled_push(folder, db, c)
     # a database with a policy that nobody marked as a development database (applied, as production is)
     other = db + "_unmarked"
     subprocess.run(["dropdb", "--if-exists", other], capture_output=True)
@@ -438,6 +567,70 @@ def with_db(folder: str, db: str) -> None:
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
 
 
+def cancelled_push(folder: str, db: str, c: Client) -> None:
+    """A push the agent cancels while it waits for a lock on app.files (another session holds it): the command
+    stopped as Ctrl-C stops it, its statement ended on the server at once (not left waiting for the lock), and
+    nothing of it kept."""
+    import pgwire
+
+    policy = os.path.join(folder, "db", "policy.authz")
+    with open(policy, encoding="utf-8") as fh:
+        before = fh.read()
+    rule = "  delete                            : edit\n"
+    with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(before.replace(rule, rule.replace("edit", "share"), 1))
+    holder = pgwire.connect(**pgwire.parse_dsn(f"dbname={db}"))
+    try:
+        versions = holder.query("SELECT count(*) FROM authz.policy_versions")
+        holder.execute("BEGIN")
+        holder.execute("LOCK TABLE app.files IN ACCESS EXCLUSIVE MODE")
+        me = holder.query("SELECT pg_backend_pid()")[0][0]
+
+        def others() -> list[tuple[pgwire.Value, ...]]:
+            """The other sessions on the database, as they are now (a transaction otherwise sees them as at first)."""
+            holder.query("SELECT pg_stat_clear_snapshot()")
+            return holder.query(
+                f"SELECT pid, wait_event_type FROM pg_stat_activity WHERE datname = '{db}' AND pid <> {me}"
+            )
+
+        c.send({"jsonrpc": "2.0", "id": "push", "method": "tools/call", "params": {"name": "push", "arguments": {}}})
+        end, waiting = time.monotonic() + 30, []
+        while time.monotonic() < end and not waiting:
+            waiting = [r for r in others() if r[1] == "Lock"]
+            time.sleep(0.05)
+        pid = c.children()
+        c.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": "push"}})
+        end, left = time.monotonic() + 10, others()
+        while time.monotonic() < end and left:
+            time.sleep(0.05)
+            left = others()
+        check(
+            "push cancelled while it waits for a lock: its command stopped, and its session with it, at once",
+            len(waiting) == 1 and len(pid) == 1 and c.ended(pid[0], 15) and left == [],
+            [waiting, pid, left],
+        )
+        holder.execute("ROLLBACK")
+        if pid:
+            c.ended(pid[0], 40)  # a push that went on (the lock is free now) has ended, and committed, by then
+        kept = holder.query("SELECT count(*) FROM authz.policy_versions")
+    finally:
+        holder.close()
+    c.send({"jsonrpc": "2.0", "id": "after", "method": "ping"})
+    got = c.until("after", 60)
+    r = c.tool("push")
+    check(
+        "... no answer for it, and nothing of it kept: the next push applies the change",
+        kept == versions
+        and got == [{"jsonrpc": "2.0", "id": "after", "result": {}}]
+        and r["structuredContent"]["ok"]
+        and "unchanged" not in r["content"][0]["text"],
+        [versions, kept, got, r],
+    )
+    with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(before)
+    check("... and back", c.tool("push")["structuredContent"]["ok"])
+
+
 def project() -> str:
     """A project folder: rowstile.toml, the docs example's policy and its named tests."""
     folder = tempfile.mkdtemp(prefix="pga_mcp_")
@@ -452,15 +645,42 @@ def project() -> str:
     return folder
 
 
+def adopt() -> None:
+    """Linux: a command whose server ended before it (a server stopped with a call running: a failing check here)
+    is this process's to wait for, not the container's first process's: where that is Postgres, a child it didn't
+    start ending reads to it as a crashed server process, and it restarts every session (PR_SET_CHILD_SUBREAPER)."""
+    if sys.platform == "linux":
+        import ctypes
+
+        ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)
+
+
+def wait_for_all() -> None:
+    """The servers this suite started ended (their input closed: each answers what it runs, then ends) and every
+    process left to this one waited for: nothing of the suite's goes on after it, and nothing is killed."""
+    for p in STARTED:
+        if p.poll() is None and p.stdin is not None:
+            with contextlib.suppress(OSError):
+                p.stdin.close()
+    while True:
+        try:
+            os.waitpid(-1, 0)
+        except ChildProcessError:
+            return
+
+
 def main() -> None:
+    adopt()
     folder = project()
     try:
         protocol(folder)
+        cancelling(folder)
         without_db(folder)
         if "--no-db" not in sys.argv:
             with_db(folder, sys.argv[sys.argv.index("--db") + 1] if "--db" in sys.argv else "authz_mcp")
     finally:
         shutil.rmtree(folder, ignore_errors=True)
+        wait_for_all()
     print(f"mcp: {'all passed' if not fails else f'{fails} failed'}")
     sys.exit(1 if fails else 0)
 

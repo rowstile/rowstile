@@ -324,7 +324,7 @@ step "the MCP server, for coding agents: check, prove, push, test, why, lint"
 python3 tests/mcp_test.py | quiet_ok
 record "${PIPESTATUS[0]}" "mcp"
 }
-unit policy 8 mcp
+unit policy 11 mcp
 devx() {
 step "day to day: named tests, refusals that say why, who_among, init, dev, --as"
 tests/devx.sh
