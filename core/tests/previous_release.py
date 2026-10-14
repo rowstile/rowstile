@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -87,6 +88,17 @@ def before(mine: str, released: Iterable[str]) -> str | None:
 
 
 def fetch(url: str, accept: str | None = None) -> bytes:
+    """The answer at url, asked up to three times while the network or the server fails: a moment's outage in a
+    run that downloads every release (upgrade.sh --every) would otherwise fail the run."""
+    for wait in (2, 5):
+        try:
+            return fetch_once(url, accept)
+        except Unreachable:
+            time.sleep(wait)
+    return fetch_once(url, accept)
+
+
+def fetch_once(url: str, accept: str | None) -> bytes:
     request = urllib.request.Request(url, headers={"Accept": accept} if accept else {})
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
