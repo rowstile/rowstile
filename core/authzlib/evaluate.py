@@ -23,6 +23,7 @@ import itertools
 import random
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import TypeAlias, TypedDict, TypeVar, cast
 
 from .conditions import Node, Scalar, columns_of, simple, truth, uses_uid
@@ -532,15 +533,17 @@ class World:
             consts = [v for how, v in used if how not in ("bool", "uid", "null") and v is not None]
             if any(how == "bool" for how, _ in used) or any(isinstance(v, bool) for v in consts):
                 values += [True, False]
+            # (a number is an int or a Decimal; Decimal's 28 digits hold one of 15 and 2 more, exactly)
             for how, v in used:
-                if how in ("<", "<=", ">", ">=") and isinstance(v, (int, float)) and not isinstance(v, bool):
+                if how in ("<", "<=", ">", ">=") and isinstance(v, (int, Decimal)) and not isinstance(v, bool):
                     values += [v - 1, v, v + 1]
                 elif how not in ("bool", "uid", "null") and v is not None:
                     values.append(v)
             if any(isinstance(v, str) for v in consts):
                 values.append("(another)")
-            if any(isinstance(v, (int, float)) and not isinstance(v, bool) for v in consts):
-                values.append(max(float(v) for v in consts if isinstance(v, (int, float))) + 2)
+            numbers = [v for v in consts if isinstance(v, (int, Decimal)) and not isinstance(v, bool)]
+            if numbers:
+                values.append(max(numbers) + 2)
             if any(how == "uid" for how, _ in used):
                 values += self.ids("user")
             if not values:
@@ -765,7 +768,7 @@ class World:
         return lines
 
 
-def shown(v: str | int | float | bool) -> str:
+def shown(v: str | int | Decimal | bool) -> str:
     """A column's value as SQL writes it (describe leaves NULL out: a smaller world's columns are NULL)."""
     if isinstance(v, bool):
         return "true" if v else "false"

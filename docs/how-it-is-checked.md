@@ -113,8 +113,9 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   `{size > 10}`, `{owner_id = authz.uid()}`) themselves, in worlds they make up. difftest never does: it
   asks the database. <!-- unchecked: how difftest is written, which reading it shows -->
   So [`tests/conditions_test.py`](../core/tests/conditions_test.py) makes conditions up at
-  random over columns of each kind, and each one the evaluator reads itself must get Postgres's answer on
-  every row: three thousand on every run, fifty thousand with new seeds every night.
+  random over columns of each kind, some named in quotes, with decimals among the numbers, and each one the
+  evaluator reads itself must get Postgres's answer on every row: three thousand on every run, fifty thousand with
+  new seeds every night.
 - **The review, against the database**: `rowstile review` says whether a pull request that rewrites permissions
   grants the same as before, from small worlds made up for the two policies; it reads no database for that.
   [`tests/rewrites.py`](../core/tests/rewrites.py) holds that verdict against one. It rewrites a permission or a

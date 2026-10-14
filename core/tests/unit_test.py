@@ -23,6 +23,7 @@ import threading
 import types
 import unittest
 from collections.abc import Callable, Iterable, Sequence
+from decimal import Decimal
 from typing import ClassVar, cast
 from unittest import mock
 
@@ -2224,6 +2225,20 @@ class Review(unittest.TestCase):
         self.assertTrue(all(f["line"] for f in risk))
         notes = self.review.annotations(self.run_review(looser), "example/docs.authz")
         self.assertRegex(notes, r"^::warning file=example/docs.authz,line=\d+,title=rowstile review::")
+
+    def test_conditions_are_read_as_postgres_reads_them(self) -> None:
+        """A quoted column name was a condition the review couldn't read, and a decimal was read as a float: the
+        same column quoted was said to change the meaning, and a number past a float's digits not to."""
+        old = "           or (folder.view and not {confidential})"
+        base = replaced(self.text, old, old[:-1] + " and {size >= 1})")
+        quoted = (replaced(self.text, old, old[:-1] + ' and {"size" >= 1})'), {}, {})
+        r = self.review.review((base, {}, {}), quoted, None, None, None, worlds=120)
+        self.assertEqual(r["meaning"]["equivalent"], "120 small worlds")
+        # on a numeric column, a file of size 1 loses view: not unchanged (a double precision column would differ)
+        longer = (replaced(self.text, old, old[:-1] + " and {size >= 1.00000000000000001})"), {}, {})
+        r = self.review.review((base, {}, {}), longer, None, None, None, worlds=120)
+        self.assertIsNone(r["meaning"]["equivalent"])
+        self.assertIn("file.view", [c["what"] for c in r["meaning"]["changed"]])
 
     def test_a_condition_it_cannot_read_reworded(self) -> None:
         """A subquery's `id` rewritten as `this.id` (two real changes, d62fa2e and e853285) was reported as a widening
@@ -4535,6 +4550,51 @@ class Confidence(unittest.TestCase):
         self.assertLessEqual(r["worlds"], 20)
         self.assertEqual(r["world"][:3], ["user: 1", "t1: 1", "t3: 1"])
 
+    def test_simple_conditions_read_names_and_numbers_as_postgres_does(self) -> None:
+        from authzlib.conditions import Bool, Cmp, Col, Const, simple, truth
+
+        # a quoted name keeps its case and its doubled quotes; a bare one is in lower case
+        self.assertEqual(simple('"B1" and "order"'), Bool("and", (Col("B1"), Col("order"))))
+        self.assertEqual(simple('not "archived"'), Bool("not", (Col("archived"),)))
+        self.assertEqual(simple('this."a""b" = 1'), Cmp("=", Col('a"b'), Const(1)))
+        self.assertEqual(simple('Done or "Done"'), Bool("or", (Col("done"), Col("Done"))))
+        # a decimal exactly, as numeric reads it; one with more digits than a double precision column keeps (15) is
+        # the database's: there 1.00000000000000001 is 1, in a numeric column it is not
+        self.assertEqual(simple("price >= 1.10"), Cmp(">=", Col("price"), Const(Decimal("1.10"))))
+        node = simple("price > 0.1")
+        assert node is not None
+        self.assertEqual([truth(node, {"price": Decimal(v)}, None) for v in ("0.1", "0.10000000000001")], [False, True])
+        self.assertIsNone(simple("price = 1.00000000000000001"))
+        self.assertIsNone(simple("price < 1000000000000000"))
+        self.assertIsNotNone(simple("price < 100000000000000.0"))
+
+    def test_prove_reads_quoted_columns_and_long_decimals_as_postgres_does(self) -> None:
+        """A quoted column was a condition prove couldn't read, so {"done"} and {not "done"} were drawn apart and
+        both held on one row; a decimal was read as a float, so {price = 1.00000000000000001} held where
+        {price = 1} did, which a numeric column never has."""
+        from authzlib import prove
+
+        def check(perms: str, invariant: str) -> prove.Proof:
+            [r] = prove.prove(
+                parse_policy(
+                    self.HEAD + f"type file = app.files\n  owner : user = owner_id\n{perms}"
+                    f"invariants\n  never file: {invariant}\n",
+                    "p.authz",
+                ),
+                worlds=80,
+            )
+            return r
+
+        r = check('  can view = owner and {"done"}\n  can edit = owner and {not "done"}\n', "view and edit")
+        self.assertTrue(r["holds"], r.get("world"))
+        r = check(
+            "  can view = owner and {price = 1}\n  can edit = owner and {price = 1.00000000000000001}\n",
+            "view and edit",
+        )
+        # the database's to read: drawn as rows of its own, so a counterexample names it held, not price = 1 alone
+        self.assertFalse(r["holds"])
+        self.assertIn("{price = 1.00000000000000001} holds for file 1", r["world"])
+
     def test_the_evaluator_reads_the_rows_of_the_data_it_is_given(self) -> None:
         # the column values it reads for a world were kept by the world's id(): once that world was gone, another
         # could be made at its address and read the first one's rows (prove counted a counterexample that wasn't).
@@ -5128,7 +5188,7 @@ class HandAnswers(unittest.TestCase):
             return {"true": True, "false": False, "null": None}[text]
         if text.startswith("'"):
             return text[1:-1]
-        return float(text) if "." in text else int(text)
+        return Decimal(text) if "." in text else int(text)
 
     def world(self, pol: authzlib.parse.Policy, text: str) -> evaluate.Data:
         from authzlib.conditions import simple
@@ -5480,10 +5540,11 @@ class HandAnswers(unittest.TestCase):
 
         for sql in ("kind in (other_kind)", "kind in ()", "id in (select doc_id from holds)"):
             self.assertIsNone(simple(sql), sql)
-        # a whole number longer than Python reads (4300 digits): the database's to read, as any other it can't
-        for sql in ("size > " + "9" * 4301, "size in (1, " + "9" * 5000 + ")"):
+        # a number with more digits than a double precision column keeps (15), the longest Python reads (4300) among
+        # them: the database's to read, as any other it can't (a double holds 2^53 + 1 as 2^53)
+        for sql in ("size > " + "9" * 4301, "size in (1, " + "9" * 5000 + ")", "size > " + "9" * 16):
             self.assertIsNone(simple(sql), sql[:20])
-        self.assertIsNotNone(simple("size > " + "9" * 4300))
+        self.assertIsNotNone(simple("size > " + "9" * 15))
 
     @worked_from("rows-hold-nothing")
     def test_a_disbanded_team_passes_its_members_on_to_no_team(self) -> None:
@@ -8092,7 +8153,7 @@ class Why(unittest.TestCase):
             with self.subTest(where=where):
                 self.assertEqual(grant.settles(where), held)
         self.assertEqual(
-            [grant.constant(v) for v in ("it's", 2, 1.5, True, False, None)],
+            [grant.constant(v) for v in ("it's", 2, Decimal("1.5"), True, False, None)],
             ["'it''s'", "2", "1.5", "true", "false", "NULL"],
         )
 
