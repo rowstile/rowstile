@@ -5,7 +5,8 @@
 # rowstile's PL/pgSQL the suites run (statements), and the scale benchmark last.
 # On GitHub's runners, as ci.yml (or the one the repository variable RUNNER names). Run by hand too
 # (workflow_dispatch), all of it or one job: `gh workflow run nightly.yml -f only=bench`. And several soaks at
-# once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7`.
+# once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7`. And every
+# small policy at once, seven jobs side by side (each night's soak checks a seventh): `-f only=small`.
 name: nightly
 on:
   schedule:
@@ -13,14 +14,15 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run only this job (suites, proofs, soak, conformance, third, statements, bench); empty: all of them"
+        description: "Run only this job (suites, proofs, soak, small, conformance, third, statements, bench); empty: all of them"
         default: ""
       soaks:
         description: "How many soaks to run at once (1 to 9), each with its own seed, on 16, 17 and 18 in turn"
         default: "1"
-# One nightly at a time. Several soaks asked for by hand are a run of their own beside it: each is on its own runner
+# One nightly at a time. Several soaks asked for by hand are a run of their own beside it: each is on its own runner;
+# so are the small policies asked for alone
 concurrency:
-  group: ${{ inputs.soaks > 1 && format('soaks-{0}', github.run_id) || 'nightly' }}
+  group: ${{ (inputs.soaks > 1 || inputs.only == 'small') && format('soaks-{0}', github.run_id) || 'nightly' }}
   cancel-in-progress: false
 # what a job needs beyond reading the repository, it says itself
 permissions: {contents: read}
@@ -82,11 +84,13 @@ jobs:
       - id: plan
         run: |
           case "${SOAKS:-1}" in [1-9]) ;; *) echo "soaks: a number from 1 to 9, not '$SOAKS'"; exit 1;; esac
+          # (and the seventh of the small policies each checks: the day's, a week covering them all; with several,
+          # one each: seven soaks check them all, as after a change to the language)
           if [ "${SOAKS:-1}" = 1 ]; then
-            plan="{\"name\": \"soak\", \"pg\": $(( 16 + 10#$(date -u +%j) % 3 )), \"seed\": $GITHUB_RUN_ID}"
+            plan="{\"name\": \"soak\", \"pg\": $(( 16 + 10#$(date -u +%j) % 3 )), \"seed\": $GITHUB_RUN_ID, \"slice\": $(( $(date -u +%s) / 86400 % 7 ))}"
           else
             plan=$(for n in $(seq 1 "$SOAKS"); do
-              echo "{\"name\": \"soak-$n\", \"pg\": $(( 16 + n % 3 )), \"seed\": $(( GITHUB_RUN_ID * 10 + n ))}"
+              echo "{\"name\": \"soak-$n\", \"pg\": $(( 16 + n % 3 )), \"seed\": $(( GITHUB_RUN_ID * 10 + n )), \"slice\": $(( (n - 1) % 7 ))}"
             done | paste -sd, -)
           fi
           echo "soaks=[$plan]" | tee -a "$GITHUB_OUTPUT"
@@ -94,7 +98,8 @@ jobs:
   # The random checks (the parser fuzzer, every random-change run, random policies, races and stress), long and
   # with a new seed, so each night tries new cases. The log is kept either way: it says the seed, to run a
   # failure again. Each soak in the parts run_tests.sh names, side by side, on one version and with one seed:
-  # the night's soak is over when its longest part is.
+  # the night's soak is over when its longest part is. And a seventh of the small policies (tests/small.py),
+  # the day's: a week checks them all.
   soak:
     needs: soak-plan
     name: ${{ matrix.soak.name }} (${{ matrix.soak.pg }}, ${{ matrix.part }})
@@ -103,7 +108,7 @@ jobs:
       fail-fast: false
       matrix:
         soak: ${{ fromJSON(needs.soak-plan.outputs.soaks) }}
-        part: [changes-1, changes-2, policies, around, races]
+        part: [changes-1, changes-2, policies, around, small, races]
     env:
       ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.soak.name }}-${{ matrix.part }}"
     steps:
@@ -114,6 +119,7 @@ jobs:
         env:
           ROWSTILE_CI_LOGS: "${{ runner.temp }}"
           SOAK_SEED: "${{ matrix.soak.seed }}"
+          SMALL_SLICE: "${{ matrix.soak.slice }}"
           PG: "${{ matrix.soak.pg }}"
           ROWSTILE_PART: "${{ matrix.part }}"
       - if: always()
@@ -122,6 +128,33 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
         with:
           name: ${{ matrix.soak.name }}-${{ matrix.part }}
+          path: ${{ runner.temp }}/rowstile-ci-*.log
+  # Every small policy (tests/small.py), asked for by hand: the seven slices the nightly soaks check one a night, a job
+  # each, side by side (as after a change to the language: `gh workflow run nightly.yml -f only=small`)
+  small:
+    if: ${{ inputs.only == 'small' }}
+    name: small policies (slice ${{ matrix.slice }} of 7)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 7
+      matrix:
+        slice: [0, 1, 2, 3, 4, 5, 6]
+    env:
+      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.slice }}"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - run: bash core/ci.sh --soak 16
+        env:
+          ROWSTILE_CI_LOGS: "${{ runner.temp }}"
+          ROWSTILE_PART: small
+          SMALL_SLICE: "${{ matrix.slice }}"
+      - if: always()
+        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: small-${{ matrix.slice }}
           path: ${{ runner.temp }}/rowstile-ci-*.log
   # The SDKs' conformance suites on 17 and 18 (ci.yml runs them on 16), and on 16 with the app through PgBouncer in
   # transaction mode (integrations/pooler.sh), one after the other: on a self-hosted runner each holds the lock its

@@ -779,13 +779,14 @@ def schema_text(spec: Spec) -> str:
                     f"{n.sql('subj_id')} {k}{f' REFERENCES {n.table(group)} {follow}' if group else ''}, "
                     f"{active} boolean NOT NULL DEFAULT true, UNIQUE ({n.sql('obj_id')}, {n.sql('subj_id')}));"
                 )
-    # what READS calls: t1's b2, read by a function with a quoted name and by an operator made on it; and the next
-    # row's key, where keys are text or uuids
-    s.append(
-        f'CREATE FUNCTION {n.sql(SCHEMA)}."Flag"(p {k}) RETURNS boolean LANGUAGE sql STABLE '
-        f"AS 'SELECT exists (SELECT 1 FROM {n.table('t1')} x WHERE x.{i} = p AND x.{n.sql('b2')})';"
-    )
-    s.append(f'CREATE OPERATOR public.=!= (FUNCTION = {n.sql(SCHEMA)}."Flag", RIGHTARG = {k});')
+    # what READS calls: t1's b2, read by a function with a quoted name and by an operator made on it (where there is
+    # a t1: tests/small.py names its types otherwise); and the next row's key, where keys are text or uuids
+    if any(o.name == "t1" for o in spec.objs):
+        s.append(
+            f'CREATE FUNCTION {n.sql(SCHEMA)}."Flag"(p {k}) RETURNS boolean LANGUAGE sql STABLE '
+            f"AS 'SELECT exists (SELECT 1 FROM {n.table('t1')} x WHERE x.{i} = p AND x.{n.sql('b2')})';"
+        )
+        s.append(f'CREATE OPERATOR public.=!= (FUNCTION = {n.sql(SCHEMA)}."Flag", RIGHTARG = {k});')
     if k in ("text", "uuid"):
         number = "p::bigint" if k == "text" else "right(p::text, 12)::bigint"
         s.append(
