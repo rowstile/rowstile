@@ -3156,7 +3156,7 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "docs";
 END;
 
-CREATE FUNCTION authz_gen."alt.docs:update:why"(p_row "alt"."docs") RETURNS SETOF text
+CREATE FUNCTION authz_gen."alt.docs:update:why"(p_row "alt"."docs", p_stored boolean) RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
 DECLARE v boolean[] := authz_gen."alt.docs:update:items"(p_row); v_t record;
@@ -3164,7 +3164,7 @@ BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update : edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs update'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on alt.docs'; END IF;
   RETURN NEXT CASE WHEN v[4] THEN '  yes  ' ELSE '  no   ' END || 'edit';
-  IF NOT v[4] THEN
+  IF NOT v[4] AND p_stored THEN
     RETURN QUERY SELECT '    ' || l FROM authz.explain('doc', ((p_row)."doc_no"::text), 'edit') l LIMIT 20;
   END IF;
 END $f$;
@@ -3175,7 +3175,7 @@ DECLARE v_lines text; v_who text := CASE WHEN coalesce(current_setting('authz.us
   ELSE coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || current_setting('authz.user_id', true) END;
 BEGIN
   BEGIN
-    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:update:why"(p_row) l);
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:update:why"(p_row, false) l);
   EXCEPTION WHEN OTHERS THEN
     v_lines := 'no explanation: ' || SQLERRM;
   END;
@@ -3229,7 +3229,7 @@ BEGIN
     RETURN ARRAY(SELECT * FROM authz_gen."alt.docs:delete:why"(r_old));
   END IF;
   r_new := jsonb_populate_record(r_old, coalesce(p_row, '{}'));
-  RETURN ARRAY(SELECT * FROM authz_gen."alt.docs:update:why"(r_old)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."alt.docs:update:why"(r_new) l) END;
+  RETURN ARRAY(SELECT * FROM authz_gen."alt.docs:update:why"(r_old, true)) || CASE WHEN p_row IS NULL THEN '{}'::text[] ELSE ARRAY['after the change:'] || ARRAY(SELECT '  ' || l FROM authz_gen."alt.docs:update:why"(r_new, false) l) END;
 END $f$;
 
 -- alt.docs select (line 43): view
