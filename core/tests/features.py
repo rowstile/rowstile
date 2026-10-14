@@ -321,6 +321,7 @@ FEATURES: list[Feature] = [
             T("governance.sh", "dave (not decided) kept it"),
             T("governance.sh", "authz.review_items("),
             T("governance.sh", "authz.review_decide("),
+            T("principals.sh", "authz.start_review is for users: a service is told so"),
         ),
     ),
     Feature(

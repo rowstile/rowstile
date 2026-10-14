@@ -760,8 +760,9 @@ CODES = {
         "For users only",
         "A call that is for users ran while a service (a principal type other than the user type) was signed in: "
         "the custom roles API (`create_role`, `set_role_permissions`, `delete_role`, `roles_of`), access requests "
-        "(`request_access`, `pending_requests`, `decide_request`, `cancel_request`), `break_glass`, a key for "
-        "oneself (`create_api_key` without a principal) and `view_as`. It is refused even when the policy gives "
+        "(`request_access`, `pending_requests`, `decide_request`, `cancel_request`), access reviews "
+        "(`start_review`, `review_decide`, `close_review`), `break_glass`, a key for oneself (`create_api_key` "
+        "without a principal) and `view_as`. It is refused even when the policy gives "
         "the service the permission the call asks for. A service may share and unshare, and a user holding "
         "`manage_keys` on it makes its keys (`authz.create_api_key('deploy', '', NULL, 'service', '7')`). "
         "SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this code).",
