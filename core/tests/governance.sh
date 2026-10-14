@@ -189,6 +189,58 @@ check "a request for a missing object reaches no approver" "0" "SET authz.user_i
 as 4 -c "SELECT authz.cancel_request($R999)" >/dev/null
 check "approvers can still list requests" "0" "SET authz.user_id = 5; SELECT count(*) FROM authz.pending_requests() WHERE requester = '4'"
 
+echo "-- a pending request goes with its requester's row, and with its object's"
+PSQL -c "INSERT INTO app.users VALUES (8, 'hal'), (9, 'ida')" \
+     -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (41, 1, 4, 1, 'doomed'), (42, 1, 4, 1, 'doomed too')" >/dev/null
+RQH=$(as 8 -c "SELECT authz.request_access('folder', 6, 'viewer', 'hal needs it')")
+RQO=$(as 4 -c "SELECT authz.request_access('folder', 41, 'viewer', 'dave needs the old one')")
+RQK=$(as 4 -c "SELECT authz.request_access('folder', 42, 'viewer', 'dave needs this one too')")
+RQD=$(as 8 -c "SELECT authz.request_access('folder', 2, 'viewer', 'hal asked before')")
+as 5 -c "SELECT authz.decide_request($RQD, false, 'no')" >/dev/null
+PSQL -c "DELETE FROM app.users WHERE id = 8" -c "DELETE FROM app.folders WHERE id = 41" -c "UPDATE app.folders SET id = 43 WHERE id = 42" >/dev/null
+admin "a pending request is cancelled when its requester is deleted, its object is, or its object gets a new id, and says why" \
+  "cancelled|its requester is gone|cancelled|its object is gone|cancelled|its object is gone" \
+  "SELECT string_agg(status || '|' || note, '|' ORDER BY id) FROM authz.requests WHERE id IN ($RQH, $RQO, $RQK)"
+admin "... a decided one stays as it was" "denied|no" "SELECT status || '|' || note FROM authz.requests WHERE id = $RQD"
+PSQL -c "INSERT INTO app.users VALUES (8, 'someone else')" \
+     -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (41, 1, 4, 1, 'new'), (42, 1, 4, 1, 'new too')" >/dev/null
+check "a later user with the id has none of the old one's requests" "0" "SET authz.user_id = 8; SELECT count(*) FROM authz.pending_requests()"
+expect_code "approving the old request for a later folder with the id is refused" "P0001: no pending request $RQO" \
+  -c "SET authz.user_id = 5" -c "SELECT authz.decide_request($RQO, true)"
+expect_code "... and so is approving the request of a requester who is gone" "P0001: no pending request $RQH" \
+  -c "SET authz.user_id = 5" -c "SELECT authz.decide_request($RQH, true)"
+admin "... so nothing is shared with the later folder" "0" "SELECT count(*) FROM authz.shares WHERE object_type = 'folder' AND object_id IN ('41', '42')"
+# a request made while its requester is deleted: it waits for the delete, then there is nobody to make it
+psql -X -q -d "$DB" -c "BEGIN" -c "DELETE FROM app.users WHERE id = 9" -c "SELECT pg_sleep(1.5)" -c "COMMIT" >/dev/null 2>&1 &
+sleep 0.5
+expect_code "a request made while its requester is deleted waits for the delete, then is refused" "42501: sign in first" \
+  -c "SET authz.user_id = 9" -c "SELECT authz.request_access('folder', 6, 'viewer', 'too late')"
+wait
+admin "... and leaves no request behind" "0" "SELECT count(*) FROM authz.requests WHERE requester = '9'"
+# REPEATABLE READ: a delete of the object whose snapshot is older than a request on it fails to serialize
+psql -X -q -d "$DB" > /tmp/authz_governance_rr.out 2>&1 <<'SQL' &
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT count(*) FROM app.orgs;
+SELECT pg_sleep(1.5);
+DELETE FROM app.folders WHERE id = 41;
+COMMIT;
+SQL
+sleep 0.5
+as 4 -c "SELECT authz.request_access('folder', 41, 'viewer', 'dave needs the new one')" >/dev/null
+wait
+if grep -q "could not serialize access due to concurrent update" /tmp/authz_governance_rr.out; then
+  echo "ok    a delete with an older snapshot than a request on the folder gets a serialization error"
+else echo "FAIL  a delete with an older snapshot than a request: $(tr '\n' ' ' < /tmp/authz_governance_rr.out)"; fails=$((fails + 1)); fi
+admin "... and the folder and the request are both still there" "1|1" \
+  "SELECT (SELECT count(*) FROM app.folders WHERE id = 41) || '|' || (SELECT count(*) FROM authz.requests WHERE object_id = '41' AND status = 'pending')"
+rm -f /tmp/authz_governance_rr.out
+PSQL -c "DELETE FROM app.folders WHERE id IN (41, 42, 43)" >/dev/null
+# a request whose requester was deleted before requests went with their rows: applying the policy cancels it
+PSQL -c "INSERT INTO authz.requests (object_type, object_id, relation, requester, reason) VALUES ('folder', '6', 'viewer', '77', 'left over')" >/dev/null
+reapply /tmp/authz_governance.sql
+admin "applying the policy cancels the pending requests of requesters whose row is gone" "cancelled|its requester is gone" \
+  "SELECT status || '|' || note FROM authz.requests WHERE requester = '77'"
+
 echo "-- access reviews"
 as 5 -c "SELECT authz.share('folder', 5, 'viewer', 'user', 4)" >/dev/null
 expect_code "carol cannot review Secrets" "42501: you cannot review folder 5" -c "SET authz.user_id = 3" -c "SELECT authz.start_review('folder', '5')"

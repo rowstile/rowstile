@@ -9,16 +9,6 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
-- A principal's API keys outlived its row: a user or a service deleted, or given a new id, kept its keys, and a
-  row that later had that id signed in with them. It affected apps that delete users or services with keys, or
-  change their ids, and reuse ids. The keys now go with the row, with a line each in the audit trail (deleted,
-  as the row's shares are, when its id changes or its table is emptied), and applying the policy deletes the keys
-  left by rows deleted before. A key made while its principal is deleted waits for the delete and is refused; a
-  delete in REPEATABLE READ or SERIALIZABLE that can't see a key made since fails with a serialization error
-  (40001), to retry.
-
-### Fixed
-
 - The command lost its connection right after signing in, before its first statement, with a traceback. It
   now says it lost the database (exit 2), as it does anywhere later.
 - A share could outlive the row it was on or to, where a row was deleted, given a new id or emptied with
@@ -36,6 +26,17 @@ Each release upgrades from the one before it. How releases are numbered and made
   to saw who had made someone else's share there, until when, and its caveat, and might read another person's end
   date as their own. It now describes the share that gives them the relation: their own, the link they presented,
   or the one to every signed-in user. Apply the policy again (or the next migration) to take it.
+- A principal's API keys outlived its row: a user or a service deleted, or given a new id, kept its keys, and a
+  row that later had that id signed in with them. It affected apps that delete users or services with keys, or
+  change their ids, and reuse ids. The keys now go with the row, with a line each in the audit trail (deleted,
+  as the row's shares are, when its id changes or its table is emptied), and applying the policy deletes the keys
+  left by rows deleted before. A key made while its principal is deleted waits for the delete and is refused; a
+  delete in REPEATABLE READ or SERIALIZABLE that can't see a key made since fails with a serialization error
+  (40001), to retry. The same held for a pending access request: one whose requester or object was deleted, or
+  given a new id, stayed pending, so a later user with that id saw it as theirs, and approving it shared the
+  object, or a later object with that id, with them. A pending request is now cancelled with its requester's or
+  its object's row, and applying the policy cancels those of requesters deleted before; decided requests stay as
+  they were.
 
 ## 0.1.0 (alpha)
 

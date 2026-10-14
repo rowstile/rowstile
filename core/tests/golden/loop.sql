@@ -536,8 +536,8 @@ INSERT INTO authz_int.perms VALUES
 
 CREATE TABLE authz_int.locks (type text PRIMARY KEY, n bigint NOT NULL);
 
--- a row for each row a share was made on or to (authz_int.mark_shared), until that row is gone
-CREATE TABLE authz_int.share_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));
+-- a row for each row a share, a key or a request named (authz_int.mark_row), until that row is gone
+CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));
 
 -- each inheritance table's definition and the tables it reads, to keep it on the next apply if they are the same
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
@@ -809,6 +809,9 @@ DELETE FROM authz.shares g WHERE g.object_type = 'domain' AND NOT EXISTS (SELECT
 DELETE FROM authz.shares g WHERE g.subject_type = 'domain' AND g.subject_id <> '*' AND NOT EXISTS (SELECT 1 FROM "lp"."domains" x WHERE x."id"::text = g.subject_id);
 -- ...and so are the API keys of principals that no longer exist
 DELETE FROM authz.api_keys k WHERE k.principal_type = 'user' AND NOT EXISTS (SELECT 1 FROM "lp"."users" x WHERE x."id"::text = k.user_id);
+-- ...and pending access requests whose requester no longer exists are cancelled (not those whose object
+-- doesn't: a request for a missing object is allowed, so that asking doesn't tell which hidden ones exist)
+UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'its requester is gone' WHERE r.status = 'pending' AND NOT EXISTS (SELECT 1 FROM "lp"."users" x WHERE x."id"::text = r.requester);
 
 DO $r$ BEGIN PERFORM set_config('authz_ctx.reason', '', true); END $r$;
 
@@ -857,23 +860,23 @@ END $f$;
 CREATE TRIGGER authz_role_gone AFTER DELETE ON authz.roles
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.role_gone();
 
--- a share on or to a row marks it (a new version of its mark, which a transaction that can't see the share
--- and then deletes the row, or changes its id, writes too: forget_marks)
-CREATE FUNCTION authz_int.mark_shared(p_type text, p_id text) RETURNS void
+-- a share, a key or a request naming a row marks it (a new version of its mark, which a transaction that can't
+-- see it and then deletes the row, or changes its id, writes too: forget_marks)
+CREATE FUNCTION authz_int.mark_row(p_type text, p_id text) RETURNS void
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-  INSERT INTO authz_int.share_marks AS m (type, id) VALUES (p_type, p_id)
+  INSERT INTO authz_int.row_marks AS m (type, id) VALUES (p_type, p_id)
   ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1 $f$;
 -- rows that are gone, or whose id changed: their marks go too. In a transaction whose snapshot may be older than a
--- share on one of them (not READ COMMITTED), the marks are written first: if a share was made since, that fails to
--- serialize (40001), rather than leave a share the deletes after can't see
+-- share, key or request naming one of them (not READ COMMITTED), the marks are written first: if one was made since,
+-- that fails to serialize (40001), rather than leave what the deletes after can't see
 CREATE FUNCTION authz_int.forget_marks(p_type text, p_ids text[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    INSERT INTO authz_int.share_marks AS m (type, id) SELECT DISTINCT p_type, x FROM unnest(p_ids) x
+    INSERT INTO authz_int.row_marks AS m (type, id) SELECT DISTINCT p_type, x FROM unnest(p_ids) x
     ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1;
   END IF;
-  DELETE FROM authz_int.share_marks WHERE type = p_type AND id = ANY (p_ids);
+  DELETE FROM authz_int.row_marks WHERE type = p_type AND id = ANY (p_ids);
 END $f$;
 -- whether a row is there, locked (FOR KEY SHARE) until the transaction ends, as authz.share locks what it shares
 CREATE FUNCTION authz_int.hold(p_type text, p_id text) RETURNS boolean
@@ -1163,22 +1166,26 @@ END $b$;
 -- trees kept but no longer used (none, normally) go with the holding schema
 DROP SCHEMA authz_keep CASCADE;
 
--- shares on user rows that are gone, or whose id changed, are removed (and their marks: forget_marks)
+-- shares on user rows that are gone, or whose id changed, are removed (and their marks: forget_marks), and
+-- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION authz_int."user__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
     DELETE FROM authz.shares WHERE object_type = 'user';
     DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id <> '*';      -- '*' (every one signed in) names no row
-    DELETE FROM authz_int.share_marks WHERE type = 'user';
+    DELETE FROM authz_int.row_marks WHERE type = 'user';
+    PERFORM authz_int.requests_gone('user', NULL);
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks('user', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'user' AND object_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
     DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
+    PERFORM authz_int.requests_gone('user', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
   ELSE
     PERFORM authz_int.forget_marks('user', ARRAY(SELECT o."id"::text FROM old_rows o));
     DELETE FROM authz.shares WHERE object_type = 'user' AND object_id IN (SELECT o."id"::text FROM old_rows o);
     DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id IN (SELECT o."id"::text FROM old_rows o);
+    PERFORM authz_int.requests_gone('user', ARRAY(SELECT o."id"::text FROM old_rows o));
   END IF;
   RETURN NULL;
 END $f$;
@@ -1188,6 +1195,7 @@ BEGIN
   PERFORM authz_int.forget_marks('user', ARRAY[OLD."id"::text]);
   DELETE FROM authz.shares WHERE object_type = 'user' AND object_id = OLD."id"::text;
   DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id = OLD."id"::text;
+  PERFORM authz_int.requests_gone('user', ARRAY[OLD."id"::text]);
   RETURN NULL;
 END $f$;
 -- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
@@ -1217,22 +1225,26 @@ DO $tr$ BEGIN
   END IF;
 END $tr$;
 
--- shares on setting rows that are gone, or whose id changed, are removed (and their marks: forget_marks)
+-- shares on setting rows that are gone, or whose id changed, are removed (and their marks: forget_marks), and
+-- the pending requests naming them are cancelled (requests_gone)
 CREATE FUNCTION authz_int."setting__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
     DELETE FROM authz.shares WHERE object_type = 'setting';
     DELETE FROM authz.shares WHERE subject_type = 'setting' AND subject_id <> '*';      -- '*' (every one signed in) names no row
-    DELETE FROM authz_int.share_marks WHERE type = 'setting';
+    DELETE FROM authz_int.row_marks WHERE type = 'setting';
+    PERFORM authz_int.requests_gone('setting', NULL);
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
     PERFORM authz_int.forget_marks('setting', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'setting' AND object_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
     DELETE FROM authz.shares WHERE subject_type = 'setting' AND subject_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
+    PERFORM authz_int.requests_gone('setting', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
   ELSE
     PERFORM authz_int.forget_marks('setting', ARRAY(SELECT o."id"::text FROM old_rows o));
     DELETE FROM authz.shares WHERE object_type = 'setting' AND object_id IN (SELECT o."id"::text FROM old_rows o);
     DELETE FROM authz.shares WHERE subject_type = 'setting' AND subject_id IN (SELECT o."id"::text FROM old_rows o);
+    PERFORM authz_int.requests_gone('setting', ARRAY(SELECT o."id"::text FROM old_rows o));
   END IF;
   RETURN NULL;
 END $f$;
@@ -1242,6 +1254,7 @@ BEGIN
   PERFORM authz_int.forget_marks('setting', ARRAY[OLD."id"::text]);
   DELETE FROM authz.shares WHERE object_type = 'setting' AND object_id = OLD."id"::text;
   DELETE FROM authz.shares WHERE subject_type = 'setting' AND subject_id = OLD."id"::text;
+  PERFORM authz_int.requests_gone('setting', ARRAY[OLD."id"::text]);
   RETURN NULL;
 END $f$;
 -- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
@@ -2438,9 +2451,9 @@ BEGIN
   IF p_caveat IS NOT NULL AND NOT EXISTS (SELECT 1 FROM authz_int.caveats WHERE name = p_caveat) THEN
     RAISE EXCEPTION 'no caveat % in the policy', p_caveat USING HINT = 'rowstile help AZ707';
   END IF;
-  PERFORM authz_int.mark_shared(p_type, p_id);
+  PERFORM authz_int.mark_row(p_type, p_id);
   IF v_key NOT LIKE '%:*' AND v_key NOT IN ('anyone', 'link') THEN
-    PERFORM authz_int.mark_shared(p_subject_type, p_subject_id);
+    PERFORM authz_int.mark_row(p_subject_type, p_subject_id);
   END IF;
   INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation,
                             expires_at, created_by, starts_at, caveat, caveat_args)
@@ -3211,39 +3224,18 @@ END $f$;
 
 SET LOCAL check_function_bodies = on;
 
--- a mark for each principal a key was made for (authz_int.mark_key), until its row is gone (keys_gone)
-CREATE TABLE authz_int.key_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));
-CREATE FUNCTION authz_int.mark_key(p_type text, p_id text) RETURNS void
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-  INSERT INTO authz_int.key_marks AS m (type, id) VALUES (p_type, p_id)
-  ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1 $f$;
--- whether a principal's row is there, locked (FOR KEY SHARE) until the transaction ends
-CREATE FUNCTION authz_int.lock_principal(p_type text, p_id text) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE v_tbl text; v_find text; v_found boolean;
-BEGIN
-  SELECT t.tbl, t.find INTO v_tbl, v_find FROM authz_int.types t WHERE t.name = p_type AND t.principal;
-  -- (the key's type by a subquery, as authz_int.hold reads it: a variable would keep its first value)
-  IF v_tbl IS NULL OR p_id IS NULL
-     OR NOT pg_catalog.pg_input_is_valid(p_id, (SELECT t.keytype FROM authz_int.types t WHERE t.name = p_type)) THEN
-    RETURN false;
-  END IF;
-  EXECUTE pg_catalog.format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s FOR KEY SHARE)', v_tbl, v_find) INTO v_found
-    USING p_id;
-  RETURN v_found;
-END $f$;
 -- the keys of principals that are gone, or whose id changed (p_ids; NULL: every one of the type, TRUNCATE) are
--- deleted, each in the audit trail. In a transaction whose snapshot may be older than a key made for one of them
--- (not READ COMMITTED), their marks are written first: if a key was made since, that fails to serialize (40001)
+-- deleted, each in the audit trail, with the rows' marks (forget_marks: in a transaction whose snapshot may be older
+-- than a key made for one of them, that fails to serialize, 40001)
 CREATE FUNCTION authz_int.keys_gone(p_type text, p_ids text[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE k record;
 BEGIN
-  IF p_ids IS NOT NULL AND pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    INSERT INTO authz_int.key_marks AS m (type, id) SELECT DISTINCT p_type, x FROM unnest(p_ids) x
-    ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1;
+  IF p_ids IS NULL THEN
+    DELETE FROM authz_int.row_marks WHERE type = p_type;
+  ELSE
+    PERFORM authz_int.forget_marks(p_type, p_ids);
   END IF;
-  DELETE FROM authz_int.key_marks WHERE type = p_type AND (p_ids IS NULL OR id = ANY (p_ids));
   FOR k IN DELETE FROM authz.api_keys WHERE principal_type = p_type AND (p_ids IS NULL OR user_id = ANY (p_ids))
            RETURNING id, user_id, name LOOP
     PERFORM authz_int.audit('delete_api_key', p_type, k.user_id, NULL, NULL, NULL, NULL,
@@ -3267,12 +3259,12 @@ BEGIN
   -- for the delete, which leaves no principal to make it for (a delete with an older snapshot: keys_gone)
   IF p_principal_id IS NULL THEN
     v_id := authz.uid()::text;
-    IF v_type <> 'user' OR v_id IS NULL OR NOT authz_int.lock_principal('user', v_id) THEN
+    IF v_type <> 'user' OR v_id IS NULL OR NOT authz_int.hold('user', v_id) THEN
       RAISE EXCEPTION 'sign in to create an API key' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ714';
     END IF;
   ELSE
     v_id := authz_int.canon(v_type, p_principal_id);
-    PERFORM authz_int.lock_principal(v_type, v_id);
+    PERFORM authz_int.hold(v_type, v_id);
     PERFORM authz_int.check_manage_keys(v_type, v_id);
   END IF;
   SELECT string_agg(x, ', ') INTO v_bad FROM unnest(v_scopes) x
@@ -3284,7 +3276,7 @@ BEGIN
   INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash, scopes, expires_at)
   VALUES (v_id, v_type, p_name, left(v_token, 10), encode(sha256(convert_to(v_token, 'UTF8')), 'hex'),
           array_to_string(v_scopes, ','), p_expires_at);
-  PERFORM authz_int.mark_key(v_type, v_id);
+  PERFORM authz_int.mark_row(v_type, v_id);
   PERFORM authz_int.audit('create_api_key', v_type, v_id, NULL, NULL, NULL, NULL,
                           jsonb_build_object('name', p_name, 'scopes', v_scopes, 'expires_at', p_expires_at));
   RETURN v_token;
@@ -3604,10 +3596,16 @@ LANGUAGE sql IMMUTABLE AS $f$
 CREATE OR REPLACE FUNCTION authz.request_access(p_type text, p_id text, p_relation text, p_reason text,
   p_duration interval DEFAULT NULL) RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE v_id bigint; v_tbl text;
+DECLARE v_id bigint; v_tbl text; v_there boolean;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
+  -- the requester's row is locked (FOR KEY SHARE) before it is checked, and the object's if it is there (without
+  -- saying whether it is): a delete of either waits for the request, or the request for the delete (then the
+  -- requester is nobody, or the object is gone: requests_gone)
+  IF authz.uid() IS NOT NULL THEN
+    PERFORM authz_int.hold('user', authz.uid()::text);
+  END IF;
   IF authz.uid() IS NULL THEN RAISE EXCEPTION 'sign in first' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ714'; END IF;
   IF coalesce(btrim(p_reason), '') = '' THEN RAISE EXCEPTION 'say why you need it' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
   IF p_duration IS NOT NULL AND p_duration <= interval '0' THEN RAISE EXCEPTION 'the duration must be positive' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
@@ -3620,8 +3618,14 @@ BEGIN
   END IF;
   -- no check that the object exists: that would tell people which hidden objects do. A request
   -- for a missing object simply never reaches anyone who could approve it.
+  v_there := authz_int.hold(p_type, p_id);
   INSERT INTO authz.requests (object_type, object_id, relation, requester, reason, duration)
   VALUES (p_type, p_id, p_relation, authz.uid()::text, p_reason, p_duration) RETURNING id INTO v_id;
+  -- marked: a delete of the requester, or of the object, that can't see this request fails to serialize
+  PERFORM authz_int.mark_row('user', authz.uid()::text);
+  IF v_there THEN
+    PERFORM authz_int.mark_row(p_type, p_id);
+  END IF;
   PERFORM authz_int.audit('request_access', p_type, p_id, p_relation, 'user', authz.uid()::text, '',
                           jsonb_build_object('request', v_id, 'duration', p_duration));
   PERFORM pg_notify('authz_requests', v_id::text);
@@ -3630,6 +3634,18 @@ END $f$;
 CREATE OR REPLACE FUNCTION authz.request_access(p_type text, p_id bigint, p_relation text, p_reason text,
   p_duration interval DEFAULT NULL) RETURNS bigint LANGUAGE sql AS
   $$ SELECT authz.request_access(p_type, p_id::text, p_relation, p_reason, p_duration) $$;
+
+-- A pending request goes when its requester's row goes, or its object's (deleted, given a new id, emptied out with
+-- its table: p_ids NULL), so that it never reaches whoever later has that id; it is kept, cancelled, with why.
+-- Decided requests are history, and stay as they were
+CREATE FUNCTION authz_int.requests_gone(p_type text, p_ids text[]) RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+  UPDATE authz.requests r SET status = 'cancelled', decided_at = now(),
+    note = CASE WHEN r.object_type = p_type AND (p_ids IS NULL OR r.object_id = ANY (p_ids))
+                THEN 'its object is gone' ELSE 'its requester is gone' END
+  WHERE r.status = 'pending'
+    AND ((r.object_type = p_type AND (p_ids IS NULL OR r.object_id = ANY (p_ids)))
+         OR (p_type = 'user' AND (p_ids IS NULL OR r.requester = ANY (p_ids)))) $f$;
 
 -- Requests the current user may decide (they may share that relation on the object), and their own
 CREATE OR REPLACE FUNCTION authz.pending_requests()
@@ -3711,8 +3727,8 @@ BEGIN
   END IF;
   v_until := now() + p_duration;
   PERFORM set_config('authz_ctx.reason', p_reason, true);
-  PERFORM authz_int.mark_shared(p_type, p_id);
-  PERFORM authz_int.mark_shared('user', authz.uid()::text);
+  PERFORM authz_int.mark_row(p_type, p_id);
+  PERFORM authz_int.mark_row('user', authz.uid()::text);
   SELECT * INTO g FROM authz.shares WHERE object_type = p_type AND object_id = p_id AND relation = p_relation
     AND subject_type = 'user' AND subject_id = authz.uid()::text AND subject_relation = '' FOR UPDATE;
   IF g.object_id IS NULL THEN

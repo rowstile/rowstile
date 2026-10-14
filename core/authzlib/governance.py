@@ -406,10 +406,16 @@ LANGUAGE sql IMMUTABLE AS $f$
 CREATE FUNCTION authz.request_access(p_type text, p_id text, p_relation text, p_reason text,
   p_duration interval DEFAULT NULL) RETURNS bigint
 LANGUAGE plpgsql {DEF} AS $f$
-DECLARE v_id bigint; v_tbl text;
+DECLARE v_id bigint; v_tbl text; v_there boolean;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
+  -- the requester's row is locked (FOR KEY SHARE) before it is checked, and the object's if it is there (without
+  -- saying whether it is): a delete of either waits for the request, or the request for the delete (then the
+  -- requester is nobody, or the object is gone: requests_gone)
+  IF authz.uid() IS NOT NULL THEN
+    PERFORM authz_int.hold('user', authz.uid()::text);
+  END IF;
   IF authz.uid() IS NULL THEN RAISE EXCEPTION 'sign in first' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ714'; END IF;
   IF coalesce(btrim(p_reason), '') = '' THEN RAISE EXCEPTION 'say why you need it' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
   IF p_duration IS NOT NULL AND p_duration <= interval '0' THEN RAISE EXCEPTION 'the duration must be positive' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
@@ -422,8 +428,14 @@ BEGIN
   END IF;
   -- no check that the object exists: that would tell people which hidden objects do. A request
   -- for a missing object simply never reaches anyone who could approve it.
+  v_there := authz_int.hold(p_type, p_id);
   INSERT INTO authz.requests (object_type, object_id, relation, requester, reason, duration)
   VALUES (p_type, p_id, p_relation, authz.uid()::text, p_reason, p_duration) RETURNING id INTO v_id;
+  -- marked: a delete of the requester, or of the object, that can't see this request fails to serialize
+  PERFORM authz_int.mark_row('user', authz.uid()::text);
+  IF v_there THEN
+    PERFORM authz_int.mark_row(p_type, p_id);
+  END IF;
   PERFORM authz_int.audit('request_access', p_type, p_id, p_relation, 'user', authz.uid()::text, '',
                           jsonb_build_object('request', v_id, 'duration', p_duration));
   PERFORM pg_notify('authz_requests', v_id::text);
@@ -432,6 +444,18 @@ END $f$;
 CREATE FUNCTION authz.request_access(p_type text, p_id bigint, p_relation text, p_reason text,
   p_duration interval DEFAULT NULL) RETURNS bigint LANGUAGE sql AS
   $$ SELECT authz.request_access(p_type, p_id::text, p_relation, p_reason, p_duration) $$;
+
+-- A pending request goes when its requester's row goes, or its object's (deleted, given a new id, emptied out with
+-- its table: p_ids NULL), so that it never reaches whoever later has that id; it is kept, cancelled, with why.
+-- Decided requests are history, and stay as they were
+CREATE FUNCTION authz_int.requests_gone(p_type text, p_ids text[]) RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+  UPDATE authz.requests r SET status = 'cancelled', decided_at = now(),
+    note = CASE WHEN r.object_type = p_type AND (p_ids IS NULL OR r.object_id = ANY (p_ids))
+                THEN 'its object is gone' ELSE 'its requester is gone' END
+  WHERE r.status = 'pending'
+    AND ((r.object_type = p_type AND (p_ids IS NULL OR r.object_id = ANY (p_ids)))
+         OR (p_type = 'user' AND (p_ids IS NULL OR r.requester = ANY (p_ids)))) $f$;
 
 -- Requests the current user may decide (they may share that relation on the object), and their own
 CREATE FUNCTION authz.pending_requests()
@@ -513,8 +537,8 @@ BEGIN
   END IF;
   v_until := now() + p_duration;
   PERFORM set_config('authz_ctx.reason', p_reason, true);
-  PERFORM authz_int.mark_shared(p_type, p_id);
-  PERFORM authz_int.mark_shared('user', authz.uid()::text);
+  PERFORM authz_int.mark_row(p_type, p_id);
+  PERFORM authz_int.mark_row('user', authz.uid()::text);
   SELECT * INTO g FROM authz.shares WHERE object_type = p_type AND object_id = p_id AND relation = p_relation
     AND subject_type = 'user' AND subject_id = authz.uid()::text AND subject_relation = '' FOR UPDATE;
   IF g.object_id IS NULL THEN
