@@ -4,13 +4,15 @@ Its tools are the command's own: check, prove, review, test, why, lint, and push
 call runs the command once, in its own process, in the folder the server was started in (so rowstile.toml, the
 policy and the database are found as the command finds them), and returns what the command printed. Nothing is
 kept between calls. A call runs beside the messages that come after it: a ping is answered meanwhile, and a call
-the client cancels (notifications/cancelled) has its command stopped, as Ctrl-C stops it, and gets no answer.
+the client cancels (notifications/cancelled) has its command stopped, as Ctrl-C stops it, and gets no answer. So
+do the calls running when the server is stopped (SIGTERM): none runs on after it.
 
     {"mcpServers": {"rowstile": {"command": "rowstile", "args": ["mcp"]}}}
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -18,6 +20,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -304,6 +307,26 @@ class Server:
         self.dsn = dsn
         self.lock = threading.Lock()
         self.running: dict[str, Running] = {}  # the calls in progress, by their request's id (as JSON writes it)
+        self.ending = False  # stopped: no call starts any more
+
+    def end(self) -> None:
+        """The server stopped (SIGTERM: how an MCP client ends one that hasn't ended once its input closed): each call
+        running cancelled, as notifications/cancelled cancels one, and its command waited for, killed once GRACE
+        seconds have passed, so that none runs on after the server."""
+        with self.lock:
+            self.ending = True
+            running = list(self.running.values())
+        for call in running:
+            call.cancel()
+        end = time.monotonic() + GRACE
+        for call in running:
+            if call.process is None:
+                continue
+            try:
+                call.process.wait(timeout=max(0.0, end - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                call.process.kill()
+                call.process.wait()
 
     def cancel(self, params: Message) -> None:
         """notifications/cancelled: the call's command stopped, and no answer. One that has ended, or a request
@@ -349,6 +372,8 @@ class Server:
         if method == "tools/call":
             key, running = json.dumps(mid), Running()
             with self.lock:
+                if self.ending:
+                    return None
                 if key in self.running:  # its cancellation would stop both
                     return error(mid, -32600, f"request {key} is running already: each request has an id of its own")
                 self.running[key] = running
@@ -415,6 +440,15 @@ def serve(dsn: str | None = None) -> None:
                 out.write(json.dumps(answer).encode() + b"\n")
                 out.flush()
 
+    def ended(signum: int, frame: object) -> None:
+        print(f"rowstile mcp: stopped (signal {signum}): the commands running are stopped first", file=sys.stderr)
+        server.end()
+        writing.acquire(timeout=5)  # an answer another thread is writing is written whole (not one this thread is)
+        with contextlib.suppress(OSError, ValueError, RuntimeError):
+            out.flush()
+        os._exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, ended)
     for raw in sys.stdin.buffer:
         if not raw.strip():
             continue

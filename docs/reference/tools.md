@@ -129,6 +129,8 @@ answer with `ok: false`; a call that couldn't run (no policy file, no database) 
 The server reads the agent's messages while a call runs: a `ping` is answered at once. <!-- checked: tests/mcp_test.py "a ping while a call runs: answered at once, the call still running" -->
 A call the agent cancels (`notifications/cancelled`) gets no answer, and its command is stopped as Ctrl-C stops
 it: a cancelled `push` keeps nothing. <!-- checked: tests/mcp_test.py "notifications/cancelled: the call's command stopped (its process ended, the server waited for it)"; tests/mcp_test.py "... and no answer for it: the next answer is the ping's"; tests/mcp_test.py "... no answer for it, and nothing of it kept: the next push applies the change" -->
+Stopped (SIGTERM, as an agent's client stops it), the server first stops the commands its calls run, the same
+way, and waits for them: none keeps running after it. <!-- checked: tests/mcp_test.py "SIGTERM while a push waits for a lock: its session ended at once, the server after it, nothing left" -->
 An agent is given
 the command to start it, in its own settings for MCP servers:
 

@@ -12,6 +12,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -486,6 +487,7 @@ def with_db(folder: str, db: str) -> None:
     r = c.tool("lint")
     check("lint: the example leaves nothing open", r["structuredContent"]["ok"], r)
     cancelled_push(folder, db, c)
+    stopped_push(folder, db)
     # a database with a policy that nobody marked as a development database (applied, as production is)
     other = db + "_unmarked"
     subprocess.run(["dropdb", "--if-exists", other], capture_output=True)
@@ -581,7 +583,7 @@ def cancelled_push(folder: str, db: str, c: Client) -> None:
         fh.write(before.replace(rule, rule.replace("edit", "share"), 1))
     holder = pgwire.connect(**pgwire.parse_dsn(f"dbname={db}"))
     try:
-        versions = holder.query("SELECT count(*) FROM authz.policy_versions")
+        versions = holder.query(IN_FORCE)
         holder.execute("BEGIN")
         holder.execute("LOCK TABLE app.files IN ACCESS EXCLUSIVE MODE")
         me = holder.query("SELECT pg_backend_pid()")[0][0]
@@ -612,7 +614,7 @@ def cancelled_push(folder: str, db: str, c: Client) -> None:
         holder.execute("ROLLBACK")
         if pid:
             c.ended(pid[0], 40)  # a push that went on (the lock is free now) has ended, and committed, by then
-        kept = holder.query("SELECT count(*) FROM authz.policy_versions")
+        kept = holder.query(IN_FORCE)
     finally:
         holder.close()
     c.send({"jsonrpc": "2.0", "id": "after", "method": "ping"})
@@ -629,6 +631,88 @@ def cancelled_push(folder: str, db: str, c: Client) -> None:
     with open(policy, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(before)
     check("... and back", c.tool("push")["structuredContent"]["ok"])
+
+
+# the policy in force (a push records it, or puts it in the last row's place)
+IN_FORCE = (
+    "SELECT count(*), (SELECT policy FROM authz.policy_versions ORDER BY id DESC LIMIT 1) FROM authz.policy_versions"
+)
+
+
+def strays() -> list[int]:
+    """The processes left to this process: a server's commands that its end left behind (adopt() makes this process
+    their parent then), running or ended; not the servers it started (the suite starts nothing else that outlives
+    its run)."""
+    found: list[int] = []
+    servers = {p.pid for p in STARTED}
+    for task in os.listdir("/proc/self/task"):
+        with contextlib.suppress(OSError), open(f"/proc/self/task/{task}/children", encoding="ascii") as fh:
+            found += [pid for pid in map(int, fh.read().split()) if pid not in servers]  # one ended too (a zombie)
+    return found
+
+
+def stopped_push(folder: str, db: str) -> None:
+    """The server stopped (SIGTERM, as an MCP client stops one) while a push waits for a lock another session
+    holds: the push stopped as Ctrl-C stops it, its session ended on the server at once, nothing kept, and the
+    server ended after it, leaving nothing running."""
+    import pgwire
+
+    policy = os.path.join(folder, "db", "policy.authz")
+    with open(policy, encoding="utf-8") as fh:
+        before = fh.read()
+    rule = "  delete                            : edit\n"
+    with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(before.replace(rule, rule.replace("edit", "share"), 1))
+    c = Client(folder, "--db", f"dbname={db}", log=True)
+    holder = pgwire.connect(**pgwire.parse_dsn(f"dbname={db}"))
+    try:
+        versions = holder.query(IN_FORCE)
+        holder.execute("BEGIN")
+        holder.execute("LOCK TABLE app.files IN ACCESS EXCLUSIVE MODE")
+        me = holder.query("SELECT pg_backend_pid()")[0][0]
+
+        def others() -> list[tuple[pgwire.Value, ...]]:
+            holder.query("SELECT pg_stat_clear_snapshot()")
+            return holder.query(
+                f"SELECT pid, wait_event_type FROM pg_stat_activity WHERE datname = '{db}' AND pid <> {me}"
+            )
+
+        c.send({"jsonrpc": "2.0", "id": "push", "method": "tools/call", "params": {"name": "push", "arguments": {}}})
+        end, waiting = time.monotonic() + 30, []
+        while time.monotonic() < end and not waiting:
+            waiting = [r for r in others() if r[1] == "Lock"]
+            time.sleep(0.05)
+        began = time.monotonic()
+        c.p.send_signal(signal.SIGTERM)
+        try:
+            code: int | None = c.p.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            code = None
+        took = time.monotonic() - began
+        end, left = time.monotonic() + 10, others()
+        while time.monotonic() < end and left:
+            time.sleep(0.05)
+            left = others()
+        stray = strays()
+        check(
+            "SIGTERM while a push waits for a lock: its session ended at once, the server after it, nothing left",
+            len(waiting) == 1 and code == 128 + signal.SIGTERM and took < 5 and left == [] and stray == [],
+            [waiting, code, f"{took:.1f} s", left, stray],
+        )
+        holder.execute("ROLLBACK")
+        for pid in stray:  # a push left running goes on now the lock is free: this process is its parent
+            os.waitpid(pid, 0)
+        kept = holder.query(IN_FORCE)
+    finally:
+        holder.close()
+    said = c.p.stderr.read().decode() if c.p.stderr else ""
+    check(
+        "... nothing of it kept, and the server's log says why it stopped",
+        kept == versions and "rowstile mcp: stopped (signal 15): the commands running are stopped first" in said,
+        [kept == versions, said],
+    )
+    with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(before)
 
 
 def project() -> str:
