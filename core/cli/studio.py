@@ -16,6 +16,7 @@ site can't read it, and a DNS name pointing here is refused).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -23,6 +24,7 @@ import secrets
 import socket
 import sys
 import threading
+import time
 import traceback
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -48,6 +50,14 @@ PolicyReader = Callable[[str], tuple[str, dict[str, str]]]
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "studio")
 ROWS = 50
+# a change's body: the page sends a few hundred bytes (a share's names and ids). A longer one is refused before a
+# byte of it is read (413)
+BODY_LIMIT = 64 * 1024
+# how long a connection may send nothing more before it is closed, and the time a body has to come whole (408)
+WAIT_SECONDS = 10.0
+# after an answer given before the body was read: how long what the client still sends is read and dropped, so the
+# close doesn't reset the connection under the answer before the client has read it
+LINGER_SECONDS = 2.0
 # the page's files, and nothing else: a request never names a path on the disk
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -428,10 +438,14 @@ class Studio:
 
         return self.work(run)
 
-    def change(self, what: str, body: Message) -> Message:
-        """A share, unshare or decision, made as the person Studio views as (only with --write)."""
+    def may_change(self) -> None:
+        """Refused unless Studio was started able to write: asked before a change's body is read."""
         if not self.writable:
             raise Problem("Studio is read-only here: start it with --write (or use rowstile dev) to change shares", 403)
+
+    def change(self, what: str, body: Message) -> Message:
+        """A share, unshare or decision, made as the person Studio views as (only with --write)."""
+        self.may_change()
         who = principal(str(body.get("as") or ""))
         if who[0] is None:
             raise Problem("as whom? pick someone to view as: they make the change")
@@ -583,6 +597,13 @@ class Studio:
         }
 
         class Handler(BaseHTTPRequestHandler):
+            read_whole = True  # a POST's body, read whole: else what the client still sends is let go first
+
+            def setup(self) -> None:
+                super().setup()
+                # a connection that sends nothing more for this long is closed, not held by a thread for ever
+                self.connection.settimeout(WAIT_SECONDS)
+
             def log_message(self, format: str, *args: object) -> None:
                 pass
 
@@ -624,9 +645,9 @@ class Studio:
                     if method == "GET" and name in gets:
                         return self.send(200, gets[name](q))
                     if method == "POST" and name in ("share", "unshare", "decide"):
-                        length = int(self.headers.get("Content-Length") or 0)
+                        studio.may_change()  # read-only: refused before the body is read
                         try:
-                            body = as_object(json.loads(self.rfile.read(length) or b"{}"))
+                            body = as_object(json.loads(self.body(self.length()) or b"{}"))
                             return self.send(200, studio.change(name, body))
                         except RecursionError:  # nested deeper than JSON's reader, or the client sending it, goes
                             raise ValueError("the body is nested too deep to read") from None
@@ -666,9 +687,64 @@ class Studio:
                 with open(os.path.join(PAGE, name), "rb") as fh:
                     self.send(200, fh.read(), ctype)
 
+            def length(self) -> int:
+                """The body's length, from its Content-Length, refused before a byte of the body is read: none
+                given (411), one that isn't a length (400), or over the cap (413)."""
+                said = self.headers.get("Content-Length")
+                if said is None or self.headers.get("Transfer-Encoding"):
+                    raise Problem("a change needs its body's Content-Length", 411)
+                if not re.fullmatch(r"[0-9]+", said.strip()):
+                    raise Problem(f"Content-Length {said!r} is not a length", 400)
+                n = int(said)
+                if n > BODY_LIMIT:
+                    raise Problem(f"the body is {n} bytes: Studio takes {BODY_LIMIT} at most", 413)
+                return n
+
+            def body(self, n: int) -> bytes:
+                """The body's n bytes, read whole within WAIT_SECONDS (408), or refused when the client ends it
+                before (400)."""
+                got = bytearray()
+                deadline = time.monotonic() + WAIT_SECONDS
+                try:
+                    while len(got) < n:
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            raise TimeoutError
+                        self.connection.settimeout(left)
+                        chunk = self.rfile.read1(n - len(got))
+                        if not chunk:
+                            raise Problem(f"the body ended after {len(got)} of its {n} bytes")
+                        got += chunk
+                except TimeoutError:
+                    raise Problem(
+                        f"the body didn't come: {len(got)} of its {n} bytes in {WAIT_SECONDS:g} seconds", 408
+                    ) from None
+                finally:
+                    self.connection.settimeout(WAIT_SECONDS)
+                self.read_whole = True
+                return bytes(got)
+
+            def linger(self) -> None:
+                """After an answer given before the body was read whole: the answer sent and the connection's
+                sending side closed, then what the client still sends read and dropped, for LINGER_SECONDS at
+                most. Closed with bytes unread, the connection is reset, and the client may lose the answer."""
+                with contextlib.suppress(OSError):  # the client gone, or the time up
+                    self.wfile.flush()
+                    self.connection.shutdown(socket.SHUT_WR)
+                    deadline = time.monotonic() + LINGER_SECONDS
+                    while (left := deadline - time.monotonic()) > 0:
+                        self.connection.settimeout(left)
+                        if not self.connection.recv(65536):
+                            break
+
             def do_POST(self) -> None:
-                if self.allowed():
-                    self.api("POST")
+                self.read_whole = False
+                try:
+                    if self.allowed():
+                        self.api("POST")
+                finally:
+                    if not self.read_whole:
+                        self.linger()
 
         self.server = Server(("127.0.0.1", self.port), Handler)
         self.port = self.server.server_address[1]

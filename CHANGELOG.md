@@ -66,6 +66,11 @@ Each release upgrades from the one before it. How releases are numbered and made
 - Studio's "Make a test" (`/api/test`) wrote a test for a permission the type doesn't have, or for a relation,
   which `rowstile test` then refused. It now refuses them as `why` does: 400, "no permission folder.nope in the
   policy", AZ707. A type the policy doesn't have is answered the same way: 400 and AZ707, where it was 404.
+- Studio read a change's body whatever its size, before deciding anything, and waited as long as the client kept
+  the connection open for a body that never came. A body is now 64 KB at most: a longer one is refused before it
+  is read (413), and so is a missing or wrong `Content-Length` (411, 400). One that hasn't come whole after 10
+  seconds is given up on (408). A read-only Studio refuses a change (403) before reading its body, and a connection
+  that sends nothing for 10 seconds is closed.
 - After `rowstile dev` or `rowstile studio` started again, a page still open from the run before was answered only
   "the token from the URL rowstile printed". It now says that Studio was started again since the page was opened,
   each start making a new token, and to open the address rowstile printed last. The page forgets that token, so
