@@ -1314,8 +1314,8 @@ END $ex$;
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_no_expiry"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  RAISE EXCEPTION '%.% links are used for inheritance, so they cannot expire, start later or have a caveat [AZ605]',
-    NEW.object_type, NEW.relation USING ERRCODE = 'check_violation';
+  RAISE EXCEPTION '%.% links are used for inheritance, so they cannot expire, start later or have a caveat',
+    NEW.object_type, NEW.relation USING ERRCODE = 'check_violation', HINT = 'rowstile help AZ605';
 END $f$;
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_shares_ins" AFTER INSERT ON authz.shares
   REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_grants"();
@@ -1595,8 +1595,8 @@ END $ex$;
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_no_expiry"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  RAISE EXCEPTION '%.% links are used for inheritance, so they cannot expire, start later or have a caveat [AZ605]',
-    NEW.object_type, NEW.relation USING ERRCODE = 'check_violation';
+  RAISE EXCEPTION '%.% links are used for inheritance, so they cannot expire, start later or have a caveat',
+    NEW.object_type, NEW.relation USING ERRCODE = 'check_violation', HINT = 'rowstile help AZ605';
 END $f$;
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_shares_ins" AFTER INSERT ON authz.shares
   REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_grants"();

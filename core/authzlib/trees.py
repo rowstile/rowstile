@@ -176,8 +176,8 @@ END $ex$;
 CREATE FUNCTION {f("_no_expiry")}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} AS $f$
 BEGIN
-  RAISE EXCEPTION '%.% links are used for inheritance, so they cannot expire, start later or have a caveat [AZ605]',
-    NEW.object_type, NEW.relation USING ERRCODE = 'check_violation';
+  RAISE EXCEPTION '%.% links are used for inheritance, so they cannot expire, start later or have a caveat',
+    NEW.object_type, NEW.relation USING ERRCODE = 'check_violation', HINT = 'rowstile help AZ605';
 END $f$;
 CREATE TRIGGER {trig("_shares_ins")} AFTER INSERT ON authz.shares
   REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_grants")}();
