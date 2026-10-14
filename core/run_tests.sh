@@ -100,7 +100,8 @@ if [ "$MODE" = soak ]; then
   done
   if part policies; then
   step "random policies, compared with the reference evaluator (100 policies, seeds from $((SEED * 1000)))"
-  python3 tests/genpolicy.py --policies 100 --steps 10 --seed "$((SEED * 1000))" --db authz_genpolicy --decisions
+  # (--slow: a policy lint says is slow to plan is checked too, here alone: slow is not wrong)
+  python3 tests/genpolicy.py --policies 100 --steps 10 --seed "$((SEED * 1000))" --db authz_genpolicy --decisions --slow
   record $? "genpolicy"
   dropdb --if-exists authz_genpolicy >/dev/null 2>&1
   step "random policies rewritten: the review's \"grants the same\" against the database's answers (40 policies, seeds from $((SEED * 1000)))"
@@ -112,7 +113,7 @@ if [ "$MODE" = soak ]; then
   fi
   if part around; then
   step "random policies in random worlds: the catalog, the session and the role around them (60, seeds from $((SEED * 1000)))"
-  python3 tests/around.py --policies 60 --steps 8 --seed "$((SEED * 1000))" --db authz_around
+  python3 tests/around.py --policies 60 --steps 8 --seed "$((SEED * 1000))" --db authz_around --slow
   record $? "around"
   fi
   if part small; then
