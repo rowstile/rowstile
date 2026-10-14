@@ -171,6 +171,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 - A `+` in a `postgresql://` URL's query (`?dbname=`, `?password=`, `?options=`) is a `+`, as libpq reads it:
   the command read it as a space, so a password with a `+` was changed before it was sent, and it didn't connect
   where `psql` does with the same URL.
+- The command prints the warnings the server sends as a session starts, as `psql` does: a database's collation
+  version that doesn't match the system's (after an upgrade of the system, which can leave indexes wrong), or a
+  setting of the database's or the role's the server can't take. It dropped them; it printed only those sent
+  once the session had started. `rowstile dev` shows them as it shows a warning.
 
 ## 0.1.0 (alpha)
 

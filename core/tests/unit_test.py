@@ -4005,14 +4005,19 @@ class Wire(unittest.TestCase):
         signed_in, ready = said(b"R", struct.pack("!i", 0)), said(b"Z", b"I")
         warning = said(b"N", b"SWARNING\0Mcareful\0\0")
         done_with = said(b"C", b"SELECT 1\0") + ready
-        # a warning while it starts (a database's setting the server can't take: psql shows it) is read past, and
-        # what the server says after it is kept
-        port, seen, done = self.talking(
-            signed_in + warning + said(b"S", b"server_version\x0016\0") + said(b"K", struct.pack("!ii", 41, 42)) + ready
-        )
-        conn = self.pgwire.connect(host="127.0.0.1", port=port, sslmode="disable", timeout=5)
-        self.assertEqual((conn.params, conn.backend), ({"server_version": "16"}, (41, 42)))
-        conn.close()
+        # a warning while it starts (a database's setting the server can't take, a collation version that doesn't
+        # match the system's: psql shows it) goes to the on_notice connect is given, and what the server says after
+        # it is kept; with none given (Studio), it is read past
+        start = signed_in + warning + said(b"S", b"server_version\x0016\0") + said(b"K", struct.pack("!ii", 41, 42))
+        for given in (True, False):
+            port, seen, done = self.talking(start + ready)
+            started: list[dict[str, str]] = []
+            conn = self.pgwire.connect(
+                host="127.0.0.1", port=port, sslmode="disable", timeout=5, on_notice=started.append if given else None
+            )
+            self.assertEqual((conn.params, conn.backend), ({"server_version": "16"}, (41, 42)))
+            self.assertEqual(started, [{"S": "WARNING", "M": "careful"}] if given else [])
+            conn.close()
         # one while a statement runs goes to on_notice (rowstile sql shows a WARNING, as psql does), and the rows
         # come after it
         column = said(b"T", struct.pack("!h", 1) + b"n\0" + struct.pack("!ihihih", 0, 0, 23, 4, -1, 0))
