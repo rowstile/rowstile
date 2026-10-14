@@ -288,7 +288,7 @@ step "upgrading: databases the release before made (from PyPI), pushed to, appli
 tests/upgrade.sh --world
 record $? "upgrade"
 }
-unit command 60 upgrade
+unit command 38 upgrade   # (with the world: 16 s before it, on CI)
 fi
 review() {
 step "rowstile review and fmt: a pull request in a git repository, with a review database"

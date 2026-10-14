@@ -12,7 +12,8 @@ the two read a policy alike, that reading has two witnesses.
 
 small.py's set (tests/small.py: every policy of the core language up to a size, and those of the next with a deny)
 is written twice: each policy as the set lists it (DIR/small_<k>.authz), and written another way, as small.py's
-second reading has it (DIR/small_<k>_other.authz: its names swapped, every `or` and `and` the other way round).
+second reading has it (DIR/small_<k>_other.authz: its names swapped, every `or` and `and` the other way round),
+where that is a policy the parser reads (`tree-sitter parse --xml` writes no XML a file it can't read is in).
 --slice K/N: only the policies whose number is K modulo N. Many files are parsed in several XMLs, each compared.
 
 Alike: the app role; the types (table, key, whether they sign in, where); each relation's sources in order, with
@@ -386,7 +387,13 @@ def write(folder: str, n: int, small: int = 0, part: tuple[int, int] = (0, 1)) -
         for k, spec in enumerate(smallset.the_set(small)):
             if k % part[1] == part[0]:
                 texts[f"small_{k}"] = smallset.policy_text(spec)
-                texts[f"small_{k}_other"] = smallset.policy_text(smallset.respelled(spec)[0])
+                other = smallset.policy_text(smallset.respelled(spec)[0])
+                try:  # (written another way, a few are no policy: an arrow through a polymorphic parent to a
+                    # permission one of its types lacks, which the compiler refuses in the policy as listed)
+                    parse.parse_policy(other, "other.authz")
+                    texts[f"small_{k}_other"] = other
+                except PolicyError:
+                    pass
     for name, text in texts.items():
         with open(os.path.join(folder, f"{name}.authz"), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
