@@ -25,8 +25,11 @@ again after a few random changes. A policy fails when
 A rewrite that may change something, and for which the review shows a difference, is counted: with the database's
 answers changing too, or on data that doesn't show it. And the first such difference of each policy is replayed in a
 database of its own: the small world the review found it in, made as rows (small.load_sql), under the policy and then
-under the rewrite; the user's answer must be the review's, before and after. A world rows can't make (a condition that
-reads other tables, custom roles, keys of several columns or uuids) is counted, not replayed. A policy
+under the rewrite; the user's answer must be the review's, before and after. Rows can't be made to hold a condition the
+evaluator doesn't read as a fact about the row (a subquery, a function) where the world says: such a condition holds
+where they say. So what the rows hold is read back (difftest's queries), and the user's answer must be the reference
+evaluator's on that: the review's, where the rows hold its world; and they must hold it but for such conditions. A
+world rows can't make (custom roles, keys of several columns or uuids) is counted, not replayed. A policy
 the compiler refuses, or whose answers take seconds to read (a diff asks for all of them, as everyone), is not
 checked, and counted so.
 """
@@ -35,6 +38,8 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
+import json
 import os
 import random
 import re
@@ -54,10 +59,13 @@ sys.path.insert(0, os.path.join(ROOT, "cli"))
 import pgwire  # noqa: E402
 import rowstile_cli  # noqa: E402
 from authzlib import Compiler, PolicyError, database, evaluate, parse_policy, review  # noqa: E402
+from authzlib.conditions import simple  # noqa: E402
+from authzlib.parse import KEYWORDS, Policy  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
 from difftest import DB, Ids, idsql, lit  # noqa: E402
+from difftest import Reference as Reader  # noqa: E402
 from genpolicy import CONDS, Node, Spec, atoms, gen_class, make, policy_text, schema_text, write_policy  # noqa: E402
-from small import Unloadable, conditions_read, load_sql  # noqa: E402
+from small import Unloadable, load_sql  # noqa: E402
 
 Path = tuple[int, ...]
 
@@ -234,6 +242,7 @@ class Tally:
     def __init__(self) -> None:
         self.same = self.agreed = self.shown = self.unshown = self.refused = self.beyond = 0
         self.replayed = 0
+        self.reread = 0  # (replayed where a condition the review can't read holds where the rows say)
         self.unloadable: Counter[str] = Counter()  # (why rows can't make the world)
 
 
@@ -245,10 +254,49 @@ def said(m: review.Meaning) -> str:
     return f"grants the same ({m['equivalent']})" if m.get("equivalent") else "no verdict"
 
 
-def replay(spec: Spec, base: review.Side, new: str, m: review.Meaning, sql: str, db: DB, worlds: int) -> str | None:
+LINK = "tok1"  # the share link's token the review's worlds hold (evaluate.first_difference), and the session here
+
+
+def opaque(pol: Policy) -> tuple[set[evaluate.CondKey], set[str]]:
+    """The conditions the evaluator doesn't read as facts about the row (a subquery, a function, conditions.py's
+    limits): a world says which rows they hold for, and rows can't be made to say so. And the types whose `where`
+    is one."""
+    conds = {k for k in evaluate.Reference(pol).conditions() if k[1] not in KEYWORDS.values() and simple(k[1]) is None}
+    return conds, {t.name for t in pol.types.values() if t.where and simple(t.where) is None}
+
+
+def rows_hold(pol: Policy, world: evaluate.Data, back: evaluate.Data, user: str) -> str | None:
+    """Whether the rows made of a world hold it, for what the policy grants the user: back is what they hold, read
+    from them as difftest reads a database. None when the policy grants the same in both; "conditions" when it
+    does once the conditions the evaluator doesn't read (and such a `where`) hold where the rows say; else the
+    first thing granted otherwise (the rows aren't the world: the loader's mistake, or the evaluator's reading of
+    a condition)."""
+    ref = evaluate.Reference(pol)
+    got = ref.evaluate(back, user, {hashlib.sha256(LINK.encode()).hexdigest()})
+    if ref.evaluate(world, user, (LINK,)) == got:
+        return None
+    conds, wheres = opaque(pol)
+    world = dataclasses.replace(
+        world,
+        cond={**world.cond, **{k: back.cond[k] for k in conds}},
+        valid={**world.valid, **{t: back.valid[t] for t in wheres}},
+    )
+    want = ref.evaluate(world, user, (LINK,))
+    if want == got:
+        return "conditions"
+    t, name = min(k for k in want.keys() | got.keys() if want.get(k) != got.get(k))
+    return f"{t}.{name} holds on {sorted(want.get((t, name), ()))} in the world, {sorted(got.get((t, name), ()))} in its rows"
+
+
+def replay(
+    spec: Spec, base: review.Side, new: str, m: review.Meaning, sql: str, db: DB, worlds: int, tally: Tally
+) -> str | None:
     """A difference the review shows, replayed in a database (db's name, _replay): the world it was found in made as
     rows under the policy (its compiled sql), then under the rewrite (new); the user's answer asked each time
-    (authz.can) must be the review's. The problem, if any; Unloadable if rows can't make that world."""
+    (authz.can) must be the review's. A condition the evaluator doesn't read holds where the rows say, which may not
+    be where the world says: so what the rows hold is read back (difftest's queries), and the database must answer
+    as the reference evaluator does on that; the review's world, where the rows hold it. The problem, if any;
+    Unloadable if rows can't make that world."""
     found = m.get("counterexample")
     assert found is not None
     if m.get("unreadable") or not re.fullmatch(r"\w+\.\w+", found["what"]):
@@ -259,17 +307,15 @@ def replay(spec: Spec, base: review.Side, new: str, m: review.Meaning, sql: str,
     head = parse_policy(new, "new.authz")
     first = evaluate.first_difference(base.pol, head, worlds=worlds)
     assert first is not None and first[0] == found, (first, found)  # (the review's own, found again)
+    _, world_a, world_b = first
     tname, perm = found["what"].split(".")
-    read = conditions_read(base.pol, tname, perm) | conditions_read(head, tname, perm)
-    rows, shares = load_sql(base.pol, first[1], read=read)
+    rows, shares = load_sql(base.pol, world_a, rows_decide=True)
     user = "" if found["user"].startswith("(") else found["user"]
     kind, pid = evaluate.principal_of(user, base.pol.types)
     # (asked holding a share link's first token, as the review's worlds are: evaluate.compare)
-    ask = (
+    signed = (
         f"SET authz.user_id = {lit(pid)}; SET authz.principal_type = {lit('' if kind == 'user' else kind)};\n"
-        "SET authz_ctx.links = 'tok1';\n"
-        f"SELECT authz.can({lit(tname)}, {lit(found['object'])}, {lit(perm)});\n"
-        "RESET authz.user_id; RESET authz.principal_type; RESET authz_ctx.links;"
+        f"SET authz_ctx.links = {lit(LINK)};\n"
     )
     there = DB(f"{db.name}_replay")
     there.recreate()
@@ -285,16 +331,41 @@ def replay(spec: Spec, base: review.Side, new: str, m: review.Meaning, sql: str,
         code, _, err = there.run(step, check=applying)
         if code != 0:  # (a value the app's table doesn't take: a world made up for the policy alone)
             raise Unloadable(err.strip().splitlines()[0])
-    before = there.rows(ask)[0][0] == "t"
-    there.run(Compiler(parse_policy(new, "new.authz")).compile("new.authz"))
-    after = there.rows(ask)[0][0] == "t"
+
+    def answer(pol: Policy) -> tuple[bool, evaluate.Data]:
+        """The user's answer, and what the rows hold for the evaluator (read in the user's session)."""
+        lines = [signed, f"SELECT 'can', authz.can({lit(tname)}, {lit(found['object'])}, {lit(perm)});"]
+        lines += [f"SELECT {lit(json.dumps(list(key)))}, ({q});" for key, q in Reader(pol).data_queries()]
+        got = there.rows("\n".join(lines))
+        assert got[0][0] == "can", got[0]
+        return got[0][1] == "t", evaluate.Data.of({tuple(json.loads(k)): json.loads(v) for k, v in got[1:]})
+
+    before, back_a = answer(base.pol)
+    there.run(Compiler(parse_policy(new, "new.authz")).compile("new.authz"))  # (compiling changes the policy)
+    after, back_b = answer(head)
     subprocess.run(["dropdb", "--if-exists", there.name], capture_output=True)
-    if (before, after) != (found["before"], found["after"]):
-        return (
-            f"the review says {found['what']} on {found['object']} for {found['user']} goes from {found['before']} to "
-            f"{found['after']}; replayed in a database, from {before} to {after}, in the world: "
-            + "; ".join(found["world"])
+    said = (
+        f"the review says {found['what']} on {found['object']} for {found['user']} goes from {found['before']} to "
+        f"{found['after']}"
+    )
+    world = "in the world: " + "; ".join(found["world"])
+    held = [rows_hold(base.pol, world_a, back_a, user), rows_hold(head, world_b, back_b, user)]
+    for h, which in zip(held, ("the policy", "the rewrite"), strict=True):
+        if h not in (None, "conditions"):
+            return f"{said}; its rows don't hold that world under {which}: {h}; {world}"
+    links = {hashlib.sha256(LINK.encode()).hexdigest()}
+    want = tuple(
+        found["object"] in evaluate.Reference(pol).evaluate(back, user, links)[(tname, perm)]
+        for pol, back in ((base.pol, back_a), (head, back_b))
+    )
+    if held == [None, None] and want != (found["before"], found["after"]):
+        return f"{said}; on its rows, which hold that world, the reference says from {want[0]} to {want[1]}; {world}"
+    if (before, after) != want:
+        on = (
+            "" if want == (found["before"], found["after"]) else f", on what its rows hold, from {want[0]} to {want[1]}"
         )
+        return f"{said}{on}; replayed in a database, from {before} to {after}, {world}"
+    tally.reread += "conditions" in held
     return None
 
 
@@ -371,7 +442,7 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
         if rw.same or not m.get("counterexample"):
             continue
         try:
-            wrong = replay(spec, base, new, m, compiled.stdout, db, worlds)
+            wrong = replay(spec, base, new, m, compiled.stdout, db, worlds, tally)
         except Unloadable as e:
             tally.unloadable[str(e)] += 1
             continue
@@ -434,7 +505,8 @@ def main() -> None:
         f"may change something, {tally.shown} the review and the database both show changing, {tally.unshown} the "
         f"review shows and this data doesn't, {tally.agreed} that change nothing here, {tally.beyond} beyond the "
         f"review; {tally.refused} rewrites the compiler refuses; {tally.replayed} of the review's differences replayed "
-        f"in a database ({sum(tally.unloadable.values())} in worlds rows can't make"
+        f"in a database, {tally.reread} of them where a condition the review can't read holds where the rows say "
+        f"({sum(tally.unloadable.values())} in worlds rows can't make"
         + "".join(f"; {n}: {why}" for why, n in sorted(tally.unloadable.items()))
         + ")"
     )

@@ -75,7 +75,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 from authzlib import Compiler, PolicyError, evaluate, parse_policy  # noqa: E402
 from authzlib.conditions import Scalar, columns_of, simple, truth  # noqa: E402
 from authzlib.evaluate import Data, State  # noqa: E402
-from authzlib.parse import Expr, Policy  # noqa: E402
+from authzlib.parse import Policy  # noqa: E402
 from authzlib.sqlutil import q, qt  # noqa: E402
 from difftest import DB, Checker, Gen, lit  # noqa: E402
 from genpolicy import Node, Obj, Rel, Spec, policy_text, schema_text  # noqa: E402
@@ -818,58 +818,16 @@ def sql_value(v: Scalar) -> str:
     return str(v) if isinstance(v, (int, float)) else lit(v)
 
 
-def conditions_read(pol: Policy, tname: str, name: str) -> set[evaluate.CondKey]:
-    """The {conditions} a relation or permission reads, itself or through what it names (a permission, an arrow, a
-    group's members)."""
-    out: set[evaluate.CondKey] = set()
-    seen: set[evaluate.Name] = set()
-
-    def walk(t: str, node: Expr) -> None:
-        match node:
-            case ("cond", sql):
-                out.add((t, sql))
-            case ("ref", n):
-                visit(t, n)
-            case ("arrow", rel, perm):
-                visit(t, rel)
-                for st, _ in pol.types[t].relations[rel].subjects():
-                    if st in pol.types:
-                        visit(st, perm)
-            case ("not", item):
-                walk(t, item)
-            case ("and", items) | ("or", items):
-                for x in items:
-                    walk(t, x)
-
-    def visit(t: str, n: str) -> None:
-        if (t, n) in seen or t not in pol.types:
-            return
-        seen.add((t, n))
-        typ = pol.types[t]
-        if n in typ.perms:
-            walk(t, typ.perms[n].expr)
-        elif n in typ.relations:
-            for st, sr in typ.relations[n].subjects():
-                if sr and sr != "*":
-                    visit(st, sr)
-
-    visit(tname, name)
-    return out
-
-
-def load_sql(
-    pol: Policy, data: evaluate.Data, principals: bool = True, read: set[evaluate.CondKey] | None = None
-) -> tuple[str, str]:
+def load_sql(pol: Policy, data: evaluate.Data, principals: bool = True, rows_decide: bool = False) -> tuple[str, str]:
     """The SQL that makes a world (evaluate.Data) in the policy's tables: (each type's rows, with the columns its
     simple conditions read and its column sources' links, then each link table's rows; the shares, which need
     authz.shares, made by applying). With principals False, the user type's and other principal types' rows are
     left out (another world made them). Rows can't make a condition that isn't about the row's own columns (a
-    subquery holds where the rows it reads say) hold where the world says: such a world is refused, unless only
-    the conditions in read count (what is asked of it reads no other: conditions_read)."""
+    subquery holds where the rows it reads say) hold where the world says: such a world is refused, unless
+    rows_decide (the caller reads back where such conditions hold: tests/rewrites.py)."""
     if any(data.rolepairs.values()):
         raise Unloadable("custom roles")
-    others = {k for k in data.cond if k[1] not in KEYWORD_SQL and simple(k[1]) is None}
-    if others & (others if read is None else read):
+    if not rows_decide and any(k[1] not in KEYWORD_SQL and simple(k[1]) is None for k in data.cond):
         raise Unloadable("a condition that isn't about the row's own columns")
 
     def text_id(t: str, i: str) -> str:
