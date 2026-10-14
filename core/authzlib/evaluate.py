@@ -27,7 +27,7 @@ from decimal import Decimal
 from typing import NamedTuple, TypeAlias, TypedDict, TypeVar, cast
 
 from .conditions import Node, Scalar, columns_of, simple, truth, uses_uid
-from .parse import KEYWORDS, ROLES, Expr, Or, Policy, Relation, Rule, Source, Type
+from .parse import KEYWORDS, ROLES, And, Expr, Or, Policy, Relation, Rule, Source, Type
 
 # a relation or permission of a type, and the ids that hold it
 Name: TypeAlias = "tuple[str, str]"
@@ -1047,13 +1047,14 @@ def cone(pols: Sequence[Policy]) -> Cone | None:
         out.types.add(t.name)
         if name in t.perms:
             walk(p, t, t.perms[name].expr)
-        elif name in t.relations:
-            out.relations.add((t.name, name))
-            for st, sr in t.relations[name].subjects():
-                if st in p.types:
-                    out.types.add(st)
-                    if sr and sr != "*":
-                        visit(p, p.types[st], sr)
+            return
+        # a relation (a name the policy reads is one or the other: AZ201)
+        out.relations.add((t.name, name))
+        for st, sr in t.relations[name].subjects():
+            if st in p.types:
+                out.types.add(st)
+                if sr and sr != "*":
+                    visit(p, p.types[st], sr)
 
     def walk(p: Policy, t: Type, node: Expr) -> None:
         out.types.add(t.name)
@@ -1067,12 +1068,13 @@ def cone(pols: Sequence[Policy]) -> Cone | None:
             case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
                 visit(p, t, rel)
                 for st, _ in t.relations[rel].subjects():
-                    if st in p.types:
-                        visit(p, p.types[st], perm)
+                    assert st in p.types, FOLLOWS
+                    visit(p, p.types[st], perm)
             case ("not", item):
                 walk(p, t, item)
-            case ("and", items) | ("or", items):
-                for x in items:
+            case _:
+                assert isinstance(node, (And, Or)), f"not an expression: {node!r}"
+                for x in node.items:
                     walk(p, t, x)
 
     for p, t, expr in start:
@@ -1182,9 +1184,8 @@ class Listing:
                 for r in t.relations.values():
                     if (t.name, r.name) not in self.cone.relations:
                         continue
+                    # (a relation the compiler makes for custom roles is never read by name: the cone has none)
                     for src in r.sources:
-                        if src.kind == "roles":
-                            continue
                         for st, sr in src.subjects:
                             key = source_key(t, r.name, src, st, sr)
                             if key in seen:
@@ -1195,10 +1196,9 @@ class Listing:
                                 subjects, stype = ["*"], None
                             elif st == "link":
                                 subjects, stype = ["tok1"], None
-                            elif st in self.types:
-                                subjects, stype = rows, st
                             else:
-                                subjects, stype = ["1"], None
+                                assert st in self.types, FOLLOWS  # (no subject of no type: AZ201)
+                                subjects, stype = rows, st
                             out += [Candidate((key, o, s), stype, column, repr(key)) for o in rows for s in subjects]
 
         def low(c: Candidate) -> tuple[int, int]:
