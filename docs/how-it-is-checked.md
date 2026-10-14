@@ -73,6 +73,22 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   doesn't name gets nothing, and that `authz.lint()` reports what changed and `rowstile apply` puts it right.
   A few on every run; on the full run the twenty worlds, of a thousand seeds, in which every two of those
   features meet; sixty with new seeds every night.
+- **Every small policy**: a random draw can wait long for the one small policy, and the one small world, that a
+  mistake needs. [`tests/small.py`](../core/tests/small.py) lists every policy of the core language up to a size
+  instead, each once (two that differ in their names alone, or in the order of an `or`'s or an `and`'s parts, are
+  one): the user type with or without a `where`; one object type, or two, the second naming the first; relations
+  from each kind of source (a column, a link table or shares; to users, to `user:*`, to `anyone`, to a group's
+  members; a `parent` from a column, from a link table or from a pair of columns naming two types; an `up`); one
+  or two permissions a type, each of up to three parts joined by `or`, `and` and `and not`: inheritance, and
+  denies. Up to six sources, parts and `where`s there are 51,155, and 19,828 of seven with a deny, the smallest a
+  deny can be; the compiler takes 29,738 of them. For each, the reference evaluator answers in every world of
+  one and two rows of each type (up to 400 of each), and in some of three; in each, the same policy written
+  another way (its names swapped, its parts turned round) must get the same answers. Then each part of the policy
+  is made wrong in turn (held by nobody or by anyone, an `and` for an `or`, a `not` left out, a link read the other
+  way round, inheritance one step deep), and the few worlds that tell every such part apart are loaded as rows (two
+  or three a policy): forty policies applied as one, and difftest's checks hold every answer of the database's to
+  the evaluator's. Each push checks those up to size three and the denies of four (96); each night, a seventh of
+  them all; each week, the whole list.
 - **Answers worked out by hand**: each paragraph of [the language's reference](reference/language.md) that says
   who may do what, given a policy and rows, carries an anchor readers don't see (40 of them), and each anchor has
   a case whose answers were worked out from that paragraph, by hand, and written down before anything ran.

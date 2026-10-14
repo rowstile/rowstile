@@ -7,6 +7,7 @@ files, what the rowstile command runs against a database, its file reading, and 
                                           # tests/golden/*.sql, then read the diff before committing
 """
 
+import dataclasses
 import fnmatch
 import glob
 import io
@@ -5800,6 +5801,203 @@ class Invariance(unittest.TestCase):
         self.assertEqual(ren.ident(t1, "999999"), "999999")  # (an id no row had stays as it is)
         self.assertEqual(ren.principal(ren.principal("bot:2"), back=True), "bot:2")
         self.assertEqual(ren.principal(""), "")
+
+
+class SmallPolicies(unittest.TestCase):
+    """tests/small.py lists every policy of the core language up to a size, once each: two spellings of one policy
+    (its names swapped, its parts in another order) are one, two policies are two, and the set has as many as
+    COUNTS says. The worlds the evaluator answers in are made as rows (load_sql), the bridge to a database."""
+
+    def setUp(self) -> None:
+        import small
+
+        self.s = small
+
+    def spec(self, text: str) -> genpolicy.Spec:
+        """A policy of the set's kind from its text: each type's relations and permissions as genpolicy keeps them."""
+        import textwrap
+
+        objs: list[genpolicy.Obj] = []
+        user_where = False
+        for line in textwrap.dedent(text).strip().splitlines():
+            words = line.split()
+            if line.startswith("type user"):
+                user_where = "where" in words
+            elif line.startswith("type "):
+                objs.append(genpolicy.Obj(words[1], "where" in words, [], {}, []))
+            elif line.startswith("  can "):
+                name, _, expr = line[6:].partition(" = ")
+                objs[-1].perms[name] = self.node(expr)
+            else:
+                name, _, rest = line.strip().partition(" : ")
+                subjects, kind = rest.rsplit(" ", 1)
+                objs[-1].rels.append(genpolicy.Rel(name, kind, subjects.split(", ")))
+        return genpolicy.Spec(0, user_where, False, objs)
+
+    def node(self, text: str) -> genpolicy.Node:
+        """`a or (b and not c)` as genpolicy's tree (the set's expressions: or, and, not, parentheses)."""
+        tokens = re.findall(r"\(|\)|[^\s()]+", text)
+
+        def parse(i: int) -> tuple[genpolicy.Node, int]:
+            items: list[genpolicy.Node] = []
+            op = ""
+            while i < len(tokens) and tokens[i] != ")":
+                if tokens[i] in ("or", "and"):
+                    op, i = tokens[i], i + 1
+                    continue
+                negated = tokens[i] == "not"
+                i += negated
+                if tokens[i] == "(":
+                    item, i = parse(i + 1)
+                    i += 1
+                else:
+                    item, i = tokens[i], i + 1
+                items.append(("not", [item]) if negated else item)
+            return (items[0] if len(items) == 1 else (op, items)), i
+
+        return parse(0)[0]
+
+    def test_two_spellings_of_one_policy_are_one(self) -> None:
+        one = self.spec("""
+            type user
+            type t1 where
+              r1 : user column
+              r2 : user table
+              r3 : user table
+              parent : t1 column
+              can p1 = (r1 or r2) and not {b1}
+              can p2 = (r3 and p1) or parent.p2
+        """)
+        other = self.spec("""
+            type user
+            type t1 where
+              parent : t1 column
+              r3 : user table
+              r1 : user column
+              r2 : user table
+              can p2 = not {b1} and (r3 or r1)
+              can p1 = parent.p1 or (p2 and r2)
+        """)
+        self.assertEqual(self.s.canonical(one), self.s.canonical(other))
+        # every policy of size 4 written another way: names the other way round, declared the other way round,
+        # every `or` and `and` turned round
+        for spec in self.s.listed(4):
+            if "?" in self.s.canonical(spec):
+                continue  # (an arrow to a permission one of its types doesn't have: refused, AZ203)
+            again, _, _ = self.s.respelled(spec)
+            again = dataclasses.replace(again, objs=[dataclasses.replace(o, rels=o.rels[::-1]) for o in again.objs])
+            self.assertEqual(self.s.canonical(again), self.s.canonical(spec), genpolicy.policy_text(spec))
+
+    def test_two_policies_are_two(self) -> None:
+        def key(text: str) -> str:
+            return self.s.canonical(self.spec(text))
+
+        base = "type user\ntype t1\n  r1 : user column\n  r2 : user table\n"
+        self.assertNotEqual(key(base + "  can p1 = r1 or r2\n"), key(base + "  can p1 = r1 and r2\n"))
+        self.assertNotEqual(key(base + "  can p1 = r1 and not r2\n"), key(base + "  can p1 = r2 and not r1\n"))
+        # r1 and r2 aren't each other's: their sources differ
+        self.assertNotEqual(
+            key(base + "  can p1 = r1\n  can p2 = p1 or r2\n"), key(base + "  can p1 = r2\n  can p2 = p1 or r1\n")
+        )
+        # `parent.p1` through a pair of columns naming t2 and t1 is p1 of both: renaming t2's alone is another policy
+        two = "type user\ntype t1\n  r1 : user column\n  can p1 = r1\ntype t2\n  parent : t2, t1 column\n"
+        self.assertNotEqual(
+            key(two + "  can p1 = parent.p1 or {b1}\n  can p2 = p1\n"),
+            key(two + "  can p1 = p2\n  can p2 = parent.p2 or {b1}\n"),
+        )
+        keys = [self.s.canonical(spec) for spec in self.s.listed(4)]
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_the_counts(self) -> None:
+        for n in range(1, 5):
+            specs = self.s.listed(n)
+            self.assertEqual((len(specs), sum(map(self.s.denies, specs))), (self.s.COUNTS[n], self.s.DENIES[n]), n)
+        self.assertTrue(all(map(self.s.well_formed, self.s.listed(4))))
+        # each policy of the set is of its size
+        self.assertEqual({self.s.size(spec) for spec in self.s.listed(4)}, {4})
+
+    def test_a_world_as_rows(self) -> None:
+        self.maxDiff = None
+        spec = self.s.decorated(
+            self.spec("""
+            type user where
+            type t1 where
+              r1 : user column
+              member : user, t1#member shared
+              parent : t1 table
+              can p1 = r1 or member or parent.p1
+        """)
+        )
+        pol = parse_policy(genpolicy.policy_text(spec), "small.authz")
+        ids, dims = self.s.dims(pol, 2)
+        self.assertEqual(ids, {"user": ["1", "2"], "t1": ["1", "2"]})
+        # b3 of each row; r1 of each row (none, user 1 or 2); member: each row to each user and each group;
+        # parent: each row to each row
+        self.assertEqual([len(d) for d in dims], [2, 2, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2])
+        data = self.s.data_of(
+            pol,
+            ids,
+            [
+                ("col", "t1", "1", "b3", False),
+                ("col", "t1", "2", "b3", True),
+                ("pair", "t1\tr1\t0\tuser\t", "1", "2", None),
+                ("pair", "t1\tmember\t0\tt1\tmember", "2", "1", None),
+                ("pair", "t1\tparent\t0\tt1\t", "2", "1", None),
+            ],
+        )
+        self.assertEqual((data.valid["user"], data.valid["t1"]), (["1"], ["1"]))
+        rows, shares = self.s.load_sql(pol, data)
+        self.assertEqual(
+            rows.splitlines(),
+            [
+                'INSERT INTO "gp"."users" ("id", "active") VALUES (1, true);',
+                'INSERT INTO "gp"."users" ("id", "active") VALUES (2, false);',
+                'INSERT INTO "gp"."t1" ("id", "b3", "c_r1") VALUES (1, false, 2);',
+                'INSERT INTO "gp"."t1" ("id", "b3") VALUES (2, true);',
+                'INSERT INTO "gp"."t1_parent" ("obj_id", "subj_id") VALUES (2, 1);',
+            ],
+        )
+        self.assertEqual(
+            shares,
+            "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) "
+            "VALUES ('t1', '2', 'member', 't1', '1', 'member');",
+        )
+        # moved up, beside another world: the objects' ids, not the users'
+        moved = self.s.moved(data, {"t1": "s3t1"}, 10, {"user"})
+        self.assertEqual((moved.ids["s3t1"], moved.ids["user"]), (["11", "12"], ["1", "2"]))
+        self.assertEqual(moved.pairs[("s3t1", "member", 0, "s3t1", "member")], [("12", "11")])
+        # what rows can't make
+        with self.assertRaises(self.s.Unloadable):
+            self.s.load_sql(pol, dataclasses.replace(data, cond={("t1", "exists (select 1)"): ["1"]}))
+
+    def test_the_parts_made_wrong_are_told_apart(self) -> None:
+        spec = self.s.decorated(
+            self.spec("""
+            type user
+            type t1
+              r1 : user column
+              parent : t1 column
+              can p1 = r1 or parent.p1
+        """)
+        )
+        text = genpolicy.policy_text(spec)
+        made = [m.what for m in self.s.mutants(spec, text)]
+        for what in (
+            "t1.p1: nobody",
+            "t1.p1 at parent.p1: not followed",
+            "t1.parent (column): the other way round",
+            "t1.r1 (column, user): to every subject",
+            "recursion one step deep",
+        ):
+            self.assertIn(what, made)
+        choice = self.s.choose(spec, text, self.s.canonical(spec))
+        self.assertEqual(choice.problems, [])
+        self.assertEqual((choice.told, choice.parts), (14, 14))
+        self.assertLessEqual(len(choice.worlds), 4)
+        # the worlds chosen tell apart each part told apart anywhere
+        base = self.s.reference(text)
+        told = {m.what for m in self.s.mutants(spec, text) for w in choice.worlds if m.answers(w) != base(w)}
+        self.assertEqual(len(told), choice.told)
 
 
 class Decisions(unittest.TestCase):

@@ -6,7 +6,8 @@
 #   ./run_tests.sh --short                                         # what depends on the Postgres version: --quick
 #                         without the checks that need no database, one random-change run, no migrate vs apply
 #   SOAK_SEED=N ./run_tests.sh --soak                              # the random checks (random policies too), long, with a new seed
-#                         (about 110 minutes; a random seed if SOAK_SEED is empty; the log says which)
+#                         (about 110 minutes; a random seed if SOAK_SEED is empty; the log says which; SMALL_SLICE=K:
+#                         the seventh of the small policies it checks, 0 to 6, the day's otherwise)
 #   ROWSTILE_PART=command ./run_tests.sh --quick                   # one part of a run (below: the parts of each)
 #   ROWSTILE_LANES=1 ./run_tests.sh --quick                        # each step after the other (below: lanes)
 #   ROWSTILE_COVERAGE=/abs/dir ./run_tests.sh --quick              # also measure what the suites run (below)
@@ -35,7 +36,7 @@ failed=()
 # other). The workflows list them, and tests/unit_test.py checks they leave none out.
 # (unit: the checks without a database, alone, so that the longest part doesn't wait for them; --short has none)
 PARTS_SUITES="unit policy command random"                 # --quick, --short and the full run
-PARTS_SOAK="changes-1 changes-2 policies around races"    # --soak
+PARTS_SOAK="changes-1 changes-2 policies around small races"    # --soak
 case "$MODE" in
   soak) PARTS=$PARTS_SOAK;; proofs) PARTS=races;; full) PARTS="$PARTS_SUITES races";;
   short) PARTS=${PARTS_SUITES#unit };; *) PARTS=$PARTS_SUITES;;
@@ -113,6 +114,14 @@ if [ "$MODE" = soak ]; then
   step "random policies in random worlds: the catalog, the session and the role around them (60, seeds from $((SEED * 1000)))"
   python3 tests/around.py --policies 60 --steps 8 --seed "$((SEED * 1000))" --db authz_around
   record $? "around"
+  fi
+  if part small; then
+  # every policy of the core language up to size 6 (and the denies of size 7), a seventh each night: the day's
+  # (days since 1970, modulo 7) unless SMALL_SLICE says (several soaks at once: one each), so a week covers them
+  SLICE=${SMALL_SLICE:-$(( $(date -u +%s) / 86400 % 7 ))}
+  step "every small policy, against the reference evaluator and the database (slice $SLICE of 7, up to size 6)"
+  python3 tests/small.py --size 6 --slice "$SLICE/7" --jobs 3 --db authz_small
+  record $? "small policies"
   fi
 fi
 
@@ -455,6 +464,14 @@ if [ "$MODE" = full ]; then
   }
   unit random 490 invariance_fixed
 fi
+# every policy of the core language up to a size (tests/small.py; the nightly soak: up to 6, a seventh a night)
+SMALL=3 SMALL_SECS=30; [ "$MODE" = full ] && SMALL=4 SMALL_SECS=300
+small_policies() {
+step "every small policy, against the reference evaluator and the database (up to size $SMALL)"
+python3 tests/small.py --size "$SMALL" --db authz_small
+record $? "small policies"
+}
+unit random $SMALL_SECS small_policies
 conditions() {
 step "simple conditions read as Postgres reads them (3000 made up)"
 python3 tests/conditions_test.py --cases 3000 --seed 1

@@ -4,7 +4,7 @@
 #   core/ci.sh --full 16       # the full run_tests.sh, on 16 only
 #   core/ci.sh --proofs 16     # the race and stress tests (short), on 16 only
 #   core/ci.sh --short 17 18   # what depends on the version (run_tests.sh --short), on 17 and 18
-#   SOAK_SEED=N core/ci.sh --soak 16   # the random checks, long, with a new seed (run_tests.sh --soak)
+#   SOAK_SEED=N core/ci.sh --soak 16   # the random checks, long, with a new seed (run_tests.sh --soak; SMALL_SLICE too)
 #   ROWSTILE_PART=command core/ci.sh 16   # one part of a run (run_tests.sh names them): CI runs the parts side by side
 #   ROWSTILE_LANES=1 core/ci.sh 16      # each step after the other (run_tests.sh runs a part's steps in lanes)
 #   ROWSTILE_UPGRADES=every core/ci.sh 16   # upgrades from every release on PyPI, not only the one before (nightly)
@@ -66,7 +66,7 @@ for v in $VERSIONS; do
   # Python keeps the code it compiles, in the container (never the mounted checkout): each of the suites' hundreds
   # of Python processes starts sooner. The image keeps it off: anything that rewrites authzlib's files (a mutation
   # tried on them) must run without it, as Python knows a stale file by its size and its time to the second
-  retry docker exec -d -e PYTHONPYCACHEPREFIX=/tmp/pycache -e PYTHONDONTWRITEBYTECODE= -e SOAK_SEED="${SOAK_SEED:-}" -e ROWSTILE_PART="${ROWSTILE_PART:-}" -e ROWSTILE_UPGRADES="${ROWSTILE_UPGRADES:-}" -e ROWSTILE_COVERAGE="$cov" -e ROWSTILE_COVERAGE_STATEMENTS="$STATEMENTS" -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core "$name" \
+  retry docker exec -d -e PYTHONPYCACHEPREFIX=/tmp/pycache -e PYTHONDONTWRITEBYTECODE= -e SOAK_SEED="${SOAK_SEED:-}" -e SMALL_SLICE="${SMALL_SLICE:-}" -e ROWSTILE_PART="${ROWSTILE_PART:-}" -e ROWSTILE_UPGRADES="${ROWSTILE_UPGRADES:-}" -e ROWSTILE_COVERAGE="$cov" -e ROWSTILE_COVERAGE_STATEMENTS="$STATEMENTS" -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core "$name" \
     bash -c "${cov:+rm -rf $cov; }ROWSTILE_LANES='${ROWSTILE_LANES:-}' bash run_tests.sh $MODE > /src/$out.log 2>&1; echo \$? > /src/$out.rc" || { failed+=("$v (start)"); continue; }
   # the exit code appears when the suites end; a container that stopped or went first ends the wait too, and so
   # does the limit
