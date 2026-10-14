@@ -1258,7 +1258,8 @@ def main() -> None:
         capture_output=True,
         text=True,
     )
-    link = "23514: doc.shortcut links are used for inheritance, so they cannot expire, start later or have a caveat [AZ605]"
+    # what an app meets: the words, and the code in the HINT (as every error the runtime raises)
+    link = "23514: doc.shortcut links are used for inheritance, so they cannot expire, start later or have a caveat"
     signed = "SET ROLE app_user; SET authz.user_id = '1'; "  # the owner of both docs
     for what, sql, want in LINKS:
         p = subprocess.run(
@@ -1267,9 +1268,12 @@ def main() -> None:
             text=True,
         )
         err = next((ln.split("ERROR:", 1)[1].strip() for ln in p.stderr.splitlines() if "ERROR:" in ln), "")
-        ok = err == (link if want else "")
+        hint = next((ln.split("HINT:", 1)[1].strip() for ln in p.stderr.splitlines() if "HINT:" in ln), "")
+        ok = (err, hint) == ((link, "rowstile help AZ605") if want else ("", ""))
         fails += not ok
-        print(f"{'ok  ' if ok else 'FAIL'}  inheritance links: {what}: {err or '(no error)'}")
+        print(
+            f"{'ok  ' if ok else 'FAIL'}  inheritance links: {what}: {err or '(no error)'}{f' (HINT: {hint})' * bool(hint)}"
+        )
 
     subprocess.run(["dropdb", db], capture_output=True)
     total = (

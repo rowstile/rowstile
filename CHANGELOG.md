@@ -125,6 +125,11 @@ Each release upgrades from the one before it. How releases are numbered and made
   0), as without `--db`. Without `--db`, a test file that parses but that `rowstile test` would refuse with the
   pull request's policy (a permission it doesn't have, a test another file names too) went unnoticed, and its
   checks were compared: it is now named the same way.
+- A share of a relation that inheritance follows, with an expiry, a start time or a caveat, was refused with the
+  code at the end of the message ("... cannot expire, start later or have a caveat [AZ605]") and no HINT, so an
+  app that shows the database's words showed the code. The code is now in the HINT, `rowstile help AZ605`, as for
+  every other error an app can meet; the SDKs read it there. Apply the policy again (or the next migration) to
+  take it.
 
 ## 0.1.0 (alpha)
 
