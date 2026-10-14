@@ -50,6 +50,11 @@ import decisions  # noqa: E402
 import features  # noqa: E402
 import genpolicy  # noqa: E402
 
+sys.path.insert(0, os.path.join(ROOT, "mutants"))
+import mutants  # noqa: E402
+import plan as sweep_plan  # noqa: E402
+import sweep  # noqa: E402
+
 GOLDEN = os.path.join(ROOT, "tests", "golden")
 UPDATE = "--update" in sys.argv
 POLICIES = {
@@ -10341,6 +10346,164 @@ class Delivery(unittest.TestCase):
         self.assertEqual(changelog.heading("0.2.0-alpha.1", alpha), "## 0.2.0 (alpha)")
         self.assertEqual(changelog.section("0.2.0-alpha.1", alpha), "- older\n")
         self.assertEqual(changelog.section("0.3.0-alpha.1", alpha), "")
+
+
+class Mutants(unittest.TestCase):
+    """The mutation sweep's parts that need no database (core/mutants): the mutants and their ids, the shards,
+    what carries over between runs, the survivors file, the report, and the workflow that runs it."""
+
+    REPO = os.path.dirname(ROOT)
+    # a docstring, a message and an SQL comment with SQL words in them, an f-string field with Python in it
+    SAMPLE = (
+        '"""Rows for a view: WHERE a = b AND c IS NULL, says the docstring."""\n\n\n'
+        "def fail(msg: str) -> None:\n"
+        "    raise ValueError(msg)\n\n\n"
+        "def view_sql(t: str, x: int) -> str:\n"
+        "    if x == 1:\n"
+        '        fail("WHERE a = b AND c")\n'
+        '    return f"SELECT 1 FROM {t} WHERE a = {x == 2} AND b IS NULL -- c = d AND e"\n'
+    )
+
+    def made(self, text: str) -> list[mutants.Mutant]:
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "authzlib"))
+            with open(os.path.join(d, "authzlib", "view.py"), "w", encoding="utf-8") as fh:
+                fh.write(text)
+            return mutants.generate(d)
+
+    def test_an_id_is_the_one_results_were_kept_by(self) -> None:
+        # results carry over between runs by id, and survivors.txt names them: made another way, every one is lost
+        ids = {m.id: m.op for m in self.made(self.SAMPLE)}
+        self.assertEqual(ids.get("g8e0a29e4cd"), "sql AND->OR")
+        self.assertEqual(ids.get("gb5cd43d52d"), "py ==->!=")
+        self.assertEqual(len(ids), 10)
+
+    def test_an_id_stays_while_its_line_does(self) -> None:
+        before = {m.id: m.line for m in self.made(self.SAMPLE)}
+        edited = "import os\n\n" + self.SAMPLE.replace("if x == 1:", "if x == 3:")
+        after = {m.id: m.line for m in self.made(edited)}
+        self.assertEqual({i for i, ln in before.items() if ln == 11}, {i for i, ln in after.items() if ln == 13})
+        self.assertEqual({i for i, ln in before.items() if ln == 9} & set(after), set())  # the line changed
+        self.assertEqual(len(after), len(before))
+
+    def test_sql_mistakes_leave_fields_messages_and_comments(self) -> None:
+        made = self.made(self.SAMPLE)
+        sql = [m for m in made if m.op.startswith("sql ")]
+        self.assertEqual(
+            sorted(m.op for m in sql),
+            [
+                "sql =-><>",
+                "sql AND->OR",
+                "sql IS NULL->IS NOT NULL",
+                "sql WHERE term dropped",
+                "sql WHERE term dropped",
+            ],
+        )
+        self.assertEqual({m.line for m in sql}, {11})
+        for m in made:
+            text = self.SAMPLE.replace(m.old, m.new, 1)
+            for kept in (
+                '"""Rows for a view: WHERE a = b AND c IS NULL',
+                'fail("WHERE a = b AND c")',
+                "-- c = d AND e",
+            ):
+                self.assertIn(kept, text, m.what)
+            if m.op.startswith("sql ") and m.op != "sql WHERE term dropped":  # a term goes whole, its field too
+                self.assertIn("{x == 2}", text, m.what)  # the field is Python: only Python's operators touch it
+        self.assertIn("py ==->!=", {m.op for m in made if m.line == 11})
+
+    def test_shards_get_the_longest_first(self) -> None:
+        self.assertEqual(sweep.deal({"a": 100, "b": 60, "c": 50, "d": 10}, 2), {"a": 1, "b": 2, "c": 2, "d": 1})
+        dealt = sweep.deal({f"m{i}": float(i % 7) for i in range(50)}, 8)
+        self.assertEqual(sorted(dealt), sorted(f"m{i}" for i in range(50)))
+        load = [sum(i % 7 for i in range(50) if dealt[f"m{i}"] == s) for s in range(1, 9)]
+        self.assertLessEqual(max(load) - min(load), 6)
+        self.assertEqual(sweep.deal({}, 3), {})
+
+    def test_a_spread_takes_every_kind_first(self) -> None:
+        made = self.made(self.SAMPLE)
+        order = mutants.spread(made, 1)
+        self.assertEqual(sorted(m.id for m in order), sorted(m.id for m in made))
+        self.assertEqual([m.id for m in order], [m.id for m in mutants.spread(made, 1)])
+        groups = {(m.op, m.file) for m in made}
+        self.assertEqual(len({(m.op, m.file) for m in order[: len(groups)]}), len(groups))
+
+    def test_what_carries_over(self) -> None:
+        rows = [
+            {"id": "ga", "result": "scenario"},
+            {"id": "gb", "result": "MISSED"},
+            {"id": "gc", "result": "MISSED"},
+            {"id": "gd", "result": "not run"},
+            {"id": "ge", "result": "scenario"},
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            sweep.write_jsonl(os.path.join(d, "results.jsonl"), rows)
+            got = sweep.carried_over(d, {"ga", "gb", "gc", "gd"}, {"gc": ("equivalent", "why"), "gb": ("lead", "")})
+        # a lead runs again (its check may be written by now); ge's line changed
+        self.assertEqual([r["id"] for r in got], ["ga", "gc"])
+
+    def test_the_survivors_file(self) -> None:
+        listed = sweep.read_survivors(sweep.SURVIVORS)
+        self.assertTrue(listed)
+        with open(sweep.SURVIVORS, encoding="utf-8") as fh:
+            for line in fh:
+                m = sweep.SURVIVOR.fullmatch(line.rstrip("\n"))
+                if m:
+                    with open(os.path.join(ROOT, "authzlib", m.group(3)), encoding="utf-8") as src:
+                        names = {name for _, _, name in mutants.Source(m.group(3), src.read()).defs}
+                    self.assertIn(m.group(4), names | {"<module>"}, line)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "survivors.txt")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("# fine\ng0123456789 maybe output.py f: why\n")
+            with self.assertRaisesRegex(ValueError, "survivors.txt:2: not"):
+                sweep.read_survivors(path)
+
+    def test_a_new_survivor_fails_the_run(self) -> None:
+        def row(i: str, result: str) -> sweep.Record:
+            return {"id": i, "what": f"x.py:1 f: op: {i}", "result": result, "kind": "sql", "seconds": 60}
+
+        rows = [row("ga", "scenario"), row("gb", "MISSED"), row("gc", "MISSED"), row("gd", "MISSED")]
+        survivors = {"gb": ("lead", "a check"), "gd": ("equivalent", "why")}
+        queue = {"commit": "abc1234", "calls": "none", "mutants": [{"id": r["id"]} for r in rows]}
+        text, new = sweep.report(queue, rows, {str(r["id"]): r for r in rows}, survivors, [], 100, 4, 8)
+        self.assertEqual(new, ["gc"])
+        self.assertIn("**Score: 1 of 3 caught", text)
+        self.assertIn("| `gc` | **new** |", text)
+
+    def test_the_suites_and_steps_are_there(self) -> None:
+        names = [s for s, _ in sweep_plan.SUITES]
+        self.assertEqual(len(names), len(set(names)))
+        for name, cmd in sweep_plan.SUITES:
+            for path in re.findall(r"\btests/[\w.]+\.(?:py|sh|sql)|\bexample/[\w.]+", cmd):
+                self.assertTrue(os.path.isfile(os.path.join(ROOT, path)), f"{name}: {path}")
+        for label, path, _ in sweep_plan.POLICIES:
+            self.assertTrue(os.path.isfile(os.path.join(self.REPO, path)), label)
+        chosen = [s for _, ss in sweep_plan.STEP_SUITES for s in ss]
+        chosen += [s for ss in [*sweep_plan.POLICY_SUITES.values(), *sweep_plan.POLICY_APPLIED.values()] for s in ss]
+        self.assertEqual(sorted(set(chosen) - set(names)), [])
+        # a step renamed in run_tests.sh would select nothing: its calls would count for no suite
+        steps = re.findall(r'^\s*step "([^"]+)"', read("run_tests.sh"), re.M)
+        for prefix, _ in sweep_plan.STEP_SUITES:
+            self.assertTrue(any(s.startswith(prefix) for s in steps), prefix)
+        with open(sweep.SEED_STATS, encoding="utf-8") as fh:
+            self.assertEqual(sorted(json.load(fh)["suites"]), sorted(names))
+
+    def test_the_workflow(self) -> None:
+        text = read("../.github/workflows/mutants.yml")
+        on = search(r"^on:\n(.*?)^\S", text, re.S | re.M).group(1)
+        self.assertEqual(re.findall(r"^  (\w+):", on, re.M), ["schedule", "workflow_dispatch"])  # never on a push
+        sweep = search(r"^  sweep:\n(.*?)(?=^  [a-z-]+:\n)", text, re.S | re.M).group(1)
+        self.assertIn("      max-parallel: 8\n", sweep)  # pull requests keep runners
+        self.assertIn("      fail-fast: false\n", sweep)
+        timeout = int(search(r"timeout-minutes: (\d+)", sweep).group(1))
+        budget = int(search(r"--budget (\d+)", sweep).group(1))
+        self.assertLess(timeout, 360)  # GitHub's runners stop a job at six hours
+        self.assertLessEqual(budget + 60, timeout)  # the mutant in flight when the budget is used up still ends
+        self.assertEqual(set(re.findall(r"sweep\.py (\w+)", text)), {"calls", "prepare", "run", "collect"})
+        # the next run resumes from what collect keeps
+        self.assertIn("name: mutants-results", text)
+        self.assertIn("-n mutants-results", text)
 
 
 class Editors(unittest.TestCase):
