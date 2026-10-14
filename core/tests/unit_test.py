@@ -4841,6 +4841,21 @@ class Confidence(unittest.TestCase):
         drawn = evaluate.World("s", 4, pols=[pol]).columns(pol)
         self.assertEqual(evaluate.World("s", 4, {cond: True}, pols=[pol]).columns(pol), drawn)
 
+    def test_a_corner_gives_both_policies_the_same_rows(self) -> None:
+        # a corner chooses together the values of columns that conditions read together. The rewrite reads b1
+        # beside b2, the policy b1 alone: chosen for each policy's own conditions, a row's b1 differed between them,
+        # and a rewrite that changes nothing showed a difference ({not b1} held before, on a row with b1 true)
+        from authzlib import evaluate
+
+        doc = "type doc = app.docs\n  r : user = owner_id\n  can p = r and {b1}\n  can q = {not b1}"
+        before, after = doc + "\n", doc + " or ({b1 and b2} and nobody)\n"
+        self.assertTrue(self.same(before, after))
+        a, b = parse_policy(self.HEAD + before, "a.authz"), parse_policy(self.HEAD + after, "b.authz")
+        for n, corner in enumerate(evaluate.corners([a, b])):
+            for k in range(8):
+                w = evaluate.World(f"s/{n}/{k}", 4, corner, pols=[a, b])
+                self.assertEqual(w.columns(a), w.columns(b), corner)
+
     def test_the_evaluator_refuses_data_it_cannot_read(self) -> None:
         from authzlib import evaluate
 
