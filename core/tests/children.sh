@@ -44,7 +44,7 @@ same "the inheritance tables are right" "$(PSQL -c "SELECT authz.verify()")" t
 same "the partitioned tables have the trigger that forgets a row gone to another partition, the others don't" \
   "$(PSQL -c "SELECT string_agg(tgrelid::regclass::text, ' ' ORDER BY tgrelid::regclass::text) FROM pg_trigger WHERE tgname LIKE 'authz\_%\_forget\_moved'")" "ch.notes ch.tasks"
 rowtriggers=$(triggers ch.docs_old)
-same "the table that inherits has its table's row triggers" "$rowtriggers" "authz_doc_col_audit_row authz_doc_forget_id authz_update_3"
+same "the table that inherits has its table's row triggers" "$rowtriggers" "authz_doc_col_audit_row authz_doc_forget_id authz_update owner_id"
 
 echo "-- a table that inherits: its rows, read and written through the table above"
 as 1 -c "SELECT authz.share('doc', 1, 'editor', 'user', 2)" -c "SELECT authz.share('doc', 11, 'editor', 'user', 2)" >/dev/null
@@ -75,7 +75,7 @@ echo "-- a table that inherits, made after the policy was applied"
 PSQL -c "CREATE TABLE ch.docs_older () INHERITS (ch.docs)" -c "CREATE TABLE ch.docs_oldest () INHERITS (ch.docs_old)" \
      -c "INSERT INTO ch.docs_older VALUES (21, 1, 'ancient')"
 same "lint names each, and the triggers it lacks" \
-  "$(PSQL -c "SELECT string_agg(object, ' ' ORDER BY object) FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'inherits from a table the policy has rules or a type for, and was made since the policy was last applied:%(missing here: authz_doc_col_audit_row, authz_doc_forget_id, authz_update_3). Apply the policy again (it makes them)'")" \
+  "$(PSQL -c "SELECT string_agg(object, ' ' ORDER BY object) FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'inherits from a table the policy has rules or a type for, and was made since the policy was last applied:%(missing here: authz_doc_col_audit_row, authz_doc_forget_id, authz_update owner_id). Apply the policy again (it makes them)'")" \
   "ch.docs_older ch.docs_oldest"
 run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "apply after a table was made" "$out"
 same "... and lint has nothing more to say of them" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object LIKE 'ch.docs_old%'")" 0
@@ -87,7 +87,7 @@ run apply; is unchanged && ok "apply again: unchanged" || bad "apply once more" 
 PSQL -c "ALTER TABLE ch.docs_older NO INHERIT ch.docs"
 run apply; is unchanged && ok "a table that inherits no more keeps its triggers until the next apply, and that is no reason to apply" || bad "apply after NO INHERIT" "$out"
 PSQL -c "ALTER TABLE ch.docs_older INHERIT ch.docs"
-PSQL -c "DROP TRIGGER authz_update_3 ON ch.docs_old"
+PSQL -c "DROP TRIGGER \"authz_update owner_id\" ON ch.docs_old"
 run apply; is applied && ok "a row trigger dropped from a table that inherits: apply applies" || bad "apply after a dropped copy" "$out"
 same "... and it is back" "$(triggers ch.docs_old)" "$rowtriggers"
 
@@ -140,7 +140,7 @@ same "... and their owner still writes them" "$(as 3 -c "$(changed "UPDATE ch.no
 run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "apply after a partition was made" "$out"
 same "... and the partition is closed: the app role reads it through its table" "$(as 2 -c "SELECT count(*) FROM ch.notes_top")|$(as 3 -c "SELECT count(*) FROM ch.notes WHERE id = 1001")" "0|1"
 same "... lint has nothing more to say of it" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object = 'ch.notes_top'")" 0
-same "... Postgres gave it the row triggers itself" "$(triggers ch.notes_top)" "authz_note_col_audit_row authz_note_forget_id authz_update_1"
+same "... Postgres gave it the row triggers itself" "$(triggers ch.notes_top)" "authz_note_col_audit_row authz_note_forget_id authz_update owner_id"
 
 echo "-- migrations: a rule on a column changes, where a table that inherits has its trigger"
 cp tests/children.authz "$T/db/policy.authz"
@@ -153,11 +153,13 @@ for f in "$T"/db/migrations/*.sql; do
   applied=$((applied + 1))
 done
 same "both migration files apply in order (the second drops a function the copied trigger calls)" "$applied" 2
-same "the table that inherits has the row triggers after them" "$(D=$DB2 triggers ch.docs_old)" "$rowtriggers"
+# (the rule's trigger is named after its head: the old one goes, on the tables that inherit too)
+retitled=${rowtriggers/authz_update owner_id/authz_update owner_id, title}
+same "the table that inherits has the row triggers after them" "$(D=$DB2 triggers ch.docs_old)" "$retitled"
 D=$DB2 as 1 -c "SELECT authz.share('doc', 12, 'editor', 'user', 2)" >/dev/null
 same "... and the changed rule holds on its rows" "$(D=$DB2 as 2 -c "UPDATE ch.docs SET title = 'mine' WHERE id = 12")" "ERROR:  changing owner_id, title of ch.docs 12 needs: own"
 run push --development; is pushed && ok "push: the same change on the first database" || bad "push" "$out"
-same "... where the tables that inherit have the row triggers too" "$(triggers ch.docs_old)|$(triggers ch.docs_older)|$(triggers ch.docs_oldest)" "$rowtriggers|$rowtriggers|$rowtriggers"
+same "... where the tables that inherit have the row triggers too" "$(triggers ch.docs_old)|$(triggers ch.docs_older)|$(triggers ch.docs_oldest)" "$retitled|$retitled|$retitled"
 same "... and the changed rule holds" "$(as 2 -c "UPDATE ch.docs SET title = 'mine' WHERE id = 21")" "ERROR:  changing owner_id, title of ch.docs 21 needs: own"
 
 echo "-- removed"

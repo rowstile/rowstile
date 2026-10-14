@@ -3106,7 +3106,7 @@ CREATE POLICY "authz_delete" ON "app"."files" FOR DELETE TO app_user
 
 COMMENT ON POLICY "authz_delete" ON "app"."files" IS 'rowstile';
 
-CREATE FUNCTION authz_gen."app.folders:column_1:items"(p_row "app"."folders") RETURNS boolean[]
+CREATE FUNCTION authz_gen."app.folders:column parent_id after:items"(p_row "app"."folders") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT ARRAY[
@@ -3132,10 +3132,10 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "folders";
 END;
 
-CREATE FUNCTION authz_gen."app.folders:column_1:why"(p_row "app"."folders") RETURNS SETOF text
+CREATE FUNCTION authz_gen."app.folders:column parent_id after:why"(p_row "app"."folders") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.folders:column_1:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.folders:column parent_id after:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update parent_id after : parent.edit or ({parent_id is null} and share)  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders update parent_id after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.folders'; END IF;
@@ -3155,7 +3155,7 @@ END $f$;
 -- app.folders update parent_id after (line 74): parent.edit or ({parent_id is null} and share)
 -- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
 -- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."app.folders:column_1:holds"(p_row "app"."folders") RETURNS boolean
+CREATE FUNCTION authz_gen."app.folders:column parent_id after:holds"(p_row "app"."folders") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce((authz_gen."folder__edit__has"("folders"."parent_id")
@@ -3167,7 +3167,7 @@ BEGIN ATOMIC
 END;
 -- checked on the row after the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
-CREATE FUNCTION authz_int."folder__update_1"() RETURNS trigger
+CREATE FUNCTION authz_int."app.folders:column parent_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "app"."folders";
 BEGIN
@@ -3175,9 +3175,9 @@ BEGIN
     -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
     IF TG_RELID = '"app"."folders"'::pg_catalog.regclass THEN v_row := NEW;
     ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(NEW)); END IF;
-    IF NOT authz_gen."app.folders:column_1:holds"(v_row) THEN
+    IF NOT authz_gen."app.folders:column parent_id after:holds"(v_row) THEN
       BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.folders:column_1:why"(v_row) l);
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.folders:column parent_id after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
         v_lines := 'no explanation: ' || SQLERRM;
       END;
@@ -3187,11 +3187,11 @@ BEGIN
   END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER "authz_update_1" BEFORE UPDATE ON "app"."folders" FOR EACH ROW
+CREATE TRIGGER "authz_update_after parent_id" BEFORE UPDATE ON "app"."folders" FOR EACH ROW
   WHEN (OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
-  EXECUTE FUNCTION authz_int."folder__update_1"();
+  EXECUTE FUNCTION authz_int."app.folders:column parent_id after"();
 
-CREATE FUNCTION authz_gen."app.folders:column_2:items"(p_row "app"."folders") RETURNS boolean[]
+CREATE FUNCTION authz_gen."app.folders:column id, owner_id, org_id, inherit:items"(p_row "app"."folders") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT ARRAY[
@@ -3208,10 +3208,10 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "folders";
 END;
 
-CREATE FUNCTION authz_gen."app.folders:column_2:why"(p_row "app"."folders") RETURNS SETOF text
+CREATE FUNCTION authz_gen."app.folders:column id, owner_id, org_id, inherit:why"(p_row "app"."folders") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.folders:column_2:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.folders:column id, owner_id, org_id, inherit:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update id, owner_id, org_id, inherit : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.folders update id, owner_id, org_id, inherit'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.folders'; END IF;
@@ -3224,7 +3224,7 @@ END $f$;
 -- app.folders update id, owner_id, org_id, inherit (line 75): share
 -- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
 -- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."app.folders:column_2:holds"(p_row "app"."folders") RETURNS boolean
+CREATE FUNCTION authz_gen."app.folders:column id, owner_id, org_id, inherit:holds"(p_row "app"."folders") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
@@ -3234,7 +3234,7 @@ BEGIN ATOMIC
 END;
 -- checked on the row before the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
-CREATE FUNCTION authz_int."folder__update_2"() RETURNS trigger
+CREATE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "app"."folders";
 BEGIN
@@ -3242,9 +3242,9 @@ BEGIN
     -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
     IF TG_RELID = '"app"."folders"'::pg_catalog.regclass THEN v_row := OLD;
     ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(OLD)); END IF;
-    IF NOT authz_gen."app.folders:column_2:holds"(v_row) THEN
+    IF NOT authz_gen."app.folders:column id, owner_id, org_id, inherit:holds"(v_row) THEN
       BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.folders:column_2:why"(v_row) l);
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.folders:column id, owner_id, org_id, inherit:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
         v_lines := 'no explanation: ' || SQLERRM;
       END;
@@ -3254,14 +3254,14 @@ BEGIN
   END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER "authz_update_2" BEFORE UPDATE ON "app"."folders" FOR EACH ROW
+CREATE TRIGGER "authz_update id, owner_id, org_id, inherit" BEFORE UPDATE ON "app"."folders" FOR EACH ROW
   WHEN (OLD."id" IS DISTINCT FROM NEW."id"
      OR OLD."owner_id" IS DISTINCT FROM NEW."owner_id"
      OR OLD."org_id" IS DISTINCT FROM NEW."org_id"
      OR OLD."inherit" IS DISTINCT FROM NEW."inherit")
-  EXECUTE FUNCTION authz_int."folder__update_2"();
+  EXECUTE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit"();
 
-CREATE FUNCTION authz_gen."app.files:column_3:items"(p_row "app"."files") RETURNS boolean[]
+CREATE FUNCTION authz_gen."app.files:column folder_id after:items"(p_row "app"."files") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT ARRAY[
@@ -3272,10 +3272,10 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "files";
 END;
 
-CREATE FUNCTION authz_gen."app.files:column_3:why"(p_row "app"."files") RETURNS SETOF text
+CREATE FUNCTION authz_gen."app.files:column folder_id after:why"(p_row "app"."files") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.files:column_3:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.files:column folder_id after:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update folder_id after : folder.edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files update folder_id after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.files'; END IF;
@@ -3290,14 +3290,14 @@ END $f$;
 -- app.files update folder_id after (line 82): folder.edit
 -- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
 -- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."app.files:column_3:holds"(p_row "app"."files") RETURNS boolean
+CREATE FUNCTION authz_gen."app.files:column folder_id after:holds"(p_row "app"."files") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce(authz_gen."folder__edit__has"("files"."folder_id"), false) FROM (SELECT (p_row).*) AS "files";
 END;
 -- checked on the row after the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
-CREATE FUNCTION authz_int."file__update_3"() RETURNS trigger
+CREATE FUNCTION authz_int."app.files:column folder_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "app"."files";
 BEGIN
@@ -3305,9 +3305,9 @@ BEGIN
     -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
     IF TG_RELID = '"app"."files"'::pg_catalog.regclass THEN v_row := NEW;
     ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(NEW)); END IF;
-    IF NOT authz_gen."app.files:column_3:holds"(v_row) THEN
+    IF NOT authz_gen."app.files:column folder_id after:holds"(v_row) THEN
       BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.files:column_3:why"(v_row) l);
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.files:column folder_id after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
         v_lines := 'no explanation: ' || SQLERRM;
       END;
@@ -3317,11 +3317,11 @@ BEGIN
   END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER "authz_update_3" BEFORE UPDATE ON "app"."files" FOR EACH ROW
+CREATE TRIGGER "authz_update_after folder_id" BEFORE UPDATE ON "app"."files" FOR EACH ROW
   WHEN (OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
-  EXECUTE FUNCTION authz_int."file__update_3"();
+  EXECUTE FUNCTION authz_int."app.files:column folder_id after"();
 
-CREATE FUNCTION authz_gen."app.files:column_4:items"(p_row "app"."files") RETURNS boolean[]
+CREATE FUNCTION authz_gen."app.files:column id, owner_id, confidential:items"(p_row "app"."files") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT ARRAY[
@@ -3334,10 +3334,10 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "files";
 END;
 
-CREATE FUNCTION authz_gen."app.files:column_4:why"(p_row "app"."files") RETURNS SETOF text
+CREATE FUNCTION authz_gen."app.files:column id, owner_id, confidential:why"(p_row "app"."files") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."app.files:column_4:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."app.files:column id, owner_id, confidential:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update id, owner_id, confidential : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule app.files update id, owner_id, confidential'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on app.files'; END IF;
@@ -3350,7 +3350,7 @@ END $f$;
 -- app.files update id, owner_id, confidential (line 83): share
 -- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
 -- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."app.files:column_4:holds"(p_row "app"."files") RETURNS boolean
+CREATE FUNCTION authz_gen."app.files:column id, owner_id, confidential:holds"(p_row "app"."files") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
@@ -3358,7 +3358,7 @@ BEGIN ATOMIC
 END;
 -- checked on the row before the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
-CREATE FUNCTION authz_int."file__update_4"() RETURNS trigger
+CREATE FUNCTION authz_int."app.files:column id, owner_id, confidential"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "app"."files";
 BEGIN
@@ -3366,9 +3366,9 @@ BEGIN
     -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
     IF TG_RELID = '"app"."files"'::pg_catalog.regclass THEN v_row := OLD;
     ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(OLD)); END IF;
-    IF NOT authz_gen."app.files:column_4:holds"(v_row) THEN
+    IF NOT authz_gen."app.files:column id, owner_id, confidential:holds"(v_row) THEN
       BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.files:column_4:why"(v_row) l);
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.files:column id, owner_id, confidential:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
         v_lines := 'no explanation: ' || SQLERRM;
       END;
@@ -3378,11 +3378,11 @@ BEGIN
   END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER "authz_update_4" BEFORE UPDATE ON "app"."files" FOR EACH ROW
+CREATE TRIGGER "authz_update id, owner_id, confidential" BEFORE UPDATE ON "app"."files" FOR EACH ROW
   WHEN (OLD."id" IS DISTINCT FROM NEW."id"
      OR OLD."owner_id" IS DISTINCT FROM NEW."owner_id"
      OR OLD."confidential" IS DISTINCT FROM NEW."confidential")
-  EXECUTE FUNCTION authz_int."file__update_4"();
+  EXECUTE FUNCTION authz_int."app.files:column id, owner_id, confidential"();
 
 -- Foreign keys that delete governed rows skip row-level security
 DO $fk$

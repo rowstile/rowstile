@@ -498,7 +498,7 @@ CONSTRUCTS = {
     "group": ["subjects"],
     "principal": ["principals"],
     "arrow": ["follow-relation", "inheritance"],
-    "not": ["permission-operators", "deny-below", "condition-every-level"],
+    "not": ["permission-operators", "deny-below", "deny-other-types", "condition-every-level"],
     "cond": ["conditions-null", "conditions-this"],
     "word": ["signed-in-anyone-nobody"],
     "roles": ["roles-include", "roles-from", "roles-refused", "roles-without-from"],

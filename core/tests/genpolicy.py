@@ -40,9 +40,10 @@ counted and their seeds printed. For each of the others, after every one of a fe
   - difftest's checks (tests/difftest.py: list, can, explain, who, the rows each rule allows, verify)
   - authz.check_invariants() against the reference evaluator
 and at the end, `rowstile prove`: an invariant it says holds must not be broken by the data seen.
-With --pairs POOL, the seeds are chosen from 1..POOL instead (covering()): a few, the compiler taking each, in which
-every two FEATURES that meet in some policy of the pool meet; it says the pairs no policy there has (but APART:
-one key type each), and at the end which pairs met the reference evaluator in a policy that passed.
+With --pairs POOL, the seeds are chosen from 1..POOL instead (covering()): a few, the compiler taking each and lint
+calling none slow to plan, in which every two FEATURES that meet in some policy of the pool meet; it says the pairs
+no policy there has (but APART: one key type each), and at the end which pairs met the reference evaluator in a
+policy that passed.
 A failing policy is shrunk (an invariant, a rule, a type, a part of a permission taken away while it still fails)
 and printed with its seed, so `--only SEED` runs it again. With --decisions, each policy's parts that never decided
 an answer in those checks are said after it (tests/decisions.py).
@@ -1234,7 +1235,7 @@ def run(
     if compiled.returncode != 0:
         raise Refused(compiled.stderr.strip().splitlines()[-1] if compiled.stderr.strip() else "refused")
     if "view definitions to plan" in compiled.stdout:
-        raise Slow("authz.lint() warns that a select rule is slow to plan")
+        raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
     gen = gen_class(spec, policy_path, schema_path)(random.Random(spec.seed))
     db.recreate()
@@ -1411,8 +1412,8 @@ def pairs(spec: Spec) -> set[tuple[str, str]]:
 
 def covering(pool: int) -> tuple[list[int], set[tuple[str, str]], set[tuple[str, str]]]:
     """Seeds of 1..pool chosen, greedily, so that every pair of FEATURES that meets in a policy of the pool the
-    compiler takes meets in one of them; and the pairs that meet only in policies it refuses, and those that meet in
-    no policy of the pool (APART aside)."""
+    compiler takes (and lint doesn't call slow to plan) meets in one of them; and the pairs that meet only in policies
+    it refuses or calls slow, and those that meet in no policy of the pool (APART aside)."""
     from authzlib import Compiler
 
     met = {seed: pairs(make(seed)) for seed in range(1, pool + 1)}
@@ -1426,8 +1427,10 @@ def covering(pool: int) -> tuple[list[int], set[tuple[str, str]], set[tuple[str,
             break
         del left[best]
         try:
-            Compiler(parse_policy(policy_text(make(best)), "gen.authz")).compile("gen.authz")
+            sql = Compiler(parse_policy(policy_text(make(best)), "gen.authz")).compile("gen.authz")
         except PolicyError:
+            continue
+        if "view definitions to plan" in sql:  # (lint says it is slow to plan: run() would set it aside)
             continue
         chosen.append(best)
         covered |= met[best]

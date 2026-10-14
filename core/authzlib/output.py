@@ -232,16 +232,23 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
 {moved}"""
 
     # --- rules on changed columns (RLS can't compare old and new rows) ----
-    def column_rule_sql(self, t: Type, alias: str, rule: Rule, idx: int) -> str:
+    def column_rule_sql(self, t: Type, alias: str, rule: Rule) -> str:
         new = rule.command == "update check"
         row = "NEW" if new else "OLD"
         cond = self.rule_sql(t, alias, rule, point=True, invoker=True)
-        fn = f"authz_int.{q(f'{t.name}__update_{idx}')}"
         cols = ", ".join(rule.columns)
+        # named after what it guards, as the rule's head says it (a table has one rule per head, AZ109), not after
+        # its place in the policy: Postgres fires a table's triggers in the order of their names, and the first to
+        # refuse an update says why, so which one that is mustn't depend on the order the rules are written in. A
+        # rule on the row before the change speaks first: its trigger is `authz_update <columns>`, one on the row
+        # after it `authz_update_after <columns>` (a space sorts before `_`), and then by the columns. (A name over
+        # 63 bytes is shortened with a hash, by q, keeping its first 54 bytes: the order holds.)
+        name = f"column {cols}{' after' if new else ''}"
+        trigger = f"authz_update_after {cols}" if new else f"authz_update {cols}"
+        fn = f"authz_int.{q(f'{rule.table}:{name}')}"
         when = "\n     OR ".join(f"OLD.{q(c)} IS DISTINCT FROM NEW.{q(c)}" for c in rule.columns)
         msg = f"changing {cols} of {rule.table} ".replace("%", "%%") + "%" + f" needs: {rule.src}".replace("%", "%%")
         # the explanation, as for refused inserts and updates (refusals.py)
-        name = f"column_{idx}"
         why = self.rule_fn(rule.table, name, "why")
         holds = self.rule_fn(rule.table, name, "holds")
         schema, table = rule.table.split(".")
@@ -280,7 +287,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER {q("authz_update_" + str(idx))} BEFORE UPDATE ON {qt(rule.table)} FOR EACH ROW
+CREATE TRIGGER {q(trigger)} BEFORE UPDATE ON {qt(rule.table)} FOR EACH ROW
   WHEN ({when})
   EXECUTE FUNCTION {fn}();"""
 
@@ -1084,7 +1091,7 @@ END $kv$;"""
                     if "update" not in cmds:
                         fail(r.loc, f"'{rule_name(r)}' refines updates, so {table} needs an 'update' rule too", "AZ403")
                     if r.columns:
-                        column_rules.append(self.column_rule_sql(t, alias, r, len(column_rules) + 1))
+                        column_rules.append(self.column_rule_sql(t, alias, r))
                     continue
                 # writes check one row at a time; select may read many, so it keeps the list-friendly views
                 sql = (

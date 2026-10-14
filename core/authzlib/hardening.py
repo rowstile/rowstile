@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .compiler import MANY_EXPANSIONS, Core
-from .parse import KEYWORDS, Cond, Loc, cols
+from .parse import KEYWORDS, Cond, Loc, Ref, cols
 from .sqlutil import POLICY_MARKS, VIEW_MARKS, lit, q, qt
 
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
@@ -275,6 +275,27 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
                     f"  severity := 'warning'; object := to_regclass({lit(qt(rule.table))})::text;\n"
                     f"  problem := '{said}';\n  RETURN NEXT;\n"
                 )
+        # ...and any permission that does, whether a rule reads it or not: authz.list checks it on each row as a
+        # select rule does, authz.can and write rules on one row (each way named at most once on the way)
+        for t in self.types.values():
+            for p in self.public_perms(t):
+                perm = t.perms[p]
+                n = max(
+                    self.expansions(self.row_sql(t, "o", Ref("ref", p), perm.loc, point=point))
+                    for point in (False, True)
+                )
+                if n > MANY_EXPANSIONS:
+                    said = (
+                        f"names permissions that name others more than once (' || "
+                        f"{self.line_sql(f'permission {t.name}.{p}', perm.loc)} || '), and Postgres writes each one out "
+                        f"again every time: {n} view definitions to plan each check of it (authz.list, authz.can, a "
+                        f"rule that names it) before a row is read, which can take a tenth of a second and more, up "
+                        f"to a second or two. Name each permission once on the way"
+                    )
+                    heavy += (
+                        f"  severity := 'warning'; object := {lit(f'{t.name}.{p}')};\n"
+                        f"  problem := '{said}';\n  RETURN NEXT;\n"
+                    )
         shadow_rows = ", ".join(
             f"({lit(tn)}, {lit(rn)}, {lit(self.line_key(f'relation {tn}.{rn}', loc))})" for tn, rn, loc in shadows
         )

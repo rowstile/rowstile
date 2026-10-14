@@ -14,15 +14,15 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run only this job (suites, proofs, soak, small, conformance, third, statements, bench); empty: all of them"
+        description: "Run only this job (suites, proofs, soak, small, full, conformance, third, statements, bench); empty: all of them"
         default: ""
       soaks:
         description: "How many soaks to run at once (1 to 9), each with its own seed, on 16, 17 and 18 in turn"
         default: "1"
 # One nightly at a time. Several soaks asked for by hand are a run of their own beside it: each is on its own runner;
-# so are the small policies asked for alone
+# so are the small policies and the full run asked for alone
 concurrency:
-  group: ${{ (inputs.soaks > 1 || inputs.only == 'small') && format('soaks-{0}', github.run_id) || 'nightly' }}
+  group: ${{ (inputs.soaks > 1 || inputs.only == 'small' || inputs.only == 'full') && format('soaks-{0}', github.run_id) || 'nightly' }}
   cancel-in-progress: false
 # what a job needs beyond reading the repository, it says itself
 permissions: {contents: read}
@@ -157,6 +157,28 @@ jobs:
         with:
           name: small-${{ matrix.slice }}
           path: ${{ runner.temp }}/rowstile-ci-*.log
+  # The full run (run_tests.sh without --quick: the random checks' longer runs among it) on 16, asked for by hand, in
+  # its parts side by side (as after a change to what the full run checks: `gh workflow run nightly.yml -f only=full`)
+  full:
+    if: ${{ inputs.only == 'full' }}
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    env:
+      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-16-${{ matrix.part }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [unit, policy, command, random]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - run: bash core/ci.sh --full 16
+        env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}", ROWSTILE_PART: "${{ matrix.part }}"}
+      - if: always()
+        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: full-16-${{ matrix.part }}
+          path: ${{ runner.temp }}/rowstile-ci-16.log
   # The SDKs' conformance suites on 17 and 18 (ci.yml runs them on 16), and on 16 with the app through PgBouncer in
   # transaction mode (integrations/pooler.sh), one after the other: on a self-hosted runner each holds the lock its
   # CI job holds (one container name and port for the machine)

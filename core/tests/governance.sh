@@ -447,6 +447,30 @@ admin "... and an index that starts with the key's columns, in another order, se
   "SELECT count(*) FROM authz.lint() WHERE object = 'app.gov_boxes.org_id, id'"
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_governance.sql >/dev/null
 PSQL -c "DROP TABLE app.gov_boxes" >/dev/null
+# a permission that names others more than once is slow to plan wherever it is checked, a rule or not: here no rule
+# reads note.read, and authz.list and authz.can plan its 191 views (p6 names p5 twice, ... down to p0)
+PSQL -c "CREATE TABLE app.gov_crowds (id bigint PRIMARY KEY, a boolean, b boolean)" \
+     -c "CREATE TABLE app.gov_crowd_members (crowd_id bigint, user_id bigint)" \
+     -c "CREATE TABLE app.gov_notes (id bigint PRIMARY KEY, crowd_id bigint)" \
+     -c "INSERT INTO app.gov_crowds VALUES (1, true, false), (2, false, false)" \
+     -c "INSERT INTO app.gov_crowd_members VALUES (1, 1), (2, 1)" -c "INSERT INTO app.gov_notes VALUES (1, 1), (2, 2), (3, 1)" >/dev/null
+{ sed '/^test$/,$d' example/docs.authz
+  printf 'type crowd = app.gov_crowds\n  member : user = app.gov_crowd_members(crowd_id -> user_id)\n  can p0 = member\n'
+  for n in 1 2 3 4 5 6; do printf '  can p%s = (p%s and {a}) or (p%s and {b})\n' $n $((n - 1)) $((n - 1)); done
+  printf 'type note = app.gov_notes\n  crowd : crowd = crowd_id\n  can read = crowd.p6\n'; } > /tmp/authz_crowds.authz
+python3 compile_policy.py /tmp/authz_crowds.authz > /tmp/authz_crowds.sql &&
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_crowds.sql >/dev/null
+L=$(grep -n '^  can read = crowd.p6$' /tmp/authz_crowds.authz | cut -d: -f1)
+admin "lint finds a permission no rule reads that is slow to plan, and says its line and how many views" \
+  "warning|note.read|names permissions that name others more than once (line $L), and Postgres writes each one out again every time: 191 view definitions to plan each check of it (authz.list, authz.can, a rule that names it) before a row is read, which can take a tenth of a second and more, up to a second or two. Name each permission once on the way" \
+  "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE object = 'note.read'"
+admin "... and of the permissions it names, the one that names many (64), not those before it (32 and fewer)" "crowd.p6" \
+  "SELECT string_agg(object, ',' ORDER BY object) FROM authz.lint() WHERE object LIKE 'crowd.%' AND problem LIKE '%view definitions to plan%'"
+check "... and authz.list answers it" "1,3" \
+  "SET authz.user_id = '1'; SELECT string_agg(l, ',' ORDER BY l::int) FROM authz.list('note', 'read') l"
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_governance.sql >/dev/null
+PSQL -c "DROP TABLE app.gov_notes, app.gov_crowd_members, app.gov_crowds" >/dev/null
+rm -f /tmp/authz_crowds.authz /tmp/authz_crowds.sql
 # the lookups are joins, which an index with a condition doesn't serve, nor one a failed CREATE INDEX CONCURRENTLY
 # left unfinished: lint names the lookup there, as rowstile indexes does
 PSQL -c "DROP INDEX app.team_members_user_id_idx" -c "CREATE INDEX team_members_some ON app.team_members (user_id) WHERE user_id > 0" >/dev/null

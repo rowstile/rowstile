@@ -358,6 +358,7 @@ FEATURES: list[Feature] = [
         (
             T("governance.sh", "the app role cannot run lint"),
             T("governance.sh", "lint finds a move nothing checks the destination of"),
+            T("governance.sh", "lint finds a permission no rule reads that is slow to plan"),
             T("adversarial.sh", "lint reports a grant on rowstile's objects made after apply"),
             T("governance.sh", "a Globex user owning an Acme folder breaks it"),
         ),
@@ -791,6 +792,7 @@ FEATURES: list[Feature] = [
             T("moves.sh", "rows inside the moved folder were left alone"),
             T("concurrency.sh", "no loop"),
             T("policy_errors.py", "a deny that doesn't cover what is below"),
+            T("policy_errors.py", "a deny on a permission that inherits through a relation to another type too"),
             T("unit_test.py", "class Denies("),
         ),
         (
@@ -800,7 +802,7 @@ FEATURES: list[Feature] = [
             T("genpolicy.py", "def across("),
             T("stress.sh", "the inheritance tables match a rebuild"),
         ),
-        hand=("inheritance", "condition-every-level", "deny-below"),
+        hand=("inheritance", "condition-every-level", "deny-below", "deny-other-types"),
     ),
     Feature(
         "lang.roles",
@@ -826,6 +828,8 @@ FEATURES: list[Feature] = [
         (
             T("devx.sh", "a refused insert says which rule, and which part of it"),
             T("adversarial.sh", "alice can't move her folder under a folder she may not edit"),
+            T("adversarial.sh", "and both at once: the rule on the row before the change says why"),
+            T("unit_test.py", "test_triggers_are_named_after_what_they_guard"),
             T("children.sh", "rule"),
             Check(FASTAPI, "test_6_a_refused_insert_says_which_rule"),
         ),

@@ -590,6 +590,14 @@ COMPILE = [
         12,
     ),
     (
+        "a deny on a permission that inherits through a relation to another type too",
+        "  above : doc, grp = (above_type, above_id)\n  can hidden = {locked} or above.hidden\n"
+        "  can view = (owner or above.view) and not hidden\n",
+        "doc.view has a deny and inherits through above, which also points at other types; give those their own "
+        "relation",
+        12,
+    ),
+    (
         "a permission that depends on itself only through a not",
         "  can view = {locked} and not parent.view\n",
         "doc.view depends on itself; a permission can only recurse as 'or rel.perm' (optionally 'and {condition}')",

@@ -2090,7 +2090,7 @@ CREATE POLICY "authz_update" ON "lp"."domains" FOR UPDATE TO app_user
 
 COMMENT ON POLICY "authz_update" ON "lp"."domains" IS 'rowstile';
 
-CREATE FUNCTION authz_gen."lp.domains:column_1:items"(p_row "lp"."domains") RETURNS boolean[]
+CREATE FUNCTION authz_gen."lp.domains:column org_id after:items"(p_row "lp"."domains") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT ARRAY[
@@ -2101,10 +2101,10 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "domains";
 END;
 
-CREATE FUNCTION authz_gen."lp.domains:column_1:why"(p_row "lp"."domains") RETURNS SETOF text
+CREATE FUNCTION authz_gen."lp.domains:column org_id after:why"(p_row "lp"."domains") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."lp.domains:column_1:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."lp.domains:column org_id after:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update org_id after : org.edit  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule lp.domains update org_id after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on lp.domains'; END IF;
@@ -2119,14 +2119,14 @@ END $f$;
 -- lp.domains update org_id after (line 42): org.edit
 -- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
 -- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."lp.domains:column_1:holds"(p_row "lp"."domains") RETURNS boolean
+CREATE FUNCTION authz_gen."lp.domains:column org_id after:holds"(p_row "lp"."domains") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce(EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id"), false) FROM (SELECT (p_row).*) AS "domains";
 END;
 -- checked on the row after the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
-CREATE FUNCTION authz_int."domain__update_1"() RETURNS trigger
+CREATE FUNCTION authz_int."lp.domains:column org_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "lp"."domains";
 BEGIN
@@ -2134,9 +2134,9 @@ BEGIN
     -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
     IF TG_RELID = '"lp"."domains"'::pg_catalog.regclass THEN v_row := NEW;
     ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(NEW)); END IF;
-    IF NOT authz_gen."lp.domains:column_1:holds"(v_row) THEN
+    IF NOT authz_gen."lp.domains:column org_id after:holds"(v_row) THEN
       BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."lp.domains:column_1:why"(v_row) l);
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."lp.domains:column org_id after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
         v_lines := 'no explanation: ' || SQLERRM;
       END;
@@ -2146,9 +2146,9 @@ BEGIN
   END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER "authz_update_1" BEFORE UPDATE ON "lp"."domains" FOR EACH ROW
+CREATE TRIGGER "authz_update_after org_id" BEFORE UPDATE ON "lp"."domains" FOR EACH ROW
   WHEN (OLD."org_id" IS DISTINCT FROM NEW."org_id")
-  EXECUTE FUNCTION authz_int."domain__update_1"();
+  EXECUTE FUNCTION authz_int."lp.domains:column org_id after"();
 
 -- Foreign keys that delete governed rows skip row-level security
 DO $fk$

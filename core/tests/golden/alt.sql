@@ -3314,7 +3314,7 @@ CREATE POLICY "authz_delete" ON "alt"."docs" FOR DELETE TO app_user
 
 COMMENT ON POLICY "authz_delete" ON "alt"."docs" IS 'rowstile';
 
-CREATE FUNCTION authz_gen."alt.docs:column_1:items"(p_row "alt"."docs") RETURNS boolean[]
+CREATE FUNCTION authz_gen."alt.docs:column owner_id:items"(p_row "alt"."docs") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT ARRAY[
@@ -3325,10 +3325,10 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "docs";
 END;
 
-CREATE FUNCTION authz_gen."alt.docs:column_1:why"(p_row "alt"."docs") RETURNS SETOF text
+CREATE FUNCTION authz_gen."alt.docs:column owner_id:why"(p_row "alt"."docs") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."alt.docs:column_1:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."alt.docs:column owner_id:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update owner_id : share  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs update owner_id'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on alt.docs'; END IF;
@@ -3341,14 +3341,14 @@ END $f$;
 -- alt.docs update owner_id (line 46): share
 -- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
 -- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."alt.docs:column_1:holds"(p_row "alt"."docs") RETURNS boolean
+CREATE FUNCTION authz_gen."alt.docs:column owner_id:holds"(p_row "alt"."docs") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false) FROM (SELECT (p_row).*) AS "docs";
 END;
 -- checked on the row before the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
-CREATE FUNCTION authz_int."doc__update_1"() RETURNS trigger
+CREATE FUNCTION authz_int."alt.docs:column owner_id"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "alt"."docs";
 BEGIN
@@ -3356,9 +3356,9 @@ BEGIN
     -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
     IF TG_RELID = '"alt"."docs"'::pg_catalog.regclass THEN v_row := OLD;
     ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(OLD)); END IF;
-    IF NOT authz_gen."alt.docs:column_1:holds"(v_row) THEN
+    IF NOT authz_gen."alt.docs:column owner_id:holds"(v_row) THEN
       BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:column_1:why"(v_row) l);
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:column owner_id:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
         v_lines := 'no explanation: ' || SQLERRM;
       END;
@@ -3368,11 +3368,11 @@ BEGIN
   END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER "authz_update_1" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
+CREATE TRIGGER "authz_update owner_id" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
   WHEN (OLD."owner_id" IS DISTINCT FROM NEW."owner_id")
-  EXECUTE FUNCTION authz_int."doc__update_1"();
+  EXECUTE FUNCTION authz_int."alt.docs:column owner_id"();
 
-CREATE FUNCTION authz_gen."alt.docs:column_2:items"(p_row "alt"."docs") RETURNS boolean[]
+CREATE FUNCTION authz_gen."alt.docs:column up after:items"(p_row "alt"."docs") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT ARRAY[
@@ -3387,10 +3387,10 @@ BEGIN ATOMIC
   FROM (SELECT (p_row).*) AS "docs";
 END;
 
-CREATE FUNCTION authz_gen."alt.docs:column_2:why"(p_row "alt"."docs") RETURNS SETOF text
+CREATE FUNCTION authz_gen."alt.docs:column up after:why"(p_row "alt"."docs") RETURNS SETOF text
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 #variable_conflict use_column
-DECLARE v boolean[] := authz_gen."alt.docs:column_2:items"(p_row); v_t record;
+DECLARE v boolean[] := authz_gen."alt.docs:column up after:items"(p_row); v_t record;
 BEGIN
   RETURN NEXT CASE WHEN v[1] THEN 'yes  ' ELSE 'no   ' END || 'update up after : parent.edit or {up is null}  (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'rule alt.docs update up after'), '?') || ')';
   IF NOT v[2] THEN RETURN NEXT '  no   the sign-in''s scopes do not allow update on alt.docs'; END IF;
@@ -3409,7 +3409,7 @@ END $f$;
 -- alt.docs update up after (line 47): parent.edit or {up is null}
 -- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
 -- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."alt.docs:column_2:holds"(p_row "alt"."docs") RETURNS boolean
+CREATE FUNCTION authz_gen."alt.docs:column up after:holds"(p_row "alt"."docs") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce((coalesce((up is null), false)
@@ -3418,7 +3418,7 @@ BEGIN ATOMIC
 END;
 -- checked on the row after the change, for roles that row-level security applies to on the
 -- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
-CREATE FUNCTION authz_int."doc__update_2"() RETURNS trigger
+CREATE FUNCTION authz_int."alt.docs:column up after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "alt"."docs";
 BEGIN
@@ -3426,9 +3426,9 @@ BEGIN
     -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
     IF TG_RELID = '"alt"."docs"'::pg_catalog.regclass THEN v_row := NEW;
     ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(NEW)); END IF;
-    IF NOT authz_gen."alt.docs:column_2:holds"(v_row) THEN
+    IF NOT authz_gen."alt.docs:column up after:holds"(v_row) THEN
       BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:column_2:why"(v_row) l);
+        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:column up after:why"(v_row) l);
       EXCEPTION WHEN OTHERS THEN
         v_lines := 'no explanation: ' || SQLERRM;
       END;
@@ -3438,9 +3438,9 @@ BEGIN
   END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER "authz_update_2" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
+CREATE TRIGGER "authz_update_after up" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
   WHEN (OLD."up" IS DISTINCT FROM NEW."up")
-  EXECUTE FUNCTION authz_int."doc__update_2"();
+  EXECUTE FUNCTION authz_int."alt.docs:column up after"();
 
 -- Foreign keys that delete governed rows skip row-level security
 DO $fk$

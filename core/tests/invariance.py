@@ -29,17 +29,19 @@ made by the same SQL, but for these, which a policy written another way may chan
     compiler.item_cost). An object is the same when its lines are the same in another order ('lines'), or its
     words and symbols ('tokens': then also the place an explanation gives each item, v[n], and a tree's hash,
     which is of its SQL)
-  - names the compiler gives in the order it meets what they are for (NUMBERED, ON_TYPES): rules on columns
-    (column_N, __update_N, the triggers authz_update_N), invariants (__never__N), a second tree of the same
-    types and relations (__tree2), the types an arrow is followed to (__on_t2_t1), and a view of starting points
-    two permissions share (named after the first the compiler meets: __direct). Objects so named are matched by
-    what they make
+  - names the compiler gives in the order it meets what they are for (NUMBERED, ON_TYPES): invariants
+    (__never__N), a second tree of the same types and relations (__tree2), the types an arrow is followed to
+    (__on_t2_t1), and a view of starting points two permissions share (named after the first the compiler meets:
+    __direct). Objects so named are matched by what they make. A rule on columns isn't among them: Postgres fires
+    a table's triggers in the order of their names, so its trigger is named after the rule's head
 
 Then each is applied to the database, and its answers must be the policy's own, read the same way (answers()):
 authz.list (whole, and in pages of two: each page after the last id of the one before, in key order), authz.can
 on every row and one that isn't, authz.perms_of, the rows each select rule lets the app role read, the masked
-views, authz.who, authz.explain_rule's verdict on an update and a delete, authz.check_invariants(), for every
-principal and nobody. For the renumbered data, in a database of its own, the answers mapped back.
+views, authz.who, authz.explain_rule's verdict on an update and a delete, which rule on columns refuses an update
+of every column they guard, where a table has two or more (the first trigger to refuse says why),
+authz.check_invariants(), for every principal and nobody. For the renumbered data, in a database of its own, the
+answers mapped back (but which rule refuses an update: a rule after the change judges the values set).
 
 --fixed compiles the fixed policies (the example's and difftest's) reordered, included and laid out, and
 compares their SQL alone.
@@ -213,9 +215,10 @@ def laid_out(text: str, files: Files, r: random.Random) -> tuple[str, Files]:
 # ----------------------------------------------------------------------
 LINE = re.compile(r"\b(?:[\w./-]+\.authz )?line \d+\b")
 TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*|\d+|<>|<=|>=|::|\S")
-# names the compiler numbers in the order it meets what they are for: the rules on columns of a table (their
-# functions and triggers) and the trees of the same types and relations
-NUMBERED = re.compile(r"(column_|__update_|authz_update_|__never__)\d+|(__tree)\w*")
+# names the compiler numbers in the order it meets what they are for: invariants and the trees of the same types
+# and relations (a rule on columns, its functions and its trigger are named after its head: Postgres fires a
+# table's triggers in the order of their names, so those must be the same)
+NUMBERED = re.compile(r"(__never__)\d+|(__tree)\w*")
 # what a body says by place, which follows the order of what it is about: the n-th item of an expression's
 # explanation (v[n]), a tree's hash (of its SQL)
 PLACES = re.compile(r"\bv\[\d+\]|'[0-9a-f]{32}'")
@@ -318,13 +321,45 @@ def sql_differences(before: dict[str, str], after: dict[str, str]) -> tuple[list
 PAGE = 2  # authz.list's pages are read this long
 
 
-def answers(db: DB, pol: Policy, users: list[str], context: Callable[[str], dict[str, str]], role: str) -> Answers:
+# an update tried as the app role and undone: what refused it, else 'allowed' (made by answers(), as the owner)
+TRY_UPDATE = """CREATE OR REPLACE FUNCTION public.invariance_try_update(p_sql text) RETURNS text LANGUAGE plpgsql AS $f$
+BEGIN
+  EXECUTE p_sql;
+  RAISE EXCEPTION 'invariance: allowed';
+EXCEPTION WHEN OTHERS THEN
+  RETURN CASE WHEN SQLERRM = 'invariance: allowed' THEN 'allowed' ELSE SQLSTATE || ': ' || SQLERRM END;
+END $f$;"""
+
+
+def guarded(pol: Policy) -> dict[str, list[str]]:
+    """The tables with two rules on columns or more, and every column those rules guard: an update of them all
+    is refused by each rule that doesn't hold, and Postgres says the first one's words."""
+    rules: dict[str, list[tuple[str, ...]]] = {}
+    for r in pol.rules:
+        if r.columns:
+            rules.setdefault(r.table, []).append(r.columns)
+    return {t: list(dict.fromkeys(c for cs in heads for c in cs)) for t, heads in rules.items() if len(heads) > 1}
+
+
+def answers(
+    db: DB,
+    pol: Policy,
+    users: list[str],
+    context: Callable[[str], dict[str, str]],
+    role: str,
+    refusals: bool = True,
+) -> Answers:
     """Every answer the policy gives on the data there, for each principal in users and nobody: keyed by what was
     asked, each the database's JSON. Read the same way each time (no sample, no order of the database's own), each
     principal's questions a block that leaves its session as it found it, the blocks in a few sessions side by
-    side (difftest's SESSIONS)."""
+    side (difftest's SESSIONS). With refusals, also which rule on columns refuses an update of every column such
+    rules guard, on each row of a table with two of them or more (guarded(); a rule after the change judges the
+    values set, so data renumbered isn't asked it)."""
     blocks: list[list[str]] = []
     lines: list[str] = []
+    tried = guarded(pol) if refusals else {}
+    if tried:
+        db.run(TRY_UPDATE)
 
     def emit(key: list[str], sql: str) -> None:
         lines.append(f"SELECT {lit(json.dumps(key))}, ({sql});")
@@ -386,6 +421,20 @@ def answers(db: DB, pol: Policy, users: list[str], context: Callable[[str], dict
                         f"SELECT coalesce(json_agg(json_build_array(i, to_json(authz.explain_rule({lit(rule_table)}, "
                         f"{lit(cmd)}, i, NULL)))), '[]') FROM ({rows[t.name]}) s(i)",
                     )
+        for rule_table, columns in tried.items() if pid else ():
+            t = type_of_table(pol, rule_table)
+            # each column set to NULL, or one that is NULL to the least value another row has
+            sets = ", ".join(
+                f"{q(c)} = CASE WHEN o.{q(c)} IS NULL THEN (SELECT x.{q(c)} FROM {qt(rule_table)} x "
+                f"WHERE x.{q(c)} IS NOT NULL ORDER BY 1 LIMIT 1) END"
+                for c in columns
+            )
+            update = f"UPDATE {qt(rule_table)} o SET {sets} WHERE {idsql(t, 'o')} = "
+            emit(
+                [u, "refused", t.name, rule_table],
+                f"SELECT coalesce(json_agg(json_build_array(i, public.invariance_try_update({lit(update)} || "
+                f"quote_literal(i)))), '[]') FROM ({rows[t.name]}) s(i)",
+            )
         lines += ["RESET ROLE;", *[f"RESET authz_ctx.{k};" for k in context(u)]]
         lines += ["RESET authz.user_id;", "RESET authz.principal_type;"]
     lines = []
@@ -469,6 +518,11 @@ def normal(key: tuple[str, ...], value: Answer, back: Callable[[str, str], str] 
     t = key[2]
     if kind == "explain_rule":
         return sorted([b(t, i), verdicts(lines)] for i, lines in value)
+    if kind == "refused":  # (which rule: its columns and table, not the row's key nor the rule as written)
+        return sorted(
+            [b(t, i), re.sub(r"^(42501: changing .+? of \S+) \S+ needs: .*", r"\1", said, flags=re.S)]
+            for i, said in value
+        )
     if kind in ("list", "pages", "rls", "view", "mask"):
         return sorted(b(t, i) for i in value)
     return sorted([b(t, i), v] for i, v in value)
@@ -743,7 +797,7 @@ def check(spec: Spec, db: DB, db2: DB, steps: int, workdir: str) -> tuple[list[s
             raise
         raise Skipped(str(e)) from None
     if "view definitions to plan" in base_sql:
-        raise Skipped("authz.lint() warns that a select rule is slow to plan")
+        raise Skipped("authz.lint() warns that a permission or a select rule is slow to plan")
     r = random.Random(f"invariance/{spec.seed}")
     passed: list[str] = []
     problems: list[str] = []
@@ -804,9 +858,10 @@ def check(spec: Spec, db: DB, db2: DB, steps: int, workdir: str) -> tuple[list[s
     for table in AUTHZ_ROWS:
         load(db2, table, data[table])
     db2.run("SELECT setval(pg_get_serial_sequence('authz.roles', 'id'), 100);")
-    got = answers(db2, pol, new_users, lambda u: contexts[u], gen.role)
+    got = answers(db2, pol, new_users, lambda u: contexts[u], gen.role, refusals=False)
     back = lambda tname, i: ren.ident(pol.types[tname], i, back=True) if tname in pol.types else i
-    diffs = differences(base, got, back, lambda u: ren.principal(u, back=True)) + page_problems(got)
+    asked = {k: v for k, v in base.items() if k[1:2] != ("refused",)}
+    diffs = differences(asked, got, back, lambda u: ren.principal(u, back=True)) + page_problems(got)
     if diffs:
         problems += [f"renumbered: {d}" for d in diffs[:8]]
     else:

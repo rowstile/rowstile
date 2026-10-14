@@ -131,9 +131,10 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   files it includes, one included from a folder below; its expressions broken over lines, then formatted by
   `rowstile fmt`. Each compiles to the same objects, read back as migrations read them, each made by the same
   SQL but for the order things come in, the lines they are on and the names the compiler numbers as it meets
-  them. Each is applied, and every answer on the policy's data is the same: lists (whole, and in pages of
-  two), checks, the rows each select rule shows, who holds what, why a write would be refused, the
-  invariants. <!-- checked: tests/invariance.py "the same answers" --> Then every key of each type is replaced by another drawn at random, in the rows, the link
+  them (not a rule on columns: Postgres fires a table's triggers in the order of their names, so each is named
+  after its rule). Each is applied, and every answer on the policy's data is the same: lists (whole, and in
+  pages of two), checks, the rows each select rule shows, who holds what, why a write would be refused, which
+  rule on columns refuses an update two of them guard, the invariants. <!-- checked: tests/invariance.py "the same answers" --> Then every key of each type is replaced by another drawn at random, in the rows, the link
   tables, the shares and the custom roles, and the answers are the same, mapped back. One policy and the nine
   fixed policies' SQL on every run; eight policies, and the fixed policies' answers, on the full run; twenty
   with new seeds every night.
@@ -298,7 +299,7 @@ each feature against each suite.
 | Conditions: `{...}`, `this`, read with the policy's rights | 1 | [language](reference/language.md) | `devx.sh`, `apply.sh`, `unit_test.py` | `conditions_test.py`, `genpolicy.py`, hand answers |
 | Inheritance and denies: `parent.view`, `and {condition}`, `and not`; moves, loops | 1 | [language](reference/language.md) | `scenario.sql`, `moves.sh`, `concurrency.sh`, `policy_errors.py`, `unit_test.py` | `difftest.py`, `interleave.py`, `small.py`, `genpolicy.py`, `stress.sh`, hand answers |
 | Custom roles in the policy: `roles : ... from ...`, `roles` in a permission | 1 | [language](reference/language.md) | `multi_scenario.sql`, `unit_test.py` | `difftest.py`, `genpolicy.py`, hand answers |
-| Rules: `select`, `insert`, `update` (before, after, on columns), `delete` | 1 | [language](reference/language.md) | `devx.sh`, `adversarial.sh`, `children.sh`, `integrations/fastapi` | `difftest.py`, `around.py`, `genpolicy.py`, hand answers |
+| Rules: `select`, `insert`, `update` (before, after, on columns), `delete` | 1 | [language](reference/language.md) | `devx.sh`, `adversarial.sh`, `unit_test.py`, `children.sh`, `integrations/fastapi` | `difftest.py`, `around.py`, `genpolicy.py`, hand answers |
 | Masked columns: `mask`, the view | 1 | [language](reference/language.md) | `masks.sh`, `multi_scenario.sql`, `apply.sh` | `difftest.py`, `genpolicy.py`, hand answers |
 | Scopes: what a key or a token may do | 1 | [identity](reference/identity.md) | `identity.sh`, `sessions.sh` | `difftest.py`, `genpolicy.py` |
 | Caveats: conditions a share carries | 1 | [language](reference/language.md) | `multi_scenario.sql` | `difftest.py`, `genpolicy.py`, hand answers |

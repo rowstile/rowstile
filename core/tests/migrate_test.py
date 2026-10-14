@@ -45,6 +45,7 @@ SCHEMAS = {
     "children": "tests/children_schema.sql",
 }
 
+REORDERED_COLUMN_RULES = "column rules written in another order"  # (whose migration must make no trigger again)
 # (name, schema, old policy, new policy)
 CASES: list[tuple[str, str, str, str]] = [
     (
@@ -117,6 +118,26 @@ CASES: list[tuple[str, str, str, str]] = [
     ),
     ("a rule that goes", "docs", DOCS, edit(DOCS, ("  delete                            : edit\n", ""))),
     ("a column rule that goes", "docs", DOCS, edit(DOCS, ("  update id, owner_id, confidential : share\n", ""))),
+    # a rule on columns, its functions and its trigger are named after its head: another column is another name
+    # (the old trigger goes), and the rules in another order are the same triggers
+    (
+        "a column rule on other columns",
+        "docs",
+        DOCS,
+        edit(DOCS, ("  update id, owner_id, confidential : share\n", "  update id, owner_id : share\n")),
+    ),
+    (
+        REORDERED_COLUMN_RULES,
+        "docs",
+        DOCS,
+        edit(
+            DOCS,
+            (
+                "  update folder_id after            : folder.edit\n  update id, owner_id, confidential : share\n",
+                "  update id, owner_id, confidential : share\n  update folder_id after            : folder.edit\n",
+            ),
+        ),
+    ),
     (
         "a table with no rules any more",
         "docs",
@@ -422,6 +443,10 @@ def main() -> None:
                 print(
                     f"FAIL  {label}: {'no migration' if all(m.empty for m in ms) else 'the migration drops something'}"
                 )
+                continue
+            if name == REORDERED_COLUMN_RULES and any(re.search(r"(?m)^(CREATE|DROP) TRIGGER", m.sql) for m in ms):
+                failed += 1
+                print(f"FAIL  {label}: the migration makes a column rule's trigger again")
                 continue
             if len(ms) == 1 and ms[0].empty:
                 print(f"ok    {label}: no migration needed")

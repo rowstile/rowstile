@@ -199,6 +199,8 @@ expect "a file claiming someone else as owner" "42501: permission denied: user 3
   -c "INSERT INTO app.files (folder_id, owner_id, name) VALUES (4, 1, 'x')"
 AS=2 expect "bob (may edit, not share) can't take ownership" "42501: changing id, owner_id, confidential of app.files 11 needs: share" -c "UPDATE app.files SET owner_id = 2 WHERE id = 11"
 AS=2 expect "...or move a file where he can't edit" "42501: changing folder_id of app.files 11 needs: folder.edit" -c "UPDATE app.files SET folder_id = 2 WHERE id = 11"
+# both at once: the rule on the row before the change speaks first, though `folder_id after` sorts first by its column
+AS=2 expect "...and both at once: the rule on the row before the change says why" "42501: changing id, owner_id, confidential of app.files 11 needs: share" -c "UPDATE app.files SET folder_id = 2, owner_id = 2 WHERE id = 11"
 AS=1 expect "alice can't move her folder under a folder she may not edit" "42501: changing parent_id of app.folders 4 needs: parent.edit or ({parent_id is null} and share)" -c "UPDATE app.folders SET parent_id = 20 WHERE id = 4"
 AS=2 expect "bob (may edit Design docs, not share it) can't cut it off from the folders above" "42501: changing id, owner_id, org_id, inherit of app.folders 4 needs: share" \
   -c "UPDATE app.folders SET inherit = false WHERE id = 4"
