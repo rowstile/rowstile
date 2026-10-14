@@ -232,6 +232,11 @@ case "$out" in *"type folder = app.folders"*"parent : folder = parent_id"*"membe
   ok "a draft: types, relations from columns and link tables, rules";; *) bad "draft" "${out:0:400} $(cat "$T/init.log")";; esac
 run apply "$T/i/db/policy.authz"; case "$out" in *": applied") ok "... which applies";; *) bad "draft applies" "$out";; esac
 CLI apply example/docs.authz >/dev/null 2>&1
+# --out: the draft, its first test and the lock file's folder somewhere else than db/, and rowstile.toml says where
+out=$(mkdir -p "$T/o" && cd "$T/o" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --out auth/policy 2>&1)
+[ -f "$T/o/auth/policy/policy.authz" ] && [ -f "$T/o/auth/policy/tests/first.authz" ] && [ ! -e "$T/o/db" ] &&
+  grep -q '^policy   = "auth/policy/policy.authz"$' "$T/o/rowstile.toml" && grep -q '^tests    = \["auth/policy/tests/\*.authz"\]$' "$T/o/rowstile.toml" &&
+  ok "init --out writes the draft and its first test there, and rowstile.toml names them" || bad "init --out" "$out $(ls -R "$T/o")"
 out=$(mkdir -p "$T/j" && cd "$T/j" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema nosuch 2>&1)
 case "$out" in *"no tables to draft a policy from in nosuch"*) ok "a schema with no tables is named";; *) bad "draft empty" "$out";; esac
 out=$(mkdir -p "$T/u" && cd "$T/u" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --users app.nosuch 2>&1)
