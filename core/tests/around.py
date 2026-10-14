@@ -106,7 +106,7 @@ OPEN = "around_open"  # a schema on that path, which someone else may create in
 NEW = "around_new"  # where the rows an insert is tried with wait: copies of rows there are, under keys of their own
 FIRST_NEW = 500000  # those keys start here, ten apart (a condition that reads the next row finds none)
 INSERTS = 6  # how many rows of each table an insert is tried with
-SLOW = "view definitions to plan"  # in the compiled policy: lint's warning that a select rule is slow to plan
+SLOW = "view definitions to plan"  # in the compiled policy: lint's warning that a permission or a rule is slow to plan
 SECRET = "around.py's secret, which signs its JWTs"  # authz.settings' jwt_secret, in a world's database
 TYPE_CLAIM = "kind"  # ... and its jwt_type_claim: what a token for a service says
 TOP = 1000000  # range partitions end here: ids never get that far, a partition made later starts here
@@ -1431,7 +1431,7 @@ def run(spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, sec
     if compiled.returncode != 0:
         raise Refused(compiled.stderr.strip().splitlines()[-1] if compiled.stderr.strip() else "refused")
     if SLOW in compiled.stdout:
-        raise Slow("authz.lint() warns that a select rule is slow to plan")
+        raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
     rnd = random.Random(f"around/run/{w.seed}")
     gen = genpolicy.gen_class(spec, policy_path, schema_path)(random.Random(spec.seed))

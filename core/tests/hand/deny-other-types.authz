@@ -1,0 +1,33 @@
+-- answer: deny-other-types
+-- Another type's permission beside a deny gives the permission, and the deny takes it away, below too.
+app role app_user
+
+type user = app.users
+type project = app.projects
+  member : user = app.memberships(project_id -> user_id)
+  can view = member
+type folder = app.folders
+  parent  : folder  = parent_id
+  project : project = app.backings(backer_id -> project_id)
+  viewer  : user    = app.folder_viewers(folder_id -> user_id)
+  blocked : user    = editor_id
+  can hidden = blocked or parent.hidden
+  can view   = (viewer or parent.view or project.view) and not hidden
+
+test "a project's members see its folders and those below, but where they are blocked"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given p   = {INSERT INTO app.projects (id) VALUES (1) RETURNING id}
+  given {INSERT INTO app.memberships (id, project_id, user_id) VALUES (1, $p, $ann)}
+  given f1  = {INSERT INTO app.folders DEFAULT VALUES RETURNING id}
+  given f2  = {INSERT INTO app.folders (parent_id, editor_id) VALUES ($f1, $ann) RETURNING id}
+  given f3  = {INSERT INTO app.folders (parent_id) VALUES ($f2) RETURNING id}
+  given f4  = {INSERT INTO app.folders (parent_id) VALUES ($f1) RETURNING id}
+  given {INSERT INTO app.backings VALUES ($p, 'folder', $f1), ($p, 'folder', $f3)}
+  given {INSERT INTO app.folder_viewers VALUES ($f4, $bo)}
+  user $ann can view folder $f1
+  user $ann cannot view folder $f2
+  user $ann cannot view folder $f3
+  user $ann can view folder $f4
+  user $bo can view folder $f4
+  user $bo cannot view folder $f1

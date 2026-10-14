@@ -129,8 +129,12 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   must inherit the same way (`can hidden = blocked or parent.hidden`), so it covers
   everything below; a deny on one object that only cuts inheritance there is refused, with
   a message saying so. <!-- checked: tests/policy_errors.py "a deny that doesn't cover what is below"; tests/unit_test.py "test_a_deny_inside_inheritance_covers_everything_below" --> <!-- answer: deny-below -->
-  A permission with a deny inherits within its own type, not through
-  another type's permission (`project.view`). A condition joined the same way holds at every level:
+  A deny can't inherit through a relation that also points at another type (`parent : folder, project`:
+  give the projects a relation of their own), nor through another type's permission that comes back to it
+  (a `project.view` that inherits from folders): both are refused (AZ306). <!-- checked: tests/policy_errors.py "a deny on a permission that inherits through a relation to another type too"; tests/policy_errors.py "a deny on a permission that inherits through another type" -->
+  Another type's permission beside the deny is fine: in `(viewer or parent.view or project.view) and not hidden`,
+  `project.view` gives `view` like `viewer` does, and `hidden` takes it away. <!-- answer: deny-other-types -->
+  A condition joined the same way holds at every level:
   `(viewer or parent.view) and {not archived}` stops at an archived folder. <!-- answer: condition-every-level -->
 - **Custom roles**: `roles : user, team#member` says who may hold roles people create at runtime
   (`authz.create_role('org', 1, 'folder', 'reviewer', ARRAY['view'])`) and share like relations. A
@@ -154,6 +158,9 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   row before the change (`update owner_id : share`, or
   `update owner_id before : share`) or after it (`update folder_id after : folder.edit`: where
   a row moves to); `authz.lint()` warns about a move nothing checks the destination of. <!-- checked: tests/governance.sh "lint finds a move nothing checks the destination of" --> <!-- answer: column-rules -->
+  An update two column rules both refuse is refused in the words of a rule on the row before the change first
+  (`update id, owner_id` before `update folder_id after`), then of the one whose columns come first in name
+  order, whatever order the policy writes them in. <!-- checked: tests/adversarial.sh "and both at once: the rule on the row before the change says why"; tests/invariance.py "the same answers"; tests/unit_test.py "test_triggers_are_named_after_what_they_guard" -->
   **Invariants** state what must never be true, for everyone who can sign in (each user, each
   service or other principal) and for nobody. <!-- checked: tests/principals.sh "invariants are asked as each service too, named as the audit trail names it"; tests/principals.sh "and as nobody: the row with no user" --> <!-- answer: invariants -->
 - **Tests**: the unnamed `test` section checks the data already in the database, with lines

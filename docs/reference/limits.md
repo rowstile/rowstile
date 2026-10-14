@@ -100,7 +100,9 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   writes a view out in full every time a query names it, again for each view it names. A rule that reaches
   another type's permission (`folder.view`), which names others more than once, which do the same, multiplies:
   the policies in this repository make Postgres write out at most a dozen views for a read, and at around a
-  hundred, planning alone takes tens to hundreds of milliseconds for every query, before a row is read.
+  hundred, planning alone takes a tenth of a second and more for every query, before a row is read, up to a
+  second or two. `authz.lint()` warns about each permission that makes it write out more than fifty, whether
+  a rule names it or only `authz.list` and `authz.can` check it. <!-- checked: tests/governance.sh "lint finds a permission no rule reads that is slow to plan" -->
   Tiers that include each other and inherit from the row above don't multiply: with `can edit = owner or
   editor or parent.edit` and `can view = edit or viewer or parent.view`, `view` looks up `parent.view` alone,
   which includes `parent.edit`, so each type in a chain adds the same few views. A query that joins tables

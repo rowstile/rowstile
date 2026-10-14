@@ -22,6 +22,17 @@ Each release upgrades from the one before it. How releases are numbered and made
   so the pull request that fixes the mistake got no review and the review's CI job failed. It says first that
   the base has a mistake, with its line there and its code, and reviews the policy as new, as where the base has
   none; `--json` has it as `base_mistake` (`line`, `message`, `code`).
+- `authz.lint()` warns about any permission that makes Postgres write out more than fifty views to plan a check
+  of it, with the permission (`note.read`) and its line; applying shows the warning too. It warned for select
+  rules alone, so a permission only `authz.list`, `authz.can` or a write rule checks could take tenths of a
+  second to plan on every call with nothing said.
+- A rule on columns (`update owner_id : share`) has a trigger named after the rule's head
+  (`authz_update owner_id`, `authz_update_after parent_id`), no longer numbered in the order the policy writes
+  its rules (`authz_update_1`); so are its functions. Postgres fires a table's triggers in the order of their
+  names, and the first to refuse an update says why: an update two such rules refuse now shows the words of a
+  rule on the row before the change first, then of the one whose columns come first by name, whatever the order
+  the rules are written in. They may be the other rule's than before. Apply the policy again (or the next
+  migration) to take it.
 
 ### Fixed
 

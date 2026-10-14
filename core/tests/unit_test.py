@@ -397,11 +397,50 @@ class ColumnRules(unittest.TestCase):
                     continue
                 self.assertNotRegex(body, r"\bauthz_int\.", f"{name} runs as its caller and names authz_int")
         sql = Compiler(parse_policy(ruled)).compile("x")
-        holds = re.findall(r'CREATE FUNCTION authz_gen\."cx\.\w+:column_\d+:holds".*?END;', sql, re.S)
+        holds = re.findall(r'CREATE FUNCTION authz_gen\."cx\.\w+:column [\w, ]+:holds".*?END;', sql, re.S)
         self.assertEqual(
-            len(holds), len(re.findall(r'IF NOT authz_gen\."cx\.\w+:column_\d+:holds"\(v_row\) THEN', sql))
+            len(holds), len(re.findall(r'IF NOT authz_gen\."cx\.\w+:column [\w, ]+:holds"\(v_row\) THEN', sql))
         )
         self.assertTrue(any('"bot__me"' in fn for fn in holds), "the rule that names the bot is behind no function")
+
+    def test_triggers_are_named_after_what_they_guard(self) -> None:
+        # Postgres fires a table's triggers in the order of their names, and the first that refuses says why: so a
+        # rule's trigger (and its functions) are named after the rule's head, the same wherever the rule is written
+        # (rules on another table before it too), within 63 bytes and each its own; and a rule on the row before
+        # the change speaks before one on the row after it, whatever their columns (`a after` sorts first by them)
+        long = "a_column_named_at_some_length"
+        heads = ["owner_id", "title after", "a_b", "a, b", f"{long}_1, {long}_2", f"{long}_1, {long}_3", "a after"]
+        heads.append(f"{long}_1, {long}_4 after")
+        rules = [f"  update {h} : owner\n" for h in heads]
+        types = (
+            "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+            "  can edit = owner\ntype note = app.notes\n  doc : doc = doc_id\n"
+        )
+        docs = "rules app.docs\n  select : edit\n  update : edit\n"
+        notes = "rules app.notes\n  update : doc.edit\n  update x : doc.edit\n"
+        trigger = re.compile(
+            r'CREATE TRIGGER ("[^"]+") BEFORE UPDATE ON ("\w+"\."\w+") FOR EACH ROW\n  WHEN .*?EXECUTE FUNCTION ([^(]+)\(\);',
+            re.S,
+        )
+
+        def triggers(text: str) -> list[tuple[str, str, str]]:
+            return trigger.findall(Compiler(parse_policy(text)).compile("x"))
+
+        made = triggers(types + docs + "".join(rules) + notes)
+        self.assertEqual(sorted(made), sorted(triggers(types + notes + docs + "".join(reversed(rules)))))
+        mine = [n for n, t, _ in made if t == '"app"."docs"']
+        self.assertEqual(
+            mine[:4],
+            ['"authz_update owner_id"', '"authz_update_after title"', '"authz_update a_b"', '"authz_update a, b"'],
+        )
+        self.assertEqual(len(set(mine)), len(heads))
+        # (Postgres compares the names byte by byte, as sorted() does them here)
+        fired = sorted(n[1:-1] for n in mine)
+        self.assertEqual([n.startswith("authz_update_after ") for n in fired], [False] * 5 + [True] * 3, fired)
+        self.assertEqual(fired[5], "authz_update_after a")
+        self.assertTrue(all(len(n[1:-1].encode()) <= 63 for n in mine), mine)
+        self.assertEqual(len({f for _, _, f in made}), len(made))
+        self.assertIn(('"authz_update x"', '"app"."notes"', 'authz_int."app.notes:column x"'), made)
 
 
 class SlowPlans(unittest.TestCase):
@@ -445,6 +484,28 @@ class SlowPlans(unittest.TestCase):
         # two levels are few, and the policies here say nothing
         for text in (self.heavy(2), read(POLICIES["docs"]), read(POLICIES["multi"])):
             self.assertNotIn("view definitions to plan", Compiler(parse_policy(text)).compile("x"))
+
+    def test_a_permission_no_rule_reads_is_a_lint_warning_too(self) -> None:
+        # no rule: authz.list and authz.can still plan doc.view's 191 views, and team.p6's 64 (p5's 32 are few)
+        text = self.heavy(6).replace("rules app.docs\n  select : view\n", "")
+        sql = Compiler(parse_policy(text, "x.authz")).compile("x.authz")
+        warned = re.findall(
+            r"object := '([\w.]+)';\n  problem := 'names permissions [^\n]*view definitions to plan", sql
+        )
+        self.assertEqual(warned, ["team.p6", "doc.view"])
+        self.assertIn(
+            "  severity := 'warning'; object := 'doc.view';\n  problem := 'names permissions that name others more than "
+            "once (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'permission doc.view'), "
+            "'?') || '), and Postgres writes each one out again every time: 191 view definitions to plan each check of "
+            "it (authz.list, authz.can, a rule that names it) before a row is read, which can take a tenth of a second "
+            "and more, up to a second or two. Name each permission once on the way';",
+            sql,
+        )
+        self.assertIn("('permission doc.view', 'line 14')", sql)
+        # with the select rule, its table is named as before, and each permission too
+        sql = Compiler(parse_policy(self.heavy(6), "x.authz")).compile("x.authz")
+        self.assertEqual(re.findall(r"object := '([\w.]+)';\n  problem := 'names permissions", sql), warned)
+        self.assertIn('object := to_regclass(\'"app"."docs"\')::text;\n  problem := \'its select rule', sql)
 
     @staticmethod
     def chain(levels: int) -> str:
@@ -5530,6 +5591,48 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("deny-other-types")
+    def test_a_deny_beside_another_types_permission(self) -> None:
+        # ann: project 1's member, so folders 1 and 3 (in project 1) and all below 1; blocked on 2, so 2 and 3 are
+        # hidden from her, even 3, which project.view gives her on its own
+        policy = (
+            "type user = app.users\ntype project = app.projects\n"
+            "  member : user = app.project_members(project_id -> user_id)\n  can view = member\n"
+            "type folder = app.folders\n  parent : folder = parent_id\n  project : project = project_id\n"
+            "  viewer : user = app.folder_viewers(folder_id -> user_id)\n"
+            "  blocked : user = app.folder_blocks(folder_id -> user_id)\n  can hidden = blocked or parent.hidden\n"
+            "  can view = (viewer or parent.view or project.view) and not hidden\n"
+        )
+        self.check(
+            policy,
+            "user: ann, bo\nproject: 1\nproject 1 member user ann\nfolder: 1, 2, 3, 4\nfolder 2 parent folder 1\n"
+            "folder 3 parent folder 2\nfolder 4 parent folder 1\nfolder 1 project project 1\n"
+            "folder 3 project project 1\nfolder 4 viewer user bo\nfolder 2 blocked user ann\n",
+            {
+                "ann": {"project.view": "1", "folder.view": "1, 4", "folder.hidden": "2, 3"},
+                "bo": {"project.view": "", "folder.view": "4", "folder.hidden": ""},
+                "": {"folder.view": ""},
+            },
+        )
+        # refused: the deny's inheritance through a relation that points at projects too, and through a project.view
+        # that comes back to folders
+        for text, words in (
+            (
+                policy.replace(
+                    "  parent : folder = parent_id\n", "  parent : folder, project = (parent_type, parent_id)\n"
+                ),
+                "folder.view has a deny and inherits through parent, which also points at other types",
+            ),
+            (
+                policy.replace(
+                    "  can view = member\n", "  folder : folder = folder_id\n  can view = member or folder.view\n"
+                ),
+                "folder.view has a deny, so it can only inherit within folder",
+            ),
+        ):
+            with self.assertRaisesRegex(PolicyError, re.escape(words) + r".*\[AZ306\]"):
+                Compiler(parse_policy(self.HEAD + text, "hand.authz")).compile("hand.authz")
+
     @worked_from("condition-every-level")
     def test_a_condition_joined_to_inheritance_stops_it_but_names_below_still_count(self) -> None:
         self.check(
@@ -9591,6 +9694,9 @@ class GeneratedShapes(unittest.TestCase):
         seeds, unmet, never = self.g.covering(1000)
         self.assertLessEqual(len(seeds), 20)
         self.assertEqual((unmet, never), (set(), set()))
+        for seed in seeds:  # each one's policy can be checked: not slow to plan (run() would set it aside)
+            sql = Compiler(parse_policy(self.g.policy_text(self.g.make(seed)), "g.authz")).compile("g.authz")
+            self.assertNotIn("view definitions to plan", sql, seed)
         met = set().union(*(self.g.pairs(self.g.make(seed)) for seed in seeds))
         self.assertEqual(met, set(itertools.combinations(sorted(self.g.FEATURES), 2)) - self.g.APART)
 

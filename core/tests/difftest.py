@@ -53,7 +53,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 import compile_policy  # noqa: E402
 from authzlib import evaluate  # noqa: E402
 from authzlib.parse import Caveat, Cols, Policy, Rule, Source, Type  # noqa: E402
-from authzlib.sqlutil import q, qt  # noqa: E402  (names as the policy writes them, quoted: capitals, reserved words)
+from authzlib.sqlutil import ident, q, qt  # noqa: E402  (names as the policy writes them, quoted: capitals, ...)
 from decisions import Decisions, Gain, Plan, allows, scope_items  # noqa: E402
 
 # the database's answers, read back as JSON: their shape is what the checks compare
@@ -378,30 +378,35 @@ class Checker:
                 "FROM pg_policies WHERE policyname LIKE 'authz\\_%'"
             )[1]
         )
-        # Column rules (`update owner_id : share`) are triggers, numbered in the compiler's order: each one's
-        # condition is read back from its function, to be evaluated on every row as the policies' are.
-        triggers: dict[str, str] = dict(
-            json.loads(
+        # Column rules (`update owner_id : share`) are triggers, named after the rule's head on their table: each
+        # one's condition is read back from its function, to be evaluated on every row as the policies' are.
+        triggers: dict[tuple[str, str], str] = {
+            (table, name): body
+            for table, name, body in json.loads(
                 self.db.run(
-                    "SELECT coalesce(json_agg(json_build_array(tg.tgname, pg_get_functiondef(tg.tgfoid))), '[]') "
-                    "FROM pg_trigger tg WHERE tg.tgname LIKE 'authz\\_update\\_%' AND NOT tg.tgisinternal"
+                    "SELECT coalesce(json_agg(json_build_array(n.nspname || '.' || c.relname, tg.tgname, "
+                    "pg_get_functiondef(tg.tgfoid))), '[]') FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE (tg.tgname LIKE 'authz\\_update %' OR tg.tgname LIKE 'authz\\_update\\_after %') AND NOT tg.tgisinternal"
                 )[1]
             )
-        )
+        }
         by_table: dict[str, list[Rule]] = {}
         for r in self.rules:
             by_table.setdefault(r.table, []).append(r)
         ruled = [r for rules in by_table.values() for r in rules if r.columns and r.command != "mask"]
+        triggers = {k: v for k, v in triggers.items() if k[0] in by_table}  # (not the copies on tables that inherit)
         if len(triggers) != len(ruled):
             raise SystemExit(
                 f"{len(ruled)} column rules in the policy, {len(triggers)} triggers for them: {sorted(triggers)}"
             )
         self.column_rules: list[tuple[Rule, str]] = []
-        for n, r in enumerate(ruled, 1):
-            m = COLUMN_CHECK.search(triggers[f"authz_update_{n}"])
+        for r in ruled:
+            name = ident(f"authz_update{'_after' if r.command == 'update check' else ''} {', '.join(r.columns)}")
+            m = COLUMN_CHECK.search(triggers.get((r.table, name), ""))
             if not m or (m.group(1) == "NEW") != (r.command == "update check"):
                 raise SystemExit(
-                    f"{r.table}, the rule on {', '.join(r.columns)}: its trigger authz_update_{n} doesn't "
+                    f"{r.table}, the rule on {', '.join(r.columns)}: its trigger {name} is missing, or doesn't "
                     f"check the row {'after' if r.command == 'update check' else 'before'} the change"
                 )
             self.column_rules.append((r, f"{m.group(2)}(the_row)"))  # asked of each row, FROM <table> the_row
