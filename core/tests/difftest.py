@@ -2531,7 +2531,8 @@ class CrossGen(Gen):
     a column and by shares; a region's guests, users or links, whose links whoever may share the region sees and
     only its chiefs turn off; a site's wardens, the chiefs of the region a column names; an update rule with an
     after rule on the whole row; notes, a table with rules and no select rule, whose `open` is conditions alone; a
-    project's backers, folders or regions a table names with their type (one it doesn't know gives nothing)."""
+    project's backers, folders or regions a table names with their type (one it doesn't know gives nothing); and a
+    deny through each pair that names its rows' type (`not parent.file`, `not backer.fund`)."""
 
     policy = "tests/cross.authz"
     schema = "tests/cross_schema.sql"

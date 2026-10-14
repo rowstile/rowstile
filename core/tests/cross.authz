@@ -22,6 +22,7 @@ type folder = cx.folders where {not archived}
   -- this. stays as written there; and <>-1 is <> then a minus, as Postgres reads it
   can file = owner or (parent.file and {owner_id is null /* this.owner_id: nobody's */ and parent_type <> $$this.id$$ and parent_type <> e'it\'s' and parent_type <> 'this.id''s' and id <>-1})
   can fund = owner or parent.fund
+  can tidy = owner and not parent.file                          -- a deny through the column's (type, id) pair
 
 type project = cx.projects
   inside : folder = cx.placements(project_id -> folder_id) where {active}   -- placed in folders by a table
@@ -32,6 +33,7 @@ type project = cx.projects
   can view = edit or inside.view or host.view
   can file = lead
   can fund = lead or backer.fund
+  can judge = view and not backer.fund                          -- a deny through the table's (type, id) pair
 
 type region = cx.regions                                                    -- regions and sites hold each other,
   over  : site   = cx.site_links(region_id -> site_id) where {active}        -- through tables only, and nothing

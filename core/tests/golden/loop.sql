@@ -4191,18 +4191,19 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     RETURN NEXT;
   END LOOP;
   -- lookups the permission views make
-  FOR r IN SELECT * FROM (VALUES ('"lp"."users"', 'id', 'user: find one by its key, for checks and write rules'), ('"lp"."orgs"', 'owner_id', 'org.owner: find objects by owner_id'), ('"lp"."orgs"', 'settings_id', 'org.settings: find objects by settings_id'), ('"lp"."orgs"', 'id', 'org: find one by its key, for checks and write rules'), ('"lp"."settings"', 'email_id', 'setting.email: find objects by email_id'), ('"lp"."settings"', 'id', 'setting: find one by its key, for checks and write rules'), ('"lp"."emails"', 'domain_id', 'email.domain: find objects by domain_id'), ('"lp"."emails"', 'id', 'email: find one by its key, for checks and write rules'), ('"lp"."domains"', 'org_id', 'domain.org: find objects by org_id'), ('"lp"."domains"', 'id', 'domain: find one by its key, for checks and write rules')) v(tbl, col, why) WHERE tbl IS NOT NULL LOOP
+  FOR r IN SELECT * FROM (VALUES ('"lp"."users"', 'id', 'user: find one by its key, for checks and write rules', NULL), ('"lp"."orgs"', 'owner_id', 'org.owner: find objects by owner_id', NULL), ('"lp"."orgs"', 'settings_id', 'org.settings: find objects by settings_id', NULL), ('"lp"."orgs"', 'id', 'org: find one by its key, for checks and write rules', NULL), ('"lp"."settings"', 'email_id', 'setting.email: find objects by email_id', NULL), ('"lp"."settings"', 'id', 'setting: find one by its key, for checks and write rules', NULL), ('"lp"."emails"', 'domain_id', 'email.domain: find objects by domain_id', NULL), ('"lp"."emails"', 'id', 'email: find one by its key, for checks and write rules', NULL), ('"lp"."domains"', 'org_id', 'domain.org: find objects by org_id', NULL), ('"lp"."domains"', 'id', 'domain: find one by its key, for checks and write rules', NULL)) v(tbl, col, why, alone) WHERE tbl IS NOT NULL LOOP
     CONTINUE WHEN to_regclass(r.tbl) IS NULL;
     -- a plain view can't have an index: the tables under it answer the lookups
     CONTINUE WHEN (SELECT c.relkind FROM pg_class c WHERE c.oid = to_regclass(r.tbl)) = 'v';
-    -- an index whose first columns are these (one, or a composite key's, in any order): a finished one, with no
+    -- an index whose first columns are these (one, or a composite key's, in any order), or what serves a (type, id)
+    -- pair alone (its ids where they are two columns, its type where its id is one): a finished one, with no
     -- condition (the lookups are joins, which a partial index doesn't serve), as rowstile indexes counts them
-    IF NOT EXISTS (SELECT 1 FROM pg_index i
-                   WHERE i.indrelid = to_regclass(r.tbl) AND i.indisvalid AND i.indpred IS NULL
+    IF NOT EXISTS (SELECT 1 FROM pg_index i, unnest(ARRAY[r.col, r.alone]) w(cs)
+                   WHERE w.cs IS NOT NULL AND i.indrelid = to_regclass(r.tbl) AND i.indisvalid AND i.indpred IS NULL
                      AND (SELECT array_agg(a.attname::text ORDER BY a.attname)
-                          FROM unnest((i.indkey::int2[])[0:cardinality(string_to_array(r.col, ', ')) - 1]) k
+                          FROM unnest((i.indkey::int2[])[0:cardinality(string_to_array(w.cs, ', ')) - 1]) k
                           JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k)
-                         = (SELECT array_agg(c ORDER BY c) FROM unnest(string_to_array(r.col, ', ')) c)) THEN
+                         = (SELECT array_agg(c ORDER BY c) FROM unnest(string_to_array(w.cs, ', ')) c)) THEN
       severity := 'performance'; object := to_regclass(r.tbl)::text || '.' || r.col;
       problem := format('no index starts with %s (%s): CREATE INDEX ON %s (%s)',
                         CASE WHEN r.col LIKE '%, %' THEN 'these columns' ELSE 'this column' END, r.why, to_regclass(r.tbl),

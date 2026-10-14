@@ -770,6 +770,16 @@ class Core:
         assert columns is not None, f"a {src.kind} source without a subject column"
         return columns
 
+    def pair_alone(self, src: Source) -> tuple[str, ...]:
+        """The columns an index on which serves a (type, id) pair's lookup by itself (none without a type column), as
+        rowstile indexes and authz.lint() count them. Ids of two columns are compared column by column (key_in): an
+        index on them. An id of one column is compared through (CASE WHEN type = 'x' THEN id END), which no index on
+        it serves; the type's condition beside it (of_type) is what one serves: an index on the type column."""
+        if not src.type_col:
+            return ()
+        ids = cols(self.source_columns(src))
+        return ids if len(ids) > 1 else (src.type_col,)
+
     def check_key_columns(
         self, t: Type, r: Relation, src: Source, columns: Cols, targets: list[str], side: str
     ) -> None:
@@ -1208,12 +1218,33 @@ class Core:
             return f"{self.key(t, a)} = ANY ({arr})"
         return self.key_in(t, a, f"SELECT unnest({arr}) AS id")
 
+    def of_type(self, src: Source, a: str, subj_type: str, sql: str) -> str:
+        """sql, which compares the id of row a's (type, id) pair with ids of subj_type, with the type's own condition
+        beside it: the same answer (the pair's id is NULL on the other types' rows, and so is sql), and an index on
+        (type, id) serves the type's part at least. A source without a type column: sql as it is."""
+        return f"({a}.{q(src.type_col)} = {lit(subj_type)} AND {sql})" if src.type_col else sql
+
     def subject_is(self, src: Source, a: str, subj_type: str, v: str) -> str:
         """A column/table source's subject columns on row a hold v, an id of subj_type."""
         st = self.T(subj_type)
         if not st.composite:
-            return f"{self.subject_id(src, a, subj_type)} = {v}"
+            return self.of_type(src, a, subj_type, f"{self.subject_id(src, a, subj_type)} = {v}")
         sql = self.key_is(st, a, v, self.source_columns(src))
+        return sql + (f" AND {a}.{q(src.type_col)} = {lit(subj_type)}" if src.type_col else "")
+
+    def subject_in(self, src: Source, a: str, subj_type: str, view: str) -> str:
+        """A column/table source's subject columns on row a hold one of the subj_type ids in view. A composite
+        key's columns are compared column by column (key_in), so an index on them serves the lookup: its
+        built id, compared as text, would need every row read."""
+        st = self.T(subj_type)
+        if not st.composite:
+            return self.of_type(src, a, subj_type, f"{self.subject_id(src, a, subj_type)} {self.ids_in(view)}")
+        ids = (
+            f"SELECT unnest({self.group_ids(view)}) AS id"
+            if view in self.nested
+            else f"SELECT id FROM authz_int.{q(view)}"
+        )
+        sql = self.key_in(st, a, ids, self.source_columns(src))
         return sql + (f" AND {a}.{q(src.type_col)} = {lit(subj_type)}" if src.type_col else "")
 
     def subject_id(self, src: Source, alias: str, subj_type: str) -> str:
@@ -1243,23 +1274,18 @@ class Core:
         principal is (subject subj: a user or other principal, a group, user:*, anyone or a link)."""
         st, sr = subj
         if src.kind in ("column", "table"):
+            a = "r" if src.kind == "column" else "s"
             if self.is_principal(st) and not sr:
-                match = f"= {self.me(st)}"
+                match = self.of_type(src, a, st, f"{self.subject_id(src, a, st)} = {self.me(st)}")
             elif sr:
-                match = self.ids_in(self.view_ref(self.T(st), sr, src.loc))
+                match = self.subject_in(src, a, st, self.view_ref(self.T(st), sr, src.loc))
             else:
                 return None
             if src.kind == "column":
-                return (
-                    f"SELECT {self.key(t, 'r')} AS id FROM {qt(t.table)} r "
-                    f"WHERE {self.subject_id(src, 'r', st)} {match}"
-                )
+                return f"SELECT {self.key(t, 'r')} AS id FROM {qt(t.table)} r WHERE {match}"
             assert src.table is not None and src.obj_col is not None
             extra = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
-            return (
-                f"SELECT {self.ref(t, 's', src.obj_col)} AS id FROM {qt(src.table)} s "
-                f"WHERE {self.subject_id(src, 's', st)} {match}{extra}"
-            )
+            return f"SELECT {self.ref(t, 's', src.obj_col)} AS id FROM {qt(src.table)} s WHERE {match}{extra}"
         # shares and custom roles live in authz.shares
         who = self.share_subject_sql(st, sr, src)
         if who is None:
@@ -1355,6 +1381,7 @@ class Core:
             return name
         direct: list[str] = []
         loops: list[str] = []
+        looked_up: list[str] = []  # the same, each one's groups found column by column (match)
         loop_kinds: set[str] = set()
         for src in r.sources:
             if ext and src.kind == "column":
@@ -1362,6 +1389,7 @@ class Core:
             for st, sr in src.subjects:
                 if sr and sr != "*" and self.is_group_loop(t, r, st, sr):
                     loops.append(self.pair_sql(t, r, src, st, sr, "obj", "subj"))
+                    looked_up.append(self.pair_sql(t, r, src, st, sr, "obj", "subj", match=("subj", "m.id")))
                     loop_kinds.add(src.kind)
                     continue
                 part = self.source_sql(t, r, src, (st, sr))
@@ -1399,7 +1427,12 @@ class Core:
                 if t.where
                 else ""
             )
-            if loop_kinds <= {"column", "table"}:
+            if loop_kinds <= {"column", "table"} and t.composite:
+                # a composite id compared as text would read every row at each step: its columns are looked up
+                step = f"SELECT unnest(ARRAY(SELECT e.obj FROM (\n  {union(looked_up)}) e)) FROM m" + (
+                    f"\n    WHERE {valid}" if valid else ""
+                )
+            elif loop_kinds <= {"column", "table"}:
                 step = f"SELECT unnest(ARRAY(SELECT e.obj FROM (\n  {union(loops)}) e WHERE e.subj = m.id)) FROM m" + (
                     f"\n    WHERE {valid}" if valid else ""
                 )
@@ -1453,14 +1486,14 @@ class Core:
                 if src.kind == "column":
                     parts.append(
                         f"SELECT {self.key(t, 'r')} AS id FROM {qt(t.table)} r "
-                        f"WHERE {self.subject_id(src, 'r', st)} {self.ids_in(inner)}"
+                        f"WHERE {self.subject_in(src, 'r', st, inner)}"
                     )
                 elif src.kind == "table":
                     assert src.table is not None and src.obj_col is not None
                     extra = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
                     parts.append(
                         f"SELECT {self.ref(t, 's', src.obj_col)} AS id FROM {qt(src.table)} s "
-                        f"WHERE {self.subject_id(src, 's', st)} {self.ids_in(inner)}{extra}"
+                        f"WHERE {self.subject_in(src, 's', st, inner)}{extra}"
                     )
                 else:
                     parts.append(
@@ -1898,10 +1931,10 @@ class Core:
                 if src.kind == "table":
                     assert src.table is not None and src.obj_col is not None
                     extra = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
+                    holds = self.of_type(src, "s", st, f"{fn}({self.subject_id(src, 's', st)})")
                     parts.append(
                         f"EXISTS (SELECT 1 FROM {qt(src.table)} s WHERE "
-                        f"{self.key_is(t, 's', obj, src.obj_col)}{extra} "
-                        f"AND {fn}({self.subject_id(src, 's', st)}))"
+                        f"{self.key_is(t, 's', obj, src.obj_col)}{extra} AND {holds})"
                     )
                 else:
                     parts.append(
@@ -1945,7 +1978,8 @@ class Core:
             for st in names:
                 if (st, None) in src.subjects:
                     view = self.view_ref(self.T(st), perm_name, loc)
-                    parts.append(self.lookup_sql(view, self.subject_id(src, alias, st), point))
+                    lookup = self.lookup_sql(view, self.subject_id(src, alias, st), point)
+                    parts.append(self.of_type(src, alias, st, lookup))
         if any(src.kind != "column" for src in r.sources):
             checks = {st: self.point_checks.get(self.view_ref(self.T(st), perm_name, loc)) for st in names}
             if point and all(checks.values()):
@@ -1974,9 +2008,11 @@ class Core:
             for st, sr in src.subjects:
                 sid = self.subject_id(src, alias, st)
                 if self.is_principal(st) and not sr:
-                    parts.append(f"coalesce({sid} = {self.me(st)}, false)")
+                    me = self.of_type(src, alias, st, f"{sid} = {self.me(st)}")
+                    parts.append(f"coalesce({me}, false)")
                 elif sr:
-                    parts.append(self.lookup_sql(self.view_ref(self.T(st), sr, loc), sid, point))
+                    lookup = self.lookup_sql(self.view_ref(self.T(st), sr, loc), sid, point)
+                    parts.append(self.of_type(src, alias, st, lookup))
         if any(src.kind != "column" for src in r.sources):
             ext = any(src.kind == "column" for src in r.sources)  # only split off when needed
             parts.append(self.lookup_sql(self.ensure_rel_view(t, r, loc, ext=ext), self.key(t, alias), point))

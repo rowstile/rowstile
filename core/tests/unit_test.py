@@ -761,6 +761,70 @@ class CompositeKeys(unittest.TestCase):
         self.assertIn('(c."org_id", c."id") = (((up._a)::authz_gen."folder__key")."org_id"', sql)
         self.assertNotRegex(sql, r'ROW\(c\."org_id"[^)]*\)::text = up\._a')
 
+    def test_lookups_for_a_set_go_column_by_column(self) -> None:
+        """The rows whose columns name one of a set (the folders a user edits, the teams they are in, a (type,
+        [org_id, id]) pair's projects) are looked up by the columns: a row's id built as text and compared
+        could only be found by reading every row (tests/confidence_test.py shows the plans)."""
+        sql = compiled("composite")
+        views = "\n".join(re.findall(r'CREATE VIEW authz_int\."[^"]+" AS\n.*?;\n', sql, re.S))
+        self.assertNotRegex(views, r"IS NOT NULL THEN ROW\([^)]*\)::text END\)\s*(IN \(SELECT id FROM authz_int|= ANY)")
+        for view, lookup in (
+            (
+                "file__folder__edit",
+                '(r."org_id", r."folder_id") IN (SELECT (k.k)."org_id", (k.k)."id" FROM (SELECT '
+                'x.id::authz_gen."folder__key" AS k FROM (SELECT id FROM authz_int."folder__edit") x) k)',
+            ),
+            (
+                "folder__editor",
+                '(s."org_id", s."team_slug") IN (SELECT (k.k)."org_id", (k.k)."slug" FROM (SELECT '
+                'x.id::authz_gen."team__key" AS k FROM (SELECT unnest((SELECT authz_gen."team__member__ids"())::text[]) '
+                "AS id) x) k)",
+            ),
+            (
+                "folder__parent__edit__on_project",
+                '(r."org_id", r."parent_id") IN (SELECT (k.k)."org_id", (k.k)."id" '
+                'FROM (SELECT x.id::authz_gen."project__key" AS k FROM (SELECT id FROM authz_int."project__edit") x) k) '
+                "AND r.\"parent_type\" = 'project'",
+            ),
+        ):
+            body = search(rf'CREATE VIEW authz_int\."{view}" AS\n(.*?);\n', sql, re.S).group(1)
+            self.assertIn(lookup, body, view)
+        # teams in teams, with no shares among them: each step of the walk finds the teams a team is in by their
+        # columns (with shares among them too, each step still joins)
+        text = read(POLICIES["composite"]).replace("  member : team#member  shared\n", "")
+        walk = search(
+            r'CREATE VIEW authz_int\."team__member" AS\n(.*?);\n',
+            Compiler(parse_policy(text, POLICIES["composite"])).compile("x"),
+            re.S,
+        ).group(1)
+        self.assertIn('(s."org_id", s."slug") = (((m.id)::authz_gen."team__key")."org_id"', walk)
+        self.assertNotIn("e.subj = m.id", walk)
+
+    def test_a_pairs_type_is_beside_its_case(self) -> None:
+        """A (type, id) pair whose id is one column is read through a CASE on the type, which no index serves: the
+        type's own condition beside it is what an index on (type, id) serves (tests/confidence_test.py shows the
+        plans), in the views and in the row checks alike."""
+        sql = compiled("cross")
+        for view, lookup in (
+            (
+                "folder__parent__file__on_project",
+                '(r."parent_type" = \'project\' AND (CASE WHEN r."parent_type" = \'project\' THEN r."parent_id" END)'
+                '::bigint IN (SELECT id FROM authz_int."project__file"))',
+            ),
+            (
+                "project__backer__fund__on_region",
+                '(s."backer_type" = \'region\' AND (CASE WHEN s."backer_type" = \'region\' THEN s."backer_id" END)'
+                '::bigint IN (SELECT id FROM authz_int."region__fund"))',
+            ),
+        ):
+            body = search(rf'CREATE VIEW authz_int\."{view}" AS\n(.*?);\n', sql, re.S).group(1)
+            self.assertIn(lookup, body, view)
+        self.assertNotRegex(
+            sql,
+            r"(?<!AND )\(CASE WHEN [rs]\.\"(parent|backer)_type\" = '\w+' THEN [rs]\.\"\w+\" END\)"
+            r"::bigint IN",
+        )
+
     def test_user_key_is_one_column(self) -> None:
         text = read(POLICIES["composite"]).replace("type user = cx.users", "type user = cx.users (org_id, id)")
         with self.assertRaisesRegex(PolicyError, "the user type signs in, so it needs a key of one column"):
@@ -4880,6 +4944,32 @@ class Confidence(unittest.TestCase):
         )
 
 
+class Indexes(unittest.TestCase):
+    """rowstile indexes: the lookups a policy makes (tests/confidence_test.py asks a database which an index serves)."""
+
+    def test_what_serves_a_type_and_id_pair_alone(self) -> None:
+        # a (type, id) pair, in the type's table or in a link table, is looked up by both columns. Where its id is
+        # one column, the id is compared through a CASE on the type, which no index serves: the type's condition
+        # beside it is what one serves, so an index on the type column serves it alone, and one on the id alone
+        # doesn't. Where its id is two columns, they are compared column by column: an index on them serves it.
+        from authzlib import perf
+
+        def pairs(name: str) -> list[tuple[str, tuple[str, ...], tuple[str, ...]]]:
+            c = Compiler(parse_policy(read(POLICIES[name])))
+            return [(table, columns, alone) for table, columns, _, _, alone in perf.needed_indexes(c) if alone]
+
+        self.assertEqual(
+            pairs("cross"),
+            [
+                ("cx.folders", ("parent_type", "parent_id"), ("parent_type",)),
+                ("cx.backings", ("backer_type", "backer_id"), ("backer_type",)),
+            ],
+        )
+        self.assertEqual(
+            pairs("composite"), [("cx.folders", ("parent_type", "org_id", "parent_id"), ("org_id", "parent_id"))]
+        )
+
+
 class Plans(unittest.TestCase):
     """rowstile plans: what it reads in EXPLAIN's JSON (tests/confidence_test.py reads a database's own plans)."""
 
@@ -4924,6 +5014,27 @@ class Plans(unittest.TestCase):
         out: list[str] = []
         perf.walk(plan, out, "app.files")
         self.assertEqual(out, ["SubPlan 11 runs once per row (15003 times)"])
+
+    def test_rowstiles_own_tables_read_whole_are_no_warning(self) -> None:
+        # someone who reaches every folder (an org's admin) has the closure table read whole: no index the app can
+        # add would change that. An app table read whole is still named
+        from authzlib import perf
+
+        scan = lambda schema, table, rows: {
+            "Node Type": "Seq Scan",
+            "Relation Name": table,
+            "Schema": schema,
+            "Actual Rows": rows,
+            "Actual Loops": 1,
+        }
+        plan: dict[str, Value] = {
+            "Node Type": "Hash Join",
+            "Actual Loops": 1,
+            "Plans": [scan("authz_int", "folder__parent__tree", 20014), scan("app", "org_members", 12001)],
+        }
+        out: list[str] = []
+        perf.walk(plan, out, "app.files")
+        self.assertEqual(out, ["reads all of app.org_members (12001 rows): an index missing?"])
 
 
 HandCase = Callable[["HandAnswers"], None]

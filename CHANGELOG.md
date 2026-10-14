@@ -7,6 +7,11 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ## Unreleased
 
+### Upgrading
+
+- Apply the policy again (or the next migration) to take the faster lookups below. A closure table built through a
+  `(type, id)` pair has a new definition: applying builds it again, once.
+
 ### Changed
 
 - The calls that are for users refuse a service signed in with words that say so, and a code of their own:
@@ -33,6 +38,23 @@ Each release upgrades from the one before it. How releases are numbered and made
   rule on the row before the change first, then of the one whose columns come first by name, whatever the order
   the rules are written in. They may be the other rule's than before. Apply the policy again (or the next
   migration) to take it.
+- Lookups through a type keyed by two columns read rows by each column, so the index on the columns serves them.
+  The views compared both columns as one piece of text, which no index serves, and read the whole table: the files
+  in the folders a user may edit, the folders of the teams they are in, the rows a `(type, [org_id, id])` pair
+  names, and a team's sub-teams where teams nest by a column or a table alone. On `tests/composite.authz`'s tables
+  with 50,000 folders and 100,000 files, as the app role, the files a user may view take 7 ms where they took 51
+  ms: 18 files read through `files (org_id, folder_id)`, where all 100,000 were.
+- A `(type, id)` pair whose id is one column puts the type's own condition beside its `CASE`, with the same
+  answers, so an index on `(type, id)` finds the rows of that type and reads no others. On `tests/cross.authz`'s
+  tables with 20,000 folders, the folders inside the projects a user files take 0.6 ms where they took 2.9 ms
+  (2,000 rows read, where all 20,000 were), and the projects that regions fund 0.3 ms where they took 2.1 ms. The
+  id itself is still read through the `CASE`, which no index serves.
+- `rowstile indexes` and `authz.lint()` asked for different indexes for a `(type, id)` pair, `(type, id)` and
+  `(id)`, and each took only its own as serving the lookup. Both ask for `(type, id)` now, and take an index that
+  starts with it, or with the type where the id is one column, or with the ids where they are two. An index on a
+  one-column id alone serves no such lookup, and is no longer taken as serving it.
+- `rowstile plans` no longer asks "an index missing?" of rowstile's own tables, which it reads whole for someone
+  who reaches most rows (an org's admin): no index the app adds changes that.
 
 ### Fixed
 
@@ -40,6 +62,11 @@ Each release upgrades from the one before it. How releases are numbered and made
   permission's starting points on the inner side of a nested loop, it worked them out again for each row (on one
   random policy, a list of seven rows took 1.3 s and made 10,768 calls where 76 do; now 10 ms). They are now
   worked out once where they are read. Apply the policy again (or the next migration) to take it.
+- For goose and dbmate, the `CREATE INDEX CONCURRENTLY` that `rowstile indexes` gave failed inside the transaction
+  those tools run each migration in. It now says to put it in a migration of its own that starts with
+  `-- +goose NO TRANSACTION` or `-- migrate:up transaction:false`.
+- A `CREATE INDEX CONCURRENTLY` that fails leaves an unfinished index under the name `rowstile indexes` gives, so
+  running its line again failed with "already exists". `rowstile indexes` now names that index first, to drop.
 - The command lost its connection right after signing in, before its first statement, with a traceback. It
   now says it lost the database (exit 2), as it does anywhere later.
 - A share could outlive the row it was on or to, where a row was deleted, given a new id or emptied with

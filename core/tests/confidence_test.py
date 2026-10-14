@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """confidence_test: rowstile prove, test --coverage, snapshot, indexes, plans and bench, on the docs example; and
-that a list runs each starting point of a permission once, on a random policy (genpolicy's seed 3).
+the plans of lookups through keys of two columns (tests/composite.authz); and that a list runs each starting point of a
+permission once, on a random policy (genpolicy's seed 3).
 
 PGHOST=... PGUSER=... python3 tests/confidence_test.py [--db authz_confidence]
 """
 
+import json
 import os
 import re
 import subprocess
@@ -22,7 +24,7 @@ sys.path.insert(0, HERE)
 import pgwire  # noqa: E402
 import rowstile_cli  # noqa: E402
 from authzlib import database, perf  # noqa: E402
-from authzlib.connection import Db  # noqa: E402
+from authzlib.connection import Db, Value  # noqa: E402
 
 T = TypeVar("T")
 
@@ -75,6 +77,34 @@ rules app.tags
   update : edit
   update owner_id : nobody
 """
+# tests/composite_schema.sql's tables, a few thousand rows: users in teams, teams in teams, folders in folders and
+# in projects, files in folders (each row in the org of what it points at)
+KEYS_ROWS = """INSERT INTO cx.orgs SELECT i FROM generate_series(1, 5) i;
+INSERT INTO cx.users SELECT i, NULL FROM generate_series(1, 500) i;
+INSERT INTO cx.teams (org_id, slug, lead_id) SELECT i % 5 + 1, 't' || i, i % 500 + 1 FROM generate_series(1, 500) i;
+INSERT INTO cx.team_members SELECT org_id, slug, (substr(slug, 2)::int * 3) % 500 + 1 FROM cx.teams;
+INSERT INTO cx.projects SELECT i % 5 + 1, i, i % 500 + 1, NULL FROM generate_series(1, 200) i;
+INSERT INTO cx.folders SELECT i % 5 + 1, i, i % 500 + 1, NULL, NULL FROM generate_series(1, 2000) i;
+UPDATE cx.folders SET parent_type = 'folder', parent_id = id - 5 WHERE id > 50 AND id % 3 = 0;
+UPDATE cx.folders SET parent_type = 'project', parent_id = id % 200 WHERE id > 50 AND id % 3 = 1 AND id % 200 > 0;
+INSERT INTO cx.folder_teams SELECT f.org_id, f.id, 't' || (f.id % 500) FROM cx.folders f WHERE f.id % 4 = 0 AND f.id % 500 > 0;
+INSERT INTO cx.files SELECT ((i % 2000) + 1) % 5 + 1, i, (i % 2000) + 1, i % 500 + 1, NULL FROM generate_series(1, 4000) i;
+ANALYZE cx.users, cx.teams, cx.team_members, cx.projects, cx.folders, cx.folder_teams, cx.files;
+"""
+# tests/cross_schema.sql's tables, a few thousand rows: folders in projects (the first 200), in folders (those whose
+# id over ten is above 200) or in nothing, and backings by the folders not in projects (so that nothing loops back
+# through them) and by regions, and the index on the backings' (type, id) pair
+PAIRS_ROWS = """INSERT INTO cx.users SELECT i, 'u' || i FROM generate_series(1, 500) i;
+INSERT INTO cx.projects SELECT i, i % 500 + 1 FROM generate_series(1, 200) i;
+INSERT INTO cx.regions SELECT i, i % 500 + 1 FROM generate_series(1, 20) i;
+INSERT INTO cx.folders (id, parent_type, parent_id, owner_id)
+  SELECT i, CASE WHEN i <= 200 THEN 'project' WHEN i / 10 > 200 THEN 'folder' END,
+         CASE WHEN i <= 200 THEN i WHEN i / 10 > 200 THEN i / 10 END, i % 500 + 1 FROM generate_series(1, 4000) i;
+INSERT INTO cx.backings SELECT i % 200 + 1, 'folder', i FROM generate_series(201, 4000) i;
+INSERT INTO cx.backings SELECT i % 200 + 1, 'region', i FROM generate_series(1, 20) i;
+CREATE INDEX ON cx.backings (backer_type, backer_id);
+ANALYZE cx.users, cx.projects, cx.regions, cx.folders, cx.backings;
+"""
 DENY_TESTS = """test "the owner"
   given u = {INSERT INTO app.users VALUES (1) RETURNING id}
   given f = {INSERT INTO app.folders (id, owner_id) VALUES (1, $u) RETURNING id}
@@ -105,6 +135,44 @@ def cli(db: str | None, *args: str, cwd: str | None = None) -> tuple[int, str]:
         cwd=cwd,
     )
     return r.returncode, r.stdout + r.stderr
+
+
+def plan_scans(raw: Value) -> list[tuple[str, str]]:
+    """(node, index or table) of each scan in a plan (EXPLAIN's JSON)."""
+    found: list[tuple[str, str]] = []
+
+    def walk(node: Value) -> None:
+        if isinstance(node, dict):
+            kind, where = node.get("Node Type"), node.get("Index Name") or node.get("Relation Name")
+            if isinstance(kind, str) and "Scan" in kind and isinstance(where, str):
+                found.append((kind, where))
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(json.loads(raw) if isinstance(raw, str) else raw)
+    return found
+
+
+def index_conds(raw: Value) -> list[tuple[str, str]]:
+    """(index, its condition) of each scan through an index in a plan (EXPLAIN's JSON)."""
+    found: list[tuple[str, str]] = []
+
+    def walk(node: Value) -> None:
+        if isinstance(node, dict):
+            index, cond = node.get("Index Name"), node.get("Index Cond")
+            if isinstance(index, str) and isinstance(cond, str):
+                found.append((index, cond))
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(json.loads(raw) if isinstance(raw, str) else raw)
+    return found
 
 
 def main() -> None:
@@ -347,6 +415,15 @@ def main() -> None:
         [(m[0], m[1]) for m in work(lambda d: perf.missing_indexes(d, database.policy_compiler(*database.applied(d))))]
         == [("app.team_members", ("user_id",))],
     )
+    # ...which holds the name the line to add gives it: dropped first, or that line fails ("already exists")
+    rc, out = cli(db, "indexes")
+    check(
+        "... and the line to add says to drop it first",
+        "\n  first, drop what a CREATE INDEX CONCURRENTLY that failed left unfinished: DROP INDEX CONCURRENTLY "
+        'app.team_members_user_id_idx;\n  add: CREATE INDEX CONCURRENTLY "team_members_user_id_idx" ON '
+        '"app"."team_members" ("user_id");' in out,
+        out,
+    )
     sql(
         "DROP INDEX app.team_members_user_id_idx",
         "DELETE FROM app.team_members WHERE (team_id, user_id) = (11, 1)",
@@ -414,7 +491,10 @@ def main() -> None:
             said,
         )
         is not None
-        and (refused, after) == ("", []),
+        and (refused, after) == ("", [])
+        # (no transaction to leave either, for goose: Postgres builds it inside one)
+        and perf.advice("app.events", ("owner_id",), "goose", True)
+        == 'CREATE INDEX "events_owner_id_idx" ON "app"."events" ("owner_id");',
         (said, refused, after),
     )
 
@@ -480,6 +560,17 @@ def main() -> None:
                 "alembic",
                 "Index('team_members_user_id_idx', 'user_id') in app.team_members's model (or index=True on the "
                 "column), then alembic revision --autogenerate",
+            ),
+            # goose and dbmate run a migration in a transaction, where Postgres builds no index concurrently
+            (
+                "goose",
+                'CREATE INDEX CONCURRENTLY "team_members_user_id_idx" ON "app"."team_members" ("user_id"); in a '
+                "migration of its own that starts with -- +goose NO TRANSACTION",
+            ),
+            (
+                "dbmate",
+                'CREATE INDEX CONCURRENTLY "team_members_user_id_idx" ON "app"."team_members" ("user_id"); in a '
+                "migration of its own that starts with -- migrate:up transaction:false",
             ),
         ):
             with open(os.path.join(tmp, "rowstile.toml"), "w", encoding="utf-8") as fh:
@@ -602,6 +693,157 @@ def main() -> None:
         and re.search(r"\n  read app\.files +- +-  <- failed: permission denied for table files\n", said) is not None,
         said,
     )
+
+    print("-- lookups through keys of two columns")
+    # tests/composite.authz's tables, a few thousand rows: a lookup through a key of two columns goes column by
+    # column, so the index on the columns serves it. With sequential scans off, the plan takes the index; a key
+    # compared as its row's text could only be read row by row
+    keys = db + "_keys"
+    subprocess.run(["dropdb", "--if-exists", keys], capture_output=True)
+    subprocess.run(["createdb", keys], check=True)
+    for sql in (["-f", os.path.join(HERE, "composite_schema.sql")], ["-c", KEYS_ROWS]):
+        subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", keys, *sql], check=True, capture_output=True)
+    rc, out = cli(keys, "apply", os.path.join(HERE, "composite.authz"))
+    if rc:
+        raise SystemExit(out)
+    kconn = pgwire.connect(**pgwire.parse_dsn(f"dbname={keys}"))
+
+    def scans(view: str) -> list[tuple[str, str]]:
+        """(node, table or index) of each scan in the plan of a read of view, as the app role signed in as user 7."""
+
+        def plan(d: Db) -> Value:
+            d.rows("SELECT authz.act_as('user', '7')")
+            d.script("SET LOCAL ROLE app_user; SET LOCAL enable_seqscan = off")
+            return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_gen."{view}"')[0].values()))
+
+        return plan_scans(rowstile_cli.transaction(kconn, plan, keep=False))
+
+    for view, table, index in (
+        ("file__folder__edit", "files", "files_org_id_folder_id_idx"),  # files in the folders user 7 edits
+        ("folder__editor", "folder_teams", "folder_teams_org_id_team_slug_idx"),  # folders of the teams 7 is in
+        ("folder__parent__edit__on_project", "folders", "folders_org_id_parent_id_idx"),  # (type, [org_id, id])
+    ):
+        found = scans(view)
+        check(
+            f"{view}: {table} looked up through {index}, not read row by row",
+            any(where == index for _, where in found) and ("Seq Scan", table) not in found,
+            found,
+        )
+
+    def named(d: Db) -> tuple[set[str], set[str]]:
+        """The lookups no index serves, as rowstile indexes names them and as authz.lint() does."""
+        missing = perf.missing_indexes(d, database.policy_compiler(*database.applied(d)))
+        linted = d.rows("SELECT object FROM authz.lint() WHERE problem LIKE 'no index starts with%'")
+        return {f"{m[0]}.{', '.join(m[1])}" for m in missing}, {str(r["object"]) for r in linted}
+
+    def without_it(d: Db) -> tuple[set[str], set[str]]:
+        d.script("DROP INDEX cx.folders_org_id_parent_id_idx")
+        return named(d)
+
+    # a (type, [org_id, id]) pair is looked up by its three columns, and an index on the two ids serves it as well
+    both = rowstile_cli.transaction(kconn, named, keep=False)
+    gone = rowstile_cli.transaction(kconn, without_it, keep=False)
+    check(
+        "indexes and lint name the same lookups: a (type, id) pair served by an index on its ids, and named once it "
+        "is gone, with its type",
+        both[0] == both[1]
+        and "cx.folders.parent_type, org_id, parent_id" not in both[0]
+        and gone[0] == gone[1]
+        and gone[0] - both[0] == {"cx.folders.parent_type, org_id, parent_id"},
+        (both, gone),
+    )
+    # teams in teams with no shares among them: user 34, in t11 only, is a member of t6 above it and of t1 above
+    # that, found a step at a time by the teams' key
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(HERE, "composite.authz"), encoding="utf-8") as fh:
+            text = fh.read().replace("  member : team#member  shared\n", "")
+        with open(os.path.join(tmp, "p.authz"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        rc, out = cli(keys, "apply", os.path.join(tmp, "p.authz"))
+
+    def nested(d: Db) -> tuple[list[str], list[tuple[str, str]]]:
+        d.script(
+            "UPDATE cx.teams SET parent_slug = 't1' WHERE slug = 't6'; UPDATE cx.teams SET parent_slug = 't6' WHERE slug = 't11'"
+        )
+        d.rows("SELECT authz.act_as('user', '34')")
+        d.script("SET LOCAL ROLE app_user; SET LOCAL enable_seqscan = off")
+        ids = sorted(str(r["id"]) for r in d.rows('SELECT id FROM authz_gen."team__member"'))
+        return ids, plan_scans(
+            next(iter(d.rows('EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_gen."team__member"')[0].values()))
+        )
+
+    ids, steps = rowstile_cli.transaction(kconn, nested, keep=False) if rc == 0 else ([], [])
+    check(
+        "teams in teams keyed by two columns: a sub-team's member is a member above it, found by the teams' key",
+        ids == ["(2,t1)", "(2,t11)", "(2,t6)"]
+        and ("Seq Scan", "teams") not in steps
+        and any(where == "teams_pkey" for _, where in steps),
+        (out, ids, steps),
+    )
+    kconn.close()
+    subprocess.run(["dropdb", "--if-exists", keys], capture_output=True)
+
+    print("-- lookups through (type, id) pairs")
+    # tests/cross.authz's tables: folders in folders or projects, a column pair (parent_type, parent_id); projects
+    # backed by folders or regions, a table's pair (backer_type, backer_id). An id of one column is compared through
+    # a CASE on the type, which no index serves: the type's own condition beside it is what one serves, so the index
+    # on (type, id) reads the rows of that type only, not every row
+    pairs = db + "_pairs"
+    subprocess.run(["dropdb", "--if-exists", pairs], capture_output=True)
+    subprocess.run(["createdb", pairs], check=True)
+    for sql in (["-f", os.path.join(HERE, "cross_schema.sql")], ["-c", PAIRS_ROWS]):
+        subprocess.run(
+            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", pairs, *sql], check=True, capture_output=True
+        )
+    rc, out = cli(pairs, "apply", os.path.join(HERE, "cross.authz"))
+    if rc:
+        raise SystemExit(out)
+    pconn = pgwire.connect(**pgwire.parse_dsn(f"dbname={pairs}"))
+
+    def conds(view: str) -> list[tuple[str, str]]:
+        """(index, its condition) of each index scan in the plan of a read of view, as the app role, user 7."""
+
+        def plan(d: Db) -> Value:
+            d.rows("SELECT authz.act_as('user', '7')")
+            d.script("SET LOCAL ROLE app_user; SET LOCAL enable_seqscan = off")
+            return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_gen."{view}"')[0].values()))
+
+        return index_conds(rowstile_cli.transaction(pconn, plan, keep=False))
+
+    for view, index, cond in (
+        ("folder__parent__file__on_project", "folders_parent_type_parent_id_idx", "(parent_type = 'project'::text)"),
+        ("project__backer__fund__on_region", "backings_backer_type_backer_id_idx", "(backer_type = 'region'::text)"),
+    ):
+        found = conds(view)
+        check(f"{view}: the rows of that type found through {index}, by the type", (index, cond) in found, found)
+
+    def served(d: Db) -> tuple[set[str], set[str]]:
+        """The (type, id) pairs' lookups no index serves, as rowstile indexes names them and as authz.lint() does."""
+        missing = perf.missing_indexes(d, database.policy_compiler(*database.applied(d)))
+        linted = d.rows("SELECT object FROM authz.lint() WHERE problem LIKE 'no index starts with%'")
+        both = {f"{m[0]}.{', '.join(m[1])}" for m in missing}, {str(r["object"]) for r in linted}
+        return {x for x in both[0] if "_type" in x}, {x for x in both[1] if "_type" in x}
+
+    def by(index: str) -> Callable[[Db], tuple[set[str], set[str]]]:
+        def run(d: Db) -> tuple[set[str], set[str]]:
+            d.script(
+                f"DROP INDEX cx.folders_parent_type_parent_id_idx; DROP INDEX cx.backings_backer_type_backer_id_idx; {index}"
+            )
+            return served(d)
+
+        return run
+
+    pair = {"cx.folders.parent_type, parent_id", "cx.backings.backer_type, backer_id"}
+    on_type = by("CREATE INDEX ON cx.folders (parent_type); CREATE INDEX ON cx.backings (backer_type)")
+    on_id = by("CREATE INDEX ON cx.folders (parent_id); CREATE INDEX ON cx.backings (backer_id)")
+    found = [rowstile_cli.transaction(pconn, f, keep=False) for f in (served, on_type, on_id)]
+    check(
+        "indexes and lint: a (type, id) pair is served by an index on (type, id) or on its type, not by one on its id",
+        found[0] == (set(), set()) and found[1] == (set(), set()) and found[2] == (pair, pair),
+        found,
+    )
+    pconn.close()
+    subprocess.run(["dropdb", "--if-exists", pairs], capture_output=True)
 
     conn.close()
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
