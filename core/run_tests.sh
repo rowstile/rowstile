@@ -123,6 +123,13 @@ python3 tests/unit_test.py 2>&1 | tail -n 3
 record "${PIPESTATUS[0]}" "unit"
 }
 unit unit 80 unit_tests
+# (in this part, the shortest, though it needs a database: in the command part it made that part the longest)
+interrupt() {
+step "the command and a migration cut half way: a sample of the statements of each"
+python3 tests/interrupt.py
+record $? "cuts half way"
+}
+unit unit 90 interrupt
 fi
 if part policy; then
 if every_version; then
@@ -271,12 +278,6 @@ tests/review.sh
 record $? "review"
 }
 unit command 48 review
-interrupt() {
-step "the command and a migration cut half way: a sample of the statements of each"
-python3 tests/interrupt.py
-record $? "cuts half way"
-}
-unit command 90 interrupt
 if every_version; then
 migrate_vs_apply() {
 step "a migration leaves what applying the new policy whole leaves (each kind of change, both ways)"
