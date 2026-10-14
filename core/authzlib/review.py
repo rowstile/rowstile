@@ -34,10 +34,6 @@ from .statements import split
 MARK = "<!-- rowstile review -->"
 
 
-class BaseMistake(Exception):
-    """The policy the change is compared with has a mistake (its message, with its code): nothing to review against."""
-
-
 WIDE = ("anyone", "link")
 # who an example is about when nobody is signed in (as the comparison's examples say it too)
 NOBODY = "(nobody signed in)"
@@ -182,6 +178,14 @@ class Access(TypedDict):
     error: NotRequired[str]
 
 
+class BaseMistake(TypedDict):
+    """The base's policy has a mistake, so the head was reviewed as new: where (the base's line), what, its code."""
+
+    line: str | None  # 'line 12', 'roles.authz line 3' (as the base has it); None: the whole policy's
+    message: str
+    code: str | None
+
+
 class Review(TypedDict):
     meaning: Meaning
     risk: list[Flag]
@@ -190,6 +194,8 @@ class Review(TypedDict):
     access: Access | None
     # the base is in the language before this one: each old form it was read with, where, and what it is now
     base_previous: NotRequired[list[str]]
+    # the base's policy has a mistake: the head is reviewed as new, as where the base has no policy
+    base_mistake: NotRequired[BaseMistake]
 
 
 # (policy text, included files, named tests {name: text}) of one side of the change
@@ -325,6 +331,14 @@ def closure(graph: dict[tuple[str, str], set[tuple[str, str]]], start: tuple[str
 
 
 # --- the review --------------------------------------------------------------------------------------
+def mistake_of(e: PolicyError) -> BaseMistake:
+    """A policy's mistake as the review reports it: 'line 12: message [AZ203]' -> its line, message and code."""
+    code = e.code
+    text = str(e).removesuffix(f" [{code}]")
+    m = re.match(r"((?:\S+ )?line \d+): (.*)$", text, re.S)
+    return {"line": m.group(1) if m else None, "message": m.group(2) if m else text, "code": code}
+
+
 def written_before(policy: str, files: dict[str, str] | None) -> bool:
     """Whether a policy is written in the language before this one: read that way, it has old forms."""
     try:
@@ -360,14 +374,11 @@ def review(
     request adds it. base_lock/head_lock: the lock files' text (for Deploy). db: a database at the base branch's
     state with the review data (for Access and Tests). A base this language refuses is read in the one before (a
     pull request that upgrades rowstile, and rewrites the policy for it): Meaning then says whether the rewrite says
-    the same."""
-    if base is None:
-        h = Side(*head)
-        # a new policy: compared with one that allows nothing, in the head's own app role and user type (made up
-        # ones would read as changed), and each of its declarations listed as added
-        b = Side("\n".join(h.entities[k][0] for k in ("app role", "type user") if k in h.entities) + "\n", None, None)
-        b.entities = {}
-    else:
+    the same. A base neither reads has a mistake: the head is reviewed as new, and base_mistake says so (the pull
+    request that fixes the mistake is reviewed all the same)."""
+    mistake: BaseMistake | None = None
+    b: Side | None = None
+    if base is not None:
         try:
             b = Side(*base)
         except PolicyError as e:
@@ -375,9 +386,13 @@ def review(
                 b = Side(*base, previous=True)
             except PolicyError as old:
                 # the mistake as the language it is written in says it: this one would only name its old forms
-                mistake = old if written_before(base[0], base[1]) else e
-                raise BaseMistake(f"the policy at the base has a mistake: {mistake}") from None
-        h = Side(*head)
+                mistake = mistake_of(old if written_before(base[0], base[1]) else e)
+    h = Side(*head)
+    if b is None:
+        # a new policy: compared with one that allows nothing, in the head's own app role and user type (made up
+        # ones would read as changed), and each of its declarations listed as added
+        b = Side("\n".join(h.entities[k][0] for k in ("app role", "type user") if k in h.entities) + "\n", None, None)
+        b.entities = {}
     said = meaning(b, h, worlds)
     flags = risk(b, h, worlds, said.get("counterexample"))
     if said["equivalent"] not in (None, "text") and any(f["why"] in ALLOWS_MORE for f in flags):
@@ -391,6 +406,8 @@ def review(
     }
     if b.pol.previous is not None:
         out["base_previous"] = b.pol.previous
+    if mistake is not None:
+        out["base_mistake"] = mistake
     if db is not None:
         from . import database
 
@@ -1248,12 +1265,21 @@ def previous_note(r: Review) -> str | None:
     )
 
 
+def mistake_note(r: Review) -> str | None:
+    """A base whose policy has a mistake: a sentence saying so, with the mistake, its line there and its code."""
+    m = r.get("base_mistake")
+    if m is None:
+        return None
+    said = (f"{m['line']} there: " if m["line"] else "") + m["message"] + (f" [{m['code']}]" if m["code"] else "")
+    return f"The policy at the base has a mistake ({said}), so the review reads this one as new."
+
+
 def markdown(r: Review, title: str = "rowstile: what this pull request changes") -> str:
     s = summary(r)
     out = [MARK, f"### {title}", ""]
-    note = previous_note(r)
-    if note:
-        out += [note, ""]
+    for note in (mistake_note(r), previous_note(r)):
+        if note:
+            out += [note, ""]
     for k in ("Meaning", "Access", "Risk", "Tests", "Deploy"):
         out.append(f"**{k}**: {s[k]}  ")
     m = r["meaning"]
@@ -1343,8 +1369,7 @@ def tests_details(r: Review) -> list[str]:
 
 def text(r: Review) -> str:
     s = summary(r)
-    note = previous_note(r)
-    out = ([f"{'Base':<8} {note}"] if note else []) + [
+    out = [f"{'Base':<8} {note}" for note in (mistake_note(r), previous_note(r)) if note] + [
         f"{k:<8} {s[k]}" for k in ("Meaning", "Access", "Risk", "Tests", "Deploy")
     ]
     m = r["meaning"]
@@ -1389,15 +1414,22 @@ def text(r: Review) -> str:
 def annotations(r: Review, path: str) -> str:
     """GitHub workflow commands: each flag on its policy line, in the pull request's files view."""
     out = []
+    note = mistake_note(r)
+    if note:  # on the file, not a line: the line is the base's
+        out.append(f"::warning file={path},title=rowstile review::{escape_command(note)}")
     folder = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
     for f in r["risk"]:
         # 'line 12' is the policy file's; 'roles.authz line 3' an included file's, beside the policy
         m = re.fullmatch(r"(?:(\S+) )?line (\d+)", f["line"] or "")
         file = folder + m.group(1) if m and m.group(1) else path
         where = f"file={file},line={m.group(2)}" if m else f"file={path}"
-        msg = f"{f['why']}: {f['flag']}".replace("%", "%25").replace("\n", "%0A").replace("`", "")
-        out.append(f"::warning {where},title=rowstile review::{msg}")
+        out.append(f"::warning {where},title=rowstile review::{escape_command(f['why'] + ': ' + f['flag'])}")
     return "\n".join(out) + ("\n" if out else "")
+
+
+def escape_command(msg: str) -> str:
+    """A workflow command's message: % and line breaks escaped, without the backticks GitHub would show."""
+    return msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace("`", "")
 
 
 def as_json(r: Review) -> str:

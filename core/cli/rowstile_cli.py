@@ -1547,8 +1547,6 @@ def review_cmd(cfg: Config, args: list[str], opts: dict[str, str], flags: set[st
         fail(str(e) + (f"\nHINT: {e.hint}" if e.hint else ""))
     except review.PolicyError as e:
         fail(f"{relative(path)}: {e}")
-    except review.BaseMistake as e:
-        fail(f"{relative(path)} at {ref}: {e}")
     except (pgwire.PgError, pgwire.ProtocolError, OSError) as e:  # the review database's (--db)
         database_stopped(e)
     finally:

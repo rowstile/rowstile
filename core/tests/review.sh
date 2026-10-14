@@ -200,10 +200,23 @@ case "$out" in "Base     The policy at the base is written in the language befor
   *) bad "a base in the language before" "$out";; esac
 { G checkout -q -b broken && sed -i 's/can edit  = share or editor or/can edit  = share or edtor or/' "$P/db/policy.authz" &&
   G commit -q -am broken && G checkout -q main; } || bad "setting up the branch broken"
+# the pull request that fixes the mistake is reviewed: as one that adds the policy, the mistake said first
 out=$(CLI review --base broken 2>&1); rc=$?
-case "$out" in "db/policy.authz at broken: the policy at the base has a mistake: line "*": folder has no relation or permission 'edtor'"*"[AZ203]")
-  [ $rc -eq 1 ] && ok "a base whose policy has a mistake (in this language and the one before): said, with the base's line, exit 1" || bad "a base with a mistake: exit" "$rc";;
+case "$out" in "Base     The policy at the base has a mistake (line "*" there: folder has no relation or permission 'edtor'"*"[AZ203]), so the review reads this one as new."$'\n'"Meaning  "*"added    app role"*"added    type folder"*)
+  [ $rc -eq 0 ] && ok "a base whose policy has a mistake: said first, with its line there and its code, and the policy reviewed as new, exit 0" || bad "a base with a mistake: exit" "$rc";;
   *) bad "a base with a mistake" "$out";; esac
+out=$(CLI review --base broken --json 2>&1)
+printf '%s' "$out" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+m = d['base_mistake']
+assert (m['code'], m['message'][:44]) == ('AZ203', \"folder has no relation or permission 'edtor'\"), m
+assert m['line'].startswith('line ') and all(c['kind'] == 'added' for c in d['meaning']['changed']), d
+" && ok "... --json: base_mistake, its line, message and code" || bad "a base with a mistake, --json" "$out"
+case "$(CLI review --base broken --markdown)" in *"### rowstile: what this pull request changes"$'\n\n'"The policy at the base has a mistake (line "*"[AZ203]), so the review reads this one as new."$'\n\n'"**Meaning**"*)
+  ok "... --markdown: said at the top of the comment";; *) bad "a base with a mistake, --markdown" "$(CLI review --base broken --markdown)";; esac
+case "$(CLI review --base broken --annotations)" in "::warning file=p/db/policy.authz,title=rowstile review::The policy at the base has a mistake (line "*"[AZ203]), so the review reads this one as new."*)
+  ok "... --annotations: on the policy file, first";; *) bad "a base with a mistake, --annotations" "$(CLI review --base broken --annotations)";; esac
 
 echo "-- the review database"
 G checkout -q -- db && G clean -q -fd db
