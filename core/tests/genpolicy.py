@@ -35,8 +35,8 @@ Now and then a seed's policy has a twin, checked after it over fewer steps (vari
 all, or with no permission at all, its rules naming relations.
 
 A policy the compiler refuses is skipped (and counted). So is one whose reads Postgres plans slowly (authz.lint()
-warns about its select rule: a check of it takes minutes to hours), and a seed that goes over --seconds: both are
-counted and their seeds printed. For each of the others, after every one of a few random changes to the data:
+warns about a permission or a select rule: a check of it takes minutes to hours), unless --slow (the soak: slow is
+not wrong, its answers count), and a seed that goes over --seconds: both are counted and their seeds printed. For each of the others, after every one of a few random changes to the data:
   - difftest's checks (tests/difftest.py: list, can, explain, who, the rows each rule allows, verify)
   - authz.check_invariants() against the reference evaluator
 and at the end, `rowstile prove`: an invariant it says holds must not be broken by the data seen.
@@ -1223,10 +1223,12 @@ def run(
     seconds: float = 900,
     report: list[str] | None = None,
     name: str = "",
+    slow: bool = False,
 ) -> list[str]:
     """The problems found with this policy (none: it passed); Refused if the compiler refuses it, Slow if lint
-    warns that its reads are slow to plan or the checks take more than `seconds`. With report: the parts of the
-    policy (named name) that never decided an answer go there (tests/decisions.py)."""
+    warns that its reads are slow to plan (unless slow: then it is checked, slowly) or the checks take more than
+    `seconds`. With report: the parts of the policy (named name) that never decided an answer go there
+    (tests/decisions.py)."""
     policy_path, schema_path = os.path.join(workdir, "gen.authz"), os.path.join(workdir, "gen_schema.sql")
     write_policy(policy_path, policy_text(spec), spec.include)
     with open(schema_path, "w", encoding="utf-8") as fh:
@@ -1234,7 +1236,7 @@ def run(
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
     if compiled.returncode != 0:
         raise Refused(compiled.stderr.strip().splitlines()[-1] if compiled.stderr.strip() else "refused")
-    if "view definitions to plan" in compiled.stdout:
+    if "view definitions to plan" in compiled.stdout and not slow:
         raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
     gen = gen_class(spec, policy_path, schema_path)(random.Random(spec.seed))
@@ -1449,6 +1451,11 @@ def main() -> None:
     ap.add_argument("--no-shrink", action="store_true")
     ap.add_argument("--seconds", type=float, default=900, help="a seed that takes longer is given up (and said)")
     ap.add_argument(
+        "--slow",
+        action="store_true",
+        help="check the policies lint says are slow to plan too (the soak: slow is not wrong); else they are set aside",
+    )
+    ap.add_argument(
         "--decisions", action="store_true", help="and say, for each policy, the parts that never decided an answer"
     )
     ap.add_argument(
@@ -1481,7 +1488,7 @@ def main() -> None:
 
                 def fails(s: Spec, steps: int = steps) -> bool:
                     try:
-                        return bool(run(s, db, steps, workdir, args.seconds))
+                        return bool(run(s, db, steps, workdir, args.seconds, slow=args.slow))
                     except (Refused, Slow):
                         return False
 
@@ -1489,7 +1496,7 @@ def main() -> None:
                     print(f"{name}:\n{policy_text(spec)}")
                 said: list[str] | None = [] if args.decisions else None
                 try:
-                    problems = run(spec, db, steps, workdir, args.seconds, said, name)
+                    problems = run(spec, db, steps, workdir, args.seconds, said, name, slow=args.slow)
                 except Slow as e:
                     slow.append(name)
                     print(f"{name}: not checked ({e})", flush=True)

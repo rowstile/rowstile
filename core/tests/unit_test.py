@@ -9688,6 +9688,17 @@ class GeneratedShapes(unittest.TestCase):
         self.assertGreaterEqual(compiled, drawn * 4 // 5)
         self.assertGreaterEqual(alone, 1)
 
+    def test_the_soak_checks_policies_slow_to_plan(self) -> None:
+        """A policy lint says is slow to plan is set aside on each push's seeds and in --pairs' choice (their time),
+        and checked in the soak: slow is not wrong, its answers count."""
+        text = read("run_tests.sh")
+        soak = text[text.index('if [ "$MODE" = soak ]; then') : text.index('if [ "$MODE" != proofs ]')]
+        for tool in ("genpolicy", "around"):
+            lines = [line for line in text.splitlines() if f"python3 tests/{tool}.py " in line]
+            self.assertTrue(lines, tool)
+            for line in lines:
+                self.assertEqual("--slow" in line.split(), line in soak, line)
+
     def test_every_two_features_meet_in_the_full_runs_policies(self) -> None:
         """--pairs 1000, what the full run checks: a few seeds the compiler takes, in which every two FEATURES meet
         (all but APART meet in some policy of the pool), each feature drawn."""

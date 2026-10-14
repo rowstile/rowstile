@@ -1421,8 +1421,11 @@ def user_gone(checker: AroundChecker) -> list[str]:
 # ----------------------------------------------------------------------
 # One seed
 # ----------------------------------------------------------------------
-def run(spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, seconds: float = 900) -> list[str]:
-    """The problems found with this policy in this world (none: it passed). Refused and Slow as in genpolicy."""
+def run(
+    spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, seconds: float = 900, slow: bool = False
+) -> list[str]:
+    """The problems found with this policy in this world (none: it passed). Refused and Slow (and slow) as in
+    genpolicy."""
     policy_path, schema_path = os.path.join(workdir, "around.authz"), os.path.join(workdir, "around_schema.sql")
     genpolicy.write_policy(policy_path, policy_text(spec, w), spec.include)
     with open(schema_path, "w", encoding="utf-8") as fh:
@@ -1430,7 +1433,7 @@ def run(spec: Spec, w: World, db: DB, control: DB, steps: int, workdir: str, sec
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
     if compiled.returncode != 0:
         raise Refused(compiled.stderr.strip().splitlines()[-1] if compiled.stderr.strip() else "refused")
-    if SLOW in compiled.stdout:
+    if SLOW in compiled.stdout and not slow:
         raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
     rnd = random.Random(f"around/run/{w.seed}")
@@ -1505,6 +1508,11 @@ def main() -> None:
     ap.add_argument("--no-shrink", action="store_true")
     ap.add_argument("--seconds", type=float, default=900, help="a seed that takes longer is given up (and said)")
     ap.add_argument(
+        "--slow",
+        action="store_true",
+        help="check the policies lint says are slow to plan too (the soak: slow is not wrong); else they are set aside",
+    )
+    ap.add_argument(
         "--pairs",
         type=int,
         metavar="POOL",
@@ -1542,7 +1550,7 @@ def main() -> None:
 
         def fails(s: Spec, w: World) -> bool:
             try:
-                return bool(run(s, w, db, control, args.steps, workdir, args.seconds))
+                return bool(run(s, w, db, control, args.steps, workdir, args.seconds, args.slow))
             except (Refused, Slow):
                 return False
 
@@ -1553,7 +1561,7 @@ def main() -> None:
             if args.only is not None:
                 print(f"world: {described(spec, w)}\n\n{policy_text(spec, w)}")
             try:
-                problems = run(spec, w, db, control, args.steps, workdir, args.seconds)
+                problems = run(spec, w, db, control, args.steps, workdir, args.seconds, args.slow)
             except Slow as e:
                 slow.append(seed)
                 print(f"seed {seed}: not checked ({e})", flush=True)
@@ -1590,7 +1598,7 @@ def main() -> None:
                 print(f"  the plainest world and the smallest policy found that still fail (seed {seed}):")
                 print(f"    world: {described(spec, w)}")
                 print("    " + policy_text(spec, w).replace("\n", "\n    ").rstrip())
-                for p in run(spec, w, db, control, args.steps, workdir):
+                for p in run(spec, w, db, control, args.steps, workdir, slow=args.slow):
                     print("   ", p)
             sys.stdout.flush()
     for d in (db, control):
