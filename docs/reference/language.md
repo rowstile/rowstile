@@ -80,7 +80,9 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   polymorphic pair holds the policy's type names (`'folder'`, `'project'`): renaming a type changes what the
   rows link to, and a row naming a type the relation doesn't list links to nothing. <!-- answer: polymorphic-type-names -->
 - **Shares**: a `shared` relation is given with `authz.share()` by whoever holds `share` on the object, so the
-  type needs a `can share`, or the relation names another permission: `shared by edit`. <!-- answer: shares-by --> `shared if {...}` is a
+  type needs a `can share`, or the relation names another permission: `shared by edit`. The giver must also hold
+  each permission the relation feeds on the object (`view`, for `can view = ... or viewer`): a share can't give what
+  its giver doesn't hold. <!-- checked: tests/principals.sh "a viewer may share helper, but not grant assist, which they don't hold"; tests/hand/shares-by.authz "reader gives view, which ed lacks" --> <!-- answer: shares-by --> `shared if {...}` is a
   condition on the share being made (`object_id`, `subject_type`, `subject_id`, `subject_relation`), which
   `authz.share` checks: "only to active users". <!-- checked: tests/multi_scenario.sql "shared if: no sharing with inactive users" --> <!-- answer: shared-if -->
   Shares may expire or start later. <!-- answer: shares-expire --> A **caveat** is a
@@ -140,7 +142,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   `from org`
   says whose roles count on an object: only those of the org its `org` relation links it to now (a
   column or a table, to one type). <!-- checked: tests/unit_test.py "test_roles_from_an_org_count_only_on_its_objects"; tests/multi_scenario.sql "until folder 1 moves to Globex" --> <!-- answer: roles-from -->
-  `authz.share` refuses another owner's role, an assignment of one
+  `authz.share` refuses another owner's role (with an error, AZ706: offering it is the app's mistake), an assignment of one
   grants nothing, and a folder moved to another org stops honouring the first org's roles. <!-- checked: tests/multi_scenario.sql "alice cannot give Globex"; tests/multi_scenario.sql "and one written into authz.shares gives dave nothing while folder 1 is Acme"; tests/difftest.py "MultiGen" --> <!-- answer: roles-refused -->
   Without
   `from`, any role for the type counts wherever it is given, so an app must offer only the owner's
