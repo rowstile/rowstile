@@ -136,6 +136,16 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   and `authz.share`. After the upgrade, by `reapply` and by the next migration, `authz.can` answers every user,
   object and permission (1,277 checks) as on a new database with the same rows, all of difftest's questions get
   the reference evaluator's answers, and the catalog and the inheritance rows are the new database's. <!-- checked: tests/upgrade_world.py "answers as on a new database"; tests/upgrade.sh "it holds what applying this version on a new database with its rows leaves" -->
+- **Cut half way**: [`tests/interrupt.py`](../core/tests/interrupt.py) runs `rowstile apply` (on a new database
+  and over a policy), `push`, `reapply --force` and both migrations of a change that builds an inheritance table
+  beside the one in use, on the docs app, and cuts each after one of its statements: the server ends the session,
+  or the connection is closed under it. After each cut the command says it lost the database (exit 2), the
+  database is as it was before the run, and the app, reading as the app role just before the cut and after it,
+  gets the old policy's answers, whole; after some, the next run leaves what an uncut one does. <!-- checked: tests/interrupt.py "after each cut, the database is as it was"; tests/interrupt.py "the app read the old policy's answers, whole" -->
+  Between the two migrations the old policy is in force. <!-- checked: tests/interrupt.py "between a migration's two: the old policy in force" -->
+  Each night, after every one of their 1,923 statements (about 25 minutes); on each push, ten cuts of each. The real
+  command is also ended while one of its statements waits for a lock, and stopped by `statement_timeout`. Every
+  night the soak cuts the first apply of twenty-five other policies, random ones among them, where its seed says.
 - **The parser**: [`tests/fuzz_parser.py`](../core/tests/fuzz_parser.py) feeds it thousands of broken
   policies; each is accepted, or refused with a line number, never a crash. <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
 - **The docs**: the getting-started guide runs as written, every line the cookbook shows is in a policy that

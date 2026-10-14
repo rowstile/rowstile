@@ -271,6 +271,12 @@ tests/review.sh
 record $? "review"
 }
 unit command 48 review
+interrupt() {
+step "the command and a migration cut half way: a sample of the statements of each"
+python3 tests/interrupt.py
+record $? "cuts half way"
+}
+unit command 90 interrupt
 if every_version; then
 migrate_vs_apply() {
 step "a migration leaves what applying the new policy whole leaves (each kind of change, both ways)"
@@ -427,6 +433,20 @@ if { [ "$MODE" = full ] || [ "$MODE" = proofs ] || [ "$MODE" = soak ]; } && part
   step "tree writes under stress (${STRESS}s per isolation level)"
   tests/stress.sh $STRESS
   record $? "stress"
+fi
+
+# The command and a migration cut after every statement of each on the docs app (--soak: other policies' first
+# apply, cut where the seed says)
+if { [ "$MODE" = full ] || [ "$MODE" = proofs ] || [ "$MODE" = soak ]; } && part races; then
+  if [ "$MODE" = soak ]; then
+    step "other policies' first apply cut half way (seed $SEED)"
+    python3 tests/interrupt.py --others --seed "$SEED" --policies 20
+    record $? "cuts half way, other policies"
+  else
+    step "the command and a migration cut half way, after every statement of each"
+    python3 tests/interrupt.py --every
+    record $? "cuts half way, every statement"
+  fi
 fi
 
 # measuring: the function calls of the databases still here (each one dropped earlier was asked then)

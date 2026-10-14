@@ -9,6 +9,9 @@ cli 129
 concurrency 12
 confidence 43
 cookbook 79
+cuts half way 27
+cuts half way, every statement 30
+cuts half way, other policies 1
 devx 101
 docs 11
 governance 157
