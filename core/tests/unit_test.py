@@ -2158,10 +2158,11 @@ class Review(unittest.TestCase):
                 "can edit  = editor or share or ({inherit} and parent.edit)",
             )
         )
-        # and the worlds listed: every one of a few rows, with at most two links here (then the time is up)
+        # and the worlds listed: every one of a few rows, with at most two links here (then the budget is spent: 15
+        # listed for each drawn world)
         self.assertEqual(
             r["meaning"]["equivalent"],
-            "120 small worlds and 3,000 listed: every one of up to 3 rows of each type with at most 2 links",
+            "120 small worlds and 1,800 listed: every one of up to 3 rows of each type with at most 2 links",
         )
         md = self.review.markdown(r)
         self.assertIn("unchanged: every permission and rule grants the same", md)
@@ -5010,7 +5011,8 @@ class Confidence(unittest.TestCase):
         )
         self.assertEqual({t: len(c) for t, c in listing.classes.items()}, {"user": 1, "doc": 2, "tag": 1})
         self.assertEqual(sorted(listing.cone.relations), [("doc", "owner")])
-        # more than LISTED: every world with one link at most, then up to LISTED in all
+        # more than the budget (LISTED for each of the 200 drawn worlds): every world with one link at most, then up
+        # to the budget in all
         many = " and ".join(f"{{k{i} = {i}}}" for i in range(10))
         a, b = (
             parse_policy(doc + f"owner and {many}\n", "a.authz"),
@@ -5020,6 +5022,10 @@ class Confidence(unittest.TestCase):
         self.assertIsNone(evaluate.compare(a, b, listing=listing))
         self.assertEqual((listing.whole, listing.complete), (1, False))
         self.assertEqual(listing.said(), "3,000 listed: every one of up to 3 rows of each type with at most 1 link")
+        # fewer drawn worlds, fewer listed: but never before every world with one link at most (2,048 here)
+        listing = evaluate.Listing((a, b))
+        self.assertIsNone(evaluate.compare(a, b, worlds=10, listing=listing))
+        self.assertEqual(listing.said(), "2,049 listed: every one of up to 3 rows of each type with at most 1 link")
 
     def test_the_evaluator_refuses_data_it_cannot_read(self) -> None:
         from authzlib import evaluate

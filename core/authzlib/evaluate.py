@@ -960,7 +960,7 @@ def rare_worlds(pols: Sequence[Policy], worlds: int, seed: str) -> Iterable[Worl
 # two linked rows on which one condition says one thing and another the other. So beside the drawn worlds, those of a
 # few rows that two policies may be told apart in are listed, every one of them, the smallest first (Listing).
 MOST_ROWS = 3  # the rows of one type a listed world has at most
-LISTED = 3000  # the listed worlds a comparison tries, after the drawn ones, once ...
+LISTED = 15  # the listed worlds a comparison tries for each drawn one it asks for (the review's 200: 3,000), once ...
 ALWAYS = 1  # ... it has tried every world with at most this many links, however many they are
 CLASS_CHOICES = 4096  # the values a group of columns read together may take, for its classes to be listed whole
 STEPS = 100_000  # the steps of looking for links a listing takes at most
@@ -1396,7 +1396,8 @@ def worlds_to_try(
     pols: Sequence[Policy], worlds: int, seed: str, max_size: int = 4, listing: Listing | None = None
 ) -> Iterable[World]:
     """The worlds a comparison of policies goes through: drawn ones, smallest first, then the corners, then the
-    listed ones (up to LISTED of them, with a listing), then the rare ones (rare_worlds)."""
+    listed ones (with a listing: LISTED for each drawn one asked for, after every one with ALWAYS links at most),
+    then the rare ones (rare_worlds)."""
     for size in range(1, max_size + 1):
         for k in range(max(1, worlds // max_size)):
             yield World(f"{seed}/{size}/{k}", size, pols=pols)
@@ -1408,7 +1409,7 @@ def worlds_to_try(
     if listing is not None:
         for w in listing.worlds():
             yield w
-            if listing.listed >= LISTED and listing.whole >= ALWAYS:
+            if listing.listed >= LISTED * worlds and listing.whole >= ALWAYS:
                 break
     yield from rare_worlds(pols, worlds, seed)
 
