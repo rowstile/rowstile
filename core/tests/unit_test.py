@@ -5027,6 +5027,39 @@ class Confidence(unittest.TestCase):
         self.assertIsNone(evaluate.compare(a, b, worlds=10, listing=listing))
         self.assertEqual(listing.said(), "2,049 listed: every one of up to 3 rows of each type with at most 1 link")
 
+    def test_the_listing_says_where_it_took_some_values_only(self) -> None:
+        # four columns of nine values each (the seven named, one none of them names, NULL), read by one condition:
+        # more combinations than a row's classes are made from, so only the first are, and the review says so
+        from authzlib import evaluate
+
+        cond = " and ".join(f"{c} in (1, 2, 3, 4, 5, 6, 7)" for c in "abcd")
+        doc = self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n  can view = "
+        a, b = (
+            parse_policy(doc + f"owner and {{{cond}}}\n", "a.authz"),
+            parse_policy(doc + f"{{{cond}}} and owner\n", "b.authz"),
+        )
+        self.assertGreater(9**4, evaluate.CLASS_CHOICES)
+        listing = evaluate.Listing((a, b))
+        self.assertIsNone(evaluate.compare(a, b, worlds=10, listing=listing))
+        self.assertTrue(listing.cut)
+        self.assertEqual(
+            listing.said(),
+            "24 listed: every one of up to 3 rows of each type; of columns read together, only the first 4,096 "
+            "combinations of their values",
+        )
+        from authzlib import review
+
+        r = review.review(
+            (doc + f"owner and {{{cond}}}\n", {}, {}),
+            (doc + f"{{{cond}}} and owner\n", {}, {}),
+            None,
+            None,
+            None,
+            worlds=10,
+        )
+        said = r["meaning"]["equivalent"] or ""
+        self.assertTrue(said.endswith("only the first 4,096 combinations of their values"), said)
+
     def test_the_evaluator_refuses_data_it_cannot_read(self) -> None:
         from authzlib import evaluate
 

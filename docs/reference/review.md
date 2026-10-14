@@ -17,7 +17,8 @@ says what a change does, in plain words, for the pull request:
   on the row it inherits from, shows. <!-- checked: tests/unit_test.py "test_a_condition_added_to_a_long_and_is_found"; tests/unit_test.py "test_conditions_that_differ_between_two_linked_rows_are_found"; tests/unit_test.py "test_the_small_worlds_are_listed" -->
   The listing stops after 3,000 worlds, once those are tried. If they all grant the same, the review says
   "Meaning unchanged", and how far the listing got: "every one of up to 3 rows of each type", with "at most 2
-  links" where it stopped there. <!-- checked: tests/review.sh "a refactor: meaning unchanged, checked in small worlds"; tests/unit_test.py "test_a_refactor_is_checked_in_small_worlds"; tests/unit_test.py "test_a_long_and_of_links_widened_is_found"; tests/unit_test.py "test_a_chain_deeper_than_the_drawn_worlds_is_found" -->
+  links" where it stopped there, and, where columns read together take more than 4,096 combinations of values,
+  that only the first of them were tried. <!-- checked: tests/review.sh "a refactor: meaning unchanged, checked in small worlds"; tests/unit_test.py "test_a_refactor_is_checked_in_small_worlds"; tests/unit_test.py "test_the_listing_says_where_it_took_some_values_only"; tests/unit_test.py "test_a_long_and_of_links_widened_is_found"; tests/unit_test.py "test_a_chain_deeper_than_the_drawn_worlds_is_found" -->
   Worlds that are bigger, or hold custom roles, are only drawn: for them it is a search, not a proof. <!-- unchecked: a limit, said so that no more is expected of it -->
   Formatting and comments are "unchanged" too; text inside quotes is not formatting. <!-- checked: tests/unit_test.py "test_comments_only"; tests/unit_test.py "test_text_in_quotes_is_compared_as_written" -->
   A
