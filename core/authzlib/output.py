@@ -78,6 +78,46 @@ def shared_if_rows(pktype: str, cond: str) -> str:
     )
 
 
+# A share is made under a lock on its object's row and its subject's (FOR KEY SHARE), so a delete waits for it, and
+# in READ COMMITTED the trigger that removes the shares on a deleted row sees it. A transaction whose snapshot is older
+# than the share (REPEATABLE READ, SERIALIZABLE) doesn't, so each share also writes a new version of a mark row for
+# the object and for the subject, and a delete, a new id or a TRUNCATE in such a transaction writes the same marks:
+# where a share it can't see was made since its snapshot, that fails to serialize (40001), instead of committing and
+# leaving the share on a row that is gone. The marks of a row go with it; there is one for each row shared on or to.
+SHARE_MARKS = """-- a share on or to a row marks it (a new version of its mark, which a transaction that can't see the share
+-- and then deletes the row, or changes its id, writes too: forget_marks)
+CREATE FUNCTION authz_int.mark_shared(p_type text, p_id text) RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+  INSERT INTO authz_int.share_marks AS m (type, id) VALUES (p_type, p_id)
+  ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1 $f$;
+-- rows that are gone, or whose id changed: their marks go too. In a transaction whose snapshot may be older than a
+-- share on one of them (not READ COMMITTED), the marks are written first: if a share was made since, that fails to
+-- serialize (40001), rather than leave a share the deletes after can't see
+CREATE FUNCTION authz_int.forget_marks(p_type text, p_ids text[]) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    INSERT INTO authz_int.share_marks AS m (type, id) SELECT DISTINCT p_type, x FROM unnest(p_ids) x
+    ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1;
+  END IF;
+  DELETE FROM authz_int.share_marks WHERE type = p_type AND id = ANY (p_ids);
+END $f$;
+-- whether a row is there, locked (FOR KEY SHARE) until the transaction ends, as authz.share locks what it shares
+CREATE FUNCTION authz_int.hold(p_type text, p_id text) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_tbl text; v_find text; v_found boolean;
+BEGIN
+  SELECT t.tbl, t.find INTO v_tbl, v_find FROM authz_int.types t WHERE t.name = p_type;
+  -- (the key's type by a subquery, never a variable: pg_input_is_valid takes a variable's first value for every
+  -- later call from the same line, so a uuid key checked after a bigint one would be invalid)
+  IF v_tbl IS NULL OR NOT pg_catalog.pg_input_is_valid(p_id, (SELECT t.keytype FROM authz_int.types t WHERE t.name = p_type)) THEN
+    RETURN false;
+  END IF;
+  EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s FOR KEY SHARE)', v_tbl, v_find) INTO v_found USING p_id;
+  RETURN v_found;
+END $f$;"""
+
+
 class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, LintMixin, TreeMixin):
     def late_conditions(self) -> list[tuple[str, str, Loc]]:
         """(rows, condition, line) for each condition only a PL/pgSQL function holds: a signing-in type's where,
@@ -129,6 +169,7 @@ class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, Li
         tbl = qt(t.table)
         fn = f"authz_int.{q(t.name + '__forget')}"
         fn_row = f"authz_int.{q(t.name + '__forget_id')}"
+        fn_trunc = f"authz_int.{q(t.name + '__forget_all')}"
         name = lit(t.name)
         gone = f"SELECT {self.key_text(t, 'o')} FROM old_rows o EXCEPT SELECT {self.key_text(t, 'n')} FROM new_rows n"
         moved = trigger_if_partitioned(
@@ -136,17 +177,20 @@ class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, Li
             f"CREATE TRIGGER {q('authz_' + t.name + '_forget_moved')} AFTER UPDATE ON {tbl} "
             f"REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn}()",
         )
-        return f"""-- shares on {t.name} rows that are gone, or whose id changed, are removed
+        return f"""-- shares on {t.name} rows that are gone, or whose id changed, are removed (and their marks: forget_marks)
 CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
     DELETE FROM authz.shares WHERE object_type = {name};
     DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id <> '*';      -- '*' (every one signed in) names no row
+    DELETE FROM authz_int.share_marks WHERE type = {name};
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
+    PERFORM authz_int.forget_marks({name}, ARRAY({gone}));
     DELETE FROM authz.shares WHERE object_type = {name} AND object_id IN ({gone});
     DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id IN ({gone});
   ELSE
+    PERFORM authz_int.forget_marks({name}, ARRAY(SELECT {self.key_text(t, "o")} FROM old_rows o));
     DELETE FROM authz.shares WHERE object_type = {name} AND object_id IN (SELECT {self.key_text(t, "o")} FROM old_rows o);
     DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id IN (SELECT {self.key_text(t, "o")} FROM old_rows o);
   END IF;
@@ -155,8 +199,18 @@ END $f$;
 CREATE FUNCTION {fn_row}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
+  PERFORM authz_int.forget_marks({name}, ARRAY[{self.key_text(t, "OLD")}]);
   DELETE FROM authz.shares WHERE object_type = {name} AND object_id = {self.key_text(t, "OLD")};
   DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id = {self.key_text(t, "OLD")};
+  RETURN NULL;
+END $f$;
+-- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
+CREATE FUNCTION {fn_trunc}() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    PERFORM authz_int.forget_marks({name}, ARRAY(SELECT {self.key_text(t, "x")} FROM {tbl} x));
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER {q("authz_" + t.name + "_forget_del")} AFTER DELETE ON {tbl}
@@ -165,6 +219,8 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_id")} AFTER UPDATE ON {tbl} FOR E
   WHEN ({self.key(t, "OLD")} IS DISTINCT FROM {self.key(t, "NEW")}) EXECUTE FUNCTION {fn_row}();
 CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc")} AFTER TRUNCATE ON {tbl}
   FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON {tbl}
+  FOR EACH STATEMENT EXECUTE FUNCTION {fn_trunc}();
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with are forgotten too.
 {moved}"""
@@ -614,6 +670,10 @@ BEGIN
   IF p_caveat IS NOT NULL AND NOT EXISTS (SELECT 1 FROM authz_int.caveats WHERE name = p_caveat) THEN
     RAISE EXCEPTION 'no caveat % in the policy', p_caveat USING HINT = 'rowstile help AZ707';
   END IF;
+  PERFORM authz_int.mark_shared(p_type, p_id);
+  IF v_key NOT LIKE '%:*' AND v_key NOT IN ('anyone', 'link') THEN
+    PERFORM authz_int.mark_shared(p_subject_type, p_subject_id);
+  END IF;
   INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation,
                             expires_at, created_by, starts_at, caveat, caveat_args)
   VALUES (p_type, p_id, p_relation, p_subject_type, p_subject_id, p_subject_relation,
@@ -812,7 +872,7 @@ END $f$;
 CREATE FUNCTION authz.roles_of(p_owner_type text, p_owner_id bigint)
 RETURNS TABLE (id bigint, object_type text, name text, permissions text[]) LANGUAGE sql STABLE AS
   $$ SELECT * FROM authz.roles_of(p_owner_type, p_owner_id::text) $$;"""
-        return catalog, share_if + "\n\n" + role_relations, api
+        return catalog, share_if + "\n\n" + role_relations + "\n\n" + SHARE_MARKS, api
 
     # --- output ---------------------------------------------------------
     def search_path_sql(self) -> str:
@@ -1170,6 +1230,8 @@ END $gi$;"""
             if perms
             else "",
             "CREATE TABLE authz_int.locks (type text PRIMARY KEY, n bigint NOT NULL);",
+            "-- a row for each row a share was made on or to (authz_int.mark_shared), until that row is gone\n"
+            "CREATE TABLE authz_int.share_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));",
             "-- each inheritance table's definition and the tables it reads, to keep it on the next apply if they are the same\n"
             "CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);",
             (

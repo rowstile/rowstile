@@ -82,6 +82,25 @@ def search(pattern: str, text: str, flags: int = 0) -> re.Match[str]:
     return m
 
 
+class KeyTypeChecks(unittest.TestCase):
+    """pg_input_is_valid(text, type name) is given the type by a literal or a subquery, never a PL/pgSQL variable:
+    Postgres keeps the type it looked up for the first value of a variable there, for each later call from the same
+    line, so a function that checks a bigint key and then a uuid key in one transaction finds the uuid invalid
+    (authz.break_glass refused a support user of an app whose users have uuid keys and folders bigint ones)."""
+
+    def test_no_type_comes_from_a_variable(self) -> None:
+        for name in POLICIES:
+            for m in re.finditer(r"pg_input_is_valid\(([^()]|\([^()]*\))*?,\s*(\w+)\s*\)", compiled(name)):
+                self.assertFalse(m.group(2).startswith(("v_", "p_")), f"{name}: {m.group(0)}")
+
+    def test_the_rule_finds_a_variable(self) -> None:
+        sql = "IF NOT pg_catalog.pg_input_is_valid(p_id, v_keytype) THEN"
+        m = re.search(r"pg_input_is_valid\(([^()]|\([^()]*\))*?,\s*(\w+)\s*\)", sql)
+        self.assertIsNotNone(m)
+        assert m is not None
+        self.assertEqual(m.group(2), "v_keytype")
+
+
 class ThisRow(unittest.TestCase):
     """`this.` in a condition is the alias its row has where the condition is placed: views, row checks, row-level
     security, triggers, trees and the migrations that build them beside. None is left in the SQL."""

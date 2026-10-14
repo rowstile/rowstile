@@ -489,7 +489,7 @@ END $f$;
 CREATE FUNCTION authz.break_glass(p_type text, p_id text, p_relation text, p_reason text,
   p_duration interval DEFAULT interval '1 hour') RETURNS void
 LANGUAGE plpgsql {DEF} AS $f$
-DECLARE g authz.shares; v_until timestamptz; v_audit bigint;
+DECLARE g authz.shares; v_until timestamptz; v_audit bigint; v_held boolean;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
@@ -497,7 +497,12 @@ BEGIN
   IF p_duration IS NULL OR p_duration <= interval '0' OR p_duration > interval '1 day' THEN
     RAISE EXCEPTION 'emergency access lasts more than nothing and one day at most' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
   END IF;
-  IF authz.uid() IS NULL
+  -- the object and the user are locked (FOR KEY SHARE), as authz.share locks them: a delete waits for this, or this
+  -- for it and then finds nothing to break into
+  v_held := authz.uid() IS NOT NULL;
+  IF v_held THEN v_held := authz_int.hold(p_type, p_id); END IF;
+  IF v_held THEN v_held := authz_int.hold('user', authz.uid()::text); END IF;
+  IF NOT v_held
      OR NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = 'break_glass')
      OR NOT authz.can(p_type, p_id, 'break_glass') THEN
     RAISE EXCEPTION 'you cannot break the glass on % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
@@ -508,6 +513,8 @@ BEGIN
   END IF;
   v_until := now() + p_duration;
   PERFORM set_config('authz_ctx.reason', p_reason, true);
+  PERFORM authz_int.mark_shared(p_type, p_id);
+  PERFORM authz_int.mark_shared('user', authz.uid()::text);
   SELECT * INTO g FROM authz.shares WHERE object_type = p_type AND object_id = p_id AND relation = p_relation
     AND subject_type = 'user' AND subject_id = authz.uid()::text AND subject_relation = '' FOR UPDATE;
   IF g.object_id IS NULL THEN
