@@ -175,6 +175,13 @@ Each release upgrades from the one before it. How releases are numbered and made
   version that doesn't match the system's (after an upgrade of the system, which can leave indexes wrong), or a
   setting of the database's or the role's the server can't take. It dropped them; it printed only those sent
   once the session had started. `rowstile dev` shows them as it shows a warning.
+- When the server ends the command's session in the middle of a run (an administrator's `pg_terminate_backend`,
+  a server shutting down), `apply`, `push`, `reapply`, `dev` and the others say why, in the server's words:
+  `lost the database: terminating connection due to administrator command`. They said `lost the database:
+  [Errno 32] Broken pipe` when the session ended between two statements on a local socket, or while one waited
+  for a lock: the command undid its savepoint, or tried the policy's conditions alone, on the closed
+  connection, and that error took the place of the server's. And `rowstile review --db` says it lost the
+  database, where a session ended as it began gave a traceback.
 
 ## 0.1.0 (alpha)
 

@@ -155,12 +155,19 @@ def check(policy: str, files: Mapping[str, object] | str | None = None) -> str |
 
 @contextlib.contextmanager
 def savepoint(db: Db, name: str = "authz_sp") -> Iterator[None]:
-    """A subtransaction: undone if the block raises, kept otherwise."""
+    """A subtransaction: undone if the block raises, kept otherwise. When undoing it fails too (the server ended the
+    session, and the block's error says why), the block's error is raised; for Undo, which asks for the undoing, the
+    failure to undo."""
     db.script(f"SAVEPOINT {name}")
     try:
         yield
-    except BaseException:
-        db.script(f"ROLLBACK TO SAVEPOINT {name}; RELEASE SAVEPOINT {name}")
+    except BaseException as e:
+        try:
+            db.script(f"ROLLBACK TO SAVEPOINT {name}; RELEASE SAVEPOINT {name}")
+        except Exception:
+            if isinstance(e, Undo):
+                raise
+            raise e from None
         raise
     db.script(f"RELEASE SAVEPOINT {name}")
 
@@ -238,10 +245,19 @@ def run_policy(db: Db, sql: str, policy: str, files: Files) -> None:
         with savepoint(db, "authz_policy"):
             run(db, sql)
     except db.errors as e:
+        if ended(e):  # the server ended the session: nothing more can be asked of it, and its words say why
+            raise
         found = condition_error(e, sql, policy, files) or failing_condition(db, e, policy, files)
         if found is None:
             raise
         raise found from e
+
+
+def ended(err: Exception) -> bool:
+    """Whether a database error is the server ending the session (FATAL, PANIC: ended by an administrator, the
+    server shutting down)."""
+    fields = getattr(err, "fields", None)
+    return isinstance(fields, dict) and fields.get("S") in ("FATAL", "PANIC")
 
 
 def failing_condition(db: Db, err: Exception, policy: str, files: Files) -> Error | None:

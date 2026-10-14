@@ -74,6 +74,9 @@ folder) or `/tmp` (libpq's own, as Homebrew and Postgres.app build it), whicheve
 Windows. <!-- checked: tests/unit_test.py "test_the_defaults_are_libpqs" -->
 The warnings the server sends are printed on stderr, as `psql` prints them, those it sends as the session starts
 too (a collation version that doesn't match the system's, a setting of the database's it can't take). <!-- checked: tests/cli.sh "a warning the server sends as the session starts is said, on stderr"; tests/cli.sh "and by dev" -->
+When the server ends the session in the middle of a command (`pg_terminate_backend`, a server shutting down), the
+command says it lost the database and why, in the server's words (`lost the database: terminating connection due
+to administrator command`), exit 2. <!-- checked: tests/interrupt.py "it says it lost the database and why (the server's words), exit 2"; tests/interrupt.py "it says it lost the database in the server's words, exit 2" -->
 
 TLS is used when the server has it and required with `sslmode=require`. <!-- checked: tests/unit_test.py "test_tls_as_sslmode_says" -->
 The server's certificate is checked
