@@ -1654,7 +1654,7 @@ def migrate_cmd(
     try:
         ms = database.migrations(text, files, old, opts.get("--name") or "policy", not one_phase, downgrade)
     except database.Error as e:
-        fail(f"{path}: {str(e).removeprefix('policy ')}")
+        fail(f"{path}: {str(e).removeprefix('policy ')}" + (f"\nHINT: {e.hint}" if e.hint else ""))
     if all(m.empty for m in ms):
         print(f"nothing to migrate: {relative(lock)} is up to date with {relative(path)}")
         return 0
