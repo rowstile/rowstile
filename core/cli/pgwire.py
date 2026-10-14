@@ -925,6 +925,13 @@ def parse_dsn(text: str | None) -> ConnectArgs:
             if v is not None:
                 out[k] = urllib.parse.unquote(v) if isinstance(v, str) else str(v)
         for k, v in urllib.parse.parse_qsl(u.query, keep_blank_values=True):
+            if k == "ssl":  # JDBC's way to ask for TLS, which libpq takes in a URL, in its place among the others
+                if v != "true":
+                    raise ValueError(
+                        f'invalid URI query parameter: "ssl" ({v!r}): libpq reads only ssl=true (sslmode=require);'
+                        " say sslmode= instead (disable, prefer, require, verify-full)"
+                    )
+                k, v = "sslmode", "require"
             setting(k, v, strict=False)
         text = ""
     for k, v in _keywords(text or ""):

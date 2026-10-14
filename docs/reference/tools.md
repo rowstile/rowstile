@@ -60,7 +60,9 @@ Next.js, Prisma and many others keep them: the environment comes first, then `.e
 Nothing else in those files is read, a file that
 is a link out of the folder isn't read at all, and with `--db` neither is: the command line named the database. <!-- checked: tests/unit_test.py "test_env_files_are_read_for_the_database_only"; tests/cli.sh "a .env that is a link out of the folder isn't read, and the failure says so"; tests/cli.sh "the files aren't read then" -->
 Values are as dotenv writes them: quotes, `#` comments,
-`export`, and `${NAME}` filled in. A URL's `?sslmode=`, `?host=`, `?port=` and the like are read. Each of
+`export`, and `${NAME}` filled in. A URL's `?sslmode=`, `?host=`, `?port=` and the like are read, and `?ssl=true`
+as `sslmode=require`, as libpq reads it (where the URL has both, the one written last wins); any other value of
+`ssl` is refused. <!-- checked: tests/unit_test.py "test_a_urls_ssl_option_as_libpq_reads_it" --> Each of
 libpq's settings, in a connection string, a URL or a `PG*` variable, is done as libpq does it, left alone where
 that changes neither what is checked nor where the command connects (`application_name`, `keepalives`, `sslsni`
 and the like), or refused, naming it: a service, a password file where no password is given, a host address apart

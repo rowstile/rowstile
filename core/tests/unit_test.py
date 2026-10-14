@@ -3449,6 +3449,30 @@ class Wire(unittest.TestCase):
         )
         self.assertEqual(parse("host=h password='it\\'s'")["password"], "it's")  # as the message below shows it
 
+    def test_a_urls_ssl_option_as_libpq_reads_it(self) -> None:
+        # libpq reads ssl=true in a URL's query as sslmode=require (JDBC's way to ask for TLS), in its place among
+        # the others: the one written last wins. Left out, it was prefer, which goes on without TLS when the server
+        # (or what is between) says it has none
+        parse = self.pgwire.parse_dsn
+        self.assertEqual(parse("postgresql://h/app?ssl=true")["sslmode"], "require")
+        self.assertEqual(parse("postgresql://h/app?ssl=%74rue")["sslmode"], "require")  # decoded first
+        self.assertEqual(parse("postgresql://h/app?sslmode=verify-full&ssl=true")["sslmode"], "require")
+        self.assertEqual(parse("postgresql://h/app?ssl=true&sslmode=verify-full")["sslmode"], "verify-full")
+        os.environ["PGSSLMODE"] = "disable"  # a variable comes after what the URL says
+        self.assertEqual(parse("postgresql://h/app?ssl=true")["sslmode"], "require")
+        del os.environ["PGSSLMODE"]
+        # any other value is no setting libpq has: refused, in its words (ssl=false isn't sslmode=disable)
+        for value in ("false", "True", "1", ""):
+            with self.assertRaisesRegex(
+                ValueError,
+                '^invalid URI query parameter: "ssl" .*: libpq reads only ssl=true .*say sslmode= instead',
+                msg=value,
+            ):
+                parse(f"postgresql://h/app?ssl={value}")
+        # a keyword string has no ssl setting, in libpq or here
+        with self.assertRaisesRegex(ValueError, "unknown connection setting 'ssl'"):
+            parse("host=h ssl=true")
+
     def test_what_it_cannot_honour_is_refused_not_dropped(self) -> None:
         for dsn, said in (
             ("postgresql://h/app?sslmode=maybe", "sslmode=maybe"),

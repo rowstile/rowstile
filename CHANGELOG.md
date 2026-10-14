@@ -104,6 +104,10 @@ Each release upgrades from the one before it. How releases are numbered and made
   object, or a later object with that id, with them. A pending request is now cancelled with its requester's or
   its object's row, and applying the policy cancels those of requesters deleted before; decided requests stay as
   they were.
+- A URL's `ssl=true` now requires TLS, as `psql` reads it (`sslmode=require`). The command left it out as an
+  option meant for another tool, so the connection used `sslmode=prefer`, which goes on without TLS when the
+  server, or anything between, says it has none. Any other value of `ssl` (`ssl=false`, `ssl=1`) is refused, as
+  libpq refuses it.
 
 ## 0.1.0 (alpha)
 
