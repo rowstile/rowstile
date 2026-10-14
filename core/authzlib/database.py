@@ -157,11 +157,13 @@ def check(policy: str, files: Mapping[str, object] | str | None = None) -> str |
 def savepoint(db: Db, name: str = "authz_sp") -> Iterator[None]:
     """A subtransaction: undone if the block raises, kept otherwise. When undoing it fails too (the server ended the
     session, and the block's error says why), the block's error is raised; for Undo, which asks for the undoing, the
-    failure to undo."""
+    failure to undo. Not on Ctrl-C (KeyboardInterrupt), which may come in the middle of a statement: the command's
+    transaction is ended then (its statement cancelled on the server), where a ROLLBACK TO sent behind the statement
+    would wait for it to run its course."""
     db.script(f"SAVEPOINT {name}")
     try:
         yield
-    except BaseException as e:
+    except Exception as e:
         try:
             db.script(f"ROLLBACK TO SAVEPOINT {name}; RELEASE SAVEPOINT {name}")
         except Exception:

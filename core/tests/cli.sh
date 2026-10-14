@@ -127,6 +127,29 @@ for _ in $(seq 20); do [ "$(sleeping)" = 0 ] && break; sleep 0.5; done
 [ $rc -eq 130 ] && [ "$(cat "$T/sleep.out")" = "stopped: nothing was kept" ] && [ $took -lt 10 ] && [ "$(sleeping)" = 0 ] &&
   ok "Ctrl-C while sql waits on a statement: stopped at once (exit 130), and the statement ended on the server" ||
   bad "Ctrl-C during sql" "exit $rc after ${took}s, still running on the server: $(sleeping), said: $(cat "$T/sleep.out")"
+# ... and while apply waits for a lock another session holds (inside the savepoint it runs the policy in): the same
+sed 's/^  delete                            : edit$/  delete                            : share/' example/docs.authz > "$T/parts/changed.authz"
+printf 'include "parts/changed.authz"\n' > "$T/changed.authz"
+versions=$(PSQL -c "SELECT count(*) FROM authz.policy_versions")
+waiting() { PSQL -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()"; }
+PSQL -c "BEGIN" -c "LOCK TABLE app.files IN ACCESS EXCLUSIVE MODE" -c "SELECT pg_sleep(31)" > /dev/null 2>&1 &
+holder=$!
+for _ in $(seq 60); do [ "$(PSQL -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = 'files' AND l.mode = 'AccessExclusiveLock' AND l.granted")" = 1 ] && break; sleep 0.2; done
+set -m
+python3 cli/rowstile_cli.py --db "dbname=$DB" apply "$T/changed.authz" > "$T/apply.out" 2>&1 &
+applier=$!
+set +m
+for _ in $(seq 60); do [ "$(waiting)" = 1 ] && break; sleep 0.5; done
+before=$(waiting)
+began=$(date +%s); kill -INT "$applier"; wait "$applier"; rc=$?; took=$(( $(date +%s) - began ))
+for _ in $(seq 20); do [ "$(waiting)" = 0 ] && break; sleep 0.5; done
+after=$(waiting)
+PSQL -c "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query = 'SELECT pg_sleep(31)' AND pid <> pg_backend_pid()" > /dev/null
+wait "$holder"
+[ "$before" = 1 ] && [ $rc -eq 130 ] && [ "$(cat "$T/apply.out")" = "stopped: nothing was kept" ] && [ $took -lt 10 ] && [ "$after" = 0 ] &&
+  [ "$(PSQL -c "SELECT count(*) FROM authz.policy_versions")" = "$versions" ] && [ "$(PSQL -c "SELECT authz.verify()")" = t ] &&
+  ok "Ctrl-C while apply waits for a lock: stopped at once (exit 130), its statement ended on the server, nothing kept" ||
+  bad "Ctrl-C during apply" "waiting $before, exit $rc after ${took}s, still waiting on the server: $after, said: $(cat "$T/apply.out")"
 run explain-rule --as user:3 app.files insert --row '{folder_id: 6}'; [ $rc -eq 2 ] && case "$out" in *"--row: not JSON: {folder_id: 6}"*"The shell took the double quotes"*) true;; *) false;; esac && ok "explain-rule shows a row a Windows shell took the quotes out of, and how to write it there" || bad "explain-rule --row without quotes" "$out"
 run explain-rule --as user:3 app.files insert --row '[1]'; [ $rc -eq 2 ] && case "$out" in *"JSON object"*) true;; *) false;; esac && ok "explain-rule --row wants an object" || bad "--row" "$rc $out"
 run diff "$T/main.authz" --limit; [ $rc -eq 2 ] && [ "$out" = "--limit needs a value" ] && ok "an option without its value is refused" || bad "option without value" "$rc $out"
