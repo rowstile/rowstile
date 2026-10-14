@@ -582,6 +582,9 @@ INSERT INTO authz_int.perms VALUES
 
 CREATE TABLE authz_int.locks (type text PRIMARY KEY, n bigint NOT NULL);
 
+-- a row for each row a share was made on or to (authz_int.mark_shared), until that row is gone
+CREATE TABLE authz_int.share_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));
+
 -- each inheritance table's definition and the tables it reads, to keep it on the next apply if they are the same
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
@@ -904,6 +907,39 @@ BEGIN
 END $f$;
 CREATE TRIGGER authz_role_gone AFTER DELETE ON authz.roles
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.role_gone();
+
+-- a share on or to a row marks it (a new version of its mark, which a transaction that can't see the share
+-- and then deletes the row, or changes its id, writes too: forget_marks)
+CREATE FUNCTION authz_int.mark_shared(p_type text, p_id text) RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+  INSERT INTO authz_int.share_marks AS m (type, id) VALUES (p_type, p_id)
+  ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1 $f$;
+-- rows that are gone, or whose id changed: their marks go too. In a transaction whose snapshot may be older than a
+-- share on one of them (not READ COMMITTED), the marks are written first: if a share was made since, that fails to
+-- serialize (40001), rather than leave a share the deletes after can't see
+CREATE FUNCTION authz_int.forget_marks(p_type text, p_ids text[]) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    INSERT INTO authz_int.share_marks AS m (type, id) SELECT DISTINCT p_type, x FROM unnest(p_ids) x
+    ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1;
+  END IF;
+  DELETE FROM authz_int.share_marks WHERE type = p_type AND id = ANY (p_ids);
+END $f$;
+-- whether a row is there, locked (FOR KEY SHARE) until the transaction ends, as authz.share locks what it shares
+CREATE FUNCTION authz_int.hold(p_type text, p_id text) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_tbl text; v_find text; v_found boolean;
+BEGIN
+  SELECT t.tbl, t.find INTO v_tbl, v_find FROM authz_int.types t WHERE t.name = p_type;
+  -- (the key's type by a subquery, never a variable: pg_input_is_valid takes a variable's first value for every
+  -- later call from the same line, so a uuid key checked after a bigint one would be invalid)
+  IF v_tbl IS NULL OR NOT pg_catalog.pg_input_is_valid(p_id, (SELECT t.keytype FROM authz_int.types t WHERE t.name = p_type)) THEN
+    RETURN false;
+  END IF;
+  EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s FOR KEY SHARE)', v_tbl, v_find) INTO v_found USING p_id;
+  RETURN v_found;
+END $f$;
 
 -- doc: each row with every ancestor it inherits from, through parent while {coalesce((not locked), false) AND coalesce((NOT coalesce((exists (select 1 from alt.holds h where h.target = this.up)), false)), false)}
 CREATE TABLE authz_int."doc__parent__tree" (descendant bigint NOT NULL, ancestor bigint NOT NULL,
@@ -1754,17 +1790,20 @@ END $b$;
 -- trees kept but no longer used (none, normally) go with the holding schema
 DROP SCHEMA authz_keep CASCADE;
 
--- shares on user rows that are gone, or whose id changed, are removed
+-- shares on user rows that are gone, or whose id changed, are removed (and their marks: forget_marks)
 CREATE FUNCTION authz_int."user__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
     DELETE FROM authz.shares WHERE object_type = 'user';
     DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id <> '*';      -- '*' (every one signed in) names no row
+    DELETE FROM authz_int.share_marks WHERE type = 'user';
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
+    PERFORM authz_int.forget_marks('user', ARRAY(SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'user' AND object_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
     DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id IN (SELECT o."id"::text FROM old_rows o EXCEPT SELECT n."id"::text FROM new_rows n);
   ELSE
+    PERFORM authz_int.forget_marks('user', ARRAY(SELECT o."id"::text FROM old_rows o));
     DELETE FROM authz.shares WHERE object_type = 'user' AND object_id IN (SELECT o."id"::text FROM old_rows o);
     DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id IN (SELECT o."id"::text FROM old_rows o);
   END IF;
@@ -1773,8 +1812,18 @@ END $f$;
 CREATE FUNCTION authz_int."user__forget_id"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
+  PERFORM authz_int.forget_marks('user', ARRAY[OLD."id"::text]);
   DELETE FROM authz.shares WHERE object_type = 'user' AND object_id = OLD."id"::text;
   DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id = OLD."id"::text;
+  RETURN NULL;
+END $f$;
+-- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
+CREATE FUNCTION authz_int."user__forget_all"() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    PERFORM authz_int.forget_marks('user', ARRAY(SELECT x."id"::text FROM "alt"."users" x));
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_user_forget_del" AFTER DELETE ON "alt"."users"
@@ -1783,6 +1832,8 @@ CREATE TRIGGER "authz_user_forget_id" AFTER UPDATE ON "alt"."users" FOR EACH ROW
   WHEN (OLD."id" IS DISTINCT FROM NEW."id") EXECUTE FUNCTION authz_int."user__forget_id"();
 CREATE TRIGGER "authz_user_forget_trunc" AFTER TRUNCATE ON "alt"."users"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__forget"();
+CREATE TRIGGER "authz_user_forget_trunc_first" BEFORE TRUNCATE ON "alt"."users"
+  FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__forget_all"();
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with are forgotten too.
 -- @object trigger "authz_user_forget_moved" ON "alt"."users"
@@ -1793,17 +1844,20 @@ DO $tr$ BEGIN
   END IF;
 END $tr$;
 
--- shares on grp rows that are gone, or whose id changed, are removed
+-- shares on grp rows that are gone, or whose id changed, are removed (and their marks: forget_marks)
 CREATE FUNCTION authz_int."grp__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
     DELETE FROM authz.shares WHERE object_type = 'grp';
     DELETE FROM authz.shares WHERE subject_type = 'grp' AND subject_id <> '*';      -- '*' (every one signed in) names no row
+    DELETE FROM authz_int.share_marks WHERE type = 'grp';
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
+    PERFORM authz_int.forget_marks('grp', ARRAY(SELECT o."gid"::text FROM old_rows o EXCEPT SELECT n."gid"::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'grp' AND object_id IN (SELECT o."gid"::text FROM old_rows o EXCEPT SELECT n."gid"::text FROM new_rows n);
     DELETE FROM authz.shares WHERE subject_type = 'grp' AND subject_id IN (SELECT o."gid"::text FROM old_rows o EXCEPT SELECT n."gid"::text FROM new_rows n);
   ELSE
+    PERFORM authz_int.forget_marks('grp', ARRAY(SELECT o."gid"::text FROM old_rows o));
     DELETE FROM authz.shares WHERE object_type = 'grp' AND object_id IN (SELECT o."gid"::text FROM old_rows o);
     DELETE FROM authz.shares WHERE subject_type = 'grp' AND subject_id IN (SELECT o."gid"::text FROM old_rows o);
   END IF;
@@ -1812,8 +1866,18 @@ END $f$;
 CREATE FUNCTION authz_int."grp__forget_id"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
+  PERFORM authz_int.forget_marks('grp', ARRAY[OLD."gid"::text]);
   DELETE FROM authz.shares WHERE object_type = 'grp' AND object_id = OLD."gid"::text;
   DELETE FROM authz.shares WHERE subject_type = 'grp' AND subject_id = OLD."gid"::text;
+  RETURN NULL;
+END $f$;
+-- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
+CREATE FUNCTION authz_int."grp__forget_all"() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    PERFORM authz_int.forget_marks('grp', ARRAY(SELECT x."gid"::text FROM "alt"."groups" x));
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_grp_forget_del" AFTER DELETE ON "alt"."groups"
@@ -1822,6 +1886,8 @@ CREATE TRIGGER "authz_grp_forget_id" AFTER UPDATE ON "alt"."groups" FOR EACH ROW
   WHEN (OLD."gid" IS DISTINCT FROM NEW."gid") EXECUTE FUNCTION authz_int."grp__forget_id"();
 CREATE TRIGGER "authz_grp_forget_trunc" AFTER TRUNCATE ON "alt"."groups"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."grp__forget"();
+CREATE TRIGGER "authz_grp_forget_trunc_first" BEFORE TRUNCATE ON "alt"."groups"
+  FOR EACH STATEMENT EXECUTE FUNCTION authz_int."grp__forget_all"();
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with are forgotten too.
 -- @object trigger "authz_grp_forget_moved" ON "alt"."groups"
@@ -1832,17 +1898,20 @@ DO $tr$ BEGIN
   END IF;
 END $tr$;
 
--- shares on doc rows that are gone, or whose id changed, are removed
+-- shares on doc rows that are gone, or whose id changed, are removed (and their marks: forget_marks)
 CREATE FUNCTION authz_int."doc__forget"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF TG_OP = 'TRUNCATE' THEN
     DELETE FROM authz.shares WHERE object_type = 'doc';
     DELETE FROM authz.shares WHERE subject_type = 'doc' AND subject_id <> '*';      -- '*' (every one signed in) names no row
+    DELETE FROM authz_int.share_marks WHERE type = 'doc';
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
+    PERFORM authz_int.forget_marks('doc', ARRAY(SELECT o."doc_no"::text FROM old_rows o EXCEPT SELECT n."doc_no"::text FROM new_rows n));
     DELETE FROM authz.shares WHERE object_type = 'doc' AND object_id IN (SELECT o."doc_no"::text FROM old_rows o EXCEPT SELECT n."doc_no"::text FROM new_rows n);
     DELETE FROM authz.shares WHERE subject_type = 'doc' AND subject_id IN (SELECT o."doc_no"::text FROM old_rows o EXCEPT SELECT n."doc_no"::text FROM new_rows n);
   ELSE
+    PERFORM authz_int.forget_marks('doc', ARRAY(SELECT o."doc_no"::text FROM old_rows o));
     DELETE FROM authz.shares WHERE object_type = 'doc' AND object_id IN (SELECT o."doc_no"::text FROM old_rows o);
     DELETE FROM authz.shares WHERE subject_type = 'doc' AND subject_id IN (SELECT o."doc_no"::text FROM old_rows o);
   END IF;
@@ -1851,8 +1920,18 @@ END $f$;
 CREATE FUNCTION authz_int."doc__forget_id"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
+  PERFORM authz_int.forget_marks('doc', ARRAY[OLD."doc_no"::text]);
   DELETE FROM authz.shares WHERE object_type = 'doc' AND object_id = OLD."doc_no"::text;
   DELETE FROM authz.shares WHERE subject_type = 'doc' AND subject_id = OLD."doc_no"::text;
+  RETURN NULL;
+END $f$;
+-- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize
+CREATE FUNCTION authz_int."doc__forget_all"() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    PERFORM authz_int.forget_marks('doc', ARRAY(SELECT x."doc_no"::text FROM "alt"."docs" x));
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_doc_forget_del" AFTER DELETE ON "alt"."docs"
@@ -1861,6 +1940,8 @@ CREATE TRIGGER "authz_doc_forget_id" AFTER UPDATE ON "alt"."docs" FOR EACH ROW
   WHEN (OLD."doc_no" IS DISTINCT FROM NEW."doc_no") EXECUTE FUNCTION authz_int."doc__forget_id"();
 CREATE TRIGGER "authz_doc_forget_trunc" AFTER TRUNCATE ON "alt"."docs"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__forget"();
+CREATE TRIGGER "authz_doc_forget_trunc_first" BEFORE TRUNCATE ON "alt"."docs"
+  FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__forget_all"();
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with are forgotten too.
 -- @object trigger "authz_doc_forget_moved" ON "alt"."docs"
@@ -3920,6 +4001,10 @@ BEGIN
   IF p_caveat IS NOT NULL AND NOT EXISTS (SELECT 1 FROM authz_int.caveats WHERE name = p_caveat) THEN
     RAISE EXCEPTION 'no caveat % in the policy', p_caveat USING HINT = 'rowstile help AZ707';
   END IF;
+  PERFORM authz_int.mark_shared(p_type, p_id);
+  IF v_key NOT LIKE '%:*' AND v_key NOT IN ('anyone', 'link') THEN
+    PERFORM authz_int.mark_shared(p_subject_type, p_subject_id);
+  END IF;
   INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation,
                             expires_at, created_by, starts_at, caveat, caveat_args)
   VALUES (p_type, p_id, p_relation, p_subject_type, p_subject_id, p_subject_relation,
@@ -5520,7 +5605,7 @@ END $f$;
 CREATE OR REPLACE FUNCTION authz.break_glass(p_type text, p_id text, p_relation text, p_reason text,
   p_duration interval DEFAULT interval '1 hour') RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE g authz.shares; v_until timestamptz; v_audit bigint;
+DECLARE g authz.shares; v_until timestamptz; v_audit bigint; v_held boolean;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
@@ -5528,7 +5613,12 @@ BEGIN
   IF p_duration IS NULL OR p_duration <= interval '0' OR p_duration > interval '1 day' THEN
     RAISE EXCEPTION 'emergency access lasts more than nothing and one day at most' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
   END IF;
-  IF authz.uid() IS NULL
+  -- the object and the user are locked (FOR KEY SHARE), as authz.share locks them: a delete waits for this, or this
+  -- for it and then finds nothing to break into
+  v_held := authz.uid() IS NOT NULL;
+  IF v_held THEN v_held := authz_int.hold(p_type, p_id); END IF;
+  IF v_held THEN v_held := authz_int.hold('user', authz.uid()::text); END IF;
+  IF NOT v_held
      OR NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = 'break_glass')
      OR NOT authz.can(p_type, p_id, 'break_glass') THEN
     RAISE EXCEPTION 'you cannot break the glass on % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
@@ -5539,6 +5629,8 @@ BEGIN
   END IF;
   v_until := now() + p_duration;
   PERFORM set_config('authz_ctx.reason', p_reason, true);
+  PERFORM authz_int.mark_shared(p_type, p_id);
+  PERFORM authz_int.mark_shared('user', authz.uid()::text);
   SELECT * INTO g FROM authz.shares WHERE object_type = p_type AND object_id = p_id AND relation = p_relation
     AND subject_type = 'user' AND subject_id = authz.uid()::text AND subject_relation = '' FOR UPDATE;
   IF g.object_id IS NULL THEN

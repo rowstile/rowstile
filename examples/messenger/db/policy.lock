@@ -85,7 +85,7 @@
 always | 48e396c95648
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
-function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 929c10670601 shape=77f3e79f
+function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 0736d1c5cdb4 shape=77f3e79f
 function authz.can(p_type text, p_id bigint, p_perm text) | 3b89f3888983 shape=a0df7b00
 function authz.can(p_type text, p_id text, p_perm text) | 61e631c8a2d4 shape=220bc89f
 function authz.can(p_type text, p_id uuid, p_perm text) | 1acab4c19015 shape=54adceba
@@ -135,7 +135,7 @@ function authz.roles_of(p_owner_type text, p_owner_id text) | 63ff9b9457bd shape
 function authz.set_role_permissions(p_role bigint, p_permissions text[]) | 8a936f1cfbbb shape=3cffc528
 function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 432b631cd9d6 shape=38174c64
 function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 9aa2633d3679 shape=9eda2a73
-function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 61ba1b04fa6a shape=386e2b78
+function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 15c818f6b38b shape=386e2b78
 function authz.start_review(p_type text, p_id bigint, p_closes_at timestamptz) | ede0d805b2b1 shape=c2dba351
 function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 102af3ff6add shape=879e84e5
 function authz.sync_members(p_type text, p_id text, p_relation text, p_members text[], OUT added int, OUT removed int) | 4f9950175cbe shape=c0ea90e1
@@ -275,8 +275,9 @@ function authz_int."chat__col_audit_trunc"() | 4d11b4f8445f shape=31a7e41a
 function authz_int."chat__col_audit_upd"() | 8d9246df783c shape=3b2ea579
 function authz_int."chat__creator__who"(p_id bigint) | e7c429b277f2 shape=25dfcb6e
 function authz_int."chat__creator__why"(p_id bigint, p_depth int, p_seen text[]) | 65fdbc9d4031 shape=1ba8912d
-function authz_int."chat__forget"() | 45c21f753cfd shape=64274e84
-function authz_int."chat__forget_id"() | 5eff55f7deb5 shape=d9b9804a
+function authz_int."chat__forget"() | 3abf0f1c2419 shape=64274e84
+function authz_int."chat__forget_all"() | d02b981cce0c shape=e103eff3
+function authz_int."chat__forget_id"() | 4a7ec652571b shape=d9b9804a
 function authz_int."chat__invite__who"(p_id bigint) | 1db1a6094768 shape=cf684d13
 function authz_int."chat__invite__why"(p_id bigint, p_depth int, p_seen text[]) | c92de041f781 shape=22a4986a
 function authz_int."chat__invitee__who"(p_id bigint) | e8088e53bb48 shape=ff2cdcb7
@@ -375,10 +376,13 @@ function authz_int.changed(p_type text, p_ids text[], p_cause text) | 3c2e76af9d
 function authz_int.check_manage_keys(p_type text, p_id text) | 1e1b710abecd shape=391727a0
 function authz_int.check_writable() | 87ff3161cc1d shape=a16d3e7b
 function authz_int.child_triggers() | 95dc35a0698e shape=52e92456
+function authz_int.forget_marks(p_type text, p_ids text[]) | 19d31a171230 shape=8933fd55
 function authz_int.hmac_sha256(p_key bytea, p_msg bytea) | 33edf164bad5 shape=4d6b17ae
+function authz_int.hold(p_type text, p_id text) | 3122469f8567 shape=bc067713
 function authz_int.jit_off() | 888eef7af8da shape=35e4d2a9
 function authz_int.link_relations(p_type text, p_id text) | 9a47fb2992d0 shape=8bbe4201
 function authz_int.manage_perm(p_type text, p_relation text, p_subject text) | 09bf2a459153 shape=5b4aa64c
+function authz_int.mark_shared(p_type text, p_id text) | 1095eed94160 shape=aa18a443
 function authz_int.may_inspect(p_type text, p_id text) | c144ba24c8dd shape=0942af2e
 function authz_int.may_manage(p_type text, p_id text, p_relation text, p_subject text) | a92f01d8d85a shape=4b7f1aa2
 function authz_int.on_grant() | 9be0691fe65f shape=e128dbcd
@@ -451,6 +455,7 @@ table authz_int.role_grantable | aa914205cf6b shape=aa914205
 table authz_int.role_subjects | 0abfdc400757 shape=0abfdc40
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
+table authz_int.share_marks | 5ad55aa695a6 shape=5ad55aa6
 table authz_int.shared_relations | fe0f6cf5c3d9 shape=c57707aa
 table authz_int.trees | 02db6ec72102 shape=02db6ec7
 table authz_int.types | 87bc8837daf3 shape=b6d5b497
@@ -478,6 +483,7 @@ trigger "authz_chat_forget_del" ON "ms"."chats" | b249a7e46352
 trigger "authz_chat_forget_id" ON "ms"."chats" | b06f68229c36
 trigger "authz_chat_forget_moved" ON "ms"."chats" | 298e67b4a59d
 trigger "authz_chat_forget_trunc" ON "ms"."chats" | a2eda4a8274e
+trigger "authz_chat_forget_trunc_first" ON "ms"."chats" | cc78f6b0ebe2
 trigger "authz_membership_col_audit_del" ON "ms"."members" | 927cb5c3b3de
 trigger "authz_membership_col_audit_ins" ON "ms"."members" | 5040fef1fa84
 trigger "authz_membership_col_audit_row" ON "ms"."members" | e34d7eb8211d

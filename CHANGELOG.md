@@ -11,6 +11,15 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 - The command lost its connection right after signing in, before its first statement, with a traceback. It
   now says it lost the database (exit 2), as it does anywhere later.
+- A share could outlive the row it was on or to, where a row was deleted, given a new id or emptied with
+  `TRUNCATE` by a transaction in REPEATABLE READ or SERIALIZABLE that had taken its snapshot before someone
+  else's share of that row was committed: the delete went through and left the share, and a row given that id
+  later had it too. It affected apps whose deletes or changes of id run in those levels, beside sharing at any level
+  (not both in SERIALIZABLE). Such a delete now fails with a serialization error (40001), to retry, and the
+  share goes with the row. `authz.break_glass` locked nothing, so a folder deleted while someone broke the glass
+  on it kept that share even in READ COMMITTED; it now locks the row and the user as `authz.share` does, and
+  waits for the delete. A share now takes a short lock of its own on the object and the subject, so two shares
+  of one object at once wait for each other, and in REPEATABLE READ the second fails with 40001.
 
 ## 0.1.0 (alpha)
 

@@ -98,6 +98,68 @@ wait
 if grep -q "you cannot share file 40" "$out.b"; then echo "ok    the share waits for the delete, then is refused"; else echo "FAIL  share: $(cat "$out.b")"; fails=$((fails + 1)); fi
 check "no share is left on the deleted id" "SELECT NOT EXISTS (SELECT 1 FROM authz.shares WHERE object_type = 'file' AND object_id = '40')"
 
+# A transaction at level $1 takes its snapshot, then waits while another session runs $3 (and commits), then
+# runs $2 and commits. Its snapshot can't see the other's share: it must fail to serialize (and change nothing), never
+# commit and leave the share on a row that is gone. $4: what the check is called.
+stale() {
+  psql -X -q -d "$DB" > "$out" 2>&1 <<SQL &
+BEGIN ISOLATION LEVEL $1;
+SELECT count(*) FROM app.orgs;
+SELECT pg_sleep(1.5);
+$2;
+COMMIT;
+SQL
+  sleep 0.5
+  psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "SET ROLE app_user" -c "SET authz.user_id = 1" -c "$3" > "$out.b" 2>&1 \
+    || { echo "FAIL  $4: the share: $(tr '\n' ' ' < "$out.b")"; fails=$((fails + 1)); }
+  wait
+  expect_in_a "$4: the writer with the older snapshot gets a serialization error" "could not serialize access due to concurrent update"
+  check "$4: no share is left on a row that is gone" "SELECT NOT EXISTS (SELECT 1 FROM authz.shares g
+    WHERE (g.object_type = 'file' AND NOT EXISTS (SELECT 1 FROM app.files x WHERE x.id::text = g.object_id))
+       OR (g.subject_type = 'user' AND NOT EXISTS (SELECT 1 FROM app.users x WHERE x.id::text = g.subject_id)))"
+}
+
+echo "-- 6. REPEATABLE READ: a file deleted while it is shared"
+reset
+psql -X -q -d "$DB" -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (40, 4, 1, 'doomed.md')"
+stale "REPEATABLE READ" "DELETE FROM app.files WHERE id = 40" "SELECT authz.share('file', 40, 'viewer', 'user', 4)" \
+  "a delete with an older snapshot"
+check "the file and its share are both still there" "SELECT EXISTS (SELECT 1 FROM app.files WHERE id = 40)
+  AND EXISTS (SELECT 1 FROM authz.shares WHERE object_type = 'file' AND object_id = '40' AND subject_id = '4')"
+
+echo "-- 7. REPEATABLE READ: a file given a new id while it is shared"
+reset
+psql -X -q -d "$DB" -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (40, 4, 1, 'doomed.md')"
+stale "REPEATABLE READ" "UPDATE app.files SET id = 41 WHERE id = 40" "SELECT authz.share('file', 40, 'viewer', 'user', 4)" \
+  "a new id with an older snapshot"
+
+echo "-- 8. SERIALIZABLE: a user deleted while a file is shared with them, by a session in READ COMMITTED"
+reset
+psql -X -q -d "$DB" -c "INSERT INTO app.users VALUES (8, 'hal')"
+stale "SERIALIZABLE" "DELETE FROM app.users WHERE id = 8" "SELECT authz.share('file', 11, 'viewer', 'user', 8)" \
+  "the user deleted with an older snapshot"
+
+echo "-- 9. REPEATABLE READ: the files emptied while one is shared"
+reset
+stale "REPEATABLE READ" "TRUNCATE app.files" "SELECT authz.share('file', 11, 'viewer', 'user', 4)" \
+  "TRUNCATE with an older snapshot"
+
+echo "-- 10. READ COMMITTED: breaking the glass on a folder while it is deleted"
+reset
+psql -X -q -d "$DB" -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (40, 1, 4, 1, 'doomed')"
+psql -X -q -d "$DB" > "$out" 2>&1 <<'SQL' &
+BEGIN;
+DELETE FROM app.folders WHERE id = 40;
+SELECT pg_sleep(1.5);
+COMMIT;
+SQL
+sleep 0.5
+psql -X -q -d "$DB" -c "SET ROLE app_user" -c "SET authz.user_id = 3" \
+  -c "SELECT authz.break_glass('folder', 40, 'viewer', 'an outage')" > "$out.b" 2>&1
+wait
+if grep -q "you cannot break the glass on folder 40" "$out.b"; then echo "ok    breaking the glass waits for the delete, then is refused"; else echo "FAIL  break_glass: $(tr '\n' ' ' < "$out.b")"; fails=$((fails + 1)); fi
+check "no share is left on the deleted folder" "SELECT NOT EXISTS (SELECT 1 FROM authz.shares WHERE object_type = 'folder' AND object_id = '40')"
+
 rm -f "$out" "$out.b"
 dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "concurrency: all passed"; else echo "concurrency: $fails failed"; exit 1; fi
