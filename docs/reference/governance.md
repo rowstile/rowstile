@@ -77,7 +77,7 @@ where memberships have an `id` too): the row's is `this.id`. <!-- checked: tests
 
 `authz.connection_check()` is the same idea for the app itself, which may call it: what is wrong with
 the connection it runs on (a superuser, BYPASSRLS, the owner of a governed table, a table with rules whose
-row-level security is off). <!-- checked: tests/sessions.sh "the owner's connection: an error"; tests/sessions.sh "row-level security off on a table with rules: an error"; tests/sessions.sh "the app's role: nothing to report" -->
+row-level security is off). <!-- checked: tests/sessions.sh "the owner's connection: an error"; tests/sessions.sh "a login in the app role with BYPASSRLS: an error, and the only one"; tests/sessions.sh "row-level security off on a table with rules: an error"; tests/sessions.sh "the app's role: nothing to report" -->
 A login that is neither the app role nor a member of it can't call it at all
 (`permission denied for schema authz`): the rules apply to the app role only. <!-- checked: tests/sessions.sh "a login outside the app role can't call connection_check() at all" -->
 A login that is a superuser or

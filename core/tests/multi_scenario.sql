@@ -106,6 +106,14 @@ RESET ROLE;
 UPDATE mt.users SET active = true WHERE id = '00000000-0000-4000-8000-000000000006';
 SET ROLE app_user;
 SELECT test.ok('reactivated: his folder is back', authz.can('folder', 4, 'edit'));
+RESET ROLE;
+-- a tree across two types may not loop: folder 1 into project 1, which sits inside it through folder 2
+SELECT test.ok('moving a folder inside itself through a project is refused, by its words and its code',
+  test.error('UPDATE mt.folders SET parent_type = ''project'', parent_id = 1 WHERE id = 1')
+    = '23514: folder 1 cannot be moved inside itself'
+  AND test.hint('UPDATE mt.folders SET parent_type = ''project'', parent_id = 1 WHERE id = 1') = '23514: rowstile help AZ713'
+  AND (SELECT parent_id IS NULL FROM mt.folders WHERE id = 1) AND authz.verify());
+SET ROLE app_user;
 
 -- ---------------------------------------------------------------------
 -- Sharing: who may share, and what
@@ -296,7 +304,15 @@ SELECT test.ok('a role is given to whom the policy says (user, team#member), not
 SELECT test.ok('... and only a role that exists, for its type',
   test.error($$SELECT authz.share('folder', '1', 'role:999999', 'user', '00000000-0000-4000-8000-000000000004')$$)
     = 'P0001: no role role:999999 for folder');
+SELECT test.ok('alice (no Acme admin) cannot change Acme''s role, nor delete it',
+  test.error(format($$SELECT authz.set_role_permissions(%s, ARRAY['view'])$$, current_setting('test.reviewer')))
+    = '42501: you cannot manage role ' || current_setting('test.reviewer')
+  AND test.error(format($$SELECT authz.delete_role(%s)$$, current_setting('test.reviewer')))
+    = '42501: you cannot manage role ' || current_setting('test.reviewer'));
 SELECT test.as(5);
+SELECT test.ok('erin may, but a role cannot be given what roles may not grant',
+  test.error(format($$SELECT authz.set_role_permissions(%s, ARRAY['view', 'share'])$$, current_setting('test.reviewer')))
+    = 'P0001: custom roles on folder cannot grant share');
 SELECT test.ok('erin adds edit to reviewer: dave can now edit',
   test.try(format($$SELECT authz.set_role_permissions(%s, ARRAY['view', 'edit'])$$, current_setting('test.reviewer'))) = 'ok');
 SELECT test.as(4);

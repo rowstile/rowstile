@@ -106,6 +106,21 @@ for p in "multi tests/multi_schema.sql tests/multi.authz app_user" "alt tests/al
   [ -z "$got" ] && echo "ok    ... and $1" || { echo "FAIL  the catalog of $1: $got"; fails=$((fails + 1)); }
 done
 
+echo "-- a table keyed by several columns (tests/composite.authz): the rule on a column holds there too"
+C="${DB}_composite"
+dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
+python3 compile_policy.py tests/composite.authz > /tmp/authz_adversarial_composite.sql &&
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" -f tests/composite_schema.sql \
+  -f /tmp/authz_adversarial_composite.sql -c "INSERT INTO cx.users (id) VALUES (1), (2)" -c "INSERT INTO cx.orgs VALUES (1)" \
+  -c "INSERT INTO cx.folders (org_id, id, owner_id) VALUES (1, 1, 1), (1, 2, 2)" >/dev/null || exit 1
+# alice owns folder (1,1), not (1,2): she may change her folder, not move it under bob's
+got=$(error_of "$(psql -X -q -At -1 -U "$ATTACKER" -d "$C" -v VERBOSITY=verbose -c "$(sign 1)" \
+  -c "UPDATE cx.folders SET parent_type = 'folder', parent_id = 2 WHERE org_id = 1 AND id = 1" 2>&1)")
+agrees "composite" "42501: changing parent_type, parent_id of cx.folders (1,1) needs: parent.edit or {parent_id is null}" "$got" &&
+  echo "ok    alice can't move her folder under one she may not edit: the refusal names the row by its key" ||
+  { echo "FAIL  the rule on a composite key's column: $got"; fails=$((fails + 1)); }
+dropdb "$C"
+
 echo "-- grants the policy doesn't give, and schemas on the search path others may create in"
 C="${DB}_grants"
 CP() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$C" "$@"; }
@@ -169,6 +184,9 @@ echo "-- sharing and asking"
 expect "sharing a hidden file with herself" "42501: you cannot share file 12" -c "SELECT authz.share('file', 12, 'viewer', 'user', 3)"
 expect "sharing what she may only view" "42501: you cannot share file 11" -c "SELECT authz.share('file', 11, 'viewer', 'user', 4)"
 AS=1 expect "sharing a relation the policy doesn't share" "P0001: the policy does not allow sharing file.owner with user" -c "SELECT authz.share('file', 11, 'owner', 'user', 3)"
+AS=1 expect "... or unsharing one" "42501: you cannot unshare owner on file 11" -c "SELECT authz.unshare('file', 11, 'owner', 'user', 3)"
+expect "breaking the glass (as she may on Acme's folders) into a relation the policy doesn't share with users" \
+  "P0001: the policy does not allow sharing folder.owner with a user" -c "SELECT authz.break_glass('folder', '6', 'owner', 'curious', '1 hour')"
 # every way of asking to share a hidden object (file 12) answers as for a missing one: message and context
 said() { psql -X -q -At -1 -U "$ATTACKER" -d "$DB" -c "$(sign 3)" -c "$1" 2>&1 | sed "s/$2/<id>/g"; }
 for call in "share('file', ID, 'viewer', 'user', '4')" "share('file', ID, 'viewer', 'user', '424242')" \
@@ -224,6 +242,9 @@ PSQL -c "CREATE TABLE app.files_old () INHERITS (app.files)" -c "GRANT SELECT, I
 [ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'app.files_old'")" = 2 ] &&
   echo "ok    lint reports a table made after apply that inherits from a governed one" ||
   { echo "FAIL  lint misses app.files_old"; fails=$((fails + 1)); }
+# (applying makes rowstile's functions anew, and the statements the run measures go with the old ones: they are kept
+# first; tests/coverage_functions.sh)
+bash tests/coverage_functions.sh "$DB"
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_adversarial.sql >/dev/null || exit 1
 expect "reading it directly, once applied again" "0" -c "SELECT count(*) FROM app.files_old"
 expect "... changing it directly" "0" -c "WITH u AS (UPDATE app.files_old SET name = 'mine' RETURNING 1) SELECT count(*) FROM u"
