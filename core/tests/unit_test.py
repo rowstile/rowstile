@@ -4064,6 +4064,131 @@ class Wire(unittest.TestCase):
             conn.query("SELECT 1")
         conn.sock.close()
 
+    def test_the_servers_reason_when_it_ends_the_session(self) -> None:
+        """A server that ends the session (pg_terminate_backend, a shutdown) sends a FATAL that says why, then
+        closes. Over a Unix socket the next statement's send fails first (a broken pipe): the error is the server's
+        words all the same, read as libpq reads them after a write that failed; and on the way out, undoing a
+        savepoint or looking for the policy's condition that failed doesn't put another error in their place."""
+        import socket
+        import struct
+
+        from authzlib import database
+
+        pgwire, said = self.pgwire, self.said
+        # as Postgres sends it
+        fatal = said(b"E", b"SFATAL\0VFATAL\0C57P01\0Mterminating connection due to administrator command\0\0")
+        ended = ("57P01", "terminating connection due to administrator command", "FATAL")
+
+        def session(answers: Sequence[bytes] = (), then: bytes = b"") -> pgwire.Connection:
+            """A connection over a Unix socket whose server signs it in, answers each statement with the next of
+            answers, then sends `then` and closes. With no answers, it has closed when this returns."""
+            mine, theirs = socket.socketpair()
+
+            def serve() -> None:
+                theirs.recv(65536)  # the start-up message
+                theirs.sendall(said(b"R", struct.pack("!i", 0)) + said(b"Z", b"I"))
+                for answer in answers:
+                    kind = b""
+                    while kind not in (b"S", b"Q"):  # one statement: up to its Sync, or a simple query
+                        kind = theirs.recv(1)
+                        length = struct.unpack("!i", theirs.recv(4, socket.MSG_WAITALL))[0]
+                        theirs.recv(length - 4, socket.MSG_WAITALL)
+                    theirs.sendall(answer)
+                theirs.sendall(then)
+                theirs.close()
+
+            server = threading.Thread(target=serve, daemon=True)
+            server.start()
+            conn = pgwire.Connection(mine, "ann", None, "app", None)
+            if not answers:
+                server.join(5)
+            return conn
+
+        # between two statements: the next one's send finds the connection closed
+        for send in ("query", "script", "execute"):
+            conn = session(then=fatal)
+            with self.assertRaises(pgwire.PgError, msg=send) as caught:
+                getattr(conn, send)("SELECT 1")
+            e = caught.exception
+            self.assertEqual((e.code, e.message, e.fields["S"]), ended, send)
+            # what is asked after it (by a probe that took the error for an answer, say) is told why again
+            with self.assertRaises(pgwire.PgError, msg=send) as caught:
+                conn.query("SELECT 2")
+            e = caught.exception
+            self.assertEqual((e.code, e.message, e.fields["S"]), ended, send)
+            conn.close()  # on a connection that is gone: nothing raised
+        conn = session()  # closed without a word (the network, a crash)
+        with self.assertRaisesRegex(pgwire.ProtocolError, "^the server closed the connection$"):
+            conn.query("SELECT 1")
+        conn.close()
+
+        class Db:
+            """authzlib's Db over the connection, each statement it was asked for kept."""
+
+            errors = pgwire.PgError
+
+            def __init__(self, conn: pgwire.Connection) -> None:
+                self.conn, self.sent = conn, list[str]()
+
+            def rows(self, sql: str, args: Sequence[Value] = ()) -> list[Row]:
+                self.sent.append(sql)
+                result, cols = self.conn.query_described(sql, list(args))
+                return [dict(zip(cols, r, strict=True)) for r in result]
+
+            def script(self, sql: str) -> None:
+                self.sent.append(sql)
+                self.conn.script(sql)
+
+            def warn(self, message: str, detail: str | None = None, hint: str | None = None) -> None:
+                pass
+
+        saved = said(b"C", b"SAVEPOINT\0") + said(b"Z", b"T")
+        # ended in the middle of a savepoint: undoing it fails, and the error raised is still the server's
+        db = Db(session([saved, fatal]))
+        with self.assertRaises(pgwire.PgError) as caught, database.savepoint(db, "sp"):
+            db.rows("SELECT 1")
+        self.assertEqual((caught.exception.code, caught.exception.message), ended[:2])
+        self.assertEqual(db.sent, ["SAVEPOINT sp", "SELECT 1", "ROLLBACK TO SAVEPOINT sp; RELEASE SAVEPOINT sp"])
+        db.conn.close()
+        # ... and Ctrl-C there stays Ctrl-C (the command says it stopped, and nothing was kept)
+        db = Db(session([saved]))
+        with self.assertRaises(KeyboardInterrupt), database.savepoint(db, "sp"):
+            raise KeyboardInterrupt
+        db.conn.close()
+        # ... but Undo asks for the undoing: a failure to undo is that failure
+        db = Db(session([saved]))
+        with (
+            self.assertRaisesRegex(pgwire.ProtocolError, "^the server closed the connection$"),
+            database.savepoint(db, "sp"),
+        ):
+            raise database.Undo
+        db.conn.close()
+
+        # the policy's SQL, ended by the server: its words, and no condition of the policy tried alone after them
+        def columns(oid: int, *names: bytes) -> bytes:
+            return said(
+                b"T",
+                struct.pack("!h", len(names))
+                + b"".join(n + b"\0" + struct.pack("!ihihih", 0, 0, oid, -1, -1, 0) for n in names),
+            )
+
+        def row(*values: bytes) -> bytes:
+            return said(b"D", struct.pack("!h", len(values)) + b"".join(struct.pack("!i", len(v)) + v for v in values))
+
+        done = said(b"C", b"SELECT 1\0") + said(b"Z", b"T")
+        room = columns(23, b"per", b"slots") + row(b"64", b"300") + done  # lock_room: the lock table's room
+        before = columns(25, b"sp", b"cfb", b"lt") + row(b"app", b"on", b"0") + done  # run: the settings it gives back
+        db = Db(session([room, saved, before, fatal]))
+        policy = "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n  can view = owner or {not archived}\n"
+        with self.assertRaises(pgwire.PgError) as caught:
+            database.run_policy(db, "CREATE VIEW v AS SELECT 1;\n", policy, {})
+        self.assertEqual((caught.exception.code, caught.exception.message), ended[:2])
+        self.assertEqual(
+            db.sent[1:], ["SAVEPOINT authz_policy", db.sent[2], "CREATE VIEW v AS SELECT 1;\n", db.sent[4]], db.sent
+        )
+        self.assertEqual(len(db.sent), 5, db.sent)  # nothing after undoing the savepoint
+        db.conn.close()
+
     def test_cancel(self) -> None:
         """Ctrl-C in the command: a CancelRequest with the session's key, on a connection of its own; then this one
         is closed."""

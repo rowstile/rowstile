@@ -173,13 +173,42 @@ class Connection:
         # called with each NOTICE / WARNING the server sends, those it sends as the session starts too (a database's
         # collation version that doesn't match the system's, a setting of the database's it can't take)
         self.on_notice = on_notice
+        self.ended: Fields | None = None  # the FATAL the server ended the session with: why, said again on any use
         self.address: tuple[str, int] | None = None  # where connect() went, for cancel()
         self.backend: tuple[int, int] | None = None  # this session's process id and key, for cancel()
         self._startup(user, password, database, options, channel_binding, _auth_rules(require_auth), settings or {})
 
     # --- framing ----------------------------------------------------------
     def _send(self, kind: bytes, payload: bytes = b"") -> None:
-        self.sock.sendall(kind + struct.pack("!i", len(payload) + 4) + payload)
+        self._send_all(kind + struct.pack("!i", len(payload) + 4) + payload)
+
+    def _send_all(self, data: bytes) -> None:
+        """Sends data. On a connection the server has closed (a broken pipe), the error is what the server said
+        before it closed, as libpq reads it after a write that failed: the FATAL that says why (the session was
+        ended, the server is shutting down); else that the server closed the connection."""
+        if self.ended is not None:
+            raise PgError(self.ended)
+        try:
+            self.sock.sendall(data)
+        except OSError as e:
+            said = self._last_words()
+            if said is not None:
+                raise said from None
+            if isinstance(e, (BrokenPipeError, ConnectionResetError)):
+                raise ProtocolError("the server closed the connection") from None
+            raise
+
+    def _last_words(self) -> PgError | None:
+        """The last error the server sent on a connection it closed, if one is left to read."""
+        said = None
+        try:
+            self.sock.settimeout(1)
+            while True:
+                kind, payload = self._read()
+                if kind == b"E":
+                    said = self._error(payload)
+        except (ProtocolError, OSError):
+            return said
 
     def _recv_exact(self, n: int) -> bytes:
         while len(self.buf) < n:
@@ -221,6 +250,14 @@ class Connection:
     def _cstr(s: str) -> bytes:
         return s.encode() + b"\0"
 
+    def _error(self, payload: bytes) -> PgError:
+        """An error the server sent. A FATAL or PANIC one ends the session: kept, so that whatever is asked of the
+        connection after it says why (a probe that takes an error as an answer reads past it, and asks again)."""
+        error = PgError(self._fields(payload))
+        if error.fields.get("S") in ("FATAL", "PANIC"):
+            self.ended = error.fields
+        return error
+
     @staticmethod
     def _fields(payload: bytes) -> Fields:
         fields: Fields = {}
@@ -253,7 +290,7 @@ class Connection:
         for k, v in params.items():
             body += self._cstr(k) + self._cstr(v)
         body += b"\0"
-        self.sock.sendall(struct.pack("!i", len(body) + 4) + body)
+        self._send_all(struct.pack("!i", len(body) + 4) + body)
         scram: _Scram | None = None
         bound = False  # signed in with SCRAM bound to this TLS channel, the server's proof checked
         done = False  # this client did its part: sent the password, or checked the server's SCRAM proof
@@ -292,7 +329,7 @@ class Connection:
                 else:
                     raise ProtocolError(f"unsupported authentication method {code}")
             elif kind == b"E":
-                raise PgError(self._fields(payload))
+                raise self._error(payload)
             elif kind == b"S":
                 k, v = payload.split(b"\0")[:2]
                 self.params[k.decode()] = v.decode()
@@ -379,7 +416,7 @@ class Connection:
             + struct.pack("!i", 4)
         )
         self.busy = True
-        self.sock.sendall(msg)
+        self._send_all(msg)
         rows: list[tuple[Value, ...]] = []
         cols: list[tuple[str, int]] = []
         error: PgError | None = None
@@ -409,7 +446,7 @@ class Connection:
                     row.append((None if val is None else val.decode()) if text else _convert(cols[i][1], val))
                 rows.append(tuple(row))
             elif kind == b"E":
-                error = PgError(self._fields(payload))
+                error = self._error(payload)
             elif kind == b"N":
                 if self.on_notice:
                     self.on_notice(self._fields(payload))
@@ -437,7 +474,7 @@ class Connection:
         while True:
             kind, payload = self._read_or(error)
             if kind == b"E":
-                error = error or PgError(self._fields(payload))
+                error = error or self._error(payload)
             elif kind == b"N":
                 if self.on_notice:
                     self.on_notice(self._fields(payload))
@@ -455,7 +492,7 @@ class Connection:
     def close(self) -> None:
         try:
             self._send(b"X")
-        except OSError:
+        except (OSError, ProtocolError, PgError):
             pass
         self.sock.close()
 

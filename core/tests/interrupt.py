@@ -86,9 +86,13 @@ STALE = (
     "ALTER TABLE app.folders ENABLE TRIGGER USER;"
 )
 # what the command says when it loses its session, last, after any warnings it printed before: exit 2, never a
-# traceback (the words after it are the server's, or the socket's when it finds the connection closed before it
-# reads them)
+# traceback; then why, in the server's words when the server ended the session (read after a send that failed too,
+# as libpq reads them), else that the connection closed
 LOST = re.compile(r"(?:.*\n)?lost the database: ([^\n]+)\n", re.S)
+WHY = {
+    "terminate": "terminating connection due to administrator command",
+    "close": "the server closed the connection",
+}
 # the tables kept across applies (schema authz): their columns and their rows, besides what migrate_test compares
 KEPT = r"""
 SELECT 'column ' || c.oid::regclass::text || ' ' || string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod),
@@ -463,8 +467,8 @@ class Lab:
             plan = Plan(at=n, how="close" if n in closed else "terminate", cut=self.cut(case.reads))
             got = case.run(DB, plan)
             lost = LOST.fullmatch(got.err) if "Traceback" not in got.err else None
-            if case.command and (got.code != 2 or not lost or got.out):
-                problem("said", n, f"exit {got.code}, {(got.out + got.err).strip()[-1500:]!r}")
+            if case.command and (got.code != 2 or not lost or got.out or lost.group(1) != WHY[plan.how]):
+                problem("said", n, f"{plan.how}: exit {got.code}, {(got.out + got.err).strip()[-1500:]!r}")
             elif lost:
                 words.add(lost.group(1))
             if not plan.done or plan.sent[:n] != r.sent[:n]:
@@ -502,7 +506,7 @@ class Lab:
         checks = [
             (
                 f"{case.name}: cut {cuts}{how}"
-                + (", it says it lost the database, exit 2" if case.command else "")
+                + (", it says it lost the database and why (the server's words), exit 2" if case.command else "")
                 + f" ({took:.0f}s)",
                 problems["said"],
             ),
@@ -747,7 +751,7 @@ def stopped(lab: Lab, d: Docs, every: bool) -> None:
                 held = (p.returncode, err) == (1, "canceling statement due to statement timeout\n")
             else:
                 lost = LOST.fullmatch(err) if "Traceback" not in err else None
-                held = p.returncode == 2 and lost is not None
+                held = p.returncode == 2 and lost is not None and lost.group(1) == WHY["terminate"]
                 if lost:
                     words.add(f"{lost.group(1)} ({what})")
             if not held or out:
@@ -757,13 +761,45 @@ def stopped(lab: Lab, d: Docs, every: bool) -> None:
         print(f"      {case.name}, the command itself: lost the database: {' | '.join(sorted(words))}")
         label = (
             f"{case.name}, the command itself: ended by the server while a statement waits for a lock (on "
-            f"{', '.join(w for w, _ in blockers)}), it says it lost the database, exit 2; stopped by "
+            f"{', '.join(w for w, _ in blockers)}), it says it lost the database in the server's words, exit 2; stopped by "
             "statement_timeout, it says so, exit 1; the database is as it was"
         )
         if problems:
             bad(label, "\n  ".join(problems[:6]))
         else:
             ok(label)
+
+
+def reviewed(lab: Lab, d: Docs) -> None:
+    """rowstile review --db, its session ended by the server as soon as it signed in (before its BEGIN)."""
+    repo = tempfile.mkdtemp(prefix="authz_interrupt_review_")
+    os.makedirs(os.path.join(repo, "db"))
+    shutil.copy(d.files.old, os.path.join(repo, "db", "policy.authz"))
+    with open(os.path.join(repo, "rowstile.toml"), "w", encoding="utf-8") as fh:
+        fh.write('policy = "db/policy.authz"\n')
+    for argv in (
+        ["init", "-q"],
+        ["add", "-A"],
+        ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "base"],
+    ):
+        subprocess.run(["git", "-C", repo, *argv], check=True, capture_output=True)
+    shutil.copy(d.files.new, os.path.join(repo, "db", "policy.authz"))
+    lab.close()
+    recreate(DB)
+    here = os.getcwd()
+    os.chdir(repo)
+    try:
+        got = command(["--db", dsn(DB), "review", "--base", "HEAD"], Plan(at=0, cut=lab.cut(False)))
+    finally:
+        os.chdir(here)
+        shutil.rmtree(repo, ignore_errors=True)
+    label = (
+        "rowstile review --db, ended by the server as soon as it signed in: it says it lost the database, why, exit 2"
+    )
+    if (got.code, got.out, got.err) == (2, "", f"lost the database: {WHY['terminate']}\n"):
+        ok(label)
+    else:
+        bad(label, f"exit {got.code}, {(got.out + got.err).strip()[-1500:]!r}")
 
 
 # --- other policies (the soak) ------------------------------------------------------------------------
@@ -831,6 +867,7 @@ def main() -> None:
             d = docs_cases()
             docs(lab, d, a.every, random.Random(f"interrupt/{a.seed}"))
             stopped(lab, d, a.every)
+            reviewed(lab, d)
     finally:
         lab.close()
         lab.control.close()

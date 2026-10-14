@@ -1550,9 +1550,10 @@ def review_cmd(cfg: Config, args: list[str], opts: dict[str, str], flags: set[st
         except (ValueError, OSError, pgwire.PgError, pgwire.ProtocolError) as e:
             fail(cant_connect(e, dsn), 2)
         conn.on_notice = lambda f: None
-        conn.execute("BEGIN")
-        db = Db(conn)
     try:
+        if conn is not None:
+            conn.execute("BEGIN")  # a session lost already is said as below
+            db = Db(conn)
         base = None if base_text is None else (base_text, base_files, base_tests(cfg, ref))  # None: the policy is new
         r = review.review(base, (head_text, head_files, head_tests), base_lock, head_lock, db)
     except database.Error as e:

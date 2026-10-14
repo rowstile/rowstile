@@ -211,13 +211,14 @@ not a proof for worlds of any size, and it reads the policy, not your data.
 - **Cut half way**: [`tests/interrupt.py`](../core/tests/interrupt.py) runs `rowstile apply` (on a new database
   and over a policy), `push`, `reapply --force` and both migrations of a change that builds an inheritance table
   beside the one in use, on the docs app, and cuts each after one of its statements: the server ends the session,
-  or the connection is closed under it. After each cut the command says it lost the database (exit 2), the
-  database is as it was before the run, and the app, reading as the app role just before the cut and after it,
-  gets the old policy's answers, whole; after some, the next run leaves what an uncut one does. <!-- checked: tests/interrupt.py "after each cut, the database is as it was"; tests/interrupt.py "the app read the old policy's answers, whole" -->
+  or the connection is closed under it. After each cut the command says it lost the database and why (the server's
+  words, when the server ended the session; exit 2), the database is as it was before the run, and the app,
+  reading as the app role just before the cut and after it, gets the old policy's answers, whole; after some, the
+  next run leaves what an uncut one does. <!-- checked: tests/interrupt.py "after each cut, the database is as it was"; tests/interrupt.py "the app read the old policy's answers, whole" -->
   Between the two migrations the old policy is in force. <!-- checked: tests/interrupt.py "between a migration's two: the old policy in force" -->
   Each night, after every one of their 1,923 statements (about 25 minutes); on each push, ten cuts of each. The real
-  command is also ended while one of its statements waits for a lock, and stopped by `statement_timeout`. Every
-  night the soak cuts the first apply of twenty-five other policies, random ones among them, where its seed says.
+  command is also ended while one of its statements waits for a lock, and stopped by `statement_timeout`; and
+  `rowstile review --db` as soon as it signs in. Every night the soak cuts the first apply of twenty-five other policies, random ones among them, where its seed says.
 - **Reads that stay fast**: where a read or a list needs a permission's starting points (a function that
   works them out), Postgres runs it once, not again for each row a nested loop looks at. `PointChecks` in
   [`tests/unit_test.py`](../core/tests/unit_test.py) checks the compiled SQL of six policies and a random one for
