@@ -1,0 +1,24 @@
+-- answer: own-row
+-- Your own row is a relation too: self : user = id.
+app role app_user
+
+type user = app.users
+  self    : user = id
+  manager : user = manager_id
+  can edit = self or manager
+
+rules app.users
+  select : signed_in
+  update : edit
+
+test "each edits their own row, and a manager their people's"
+  given u1 = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given u2 = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given u3 = {INSERT INTO app.users (id, manager_id) VALUES (3, 1) RETURNING id}
+  user $u1 can edit user $u1
+  user $u1 can edit user $u3
+  user $u1 cannot edit user $u2
+  user $u2 can edit user $u2
+  as user $u1 allowed {UPDATE app.users SET name = 'x' WHERE id = $u1}
+  as user $u1 allowed {UPDATE app.users SET name = 'x' WHERE id = $u3}
+  as user $u2 refused {UPDATE app.users SET name = 'x' WHERE id = $u1}

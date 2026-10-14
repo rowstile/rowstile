@@ -1,0 +1,27 @@
+-- answer: tests-scope
+-- with scope: a line checked as a key or a token limited to those scopes would be.
+app role app_user
+
+scope read  = select, view
+scope files = app.files.select, app.files.update, file.view, file.edit
+
+type user = app.users
+type file = app.files
+  owner : user = owner_id
+  can view = owner
+  can edit = owner
+
+rules app.files
+  select : view
+  update : edit
+
+test "a line limited to scopes"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given f   = {INSERT INTO app.files (owner_id) VALUES ($ann) RETURNING id}
+  user $ann can edit file $f
+  user $ann with scope read can view file $f
+  user $ann with scope read cannot edit file $f
+  as user $ann with scope read sees 1 {SELECT FROM app.files WHERE id = $f}
+  as user $ann with scope read refused {UPDATE app.files SET name = 'b' WHERE id = $f}
+  as user $ann with scope files allowed {UPDATE app.files SET name = 'b' WHERE id = $f}
+  user $ann with scope files can edit file $f

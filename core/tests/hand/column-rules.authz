@@ -1,0 +1,36 @@
+-- answer: column-rules
+-- A column rule checks the row before the change (owner_id) or after it (folder_id after: where a row moves to),
+-- and only when its column changes.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner : user = owner_id
+  can edit  = owner
+  can share = owner
+type file = app.files
+  folder : folder = folder_id
+  can share = folder.share
+
+rules app.files
+  select                 : signed_in
+  update                 : signed_in
+  update owner_id        : share
+  update folder_id after : folder.edit
+
+test "column rules, before and after"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given a   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given b   = {INSERT INTO app.folders (owner_id) VALUES ($bo) RETURNING id}
+  given f   = {INSERT INTO app.files (folder_id, owner_id) VALUES ($a, $ann) RETURNING id}
+  given f2  = {INSERT INTO app.files (folder_id, owner_id) VALUES ($a, $ann) RETURNING id}
+  given g   = {INSERT INTO app.files (folder_id, owner_id) VALUES ($b, $bo) RETURNING id}
+  as user $bo allowed {UPDATE app.files SET name = 'x' WHERE id = $f}
+  as user $bo refused {UPDATE app.files SET owner_id = $bo WHERE id = $f}
+  as user $ann allowed {UPDATE app.files SET owner_id = $bo WHERE id = $f}
+  as user $bo allowed {UPDATE app.files SET owner_id = owner_id WHERE id = $f2}
+  as user $bo allowed {UPDATE app.files SET folder_id = $b WHERE id = $f}
+  as user $ann refused {UPDATE app.files SET folder_id = $b WHERE id = $f2}
+  as user $ann refused {UPDATE app.files SET folder_id = $a, owner_id = $ann WHERE id = $g}
+  as user $ann allowed {UPDATE app.files SET folder_id = $a WHERE id = $g}

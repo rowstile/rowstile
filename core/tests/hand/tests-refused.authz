@@ -1,0 +1,22 @@
+-- answer: tests-refused
+-- A write is refused if a rule or a missing privilege stops it, or if it changes no row.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner : user = owner_id
+  can edit = owner
+
+rules app.folders
+  select : edit
+  update : edit
+
+test "what refused means"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given a   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given b   = {INSERT INTO app.folders (owner_id) VALUES ($bo) RETURNING id}
+  as user $ann allowed {UPDATE app.folders SET name = 'x' WHERE id = $a}
+  as user $ann refused {UPDATE app.folders SET name = 'x' WHERE id = $b}
+  as user $ann refused {UPDATE app.folders SET name = 'x' WHERE false}
+  as user $ann refused {DELETE FROM app.users WHERE id = $ann}

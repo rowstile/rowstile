@@ -1,0 +1,27 @@
+-- answer: runtime-break-glass
+-- break_glass lets its holders give themselves a relation shared with users, for a while.
+app role app_user
+
+type user = app.users
+type org = app.orgs
+  member : user = app.org_members(org_id -> user_id)
+type folder = app.folders
+  org    : org = org_id
+  owner  : user = owner_id
+  viewer : user shared
+  can share       = owner
+  can view        = owner or viewer
+  can break_glass = org.member
+
+test "breaking the glass"
+  given ann   = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given carol = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given frank = {INSERT INTO app.users (id) VALUES (6) RETURNING id}
+  given o     = {INSERT INTO app.orgs (id) VALUES (1) RETURNING id}
+  given {INSERT INTO app.org_members VALUES ($o, $carol)}
+  given f     = {INSERT INTO app.folders (org_id, owner_id) VALUES ($o, $ann) RETURNING id}
+  user $carol cannot view folder $f
+  as user $carol allowed {SELECT authz.break_glass('folder', $f, 'viewer', 'INC-7 outage', '1 hour')}
+  user $carol can view folder $f
+  as user $frank refused {SELECT authz.break_glass('folder', $f, 'viewer', 'INC-7 outage', '1 hour')}
+  user $frank cannot view folder $f

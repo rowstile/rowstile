@@ -1,0 +1,23 @@
+-- answer: relation-sources
+-- A link table's where reads the link's row; a polymorphic pair in a link table names users and services.
+app role app_user
+
+type user = app.users
+type service = app.services principal
+type project = app.projects
+  member : user = app.memberships(project_id -> user_id) where {not revoked}
+  backer : user, service = app.backings(project_id -> (backer_type, backer_id))
+  can view = member or backer
+
+test "a revoked membership links no one"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given cy  = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given s   = {INSERT INTO app.services (id) VALUES (1) RETURNING id}
+  given p   = {INSERT INTO app.projects (id) VALUES (1) RETURNING id}
+  given {INSERT INTO app.memberships (id, project_id, user_id, revoked) VALUES (1, 1, 1, false), (2, 1, 2, true)}
+  given {INSERT INTO app.backings VALUES (1, 'user', 3), (1, 'service', 1)}
+  user $ann can view project $p
+  user $bo cannot view project $p
+  user $cy can view project $p
+  service $s can view project $p

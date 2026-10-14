@@ -1,0 +1,29 @@
+-- answer: shares-expire
+-- Shares may expire or start later.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  viewer : user shared
+  can share = owner
+  can view  = owner or viewer
+
+test "a share counts between its start and its end"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given cy  = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given dan = {INSERT INTO app.users (id) VALUES (4) RETURNING id}
+  given eve = {INSERT INTO app.users (id) VALUES (5) RETURNING id}
+  given fay = {INSERT INTO app.users (id) VALUES (6) RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at) VALUES ('folder', $f, 'viewer', 'user', $bo, now() - interval '1 hour')}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at) VALUES ('folder', $f, 'viewer', 'user', $cy, now() + interval '1 day')}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at) VALUES ('folder', $f, 'viewer', 'user', $dan, now() + interval '1 day')}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at) VALUES ('folder', $f, 'viewer', 'user', $eve, now() - interval '1 day')}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'user', $fay, '', now() - interval '1 hour')}
+  user $bo cannot view folder $f
+  user $cy can view folder $f
+  user $dan cannot view folder $f
+  user $eve can view folder $f
+  user $fay cannot view folder $f

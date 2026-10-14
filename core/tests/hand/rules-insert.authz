@@ -1,0 +1,24 @@
+-- answer: rules-commands
+-- insert : folder.edit and owner: the new row names you as its owner, in a folder you edit.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner : user = owner_id
+  can edit = owner
+type file = app.files
+  folder : folder = folder_id
+  owner  : user = owner_id
+
+rules app.files
+  select : folder.edit
+  insert : folder.edit and owner
+
+test "what an insert needs"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given a   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given b   = {INSERT INTO app.folders (owner_id) VALUES ($bo) RETURNING id}
+  as user $ann allowed {INSERT INTO app.files (folder_id, owner_id) VALUES ($a, $ann)}
+  as user $ann refused {INSERT INTO app.files (folder_id, owner_id) VALUES ($a, $bo)}
+  as user $ann refused {INSERT INTO app.files (folder_id, owner_id) VALUES ($b, $ann)}

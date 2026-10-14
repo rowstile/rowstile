@@ -4797,11 +4797,31 @@ class Plans(unittest.TestCase):
         self.assertEqual(out, ["SubPlan 11 runs once per row (15003 times)"])
 
 
+HandCase = Callable[["HandAnswers"], None]
+HAND_ANCHORS: dict[HandCase, tuple[str, ...]] = {}
+
+
+def worked_from(*anchors: str) -> Callable[[HandCase], HandCase]:
+    """Names the paragraphs of docs/reference/language.md a HandAnswers case is worked out from: their anchors."""
+
+    def mark(case: HandCase) -> HandCase:
+        HAND_ANCHORS[case] = anchors
+        return case
+
+    return mark
+
+
 class HandAnswers(unittest.TestCase):
     """The reference evaluator against answers worked out by hand from the language's reference
     (docs/reference/language.md), not by running anything. difftest holds the database to the evaluator, but both
     read the policy through one parser: a misreading there would be in both, and they would agree on it. Neither
     wrote these answers.
+
+    Each paragraph of the page that says what an answer is (who may do what on which row) ends with an anchor
+    readers don't see, `<!-- answer: rows-hold-nothing -->`, and each anchor has a case: here, `@worked_from(...)` on a
+    test, or, where the answer is the database's alone (a share that expires, a caveat, a write checked before and
+    after, a masked column), a policy with named tests in tests/hand/, whose first lines say `-- answer: name`
+    (tests/hand_answers.sh runs them). test_every_answering_paragraph_has_a_case checks both ways.
 
     A world, one fact a line:
         folder: 1, 2, 3                      the ids of a type
@@ -4874,7 +4894,18 @@ class HandAnswers(unittest.TestCase):
         self.assertEqual(conds, {}, "conditions the policy doesn't have, or that its columns say")
         return data
 
-    def check(self, policy: str, world: str, answers: dict[str, dict[str, str]], links: Sequence[str] = ()) -> None:
+    def check(
+        self,
+        policy: str,
+        world: str,
+        answers: dict[str, dict[str, str]],
+        links: Sequence[str] = (),
+        broken: str | None = None,
+    ) -> None:
+        """broken: who breaks the policy's invariant, and where, as `rowstile prove` asks each who can sign in and
+        nobody in a world ('service:1 on 1', 'nobody on 1'), or 'none'."""
+        from authzlib import prove
+
         # a policy the compiler takes (parsed apart: compiling splits denies, the evaluator reads them as written)
         Compiler(parse_policy(self.HEAD + policy, "hand.authz")).compile("hand.authz")
         pol = parse_policy(self.HEAD + policy, "hand.authz")
@@ -4888,7 +4919,12 @@ class HandAnswers(unittest.TestCase):
                 got = ref.rule(state, rules[name]) if name in rules else state[(tname, perm)]
                 want = {x.strip() for x in ids.split(",") if x.strip()}
                 self.assertEqual(sorted(got), sorted(want), f"{name}, asked as {who or 'nobody'}")
+        if broken is not None:
+            (inv,) = pol.invariants
+            found = prove.broken(ref, inv, data)
+            self.assertEqual(" on ".join(found) if found else "none", broken, inv.src)
 
+    @worked_from("permission-operators")
     def test_not_takes_the_item_after_it(self) -> None:
         self.check(
             "type user = app.users\ntype doc = app.docs\n  a : user = a_id\n  b : user = b_id\n"
@@ -4900,6 +4936,7 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("inheritance")
     def test_a_condition_stops_inheritance_where_it_fails(self) -> None:
         self.check(
             "type user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
@@ -4909,6 +4946,7 @@ class HandAnswers(unittest.TestCase):
             {"ann": {"folder.view": "1, 2"}, "bo": {"folder.view": ""}, "": {"folder.view": ""}},
         )
 
+    @worked_from("rows-hold-nothing", "rows-no-rule")
     def test_a_row_the_where_leaves_out_holds_nothing_and_passes_nothing_on(self) -> None:
         # an archived folder and what is inside it; no rule allows anything on it either
         self.check(
@@ -4924,6 +4962,7 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("rows-hold-nothing")
     def test_a_suspended_user_holds_nothing(self) -> None:
         self.check(
             "type user = app.users where {active}\ntype folder = app.folders\n  owner : user = owner_id\n"
@@ -4937,6 +4976,7 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("subjects", "rows-hold-nothing")
     def test_groups_nest_loop_and_stop_at_a_group_the_where_leaves_out(self) -> None:
         self.check(
             "type user = app.users\ntype team = app.teams where {not disbanded}\n"
@@ -4955,6 +4995,7 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("subjects", "principals")
     def test_who_each_subject_is(self) -> None:
         # user:* any signed-in user, service:* any signed-in service, anyone also signed out, link who holds the
         # token; signed_in is about users; a share to service 2 is not one to user 2
@@ -4976,6 +5017,7 @@ class HandAnswers(unittest.TestCase):
             links=["tok1"],
         )
 
+    @worked_from("deny-below")
     def test_a_deny_inside_inheritance_covers_everything_below(self) -> None:
         self.check(
             "type user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
@@ -4991,6 +5033,7 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("inheritance")
     def test_folders_and_projects_inside_each_other(self) -> None:
         self.check(
             "type user = app.users\n"
@@ -5028,6 +5071,7 @@ class HandAnswers(unittest.TestCase):
         "role view on folder 2 for user bo from org 2\n"
     )
 
+    @worked_from("roles-from")
     def test_roles_from_an_org_count_only_on_its_objects(self) -> None:
         self.check(
             self.ROLES.format(**{"from": " from org"}),
@@ -5035,6 +5079,7 @@ class HandAnswers(unittest.TestCase):
             {"ann": {"folder.view": "1", "folder.edit": ""}, "bo": {"folder.view": "2", "folder.edit": ""}},
         )
 
+    @worked_from("roles-without-from")
     def test_roles_without_from_count_wherever_they_are_given(self) -> None:
         self.check(
             self.ROLES.format(**{"from": ""}),
@@ -5042,6 +5087,7 @@ class HandAnswers(unittest.TestCase):
             {"ann": {"folder.view": "1, 2", "folder.edit": ""}, "bo": {"folder.view": "2", "folder.edit": "1, 3"}},
         )
 
+    @worked_from("conditions-null", "conditions-sql")
     def test_simple_conditions_read_columns_as_sql_does(self) -> None:
         # NULL holds nothing: {not archived} is false where archived is NULL, not {archived} true there; NULL and
         # false is false; numbers compare as numbers; authz.uid() is a user's id, never a service's
@@ -5063,6 +5109,7 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("conditions-sql")
     def test_what_depends_on_the_column_type_is_left_to_the_database(self) -> None:
         # text in order follows the collation; text Postgres casts to the column's type; the user key's order. A
         # linked column's id compared with a number is a number (tests/conditions_test.py asks Postgres)
@@ -5075,6 +5122,7 @@ class HandAnswers(unittest.TestCase):
         self.assertIs(compare("<", "2", 10), True)
         self.assertIs(compare("<", "2", "10"), False)
 
+    @worked_from("relation-again")
     def test_a_relation_with_two_sources(self) -> None:
         self.check(
             "type user = app.users\ntype folder = app.folders\n  viewer : user = viewer_id\n"
@@ -5084,6 +5132,7 @@ class HandAnswers(unittest.TestCase):
             {"ann": {"folder.view": "1, 2"}, "bo": {"folder.view": "3"}},
         )
 
+    @worked_from("subjects")
     def test_a_group_named_by_a_permission(self) -> None:
         # shared with team#manage, a permission: whoever holds it on the team holds the relation, as with a relation
         self.check(
@@ -5103,6 +5152,7 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("relation-again")
     def test_a_relation_declared_again_for_another_type(self) -> None:
         # a doc's parent is a doc (a column, or a link table) or its project: inheritance goes through each; and
         # `owner and not {locked}` gives nothing on a locked doc
@@ -5123,6 +5173,7 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("relation-again")
     def test_a_relation_to_users_and_to_objects_gives_its_users(self) -> None:
         # alone in a rule it is the users it links to; the docs it links to give no one
         self.check(
@@ -5137,6 +5188,7 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("conditions-sql")
     def test_what_is_not_a_fact_about_the_row(self) -> None:
         # a list that holds a column, or nothing (which Postgres refuses): read as a condition of its own, never as
         # a list of constants
@@ -5148,6 +5200,408 @@ class HandAnswers(unittest.TestCase):
         for sql in ("size > " + "9" * 4301, "size in (1, " + "9" * 5000 + ")"):
             self.assertIsNone(simple(sql), sql[:20])
         self.assertIsNotNone(simple("size > " + "9" * 4300))
+
+    @worked_from("rows-hold-nothing")
+    def test_a_disbanded_team_passes_its_members_on_to_no_team(self) -> None:
+        # team 2 is disbanded: its members are no one's, not team 1's (which holds it), nor through team 3 inside it
+        self.check(
+            "type user = app.users\ntype team = app.teams where {not disbanded}\n"
+            "  member : user = app.team_members(team_id -> user_id)\n"
+            "  member : team#member = app.teams(parent_id -> id)\n"
+            "type folder = app.folders\n  owner : user = owner_id\n  viewer : user, team#member shared\n"
+            "  can share = owner\n  can view = viewer\n",
+            "user: ann, cy, dan\nteam: 1, 2, 3\nteam 2 fails its where\nteam 1 member team#member 2\n"
+            "team 2 member team#member 3\nteam 2 member user ann\nteam 1 member user cy\nteam 3 member user dan\n"
+            "folder: 1, 2, 3\nfolder 1 viewer team#member 1\nfolder 2 viewer team#member 2\n"
+            "folder 3 viewer team#member 3\n",
+            {
+                "ann": {"team.member": "", "folder.view": ""},
+                "cy": {"team.member": "1", "folder.view": "1"},
+                "dan": {"team.member": "3", "folder.view": "3"},
+                "": {"team.member": "", "folder.view": ""},
+            },
+        )
+
+    @worked_from("rows-hold-nothing")
+    def test_an_archived_folder_passes_nothing_on_through_any_source(self) -> None:
+        # folder 2 is inside the archived folder 1 (a link table) and inside folder 4: only 4 passes view on
+        self.check(
+            "type user = app.users\ntype folder = app.folders where {not archived}\n  parent : folder = parent_id\n"
+            "  linked_into : folder = app.folder_links(folder_id -> parent_id)\n  owner : user = owner_id\n"
+            "  can view = owner or parent.view or linked_into.view\n",
+            "user: ann, bo, cy\nfolder: 1, 2, 3, 4\nfolder 1 fails its where\nfolder 1 owner user ann\n"
+            "folder 2 linked_into folder 1\nfolder 2 linked_into folder 4\nfolder 2 owner user bo\n"
+            "folder 3 parent folder 2\nfolder 4 owner user cy\n",
+            {"ann": {"folder.view": ""}, "bo": {"folder.view": "2, 3"}, "cy": {"folder.view": "2, 3, 4"}},
+        )
+
+    @worked_from("rows-no-rule")
+    def test_no_rule_allows_anything_on_a_row_the_where_leaves_out(self) -> None:
+        self.check(
+            "type user = app.users\ntype folder = app.folders where {not archived}\n  owner : user = owner_id\n"
+            "rules app.folders\n  select : anyone\n  update : signed_in\n  delete : owner\n",
+            "user: ann\nfolder: 1, 2\nfolder 2 fails its where\nfolder 1 owner user ann\nfolder 2 owner user ann\n",
+            {
+                "ann": {"rule app.folders select": "1", "rule app.folders update": "1", "rule app.folders delete": "1"},
+                "": {"rule app.folders select": "1", "rule app.folders update": "", "rule app.folders delete": ""},
+            },
+        )
+
+    @worked_from("rows-in-permissions")
+    def test_archived_said_in_a_permission_takes_only_that_permission(self) -> None:
+        # no where: the archived folder 2 still counts, and passes view on; only edit says {not archived}
+        self.check(
+            "type user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
+            "  owner : user = owner_id\n  can view = owner or parent.view\n  can edit = owner and {not archived}\n"
+            "rules app.folders\n  select : view\n  update : edit\n",
+            "user: ann\nfolder: 1, 2, 3\nfolder 1 owner user ann\nfolder 2 owner user ann\nfolder 3 parent folder 2\n"
+            "folder 1: archived = false\nfolder 2: archived = true\nfolder 3: archived = false\n",
+            {
+                "ann": {
+                    "folder.view": "1, 2, 3",
+                    "folder.edit": "1",
+                    "rule app.folders select": "1, 2, 3",
+                    "rule app.folders update": "1",
+                },
+                "": {
+                    "folder.view": "",
+                    "folder.edit": "",
+                    "rule app.folders select": "",
+                    "rule app.folders update": "",
+                },
+            },
+        )
+
+    @worked_from("relation-sources")
+    def test_each_kind_of_source_links_its_subjects(self) -> None:
+        # a column, a table with its columns named, a polymorphic pair in a link table, shares
+        self.check(
+            "type user = app.users\ntype service = app.services principal\ntype project = app.projects\n"
+            "  lead : user = lead_id\n  member : user = app.project_members(object: project_id, subject: user_id)\n"
+            "  backer : user, service = app.backings(project_id -> (backer_type, backer_id))\n"
+            "  guest : user shared\n  can share = lead\n  can view = lead or member or backer or guest\n",
+            "user: 1, 2, 3, 4, 5\nservice: 1\nproject: 1, 2\nproject 1 lead user 1\nproject 1 member user 2\n"
+            "project 1 guest user 4\nproject 2 backer user 3\nproject 2 backer service 1\n",
+            {
+                "1": {"project.view": "1"},
+                "2": {"project.view": "1"},
+                "3": {"project.view": "2"},
+                "4": {"project.view": "1"},
+                "5": {"project.view": ""},
+                "service:1": {"project.view": "2"},
+                "": {"project.view": ""},
+            },
+        )
+
+    @worked_from("relation-again")
+    def test_a_relation_declared_three_times_one_of_them_shared(self) -> None:
+        self.check(
+            "type user = app.users\ntype team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
+            "type doc = app.docs\n  owner : user = owner_id\n  editor : user = editor_id\n"
+            "  editor : user = app.doc_editors(doc_id -> user_id)\n  editor : team#member shared\n"
+            "  can share = owner\n  can edit = editor\n",
+            "user: ann, bo, cy\nteam: 1\nteam 1 member user cy\ndoc: 1, 2, 3\ndoc 1 editor user ann\n"
+            "doc 2 editor[1] user bo\ndoc 3 editor[2] team#member 1\n",
+            {
+                "ann": {"doc.edit": "1"},
+                "bo": {"doc.edit": "2"},
+                "cy": {"doc.edit": "3"},
+                "": {"doc.edit": ""},
+            },
+        )
+
+    @worked_from("subjects")
+    def test_groups_nest_to_any_depth_and_loop_and_a_token_is_held_by_whoever_brings_it(self) -> None:
+        policy = (
+            "type user = app.users\ntype team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
+            "  member : team#member = app.teams(parent_id -> id)\n"
+            "type folder = app.folders\n  owner : user = owner_id\n"
+            "  viewer : user, team#member, user:*, anyone, link shared\n  can share = owner\n  can view = viewer\n"
+        )
+        # 2 in 1, 3 in 2, 4 in 3, 2 in 4 (a loop), 5 in itself
+        world = (
+            "user: ann, bo\nteam: 1, 2, 3, 4, 5\nteam 1 member team#member 2\nteam 2 member team#member 3\n"
+            "team 3 member team#member 4\nteam 4 member team#member 2\nteam 5 member team#member 5\n"
+            "team 4 member user ann\nteam 1 member user bo\nfolder: 1, 2, 3, 4, 5, 6\nfolder 1 viewer team#member 1\n"
+            "folder 2 viewer team#member 3\nfolder 3 viewer team#member 5\nfolder 4 viewer user:* *\n"
+            "folder 5 viewer anyone *\nfolder 6 viewer link tok9\n"
+        )
+        self.check(
+            policy,
+            world,
+            {
+                "ann": {"team.member": "1, 2, 3, 4", "folder.view": "1, 2, 4, 5"},
+                "bo": {"team.member": "1", "folder.view": "1, 4, 5"},
+                "": {"team.member": "", "folder.view": "5"},
+            },
+        )
+        self.check(
+            policy,
+            world,
+            {"ann": {"folder.view": "1, 2, 4, 5, 6"}, "bo": {"folder.view": "1, 4, 5, 6"}, "": {"folder.view": "5, 6"}},
+            links=["tok9"],
+        )
+
+    @worked_from("principals")
+    def test_services_are_named_like_users_and_signed_in_is_about_users(self) -> None:
+        # user 1 and service 1 share an id, and are two
+        self.check(
+            "type user = app.users\ntype service = app.services principal\ntype folder = app.folders\n"
+            "  owner : user = owner_id\n  bot : service = bot_id\n  reader : user, service shared\n"
+            "  viewer : user:*, service:* shared\n  can share = owner\n  can view = reader or bot or viewer\n"
+            "  can open = signed_in\n",
+            "user: 1, 2\nservice: 1, 2\nfolder: 1, 2, 3, 4, 5\nfolder 1 reader service 1\nfolder 2 reader user 1\n"
+            "folder 3 viewer user:* *\nfolder 4 viewer service:* *\nfolder 5 bot service 2\n",
+            {
+                "1": {"folder.view": "2, 3", "folder.open": "1, 2, 3, 4, 5"},
+                "2": {"folder.view": "3", "folder.open": "1, 2, 3, 4, 5"},
+                "service:1": {"folder.view": "1, 4", "folder.open": ""},
+                "service:2": {"folder.view": "4, 5", "folder.open": ""},
+                "": {"folder.view": "", "folder.open": ""},
+            },
+        )
+
+    @worked_from("permission-operators")
+    def test_parentheses_say_what_goes_first(self) -> None:
+        # ann holds, on docs 1 to 8: nothing, a, b, c, a b, a c, b c, a b c
+        self.check(
+            "type user = app.users\ntype doc = app.docs\n  a : user = a_id\n  b : user = b_id\n  c : user = c_id\n"
+            "  can p = a or (b and c)\n  can q = (a or b) and c\n  can r = not (a or b)\n"
+            "  can s = a and not b and c\n",
+            "user: ann\ndoc: 1, 2, 3, 4, 5, 6, 7, 8\ndoc 2 a user ann\ndoc 3 b user ann\ndoc 4 c user ann\n"
+            "doc 5 a user ann\ndoc 5 b user ann\ndoc 6 a user ann\ndoc 6 c user ann\ndoc 7 b user ann\n"
+            "doc 7 c user ann\ndoc 8 a user ann\ndoc 8 b user ann\ndoc 8 c user ann\n",
+            {
+                "ann": {"doc.p": "2, 5, 6, 7, 8", "doc.q": "6, 7, 8", "doc.r": "1, 4", "doc.s": "6"},
+                "": {"doc.p": "", "doc.q": "", "doc.r": "1, 2, 3, 4, 5, 6, 7, 8", "doc.s": ""},
+            },
+        )
+
+    @worked_from("follow-relation")
+    def test_a_relation_followed_to_a_users_own_permission(self) -> None:
+        # user 2's manager is user 1; user 3 blocked user 4; user 4 is org 1's admin
+        self.check(
+            "type user = app.users\n  manager : user = manager_id\n  can oversee = manager\n"
+            "  blocked : user = app.blocks(blocker_id -> blocked_id)\n  can has_blocked = blocked\n"
+            "type org = app.orgs\n  admin : user = app.org_admins(org_id -> user_id)\n"
+            "type doc = app.docs\n  author : user = author_id\n  org : org = org_id\n"
+            "  can review = author.oversee or org.admin\n  can comment = signed_in and not author.has_blocked\n",
+            "user: 1, 2, 3, 4\nuser 2 manager user 1\nuser 3 blocked user 4\norg: 1\norg 1 admin user 4\n"
+            "doc: 1, 2, 3\ndoc 1 author user 2\ndoc 2 author user 3\ndoc 3 author user 1\ndoc 3 org org 1\n",
+            {
+                "1": {"user.oversee": "2", "doc.review": "1", "doc.comment": "1, 2, 3"},
+                "2": {"doc.review": "", "doc.comment": "1, 2, 3"},
+                "3": {"doc.review": "", "doc.comment": "1, 2, 3"},
+                "4": {"doc.review": "3", "doc.comment": "1, 3"},
+                "": {"doc.review": "", "doc.comment": ""},
+            },
+        )
+
+    @worked_from("signed-in-anyone-nobody")
+    def test_signed_in_anyone_and_nobody(self) -> None:
+        self.check(
+            "type user = app.users\ntype service = app.services principal\ntype dir = app.dirs\n"
+            "  owner : user = owner_id\n  can a = signed_in\n  can b = anyone\n  can c = nobody or owner\n"
+            "rules app.dirs\n  select : anyone\n  update : signed_in\n  delete : nobody\n",
+            "user: 1\nservice: 1\ndir: 1, 2\ndir 2 owner user 1\n",
+            {
+                "1": {
+                    "dir.a": "1, 2",
+                    "dir.b": "1, 2",
+                    "dir.c": "2",
+                    "rule app.dirs select": "1, 2",
+                    "rule app.dirs update": "1, 2",
+                    "rule app.dirs delete": "",
+                },
+                "service:1": {
+                    "dir.a": "",
+                    "dir.b": "1, 2",
+                    "dir.c": "",
+                    "rule app.dirs select": "1, 2",
+                    "rule app.dirs update": "",
+                    "rule app.dirs delete": "",
+                },
+                "": {
+                    "dir.a": "",
+                    "dir.b": "1, 2",
+                    "dir.c": "",
+                    "rule app.dirs select": "1, 2",
+                    "rule app.dirs update": "",
+                    "rule app.dirs delete": "",
+                },
+            },
+        )
+
+    @worked_from("conditions-null")
+    def test_a_null_condition_holds_nothing_and_not_of_it_holds(self) -> None:
+        self.check(
+            "type user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n  can a = {archived}\n"
+            "  can b = {not archived}\n  can c = not {archived}\n  can d = not {not archived}\n"
+            "rules app.docs\n  select : {not archived} or owner\n",
+            "user: ann\ndoc: 1, 2, 3\ndoc 3 owner user ann\ndoc 1: archived = true\ndoc 2: archived = false\n"
+            "doc 3: archived = null\n",
+            {
+                "ann": {"doc.a": "1", "doc.b": "2", "doc.c": "2, 3", "doc.d": "1, 3", "rule app.docs select": "2, 3"},
+                "": {"doc.a": "1", "doc.b": "2", "doc.c": "2, 3", "doc.d": "1, 3", "rule app.docs select": "2"},
+            },
+        )
+
+    @worked_from("inheritance")
+    def test_inheritance_goes_as_deep_as_it_goes_through_any_mix_of_sources(self) -> None:
+        # folders 1 to 9 in a chain, each inside the one before by a column or a link table in turn, folder 1 inside
+        # project 1; edit stops where {inherit} doesn't hold (folder 4)
+        self.check(
+            "type user = app.users\ntype project = app.projects\n  owner : user = owner_id\n  can view = owner\n"
+            "type folder = app.folders\n  owner : user = owner_id\n  parent : folder = parent_id\n"
+            "  parent : folder = app.folder_links(folder_id -> parent_id)\n  inside : project = project_id\n"
+            "  can view = owner or parent.view or inside.view\n  can edit = owner or (parent.edit and {inherit})\n",
+            "user: ann, bo\nproject: 1\nproject 1 owner user ann\nfolder: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11\n"
+            "folder 1 inside project 1\nfolder 1 owner user ann\nfolder 2 parent folder 1\nfolder 3 parent[1] folder 2\n"
+            "folder 4 parent folder 3\nfolder 5 parent[1] folder 4\nfolder 6 parent folder 5\n"
+            "folder 7 parent[1] folder 6\nfolder 8 parent folder 7\nfolder 9 parent[1] folder 8\n"
+            "folder 10 parent[1] folder 11\nfolder 11 owner user bo\n{inherit} on folder 2, 3, 5\n",
+            {
+                "ann": {"folder.view": "1, 2, 3, 4, 5, 6, 7, 8, 9", "folder.edit": "1, 2, 3", "project.view": "1"},
+                "bo": {"folder.view": "10, 11", "folder.edit": "11"},
+                "": {"folder.view": "", "folder.edit": ""},
+            },
+        )
+
+    @worked_from("deny-below")
+    def test_a_deny_for_one_person_covers_everything_below_even_where_she_is_named(self) -> None:
+        self.check(
+            "type user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
+            "  viewer : user = app.folder_viewers(folder_id -> user_id)\n"
+            "  blocked : user = app.folder_blocks(folder_id -> user_id)\n  can hidden = blocked or parent.hidden\n"
+            "  can view = (viewer or parent.view) and not hidden\n",
+            "user: ann, bo\nfolder: 1, 2, 3, 4, 5\nfolder 2 parent folder 1\nfolder 3 parent folder 2\n"
+            "folder 4 parent folder 3\nfolder 5 parent folder 1\nfolder 1 viewer user ann\nfolder 1 viewer user bo\n"
+            "folder 3 viewer user ann\nfolder 2 blocked user ann\n",
+            {
+                "ann": {"folder.view": "1, 5", "folder.hidden": "2, 3, 4"},
+                "bo": {"folder.view": "1, 2, 3, 4, 5", "folder.hidden": ""},
+            },
+        )
+
+    @worked_from("condition-every-level")
+    def test_a_condition_joined_to_inheritance_stops_it_but_names_below_still_count(self) -> None:
+        self.check(
+            "type user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
+            "  viewer : user = app.folder_viewers(folder_id -> user_id)\n"
+            "  can view = (viewer or parent.view) and {not archived}\n",
+            "user: ann, cy\nfolder: 1, 2, 3, 4\nfolder 2 parent folder 1\nfolder 3 parent folder 2\n"
+            "folder 4 parent folder 3\nfolder 1 viewer user ann\nfolder 3 viewer user cy\nfolder 1: archived = false\n"
+            "folder 2: archived = true\nfolder 3: archived = false\nfolder 4: archived = false\n",
+            {"ann": {"folder.view": "1"}, "cy": {"folder.view": "3, 4"}},
+        )
+
+    @worked_from("roles-include")
+    def test_a_role_gives_the_permissions_it_includes_and_the_deny_holds_for_it(self) -> None:
+        # ann: view on 1, blocked on 2; bo: edit only, on 2; team 1's members (cy): view on 3; dan: view and edit on 1
+        self.check(
+            "type user = app.users\ntype team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
+            "type org = app.orgs\n  admin : user = app.org_admins(org_id -> user_id)\n  can manage_roles = admin\n"
+            "type folder = app.folders\n  owner : user = owner_id\n  parent : folder = parent_id\n"
+            "  viewer : user shared\n  blocked : user = app.folder_blocks(folder_id -> user_id)\n"
+            "  roles : user, team#member\n  can share = owner\n  can hidden = blocked or parent.hidden\n"
+            "  can view = (viewer or roles or parent.view) and not hidden\n  can edit = owner or roles\n",
+            "user: ann, bo, cy, dan\nteam: 1\nteam 1 member user cy\norg: 1\nfolder: 1, 2, 3\nfolder 2 parent folder 1\n"
+            "folder 3 parent folder 2\nfolder 2 blocked user ann\nrole view on folder 1 for user ann\n"
+            "role edit on folder 2 for user bo\nrole view on folder 3 for team#member 1\n"
+            "role view on folder 1 for user dan\nrole edit on folder 1 for user dan\n",
+            {
+                "ann": {"folder.view": "1", "folder.edit": ""},
+                "bo": {"folder.view": "", "folder.edit": "2"},
+                "cy": {"folder.view": "3", "folder.edit": ""},
+                "dan": {"folder.view": "1, 2, 3", "folder.edit": "1"},
+            },
+        )
+
+    @worked_from("roles-from")
+    def test_roles_from_an_org_a_table_links(self) -> None:
+        self.check(
+            "type user = app.users\ntype org = app.orgs\n  admin : user = app.org_admins(org_id -> user_id)\n"
+            "  can manage_roles = admin\n"
+            "type folder = app.folders\n  org : org = app.org_folders(folder_id -> org_id)\n  owner : user = owner_id\n"
+            "  roles : user from org\n  can share = owner or org.admin\n  can view = owner or roles\n",
+            "user: ann, bo\norg: 1, 2\nfolder: 1, 2, 3\nfolder 1 org org 1\nfolder 2 org org 2\n"
+            "role view on folder 1 for user ann from org 1\nrole view on folder 2 for user ann from org 1\n"
+            "role view on folder 3 for user ann from org 1\nrole view on folder 3 for user bo from org 2\n",
+            {"ann": {"folder.view": "1"}, "bo": {"folder.view": ""}},
+        )
+
+    @worked_from("roles-refused")
+    def test_a_folder_moved_to_another_org_honours_that_orgs_roles(self) -> None:
+        policy = self.ROLES.format(**{"from": " from org"})
+        roles = "role view on folder 1 for user ann from org 1\nrole view on folder 1 for user bo from org 2\n"
+        before = "user: ann, bo\norg: 1, 2\nfolder: 1\nfolder 1 org org 1\n" + roles
+        self.check(policy, before, {"ann": {"folder.view": "1"}, "bo": {"folder.view": ""}})
+        self.check(
+            policy, before.replace("org org 1", "org org 2"), {"ann": {"folder.view": ""}, "bo": {"folder.view": "1"}}
+        )
+
+    @worked_from("rules-commands")
+    def test_each_command_needs_what_its_rule_says(self) -> None:
+        self.check(
+            "type user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+            "  viewer : user = app.doc_viewers(doc_id -> user_id)\n  can view = owner or viewer\n  can edit = owner\n"
+            "rules app.docs\n  select : view\n  update : edit\n  delete : owner and {not locked}\n",
+            "user: ann, bo\ndoc: 1, 2, 3\ndoc 1 owner user ann\ndoc 2 owner user ann\ndoc 1 viewer user bo\n"
+            "doc 1: locked = false\ndoc 2: locked = true\ndoc 3: locked = false\n",
+            {
+                "ann": {"rule app.docs select": "1, 2", "rule app.docs update": "1, 2", "rule app.docs delete": "1"},
+                "bo": {"rule app.docs select": "1", "rule app.docs update": "", "rule app.docs delete": ""},
+                "": {"rule app.docs select": "", "rule app.docs update": "", "rule app.docs delete": ""},
+            },
+        )
+
+    INVARIANT = (
+        "type user = app.users\ntype service = app.services principal\ntype folder = app.folders\n"
+        "  owner : user = owner_id\n  viewer : user, service, anyone shared\n  can share = owner\n"
+        "  can view = owner or viewer\ninvariants\n  never folder: view and not signed_in\n"
+    )
+
+    @worked_from("invariants")
+    def test_an_invariant_is_asked_as_each_service(self) -> None:
+        self.check(
+            self.INVARIANT, "user: 1\nservice: 1\nfolder: 1\nfolder 1 viewer service 1\n", {}, broken="service:1 on 1"
+        )
+
+    @worked_from("invariants")
+    def test_an_invariant_is_asked_as_nobody(self) -> None:
+        self.check(self.INVARIANT, "folder: 1\nfolder 1 viewer anyone *\n", {}, broken="nobody on 1")
+
+    @worked_from("invariants")
+    def test_an_invariant_no_one_breaks(self) -> None:
+        self.check(self.INVARIANT, "user: 1\nfolder: 1\nfolder 1 viewer user 1\n", {}, broken="none")
+
+    ANCHOR = re.compile(r"<!-- answer: ([a-z0-9-]+(?:, [a-z0-9-]+)*) -->")
+
+    def test_every_answering_paragraph_has_a_case(self) -> None:
+        # each anchor on the page has a case here or in tests/hand/, each case names anchors the page has, and each
+        # case here names one
+        with open(os.path.join(os.path.dirname(ROOT), "docs", "reference", "language.md"), encoding="utf-8") as fh:
+            page = fh.read()
+        anchors = self.ANCHOR.findall(page)
+        self.assertEqual(len(re.findall(r"<!--\s*answer\b", page)), len(anchors), "an anchor not in the form")
+        on_page = [a for m in anchors for a in m.split(", ")]
+        self.assertEqual(len(on_page), len(set(on_page)), "an anchor twice on the page")
+        cases: dict[str, set[str]] = {}
+        for name, fn in vars(HandAnswers).items():
+            if name.startswith("test_") and name != "test_every_answering_paragraph_has_a_case":
+                self.assertIn(fn, HAND_ANCHORS, f"{name} names no paragraph (@worked_from)")
+                for a in HAND_ANCHORS[fn]:
+                    cases.setdefault(a, set()).add(name)
+        hand = sorted(glob.glob(os.path.join(ROOT, "tests", "hand", "*.authz")))
+        self.assertTrue(hand)
+        for path in hand:
+            with open(path, encoding="utf-8") as fh:
+                named = [a for line in fh for a in re.findall(r"^-- answer: (.+)$", line.rstrip("\n"))]
+            self.assertTrue(named, f"{path} names no paragraph (-- answer: name)")
+            for a in ", ".join(named).split(", "):
+                cases.setdefault(a, set()).add(os.path.basename(path))
+        self.assertEqual(sorted(set(on_page) - set(cases)), [], "anchors with no case")
+        self.assertEqual({a: c for a, c in cases.items() if a not in on_page}, {}, "cases naming no anchor")
 
 
 class Rewrites(unittest.TestCase):

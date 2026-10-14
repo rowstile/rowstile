@@ -1,0 +1,20 @@
+-- answer: runtime-share
+-- share lets its holders share, and see who has access (authz.who, authz.list_shares).
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  viewer : user shared
+  can share = owner
+  can view  = owner or viewer
+
+test "who may see who has access"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'user', $bo)}
+  as user $ann sees 2 {SELECT * FROM authz.who('folder', $f, 'view')}
+  as user $ann sees 1 {SELECT * FROM authz.list_shares('folder', $f)}
+  as user $bo refused {SELECT * FROM authz.who('folder', $f, 'view')}
+  as user $bo refused {SELECT * FROM authz.list_shares('folder', $f)}
