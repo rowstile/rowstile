@@ -232,8 +232,9 @@ BEGIN
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;
 END $f$;
--- custom roles, access requests, break-glass, a key of one's own and view-as are for users: a service signed in
--- (another principal type) is refused, saying so, even one the policy gives the permission the call asks for
+-- custom roles, access requests, access reviews, break-glass, a key of one's own and view-as are for users: a
+-- service signed in (another principal type) is refused, saying so, even one the policy gives the permission the
+-- call asks for
 CREATE FUNCTION authz_int.users_only(p_what text) RETURNS void
 LANGUAGE plpgsql STABLE {DEF} AS $f$
 DECLARE v_type text; v_id text;

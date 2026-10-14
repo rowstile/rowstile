@@ -276,7 +276,7 @@ each feature against each suite.
 | API keys: `authz.create_api_key`, `authz.list_api_keys`, `authz.revoke_api_key` | 1 | [identity](reference/identity.md) | `identity.sh`, `principals.sh`, `children.sh` | `around.py`, `difftest.py` |
 | Group sync from an identity provider: `authz.sync_members` | 1 | [app-code](reference/app-code.md) | `identity.sh` | `difftest.py` |
 | Requests for access and breaking the glass: `authz.request_access`, `authz.decide_request`, `authz.cancel_request`, `authz.pending_requests`, `authz.break_glass` | 2 | [governance](reference/governance.md) | `governance.sh`, `concurrency.sh` | hand answers |
-| Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review` | 2 | [governance](reference/governance.md) | `governance.sh` |  |
+| Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review` | 2 | [governance](reference/governance.md) | `governance.sh`, `principals.sh` |  |
 | The change feed: `authz.changes_since`, `authz.trim_changes` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` |  |
 | The audit trail: `authz.audit`, `authz.trim_audit` | 2 | [governance](reference/governance.md) | `governance.sh` |  |
 | Checking the database: `authz.lint`, `authz.check_invariants` | 2 | [governance](reference/governance.md) | `governance.sh`, `adversarial.sh` | `around.py` |

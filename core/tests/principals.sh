@@ -167,6 +167,19 @@ expect_code "authz.create_api_key for oneself is for users: a service is told so
   "42501: authz.create_api_key for oneself is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.create_api_key('mine')"
 expect_code "authz.view_as is for users: a service is told so" \
   "42501: authz.view_as is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.view_as('3', 'ticket 12')"
+REV=$(state -c "$AS_USER" -c "SELECT authz.start_review('doc', 1)")
+check "its owner starts a review of doc 1, which service 7 may share too" "$REV|2|true" \
+  "$AS_SVC SELECT '$REV|' || (SELECT count(*) FROM authz.review_items($REV)) || '|' || authz.can('doc', 1, 'share');"
+expect_code "authz.start_review is for users: a service is told so" \
+  "42501: authz.start_review is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.start_review('doc', 1)"
+expect_code "authz.review_decide is for users: a service is told so" \
+  "42501: authz.review_decide is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.review_decide($REV, 1, false)"
+expect_code "authz.close_review is for users: a service is told so" \
+  "42501: authz.close_review is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.close_review($REV, true)"
+check "... and the review is as it was: one, open, nothing decided, every share still there" "1|open|0|2" \
+  "RESET ROLE; SELECT (SELECT count(*) FROM authz.reviews) || '|' || (SELECT CASE WHEN closed_at IS NULL THEN 'open' ELSE 'closed' END
+     FROM authz.reviews WHERE id = $REV) || '|' || (SELECT count(*) FROM authz.review_items WHERE review_id = $REV AND keep IS NOT NULL)
+     || '|' || (SELECT count(*) FROM authz.shares WHERE object_type = 'doc' AND object_id = '1');"
 got=$(PSQL -v VERBOSITY=verbose -c "SET ROLE app_user" -c "$AS_SVC" -c "SELECT authz.break_glass('doc', 1, 'reader', 'an outage')" 2>&1)
 case "$got" in *"HINT:  rowstile help AZ715"*) echo "ok    ... with its code, AZ715";;
   *) echo "FAIL  the code of a call that is for users: $got"; fails=$((fails + 1));; esac

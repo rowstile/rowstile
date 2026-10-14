@@ -681,8 +681,9 @@ BEGIN
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;
 END $f$;
--- custom roles, access requests, break-glass, a key of one's own and view-as are for users: a service signed in
--- (another principal type) is refused, saying so, even one the policy gives the permission the call asks for
+-- custom roles, access requests, access reviews, break-glass, a key of one's own and view-as are for users: a
+-- service signed in (another principal type) is refused, saying so, even one the policy gives the permission the
+-- call asks for
 CREATE FUNCTION authz_int.users_only(p_what text) RETURNS void
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_type text; v_id text;
@@ -5797,12 +5798,14 @@ CREATE OR REPLACE FUNCTION authz.break_glass(p_type text, p_id bigint, p_relatio
 -- Access reviews: snapshot the shares on an object; reviewers keep or revoke each; closing applies it.
 -- Starting one needs 'share' on the object (or being an administrator); revoking an item needs
 -- what unsharing it needs.
+-- Starting, deciding and closing are for users: a service signed in is refused (users_only).
 CREATE OR REPLACE FUNCTION authz.start_review(p_type text, p_id text, p_closes_at timestamptz DEFAULT now() + interval '14 days')
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_id bigint;
 BEGIN
   p_id := authz_int.canon(p_type, p_id);
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.start_review');
   IF NOT authz_int.may_inspect(p_type, p_id) THEN
     RAISE EXCEPTION 'you cannot review % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
@@ -5837,6 +5840,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v authz.reviews; i authz.review_items;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.review_decide');
   SELECT * INTO v FROM authz.reviews WHERE id = p_review AND closed_at IS NULL;
   IF v.id IS NULL OR NOT authz_int.may_inspect(v.object_type, v.object_id) THEN
     RAISE EXCEPTION 'you cannot decide in review %', p_review USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
@@ -5857,6 +5861,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v authz.reviews; n int;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.close_review');
   SELECT * INTO v FROM authz.reviews WHERE id = p_review AND closed_at IS NULL FOR UPDATE;
   IF v.id IS NULL OR NOT authz_int.may_inspect(v.object_type, v.object_id) THEN
     RAISE EXCEPTION 'you cannot close review %', p_review USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
