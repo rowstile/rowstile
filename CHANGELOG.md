@@ -63,6 +63,9 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- Studio's "Make a test" (`/api/test`) wrote a test for a permission the type doesn't have, or for a relation,
+  which `rowstile test` then refused. It now refuses them as `why` does: 400, "no permission folder.nope in the
+  policy", AZ707. A type the policy doesn't have is answered the same way: 400 and AZ707, where it was 404.
 - A list or a read could take seconds on a few rows, on some policies with inheritance: where Postgres put a
   permission's starting points on the inner side of a nested loop, it worked them out again for each row (on one
   random policy, a list of seven rows took 1.3 s and made 10,768 calls where 76 do; now 10 ms). They are now

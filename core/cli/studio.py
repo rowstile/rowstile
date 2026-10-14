@@ -483,10 +483,11 @@ class Studio:
         subject = "anyone" if who[0] is None else f"{who[0]} {word(who[1] or '')}"
 
         def run(db: Db) -> Message:
+            from authzlib import grant
+
             c = self.compiler(db)
-            if type_name not in c.types:
-                raise Problem(f"no type {type_name} in the policy", 404)
-            t = c.types[type_name]
+            # what why refuses, in its words: a test on anything else is one rowstile test refuses
+            t = grant.permission_of(c, type_name, perm)
             check = f"{subject} {expect} {perm} {type_name} {word(oid)}"
 
             def value(v: Json) -> str:

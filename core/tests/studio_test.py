@@ -589,11 +589,24 @@ def main() -> None:
                 "no permission folder.viewer in the policy (rowstile help AZ707)",
             ),
             ("a test expecting neither", "/api/test?as=user:3&type=folder&id=3&perm=edit&expect=maybe", 400, "expect:"),
+            # a test is refused what why refuses, in its words: rowstile test would refuse the test it wrote
             (
                 "a test on a type the policy doesn't have",
                 "/api/test?as=user:3&type=nothing&id=3&perm=edit",
-                404,
-                "no type",
+                400,
+                "no type nothing in the policy (rowstile help AZ707)",
+            ),
+            (
+                "a test on a permission the type doesn't have",
+                "/api/test?as=user:3&type=folder&id=3&perm=nope",
+                400,
+                "no permission folder.nope in the policy (rowstile help AZ707)",
+            ),
+            (
+                "a test on a relation, which a test's line doesn't take",
+                "/api/test?as=user:3&type=folder&id=3&perm=viewer",
+                400,
+                "no permission folder.viewer in the policy (rowstile help AZ707)",
             ),
             ("an address it doesn't answer", "/api/nothing", 404, "nothing"),
         ):

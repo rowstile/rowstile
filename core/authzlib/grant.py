@@ -676,6 +676,20 @@ class Grants:
         way.takes = [(t.name, p, 0, n) for p, n in here.items() if n] + sorted(there, key=lambda x: x[0] != t.name)
 
 
+def permission_of(c: Compiler, type_name: str, perm: str) -> Type:
+    """The type, once it and the permission asked for on it are the policy's: what authz.can and authz.explain
+    take, refused as they refuse it. A relation, or a permission the compiler made, is no permission of the type
+    (a test's line doesn't take them either)."""
+    from .database import Error
+
+    if type_name not in c.types:
+        raise Error(f"no type {type_name} in the policy", hint="rowstile help AZ707")
+    t = c.types[type_name]
+    if perm not in c.public_perms(t):
+        raise Error(f"no permission {type_name}.{perm} in the policy", hint="rowstile help AZ707")
+    return t
+
+
 def how_to_grant(
     c: Compiler, db: Db, ptype: str, pid: str, type_name: str, oid: str, perm: str, tried: bool = True
 ) -> Answer:
@@ -683,15 +697,7 @@ def how_to_grant(
     grant it, best first. c: the compiled policy in force; runs in the caller's transaction and leaves nothing
     behind (each change is undone). tried=False (a transaction that can't write): the changes that might grant
     it, none tried."""
-    from .database import Error
-
-    # what authz.can and authz.explain take, refused before anything is asked as they refuse it: a relation, or a
-    # permission the compiler made, is no permission of the type
-    if type_name not in c.types:
-        raise Error(f"no type {type_name} in the policy", hint="rowstile help AZ707")
-    t = c.types[type_name]
-    if perm not in c.public_perms(t):
-        raise Error(f"no permission {type_name}.{perm} in the policy", hint="rowstile help AZ707")
+    t = permission_of(c, type_name, perm)
     g = Grants(c, db, ptype, pid)
     g.sign_in(False)
     who = pid if ptype == "user" else f"{ptype}:{pid}"
