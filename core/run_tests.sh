@@ -240,7 +240,7 @@ if every_version; then
   record "${PIPESTATUS[0]}" "language server"
 fi
 }
-unit policy 13 tools
+unit policy 20 tools
 
 fi
 if part command; then

@@ -96,6 +96,10 @@ class Client:
         return self.stderr.read().decode()
 
 
+def rng(l1: int, c1: int, l2: int, c2: int) -> Answer:
+    return {"start": {"line": l1, "character": c1}, "end": {"line": l2, "character": c2}}
+
+
 def uri(path: str) -> str:
     return Path(os.path.abspath(path)).as_uri()
 
@@ -313,6 +317,95 @@ with tempfile.TemporaryDirectory() as d:
             [said, f"waited {waited:.1f}s"],
         )
     silent.close()
+
+
+def flushed(c: Client, u: str) -> tuple[dict[str, Answer], list[Answer]]:
+    """What the server sent since the last question, once it has answered one: the last diagnostics for each file,
+    and its messages (window/showMessage)."""
+    c.request("textDocument/documentSymbol", {"textDocument": {"uri": u}})
+    diags = {m["params"]["uri"]: m["params"]["diagnostics"] for m in c.notes if m.get("method").endswith("Diagnostics")}
+    shown = [m["params"] for m in c.notes if m.get("method") == "window/showMessage"]
+    c.notes.clear()
+    return diags, shown
+
+
+# a mistake in rowstile.toml: the server starts all the same, shows it on rowstile.toml (its line) and in a message,
+# checks the policy without the file's settings, and takes the file again once it is fixed
+with tempfile.TemporaryDirectory() as d:
+    path = os.path.join(d, "policy.authz")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(policy)
+    toml = os.path.join(d, "rowstile.toml")
+    with open(toml, "w", encoding="utf-8") as fh:
+        fh.write('policy = "policy.authz"\npolcy_tests = ["t.authz"]\n')
+    u, tu, mu = uri(path), uri(os.path.join(d, "t.authz")), uri(toml)
+    c = Client(d)
+    caps = c.request("initialize", {"processId": None, "rootUri": uri(d), "capabilities": {}})
+    c.notify("initialized", {})
+    diags, shown = flushed(c, u)
+    unknown = (
+        "polcy_tests is not a setting rowstile knows (policy, tests, database, and the tables [clients], "
+        "[migrations], [review])"
+    )
+    ok(
+        "a setting rowstile.toml shouldn't have: the server starts all the same",
+        isinstance(caps, dict) and caps["capabilities"].get("completionProvider") and c.p.poll() is None,
+        caps,
+    )
+    ok(
+        "... the mistake shown on rowstile.toml, on its line, and in a message",
+        diags.get(mu) == [{"range": rng(1, 0, 1, 25), "severity": 1, "source": "rowstile", "message": unknown}]
+        and shown
+        == [{"type": 1, "message": f"rowstile.toml: {unknown} (until it is fixed, the policy is checked without it)"}],
+        [diags, shown],
+    )
+    c.notify("textDocument/didOpen", {"textDocument": {"uri": u, "languageId": "authz", "version": 1, "text": broken}})
+    diags, shown = flushed(c, u)
+    ok(
+        "... the open policy checked without it: its own mistake shown, nothing said again",
+        [x["message"].startswith("folder has no relation or permission 'edtor'") for x in diags.get(u, [])] == [True]
+        and mu not in diags
+        and shown == [],
+        [diags, shown],
+    )
+    c.notify("textDocument/didOpen", {"textDocument": {"uri": tu, "languageId": "authz", "version": 1, "text": good}})
+    diags, _ = flushed(c, u)
+    ok(
+        "... a test file, which needs the policy rowstile.toml names: the mistake at its line 1",
+        diags.get(tu)
+        == [
+            {
+                "range": rng(0, 0, 0, len(good.split("\n")[0])),
+                "severity": 1,
+                "source": "rowstile",
+                "message": f"rowstile.toml: {unknown}",
+            }
+        ],
+        diags,
+    )
+    with open(toml, "w", encoding="utf-8") as fh:
+        fh.write('policy = "policy.authz\n')
+    c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 2}, "contentChanges": [{"text": policy}]})
+    diags, shown = flushed(c, u)
+    ok(
+        "a mistake in TOML: shown on the line TOML names, and said once more",
+        [(x["range"], "(at line 1, column 23)" in x["message"]) for x in diags.get(mu, [])]
+        == [(rng(0, 0, 0, 22), True)]
+        and len(shown) == 1
+        and "(at line 1, column 23)" in shown[0]["message"],
+        [diags, shown],
+    )
+    with open(toml, "w", encoding="utf-8") as fh:
+        fh.write('policy = "policy.authz"\n')
+    c.notify("textDocument/didSave", {"textDocument": {"uri": u}})
+    diags, shown = flushed(c, u)
+    ok(
+        "rowstile.toml fixed: its mistake cleared at the next message, and its settings taken (the test file checks)",
+        diags.get(mu) == [] and diags.get(tu) == [] and diags.get(u) == [] and shown == [],
+        [diags, shown],
+    )
+    said = c.close()
+    ok("... and the server's log has nothing of it", said == "", said)
 
 # a policy split into files: the included file is a part of the policy, opened alone or not
 with tempfile.TemporaryDirectory() as d:
@@ -843,6 +936,57 @@ else:
             and 'database "authz_lsp_nosuch" does not exist' in why,
             results[1],
         )
+
+        # a database that isn't there yet at the first completion (its container still starting, say): tried again
+        # some seconds later, and its tables offered then; rowstile.toml naming another: read at the next completion
+        later = "authz_lsp_later"
+        subprocess.run(["dropdb", "--if-exists", later], capture_output=True)
+        with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
+            fh.write(f'policy = "policy.authz"\ndatabase = "dbname={later}"\n')
+        c = Client(d)
+        c.request("initialize", {"capabilities": {}})
+        e = Editor(c, path, typed)
+        first = e.offered(typed, "type extra = app.", len("type extra = app."))
+        tried = time.monotonic()
+        subprocess.run(["createdb", later], check=True)
+        subprocess.run(
+            [
+                "psql",
+                "-X",
+                "-q",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-d",
+                later,
+                "-f",
+                os.path.join(ROOT, "example", "app_schema.sql"),
+            ],
+            check=True,
+            capture_output=True,
+            env=dict(os.environ, PGOPTIONS="-c client_min_messages=error"),
+        )
+        time.sleep(max(0.0, tried + 5.5 - time.monotonic()))  # the first wait after a failure: 5 seconds
+        then = e.offered(typed, "type extra = app.", len("type extra = app."))
+        with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
+            fh.write(f'policy = "policy.authz"\ndatabase = "dbname={db}"\n')
+        other = e.offered(typed, "type extra = app.", len("type extra = app."))
+        said = c.close()
+        ok(
+            "a database not there at the first completion: its tables some seconds later, in the same server",
+            first == [] and sorted(then) == [t for t in app if t != "order"],
+            [first, then],
+        )
+        ok(
+            "... and rowstile.toml naming another database: its tables at the next completion",
+            sorted(other) == app,
+            other,
+        )
+        ok(
+            "... its log said why the first failed, once",
+            said == f'rowstile lsp: no table or column names to complete: 3D000: database "{later}" does not exist\n',
+            said,
+        )
+        subprocess.run(["dropdb", "--if-exists", later], capture_output=True)
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
 
 print("lsp: all passed" if not fails else f"lsp: {fails} failed")

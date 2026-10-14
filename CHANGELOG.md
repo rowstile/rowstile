@@ -189,6 +189,13 @@ Each release upgrades from the one before it. How releases are numbered and made
   database all the same) and was answered, and a `ping` sent meanwhile waited for it. Each call now runs beside
   the messages after it: a ping is answered at once, and a cancelled call's command is stopped as Ctrl-C stops it
   (a push keeps nothing) and gets no answer, as MCP asks.
+- `rowstile lsp` stopped at start (exit 2) on a mistake in `rowstile.toml` (a setting it doesn't know, a TOML
+  mistake): the editor had no language server at all, and the mistake was only in the server's log. It starts
+  now, shows the mistake on `rowstile.toml` (its line) and in a message, checks the policy without the file's
+  settings, and reads the file again when it changes, so a fix is taken at once.
+- `rowstile lsp` never tried again a database it couldn't reach at the first completion that needed it (not
+  started yet, say): no table or column names until the editor restarted the server. It tries again some seconds
+  later (5, then 10, 20, up to a minute between tries), and at once when `rowstile.toml` changes.
 
 ## 0.1.0 (alpha)
 
