@@ -317,6 +317,98 @@ PSQL -c "TRUNCATE ps.services CASCADE" >/dev/null
 check "emptying the services' table deletes every service's keys" "0" \
   "RESET ROLE; SELECT count(*) FROM authz.api_keys WHERE principal_type = 'service';"
 
+echo "-- a row's marks go with it, and only its own"
+# A share, a key or a request marks each row it names (authz_int.row_marks), so a delete with an older snapshot fails
+# to serialize; the marks go with the row. Here the ids repeat across types, and nothing is shared with a bot: only
+# its keys mark its rows, so its keys' trigger alone forgets them.
+MDB="${DB}_marks"
+dropdb --if-exists "$MDB" 2>/dev/null; createdb "$MDB" || exit 1
+MPSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$MDB" "$@"; }
+PGOPTIONS="-c client_min_messages=warning" MPSQL <<'SQL' >/dev/null || exit 1
+CREATE SCHEMA pm;
+CREATE TABLE pm.users (id bigint PRIMARY KEY);
+CREATE TABLE pm.bots (id bigint PRIMARY KEY, owner_id bigint);
+CREATE TABLE pm.notes (id bigint PRIMARY KEY, owner_id bigint);
+CREATE TABLE pm.pages (id bigint PRIMARY KEY, owner_id bigint);
+INSERT INTO pm.users VALUES (1), (2);
+INSERT INTO pm.bots VALUES (1, 1), (2, 1), (3, 1), (4, 1);
+INSERT INTO pm.notes VALUES (1, 1), (2, 1);
+INSERT INTO pm.pages VALUES (1, 1), (2, 1);
+GRANT USAGE ON SCHEMA pm TO app_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA pm TO app_user;
+SQL
+cat > /tmp/authz_principals_marks.authz <<'POLICY'
+app role app_user
+type user = pm.users
+type bot = pm.bots principal             -- nothing is shared with a bot
+  owner : user = owner_id
+  can manage_keys = owner
+type note = pm.notes
+  owner  : user = owner_id
+  reader : user shared
+  can share = owner
+  can view  = owner or reader
+type page = pm.pages
+  owner  : user = owner_id
+  reader : user shared
+  can share = owner
+  can view  = owner or reader
+POLICY
+python3 compile_policy.py /tmp/authz_principals_marks.authz > /tmp/authz_principals_marks.sql || exit 1
+PGOPTIONS="-c client_min_messages=error" MPSQL -f /tmp/authz_principals_marks.sql >/dev/null || exit 1
+MPSQL -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SELECT authz.share('note', 1, 'reader', 'user', 2)" \
+  -c "SELECT authz.share('note', 2, 'reader', 'user', 2)" -c "SELECT authz.share('page', 1, 'reader', 'user', 2)" \
+  -c "SELECT authz.create_api_key('a', '', NULL, 'bot', '1')" -c "SELECT authz.create_api_key('b', '', NULL, 'bot', '2')" >/dev/null
+marks() {   # $1 label, $2 the marks expected, "type id" in order
+  got=$(MPSQL -c "SELECT string_agg(type || ' ' || id, ',' ORDER BY type, id) FROM authz_int.row_marks" 2>&1)
+  if [ "$got" = "$2" ]; then echo "ok    $1"; else echo "FAIL  $1: expected '$2', got '$got'"; fails=$((fails + 1)); fi
+}
+marks "a share marks its object and its subject; a key, its principal" "bot 1,bot 2,note 1,note 2,page 1,user 2"
+MPSQL -c "DELETE FROM pm.notes WHERE id = 1" >/dev/null
+marks "deleting a note takes its marks, not the other notes', nor another type's with its id" "bot 1,bot 2,note 2,page 1,user 2"
+MPSQL -c "DELETE FROM pm.bots WHERE id = 1" >/dev/null
+marks "deleting a bot (its keys' trigger) takes its marks, not the other bots'" "bot 2,note 2,page 1,user 2"
+MPSQL -c "TRUNCATE pm.notes" >/dev/null
+marks "emptying the notes takes every note's marks, and no other type's" "bot 2,page 1,user 2"
+MPSQL -c "TRUNCATE pm.bots" >/dev/null
+marks "emptying the bots (their keys' trigger) takes every bot's marks, and no other type's" "page 1,user 2"
+MPSQL -c "INSERT INTO pm.bots VALUES (3, 1), (4, 1)" >/dev/null
+# REPEATABLE READ: a delete whose snapshot is older than a key made for the bot fails to serialize, as for a service,
+# though no share trigger writes the bot's mark first
+MPSQL > "/tmp/${MDB}_rr.out" 2>&1 <<'SQL' &
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT count(*) FROM pm.users;
+SELECT pg_sleep(1.5);
+DELETE FROM pm.bots WHERE id = 3;
+COMMIT;
+SQL
+sleep 0.5
+MPSQL -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SELECT authz.create_api_key('c', '', NULL, 'bot', '3')" >/dev/null 2>&1
+wait
+if grep -q "could not serialize access due to concurrent update" "/tmp/${MDB}_rr.out"; then
+  echo "ok    a delete with an older snapshot than a key made for a bot nothing is shared with gets a serialization error"
+else echo "FAIL  a bot deleted with an older snapshot than its key: $(tr '\n' ' ' < "/tmp/${MDB}_rr.out")"; fails=$((fails + 1)); fi
+got=$(MPSQL -c "SELECT (SELECT count(*) FROM pm.bots WHERE id = 3) || '|' || (SELECT count(*) FROM authz.api_keys WHERE principal_type = 'bot' AND user_id = '3')")
+[ "$got" = "1|1" ] && echo "ok    ... and the bot and its key are both still there" ||
+  { echo "FAIL  the bot and its key after the delete: expected 1|1, got $got"; fails=$((fails + 1)); }
+rm -f "/tmp/${MDB}_rr.out"
+# READ COMMITTED: a key made for another principal while it is deleted waits for the delete (its row is locked
+# first), then there is no one to make it for
+psql -X -q -d "$MDB" -c "BEGIN" -c "DELETE FROM pm.bots WHERE id = 4" -c "SELECT pg_sleep(1.5)" -c "COMMIT" >/dev/null 2>&1 &
+sleep 0.5
+got=$(psql -X -q -At -d "$MDB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "SET authz.user_id = '1'" \
+  -c "SELECT authz.create_api_key('late', '', NULL, 'bot', '4')" 2>&1 | grep '^ERROR:  ' | tail -n 1)
+wait
+got=${got#ERROR:  }
+if agrees "a key made for a bot while it is deleted waits for the delete, then is refused" \
+  "42501: you cannot manage the keys of bot 4" "${got:-ok}"; then
+  echo "ok    a key made for a bot while it is deleted waits for the delete, then is refused"
+else echo "FAIL  a key made for a bot while it is deleted: expected 42501: you cannot manage the keys of bot 4, got ${got:-ok}"; fails=$((fails + 1)); fi
+got=$(MPSQL -c "SELECT count(*) FROM authz.api_keys WHERE principal_type = 'bot' AND user_id = '4'")
+[ "$got" = 0 ] && echo "ok    ... and no key is left on the bot that is gone" ||
+  { echo "FAIL  keys left on a deleted bot: $got"; fails=$((fails + 1)); }
+[ -n "${KEEP:-}" ] || dropdb "$MDB"
+
 [ -n "${KEEP:-}" ] || dropdb "$DB"
 echo "principals: $fails failure(s)"
 exit $((fails > 0))
