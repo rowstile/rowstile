@@ -111,8 +111,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 - `rowstile prove` and the review read a decimal in a condition (`{price >= 1.5}`) as a float, so
   `1.00000000000000001` was 1: prove gave counterexamples a `numeric` column can't have, and the review said
   "Meaning unchanged" when `{price >= 1}` became `{price >= 1.00000000000000001}`. They now read numbers exactly,
-  as `numeric` does, and leave a number written with more than 15 digits (more than a `double precision` column
-  keeps) to the database, as any condition they can't read.
+  as `numeric` does, and only those a `numeric`, a `double precision` and a `real` column all hold as written,
+  with the values the worlds draw around them (`0.5`, `0.25`, `100`); any other (`0.1`, which a `real` column
+  holds as 0.100000001; `1.00000000000000001`; `16777216` and above, whole numbers a `real` column rounds near)
+  is left to the database, as any condition they can't read.
 - `rowstile prove` and the review didn't read quoted column names in conditions (`{"done"}`, `{not "archived"}`,
   `{"order" = 2}`): such a condition was one they couldn't read, so `{"done"}` and `{not "done"}` could both hold
   on one row, and quoting a column was a change of meaning. They now read them as Postgres does, case kept.

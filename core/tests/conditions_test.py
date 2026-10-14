@@ -6,7 +6,7 @@
 `rowstile prove` and the review's refactor check read a simple condition (`{not archived}`, `{size > 10}`,
 `{owner_id = authz.uid()}`) as a fact about a made-up row (authzlib/conditions.py); difftest never does, it asks
 the database for each condition's rows. So this asks both: conditions made up at random over columns of each kind
-(boolean, integer, numeric, double precision, text, and a column a relation reads, whose values the evaluator
+(boolean, integer, numeric, double precision, real, text, and a column a relation reads, whose values the evaluator
 holds as the ids' text; some named only in quotes, "B" beside b, "order"), every one Postgres accepts asked on the
 same rows, signed in as each user and as nobody. Whatever
 conditions.py takes as simple must give Postgres's answer on every row: true, false or NULL. One it doesn't take
@@ -37,6 +37,9 @@ COLUMNS: dict[str, tuple[str, list[Scalar]]] = {
     # a decimal is read exactly, as numeric holds it; one with more digits than a double keeps is not read
     "x": ("numeric", [Decimal("0.5"), 1, Decimal("1.5"), 10, Decimal("0.1"), Decimal("1.00000000000000001"), None]),
     "f": ("double precision", [Decimal("0.5"), 1, Decimal("1.5"), Decimal("0.1"), Decimal("0.3"), None]),
+    # a real column holds 0.1 as 0.100000001 (and 0.1::real = 0.1 is false), 16777217 as 16777216: as the worlds
+    # draw the values around a constant (16777217 beside 16777216), a row may hold one it rounds
+    "r": ("real", [Decimal("0.5"), 1, Decimal("0.25"), Decimal("0.1"), 16777216, 16777217, None]),
     "s": ("text", ["a", "b", "A", "B", "ab", "x", "it's", "10", "9", "", " a", None]),
     # a relation's column (`owner : user = o`): the evaluator holds its values as the linked ids' text
     "o": ("bigint", ["1", "2", "10", None]),
@@ -54,6 +57,8 @@ CONSTANTS: dict[str, list[str]] = {
     "x": ["0.5", "1", "1.0", "1.50", "10", "'1.5'", "'1.50'", "1e1", "1.5e0", "0.1", "0.10", "null"]
     + ["1.00000000000000001", "1.000000000000001", "100.000000000000000000", "0.000000000000001", "0.0000000000000001"],
     "f": ["0.5", "1", "1.50", "0.1", "0.3", "0.30000000000000001", "0.1000000000000001", "100000000000000.1", "null"],
+    "r": ["0.5", "1", "1.0", "0.25", "0.1", "0.10", "0.3", "'0.5'", "null"]
+    + ["16777214", "16777215", "16777216", "16777217", "16777218"],
     "s": ["'a'", "'b'", "'A'", "'B'", "'ab'", "'it''s'", "'10'", "'9'", "''", "' a'", "10", "null"],
     "o": ["1", "2", "10", "'1'", "'10'", "9", "null"],
     "B": ["true", "false", "'t'", "null"],
@@ -110,7 +115,7 @@ def atom(rng: random.Random) -> str:
         # what conditions.py leaves to the database: it must say so, not read it some other way
         return rng.choice(
             [
-                f"{col} + 1 > 2" if c in ("n", "x", "f", "order") else f"coalesce({col}, {k}) = {k}",
+                f"{col} + 1 > 2" if c in ("n", "x", "f", "r", "order") else f"coalesce({col}, {k}) = {k}",
                 f"{col} between {k} and {k}",
                 f"{col} is true" if c in BOOLEANS else f"{col} = -1",
                 "n = x",

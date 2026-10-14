@@ -4579,15 +4579,18 @@ class Confidence(unittest.TestCase):
         self.assertEqual(simple('not "archived"'), Bool("not", (Col("archived"),)))
         self.assertEqual(simple('this."a""b" = 1'), Cmp("=", Col('a"b'), Const(1)))
         self.assertEqual(simple('Done or "Done"'), Bool("or", (Col("done"), Col("Done"))))
-        # a decimal exactly, as numeric reads it; one with more digits than a double precision column keeps (15) is
-        # the database's: there 1.00000000000000001 is 1, in a numeric column it is not
-        self.assertEqual(simple("price >= 1.10"), Cmp(">=", Col("price"), Const(Decimal("1.10"))))
-        node = simple("price > 0.1")
+        # a decimal exactly, as numeric reads it, where a numeric, a double precision and a real column all hold it
+        # as written (1.50, 0.25), and the values the worlds draw around it (one less, one more, two past); any other
+        # is the database's: a real column holds 0.1 as 0.100000001 and 16777217 as 16777216, a double precision one
+        # 1.00000000000000001 as 1
+        self.assertEqual(simple("price >= 1.50"), Cmp(">=", Col("price"), Const(Decimal("1.50"))))
+        node = simple("price > 0.25")
         assert node is not None
-        self.assertEqual([truth(node, {"price": Decimal(v)}, None) for v in ("0.1", "0.10000000000001")], [False, True])
-        self.assertIsNone(simple("price = 1.00000000000000001"))
-        self.assertIsNone(simple("price < 1000000000000000"))
-        self.assertIsNotNone(simple("price < 100000000000000.0"))
+        self.assertEqual([truth(node, {"price": Decimal(v)}, None) for v in ("0.25", "0.2500000001")], [False, True])
+        for sql in ("price > 0.1", "price >= 1.10", "price = 1.00000000000000001", "price < 16777217"):
+            self.assertIsNone(simple(sql), sql)
+        # 2^24 itself a real column holds, but not 2^24 + 1, which the worlds draw beside it: 2^24 - 2 is the last
+        self.assertEqual([simple(f"price < {n}") is None for n in (16777214, 16777215, 16777216)], [False, True, True])
 
     def test_prove_reads_quoted_columns_and_long_decimals_as_postgres_does(self) -> None:
         """A quoted column was a condition prove couldn't read, so {"done"} and {not "done"} were drawn apart and
@@ -5561,11 +5564,17 @@ class HandAnswers(unittest.TestCase):
 
         for sql in ("kind in (other_kind)", "kind in ()", "id in (select doc_id from holds)"):
             self.assertIsNone(simple(sql), sql)
-        # a number with more digits than a double precision column keeps (15), the longest Python reads (4300) among
-        # them: the database's to read, as any other it can't (a double holds 2^53 + 1 as 2^53)
-        for sql in ("size > " + "9" * 4301, "size in (1, " + "9" * 5000 + ")", "size > " + "9" * 16):
+        # a number some column type holds otherwise than written (a real column rounds whole numbers past 2^24),
+        # the longest Python reads (4300 digits) among them: the database's to read, as any other it can't
+        for sql in (
+            "size > " + "9" * 4301,
+            "size in (1, " + "9" * 5000 + ")",
+            "size > " + "9" * 8,
+            "size > 0.1",
+            "size = 16777216",
+        ):
             self.assertIsNone(simple(sql), sql[:20])
-        self.assertIsNotNone(simple("size > " + "9" * 15))
+        self.assertIsNotNone(simple("size > " + "9" * 7))
 
     @worked_from("rows-hold-nothing")
     def test_a_disbanded_team_passes_its_members_on_to_no_team(self) -> None:

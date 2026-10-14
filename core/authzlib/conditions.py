@@ -17,16 +17,19 @@ written (`"Archived"`, `"order"`, `"a""b"` for a"b). A number is read exactly, a
 
 Only what means the same whatever the column's type and collation, which a condition doesn't say: no text in
 order (`{name < 'b'}` follows the database's collation), no text Postgres would read as the column's number or
-boolean (`{size = '10'}`, `{done = 't'}`), no number written with more digits than a double precision column keeps
-(`{price = 1.00000000000000001}` is false of 1 on a numeric column, true on a double precision one), no order
-against authz.uid() (the user key's type decides it). Those are left to the database too. A column a relation
-reads holds the linked ids' text: compared with a number, as a number (tests/conditions_test.py asks Postgres the
-same questions).
+boolean (`{size = '10'}`, `{done = 't'}`), no number a numeric, a double precision and a real column don't all
+hold as written (read: 0.5, 0.25, 1.5, 100; not 0.1, which a real column holds as 0.100000001, so
+`0.1::real = 0.1` is false; not 1.00000000000000001, which is 1 in a double precision column; not 16777217,
+which a real column rounds, nor 16777216, one more than which it rounds: the made-up rows hold the values around a
+number too), no order against authz.uid() (the user key's type decides it). Those are left to the
+database too. A column a relation reads holds the linked ids' text: compared with a number, as a number
+(tests/conditions_test.py asks Postgres the same questions).
 """
 
 from __future__ import annotations
 
 import re
+import struct
 from collections.abc import Mapping
 from decimal import Decimal
 from functools import cache
@@ -36,8 +39,11 @@ from typing import NamedTuple, TypeAlias
 Scalar: TypeAlias = "str | int | Decimal | bool | None"
 
 # the most digits a number may be written with for the evaluator to read it: what a double precision column keeps
-# (15), so that the made-up rows' numbers are as far apart there as they are in a numeric one
+# (15); the made-up rows' numbers around it (one less, one more) are then exact in Decimal's 28 digits
 DIGITS = 15
+# the values the worlds draw for a column around a number it is compared with (evaluate.domains): one less, the
+# number, one more, two past the largest; each must be one every numeric column holds as it is
+AROUND = (-1, 0, 1, 2)
 
 
 class Col(NamedTuple):
@@ -198,7 +204,8 @@ class Parser:
         if self.peek("num"):
             text = self.take("num")
             exact = Decimal(text)
-            if written(exact) > DIGITS:  # a double precision column reads it otherwise: the database's to read
+            # a column of some type holds it, or a value the worlds draw around it, otherwise: the database's
+            if written(exact) > DIGITS or not all(held(exact + k) for k in AROUND):
                 raise NotSimple(text[:40])
             return exact if "." in text else int(text)
         if self.peek("word", "true") or self.peek("word", "false"):
@@ -234,6 +241,13 @@ def written(d: Decimal) -> int:
     exponent = d.as_tuple().exponent
     assert isinstance(exponent, int)  # (a number the parser read: not NaN or infinity)
     return max(d.adjusted(), 0) - min(exponent, 0) + 1
+
+
+def held(d: Decimal) -> bool:
+    """Whether a numeric, a double precision and a real column all hold d as it is: its value is the same as a
+    float8 and as a float4 (0.5, 0.25, 16777216; not 0.1, nor 16777217, which a real column rounds)."""
+    x = float(d)
+    return Decimal(x) == d and struct.unpack("f", struct.pack("f", x))[0] == x
 
 
 def number(v: Scalar) -> Decimal | None:
