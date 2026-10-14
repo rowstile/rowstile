@@ -947,6 +947,15 @@ def compare(pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_
     """None if the two policies grant the same in every world tried (each permission of either, for everyone
     who signs in, and each rule), else the first difference found in the smallest world: what differs, for
     whom, on which object, before and after, and the world."""
+    found = first_difference(pol_a, pol_b, worlds, seed, max_size)
+    return found[0] if found else None
+
+
+def first_difference(
+    pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_size: int = 4
+) -> tuple[Difference, Data] | None:
+    """compare()'s difference, with the world it was found in, as the first policy's data (tests/rewrites.py loads
+    it as rows, to see the database answer as the review says)."""
     ref_a, ref_b = Reference(pol_a), Reference(pol_b)
     perms = sorted(
         {(t.name, p) for pol in (pol_a, pol_b) for t in pol.types.values() for p in t.perms if not t.perms[p].hidden}
@@ -975,7 +984,7 @@ def compare(pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_
                         "after": o in gb,
                         "world": w.describe(pol_b, db),
                         "worlds": n,
-                    }
+                    }, da
             for key in sorted(set(rules_a) & set(rules_b), key=repr):
                 ra, rb = ref_a.rule(sa, rules_a[key]), ref_b.rule(sb, rules_b[key])
                 if ra != rb:
@@ -990,5 +999,5 @@ def compare(pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_
                         "after": o in rb,
                         "world": w.describe(pol_b, db),
                         "worlds": n,
-                    }
+                    }, da
     return None

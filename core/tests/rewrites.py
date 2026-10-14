@@ -23,8 +23,12 @@ again after a few random changes. A policy fails when
   - a rewrite that changes nothing is given a difference by the review, or changes the database's answers.
 
 A rewrite that may change something, and for which the review shows a difference, is counted: with the database's
-answers changing too, or on data that doesn't show it. A policy the compiler refuses, or whose answers take seconds
-to read (a diff asks for all of them, as everyone), is not checked, and counted so.
+answers changing too, or on data that doesn't show it. And the first such difference of each policy is replayed in a
+database of its own: the small world the review found it in, made as rows (small.load_sql), under the policy and then
+under the rewrite; the user's answer must be the review's, before and after. A world rows can't make (a condition that
+reads other tables, custom roles, keys of several columns or uuids) is counted, not replayed. A policy
+the compiler refuses, or whose answers take seconds to read (a diff asks for all of them, as everyone), is not
+checked, and counted so.
 """
 
 from __future__ import annotations
@@ -33,10 +37,12 @@ import argparse
 import dataclasses
 import os
 import random
+import re
 import subprocess
 import sys
 import tempfile
 import time
+from collections import Counter
 from collections.abc import Callable, Iterator
 from typing import NamedTuple
 
@@ -47,10 +53,11 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "cli"))
 import pgwire  # noqa: E402
 import rowstile_cli  # noqa: E402
-from authzlib import PolicyError, database, review  # noqa: E402
+from authzlib import Compiler, PolicyError, database, evaluate, parse_policy, review  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
-from difftest import DB, Ids, idsql  # noqa: E402
+from difftest import DB, Ids, idsql, lit  # noqa: E402
 from genpolicy import CONDS, Node, Spec, atoms, gen_class, make, policy_text, schema_text, write_policy  # noqa: E402
+from small import Unloadable, conditions_read, load_sql  # noqa: E402
 
 Path = tuple[int, ...]
 
@@ -226,6 +233,8 @@ SLOW = 5.0  # seconds for one diff: such a policy's rewrites would take minutes,
 class Tally:
     def __init__(self) -> None:
         self.same = self.agreed = self.shown = self.unshown = self.refused = self.beyond = 0
+        self.replayed = 0
+        self.unloadable: Counter[str] = Counter()  # (why rows can't make the world)
 
 
 def said(m: review.Meaning) -> str:
@@ -234,6 +243,58 @@ def said(m: review.Meaning) -> str:
     if found:
         return f"{found['what']} differs for user {found['user']} on {found['object']}"
     return f"grants the same ({m['equivalent']})" if m.get("equivalent") else "no verdict"
+
+
+def replay(spec: Spec, base: review.Side, new: str, m: review.Meaning, sql: str, db: DB, worlds: int) -> str | None:
+    """A difference the review shows, replayed in a database (db's name, _replay): the world it was found in made as
+    rows under the policy (its compiled sql), then under the rewrite (new); the user's answer asked each time
+    (authz.can) must be the review's. The problem, if any; Unloadable if rows can't make that world."""
+    found = m.get("counterexample")
+    assert found is not None
+    if m.get("unreadable") or not re.fullmatch(r"\w+\.\w+", found["what"]):
+        raise Unloadable("a rule's difference, or one in conditions the review can't read")
+    if spec.spelling.keytype == "uuid":
+        raise Unloadable("uuid keys (a world's ids are numbers)")
+    head = parse_policy(new, "new.authz")
+    first = evaluate.first_difference(base.pol, head, worlds=worlds)
+    assert first is not None and first[0] == found, (first, found)  # (the review's own, found again)
+    tname, perm = found["what"].split(".")
+    read = conditions_read(base.pol, tname, perm) | conditions_read(head, tname, perm)
+    rows, shares = load_sql(base.pol, first[1], read=read)
+    user = "" if found["user"].startswith("(") else found["user"]
+    kind, pid = evaluate.principal_of(user, base.pol.types)
+    # (asked holding a share link's first token, as the review's worlds are: evaluate.compare)
+    ask = (
+        f"SET authz.user_id = {lit(pid)}; SET authz.principal_type = {lit('' if kind == 'user' else kind)};\n"
+        "SET authz_ctx.links = 'tok1';\n"
+        f"SELECT authz.can({lit(tname)}, {lit(found['object'])}, {lit(perm)});\n"
+        "RESET authz.user_id; RESET authz.principal_type; RESET authz_ctx.links;"
+    )
+    there = DB(f"{db.name}_replay")
+    there.recreate()
+    there.run(schema_text(spec))
+    # a made-up world's columns may be NULL where the app's table says they can't be: they may here
+    there.run(
+        "DO $$ DECLARE c record; BEGIN FOR c IN SELECT table_schema, table_name, column_name FROM "
+        "information_schema.columns WHERE table_schema NOT IN ('pg_catalog', 'information_schema') AND is_nullable = 'NO' "
+        "AND column_default IS NOT NULL LOOP EXECUTE format('ALTER TABLE %I.%I ALTER COLUMN %I DROP NOT NULL', "
+        "c.table_schema, c.table_name, c.column_name); END LOOP; END $$;"
+    )
+    for step, applying in ((rows, False), (sql, True), (shares, False)):
+        code, _, err = there.run(step, check=applying)
+        if code != 0:  # (a value the app's table doesn't take: a world made up for the policy alone)
+            raise Unloadable(err.strip().splitlines()[0])
+    before = there.rows(ask)[0][0] == "t"
+    there.run(Compiler(parse_policy(new, "new.authz")).compile("new.authz"))
+    after = there.rows(ask)[0][0] == "t"
+    subprocess.run(["dropdb", "--if-exists", there.name], capture_output=True)
+    if (before, after) != (found["before"], found["after"]):
+        return (
+            f"the review says {found['what']} on {found['object']} for {found['user']} goes from {found['before']} to "
+            f"{found['after']}; replayed in a database, from {before} to {after}, in the world: "
+            + "; ".join(found["world"])
+        )
+    return None
 
 
 def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, worlds: int, tally: Tally) -> list[str]:
@@ -305,6 +366,18 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
                         return [f"round {n}: unexpected error", f"  {sql}", f"  {err.strip()}"]
     finally:
         conn.close()
+    for rw, new, m in tried:
+        if rw.same or not m.get("counterexample"):
+            continue
+        try:
+            wrong = replay(spec, base, new, m, compiled.stdout, db, worlds)
+        except Unloadable as e:
+            tally.unloadable[str(e)] += 1
+            continue
+        tally.replayed += 1
+        if wrong:
+            problems.append(f"{rw.what}: {wrong}")
+        break  # (one a policy)
     for rw, _, m in tried:
         if rw.same and not m.get("equivalent"):
             problems.append(f"{rw.what}: it changes nothing, and the review says: {said(m)}")
@@ -359,7 +432,10 @@ def main() -> None:
         f"(refused, or slow to read); {tally.same} rewrites that change nothing, said so and seen so; of those that "
         f"may change something, {tally.shown} the review and the database both show changing, {tally.unshown} the "
         f"review shows and this data doesn't, {tally.agreed} that change nothing here, {tally.beyond} beyond the "
-        f"review; {tally.refused} rewrites the compiler refuses"
+        f"review; {tally.refused} rewrites the compiler refuses; {tally.replayed} of the review's differences replayed "
+        f"in a database ({sum(tally.unloadable.values())} in worlds rows can't make"
+        + "".join(f"; {n}: {why}" for why, n in sorted(tally.unloadable.items()))
+        + ")"
     )
     sys.exit(1 if failed else 0)
 
