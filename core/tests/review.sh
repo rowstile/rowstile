@@ -225,6 +225,15 @@ sed -i 's/user $bo cannot view file $f/user $bo can view file $f/' "$P/db/tests/
 out=$(CLI --db "dbname=$DB" review --base main 2>&1)
 case "$out" in *"Tests    "*" checks pass, 1 fail. 1 check changed what it expects."*"Deploy   no migration: nothing the database holds changes."*)
   ok "a pull request that changes the tests alone: nothing to migrate, and they run on the review data";; *) bad "the tests alone" "$out";; esac
+# test files rowstile test would refuse (a permission the policy doesn't have, a line that doesn't parse): each is
+# named under Tests, the others still run on the review data, and the review goes on (exit 0)
+printf 'test "broken"\n  user 3 can nosuch file 11\n' > "$P/db/tests/nosuch.authz"
+printf 'test "unread"\n  user 3 frobs file 11\n' > "$P/db/tests/frobs.authz"
+out=$(CLI --db "dbname=$DB" review --base main 2>&1); rc=$?
+case "$out" in *"Tests    9 checks pass, 1 fail. 1 check changed what it expects. 2 test files can't be read, so their checks aren't compared."*"Deploy   no migration"*"can't read: db/tests/frobs.authz line 2: a test's lines are: "*" [AZ106]"*"can't read: db/tests/nosuch.authz line 2: file has no permission 'nosuch' (it has: share, edit, view) [AZ203]"*)
+  [ $rc -eq 0 ] && ok "test files rowstile test would refuse: each named with its mistake under Tests, the others run, the review goes on (exit 0)" ||
+    bad "test files it would refuse: exit" "$rc";; *) bad "test files it would refuse" "$out";; esac
+rm "$P/db/tests/nosuch.authz" "$P/db/tests/frobs.authz"
 G checkout -q -- db
 # a project that keeps no migrations (rowstile apply): the pull request's policy is applied whole on the review data
 N="$T/nolock"; mkdir -p "$N/db/tests"
