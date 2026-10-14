@@ -37,8 +37,9 @@ says what a change does, in plain words, for the pull request:
   compared under the new name: a new name alone removes nothing. <!-- checked: tests/unit_test.py "test_a_renamed_test_is_not_its_checks_removed" -->
   With `--db`, the pull request's tests run
   on the review data after its migrations. <!-- checked: tests/review.sh "a pull request that changes the tests alone: nothing to migrate, and they run on the review data" -->
-  The checks are listed whatever Meaning says. A test file of the pull request that doesn't parse
-  is named, with its mistake: its checks are not compared. <!-- checked: tests/unit_test.py "test_a_test_file_that_doesnt_parse_is_said" -->
+  The checks are listed whatever Meaning says. A test file of the pull request that doesn't parse, or that
+  `rowstile test` would refuse with the pull request's policy (a permission it doesn't have, a test another file
+  names too), is named, with its mistake: its checks are not compared, nor run, and the review goes on. <!-- checked: tests/unit_test.py "test_a_test_file_that_doesnt_parse_is_said"; tests/unit_test.py "test_a_test_file_the_policy_refuses_is_said"; tests/review.sh "test files rowstile test would refuse: each named with its mistake under Tests, the others run, the review goes on (exit 0)" -->
 - **Deploy**: the migrations the change needs (from the base branch's lock file), their statements, the
   app tables they lock and in which mode, the inheritance tables they rebuild or build beside; with
   `--db`, how long they took on the review data. <!-- checked: tests/review.sh "Deploy: two migrations, the tree built beside, applied on the review data" -->

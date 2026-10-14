@@ -119,6 +119,12 @@ Each release upgrades from the one before it. How releases are numbered and made
 - `rowstile migrate` and `migrate --check`, refusing a lock file a newer rowstile wrote (AZ616), left out the
   hint `apply` and `push` give: "upgrade the rowstile command; to go back to this version on purpose, add
   --downgrade". They now give it too.
+- `rowstile review --db` stopped at a test file of the pull request with a mistake (a line that doesn't parse, a
+  check naming a permission the type doesn't have): it printed that mistake alone and exited 1, with no review and
+  no comment to post. It now names the file under Tests with its mistake, runs the other tests, and goes on (exit
+  0), as without `--db`. Without `--db`, a test file that parses but that `rowstile test` would refuse with the
+  pull request's policy (a permission it doesn't have, a test another file names too) went unnoticed, and its
+  checks were compared: it is now named the same way.
 
 ## 0.1.0 (alpha)
 

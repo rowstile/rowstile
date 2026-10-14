@@ -393,6 +393,7 @@ def review(
         # ones would read as changed), and each of its declarations listed as added
         b = Side("\n".join(h.entities[k][0] for k in ("app role", "type user") if k in h.entities) + "\n", None, None)
         b.entities = {}
+    unread = unread_tests(h)
     said = meaning(b, h, worlds)
     flags = risk(b, h, worlds, said.get("counterexample"))
     if said["equivalent"] not in (None, "text") and any(f["why"] in ALLOWS_MORE for f in flags):
@@ -400,7 +401,7 @@ def review(
     out: Review = {
         "meaning": said,
         "risk": flags,
-        "tests": tests(b, h),
+        "tests": tests(b, h, unread),
         "deploy": deploy(b, h, base_lock, head_lock),
         "access": access(db, h) if db is not None else None,
     }
@@ -417,7 +418,10 @@ def review(
             if g["change"] == "gains" and g["what"].startswith("permission ")
             for e in g["examples"][:2]
         ]
-        ran = database.review_run(db, h.policy, h.files, h.tests, base_lock, wanted)
+        # the test files it can't read are named under Tests, not run: one would stop them all
+        named = {f["file"] for f in unread}
+        runnable = {name: body for name, body in h.tests.items() if name not in named}
+        ran = database.review_run(db, h.policy, h.files, runnable, base_lock, wanted)
         for g in (out["access"] or {}).get("groups", []):
             for e in g["examples"]:
                 how = ran["how"].get((as_given(e["user"], h.pol), g["type"], e["id"], g["what"][11:]))
@@ -920,20 +924,40 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
 EXPECT = re.compile(r"\b(can|cannot|allowed|refused|sees\s+\d+)\b")
 
 
-def checks(side: Side, unread: list[Unread] | None = None) -> dict[tuple[str, str], tuple[str, str, str]]:
+def unread_tests(side: Side) -> list[Unread]:
+    """The test files `rowstile test` would refuse with this side's policy: one that doesn't parse, or names what
+    the policy doesn't have (a permission, a type) or a test another file names too. Each is named with its
+    mistake, as `rowstile test` names it; the files are added one at a time, in order, so a name two files give is
+    the second's mistake."""
+    out: list[Unread] = []
+    good: dict[str, str] = {}
+    for name, body in sorted(side.tests.items()):
+        try:
+            c = Compiler(parse_policy(side.policy, None, files=side.files, previous=side.previous))
+            c.add_test_files({**good, name: body})
+            c.tests_function_sql()
+        except PolicyError as e:
+            out.append({"file": name, "error": f"{name} {e}" if str(e).startswith("line ") else str(e)})
+        else:
+            good[name] = body
+    return out
+
+
+def checks(side: Side, unread: Iterable[str] = ()) -> dict[tuple[str, str], tuple[str, str, str]]:
     """{(test, check without its expectation): (expectation, text, line)}, from the policy's own tests and the
-    test files. A test file that doesn't parse gives no checks; it is noted in unread, with why."""
+    test files. A test file in unread, or one that doesn't parse, gives no checks."""
     out: dict[tuple[str, str], tuple[str, str, str]] = {}
     for t in side.pol.tests:
         text = t.text.strip()
         out[("test section", EXPECT.sub("…", text, count=1))] = ("can" if t.expect else "cannot", text, str(t.loc))
     scenarios = [(sc, None) for sc in side.pol.scenarios]
     for name, body in sorted(side.tests.items()):
+        if name in unread:
+            continue
         try:
             scenarios += [(sc, name) for sc in parse_policy(body, name, files={}, previous=side.previous).scenarios]
-        except PolicyError as e:
-            if unread is not None:  # named with its file, as `rowstile test` names it
-                unread.append({"file": name, "error": f"{name} {e}" if str(e).startswith("line ") else str(e)})
+        except PolicyError:
+            pass  # (the base's own: the pull request's are in unread)
     for sc, file in scenarios:
         for st in sc.steps:
             if st.kind in ("check", "as"):
@@ -966,11 +990,10 @@ def renames(before: Iterable[tuple[str, str]], after: Iterable[tuple[str, str]])
     return out
 
 
-def tests(b: Side, h: Side) -> Tests:
-    # the pull request's test files that don't parse are said: their checks are missing from the comparison,
-    # which would otherwise read as "no change" (the base's are the base's business)
-    unread: list[Unread] = []
-    cb, ch = checks(b), checks(h, unread)
+def tests(b: Side, h: Side, unread: list[Unread]) -> Tests:
+    # the pull request's test files that `rowstile test` would refuse are said (unread_tests): their checks are
+    # missing from the comparison, which would otherwise read as "no change" (the base's are the base's business)
+    cb, ch = checks(b), checks(h, [f["file"] for f in unread])
     renamed = renames(cb, ch)
     now = {r["before"]: r["after"] for r in renamed}
     cb = {(now.get(test, test), check): v for (test, check), v in cb.items()}
@@ -1211,7 +1234,10 @@ def summary(r: Review) -> dict[str, str]:
     if t["untested"]:
         parts.append(f"{plural(len(t['untested']), 'new permission')} no test names")
     if t["unread"]:
-        parts.append(f"{plural(len(t['unread']), 'test file')} can't be read, so its checks aren't compared")
+        n = len(t["unread"])
+        parts.append(
+            f"{plural(n, 'test file')} can't be read, so {'its' if n == 1 else 'their'} checks aren't compared"
+        )
     lines["Tests"] = ". ".join(parts) + "." if parts else "no change to what the tests claim."
     d = r["deploy"]
     ran = d.get("on_review_data")

@@ -2197,6 +2197,27 @@ class Review(unittest.TestCase):
         same = self.run_review(self.text, {"tests/a.authz": good}, {"tests/a.authz": good})
         self.assertEqual((same["tests"]["unread"], same["tests"]["flipped"], same["tests"]["count"]), ([], [], 21))
 
+    def test_a_test_file_the_policy_refuses_is_said(self) -> None:
+        # it parses, but names a permission the type doesn't have, or a test another file names: `rowstile test`
+        # refuses it, so its checks are neither compared nor run
+        good = 'test "owners"\n  user 1 can view folder 1\n'
+        after = {
+            "tests/a.authz": good,
+            "tests/b.authz": 'test "broken"\n  user 3 can nosuch file 11\n',
+            "tests/c.authz": good,
+        }
+        r = self.run_review(self.text, {"tests/a.authz": good}, after)
+        t = r["tests"]
+        self.assertEqual(
+            [x["error"] for x in t["unread"]],
+            [
+                "tests/b.authz line 2: file has no permission 'nosuch' (it has: share, edit, view) [AZ203]",
+                "tests/c.authz line 1: there is already a test named 'owners' [AZ109]",
+            ],
+        )
+        self.assertEqual((t["flipped"], t["removed"], t["added"], t["count"]), ([], [], [], 21))
+        self.assertIn("2 test files can't be read, so their checks aren't compared.", self.review.text(r))
+
     def test_risk_flags(self) -> None:
         widened = replaced(
             self.text, "  viewer : user, team#member shared\n", "  viewer : user, team#member, anyone shared\n"
