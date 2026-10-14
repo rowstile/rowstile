@@ -50,8 +50,9 @@ out=$(CLI migrate --check 2>&1); rc=$?; [ $rc -eq 0 ] && ok "--check: exit 0 aft
 sed -i '1s/^# rowstile [^:]*:/# rowstile 99.0.0:/' "$P/db/policy.lock"
 for args in "migrate --check" "migrate"; do
   out=$(CLI $args 2>&1); rc=$?
-  case "$out" in *"the lock file was last written by rowstile 99.0.0, which is newer than this command"*"[AZ616]"*) [ $rc -ne 0 ] &&
-    [ "$(ls "$P/db/migrations" | wc -l)" = 1 ] && ok "$args: a lock a newer version wrote is refused" || bad "$args on a newer lock: rc $rc";;
+  case "$out" in *"the lock file was last written by rowstile 99.0.0, which is newer than this command"*"back [AZ616]
+HINT: upgrade the rowstile command; to go back to this version on purpose, add --downgrade") [ $rc -ne 0 ] &&
+    [ "$(ls "$P/db/migrations" | wc -l)" = 1 ] && ok "$args: a lock a newer version wrote is refused, with the way back" || bad "$args on a newer lock: rc $rc";;
     *) bad "$args on a newer lock" "$out";; esac
 done
 out=$(CLI migrate --check --downgrade 2>&1); rc=$?; [ $rc -eq 0 ] && ok "... unless asked: --downgrade" || bad "--downgrade" "$out"

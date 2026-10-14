@@ -116,6 +116,9 @@ Each release upgrades from the one before it. How releases are numbered and made
 - `rowstile prove` and the review didn't read quoted column names in conditions (`{"done"}`, `{not "archived"}`,
   `{"order" = 2}`): such a condition was one they couldn't read, so `{"done"}` and `{not "done"}` could both hold
   on one row, and quoting a column was a change of meaning. They now read them as Postgres does, case kept.
+- `rowstile migrate` and `migrate --check`, refusing a lock file a newer rowstile wrote (AZ616), left out the
+  hint `apply` and `push` give: "upgrade the rowstile command; to go back to this version on purpose, add
+  --downgrade". They now give it too.
 
 ## 0.1.0 (alpha)
 
