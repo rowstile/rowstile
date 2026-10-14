@@ -608,13 +608,16 @@ class Studio:
             def api(self, method: str) -> None:
                 parsed = urlparse(self.path)
                 # as bytes: a header may hold anything, and compare_digest takes text only if it is ASCII
-                if not secrets.compare_digest(
-                    self.headers.get("X-Studio-Token", "").encode("latin-1", "replace"), studio.token.encode()
-                ):
-                    return self.send(
-                        401,
-                        {"title": "Unauthorized", "status": 401, "detail": "the token from the URL rowstile printed"},
+                given = self.headers.get("X-Studio-Token", "")
+                if not secrets.compare_digest(given.encode("latin-1", "replace"), studio.token.encode()):
+                    # each start of Studio makes a new token: a page still open from the start before holds that one
+                    detail = (
+                        "this page's token isn't this Studio's: Studio was started again since the page was opened, "
+                        "and each start makes a new token. Open the address rowstile printed last"
+                        if given
+                        else "no token: open Studio from the address rowstile printed (it carries the token)"
                     )
+                    return self.send(401, {"title": "Unauthorized", "status": 401, "detail": detail})
                 q = {k: v[-1] for k, v in parse_qs(parsed.query).items()}
                 name = parsed.path[len("/api/") :]
                 try:

@@ -92,6 +92,9 @@ async function api(path, params = {}, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const out = await r.json().catch(() => ({ detail: r.statusText }));
+  // a token this Studio doesn't take (it was started again since the page was opened, the answer says): forgotten,
+  // so a reload asks for the address rowstile printed rather than sending it again
+  if (r.status === 401) sessionStorage.removeItem("rowstile-token");
   if (!r.ok) throw new Refusal(out.detail || r.statusText, out.why || []);
   return out;
 }
