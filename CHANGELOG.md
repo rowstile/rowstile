@@ -67,6 +67,10 @@ Each release upgrades from the one before it. How releases are numbered and made
   `-- +goose NO TRANSACTION` or `-- migrate:up transaction:false`.
 - A `CREATE INDEX CONCURRENTLY` that fails leaves an unfinished index under the name `rowstile indexes` gives, so
   running its line again failed with "already exists". `rowstile indexes` now names that index first, to drop.
+- `rowstile review` could show a difference for a rewrite that changes nothing. In the small worlds where every
+  condition holds, or none does, it chose a row's column values for each policy's own conditions, so where the
+  rewrite read a column beside another (`{not b1} or ({b1 and b2} and nobody)` for `{not b1}`) the two
+  policies were compared on different rows. Both now read the same values.
 - The command lost its connection right after signing in, before its first statement, with a traceback. It
   now says it lost the database (exit 2), as it does anywhere later.
 - A share could outlive the row it was on or to, where a row was deleted, given a new id or emptied with

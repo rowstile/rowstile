@@ -581,11 +581,17 @@ class World:
         many of those conditions as can be say what the corner says. They are still read from the columns, so a
         condition and its opposite (`{archived}`, `{not archived}`) never both hold: the values decide. Conditions
         that share no column are chosen for apart. Not those that read who is signed in or a relation's column
-        (those come from the links, the same facts as the relation)."""
+        (those come from the links, the same facts as the relation). The conditions are those of every policy
+        of the world: a column one reads beside another and its rewrite reads alone is chosen once, the same for
+        both."""
         if not self.conds:
             return
         domains, linked = self.domains(pol), self.linked(pol)
-        conds = list(Reference(pol).conditions()) + [(t.name, t.where) for t in pol.types.values() if t.where]
+        conds = [
+            cond
+            for p in [*self.pols, pol]
+            for cond in [*Reference(p).conditions(), *((t.name, t.where) for t in p.types.values() if t.where)]
+        ]
         wanted: dict[str, list[tuple[Node, bool]]] = {}
         for tname, cond in dict.fromkeys(conds):
             node = simple(cond)
