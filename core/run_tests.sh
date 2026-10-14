@@ -215,7 +215,7 @@ record $? "principals"
 tests/sessions.sh
 record $? "signed sessions"
 }
-unit policy 32 identities
+unit policy 38 identities
 
 governance() {
 step "governance: audit trail, change feed, requests, break glass, reviews, invariants, policy diff"

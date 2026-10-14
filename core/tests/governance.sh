@@ -239,9 +239,12 @@ rm -f /tmp/authz_governance_rr.out
 PSQL -c "DELETE FROM app.folders WHERE id IN (41, 42, 43)" >/dev/null
 # a request whose requester was deleted before requests went with their rows: applying the policy cancels it
 PSQL -c "INSERT INTO authz.requests (object_type, object_id, relation, requester, reason) VALUES ('folder', '6', 'viewer', '77', 'left over')" >/dev/null
+RQS=$(as 4 -c "SELECT authz.request_access('folder', 6, 'viewer', 'dave still needs it')")
 reapply /tmp/authz_governance.sql
 admin "applying the policy cancels the pending requests of requesters whose row is gone" "cancelled|its requester is gone" \
   "SELECT status || '|' || note FROM authz.requests WHERE requester = '77'"
+admin "... and keeps the pending requests of requesters who are there" "pending|" \
+  "SELECT status || '|' || coalesce(note, '') FROM authz.requests WHERE id = $RQS"
 
 echo "-- access reviews"
 as 5 -c "SELECT authz.share('folder', 5, 'viewer', 'user', 4)" >/dev/null
