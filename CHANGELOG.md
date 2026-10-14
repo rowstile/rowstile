@@ -9,6 +9,16 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- A principal's API keys outlived its row: a user or a service deleted, or given a new id, kept its keys, and a
+  row that later had that id signed in with them. It affected apps that delete users or services with keys, or
+  change their ids, and reuse ids. The keys now go with the row, with a line each in the audit trail (deleted,
+  as the row's shares are, when its id changes or its table is emptied), and applying the policy deletes the keys
+  left by rows deleted before. A key made while its principal is deleted waits for the delete and is refused; a
+  delete in REPEATABLE READ or SERIALIZABLE that can't see a key made since fails with a serialization error
+  (40001), to retry.
+
+### Fixed
+
 - The command lost its connection right after signing in, before its first statement, with a traceback. It
   now says it lost the database (exit 2), as it does anywhere later.
 - A share could outlive the row it was on or to, where a row was deleted, given a new id or emptied with

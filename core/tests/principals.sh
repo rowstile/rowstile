@@ -164,6 +164,48 @@ KID=$(state -c "$AS_USER" -c "SELECT id FROM authz.list_api_keys('service', '7')
 PSQL -c "SET ROLE app_user; $AS_USER SELECT authz.revoke_api_key($KID)" >/dev/null
 expect_code "the owner revoked it" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$KEY')"
 
+echo "-- a principal's keys go with its row"
+PSQL -c "INSERT INTO ps.users VALUES (98), (94)" -c "INSERT INTO ps.services VALUES (97, 1, true), (96, 1, true), (93, 1, true)" >/dev/null
+K98=$(state -c "SET authz.user_id = '98'" -c "SELECT authz.create_api_key('mine')")
+K97=$(state -c "$AS_USER" -c "SELECT authz.create_api_key('deploy', '', NULL, 'service', '97')")
+K96=$(state -c "$AS_USER" -c "SELECT authz.create_api_key('deploy', '', NULL, 'service', '96')")
+keys() { echo "RESET ROLE; SELECT count(*) FROM authz.api_keys WHERE principal_type = '$1' AND user_id = '$2';"; }
+PSQL -c "DELETE FROM ps.users WHERE id = 98" -c "DELETE FROM ps.services WHERE id = 97" -c "UPDATE ps.services SET id = 95 WHERE id = 96" >/dev/null
+check "deleting a user deletes their keys" "0" "$(keys user 98)"
+check "... and deleting a service, its keys" "0" "$(keys service 97)"
+check "a service given a new id loses its keys, as its shares" "0|0" \
+  "RESET ROLE; SELECT (SELECT count(*) FROM authz.api_keys WHERE principal_type = 'service' AND user_id = '96') || '|' || (SELECT count(*) FROM authz.api_keys WHERE principal_type = 'service' AND user_id = '95');"
+check "... each in the audit trail" "user 98|service 96|service 97" \
+  "RESET ROLE; SELECT string_agg(object_type || ' ' || object_id, '|' ORDER BY object_type DESC, object_id) FROM authz.audit WHERE action = 'delete_api_key';"
+PSQL -c "INSERT INTO ps.users VALUES (98)" -c "INSERT INTO ps.services VALUES (97, 1, true), (96, 1, true)" >/dev/null
+expect_code "a new user with the old one's id signs in with none of its keys" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$K98')"
+expect_code "... nor a new service with a deleted one's id" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$K97')"
+expect_code "... nor one with the id another left" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$K96')"
+# a key made while its principal is deleted: it waits for the delete, then there is no one to make it for
+psql -X -q -d "$DB" -c "BEGIN" -c "DELETE FROM ps.users WHERE id = 94" -c "SELECT pg_sleep(1.5)" -c "COMMIT" >/dev/null 2>&1 &
+sleep 0.5
+expect_code "a key made while its user is deleted waits for the delete, then is refused" \
+  "42501: sign in to create an API key" -c "SET authz.user_id = '94'" -c "SELECT authz.create_api_key('late')"
+wait
+check "... and no key is left behind" "0" "$(keys user 94)"
+# REPEATABLE READ: a delete whose snapshot is older than a key made for the row fails to serialize
+psql -X -q -d "$DB" > /tmp/authz_principals_rr.out 2>&1 <<'SQL' &
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT count(*) FROM ps.teams;
+SELECT pg_sleep(1.5);
+DELETE FROM ps.services WHERE id = 93;
+COMMIT;
+SQL
+sleep 0.5
+state -c "$AS_USER" -c "SELECT left(authz.create_api_key('deploy', '', NULL, 'service', '93'), 3)" >/dev/null
+wait
+if grep -q "could not serialize access due to concurrent update" /tmp/authz_principals_rr.out; then
+  echo "ok    a delete with an older snapshot than a key made for the service gets a serialization error"
+else echo "FAIL  a delete with an older snapshot than a key: $(tr '\n' ' ' < /tmp/authz_principals_rr.out)"; fails=$((fails + 1)); fi
+check "... and the service and its key are both still there" "1|1" \
+  "RESET ROLE; SELECT (SELECT count(*) FROM ps.services WHERE id = 93) || '|' || (SELECT count(*) FROM authz.api_keys WHERE principal_type = 'service' AND user_id = '93');"
+rm -f /tmp/authz_principals_rr.out
+
 echo "-- JWTs naming a principal type"
 PSQL -c "INSERT INTO authz.settings VALUES ('jwt_secret', 's3cret'), ('jwt_type_claim', 'kind')" >/dev/null
 jwt() { python3 - "$@" <<'PY'
@@ -201,6 +243,15 @@ out=$(python3 compile_policy.py /tmp/authz_principals_bot.authz --diff --users 1
 case "$out" in *service:*) echo "FAIL  --users 1,2 shows a service: $out"; fails=$((fails + 1));; *) echo "ok    ... and --users leaves it out when it names users only";; esac
 check "lint notes a principal type nobody can make keys for" "0" \
   "RESET ROLE; SELECT count(*) FROM authz.lint() WHERE object = 'service' AND problem LIKE '%manage_keys%';"
+
+# keys stored before keys went with their principal's row, of a user deleted since: applying deletes them
+PSQL -c "INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash) VALUES ('90', 'user', 'left', 'ak_', 'left over')" >/dev/null
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_principals.sql >/dev/null
+check "applying the policy deletes the keys of a principal whose row is gone" "0" \
+  "RESET ROLE; SELECT count(*) FROM authz.api_keys WHERE principal_type = 'user' AND user_id = '90';"
+PSQL -c "TRUNCATE ps.services CASCADE" >/dev/null
+check "emptying the services' table deletes every service's keys" "0" \
+  "RESET ROLE; SELECT count(*) FROM authz.api_keys WHERE principal_type = 'service';"
 
 [ -n "${KEEP:-}" ] || dropdb "$DB"
 echo "principals: $fails failure(s)"

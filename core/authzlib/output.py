@@ -1195,6 +1195,13 @@ END $gi$;"""
                 for t in self.types.values()
                 for side in ("object", "subject")
             )
+            + "\n-- ...and so are the API keys of principals that no longer exist\n"
+            + "\n".join(
+                f"DELETE FROM authz.api_keys k WHERE k.principal_type = {lit(t.name)} AND NOT EXISTS "
+                f"(SELECT 1 FROM {qt(t.table)} x WHERE {self.key_text(t, 'x')} = k.user_id);"
+                for t in self.types.values()
+                if t.principal
+            )
         )
         catalog_share, share_internal, share_api = self.share_sql()
         # these may add views, so they run before the views are written out
@@ -1367,6 +1374,7 @@ END $w$;"""
             ("objects", "who_among", self.who_among_sql()),
             *[("objects", "insight", x) for x in insight],
             ("objects", "identity", self.identity_api_sql()),
+            *[("objects", "keys_gone", self.key_forget_sql(t)) for t in self.types.values() if t.principal],
             ("objects", "workflow", self.workflow_sql()),
             ("objects", "child_triggers", CHILD_TRIGGERS_FN),
             ("objects", "lint", self.lint_sql()),
