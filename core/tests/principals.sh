@@ -32,7 +32,7 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'other_app') THEN CREATE ROLE other_app NOLOGIN; END IF;
 END $$;
 CREATE SCHEMA ps;
-CREATE TABLE ps.users (id bigint PRIMARY KEY);
+CREATE TABLE ps.users (id bigint PRIMARY KEY, support_id bigint);
 CREATE TABLE ps.services (id bigint PRIMARY KEY, owner_id bigint REFERENCES ps.users, active boolean NOT NULL DEFAULT true);
 CREATE TABLE ps.teams (id bigint PRIMARY KEY);
 CREATE TABLE ps.team_members (team_id bigint REFERENCES ps.teams, user_id bigint REFERENCES ps.users, PRIMARY KEY (team_id, user_id));
@@ -51,19 +51,24 @@ SQL
 cat > /tmp/authz_principals.authz <<'POLICY'
 app role app_user
 type user = ps.users
+  support : service = support_id         -- a service the policy lets view as this user
+  can impersonate = support
 type service = ps.services principal where {active}
   owner : user = owner_id
   can manage_keys = owner
 type team = ps.teams
   member : user    = ps.team_members(team_id -> user_id)
   member : service = ps.team_services(team_id -> service_id)
+  can manage_roles = member              -- service 8 is a member: the roles API is still for users
 type doc = ps.docs
   owner  : user    = owner_id
   bot    : service = bot_id
   reader : user, service, team#member, user:*, service:*  shared
   can share = owner or bot
   can edit  = owner or bot
-  can view  = edit or reader
+  roles  : user
+  can view  = edit or reader or roles
+  can break_glass = bot
   helper : user  shared by view          -- any viewer may name a helper, if they may assist themselves
   can assist = owner or helper
 rules ps.docs
@@ -130,6 +135,49 @@ case "$got" in *"you cannot share doc 1 (needs share)"*) echo "ok    ... and may
 got=$(psql -X -q -At -d "$DB" -f <(python3 compile_policy.py /tmp/authz_principals.authz --tests) 2>&1)
 case "$got" in *"FAIL  invariant never doc: edit and not owner"*": service 7 can reach {1}"*) echo "ok    ... and the policy tests say which service";;
   *) echo "FAIL  the policy tests on a service breaking an invariant: $got"; fails=$((fails + 1));; esac
+
+echo "-- what is for users: a service is refused, saying so, though the policy gives it the permission"
+PSQL -c "INSERT INTO ps.team_members VALUES (1, 2)" -c "UPDATE ps.users SET support_id = 7 WHERE id = 3" >/dev/null
+AS_SVC8="SET authz.user_id = '8'; SET authz.principal_type = 'service';"
+check "service 8 holds manage_roles on team 1" "t" "$AS_SVC8 SELECT authz.can('team', 1, 'manage_roles');"
+check "service 7 holds break_glass and share on doc 1, and impersonate on user 3" "t|t|t" \
+  "$AS_SVC SELECT authz.can('doc', 1, 'break_glass'), authz.can('doc', 1, 'share'), authz.can('user', 3, 'impersonate');"
+ROLE=$(state -c "SET authz.user_id = '2'" -c "SELECT authz.create_role('team', 1, 'doc', 'reviewer', ARRAY['view'])")
+REQ=$(state -c "SET authz.user_id = '3'" -c "SELECT authz.request_access('doc', 1, 'reader', 'to read it')")
+check "a user who holds manage_roles makes a role; another asks for access" "1|1" "SELECT '$ROLE|$REQ';"
+expect_code "authz.create_role is for users: a service is told so" \
+  "42501: authz.create_role is for users, not services (service 8 is signed in)" -c "$AS_SVC8" -c "SELECT authz.create_role('team', 1, 'doc', 'mine', ARRAY['view'])"
+expect_code "authz.set_role_permissions is for users: a service is told so" \
+  "42501: authz.set_role_permissions is for users, not services (service 8 is signed in)" -c "$AS_SVC8" -c "SELECT authz.set_role_permissions($ROLE, ARRAY['view'])"
+expect_code "authz.delete_role is for users: a service is told so" \
+  "42501: authz.delete_role is for users, not services (service 8 is signed in)" -c "$AS_SVC8" -c "SELECT authz.delete_role($ROLE)"
+expect_code "authz.roles_of is for users: a service is told so" \
+  "42501: authz.roles_of is for users, not services (service 8 is signed in)" -c "$AS_SVC8" -c "SELECT * FROM authz.roles_of('team', 1)"
+expect_code "authz.request_access is for users: a service is told so" \
+  "42501: authz.request_access is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.request_access('doc', 5, 'reader', 'to read it')"
+expect_code "authz.pending_requests is for users: a service is told so" \
+  "42501: authz.pending_requests is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT * FROM authz.pending_requests()"
+expect_code "authz.decide_request is for users: a service is told so" \
+  "42501: authz.decide_request is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.decide_request($REQ, true)"
+expect_code "authz.cancel_request is for users: a service is told so" \
+  "42501: authz.cancel_request is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.cancel_request($REQ)"
+expect_code "authz.break_glass is for users: a service is told so" \
+  "42501: authz.break_glass is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.break_glass('doc', 1, 'reader', 'an outage')"
+expect_code "authz.create_api_key for oneself is for users: a service is told so" \
+  "42501: authz.create_api_key for oneself is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.create_api_key('mine')"
+expect_code "authz.view_as is for users: a service is told so" \
+  "42501: authz.view_as is for users, not services (service 7 is signed in)" -c "$AS_SVC" -c "SELECT authz.view_as('3', 'ticket 12')"
+got=$(PSQL -v VERBOSITY=verbose -c "SET ROLE app_user" -c "$AS_SVC" -c "SELECT authz.break_glass('doc', 1, 'reader', 'an outage')" 2>&1)
+case "$got" in *"HINT:  rowstile help AZ715"*) echo "ok    ... with its code, AZ715";;
+  *) echo "FAIL  the code of a call that is for users: $got"; fails=$((fails + 1));; esac
+check "... and nothing changed: the role and the request are as they were, no key, no break-glass or view-as" \
+  "reviewer {view}|pending|1|0|0" \
+  "RESET ROLE; SELECT (SELECT name || ' ' || (SELECT array_agg(permission)::text FROM authz.role_permissions WHERE role_id = $ROLE)
+       FROM authz.roles WHERE id = $ROLE) || '|' || (SELECT status FROM authz.requests WHERE id = $REQ)
+     || '|' || (SELECT count(*) FROM authz.requests) || '|' || (SELECT count(*) FROM authz.api_keys WHERE name = 'mine')
+     || '|' || (SELECT count(*) FROM authz.audit WHERE action IN ('view_as', 'break_glass'));"
+check "a user still decides the request" "approved" \
+  "SET authz.user_id = '1'; SELECT authz.decide_request($REQ, true); RESET ROLE; SELECT status FROM authz.requests WHERE id = $REQ;"
 
 echo "-- whoever signs in is a row of their type"
 PSQL -c "INSERT INTO ps.docs VALUES (20, 99, 77, 'its owner and its bot are gone')" >/dev/null

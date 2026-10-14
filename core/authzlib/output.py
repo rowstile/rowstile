@@ -807,6 +807,7 @@ CREATE FUNCTION authz.create_role(p_owner_type text, p_owner_id text, p_object_t
 DECLARE v_id bigint; v_bad text;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.create_role');
   IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles') THEN
     RAISE EXCEPTION '% has no manage_roles permission in the policy', p_owner_type USING HINT = 'rowstile help AZ707';
   END IF;
@@ -840,6 +841,7 @@ LANGUAGE plpgsql {DEFINER} AS $f$
 DECLARE v authz.roles; v_bad text;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.set_role_permissions');
   SELECT * INTO v FROM authz.roles WHERE id = p_role;
   IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz.can(v.owner_type, v.owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage role %', p_role USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
@@ -854,6 +856,7 @@ CREATE FUNCTION authz.delete_role(p_role bigint) RETURNS void LANGUAGE plpgsql {
 DECLARE v authz.roles;
 BEGIN
   PERFORM authz_int.check_writable();
+  PERFORM authz_int.users_only('authz.delete_role');
   SELECT * INTO v FROM authz.roles WHERE id = p_role;
   IF v.id IS NULL OR authz.uid() IS NULL OR NOT authz.can(v.owner_type, v.owner_id, 'manage_roles') THEN
     RAISE EXCEPTION 'you cannot manage role %', p_role USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
@@ -864,6 +867,7 @@ CREATE FUNCTION authz.roles_of(p_owner_type text, p_owner_id text)
 RETURNS TABLE (id bigint, object_type text, name text, permissions text[])
 LANGUAGE plpgsql STABLE {DEFINER} AS $f$
 BEGIN
+  PERFORM authz_int.users_only('authz.roles_of');
   IF authz.uid() IS NULL OR NOT (
        (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles')
         AND authz.can(p_owner_type, p_owner_id, 'manage_roles'))

@@ -725,10 +725,11 @@ FEATURES: list[Feature] = [
         "lang.subjects",
         1,
         "Subjects and principals: a type, a group's members, `user:*`, `anyone`, `link`, services",
-        ("lang.subject", "lang.anyone", "lang.link", "err.AZ204"),
+        ("lang.subject", "lang.anyone", "lang.link", "err.AZ204", "err.AZ715"),
         Doc(LANG, "Subjects"),
         (
             T("principals.sh", "so a column that still names it grants nothing, nor does user:*"),
+            T("principals.sh", "authz.create_role is for users: a service is told so"),
             T("principals.sh", "it shares as itself: created_by says so"),
             T("unit_test.py", "class Principals("),
         ),

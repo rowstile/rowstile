@@ -241,6 +241,22 @@ async def test_16_each_code_answers_as_its_page_says(app: FastAPI) -> None:
         got = r.json()
         assert got["type"] == "https://rowstile.dev/problems/refused" and got["code"] == code, got
         assert got["detail"].startswith(detail) and got["table"] is None and got["command"] is None, got
+    # a call that is for users, made by a service (rowstile help AZ715): a refusal too, 403
+    with psycopg.connect(libpq(APP)) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege) as e:
+        conn.execute("SELECT authz.act_as('service', '1')")
+        conn.execute("SELECT authz.create_api_key('mine')")
+    users_only = rowstile.refusal(e.value)
+    assert users_only is not None
+    assert users_only.problem() == {
+        "type": "https://rowstile.dev/problems/refused",
+        "title": "Forbidden",
+        "status": 403,
+        "detail": "authz.create_api_key for oneself is for users, not services (service 1 is signed in)",
+        "table": None,
+        "command": None,
+        "why": [],
+        "code": "AZ715",
+    }
     said = [(rowstile.error_code(e), rowstile.sqlstate(e)) for e in errors]
     assert said == [("AZ706", "P0001"), ("AZ707", "P0001"), ("AZ702", "28000")], said
     for e, words in zip(
