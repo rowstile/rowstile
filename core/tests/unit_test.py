@@ -10532,8 +10532,28 @@ class Mutants(unittest.TestCase):
         steps = re.findall(r'^\s*step "([^"]+)"', read("run_tests.sh"), re.M)
         for prefix, _ in sweep_plan.STEP_SUITES:
             self.assertTrue(any(s.startswith(prefix) for s in steps), prefix)
+        # and a new step stands for a suite of the sweep, or says why not: else its calls choose no suite
+        for step in steps:
+            step = re.sub(r"\$(?:1|gen)\b", "docs", step)
+            self.assertTrue(sweep_plan.suites_of_step(step) or step.startswith(sweep_plan.NOT_SWEPT), step)
         with open(sweep.SEED_STATS, encoding="utf-8") as fh:
             self.assertEqual(sorted(json.load(fh)["suites"]), sorted(names))
+
+    def test_call_data_names_only_suites_of_the_sweep(self) -> None:
+        # a step the data's run had and no suite stands for: it chose a name the stats don't have, and the
+        # sweep's first job stopped on it
+        data = {
+            "source": "a run",
+            "functions": {"authz.can": ["scenario", "(upgrading)"]},
+            "lines": {"authzlib/output.py": {"scenario": [[1, 3]], "(upgrading)": [[2, 2]]}},
+        }
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "calls.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+            calls = sweep_plan.Calls.load(path)
+        self.assertEqual(calls.functions, {"authz.can": {"scenario"}})
+        self.assertEqual(calls.ran("authzlib/output.py", 2), {"scenario"})
 
     def test_the_workflow(self) -> None:
         text = read("../.github/workflows/mutants.yml")

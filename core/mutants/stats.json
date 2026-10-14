@@ -50,6 +50,11 @@
    "runs": 11,
    "seconds": 44.7
   },
+  "cuts": {
+   "catches": 0,
+   "runs": 0,
+   "seconds": 90.0
+  },
   "devx": {
    "catches": 3,
    "runs": 9,
@@ -119,6 +124,16 @@
    "catches": 0,
    "runs": 0,
    "seconds": 45.0
+  },
+  "invariance": {
+   "catches": 0,
+   "runs": 0,
+   "seconds": 40.0
+  },
+  "invariance fixed": {
+   "catches": 0,
+   "runs": 0,
+   "seconds": 10.0
   },
   "keep": {
    "catches": 0,
@@ -194,6 +209,11 @@
    "catches": 2,
    "runs": 14,
    "seconds": 9.6
+  },
+  "small": {
+   "catches": 0,
+   "runs": 0,
+   "seconds": 30.0
   },
   "stress": {
    "catches": 0,

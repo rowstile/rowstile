@@ -113,6 +113,10 @@ SUITES: list[tuple[str, str]] = (
         ("rewrites", "python3 tests/rewrites.py --policies 4 --seed 1 --db authz_m_rewrites"),
         ("conditions", "python3 tests/conditions_test.py --cases 3000 --seed 1"),
         ("hand answers", "bash tests/hand_answers.sh"),
+        ("cuts", "python3 tests/interrupt.py"),
+        ("invariance", "python3 tests/invariance.py --policies 1 --seed 2 --db authz_m_invariance"),
+        ("invariance fixed", "python3 tests/invariance.py --fixed"),
+        ("small", "python3 tests/small.py --size 3 --db authz_m_small"),
         ("unit", UNIT),
     ]
 )
@@ -190,9 +194,16 @@ STEP_SUITES: list[tuple[str, list[str]]] = [
     ("random policies rewritten", ["rewrites"]),
     ("simple conditions read as Postgres", ["conditions"]),
     ("answers worked out by hand", ["hand answers"]),
+    ("the command and a migration cut half way", ["cuts"]),
+    ("other policies' first apply cut half way", ["cuts"]),
+    ("the fixed policies written another way", ["invariance fixed"]),
+    ("random policies written another way", ["invariance"]),
+    ("every small policy", ["small"]),
     ("compile the example policy", ["scenario"]),
     ("fast checks without a database", ["unit"]),
 ]
+# steps no suite of the sweep stands for: what they'd catch, another catches sooner (or they need the network)
+NOT_SWEPT = ("upgrading",)
 DIFFTEST_STEP = re.compile(r"random changes, compared with the reference evaluator \((\w+),")
 PRIOR = 0.5  # catches a suite is credited with before any: those with none go cheapest first
 DEFAULT_SECONDS = 60.0  # a suite the stats don't have yet
@@ -236,7 +247,11 @@ class Calls:
             return Calls({}, {}, "none: every suite in the order of the stats")
         with open(path, encoding="utf-8") as fh:
             d = json.load(fh)
-        return Calls({k: set(v) for k, v in d["functions"].items()}, d["lines"], d["source"])
+        # a step no suite stands for (NOT_SWEPT, or one the data's run had and this checkout doesn't) selects nothing
+        known = {s for s, _ in SUITES}
+        functions = {k: set(v) & known for k, v in d["functions"].items()}
+        lines = {f: {s: r for s, r in per.items() if s in known} for f, per in d["lines"].items()}
+        return Calls(functions, lines, d["source"])
 
     def ran(self, fname: str, line: int) -> set[str]:
         out = set()
