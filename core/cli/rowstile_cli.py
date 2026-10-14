@@ -1222,8 +1222,8 @@ def main(argv: list[str]) -> None:
         file=sys.stderr,
     )
     q = conn.query
-    q("SELECT set_config('client_min_messages', 'warning', false)")
     try:
+        q("SELECT set_config('client_min_messages', 'warning', false)")  # a session lost already is said as below
         if cmd == "apply":
             path, text, files = policy_arg()
             state = transaction(

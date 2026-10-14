@@ -7,6 +7,11 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ## Unreleased
 
+### Fixed
+
+- The command lost its connection right after signing in, before its first statement, with a traceback. It
+  now says it lost the database (exit 2), as it does anywhere later.
+
 ## 0.1.0 (alpha)
 
 **rowfence is now rowstile**, and 0.1.0-alpha.2 is its first release under the new name (0.1.0-alpha.1 was
