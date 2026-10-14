@@ -1,0 +1,165 @@
+# The mutation sweep (core/mutants/): small mistakes put into the compiler by rule, one at a time, and the suites
+# run until one goes red. Weekly, and by hand; never on a push or a pull request (a full sweep takes many
+# runner-hours). Three jobs:
+# - prepare: every mutant (each has an id that stays while its line is unchanged), the results of the last run
+#   that still hold (resume), the cheap phase (each candidate's policies compiled before and after, no Postgres:
+#   what changed selects the suites, from the call data of main's latest CI coverage run), and the queue dealt
+#   into shards, the longest first;
+# - sweep: a shard each, side by side (8 at most, so pull requests keep runners), each in a Postgres container of
+#   its own, until its budget of minutes is used (what is left waits for the next run);
+# - collect: the results together (an artifact, mutants-results, that the next run resumes from), and the report
+#   (in the run's summary): the score, what caught what, and each survivor with its edit. A survivor that
+#   core/mutants/survivors.txt doesn't list fails the job.
+# By hand: `gh workflow run mutants.yml -f since=<commit>` (the mutants in lines changed since), `-f limit=40` (a
+# sample spread over operators and files), `-f only=g...,g...`, `-f shards=N`, `-f resume=none|latest|<run id>`.
+name: mutants
+on:
+  schedule:
+    - cron: "0 2 * * 6"       # Saturdays, 02:00 UTC (after the nightly's start)
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Only the mutants in lines of core/authzlib changed since this commit; empty: all"
+        default: ""
+      limit:
+        description: "How many mutants that need suites to run (spread over operators and files); empty: 30 a shard"
+        default: ""
+      shards:
+        description: "How many sweep jobs (1 to 64; 8 run at a time)"
+        default: "8"
+      resume:
+        description: "Whose results to carry over: latest (this branch's last run), none, or a run id"
+        default: "latest"
+      only:
+        description: "These mutants only (ids, comma-separated)"
+        default: ""
+# one sweep at a time on a branch: each resumes from the one before
+concurrency:
+  group: mutants-${{ github.ref }}
+  cancel-in-progress: false
+# what a job needs beyond reading the repository, it says itself
+permissions: {contents: read}
+jobs:
+  prepare:
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    # reads main's CI artifacts (the call data) and this workflow's last results
+    permissions: {contents: read, actions: read}
+    outputs:
+      shards: ${{ steps.prepare.outputs.shards }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SINCE: ${{ inputs.since }}
+      LIMIT: ${{ inputs.limit }}
+      SHARDS: ${{ inputs.shards || '8' }}
+      RESUME: ${{ inputs.resume || 'latest' }}
+      ONLY: ${{ inputs.only }}
+      BRANCH: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {fetch-depth: 0}     # --since reads the changes
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97   # v7.0.0
+        with:
+          python-version: "3.13"
+      # which suites called each function and ran each line: main's latest green CI run, measured on 16
+      - run: |
+          mkdir -p .mutants/prepared
+          read -r id sha < <(gh run list --workflow ci.yml --branch main --status success --limit 1 \
+            --json databaseId,headSha --jq '.[0] | "\(.databaseId) \(.headSha[0:7])"') || true
+          if [ -n "${id:-}" ] && gh run download "$id" -p 'coverage-pg16-*' -D .mutants/coverage; then
+            python3 core/mutants/sweep.py calls .mutants/coverage/coverage-pg16-* \
+              --source "CI run $id (main at $sha)" --out .mutants/prepared/calls.json
+          else
+            echo "no call data: every suite runs in the order of the stats"
+          fi
+      # the results to carry over: a run id's, or the latest run on this branch that kept them
+      - run: |
+          case "$RESUME" in
+            none) exit 0;;
+            latest) runs=$(gh run list --workflow mutants.yml --branch "$BRANCH" --status completed --limit 20 \
+                      --json databaseId --jq '.[].databaseId');;
+            *[!0-9]*) echo "resume: none, latest or a run id, not '$RESUME'"; exit 1;;
+            *) runs=$RESUME;;
+          esac
+          for id in $runs; do
+            if gh run download "$id" -n mutants-results -D .mutants/carried 2>/dev/null; then
+              echo "carrying over the results of run $id"; exit 0
+            fi
+          done
+          echo "no results to carry over"
+      - id: prepare
+        run: |
+          case "$SHARDS" in [1-9]|[1-5][0-9]|6[0-4]) ;; *) echo "shards: a number from 1 to 64, not '$SHARDS'"; exit 1;; esac
+          args=(--out .mutants/prepared --shards "$SHARDS" --github-output "$GITHUB_OUTPUT")
+          [ -z "$SINCE" ] || args+=(--since "$SINCE")
+          [ -z "$LIMIT" ] || args+=(--limit "$LIMIT")
+          [ -z "$ONLY" ] || args+=(--only "$ONLY")
+          [ ! -f .mutants/carried/results.jsonl ] || args+=(--carried .mutants/carried)
+          [ ! -f .mutants/prepared/calls.json ] || args+=(--calls .mutants/prepared/calls.json)
+          python3 core/mutants/sweep.py prepare "${args[@]}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: mutants-prepared
+          path: .mutants/prepared
+          retention-days: 7
+  sweep:
+    needs: prepare
+    if: needs.prepare.outputs.shards != '[]'
+    name: sweep (${{ matrix.shard }})
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    # the shard stops starting mutants after 270 minutes; the one in flight may take most of an hour
+    timeout-minutes: 350
+    env:
+      # the label on this job's container: its run, attempt, job and shard
+      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.shard }}"
+      SHARD: "${{ matrix.shard }}/${{ strategy.job-total }}"
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        shard: ${{ fromJSON(needs.prepare.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {ref: "${{ github.sha }}"}   # the commit prepare read (schedule and dispatch: never a pull request's)
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97   # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with: {name: mutants-prepared, path: .mutants/prepared}
+      - run: docker build -q -t rowstile:16 --build-arg PG_MAJOR=16 -f core/Dockerfile .
+      - run: python3 core/mutants/sweep.py run --prepared .mutants/prepared --shard "$SHARD" --out .mutants/shard --budget 270
+      # a cancelled job may stop before the sweep removes its container: this job's own (the label names the job)
+      - if: always()
+        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: mutants-shard-${{ matrix.shard }}
+          path: .mutants/shard
+          if-no-files-found: ignore
+          retention-days: 7
+  collect:
+    needs: [prepare, sweep]
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {ref: "${{ github.sha }}"}   # the commit prepare read (schedule and dispatch: never a pull request's)
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97   # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with: {name: mutants-prepared, path: .mutants/prepared}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with: {pattern: "mutants-shard-*", path: .mutants/shards}
+      - run: >-
+          python3 core/mutants/sweep.py collect --prepared .mutants/prepared --shards .mutants/shards
+          --out .mutants/results --summary "$GITHUB_STEP_SUMMARY"
+      # what the next run resumes from: every result (results.jsonl, results.txt), the stats, the report
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: mutants-results
+          path: .mutants/results
+          if-no-files-found: ignore
+          retention-days: 90

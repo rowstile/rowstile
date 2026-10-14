@@ -343,6 +343,16 @@ and shrink their worlds. The answers worked out by hand and the comparison of co
 of that. With them, and four more mistakes for what they changed, the suites catch each of the 44 but that
 one.
 
+Since October 2026 the mistakes are made by rule rather than picked by hand: [`core/mutants/`](../core/mutants/sweep.py)
+makes about 10,000 of them in the compiler (an operator of its SQL or its Python turned round, a term dropped, a
+quoting call left out), compiles every policy in the repository with each, and runs the suites on those that change
+what one of them compiles to, on GitHub's runners, [weekly](../.github/workflows/mutants.yml). A mistake no suite
+catches is listed in `core/mutants/survivors.txt`, either as one that changes no answer or with the check that would
+catch it, and one that isn't listed fails the run. <!-- checked: tests/unit_test.py "test_a_new_survivor_fails_the_run" -->
+Its first run took the 59 mistakes in the lines two changes of 14 October made. Of the first 28 to finish, the
+suites caught 19, most in about a minute; the 9 they missed (about 26 minutes each, every suite run) are checks to
+write, all on what goes with a row that is deleted: its marks, its API keys, its access requests.
+
 ## When something is found
 
 Vulnerabilities are reported privately ([SECURITY.md](../SECURITY.md)) and published as advisories once

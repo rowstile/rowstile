@@ -12,6 +12,7 @@ page is for working on them.
 | `example/` | the docs app used throughout: its schema, `docs.authz` and the policy's tests (`docs.test.authz`) |
 | `tests/` | every test suite; `run_tests.sh` runs them all, `ci.sh` on every Postgres version |
 | `bench/` | the benchmarks: `benchmark.sql` (the docs app, bigger) and the scale benchmark |
+| `mutants/` | the mutation sweep: mistakes put into `authzlib` by rule, one at a time, to see that a suite catches each |
 
 From this folder:
 
@@ -126,3 +127,40 @@ away checks on purpose, write the new count there, or `python3 tests/check_count
 log (`rowstile-ci-16.log`, in `/tmp` or where `ROWSTILE_CI_LOGS` says). The random suites (difftest, genpolicy,
 around, the invariance of random policies, the conditions, the parser fuzzer, the stress test) check as many
 things as their seeds draw, and aren't counted.
+
+### Mistakes put in on purpose
+
+A suite can pass and still check too little. So `mutants/` puts small mistakes into `authzlib`, one at a time, and
+runs the suites until one goes red. `mutants/mutants.py` makes them by rule: in the SQL the compiler writes, `AND`
+for `OR`, `=` for `<>`, `<` for `<=`, `IS NULL` for `IS NOT NULL`, `EXISTS` for `NOT EXISTS`, a `coalesce`'s
+default flipped, a term of a `WHERE` dropped, a `PERFORM`, `SECURITY DEFINER` or `SET search_path` taken out; in the
+Python, each comparison turned round, a `not` dropped or added, each `if` forced either way, an item of a list
+dropped, a quoting call (`q`, `qt`, `lit`) dropped. Never in an f-string's fields, a docstring, a message or an SQL
+comment. Each mutant has an id (`g` and ten hex digits) that stays the same until its own line changes.
+
+`mutants/plan.py` first compiles every policy in the repository before and after each mutant, with no database:
+the fixed policies, the cookbook's, the four apps', the docs app's diagram, clients and diffs, and the migrations
+`tests/migrate_test.py` checks. A mutant that changes none of them is equivalent for all of them and doesn't run
+(`same`); one that breaks a compile is caught there. The others run the suites. Those that called a function whose
+SQL changed, or ran the mutated line (CI's coverage run on `main`: `functions.tsv` and coverage.py's contexts),
+run first, then the rest; each group the most catches per second first. A catch counts when the suite is red
+twice, and only if it is green unmutated on the same machine.
+
+It runs on GitHub's runners (`.github/workflows/mutants.yml`), weekly and by hand, never on a push: a job prepares
+the queue, up to eight jobs run a share of it each, side by side, and a last one collects the results. Each run
+carries over the results of the last one whose mutants' lines are unchanged, and takes the next mutants in an
+order spread over operators and files. A mutant no suite catches (a survivor) is listed in
+`mutants/survivors.txt`, as `equivalent` (it can't change an answer) or `lead` (the check that would catch it): a
+survivor not listed fails the run. The run's summary has the score, what caught what and each survivor's edit;
+the artifact `mutants-results` has every result.
+
+    gh workflow run mutants.yml -f since=<commit>    # the mutants in lines changed since that commit
+    gh workflow run mutants.yml -f limit=40          # 40 that need suites, spread over operators and files
+    gh workflow run mutants.yml -f only=<id>,<id>    # these mutants
+    python3 mutants/sweep.py list --since <commit>   # which mutants those are, here, without running anything
+
+By hand, with Docker: `docker build -t rowstile:16 --build-arg PG_MAJOR=16 -f core/Dockerfile .` from the
+repository's root, then from this folder `python3 mutants/sweep.py prepare --out /tmp/m --only <id>`,
+`python3 mutants/sweep.py run --prepared /tmp/m --shard 1/1 --out /tmp/m/run` (a Postgres container of its own;
+it changes this checkout's `authzlib` and puts it back after each mutant) and `python3 mutants/sweep.py collect
+--prepared /tmp/m --shards /tmp/m/run --out /tmp/m/results`.

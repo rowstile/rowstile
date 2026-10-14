@@ -36,3 +36,6 @@ llms-full.txt
 
 # ci.sh: the suites log and exit code, written by the container
 .ci/
+
+# core/mutants/sweep.py: what a sweep prepares, runs and collects (the mutants workflow)
+.mutants/
