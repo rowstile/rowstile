@@ -2,7 +2,9 @@
 """previous_release: the release of rowstile before this checkout's version, installed from PyPI into a virtual
 environment of its own, for tests/upgrade.sh to make a database with.
 
-    python3 tests/previous_release.py DIR     # prints the version it installed, as the command writes it
+    python3 tests/previous_release.py DIR            # prints the version it installed, as the command writes it
+    python3 tests/previous_release.py DIR VERSION    # that release (0.1.0-alpha.2, or as PyPI writes it: 0.1.0a2)
+    python3 tests/previous_release.py --list         # every release older than this version, oldest first
 
 The release before is the newest version PyPI has that is older than this checkout's (authzlib.__version__). A
 version's alphas come before its candidates, and those before the version itself; a build of main (X.Y.Z-dev) is on
@@ -10,8 +12,8 @@ its way to X.Y.Z, after each alpha and candidate of it that is out. Its wheel is
 index gives, and its files are put in DIR, a virtual environment made without pip: a wheel of pure Python is its
 files, and the image the suites run in has no pip. `DIR/bin/python -m rowstile` is then that release's command.
 
-Exit 0: installed, and its version printed. Exit 2: nothing to upgrade from here, and why (PyPI can't be reached,
-or has no release before this one): the suite says so and skips. Exit 1: anything else (PyPI answered something
+Exit 0: installed, and its version printed (--list: the versions, one a line). Exit 2: nothing to upgrade from
+here, and why (PyPI can't be reached, or has no release before this one): the suite says so and skips. Exit 1: anything else (PyPI answered something
 this doesn't read, or a wheel that isn't the one the index names).
 """
 
@@ -126,13 +128,38 @@ def install(target: str, url: str, sha256: str) -> None:
         wheel.extractall(where)
 
 
+def older(mine: str, released: Iterable[str]) -> list[str]:
+    """Every released version older than mine, oldest first."""
+    here = key(mine)
+    if here is None:
+        raise ValueError(f"{mine} is not a version rowstile has")
+    keyed = [(k, v) for v in released if (k := key(v)) is not None and k < here]
+    return [v for _, v in sorted(keyed)]
+
+
+def named(version: str, released: Iterable[str]) -> str:
+    """The released version a name means, written either way (0.1.0-alpha.2 or 0.1.0a2)."""
+    want = key(version)
+    match = [v for v in released if want is not None and key(v) == want]
+    if not match:
+        raise Wrong(f"PyPI's index has no wheel of rowstile {version}")
+    return match[0]
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 1:
-        print("usage: python3 tests/previous_release.py DIR", file=sys.stderr)
+    if len(argv) not in (1, 2) or (argv[0] == "--list" and len(argv) != 1):
+        print("usage: python3 tests/previous_release.py DIR [VERSION] | --list", file=sys.stderr)
         return 1
     try:
         found = wheels(json.loads(fetch(INDEX, INDEX_JSON)))
-        old = before(__version__, found)
+        if argv[0] == "--list":
+            every = older(__version__, found)
+            if not every:
+                print(f"PyPI has no release of rowstile before {__version__}: there is nothing to upgrade from")
+                return 2
+            print("\n".join(spelled(v) for v in every))
+            return 0
+        old = named(argv[1], found) if len(argv) == 2 else before(__version__, found)
         if old is None:
             print(f"PyPI has no release of rowstile before {__version__}: there is nothing to upgrade from")
             return 2

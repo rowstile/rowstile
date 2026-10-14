@@ -8403,6 +8403,18 @@ class PreviousRelease(unittest.TestCase):
         with self.assertRaises(ValueError):
             before("0.1.0-beta.1", alphas)
 
+    def test_every_release_before_and_one_by_name(self) -> None:
+        # tests/upgrade.sh --every: each release older than this version, oldest first, in the same order
+        released = ["0.1.0a7", "0.1.0a2", "0.1.0a10", "0.1.0", "0.1.1.post1", "0.1.0rc1"]
+        self.assertEqual(self.p.older("0.1.0-dev", released), ["0.1.0a2", "0.1.0a7", "0.1.0a10", "0.1.0rc1"])
+        self.assertEqual(self.p.older("0.1.0-alpha.2", released), [])
+        self.assertEqual(self.p.older("0.2.0-dev", released)[-1], "0.1.0")
+        # --from: a release by either spelling, and none that PyPI hasn't
+        self.assertEqual(self.p.named("0.1.0-alpha.10", released), "0.1.0a10")
+        self.assertEqual(self.p.named("0.1.0rc1", released), "0.1.0rc1")
+        with self.assertRaises(self.p.Wrong):
+            self.p.named("0.1.0-alpha.3", released)
+
     def test_spelled_as_the_command_writes_it(self) -> None:
         self.assertEqual(
             [self.p.spelled(v) for v in ("0.1.0a6", "0.1.0rc1", "0.2.0")], ["0.1.0-alpha.6", "0.1.0-rc.1", "0.2.0"]
