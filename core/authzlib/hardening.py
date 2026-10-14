@@ -152,10 +152,13 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
         link_cols: list[tuple[str, str, str, Loc, str]] = []
         # (table, columns, relation, loc): a column placing a row under another of its type
         move_cols: list[tuple[str, tuple[str, ...], str, Loc]] = []
-        index_cols: list[tuple[str, str, str]] = []  # (table, column, why) that lookups go through
+        # (table, columns, why, the columns that serve the lookup alone too) that lookups go through: a (type, id)
+        # pair is looked up by both, and an index on what pair_alone names serves it too, as rowstile indexes counts it
+        index_cols: list[tuple[str, str, str, str]] = []
         for t in self.types.values():
             for r in t.relations.values():
                 for src in r.sources:
+                    lead = (src.type_col,) if src.type_col else ()
                     if src.kind == "table":  # (never a custom roles' relation: its source is the roles)
                         table = self.source_table(src)
                         link_tables.add(table)
@@ -165,13 +168,16 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
                                 table,
                                 ", ".join(cols(self.source_obj_columns(src))),
                                 f"{t.name}.{r.name}: find the members of an object",
+                                "",
                             )
                         )
+                        ids = cols(self.source_columns(src))
                         index_cols.append(
                             (
                                 table,
-                                ", ".join(cols(self.source_columns(src))),
+                                ", ".join(lead + ids),
                                 f"{t.name}.{r.name}: find what a subject is in",
+                                ", ".join(self.pair_alone(src)),
                             )
                         )
                     elif src.kind == "column":
@@ -183,11 +189,23 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
                         # (one that reads the row's own key is "this row", `self : user = id`: not a move)
                         if any(st == t.name for st, _ in src.subjects) and column != tuple(c for c, _ in t.key):
                             move_cols.append((t.table, column, r.name, src.loc))
-                        shown = ", ".join(column)
-                        index_cols.append((t.table, shown, f"{t.name}.{r.name}: find objects by {shown}"))
+                        shown = ", ".join(lead + column)
+                        index_cols.append(
+                            (
+                                t.table,
+                                shown,
+                                f"{t.name}.{r.name}: find objects by {shown}",
+                                ", ".join(self.pair_alone(src)),
+                            )
+                        )
             # each check on one object (authz.can, a write rule) finds its row by the key, as rowstile indexes says
             index_cols.append(
-                (t.table, ", ".join(k for k, _ in t.key), f"{t.name}: find one by its key, for checks and write rules")
+                (
+                    t.table,
+                    ", ".join(k for k, _ in t.key),
+                    f"{t.name}: find one by its key, for checks and write rules",
+                    "",
+                )
             )
         # columns that grant something, on tables whose updates only need the plain 'update' rule
         guarded = {(r.table, c) for r in self.rules if r.columns and r.command != "mask" for c in r.columns}
@@ -217,11 +235,12 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
             f"{'true' if t in typed_tables else 'false'})"
             for t in link_only
         )
-        whys = {}
-        for tb, c, why in index_cols:
-            whys.setdefault((tb, c), []).append(why)
+        whys: dict[tuple[str, str, str], list[str]] = {}
+        for tb, c, why, alone in index_cols:
+            whys.setdefault((tb, c, alone), []).append(why)
         idx_rows = ", ".join(
-            f"({lit(qt(tb))}, {lit(c)}, {lit('; '.join(dict.fromkeys(w)))})" for (tb, c), w in whys.items()
+            f"({lit(qt(tb))}, {lit(c)}, {lit('; '.join(dict.fromkeys(w)))}, {lit(alone) if alone else 'NULL'})"
+            for (tb, c, alone), w in whys.items()
         )
         unguarded_rows = ", ".join(
             f"({lit(qt(tb))}, {lit(c)}, {lit(what)}, {lit(self.line_key(f'relation {what} {c}', loc))}, {lit(ask)})"
@@ -574,18 +593,19 @@ BEGIN
     RETURN NEXT;
   END LOOP;
   -- lookups the permission views make
-  FOR r IN SELECT * FROM (VALUES {idx_rows or "(NULL::text, NULL::text, NULL::text)"}) v(tbl, col, why) WHERE tbl IS NOT NULL LOOP
+  FOR r IN SELECT * FROM (VALUES {idx_rows or "(NULL::text, NULL::text, NULL::text, NULL::text)"}) v(tbl, col, why, alone) WHERE tbl IS NOT NULL LOOP
     CONTINUE WHEN to_regclass(r.tbl) IS NULL;
     -- a plain view can't have an index: the tables under it answer the lookups
     CONTINUE WHEN (SELECT c.relkind FROM pg_class c WHERE c.oid = to_regclass(r.tbl)) = 'v';
-    -- an index whose first columns are these (one, or a composite key's, in any order): a finished one, with no
+    -- an index whose first columns are these (one, or a composite key's, in any order), or what serves a (type, id)
+    -- pair alone (its ids where they are two columns, its type where its id is one): a finished one, with no
     -- condition (the lookups are joins, which a partial index doesn't serve), as rowstile indexes counts them
-    IF NOT EXISTS (SELECT 1 FROM pg_index i
-                   WHERE i.indrelid = to_regclass(r.tbl) AND i.indisvalid AND i.indpred IS NULL
+    IF NOT EXISTS (SELECT 1 FROM pg_index i, unnest(ARRAY[r.col, r.alone]) w(cs)
+                   WHERE w.cs IS NOT NULL AND i.indrelid = to_regclass(r.tbl) AND i.indisvalid AND i.indpred IS NULL
                      AND (SELECT array_agg(a.attname::text ORDER BY a.attname)
-                          FROM unnest((i.indkey::int2[])[0:cardinality(string_to_array(r.col, ', ')) - 1]) k
+                          FROM unnest((i.indkey::int2[])[0:cardinality(string_to_array(w.cs, ', ')) - 1]) k
                           JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k)
-                         = (SELECT array_agg(c ORDER BY c) FROM unnest(string_to_array(r.col, ', ')) c)) THEN
+                         = (SELECT array_agg(c ORDER BY c) FROM unnest(string_to_array(w.cs, ', ')) c)) THEN
       severity := 'performance'; object := to_regclass(r.tbl)::text || '.' || r.col;
       problem := format('no index starts with %s (%s): CREATE INDEX ON %s (%s)',
                         CASE WHEN r.col LIKE '%, %' THEN 'these columns' ELSE 'this column' END, r.why, to_regclass(r.tbl),

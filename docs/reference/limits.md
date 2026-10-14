@@ -122,7 +122,11 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   three others. The same name twice in one `and` or `or` counts once. <!-- checked: tests/unit_test.py "test_an_operand_named_twice_is_written_once" -->
 - **Composite keys cost more to check** than single-column ones: ids are built as text per row
   (20,000 folders keyed `(org_id, id)`: a list of 7,000 takes about 0.4 s). The benchmark
-  gate is measured on single keys.
+  gate is measured on single keys. Rows are looked up by each column of such a key, so an index on the columns
+  serves the lookup (`rowstile indexes` names it). <!-- checked: tests/confidence_test.py "looked up through" -->
+- **A `(type, id)` pair whose id is one column** is found by its type: its id is read through a `CASE` on the
+  type, which no index serves. An index on `(type, id)` (what `rowstile indexes` asks for) finds the rows of that
+  type, and each of them is read. Where most rows name one type, that is most of the table. <!-- checked: tests/confidence_test.py "the rows of that type found through" -->
 
 ## What a 0.x release promises
 

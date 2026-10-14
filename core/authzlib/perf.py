@@ -31,11 +31,17 @@ if TYPE_CHECKING:
 
 BIG = 10_000  # rows: a full scan of a table this size is worth a warning
 SLOW_MS = 100  # a read slower than this on the data there is worth a warning
+OWN_SCHEMAS = ("authz", "authz_gen", "authz_int", "authz_keep")  # rowstile's: their indexes are its own business
 
-# a lookup the policy makes: (table, columns, why, the policy line)
-Lookup: TypeAlias = "tuple[str, tuple[str, ...], str, str]"
-# one that no index serves, and whether its table is partitioned (Postgres makes no index on one concurrently)
-Missing: TypeAlias = "tuple[str, tuple[str, ...], str, str, bool]"
+# a lookup the policy makes: (table, columns, why, the policy line, the columns that serve it alone too: a (type, id)
+# pair's ids where they are two columns, its type where its id is one, as authz.lint() counts them)
+Lookup: TypeAlias = "tuple[str, tuple[str, ...], str, str, tuple[str, ...]]"
+# one that no index serves: whether its table is partitioned (Postgres makes no index on one concurrently), and the
+# indexes on its columns that a CREATE INDEX CONCURRENTLY which failed left unfinished (to drop first)
+Missing: TypeAlias = "tuple[str, tuple[str, ...], str, str, bool, tuple[str, ...]]"
+# the tools that run each migration in a transaction, where Postgres builds no index concurrently, and the line a
+# migration starts with to run outside one
+NO_TRANSACTION = {"goose": "-- +goose NO TRANSACTION", "dbmate": "-- migrate:up transaction:false"}
 
 
 class TablePlan(TypedDict):
@@ -69,15 +75,17 @@ def an(word: str) -> str:
 
 
 def needed_indexes(c: Compiler) -> list[Lookup]:
-    """[(table, columns, why, line)]: the lookups the policy makes into app tables, one per table and columns."""
+    """[(table, columns, why, line, alone)]: the lookups the policy makes into app tables, one per table and
+    columns. A (type, id) pair's lookup is by both columns, and an index on what Compiler.pair_alone names serves it
+    too."""
     out: list[Lookup] = []
     seen: set[tuple[str, tuple[str, ...]]] = set()
 
-    def add(table: str, columns: tuple[str, ...], why: str, loc: Loc) -> None:
+    def add(table: str, columns: tuple[str, ...], why: str, loc: Loc, alone: tuple[str, ...] = ()) -> None:
         key = (table, tuple(columns))
         if key not in seen:
             seen.add(key)
-            out.append((table, columns, why, str(loc)))
+            out.append((table, columns, why, str(loc), alone))
 
     for t in c.types.values():
         for r in t.relations.values():
@@ -91,6 +99,7 @@ def needed_indexes(c: Compiler) -> list[Lookup]:
                         lead + cols(c.source_columns(src)),
                         f"finding the {t.name}s by their {t.name}.{r.name} (lists, select rules)",
                         r.loc,
+                        c.pair_alone(src),
                     )
                 elif src.kind == "table":
                     table = c.source_table(src)
@@ -99,6 +108,7 @@ def needed_indexes(c: Compiler) -> list[Lookup]:
                         lead + cols(c.source_columns(src)),
                         f"finding the {t.name}s by their {t.name}.{r.name} (lists, select rules)",
                         r.loc,
+                        c.pair_alone(src),
                     )
                     add(
                         table,
@@ -133,6 +143,20 @@ def table_indexes(db: Db, table: str) -> list[tuple[str, ...]]:
     return out
 
 
+def unfinished_indexes(db: Db, table: str) -> list[tuple[str, str]]:
+    """(its name with its schema, as SQL writes it; its name) of each index on the table that a CREATE INDEX
+    CONCURRENTLY which failed left unfinished (invalid): it serves nothing, and holds its name, the one rowstile
+    advises when that build was of its advice."""
+    rows = db.rows(
+        "SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(c.relname) AS sql, "
+        "c.relname::text AS name FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid "
+        "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE i.indrelid = to_regclass($1) AND NOT i.indisvalid ORDER BY 2",
+        [qt(table)],
+    )
+    return [(text(r, "sql"), text(r, "name")) for r in rows]
+
+
 def relkind(db: Db, table: str) -> str:
     """What the table is: r a table, p a partitioned one, v a view, m a materialized one ('' if there is none)."""
     rows = db.rows("SELECT c.relkind::text AS k FROM pg_catalog.pg_class c WHERE c.oid = to_regclass($1)", [qt(table)])
@@ -140,26 +164,37 @@ def relkind(db: Db, table: str) -> str:
 
 
 def missing_indexes(db: Db, c: Compiler) -> list[Missing]:
-    """[(table, columns, why, line, partitioned)] for the needed lookups no index serves (its columns lead no
-    index). A view can't have an index: the tables under it answer its lookups (authz.lint() skips it too)."""
+    """[(table, columns, why, line, partitioned, unfinished)] for the needed lookups no index serves (its columns
+    lead no index). A view can't have an index: the tables under it answer its lookups (authz.lint() skips it too)."""
     out: list[Missing] = []
     kinds: dict[str, str] = {}
     cache: dict[str, list[tuple[str, ...]]] = {}
-    for table, columns, why, line in needed_indexes(c):
+    stale: dict[str, list[tuple[str, str]]] = {}
+    for table, columns, why, line, alone in needed_indexes(c):
         if table not in kinds:
             kinds[table] = relkind(db, table)
             cache[table] = table_indexes(db, table)
-        if kinds[table] != "v" and not any(
-            ix[: len(columns)] == columns or set(ix[: len(columns)]) == set(columns) for ix in cache[table]
-        ):
-            out.append((table, columns, why, line, kinds[table] == "p"))
+            stale[table] = unfinished_indexes(db, table)
+        # an index whose first columns are these, in any order (or what serves a (type, id) pair alone: pair_alone)
+        serves = [set(x) for x in (columns, alone) if x]
+        if kinds[table] != "v" and not any(set(ix[: len(s)]) == s for ix in cache[table] for s in serves):
+            # one left unfinished under the name the advice gives (a build of it that failed): dropped first, or the
+            # advice fails ("already exists")
+            unfinished = tuple(sql for sql, name in stale[table] if name == index_name(table, columns))
+            out.append((table, columns, why, line, kinds[table] == "p", unfinished))
     return out
+
+
+def index_name(table: str, columns: Sequence[str]) -> str:
+    """The name advice gives the index: the table's, its columns', _idx (as Prisma names one)."""
+    return f"{table.split('.')[-1]}_{'_'.join(columns)}_idx"
 
 
 def advice(table: str, columns: Sequence[str], tool: str | None, partitioned: bool = False) -> str:
     """The line to add, for the app's migration tool. Postgres makes no index on a partitioned table concurrently:
-    it makes one on each partition, which holds off writes to it meanwhile."""
-    name = f"{table.split('.')[-1]}_{'_'.join(columns)}_idx"
+    it makes one on each partition, which holds off writes to it meanwhile; nor inside a transaction, where goose
+    and dbmate run each migration unless it says otherwise."""
+    name = index_name(table, columns)
     fields = ", ".join(columns)
     if tool == "prisma":
         return f"@@index([{fields}]) on the model for {table} (prisma/schema.prisma)"
@@ -170,16 +205,24 @@ def advice(table: str, columns: Sequence[str], tool: str | None, partitioned: bo
             f"Index({lit(name)}, {', '.join(lit(x) for x in columns)}) in {table}'s model "
             f"(or index=True on the column), then alembic revision --autogenerate"
         )
-    return (
+    sql = (
         f"CREATE INDEX {'' if partitioned else 'CONCURRENTLY '}{q(name)} ON {qt(table)} "
         f"({', '.join(q(x) for x in columns)});"
     )
+    if tool in NO_TRANSACTION and not partitioned:
+        return f"{sql} in a migration of its own that starts with {NO_TRANSACTION[tool]}"
+    return sql
 
 
 def describe_missing(missing: list[Missing], tool: str | None) -> str:
     lines = []
-    for table, columns, why, line, partitioned in missing:
+    for table, columns, why, line, partitioned, unfinished in missing:
         lines.append(f"{table} has no index on ({', '.join(columns)}): {why} ({line})")
+        lines += [
+            f"  first, drop what a CREATE INDEX CONCURRENTLY that failed left unfinished: "
+            f"DROP INDEX {'' if partitioned else 'CONCURRENTLY '}{name};"
+            for name in unfinished
+        ]
         lines.append(f"  add: {advice(table, columns, tool, partitioned)}")
     return "\n".join(lines)
 
@@ -224,7 +267,8 @@ def walk(plan: dict[str, Value], out: list[str], governed: str) -> None:
     # the rows the scan read: the ones it gave and the ones its filter dropped (a missing index shows as a scan
     # that reads everything and keeps little)
     read = (_num(plan, "Actual Rows", 0) + _num(plan, "Rows Removed by Filter", 0)) * loops
-    if node == "Seq Scan" and table and table != governed and read >= BIG:
+    # (rowstile's own tables, read whole for someone who reaches most rows, are no index the app can add)
+    if node == "Seq Scan" and table and table != governed and read >= BIG and schema not in OWN_SCHEMAS:
         out.append(f"reads all of {table} ({int(read)} rows): an index missing?")
     subplan = _str(plan, "Subplan Name")
     if subplan and _num(plan, "Actual Loops", 0) >= 1000:

@@ -312,7 +312,7 @@ step "prove, coverage, snapshots, indexes, plans and bench"
 python3 tests/confidence_test.py | quiet_ok
 record "${PIPESTATUS[0]}" "confidence"
 }
-unit policy 14 confidence
+unit policy 19 confidence
 studio() {
 step "why, and how to grant; Studio (read-only, and able to write)"
 python3 tests/studio_test.py | quiet_ok

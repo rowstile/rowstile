@@ -64,7 +64,7 @@ each step's output printed whole once it ends, in the order `run_tests.sh` write
 | `tests/principals.sh` | services that sign in as themselves: principal types, their keys and JWTs, `service:*` next to `user:*`, what the audit trail records |
 | `tests/sessions.sh` | signed sessions: the app role can't choose its user by setting `authz.user_id`, widen its scopes, or reuse a sign-in in another transaction or connection |
 | `tests/devx.sh` | what developers use day to day: named tests with their own data, refusals that say why, `authz.who_among`, drafting a policy, `rowstile dev`, `test`, `init`, `--as` |
-| `tests/confidence_test.py` | `rowstile prove`, `test --coverage`, `snapshot`, `indexes`, `plans` and `bench`, on the docs example; a list on a random policy runs each starting point of a permission once (the calls counted) |
+| `tests/confidence_test.py` | `rowstile prove`, `test --coverage`, `snapshot`, `indexes`, `plans` and `bench`, on the docs example; the plans of lookups through two-column keys and `(type, id)` pairs; a list on a random policy runs each starting point of a permission once (the calls counted) |
 | `tests/lsp_test.py` | the language server over its protocol, as an editor uses it; where there is a database (`createdb` works), also the tables and columns it completes from one |
 | `tests/mcp_test.py` | the MCP server over its protocol, as a coding agent's client uses it: each tool in a project folder |
 | `tests/studio_test.py` | `rowstile why` and Studio's API: read-only unless `--write`, only for the page that has the token, on localhost; and `rowstile studio` itself: what it prints, and what stops it starting |
