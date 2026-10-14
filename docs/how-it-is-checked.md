@@ -24,7 +24,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   read every policy in the repository, two hundred random ones and the small policies up to size four (894, each
   written two ways: as listed, and with its names swapped and its parts turned round), and compares what they
   read: the types, each relation's sources, the permissions with their grouping, the rules, the tests. They read
-  each one alike. Each night they read all 70,983 small policies, both ways. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
+  each one alike. Each night they read all 70,983 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
   (The grammar takes more than the parser does, as an editor must: what the parser refuses isn't compared.) <!-- checked: tests/parse_agreement.py "policy the parser refuses is not compared" -->
 - **A third evaluator**: [`tests/third.py`](../core/tests/third.py) was written from the language's reference
   alone and imports nothing of the compiler's or the reference evaluator's. It reads each policy through the
