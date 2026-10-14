@@ -114,6 +114,9 @@ what).
   rights, and that the app role may call the API and nothing else.
 - [`tests/sessions.sh`](../core/tests/sessions.sh) checks that the app role can't choose who is signed in
   by setting a variable, widen an API key's scopes, or reuse a sign-in in another transaction or connection. <!-- checked: tests/sessions.sh "changing authz.user_id after signing in is an error"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
+  When `authz.who`, `authz.explain`, `authz.who_among` or `authz.check_invariants` fail half way, signed in as
+  someone else, the transaction goes on signed in as before: the same settings and signature, the same rows
+  seen and changed. <!-- checked: tests/sessions.sh "who fails half way: its error, and the same user signed in, seeing and changing the same"; tests/sessions.sh "explain for user 3 fails: the same user signed in"; tests/sessions.sh "who_among fails at user 3: the same user signed in"; tests/sessions.sh "check_invariants fails at user 3: the same user signed in" -->
 - [`tests/identity.sh`](../core/tests/identity.sh) covers API keys and JWTs: a bad signature, an expired
   token, one without an expiry, `alg: none`.
 - Every refusal the runtime can raise is asked for by its words by some check, not only by its error code (two

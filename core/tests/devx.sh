@@ -140,6 +140,30 @@ case "$out" in *"P0001: no permission team.view in the policy"*) ok "... asking 
   *) bad "who, a type without permissions" "$out";; esac
 out=$(as 1 "SELECT cardinality(authz.perms('team', '10'))")
 [ "$out" = 0 ] && ok "... and the permissions held on it: none" || bad "perms, a type without permissions" "$out"
+# each call that takes a type or a permission says so itself (its own guard, which the error's context names)
+nope() {   # $1 label, $2 SQL, $3 the error's words, $4 the function that raises it; as user 1, or as $AS_SQL says
+  local out; out=$(psql -X -q -At -d "$DB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "SET authz.user_id = '1'" \
+    ${AS_SQL:+-c "$AS_SQL"} -c "$2" 2>&1)
+  case "$out" in "ERROR:  P0001: $3"$'\n'"HINT:  rowstile help AZ707"$'\n'"CONTEXT:  PL/pgSQL function $4 line "*" at RAISE"*) ok "$1";;
+    *) bad "$1" "$out";; esac
+}
+nope "... listing what holds it" "SELECT * FROM authz.list('file', 'fly')" "no permission file.fly in the policy" \
+  "authz.list(text,text,text,integer)"
+nope "a type the policy doesn't have is a mistake too: the permissions held on it" "SELECT authz.perms('boat', '1')" \
+  "no type boat in the policy" "authz.perms(text,text)"
+nope "... asking can() about it" "SELECT authz.can('boat', '1', 'view')" "no type boat in the policy" "authz.can(text,text,text)"
+nope "... sharing it" "SELECT authz.share('boat', '1', 'viewer', 'user', '2')" "no type boat in the policy" \
+  "authz.share(text,text,text,text,text,text,timestamp with time zone,timestamp with time zone,text,jsonb)"
+AS_SQL="RESET ROLE" nope "... asking who holds a permission on it (as one who may ask: others may not see who)" \
+  "SELECT * FROM authz.who('boat', '1', 'view')" "no type boat in the policy" "authz.who(text,text,text)"
+# with a key's scopes, can() answers no for a permission they leave out, before it looks at the type or the
+# permission: explaining it still says the mistake
+AS_SQL="SET authz.scopes = 'read'" nope "with scopes, explain says a permission the policy doesn't have is a mistake" \
+  "SELECT * FROM authz.explain('file', '11', 'fly')" "no permission file.fly in the policy" "authz.explain(text,text,text,text)"
+AS_SQL="SET authz.scopes = 'read'" nope "... on a type that has no permissions" \
+  "SELECT * FROM authz.explain('team', '10', 'fly', '1')" "no permission team.fly in the policy" "authz.explain(text,text,text,text)"
+AS_SQL="SET authz.scopes = 'read'" nope "... and on a type the policy doesn't have" \
+  "SELECT * FROM authz.explain('boat', '1', 'fly', '1')" "no type boat in the policy" "authz.explain(text,text,text,text)"
 out=$(as 6 "SELECT authz.explain_rule('app.files', 'update', '11') IS NULL")
 [ "$out" = t ] && ok "... and one the user can't see: NULL too" || bad "explain invisible" "$out"
 out=$(as 2 "SELECT array_to_string(authz.explain_rule('app.files', 'update', '12', '{\"name\": \"x\"}'), '|')")

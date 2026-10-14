@@ -96,5 +96,22 @@ check "several links at once: tables match a rebuild" "SELECT authz.verify()"
 PSQL -c "UPDATE app.folder_links SET parent_id = 1000 WHERE parent_id = 2000"
 check "several links moved at once: tables match a rebuild" "SELECT authz.verify()"
 
+echo "-- 5. a loop round four tables' keys (tests/loop.authz: a tree whose name is too long, shortened to a hash)"
+L=${DB}_loop
+dropdb --if-exists "$L" 2>/dev/null; createdb "$L" || exit 1
+python3 compile_policy.py tests/loop.authz > "/tmp/${L}.sql" || exit 1
+PGOPTIONS="-c client_min_messages=warning" psql -X -q -At -v ON_ERROR_STOP=1 -d "$L" -f tests/loop_schema.sql -f "/tmp/${L}.sql" \
+  -c "INSERT INTO lp.users VALUES (1, 'u')" -c "INSERT INTO lp.orgs (id, owner_id) VALUES (1, 1)" \
+  -c "INSERT INTO lp.settings (id) VALUES (1)" -c "INSERT INTO lp.emails (id) VALUES (1)" \
+  -c "INSERT INTO lp.domains (id, org_id) VALUES (1, 1)" -c "UPDATE lp.emails SET domain_id = 1" \
+  -c "UPDATE lp.settings SET email_id = 1" >/dev/null || { echo "FAIL  the loop's setup"; fails=$((fails + 1)); }
+# the org's settings would name an address whose domain is the org's own
+got=$(psql -X -q -At -d "$L" -v VERBOSITY=verbose -c "UPDATE lp.orgs SET settings_id = 1 WHERE id = 1" 2>&1 | grep '^ERROR:  \|^HINT:  ')
+[ "$got" = "$(printf 'ERROR:  23514: org 1 cannot be moved inside itself\nHINT:  rowstile help AZ713')" ] &&
+  [ "$(psql -X -q -At -d "$L" -c "SELECT settings_id IS NULL AND authz.verify() FROM lp.orgs")" = t ] &&
+  echo "ok    the write that would close the loop is refused, by its words, and the tables match a rebuild" ||
+  { echo "FAIL  a loop round four tables: $got"; fails=$((fails + 1)); }
+dropdb "$L"
+
 dropdb "$DB"
 [ $fails -eq 0 ] && echo "all move checks passed" || { echo "$fails move checks failed"; exit 1; }

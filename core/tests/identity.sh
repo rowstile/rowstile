@@ -52,6 +52,11 @@ expect_code "a session limited to a scope cannot make a key with another" "42501
   -c "BEGIN" -c "SELECT authz.login_key('$FILES')" -c "SELECT authz.create_api_key('wider', 'read')"
 expect_code "... nor one with every scope (none named)" "42501: a key cannot have more scopes than the session creating it" \
   -c "BEGIN" -c "SELECT authz.login_key('$FILES')" -c "SELECT authz.create_api_key('wider')"
+expect_code "a scope the policy doesn't have is a mistake, not a key" "P0001: no scope boat in the policy" \
+  -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('k', 'read, boat')"
+expect_code "a key for another user: users' keys are their own (the policy gives user no manage_keys)" \
+  "P0001: the policy gives user no manage_keys permission, so nobody manages its keys" \
+  -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('k', 'read', NULL, 'user', '3')"
 expect_code "nobody signed in makes no key" "42501: sign in to create an API key" -c "SELECT authz.create_api_key('k', 'read')"
 said=$(psql -X -q -At -d "$DB" -c "SET ROLE app_user;" -c "SELECT authz.create_api_key('k', 'read')" 2>&1 | grep '^HINT:  ')
 [ "$said" = "HINT:  rowstile help AZ714" ] && echo "ok    ... and its code is sign in first (AZ714, a 401), not a refusal" ||
@@ -120,6 +125,7 @@ expect_code "another issuer" "28000: token from another issuer" -c "BEGIN" -c "S
 expect_code "a token that names no issuer, once one is asked" "28000: token from another issuer" -c "BEGIN" \
   -c "SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"iss": null}')')"
 expect_code "alg none" "28000: invalid token" -c "BEGIN" -c "SELECT authz.login_jwt('$T_NONE')"
+expect_code "a token not in three parts" "28000: invalid token" -c "BEGIN" -c "SELECT authz.login_jwt('$(echo "$T_OK" | cut -d. -f1,2)')"
 expect_code "no expiry" "28000: token expired or not yet valid" -c "BEGIN" -c "SELECT authz.login_jwt('$T_NOEXP')"
 # nbf is optional; the hours keep these far from a clock that steps a few seconds
 expect_code "not valid yet (nbf in an hour)" "28000: token expired or not yet valid" -c "BEGIN" \

@@ -121,6 +121,112 @@ expect "who_among asks each one in turn" "${want%,}" -c "$(ACT "'user', '3'")" \
 expect "... and leaves carol signed in" "$carol" -c "$(ACT "'user', '3'")" \
   -c "SELECT count(*) FROM authz.who_among('file', '11', 'view', ARRAY['1', '2'])" -c "SELECT count(*) FROM app.files"
 
+echo "-- ... and when they fail half way, signed in as someone else, who is signed in is as it was"
+# A policy whose condition fails for user 3 (as one reading a broken row would): who, explain, who_among and
+# check_invariants, asked as user 3 after others, fail with its error, in the middle of switching users. Caught (a
+# savepoint, an exception block), the transaction goes on signed in exactly as before: the same settings and
+# signature, the same rows seen and changed. Their own handlers restore it; Postgres also undoes what a failed
+# block set, so this holds of the whole, not of the handlers alone.
+H=${DB}_half
+dropdb --if-exists "$H" 2>/dev/null; createdb "$H" || exit 1
+PGOPTIONS="-c client_min_messages=warning" psql -X -q -v ON_ERROR_STOP=1 -d "$H" >/dev/null <<'SQL' || exit 1
+CREATE SCHEMA sh;
+CREATE TABLE sh.users (id bigint PRIMARY KEY);
+CREATE TABLE sh.bots (id bigint PRIMARY KEY);
+CREATE TABLE sh.docs (id bigint PRIMARY KEY, owner_id bigint, bot_id bigint, title text);
+INSERT INTO sh.users VALUES (1), (2), (3), (4);
+INSERT INTO sh.bots VALUES (1);
+INSERT INTO sh.docs VALUES (1, 1, 1, 'one'), (2, 2, NULL, 'two'), (3, 3, NULL, 'three'), (4, 4, NULL, 'four');
+CREATE FUNCTION sh.trips() RETURNS boolean LANGUAGE plpgsql STABLE AS $f$
+BEGIN
+  IF current_setting('authz.user_id', true) = '3' AND coalesce(current_setting('authz.principal_type', true), '') = '' THEN
+    RAISE EXCEPTION 'sh.trips() fails for user 3';
+  END IF;
+  RETURN false;
+END $f$;
+GRANT USAGE ON SCHEMA sh TO app_user;
+GRANT SELECT, UPDATE ON ALL TABLES IN SCHEMA sh TO app_user;
+SQL
+cat > "/tmp/${H}.authz" <<'POLICY'
+app role app_user
+type user = sh.users
+type bot = sh.bots principal
+type doc = sh.docs
+  owner  : user = owner_id
+  keeper : bot  = bot_id
+  viewer : user shared
+  can share = owner or keeper
+  can edit  = share
+  can view  = edit or viewer or {sh.trips()}
+scope look = select, view, share
+rules sh.docs
+  select                 : view
+  update                 : edit
+  update owner_id, bot_id : share
+invariants
+  never doc: view and not edit and not viewer
+POLICY
+python3 cli/rowstile_cli.py --db "dbname=$H" apply "/tmp/${H}.authz" >/dev/null 2>&1 || { bad "apply the policy that fails half way"; exit 1; }
+psql -X -q -d "$H" -c "SET authz.user_id = 1" -c "SELECT authz.share('doc', 1, 'viewer', 'user', 2)" \
+  -c "SELECT authz.share('doc', 1, 'viewer', 'user', 3)" >/dev/null
+look=$(psql -X -q -At -d "$H" -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('half way', 'look')")
+OWNER=$(PSQL -c "SELECT current_user")
+SETTINGS="concat_ws('|', current_setting('authz.user_id', true), current_setting('authz.principal_type', true),
+  current_setting('authz.scopes', true), current_setting('authz.acting_user', true), current_setting('authz.session', true))"
+# who is signed in, what they see, and what an update changes (nothing, for a read-only key)
+SIGNED="WITH u AS (UPDATE sh.docs SET title = title RETURNING 1)
+  SELECT concat_ws('|', authz.uid(), (SELECT principal_type || ':' || principal_id FROM authz.principal()),
+    current_setting('authz.scopes', true), (SELECT count(*) FROM sh.docs), (SELECT count(*) FROM u))"
+half() {   # $1 label, $2 the sign-in, $3 the call that fails half way; as $ROLE (else $APP), a role RLS applies to
+  local label=$1 signin=$2 call=$3 want out err
+  want=$(psql -X -q -At -U "${ROLE:-$APP}" -d "$H" -1 -c "$signin" -c "SET LOCAL ROLE app_user" -c "$SIGNED" 2>&1 | tail -n 1)
+  out=$(psql -X -q -At -U "${ROLE:-$APP}" -d "$H" -v VERBOSITY=verbose 2>&1 <<SQL
+BEGIN;
+$signin;
+SELECT $SETTINGS AS before \gset
+SAVEPOINT s;
+$call;
+ROLLBACK TO SAVEPOINT s;
+SET LOCAL ROLE app_user;
+SELECT ($SETTINGS) = :'before';
+$SIGNED;
+COMMIT;
+SQL
+)
+  err=$(printf '%s\n' "$out" | grep '^ERROR:  ' | head -n 1)
+  out=$(printf '%s\n' "$out" | tail -n 2 | paste -sd '|')
+  if [ "$err" = "ERROR:  P0001: sh.trips() fails for user 3" ] && [ "$out" = "t|$want" ] && [ -n "$want" ]; then ok "$label"
+  else bad "$label" "error '$err', then '$out' (signed in before: '$want')"; fi
+}
+half "who fails half way: its error, and the same user signed in, seeing and changing the same" \
+  "SELECT authz.act_as('user', '1')" "SELECT count(*) FROM authz.who('doc', '1', 'view')"
+half "... signed in as a service: the same service" "SELECT authz.act_as('bot', '1')" \
+  "SELECT count(*) FROM authz.who('doc', '1', 'view')"
+half "... with a key's scopes, which who clears while it asks: the same scopes, still read-only" \
+  "SELECT authz.login_key('$look')" "SELECT count(*) FROM authz.who('doc', '1', 'view')"
+half "explain for user 3 fails: the same user signed in" "SELECT authz.act_as('user', '1')" \
+  "SELECT count(*) FROM authz.explain('doc', '1', 'view', '3')"
+half "... signed in as a service" "SELECT authz.act_as('bot', '1')" "SELECT count(*) FROM authz.explain('doc', '1', 'view', '3')"
+half "who_among fails at user 3: the same user signed in" "SELECT authz.act_as('user', '1')" \
+  "SELECT count(*) FROM authz.who_among('doc', '1', 'view', ARRAY['2', '3', '4'])"
+half "... signed in as a service" "SELECT authz.act_as('bot', '1')" \
+  "SELECT count(*) FROM authz.who_among('doc', '1', 'view', ARRAY['2', '3', '4'])"
+ROLE=$OWNER half "check_invariants fails at user 3: the same user signed in" "SELECT authz.act_as('user', '1')" \
+  "SELECT count(*) FROM authz.check_invariants()"
+ROLE=$OWNER half "... with a key's scopes, which it clears while it asks: the same scopes" "SELECT authz.login_key('$look')" \
+  "SELECT count(*) FROM authz.check_invariants()"
+# caught by an exception block instead of a savepoint
+got=$(psql -X -q -At -U "$APP" -d "$H" -1 -c "$(ACT "'user', '1'")" -c "DO \$\$ BEGIN
+    PERFORM count(*) FROM authz.who('doc', '1', 'view');
+  EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'caught: %', SQLERRM;
+  END \$\$" -c "SELECT concat_ws('|', authz.uid(), (SELECT count(*) FROM sh.docs))" 2>&1)
+[ "$got" = "$(printf 'NOTICE:  caught: sh.trips() fails for user 3\n1|1')" ] &&
+  ok "... caught by an exception block: the same user signed in" || bad "who caught by an exception block" "$got"
+# not caught: the transaction fails, and the next one on the connection has nobody signed in, not user 3
+got=$(psql -X -q -At -U "$APP" -d "$H" -v VERBOSITY=sqlstate -c "BEGIN" -c "SELECT authz.act_as('user', '1')" \
+  -c "SELECT count(*) FROM authz.who('doc', '1', 'view')" -c "COMMIT" -c "SELECT count(*) FROM sh.docs" 2>&1 | tail -n 1)
+[ "$got" = "ERROR:  28000" ] && ok "... not caught: the next transaction has nobody signed in" || bad "who not caught" "$got"
+
 echo "-- what is wrong with a connection (authz.connection_check)"
 expect "the app's role: nothing to report" "0" -c "SELECT count(*) FROM authz.connection_check()"
 got=$(PSQL -c "SELECT string_agg(severity || ': ' || problem, '; ') FROM authz.connection_check()")
@@ -138,6 +244,13 @@ case "$got" in "this connection logs in as $(PSQL -c "SELECT current_user"), a s
 if [ -n "${PGSUPERUSER:-}" ]; then
   got=$(PSQL -U "$PGSUPERUSER" -c "SET ROLE app_user" -c "SELECT count(*) FROM authz.connection_check() WHERE problem LIKE 'this connection logs in as $PGSUPERUSER, %'")
   [ "$got" = 1 ] && ok "... and a superuser's" || bad "superuser as app role" "$got"
+  # (only a superuser may make a role with BYPASSRLS)
+  psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS authz_sess_bypass" \
+    -c "CREATE ROLE authz_sess_bypass LOGIN BYPASSRLS IN ROLE app_user" >/dev/null 2>&1
+  ROLE=authz_sess_bypass expect "a login in the app role with BYPASSRLS: an error, and the only one" \
+    "error: authz_sess_bypass has BYPASSRLS: row-level security does not apply to it" \
+    -c "SELECT string_agg(severity || ': ' || problem, '; ') FROM authz.connection_check()"
+  psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS authz_sess_bypass" >/dev/null 2>&1
 fi
 expect "a login in the app role: no errors" "0" -c "SELECT count(*) FROM authz.connection_check() WHERE severity = 'error'"
 expect "... nor after SET ROLE app_user" "0" -c "SET ROLE app_user" -c "SELECT count(*) FROM authz.connection_check() WHERE severity = 'error'"
@@ -151,7 +264,11 @@ expect "... and so is the signing" "42501: permission denied for schema authz_in
 ROLE=$OTHER expect "a role that isn't the app role can't act_as" "42501: permission denied for function act_as" -c "$(ACT "'user', '1'")"
 expect "act_as names only types that sign in" "P0001: folder is not a type that signs in" -c "$(ACT "'folder', '1'")"
 
+# (taking the grant back makes the function's catalog row anew, and with it the statements the run measures: they
+# are kept first; tests/coverage_functions.sh)
+bash tests/coverage_functions.sh "$DB"
 PSQL -c "REVOKE ALL ON SCHEMA app, authz FROM $OTHER" -c "REVOKE ALL ON FUNCTION authz.connection_check() FROM $OTHER" >/dev/null 2>&1
 dropdb "$DB"
+dropdb "$H"
 for r in $APP $OTHER; do psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1; done
 [ $fails -eq 0 ] && echo "sessions: all passed" || { echo "sessions: $fails failed"; exit 1; }
