@@ -36,6 +36,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- A list or a read could take seconds on a few rows, on some policies with inheritance: where Postgres put a
+  permission's starting points on the inner side of a nested loop, it worked them out again for each row (on one
+  random policy, a list of seven rows took 1.3 s and made 10,768 calls where 76 do; now 10 ms). They are now
+  worked out once where they are read. Apply the policy again (or the next migration) to take it.
 - The command lost its connection right after signing in, before its first statement, with a traceback. It
   now says it lost the database (exit 2), as it does anywhere later.
 - A share could outlive the row it was on or to, where a row was deleted, given a new id or emptied with

@@ -321,6 +321,27 @@ class PointChecks(unittest.TestCase):
         lst = sql[sql.index("CREATE OR REPLACE FUNCTION authz.list(p_type text") :]
         self.assertNotIn("__has", lst[: lst.index("END $f$;")])
 
+    def test_starting_points_are_read_in_from(self) -> None:
+        """A recursive permission's starting points (its __start function) are read in FROM: a nested loop that
+        scans them again rereads the rows the function gave. Called in a select list, the function ran again for
+        each outer row (a list of seven rows of genpolicy's seed 3 took over a second; tests/confidence_test.py
+        counts the calls)."""
+        texts = {name: compiled(name) for name in POLICIES}
+        texts["genpolicy 3"] = Compiler(parse_policy(genpolicy.policy_text(genpolicy.make(3)), "gen.authz")).compile(
+            "gen.authz"
+        )
+        for name, sql in texts.items():
+            calls = list(re.finditer(r'\w+__start"?\(', sql))
+            if name in ("docs", "multi", "genpolicy 3"):
+                self.assertTrue(calls, name)
+            for call in calls:
+                # where it is made, or a function scan with its alias
+                said = sql[call.start() - 40 : call.end() + 10]
+                before = sql[call.start() - 30 : call.start()]
+                made = re.search(r'CREATE FUNCTION authz_int\."?$', before)
+                scanned = re.search(r'FROM authz_int\."?$', before) and re.match(r"\) \w+", sql[call.end() :])
+                self.assertTrue(made or scanned, f"{name}: {said}")
+
     def test_own_columns_first(self) -> None:
         """Reads check a recursive permission against what the object's own columns give (owner, org admin)
         before its view, and each check lists its cheapest items first."""

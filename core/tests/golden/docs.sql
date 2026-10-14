@@ -2498,7 +2498,7 @@ END $f$;
 -- folder.share (line 48): owner or org.admin or (parent.share and {inherit})
 CREATE VIEW authz_int."folder__share" AS
   SELECT c.descendant AS id FROM authz_int."folder__parent__tree" c
-  WHERE c.ancestor IN (SELECT authz_int."folder__share__start"());
+  WHERE c.ancestor IN (SELECT s.id FROM authz_int."folder__share__start"() s(id));
 CREATE VIEW authz_gen."folder__share" WITH (security_barrier) AS SELECT id FROM authz_int."folder__share";
 
 -- folder.share for one object (checks of single rows and authz.can)
@@ -2562,7 +2562,7 @@ END $f$;
 -- folder.edit (line 49): share or editor or (parent.edit and {inherit})
 CREATE VIEW authz_int."folder__edit" AS
   SELECT c.descendant AS id FROM authz_int."folder__parent__tree" c
-  WHERE c.ancestor IN (SELECT authz_int."folder__edit__start"());
+  WHERE c.ancestor IN (SELECT s.id FROM authz_int."folder__edit__start"() s(id));
 CREATE VIEW authz_gen."folder__edit" WITH (security_barrier) AS SELECT id FROM authz_int."folder__edit";
 
 -- folder.edit for one object (checks of single rows and authz.can)
@@ -2612,7 +2612,7 @@ END $f$;
 -- folder.view (line 50): edit or viewer or (parent.view and {inherit}) or linked_into.view
 CREATE VIEW authz_int."folder__view" AS
   SELECT c.descendant AS id FROM authz_int."folder__linked_into_parent__tree" c
-  WHERE c.ancestor IN (SELECT authz_int."folder__view__start"());
+  WHERE c.ancestor IN (SELECT s.id FROM authz_int."folder__view__start"() s(id));
 CREATE VIEW authz_gen."folder__view" WITH (security_barrier) AS SELECT id FROM authz_int."folder__view";
 
 -- folder.view for one object (checks of single rows and authz.can)

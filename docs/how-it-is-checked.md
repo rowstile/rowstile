@@ -215,6 +215,12 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   Each night, after every one of their 1,923 statements (about 25 minutes); on each push, ten cuts of each. The real
   command is also ended while one of its statements waits for a lock, and stopped by `statement_timeout`. Every
   night the soak cuts the first apply of twenty-five other policies, random ones among them, where its seed says.
+- **Reads that stay fast**: where a read or a list needs a permission's starting points (a function that
+  works them out), Postgres runs it once, not again for each row a nested loop looks at. `PointChecks` in
+  [`tests/unit_test.py`](../core/tests/unit_test.py) checks the compiled SQL of six policies and a random one for
+  it, and [`tests/confidence_test.py`](../core/tests/confidence_test.py) counts the calls of a list of seven rows
+  on that random policy: 76 on PostgreSQL 16, where calling the function for each row made 10,768 and took over a
+  second. <!-- checked: tests/unit_test.py "test_starting_points_are_read_in_from"; tests/confidence_test.py "its starting points run once where they are read" -->
 - **The parser**: [`tests/fuzz_parser.py`](../core/tests/fuzz_parser.py) feeds it thousands of broken
   policies; each is accepted, or refused with a line number, never a crash. <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
 - **The docs**: the getting-started guide runs as written, every line the cookbook shows is in a policy that

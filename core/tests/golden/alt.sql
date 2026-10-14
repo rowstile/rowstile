@@ -2824,7 +2824,7 @@ END $f$;
 -- doc.view__base (line 36): (owner or (reader and not blocked) or project.view or shortcut.view or (parent.view and {not exists (select 1 from alt.holds h where h.target = this.doc_no)}) or roles) and not hidden  (its inheritance, before the deny)
 CREATE VIEW authz_int."doc__view__base" AS
   SELECT c.descendant AS id FROM authz_int."doc__parent_shortcut__tree" c
-  WHERE c.ancestor IN (SELECT authz_int."doc__view__base__start"());
+  WHERE c.ancestor IN (SELECT s.id FROM authz_int."doc__view__base__start"() s(id));
 CREATE VIEW authz_gen."doc__view__base" WITH (security_barrier) AS SELECT id FROM authz_int."doc__view__base";
 
 -- doc.view__base for one object (checks of single rows and authz.can)
@@ -2868,7 +2868,7 @@ END $f$;
 -- doc.hidden (line 35): banned or parent.hidden or shortcut.hidden
 CREATE VIEW authz_int."doc__hidden" AS
   SELECT c.descendant AS id FROM authz_int."doc__parent_shortcut__tree2" c
-  WHERE c.ancestor IN (SELECT authz_int."doc__hidden__start"());
+  WHERE c.ancestor IN (SELECT s.id FROM authz_int."doc__hidden__start"() s(id));
 CREATE VIEW authz_gen."doc__hidden" WITH (security_barrier) AS SELECT id FROM authz_int."doc__hidden";
 
 -- doc.hidden for one object (checks of single rows and authz.can)
@@ -2903,7 +2903,7 @@ END $f$;
 -- doc.edit (line 33): owner or (writer and view) or (parent.edit and {not locked} and not {exists (select 1 from alt.holds h where h.target = this.up)})
 CREATE VIEW authz_int."doc__edit" AS
   SELECT c.descendant AS id FROM authz_int."doc__parent__tree" c
-  WHERE c.ancestor IN (SELECT authz_int."doc__edit__start"());
+  WHERE c.ancestor IN (SELECT s.id FROM authz_int."doc__edit__start"() s(id));
 CREATE VIEW authz_gen."doc__edit" WITH (security_barrier) AS SELECT id FROM authz_int."doc__edit";
 
 -- doc.edit for one object (checks of single rows and authz.can)
