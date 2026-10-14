@@ -41,7 +41,7 @@
   if `editor` is shared, break glass can give `editor`.
 - **Access reviews**: a snapshot of an object's shares; each is kept or revoked by
   someone who could unshare it; closing applies the decisions. <!-- checked: tests/governance.sh "closing the review revokes what was marked"; tests/governance.sh "dave (not decided) kept it"; tests/governance.sh "nor revoke it in a review" -->
-  Starting, deciding and closing one are for users: a service signed in is refused, saying so (AZ715). <!-- checked: tests/principals.sh "authz.start_review is for users: a service is told so"; tests/principals.sh "authz.review_decide is for users: a service is told so"; tests/principals.sh "authz.close_review is for users: a service is told so" -->
+  Reviews are for users: a service signed in is refused each call, saying so (AZ715). <!-- checked: tests/principals.sh "authz.start_review is for users: a service is told so"; tests/principals.sh "authz.review_items is for users: a service is told so"; tests/principals.sh "authz.review_decide is for users: a service is told so"; tests/principals.sh "authz.close_review is for users: a service is told so" -->
 - **Invariants** run with the policy's tests and on demand. <!-- checked: tests/governance.sh "the policy tests fail on it"; tests/governance.sh "a Globex user owning an Acme folder breaks it" -->
 - **Previewing a change**: `python3 core/compile_policy.py new.authz --diff [--users 1,2] | psql -d mydb`
   applies the new policy inside a transaction, lists every (user, object) pair that

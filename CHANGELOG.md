@@ -14,11 +14,11 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Changed
 
-- Access reviews are for users too: `start_review`, `review_decide` and `close_review` refuse a service signed in,
-  "authz.start_review is for users, not services (service 7 is signed in)", AZ715. A service the policy let share
-  an object could start a review of it, decide its items and close it, and the review recorded no one as having
-  started or decided it. `review_items` still answers whoever may inspect the object. Apply the policy again (or
-  the next migration) to take it.
+- Access reviews are for users too: `start_review`, `review_items`, `review_decide` and `close_review` refuse a
+  service signed in, "authz.start_review is for users, not services (service 7 is signed in)", AZ715. A service
+  the policy let share an object could start a review of it, read and decide its items and close it, and the
+  review recorded no one as having started or decided it. Apply the policy again (or the next migration) to take
+  it.
 - The calls that are for users refuse a service signed in with words that say so, and a code of their own:
   "authz.create_role is for users, not services (service 8 is signed in)", AZ715 (403 in the SDKs). They are the
   custom roles API (`create_role`, `set_role_permissions`, `delete_role`, `roles_of`), access requests
