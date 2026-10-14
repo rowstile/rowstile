@@ -394,6 +394,34 @@ def main() -> None:
         status, page = c.call("/")
         check("the page, without the token (it carries no data)", status == 200 and "rowstile Studio" in page, status)
         check("the API needs the token", Client(ro, token="wrong").call("/api/overview")[0] == 401)
+        # a page left open from Studio's run before holds that run's token: the answer says what happened
+        check(
+            "a token from an earlier start of Studio: 401, saying Studio was started again and which address to open",
+            Client(ro, token="wrong").call("/api/overview")
+            == (
+                401,
+                {
+                    "title": "Unauthorized",
+                    "status": 401,
+                    "detail": "this page's token isn't this Studio's: Studio was started again since the page was "
+                    "opened, and each start makes a new token. Open the address rowstile printed last",
+                },
+            ),
+            Client(ro, token="wrong").call("/api/overview"),
+        )
+        check(
+            "no token at all: 401, saying where to find it",
+            Client(ro, token="").call("/api/overview")
+            == (
+                401,
+                {
+                    "title": "Unauthorized",
+                    "status": 401,
+                    "detail": "no token: open Studio from the address rowstile printed (it carries the token)",
+                },
+            ),
+            Client(ro, token="").call("/api/overview"),
+        )
         check(
             "... and a request for localhost (not a DNS name pointed here)",
             c.call("/api/overview", host="evil.example:4983")[0] == 403,
