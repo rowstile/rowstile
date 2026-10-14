@@ -1,0 +1,38 @@
+-- answer: roles-refused
+-- authz.share refuses another owner's role (an error, AZ706: the app's mistake, not a refusal), an assignment
+-- of one grants nothing, and a folder moved to another org stops honouring the first org's roles (and honours the
+-- new one's).
+app role app_user
+
+type user = app.users
+type org = app.orgs
+  admin : user = app.org_admins(org_id -> user_id)
+  can manage_roles = admin
+type folder = app.folders
+  org   : org = org_id
+  owner : user = owner_id
+  roles : user from org
+  can share = owner or org.admin
+  can view  = owner or roles
+
+test "another org's role"
+  given alice = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo    = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given cy    = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given erin  = {INSERT INTO app.users (id) VALUES (5) RETURNING id}
+  given fay   = {INSERT INTO app.users (id) VALUES (6) RETURNING id}
+  given {INSERT INTO app.orgs VALUES (1), (2)}
+  given {INSERT INTO app.org_admins VALUES (1, $erin), (2, $fay)}
+  given f     = {INSERT INTO app.folders (org_id, owner_id) VALUES (1, $alice) RETURNING id}
+  as user $erin allowed {SELECT authz.create_role('org', 1, 'folder', 'a', ARRAY['view'])}
+  as user $fay allowed {SELECT authz.create_role('org', 2, 'folder', 'b', ARRAY['view'])}
+  given ra = {SELECT id FROM authz.roles WHERE name = 'a'}
+  given rb = {SELECT id FROM authz.roles WHERE name = 'b'}
+  as user $alice refused {SELECT authz.share('folder', $f, 'role:' || $rb, 'user', $bo)}   -- error: role b belongs to org 2, which doesn't own folder 1
+  as user $alice allowed {SELECT authz.share('folder', $f, 'role:' || $ra, 'user', $cy)}
+  user $cy can view folder $f
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', $f, 'role:' || $rb, 'user', $bo)}
+  user $bo cannot view folder $f
+  given {UPDATE app.folders SET org_id = 2 WHERE id = $f}
+  user $cy cannot view folder $f
+  user $bo can view folder $f

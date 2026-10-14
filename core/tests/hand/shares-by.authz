@@ -1,0 +1,29 @@
+-- answer: shares-by
+-- A shared relation is given by whoever holds share on the object, or the permission `shared by` names, and every
+-- permission the relation gives there.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  editor : user = editor_id
+  viewer : user shared
+  reader : user shared by edit
+  can share = owner
+  can edit  = owner or editor
+  can view  = owner or viewer or reader
+
+test "who may share what"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given ed  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given cy  = {INSERT INTO app.users (id) VALUES (4) RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id, editor_id) VALUES ($ann, $ed) RETURNING id}
+  as user $ed refused {SELECT authz.share('folder', $f, 'viewer', 'user', $bo)}
+  user $bo cannot view folder $f
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'user', $bo)}
+  user $bo can view folder $f
+  as user $ed refused {SELECT authz.share('folder', $f, 'reader', 'user', $cy)}   -- reader gives view, which ed lacks
+  user $cy cannot view folder $f
+  as user $bo refused {SELECT authz.share('folder', $f, 'reader', 'user', $ed)}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'reader', 'user', $ed)}

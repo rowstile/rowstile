@@ -1,0 +1,20 @@
+-- answer: shared-if, conditions-this
+-- shared if: a condition on the share being made (this), which authz.share checks: only to active users.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  viewer : user shared if {exists (select 1 from app.users u where u.id::text = this.subject_id::text and u.active)}
+  can share = owner
+  can view  = owner or viewer
+
+test "only to active users"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id, active) VALUES (2, true) RETURNING id}
+  given cy  = {INSERT INTO app.users (id, active) VALUES (3, false) RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'user', $bo)}
+  as user $ann refused {SELECT authz.share('folder', $f, 'viewer', 'user', $cy)}
+  user $bo can view folder $f
+  user $cy cannot view folder $f

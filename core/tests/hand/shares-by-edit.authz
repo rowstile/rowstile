@@ -1,0 +1,22 @@
+-- answer: shares-by
+-- shared by edit: editors give it (here they hold view too, which it gives), and only it.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  editor : user = editor_id
+  viewer : user shared
+  reader : user shared by edit
+  can share = owner
+  can edit  = owner or editor
+  can view  = edit or viewer or reader
+
+test "an editor shares what shared by edit lets her"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given ed  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given cy  = {INSERT INTO app.users (id) VALUES (4) RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id, editor_id) VALUES ($ann, $ed) RETURNING id}
+  as user $ed allowed {SELECT authz.share('folder', $f, 'reader', 'user', $cy)}
+  user $cy can view folder $f
+  as user $ed refused {SELECT authz.share('folder', $f, 'viewer', 'user', $cy)}

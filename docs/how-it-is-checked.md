@@ -62,12 +62,19 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   doesn't name gets nothing, and that `authz.lint()` reports what changed and `rowstile apply` puts it right.
   A few on every run; on the full run the twenty worlds, of a thousand seeds, in which every two of those
   features meet; sixty with new seeds every night.
-- **Answers worked out by hand**: `HandAnswers` in [`tests/unit_test.py`](../core/tests/unit_test.py) gives
-  the evaluator small policies and worlds whose answers were worked out from
-  [the language's reference](reference/language.md), by hand: `not` and parentheses, inheritance stopped by
-  a condition or by a type's `where`, a suspended user, groups inside groups and in a loop, each kind of
-  subject (`user:*`, `anyone`, a link, a service), a deny inside inheritance, folders and projects inside each
-  other, custom roles with and without `from`, NULL in conditions.
+- **Answers worked out by hand**: each paragraph of [the language's reference](reference/language.md) that says
+  who may do what, given a policy and rows, carries an anchor readers don't see (40 of them), and each anchor has
+  a case whose answers were worked out from that paragraph, by hand, and written down before anything ran.
+  `HandAnswers` in [`tests/unit_test.py`](../core/tests/unit_test.py) gives the reference evaluator the 39 it can
+  answer: small policies and worlds, `not` and parentheses, inheritance through any mix of sources and stopped by a
+  condition or a type's `where`, a suspended user, groups inside groups and in a loop, each kind of subject (`user:*`,
+  `anyone`, a link, a service), a relation followed to a user's own permission, a deny inside inheritance, custom
+  roles with and without `from` and a folder moved to another org, NULL in conditions, an invariant asked as a
+  service and as nobody. [`tests/hand_answers.sh`](../core/tests/hand_answers.sh) gives the database the 25 that are
+  its alone to answer (143 checks), as named tests in `tests/hand/`: a share that expires or starts later, a caveat,
+  `shared if`, who may share, a write checked before and after, column rules, an insert, a masked column, `this` and a
+  bare column in a subquery, conditions read with the policy's rights, a polymorphic pair naming a type the policy
+  doesn't have, a key of two columns. A unit test fails when an anchor has no case, or a case names none. <!-- checked: tests/unit_test.py "test_every_answering_paragraph_has_a_case" -->
 - **Conditions, against Postgres**: `rowstile prove` and the review read simple conditions (`{not archived}`,
   `{size > 10}`, `{owner_id = authz.uid()}`) themselves, in worlds they make up. difftest never does: it
   asks the database. <!-- unchecked: how difftest is written, which reading it shows -->

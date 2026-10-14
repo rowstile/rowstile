@@ -1,0 +1,22 @@
+-- answer: keys-composite
+-- A relation points at an object with a key of two columns by both: [org_id, parent_id] is the parent in the row's
+-- own org.
+app role app_user
+
+type user = app.users
+type folder = app.org_folders (org_id, id)
+  parent : folder = [org_id, parent_id]
+  owner  : user = owner_id
+  can view = owner or parent.view
+
+test "the parent in the row's own org"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given a   = {INSERT INTO app.org_folders (org_id, id, owner_id) VALUES (1, 1, $ann) RETURNING org_id, id}
+  given b   = {INSERT INTO app.org_folders (org_id, id, owner_id) VALUES (2, 1, $bo) RETURNING org_id, id}
+  given c   = {INSERT INTO app.org_folders (org_id, id, parent_id) VALUES (1, 2, 1) RETURNING org_id, id}
+  given d   = {INSERT INTO app.org_folders (org_id, id, parent_id) VALUES (2, 2, 1) RETURNING org_id, id}
+  user $ann can view folder $c
+  user $ann cannot view folder $d
+  user $bo can view folder $d
+  user $bo cannot view folder $c

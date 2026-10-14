@@ -1,0 +1,28 @@
+-- answer: mask-view, mask-table
+-- A masked view has the rows select allows, the column NULL unless the mask's rule holds; the app role loses SELECT
+-- on the column in the table itself, and keeps the other columns.
+app role app_user
+
+type user = app.users
+type file = app.files
+  owner  : user = owner_id
+  viewer : user = app.file_viewers(file_id -> user_id)
+  can view = owner or viewer
+  can edit = owner
+
+rules app.files view app.files_visible
+  select    : view
+  mask body : edit
+
+test "the masked view and the table"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given f1  = {INSERT INTO app.files (owner_id, body) VALUES ($ann, 'x') RETURNING id}
+  given f2  = {INSERT INTO app.files (owner_id, body) VALUES ($ann, 'y') RETURNING id}
+  given {INSERT INTO app.file_viewers VALUES ($f1, $bo)}
+  as user $bo sees 1 {SELECT FROM app.files_visible WHERE id IN ($f1, $f2)}
+  as user $bo sees 1 {SELECT FROM app.files_visible WHERE id = $f1 AND body IS NULL}
+  as user $ann sees 2 {SELECT FROM app.files_visible WHERE id IN ($f1, $f2)}
+  as user $ann sees 1 {SELECT FROM app.files_visible WHERE id = $f1 AND body IS NOT NULL}
+  as user $ann allowed {SELECT name FROM app.files}
+  as user $ann refused {SELECT body FROM app.files}

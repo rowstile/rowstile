@@ -352,6 +352,12 @@ tests/reference.sh
 record $? "reference"
 }
 unit policy 12 reference
+hand_answers() {
+step "answers worked out by hand from the language's reference, held against the database (tests/hand/)"
+tests/hand_answers.sh | quiet_ok
+record "${PIPESTATUS[0]}" "hand answers"
+}
+unit policy 45 hand_answers
 
 fi
 difftest() {

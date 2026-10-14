@@ -1,0 +1,30 @@
+-- answer: update-before-after
+-- The plain update rule holds on the row before and after the change.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  viewer : user = app.folder_viewers(folder_id -> user_id)
+  can edit = owner
+  can view = owner or viewer
+type file = app.files
+  folder : folder = folder_id
+  can edit = folder.edit
+  can view = folder.view
+
+rules app.files
+  select : view
+  update : edit
+
+test "an update needs edit before and after"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given a   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given b   = {INSERT INTO app.folders (owner_id) VALUES ($bo) RETURNING id}
+  given {INSERT INTO app.folder_viewers VALUES ($b, $ann)}
+  given f   = {INSERT INTO app.files (folder_id) VALUES ($a) RETURNING id}
+  given g   = {INSERT INTO app.files (folder_id) VALUES ($b) RETURNING id}
+  as user $ann allowed {UPDATE app.files SET name = 'x' WHERE id = $f}
+  as user $ann refused {UPDATE app.files SET folder_id = $b WHERE id = $f}
+  as user $ann refused {UPDATE app.files SET name = 'x' WHERE id = $g}

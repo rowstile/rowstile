@@ -1,0 +1,33 @@
+-- answer: polymorphic-type-names
+-- The type column of a polymorphic pair holds the policy's type names; a row naming a type the relation doesn't
+-- list links to nothing.
+app role app_user
+
+type user = app.users
+type team = app.teams
+type project = app.projects
+  owner : user = owner_id
+  can view = owner
+type folder = app.folders
+  owner  : user = owner_id
+  parent : folder, project = (parent_type, parent_id)
+  can view = owner or parent.view
+
+test "what a polymorphic pair links to"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given p   = {INSERT INTO app.projects (id, owner_id) VALUES (1, $ann) RETURNING id}
+  given t   = {INSERT INTO app.teams (id) VALUES (1) RETURNING id}
+  given f1  = {INSERT INTO app.folders (id, owner_id) VALUES (1, $bo) RETURNING id}
+  given f10 = {INSERT INTO app.folders (id, parent_type, parent_id) VALUES (10, 'project', 1) RETURNING id}
+  given f11 = {INSERT INTO app.folders (id, parent_type, parent_id) VALUES (11, 'folder', 1) RETURNING id}
+  given f12 = {INSERT INTO app.folders (id, parent_type, parent_id) VALUES (12, 'Project', 1) RETURNING id}
+  given f13 = {INSERT INTO app.folders (id, parent_type, parent_id) VALUES (13, 'team', 1) RETURNING id}
+  given f14 = {INSERT INTO app.folders (id, parent_type, parent_id) VALUES (14, 'projects', 1) RETURNING id}
+  user $ann can view folder $f10
+  user $ann cannot view folder $f11
+  user $ann cannot view folder $f12
+  user $ann cannot view folder $f13
+  user $ann cannot view folder $f14
+  user $bo can view folder $f11
+  user $bo cannot view folder $f10

@@ -1,0 +1,20 @@
+-- answer: polymorphic-type-names
+-- Renaming a type changes what the rows link to: here projects are the type `proj`.
+app role app_user
+
+type user = app.users
+type proj = app.projects
+  owner : user = owner_id
+  can view = owner
+type folder = app.folders
+  owner  : user = owner_id
+  parent : folder, proj = (parent_type, parent_id)
+  can view = owner or parent.view
+
+test "a row still naming the old type links to nothing"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given p   = {INSERT INTO app.projects (id, owner_id) VALUES (1, $ann) RETURNING id}
+  given f10 = {INSERT INTO app.folders (id, parent_type, parent_id) VALUES (10, 'project', 1) RETURNING id}
+  given f15 = {INSERT INTO app.folders (id, parent_type, parent_id) VALUES (15, 'proj', 1) RETURNING id}
+  user $ann cannot view folder $f10
+  user $ann can view folder $f15

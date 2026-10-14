@@ -1,0 +1,34 @@
+-- answer: caveats
+-- A caveat goes with one share and is checked at each request, arg() being what the share was made with.
+app role app_user
+
+caveat from_ip        = {authz.ctx('ip') = arg('ip')}
+caveat business_hours = {authz.ctx('mode') = 'business'}
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  viewer : user shared
+  can share = owner
+  can view  = owner or viewer
+
+test "a share with a caveat counts while it holds"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given cy  = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given dan = {INSERT INTO app.users (id) VALUES (4) RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'user', $bo, '', NULL, NULL, 'from_ip', jsonb_build_object('ip', '10.0.0.1'))}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'user', $cy, '', NULL, NULL, 'business_hours')}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'user', $dan)}
+  user $bo cannot view folder $f
+  user $cy cannot view folder $f
+  user $dan can view folder $f
+  given {SELECT set_config('authz_ctx.ip', '10.0.0.1', true)}
+  user $bo can view folder $f
+  user $cy cannot view folder $f
+  given {SELECT set_config('authz_ctx.ip', '10.0.0.2', true)}
+  user $bo cannot view folder $f
+  given {SELECT set_config('authz_ctx.mode', 'business', true)}
+  user $cy can view folder $f
+  user $bo cannot view folder $f
