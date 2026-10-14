@@ -485,11 +485,27 @@ def names(name: str) -> list[tuple[str, str]]:
     return sorted({p for p in out if len(p[0]) > 1}, key=lambda p: -len(p[0]))
 
 
+# a rule on columns refusing (output.py, column_rule_sql): its message holds the policy's own columns and rule, and
+# names the row by its key, of one column or several
+COLUMN_RULE = re.compile(
+    r"""RAISE EXCEPTION 'changing (?:[^']|'')*? of (\S+) % needs: (?:[^']|'')*', (OLD\."(?:[^"]|"")*"|ROW\(.*?\)::text) USING"""
+)
+
+
 def plain(text: str, own: Sequence[tuple[str, str]]) -> str:
-    """A line of a function, its policy's own names taken out (`names`: those its name holds, longest first),
-    spaces squeezed: the same statement in two databases' functions of a kind reads the same."""
+    """A line of a function, its policy's own names taken out (`names`: those its name holds, longest first; and a
+    rule on columns' own words), spaces squeezed: the same statement in two databases' functions of a kind reads the
+    same."""
     for n, instead in own:
         text = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(n)}(?![A-Za-z0-9_])", instead, text)
+    text = COLUMN_RULE.sub(
+        lambda m: (
+            f"RAISE EXCEPTION 'changing <columns> of {m.group(1)} % needs: <rule>', "
+            + ("OLD.<key>" if m.group(2).startswith("OLD.") else "ROW(OLD.<key>, ...)::text")
+            + " USING"
+        ),
+        text,
+    )
     text = " ".join(text.split())
     return text if len(text) <= 110 else text[:107] + "..."
 

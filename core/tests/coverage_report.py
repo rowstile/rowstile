@@ -201,6 +201,20 @@ def functions_report(called: Sequence[Called]) -> list[str]:
     return out
 
 
+def lost(called: Sequence[Called], m: coverage_plpgsql.Measured) -> list[str]:
+    """The PL/pgSQL functions Postgres counts as called in a database whose statements the profiler read none of
+    there: its counts went with the function's catalog row, made anew after the calls (applying again, a GRANT or a
+    REVOKE on it) and before they were read. Postgres's own count is by the function's oid, which a GRANT keeps."""
+    read = {(r.step, r.db, r.schema, r.name, r.args) for r in m.runs}
+    ran = {(r.step, r.db, r.schema, r.name, r.args) for r in m.runs if any(r.ran.values())}
+    keys = {
+        (c.step, c.db, c.schema, c.name, c.args)
+        for c in called
+        if c.how.startswith("plpgsql") and (c.entered or c.calls > 0)
+    }
+    return [f"  {s}.{n}({a}) in {db} ({step})" for step, db, s, n, a in sorted(keys & read - ran)]
+
+
 def relative(path: str) -> str:
     """A measured file's name as the report gives it: relative to core/, with forward slashes."""
     return (os.path.relpath(path, CODE) if os.path.isabs(path) else path).replace(os.sep, "/")
@@ -487,6 +501,15 @@ def main(argv: Sequence[str]) -> int:
     database = [""] + functions_report(called) if called else []
     if statements.runs:
         database += ["", *coverage_plpgsql.report(statements, each, a.dirs)]
+        gone = lost(called, statements)
+        if gone:
+            database += [
+                "",
+                "Called (Postgres counts them) but none of their statements counted: the profiler's counts went with",
+                "the function's catalog row, made anew after the calls (an apply, a GRANT or REVOKE on it). A suite",
+                "that does so measures first (tests/coverage_functions.sh), or what it ran is reported as never run:",
+                *gone,
+            ]
     with open(os.path.join(out, "report.txt"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(report(files) + database) + "\n")
     print("\n".join(table(files)))
