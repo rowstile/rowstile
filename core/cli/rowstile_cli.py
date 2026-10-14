@@ -262,9 +262,9 @@ ENV = EnvFiles()
 
 
 def cant_connect(e: BaseException, dsn: str | None) -> str:
-    """What to say when the connection failed. When nothing named a database, the defaults were tried (a local
-    socket, the system's user): the message says that, and how to name one, rather than quote a host nobody
-    gave. A database a .env file named: which file."""
+    """What to say when the connection failed. When nothing named a database, libpq's defaults were tried (the
+    system's user, on a local socket, or localhost on Windows): the message says that, and how to name one. A
+    database a .env file named: which file."""
     if dsn or any(os.environ.get(v) for v in ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE")):
         named = f"\n(the database is the one {ENV.where} names)" if ENV.where else ""
         return f"can't connect: {e}{named}{ENV.note()}"
