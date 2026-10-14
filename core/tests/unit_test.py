@@ -5970,6 +5970,27 @@ class SmallPolicies(unittest.TestCase):
         with self.assertRaises(self.s.Unloadable):
             self.s.load_sql(pol, dataclasses.replace(data, cond={("t1", "exists (select 1)"): ["1"]}))
 
+    def test_a_world_with_conditions_nothing_asked_reads(self) -> None:
+        # tests/rewrites.py replays a difference the review shows: the world is made as rows, but a condition that
+        # reads other tables holds where they say, not where the world says. Only those the answer asked reads count
+        pol = parse_policy(
+            "app role app_user\ntype user = gp.users\ntype t1 = gp.t1\n  r1 : user = c_r1\n  member : user = gp.m(a -> b)\n"
+            "  can p1 = r1 and {exists (select 1)}\n  can p2 = member or {b1}\n"
+            "type t2 = gp.t2\n  r2 : t1#member = gp.n(a -> b)\n  up : t1 = c_up\n  can p3 = r2 or up.p1\n",
+            "small.authz",
+        )
+        self.assertEqual(self.s.conditions_read(pol, "t1", "p2"), {("t1", "b1")})
+        self.assertEqual(self.s.conditions_read(pol, "t2", "p3"), {("t1", "exists (select 1)")})
+        self.assertEqual(self.s.conditions_read(pol, "t2", "r2"), set())
+        data = self.s.data_of(pol, {"user": ["1", "2"], "t1": ["1"], "t2": ["1"]}, [])
+        data.cond[("t1", "exists (select 1)")] = []
+        with self.assertRaises(self.s.Unloadable):
+            self.s.load_sql(pol, data)
+        with self.assertRaises(self.s.Unloadable):
+            self.s.load_sql(pol, data, read=self.s.conditions_read(pol, "t2", "p3"))
+        rows, _ = self.s.load_sql(pol, data, read=self.s.conditions_read(pol, "t1", "p2"))
+        self.assertIn('INSERT INTO "gp"."t2" ("id") VALUES (1);', rows)
+
     def test_the_parts_made_wrong_are_told_apart(self) -> None:
         spec = self.s.decorated(
             self.spec("""
