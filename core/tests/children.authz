@@ -4,6 +4,8 @@
 app role app_user
 
 type user = ch.users
+type bot = ch.bots principal
+type person = ch.people principal
 
 type note = ch.notes
   owner  : user = owner_id

@@ -51,6 +51,12 @@ the app made up) is nobody: `authz.uid()` is NULL and `authz.principal()` return
 fails the type's `where`. <!-- checked: tests/principals.sh "an id the user table doesn't have is nobody: no uid, no principal"; tests/principals.sh "a service failing the type's where is nobody" -->
 So a deleted user's leftover `owner_id` grants nothing, and an app inserts a new
 user's row before it signs in as them. <!-- checked: tests/principals.sh "so a column that still names it grants nothing, nor does user:*"; tests/principals.sh "once the row is there, they are someone" -->
+A principal's API keys go with its row: deleting the row, giving it a new id (as its shares do) or emptying its
+table deletes them, each with a line in the audit trail, so a row that later has that id signs in with none of
+them. <!-- checked: tests/principals.sh "deleting a user deletes their keys"; tests/principals.sh "a service given a new id loses its keys, as its shares"; tests/principals.sh "each in the audit trail"; tests/principals.sh "a new user with the old one's id signs in with none of its keys"; tests/principals.sh "emptying the services' table deletes every service's keys"; tests/children.sh "a bot's keys go when its id changes, inside its partition or to another, and with its row"; tests/children.sh "so a person stored there loses their keys with a new id" -->
+A key made while its principal is deleted waits for the delete and is refused; a delete in REPEATABLE READ or
+SERIALIZABLE whose snapshot is older than a key made since fails with a serialization error (40001), to retry. <!-- checked: tests/principals.sh "a key made while its user is deleted waits for the delete, then is refused"; tests/principals.sh "and no key is left behind"; tests/principals.sh "a delete with an older snapshot than a key made for the service gets a serialization error" -->
+Applying the policy deletes the keys of principals whose rows went while nothing watched them. <!-- checked: tests/principals.sh "applying the policy deletes the keys of a principal whose row is gone" -->
 
 **Every sign-in is signed**. `act_as` and the logins put an HMAC in `authz.session`, over
 who is signed in, the scopes, the backend and the transaction, with a key the app role can't read. <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/sessions.sh "and so is the signing" -->

@@ -2,7 +2,8 @@
 read-only impersonation, and syncing group members from an identity provider."""
 
 from .compiler import Core
-from .parse import cols
+from .governance import trigger_if_partitioned
+from .parse import Type, cols
 from .sqlutil import lit, q, qt
 
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
@@ -24,7 +25,109 @@ SESSION_SIG = (
 SESSION_OK = "authz_int.session_ok()"
 
 
+# A principal's API keys go with its row (key_forget_sql). A key is made under a lock on the principal's row (FOR
+# KEY SHARE), so a delete waits for it, and in READ COMMITTED the trigger that deletes the row's keys then sees it. A
+# transaction whose snapshot is older than the key (REPEATABLE READ, SERIALIZABLE) doesn't, so making a key also
+# writes a new version of a mark row for its principal, and a delete, a new id or a TRUNCATE in such a transaction
+# writes the same mark first: where a key it can't see was made since its snapshot, that fails to serialize (40001)
+# instead of committing and leaving the key to whoever later has that id. One mark per principal with keys made,
+# removed with the row.
+KEY_MARKS = """-- a mark for each principal a key was made for (authz_int.mark_key), until its row is gone (keys_gone)
+CREATE TABLE authz_int.key_marks (type text, id text, n bigint NOT NULL DEFAULT 0, PRIMARY KEY (type, id));
+CREATE FUNCTION authz_int.mark_key(p_type text, p_id text) RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+  INSERT INTO authz_int.key_marks AS m (type, id) VALUES (p_type, p_id)
+  ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1 $f$;
+-- whether a principal's row is there, locked (FOR KEY SHARE) until the transaction ends
+CREATE FUNCTION authz_int.lock_principal(p_type text, p_id text) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_tbl text; v_find text; v_found boolean;
+BEGIN
+  SELECT t.tbl, t.find INTO v_tbl, v_find FROM authz_int.types t WHERE t.name = p_type AND t.principal;
+  -- (the key's type by a subquery, as authz_int.hold reads it: a variable would keep its first value)
+  IF v_tbl IS NULL OR p_id IS NULL
+     OR NOT pg_catalog.pg_input_is_valid(p_id, (SELECT t.keytype FROM authz_int.types t WHERE t.name = p_type)) THEN
+    RETURN false;
+  END IF;
+  EXECUTE pg_catalog.format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s FOR KEY SHARE)', v_tbl, v_find) INTO v_found
+    USING p_id;
+  RETURN v_found;
+END $f$;
+-- the keys of principals that are gone, or whose id changed (p_ids; NULL: every one of the type, TRUNCATE) are
+-- deleted, each in the audit trail. In a transaction whose snapshot may be older than a key made for one of them
+-- (not READ COMMITTED), their marks are written first: if a key was made since, that fails to serialize (40001)
+CREATE FUNCTION authz_int.keys_gone(p_type text, p_ids text[]) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE k record;
+BEGIN
+  IF p_ids IS NOT NULL AND pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    INSERT INTO authz_int.key_marks AS m (type, id) SELECT DISTINCT p_type, x FROM unnest(p_ids) x
+    ON CONFLICT (type, id) DO UPDATE SET n = m.n + 1;
+  END IF;
+  DELETE FROM authz_int.key_marks WHERE type = p_type AND (p_ids IS NULL OR id = ANY (p_ids));
+  FOR k IN DELETE FROM authz.api_keys WHERE principal_type = p_type AND (p_ids IS NULL OR user_id = ANY (p_ids))
+           RETURNING id, user_id, name LOOP
+    PERFORM authz_int.audit('delete_api_key', p_type, k.user_id, NULL, NULL, NULL, NULL,
+                            jsonb_build_object('key', k.id, 'name', k.name, 'why', 'its principal is gone'));
+  END LOOP;
+END $f$;"""
+
+
 class IdentityMixin(Core):
+    def key_forget_sql(self, t: Type) -> str:
+        """A principal's API keys go with its row: deleted with the row, when its id changes (as its shares are) or
+        when its table is emptied, so a row that later has that id signs in with none of them."""
+        tbl = qt(t.table)
+        fn = f"authz_int.{q(t.name + '__keys_gone')}"
+        fn_row = f"authz_int.{q(t.name + '__keys_gone_id')}"
+        fn_first = f"authz_int.{q(t.name + '__keys_gone_all')}"
+        name = lit(t.name)
+        gone = f"SELECT {self.key_text(t, 'o')} FROM old_rows o EXCEPT SELECT {self.key_text(t, 'n')} FROM new_rows n"
+        moved = trigger_if_partitioned(
+            t.table,
+            f"CREATE TRIGGER {q('authz_' + t.name + '_keys_gone_moved')} AFTER UPDATE ON {tbl} "
+            f"REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn}()",
+        )
+        return f"""-- the API keys of {t.name} rows that are gone, or whose id changed, are deleted (authz_int.keys_gone)
+CREATE FUNCTION {fn}() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF TG_OP = 'TRUNCATE' THEN
+    PERFORM authz_int.keys_gone({name}, NULL);
+  ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
+    PERFORM authz_int.keys_gone({name}, ARRAY({gone}));
+  ELSE
+    PERFORM authz_int.keys_gone({name}, ARRAY(SELECT {self.key_text(t, "o")} FROM old_rows o));
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE FUNCTION {fn_row}() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  PERFORM authz_int.keys_gone({name}, ARRAY[{self.key_text(t, "OLD")}]);
+  RETURN NULL;
+END $f$;
+-- before TRUNCATE empties the table: with a snapshot older than a key made for one of its rows, fail to serialize
+CREATE FUNCTION {fn_first}() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    PERFORM authz_int.keys_gone({name}, ARRAY(SELECT {self.key_text(t, "x")} FROM {tbl} x));
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER {q("authz_" + t.name + "_keys_gone_del")} AFTER DELETE ON {tbl}
+  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+CREATE TRIGGER {q("authz_" + t.name + "_keys_gone_id")} AFTER UPDATE ON {tbl} FOR EACH ROW
+  WHEN ({self.key(t, "OLD")} IS DISTINCT FROM {self.key(t, "NEW")}) EXECUTE FUNCTION {fn_row}();
+CREATE TRIGGER {q("authz_" + t.name + "_keys_gone_trunc")} AFTER TRUNCATE ON {tbl}
+  FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+CREATE TRIGGER {q("authz_" + t.name + "_keys_gone_trunc_first")} BEFORE TRUNCATE ON {tbl}
+  FOR EACH STATEMENT EXECUTE FUNCTION {fn_first}();
+-- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
+-- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with lose their keys too.
+{moved}"""
+
     def session_sql(self) -> str:
         """Signed sessions: who is signed in (authz.user_id, principal_type, scopes, acting_user) is
         believed only with the signature authz.act_as() and the logins put in authz.session: an HMAC of those
@@ -204,7 +307,9 @@ LANGUAGE sql {DEF} AS $f$
               WHERE NOT EXISTS (SELECT 1 FROM {tbl} s WHERE {this} AND s.{sc} = w.m) RETURNING 1)
       SELECT (SELECT count(*) FROM ins)::int, (SELECT count(*) FROM del)::int INTO added, removed;""")
         sync = "\n".join(sync_cases) if sync_cases else "    WHEN NULL THEN NULL;"
-        return f"""-- API keys: a signed-in user's own, or a principal's (a service's) made by someone holding
+        return f"""{KEY_MARKS}
+
+-- API keys: a signed-in user's own, or a principal's (a service's) made by someone holding
 -- manage_keys on it; only a hash is kept
 CREATE FUNCTION authz.create_api_key(p_name text, p_scopes text DEFAULT '', p_expires_at timestamptz DEFAULT NULL,
   p_principal_type text DEFAULT NULL, p_principal_id text DEFAULT NULL)
@@ -216,13 +321,16 @@ DECLARE v_token text := 'ak_' || replace(gen_random_uuid()::text || gen_random_u
         v_type text := coalesce(p_principal_type, 'user'); v_id text;
 BEGIN
   PERFORM authz_int.check_writable();
+  -- the principal's row is locked (FOR KEY SHARE) before it is checked: a delete of it waits for this key, or this
+  -- for the delete, which leaves no principal to make it for (a delete with an older snapshot: keys_gone)
   IF p_principal_id IS NULL THEN
-    IF v_type <> 'user' OR authz.uid() IS NULL THEN
+    v_id := authz.uid()::text;
+    IF v_type <> 'user' OR v_id IS NULL OR NOT authz_int.lock_principal('user', v_id) THEN
       RAISE EXCEPTION 'sign in to create an API key' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ714';
     END IF;
-    v_id := authz.uid()::text;
   ELSE
     v_id := authz_int.canon(v_type, p_principal_id);
+    PERFORM authz_int.lock_principal(v_type, v_id);
     PERFORM authz_int.check_manage_keys(v_type, v_id);
   END IF;
   SELECT string_agg(x, ', ') INTO v_bad FROM unnest(v_scopes) x
@@ -234,6 +342,7 @@ BEGIN
   INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash, scopes, expires_at)
   VALUES (v_id, v_type, p_name, left(v_token, 10), encode(sha256(convert_to(v_token, 'UTF8')), 'hex'),
           array_to_string(v_scopes, ','), p_expires_at);
+  PERFORM authz_int.mark_key(v_type, v_id);
   PERFORM authz_int.audit('create_api_key', v_type, v_id, NULL, NULL, NULL, NULL,
                           jsonb_build_object('name', p_name, 'scopes', v_scopes, 'expires_at', p_expires_at));
   RETURN v_token;

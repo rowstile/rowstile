@@ -116,6 +116,18 @@ same "... and one line, not two, for a row that stayed where it was" "$(relates 
 owner 1 -c "UPDATE ch.tasks SET owner_id = 1 WHERE id = 3" -c "UPDATE ch.tasks SET owner_id = 2, state = 'open' WHERE id = 3" >/dev/null
 same "... a line for each change after that, moved or not" "$(relates task 3)" "1 set 2, was 1; 1 set 1, was 2; 1 set 2, was 1"
 
+echo "-- the API keys of principals stored in partitions, and in a table that inherits"
+PSQL -c "INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash) VALUES
+  ('1', 'bot', 'a', 'ak_', 'h1'), ('2', 'bot', 'b', 'ak_', 'h2'), ('3', 'bot', 'c', 'ak_', 'h3'),
+  ('11', 'person', 'd', 'ak_', 'h4'), ('12', 'person', 'e', 'ak_', 'h5')"
+keys() { PSQL -c "SELECT coalesce(string_agg(user_id, ' ' ORDER BY user_id), '') FROM authz.api_keys WHERE principal_type = '$1'"; }
+PSQL -c "UPDATE ch.bots SET id = 33 WHERE id = 3" -c "UPDATE ch.bots SET id = 502 WHERE id = 2" -c "DELETE FROM ch.bots WHERE id = 1"
+same "a bot's keys go when its id changes, inside its partition or to another, and with its row" "$(keys bot)" ""
+same "the table that inherits from the people's has the row trigger that deletes the keys of an id that changes" \
+  "$(PSQL -c "SELECT count(*) FROM pg_trigger WHERE tgrelid = 'ch.people_old'::regclass AND tgname = 'authz_person_keys_gone_id'")" 1
+PSQL -c "UPDATE ch.people SET id = 111 WHERE id = 11" -c "DELETE FROM ch.people WHERE id = 12"
+same "... so a person stored there loses their keys with a new id, and one above with their row" "$(keys person)" ""
+
 echo "-- a partition made after the policy was applied"
 PSQL -c "CREATE TABLE ch.notes_top PARTITION OF ch.notes FOR VALUES FROM (1000) TO (2000)" \
      -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ch.notes_top TO app_user" -c "INSERT INTO ch.notes VALUES (1001, 3, NULL, 'carol''s')"
