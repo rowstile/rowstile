@@ -26,5 +26,38 @@ for db in "$@"; do
     awk -F '\t' -v step="$step" -v db="$db" 'BEGIN {OFS = "\t"} {print step, db, $0}')
   # in whole, under a lock: run_tests.sh's lanes drop databases at the same time, and a long write may be cut
   [ -z "$rows" ] || { flock 9 && printf '%s\n' "$rows" >&9; } 9>> "$ROWSTILE_COVERAGE/functions.tsv"
+  # statement by statement, where the server runs plpgsql_check's profiler (ci.sh --statements preloads it, and says
+  # so: ROWSTILE_COVERAGE_STATEMENTS): read as the superuser, with the extension made for the moment, in a schema of
+  # its own and a transaction rolled back, so nothing a suite checks ever sees it; the counts read are forgotten (the
+  # profiler's memory is the server's)
+  [ -n "${ROWSTILE_COVERAGE_STATEMENTS:-}" ] && [ -n "${PGSUPERUSER:-}" ] || continue
+  psql -X -q -At -U "$PGSUPERUSER" -d "$db" -v ON_ERROR_STOP=1 2>/dev/null <<'SQL' |
+\echo connected
+SELECT coalesce(current_setting('plpgsql_check.profiler', true), 'off') = 'on' AS profiling \gset
+\if :profiling
+BEGIN;
+SET LOCAL client_min_messages = warning;
+CREATE SCHEMA rowstile_coverage;
+CREATE EXTENSION plpgsql_check SCHEMA rowstile_coverage;
+CREATE TEMP TABLE rowstile_coverage_functions ON COMMIT DROP AS
+  SELECT p.oid, n.nspname, p.proname, p.prosrc FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+  WHERE n.nspname IN ('authz', 'authz_gen', 'authz_int') AND l.lanname = 'plpgsql';
+SELECT jsonb_build_object('schema', f.nspname, 'name', f.proname,
+    'args', pg_catalog.pg_get_function_identity_arguments(f.oid), 'md5', pg_catalog.md5(f.prosrc), 'source', f.prosrc,
+    'statements', (SELECT jsonb_agg(jsonb_build_array(s.stmtid, s.parent_stmtid, s.block_num, s.lineno, s.stmtname,
+        s.exec_stmts, s.exec_stmts_err) ORDER BY s.stmtid)
+      FROM rowstile_coverage.plpgsql_profiler_function_statements_tb(f.oid) s),
+    'ratios', jsonb_build_array(rowstile_coverage.plpgsql_coverage_statements(f.oid),
+      rowstile_coverage.plpgsql_coverage_branches(f.oid)))
+  FROM rowstile_coverage_functions f;
+SELECT count(rowstile_coverage.plpgsql_profiler_reset(f.oid)) FROM rowstile_coverage_functions f;
+ROLLBACK;
+\echo read
+\else
+\echo off
+\endif
+SQL
+    env -u COVERAGE_PROCESS_START python3 "$(dirname "$0")/coverage_plpgsql.py" save "$ROWSTILE_COVERAGE" "$step" "$db"
 done
 exit 0

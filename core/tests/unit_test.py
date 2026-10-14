@@ -7998,6 +7998,233 @@ class CoverageReport(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(ROOT, name)), name)
 
 
+class CoveragePlpgsql(unittest.TestCase):
+    """tests/coverage_plpgsql.py, which reads what plpgsql_check's profiler counted of rowstile's PL/pgSQL: which
+    statements begin which arm (the profiler says only which statement holds which), the branches, and the report.
+    The figures here are what plpgsql_check 2.10 answered for this function, called with 1, 3, 1 and -1."""
+
+    SOURCE = """
+DECLARE r text;
+BEGIN
+  IF x = 1 THEN
+    r := 'one';
+  ELSIF x = 2 THEN
+    r := 'two';
+  ELSIF x < 0 THEN
+    RAISE EXCEPTION 'negative' USING HINT = 'AZ999';
+  END IF;
+  CASE WHEN x > 100 THEN r := 'big'; ELSE NULL; END CASE;
+  FOR i IN 1..x LOOP
+    IF i = 5 THEN EXIT; END IF;
+  END LOOP;
+  BEGIN
+    PERFORM 1/(x-3);
+  EXCEPTION WHEN division_by_zero THEN
+    r := 'three';
+  END;
+  RETURN r;
+END """
+    # stmtid, parent_stmtid, block_num, lineno, stmtname, exec_stmts, exec_stmts_err
+    PROFILE: ClassVar[list[list[int | str | None]]] = [
+        [1, None, 1, 3, "statement block", 4, 1],
+        [2, 1, 1, 4, "IF", 4, 1],
+        [3, 2, 1, 5, "assignment", 2, 0],
+        [4, 2, 2, 7, "assignment", 0, 0],
+        [5, 2, 3, 9, "RAISE", 1, 1],
+        [6, 1, 2, 11, "CASE", 3, 0],
+        [7, 6, 1, 11, "assignment", 0, 0],
+        [8, 1, 3, 12, "FOR with integer loop variable", 3, 0],
+        [9, 8, 1, 13, "IF", 5, 0],
+        [10, 9, 1, 13, "EXIT", 0, 0],
+        [11, 1, 4, 15, "statement block", 3, 0],
+        [12, 11, 1, 16, "PERFORM", 3, 1],
+        [13, 11, 2, 18, "assignment", 1, 0],
+        [14, 1, 5, 20, "RETURN", 3, 0],
+    ]
+    RATIOS: ClassVar[list[float]] = [
+        0.7857142857142857,
+        0.6363636363636364,
+    ]  # plpgsql_coverage_statements, plpgsql_coverage_branches
+
+    def setUp(self) -> None:
+        sys.path.insert(0, os.path.join(ROOT, "tests"))
+        import coverage_plpgsql
+        import coverage_report
+
+        self.p = coverage_plpgsql
+        self.kind = coverage_report.kind
+
+    def test_which_statements_begin_which_arm(self) -> None:
+        body = self.p.read_body("m", self.SOURCE, self.PROFILE)
+        self.assertEqual(body.why, "")
+        assert body.branches is not None
+        arms = [(b.statement, b.label, b.first) for b in body.branches]
+        # NULL is no statement: the CASE's ELSE has none; an IF without ELSE has one more way, no arm taken
+        self.assertEqual(
+            arms,
+            [(2, "then", 3), (2, "elsif", 4), (2, "elsif", 5), (2, "no arm", 0), (6, "when", 7), (6, "else", 0)]
+            + [(8, "body", 9), (9, "then", 10), (9, "no arm", 0), (11, "body", 12), (11, "handler", 13)],
+        )
+        ran = {int(cast(int, r[0])): int(cast(int, r[5])) for r in self.PROFILE}
+        # as plpgsql_check counts: the same shares it gave
+        self.assertEqual(self.p.share(body, ran), (self.RATIOS[0], self.RATIOS[1]))
+        # as the report counts: the CASE's ELSE without a statement was taken (the CASE ran 3 times, its WHEN never)
+        self.assertEqual([self.p.taken(b, ran) for b in body.branches if b.statement == 6], [False, True])
+
+    def test_what_the_source_is_read_through(self) -> None:
+        source = """
+#variable_conflict use_column
+<<outer>>
+DECLARE v int := CASE WHEN true THEN 1 ELSE 2 END; -- a comment: IF x THEN
+BEGIN
+  /* a comment /* nested */ END IF; */
+  EXECUTE $q$ IF a THEN b; END IF; $q$;
+  v := (SELECT CASE WHEN 'x;' = E'it\\'s; END' THEN 1 END);
+  IF v IS NULL THEN NULL; ELSIF (SELECT CASE WHEN true THEN true END) THEN RETURN 1; END IF;
+  <<inner>> WHILE v < 3 LOOP v := v + 1; END LOOP inner;
+  CASE v WHEN 1 THEN RETURN "end"; END CASE;
+  RETURN 2;
+END outer;"""
+        profile = [
+            [1, None, 1, 5, "statement block"],
+            [2, 1, 1, 7, "EXECUTE"],
+            [3, 1, 2, 8, "assignment"],
+            [4, 1, 3, 9, "IF"],
+            [5, 4, 1, 9, "RETURN"],
+            [6, 1, 4, 10, "WHILE"],
+            [7, 6, 1, 10, "assignment"],
+            [8, 1, 5, 11, "CASE"],
+            [9, 8, 1, 11, "RETURN"],
+            [10, 1, 6, 12, "RETURN"],
+        ]
+        body = self.p.read_body("m", source, profile)
+        self.assertEqual(body.why, "")
+        assert body.branches is not None
+        self.assertEqual(
+            [(b.statement, b.label, b.first) for b in body.branches],
+            [(4, "then", 0), (4, "elsif", 5), (4, "no arm", 0), (6, "body", 7), (8, "when", 9)],
+        )
+        # a statement the profiler counts and the source here doesn't hold: the branches aren't guessed
+        unread = self.p.read_body("m", source, [*profile, [11, 1, 7, 12, "RETURN"]])
+        self.assertIsNone(unread.branches)
+        self.assertEqual(unread.why, "10 statements read, the profiler counts 11")
+
+    def test_the_policy_names_are_taken_out(self) -> None:
+        self.assertEqual(
+            self.p.plain("  IF NOT v THEN   RAISE 'cannot update app.files';", self.p.names("app.files:update:refuse")),
+            "IF NOT v THEN RAISE 'cannot update <table>';",
+        )
+        self.assertEqual(
+            self.p.plain("RETURN folder_id IN (SELECT id FROM folder__view);", self.p.names("folder__view__has")),
+            "RETURN folder_id IN (SELECT id FROM folder__view);",  # (whole names only)
+        )
+        self.assertEqual(
+            self.p.plain("PERFORM folder.view;", self.p.names("folder__view__has")), "PERFORM <type>.<name>;"
+        )
+
+    def test_the_databases_names_are_taken_out_everywhere(self) -> None:
+        # a table (by its functions app.files:...) and a type (folder__...) of the database, in another function
+        source = '\nBEGIN\n  RETURN \'folder\' = (SELECT 1 FROM "app"."files" WHERE app.files.folder);\nEND '
+        profile = [[1, None, 1, 2, "statement block", 1, 0], [2, 1, 1, 3, "RETURN", 1, 0]]
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("app.files:update:refuse", "folder__view__has", "lint"):
+                fn = {"schema": "authz", "name": name, "args": "", "md5": "m", "source": source, "ratios": [1, 1]}
+                self.p.save(d, "step", "authz_a", ["connected", json.dumps({**fn, "statements": profile}), "read"])
+            t = self.p.totals(self.p.measured([d]), self.kind)
+        texts = {x.kind: x.text for x in t.statements.values() if x.what == "RETURN"}
+        # (a type's name in the SQL itself stays: only the function's own, or a string, is the policy's for sure)
+        self.assertEqual(texts["authz.lint()"], "RETURN '<type>' = (SELECT 1 FROM <table> WHERE <table>.folder);")
+
+    def test_saved_then_reported(self) -> None:
+        line = {"schema": "authz_int", "md5": "m", "source": self.SOURCE, "ratios": self.RATIOS}
+        with tempfile.TemporaryDirectory() as d:
+            for db, name in (("authz_a", "folder__guard"), ("authz_b", "doc__guard")):
+                fn = {**line, "name": name, "args": "x integer", "statements": self.PROFILE}
+                self.assertEqual(self.p.save(d, "step a", db, ["connected", "off?", json.dumps(fn), "1", "read"]), 1)
+            self.assertEqual(
+                self.p.save(d, "step a", "authz_e", ["connected", "0", "read"]), 0
+            )  # no function: nothing written
+            self.assertEqual(self.p.save(d, "step b", "authz_c", ["connected", "ERROR: x"]), 0)  # couldn't be read
+            self.assertEqual(
+                self.p.save(d, "step b", "authz_d", ["connected", "off"]), 0
+            )  # no profiler: nothing written
+            self.assertEqual(self.p.save(d, "step b", "authz_f", []), 0)  # dropped already: nothing written
+            with open(os.path.join(d, "plpgsql.jsonl"), encoding="utf-8") as fh:
+                self.assertEqual(len(fh.read().splitlines()), 4)  # the body once, two functions, the unread
+            with open(os.path.join(d, "plpgsql-memory.txt"), "w", encoding="utf-8") as fh:
+                fh.write("NOTICE:  allocated stats: 100 (5kB), used stats: 95\n")
+            reasons = os.path.join(d, "why.txt")
+            with open(reasons, "w", encoding="utf-8") as fh:
+                fh.write("# KIND | WORDS | WHY\nauthz_int.<type>__guard | r := 'two' | x is never 2\n")
+                fh.write("authz_int.<type>__guard | gone | a reason nothing matches\n")
+            m = self.p.measured([d])
+            out = self.p.report(m, self.p.totals(m, self.kind), [d], reasons)
+        self.assertEqual(m.unread, [("step b", "authz_c")])
+        self.assertEqual(len(m.runs), 2)
+        t = self.p.totals(m, self.kind)
+        # each statement and branch once for the kind and its line, however many databases had it (the two blocks'
+        # lines both say BEGIN: one)
+        self.assertEqual(self.p.summary(t), "PL/pgSQL: 10 of 13 statements (76.9%), 8 of 11 branches (72.7%)")
+        self.assertTrue(out[3].startswith("WARNING: the profiler's memory was 95.0% full"), out[3])
+        text = "\n".join(out)
+        g = "authz_int.<type>__guard"
+        self.assertIn("RAISE never run (every guard should be met by some suite):\n  (none)", text)
+        self.assertIn(
+            f"Never run, and why (tests/coverage_plpgsql.txt):\n  {g}\n      r := 'two';  (assignment; in 2 function(s)): x is never 2",
+            text,
+        )
+        self.assertIn(
+            "Other statements never run, in the kinds of function some suite calls:\n  authz_int.<type>__guard\n      CASE WHEN x > 100 "
+            "THEN r := 'big'; ELSE NULL; END CASE;  (assignment; in 2 function(s))\n      IF i = 5 THEN EXIT; END IF;  "
+            "(EXIT; in 2 function(s))\n",
+            text,
+        )
+        # branches: only those without a statement of their own (the elsif is its statement's, listed above)
+        self.assertNotIn("(elsif;", text)
+        self.assertIn(
+            "Kinds of function no suite calls, and how many other statements that leaves never run:\n  (none)", text
+        )
+        self.assertIn(
+            f"Reasons in tests/coverage_plpgsql.txt that nothing never run matches (remove them):\n  {g} | gone", text
+        )
+        self.assertNotIn("otherwise than read here", text)
+
+    def test_the_coverage_image_and_ci_count_statements(self) -> None:
+        # the package in the coverage image only, the profiler preloaded where ci.sh measures, and CI keeps the counts
+        self.assertIn("${COVERAGE:+python3-coverage postgresql-$PG_MAJOR-plpgsql-check}", read("Dockerfile"))
+        ci = read("ci.sh")
+        for flag in ("shared_preload_libraries=plpgsql_check", "plpgsql_check.profiler=on", "cursors_leaks=off"):
+            self.assertRegex(ci, r"\$\{STATEMENTS:\+[^}]*" + re.escape(flag), flag)
+        self.assertIn('-e ROWSTILE_COVERAGE_STATEMENTS="$STATEMENTS"', ci)
+        # nightly runs it and keeps the counts, which its report reads
+        workflow = read("../.github/workflows/nightly.yml")
+        self.assertIn("run: bash core/ci.sh --statements 16", workflow)
+        for name in (".coverage", "functions.tsv", "plpgsql.jsonl", "plpgsql-memory.txt"):
+            self.assertIn(f".ci/coverage-16/{name}", workflow)
+        self.assertIn("tests/coverage_report.py --out /src/.ci/statements /src/.ci/parts/statements-pg16-*", workflow)
+        # the read is rolled back: the extension is never left in a database a suite checks
+        wrapper = read("tests/coverage_functions.sh")
+        self.assertLess(wrapper.index("CREATE EXTENSION plpgsql_check"), wrapper.index("ROLLBACK;"))
+        self.assertNotIn("COMMIT;", wrapper)
+
+    def test_a_raise_never_run_comes_first(self) -> None:
+        profile = [[*r[:5], 0 if r[0] == 5 else r[5], 0] for r in self.PROFILE]
+        line = {"schema": "authz_gen", "name": "app.files:update:refuse", "args": "", "md5": "m"}
+        with tempfile.TemporaryDirectory() as d:
+            fn = {**line, "source": self.SOURCE, "statements": profile, "ratios": [None, None]}
+            self.p.save(d, "step", "authz_a", ["connected", json.dumps(fn), "read"])
+            m = self.p.measured([d])
+            out = self.p.report(m, self.p.totals(m, self.kind), [d], os.path.join(d, "none.txt"))
+        first = out.index("RAISE never run (every guard should be met by some suite):")
+        self.assertEqual(
+            out[first + 1 : first + 3],
+            [
+                "  authz_gen.<table>:update:refuse",
+                "      RAISE EXCEPTION 'negative' USING HINT = 'AZ999';  (RAISE; in 1 function(s))",
+            ],
+        )
+
+
 class Guards(unittest.TestCase):
     """Each refusal the SQL authzlib writes can raise is asked for by its own words in some suite: a check that asks
     only for an SQLSTATE can't tell which guard refused (two that answer 42501 look alike). A guard's own words are
@@ -9081,6 +9308,7 @@ class Delivery(unittest.TestCase):
         for workflow, name, kind in (
             ("ci.yml", "suites", "SUITES"),
             ("nightly.yml", "suites", "SUITES"),
+            ("nightly.yml", "statements", "SUITES"),
             ("nightly.yml", "soak", "SOAK"),
         ):
             with self.subTest(workflow=workflow, job=name):

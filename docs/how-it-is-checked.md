@@ -185,6 +185,13 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   [`tests/check_counts.txt`](../core/tests/check_counts.txt) says, no fewer and no more, or the run fails. A
   suite that stopped checking something (a glob that matches nothing, a loop over an empty list) can't stay
   green unseen. <!-- checked: tests/unit_test.py "test_fewer_or_more_is_said"; tests/unit_test.py "test_each_suite_written_is_one_run_tests_records" -->
+- **What the database runs**: [every night](../.github/workflows/nightly.yml) the suites run on PostgreSQL 16 with
+  plpgsql_check's profiler on (in the test image: rowstile itself needs no extension), and
+  [`tests/coverage_report.py`](../core/tests/coverage_report.py) lists each statement and branch of rowstile's
+  PL/pgSQL that no suite runs, by kind of function, each `RAISE` first. It reads each function's source to know
+  which statements begin which branch, and holds that reading to plpgsql_check's own figures. <!-- checked: tests/unit_test.py "test_which_statements_begin_which_arm" -->
+  On 14 October 2026 the suites ran 2,926 of 4,551 statements (64%) and 1,634 of 3,046 branches (54%); 26
+  `RAISE` statements in functions they call were not reached.
 
 ## What a review of every file found
 

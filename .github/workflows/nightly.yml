@@ -1,7 +1,8 @@
 # What ci.yml leaves out of each push, every night on main: every suite on PostgreSQL 17 and 18 (ci.yml runs
 # them all on 16, and only what depends on the version on 17 and 18), with upgrades from every release (each push:
 # from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
-# SDKs' conformance suites on 17 and 18, and the scale benchmark last.
+# SDKs' conformance suites on 17 and 18, each statement of rowstile's PL/pgSQL the suites run (statements), and the
+# scale benchmark last.
 # On GitHub's runners, as ci.yml (or the one the repository variable RUNNER names). Run by hand too
 # (workflow_dispatch), all of it or one job: `gh workflow run nightly.yml -f only=bench`. And several soaks at
 # once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7`.
@@ -12,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run only this job (suites, proofs, soak, conformance, bench); empty: all of them"
+        description: "Run only this job (suites, proofs, soak, conformance, statements, bench); empty: all of them"
         default: ""
       soaks:
         description: "How many soaks to run at once (1 to 9), each with its own seed, on 16, 17 and 18 in turn"
@@ -148,6 +149,62 @@ jobs:
       - run: flock /tmp/rowstile-ci-conformance-python.lock bash integrations/fastapi/test.sh
       - run: npm ci --no-audit --no-fund
       - run: flock /tmp/rowstile-ci-conformance-typescript.lock bash integrations/nextjs/test.sh
+  # Each statement and branch of rowstile's PL/pgSQL the suites run, on 16: core/ci.sh --statements preloads
+  # plpgsql_check's profiler (in the coverage image only; rowstile needs no extension) and keeps its counts, in the
+  # parts run_tests.sh names, side by side. The counts are kept when a check fails too: they are worth reading then
+  statements:
+    if: ${{ !inputs.only || inputs.only == 'statements' }}
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    env:
+      # the label on this job's containers: its run, attempt, job and part
+      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.part }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [unit, policy, command, random]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - run: bash core/ci.sh --statements 16
+        env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}", ROWSTILE_PART: "${{ matrix.part }}"}
+      - if: always()
+        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: statements-logs-${{ matrix.part }}
+          path: ${{ runner.temp }}/rowstile-ci-16.log
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: statements-pg16-${{ matrix.part }}
+          path: |
+            .ci/coverage-16/.coverage
+            .ci/coverage-16/functions.tsv
+            .ci/coverage-16/plpgsql.jsonl
+            .ci/coverage-16/plpgsql-memory.txt
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+  # What no suite runs of rowstile's PL/pgSQL, every part's counts together (core/tests/coverage_report.py: each RAISE
+  # never run first, then the other statements and the branches, by kind of function; report.txt in the artifact)
+  statements-report:
+    needs: statements
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'statements') }}
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with: {pattern: "statements-pg16-*", path: .ci/parts}
+      - run: docker build -q -t rowstile:16-coverage --build-arg PG_MAJOR=16 --build-arg COVERAGE=1 -f core/Dockerfile .
+      - run: >-
+          docker run --rm -v "$PWD:/src" -w /src/core --entrypoint bash rowstile:16-coverage
+          -c "python3 tests/coverage_report.py --out /src/.ci/statements /src/.ci/parts/statements-pg16-*/.coverage"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: statements
+          path: .ci/statements/report.txt
+          if-no-files-found: ignore
   # The scale benchmark, small: fails when a measure got more than twice as slow as the runners' baseline
   # (recorded on the first run and kept in the cache; delete the cache entries to record it again, after an
   # intended change or on other runners), when a write fails, or when verify() doesn't say true. The gate's
@@ -155,7 +212,7 @@ jobs:
   # Last, once the others are done: on a self-hosted runner, timings need the machine to themselves.
   bench:
     if: ${{ !cancelled() && (!inputs.only || inputs.only == 'bench') }}
-    needs: [suites, proofs, soak, conformance]
+    needs: [suites, proofs, soak, conformance, statements]
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1

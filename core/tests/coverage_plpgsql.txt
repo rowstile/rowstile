@@ -1,0 +1,8 @@
+# What no suite can run of rowstile's PL/pgSQL, and why: tests/coverage_report.py lists each statement or branch
+# never run that a line here matches apart, with its reason (tests/coverage_plpgsql.py). A line:
+#   KIND | WORDS | WHY      (a space on each side of each bar: WORDS may hold ||)
+# KIND is the kind of function as the report names it (authz_int.<type>__forget, authz.share(p_type text, ...));
+# WORDS, words of the statement's line (or of the arm's first statement), as the report shows it (the policy's own
+# names taken out); WHY, in plain words. A line nothing never run matches is reported, to be taken out.
+authz_int.share_if | CASE p_key -> (when, no statement) | WHEN NULL THEN NULL, the arm a policy without conditions on its shares gets so that the CASE has one: it matches nothing
+authz_int.role_owner_type | CASE p_object_type -> (when, no statement) | WHEN NULL THEN NULL, the arm a policy without custom roles gets so that the CASE has one: it matches nothing
