@@ -182,6 +182,9 @@ Each release upgrades from the one before it. How releases are numbered and made
   for a lock: the command undid its savepoint, or tried the policy's conditions alone, on the closed
   connection, and that error took the place of the server's. And `rowstile review --db` says it lost the
   database, where a session ended as it began gave a traceback.
+- Ctrl-C while `rowstile apply` or `push` ran a statement of the policy (waiting for a lock another session held,
+  say) was heeded only once that statement ended: a wait for a lock went on to the lock timeout, and the command
+  reported the timeout. It stops at once now, ends the statement on the server and keeps nothing, as `sql` does.
 
 ## 0.1.0 (alpha)
 
