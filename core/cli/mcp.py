@@ -3,7 +3,8 @@
 Its tools are the command's own: check, prove, review, test, why, lint, and push to a development database. Each
 call runs the command once, in its own process, in the folder the server was started in (so rowstile.toml, the
 policy and the database are found as the command finds them), and returns what the command printed. Nothing is
-kept between calls.
+kept between calls. A call runs beside the messages that come after it: a ping is answered meanwhile, and a call
+the client cancels (notifications/cancelled) has its command stopped, as Ctrl-C stops it, and gets no answer.
 
     {"mcpServers": {"rowstile": {"command": "rowstile", "args": ["mcp"]}}}
 """
@@ -13,8 +14,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -26,6 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 COMMAND = os.path.join(HERE, "rowstile_cli.py")
 VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]  # newest first
 TIMEOUT = 600  # seconds, for one call
+GRACE = 10  # seconds a stopped command has to end on its own (a push rolls back) before it is killed
 ERROR = re.compile(r"^(?P<file>.+?): (?:(?P<inc>\S+) )?line (?P<line>\d+): (?P<message>.*)$", re.S)
 
 INSTRUCTIONS = """rowstile compiles an access policy (.authz) into row-level security for Postgres.
@@ -195,24 +199,74 @@ def tool_list() -> list[Json]:
     ]
 
 
-def run(dsn: str | None, args: list[str]) -> tuple[int, str]:
-    """The command, once: (exit code, what it printed)."""
+class Cancelled(Exception):
+    """The client cancelled the call: its command is stopped, and it gets no answer."""
+
+
+class Running:
+    """A call in progress: the command's process, once started, and whether the client cancelled the call."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.process: subprocess.Popen[bytes] | None = None
+        self.cancelled = False
+
+    def start(self, argv: list[str], env: dict[str, str]) -> subprocess.Popen[bytes]:
+        with self.lock:  # a call cancelled before its command started never starts it
+            if self.cancelled:
+                raise Cancelled
+            self.process = subprocess.Popen(
+                argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env
+            )
+            return self.process
+
+    def cancel(self) -> None:
+        with self.lock:
+            self.cancelled = True
+            p = self.process
+        if p is not None:
+            stop(p)
+
+
+def stop(p: subprocess.Popen[bytes]) -> None:
+    """Stops the command as Ctrl-C does: it takes back what it began (a push's transaction rolled back, the statement
+    running stopped on the server) and ends; one still running GRACE seconds later is killed. Only this server's own
+    child, by its process id, which the call waits for (so it is never left to run on its own)."""
+    if p.poll() is not None:
+        return
+    if os.name == "nt":
+        p.terminate()  # Windows has no Ctrl-C for one process: ended, its connection with it (the server rolls back)
+    else:
+        p.send_signal(signal.SIGINT)
+    later = threading.Timer(GRACE, p.kill)  # nothing once the call has seen it end (Popen knows it ended)
+    later.daemon = True
+    later.start()
+
+
+def run(dsn: str | None, args: list[str], running: Running | None = None) -> tuple[int, str]:
+    """The command, once: (exit code, what it printed). Cancelled: stopped, and Cancelled raised."""
     argv = [sys.executable, COMMAND, *(["--db", dsn] if dsn else []), *args]
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    running = running or Running()
+    p = running.start(argv, env)
     try:
-        p = subprocess.run(
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=TIMEOUT, env=env
-        )
+        out, _ = p.communicate(timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
+        stop(p)
+        p.communicate()
+        if running.cancelled:
+            raise Cancelled from None
         return 2, f"rowstile {args[0]} took more than {TIMEOUT} s and was stopped"
-    return p.returncode, p.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
+    if running.cancelled:
+        raise Cancelled
+    return p.returncode, out.decode("utf-8", "replace").replace("\r\n", "\n")
 
 
-def call(dsn: str | None, name: Json, arguments: Json) -> Message:
+def call(dsn: str | None, name: Json, arguments: Json, running: Running | None = None) -> Message:
     if not isinstance(name, str) or name not in TOOLS:
         raise KeyError(name)
     args = TOOLS[name].command(arguments if isinstance(arguments, dict) else {})
-    code, out = run(dsn, args)
+    code, out = run(dsn, args, running)
     result: Message = {"ok": code == 0, "exit_code": code, "output": out}
     if name == "check" and code != 0:
         from authzlib import errors
@@ -248,6 +302,19 @@ def call(dsn: str | None, name: Json, arguments: Json) -> Message:
 class Server:
     def __init__(self, dsn: str | None = None) -> None:
         self.dsn = dsn
+        self.lock = threading.Lock()
+        self.running: dict[str, Running] = {}  # the calls in progress, by their request's id (as JSON writes it)
+
+    def cancel(self, params: Message) -> None:
+        """notifications/cancelled: the call's command stopped, and no answer. One that has ended, or a request
+        this server doesn't know, is let be (MCP: a cancellation may cross the answer on the way)."""
+        with self.lock:
+            running = self.running.get(json.dumps(params.get("requestId")))
+        if running is not None:
+            reason = params.get("reason")
+            said = f": {reason}" if isinstance(reason, str) and reason else ""
+            print(f"rowstile mcp: request {json.dumps(params.get('requestId'))} cancelled{said}", file=sys.stderr)
+            running.cancel()
 
     def handle(self, msg: Message) -> Message | None:
         """The answer to one message (None for a notification)."""
@@ -257,6 +324,8 @@ class Server:
             # a notification (notifications/initialized, notifications/cancelled, ...): no answer; a request whose id
             # is null (which MCP doesn't allow) is told so, or its client would wait for an answer
             null = "id" in msg and "method" in msg
+            if method == "notifications/cancelled" and not null:
+                self.cancel(params)
             return error(None, -32600, "a request's id is a string or a number, not null") if null else None
         if raw is not None and not isinstance(raw, dict):
             return error(mid, -32602, f"{method}: params is an object (names and values), not {json.dumps(raw)[:40]}")
@@ -278,15 +347,33 @@ class Server:
         if method == "tools/list":
             return ok(mid, {"tools": tool_list()})
         if method == "tools/call":
+            key, running = json.dumps(mid), Running()
+            with self.lock:
+                if key in self.running:  # its cancellation would stop both
+                    return error(mid, -32600, f"request {key} is running already: each request has an id of its own")
+                self.running[key] = running
             try:
-                return ok(mid, call(self.dsn, params.get("name"), params.get("arguments")))
+                return ok(mid, call(self.dsn, params.get("name"), params.get("arguments"), running))
+            except Cancelled:
+                return None
             except KeyError as e:
                 if e.args and e.args[0] == params.get("name"):
                     return error(mid, -32602, f"no tool {params.get('name')!r}: {', '.join(TOOLS)}")
                 return error(mid, -32602, f"{params.get('name')}: missing argument {e}")
             except ValueError as e:
                 return error(mid, -32602, f"{params.get('name')}: {e}")
+            finally:
+                with self.lock:
+                    del self.running[key]
         return error(mid, -32601, f"not supported: {method}")
+
+    def reply(self, got: Json) -> Json:
+        """The answer to what one line held: a message, or a batch (protocol 2025-03-26 has them): each message
+        answered, the answers in one array, and nothing for notifications alone."""
+        if isinstance(got, list) and got:
+            answers: list[Json] = [a for a in map(self.answer, got) if a is not None]
+            return answers or None
+        return self.answer(got)
 
     def answer(self, got: Json) -> Message | None:
         """The answer to one message as read: an error for one that isn't an object, None for a notification."""
@@ -307,26 +394,41 @@ def error(mid: Json, code: int, message: str) -> Message:
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
 
 
+def calls(got: Json) -> bool:
+    """Whether a line holds a tool call (alone or in a batch): it runs beside the lines after it."""
+    items = got if isinstance(got, list) else [got]
+    return any(isinstance(m, dict) and m.get("method") == "tools/call" for m in items)
+
+
 def serve(dsn: str | None = None) -> None:
-    """Newline-delimited JSON-RPC on stdin and stdout; the log (nothing, for now) would go to stderr."""
+    """Newline-delimited JSON-RPC on stdin and stdout; the log goes to stderr. Each tool call runs in a thread of its
+    own, so that the lines after it are read meanwhile (a ping, a cancellation, another call); the end of the input
+    ends the server once the calls running have been answered."""
     server = Server(dsn)
     out = sys.stdout.buffer
+    writing = threading.Lock()
+    threads: list[threading.Thread] = []
+
+    def write(answer: Json) -> None:
+        if answer is not None:
+            with writing:
+                out.write(json.dumps(answer).encode() + b"\n")
+                out.flush()
+
     for raw in sys.stdin.buffer:
         if not raw.strip():
             continue
-        answer: Json
         try:
             got = json.loads(raw)
         except (ValueError, RecursionError):  # nested too deep to read is not JSON this server takes either
-            answer = error(None, -32700, "not JSON")
+            write(error(None, -32700, "not JSON"))
+            continue
+        if calls(got):
+            threads = [t for t in threads if t.is_alive()]
+            thread = threading.Thread(target=lambda got=got: write(server.reply(got)), daemon=True)
+            thread.start()
+            threads.append(thread)
         else:
-            if isinstance(got, list) and got:
-                # a batch (protocol 2025-03-26 has them): each message answered, the answers in one array, and
-                # nothing for notifications alone
-                answers: list[Json] = [a for a in map(server.answer, got) if a is not None]
-                answer = answers or None
-            else:
-                answer = server.answer(got)
-        if answer is not None:
-            out.write(json.dumps(answer).encode() + b"\n")
-            out.flush()
+            write(server.reply(got))
+    for thread in threads:
+        thread.join()

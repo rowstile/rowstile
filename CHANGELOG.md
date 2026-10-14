@@ -185,6 +185,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 - Ctrl-C while `rowstile apply` or `push` ran a statement of the policy (waiting for a lock another session held,
   say) was heeded only once that statement ended: a wait for a lock went on to the lock timeout, and the command
   reported the timeout. It stops at once now, ends the statement on the server and keeps nothing, as `sql` does.
+- `rowstile mcp` ignored `notifications/cancelled`: a call the agent cancelled ran to its end (a `push` changed the
+  database all the same) and was answered, and a `ping` sent meanwhile waited for it. Each call now runs beside
+  the messages after it: a ping is answered at once, and a cancelled call's command is stopped as Ctrl-C stops it
+  (a push keeps nothing) and gets no answer, as MCP asks.
 
 ## 0.1.0 (alpha)
 

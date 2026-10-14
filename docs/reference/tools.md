@@ -126,6 +126,9 @@ once, in the folder the agent started it in, so `rowstile.toml` names the policy
 also returns the mistake's file and line. <!-- checked: tests/mcp_test.py "a mistake: an answer (not a failed call), with the file, the line and the message" -->
 A finding (a mistake, a failing test, a counterexample) is an
 answer with `ok: false`; a call that couldn't run (no policy file, no database) is an error. <!-- checked: tests/mcp_test.py "a failing test: an answer (not a failed call), naming the check"; tests/mcp_test.py "a policy file that isn't there: a failed call" -->
+The server reads the agent's messages while a call runs: a `ping` is answered at once. <!-- checked: tests/mcp_test.py "a ping while a call runs: answered at once, the call still running" -->
+A call the agent cancels (`notifications/cancelled`) gets no answer, and its command is stopped as Ctrl-C stops
+it: a cancelled `push` keeps nothing. <!-- checked: tests/mcp_test.py "notifications/cancelled: the call's command stopped (its process ended, the server waited for it)"; tests/mcp_test.py "... and no answer for it: the next answer is the ping's"; tests/mcp_test.py "... no answer for it, and nothing of it kept: the next push applies the change" -->
 An agent is given
 the command to start it, in its own settings for MCP servers:
 
