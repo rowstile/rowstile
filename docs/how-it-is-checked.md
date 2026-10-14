@@ -24,6 +24,17 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   read every policy in the repository and two hundred random ones, and compares what they read: the types,
   each relation's sources, the permissions with their grouping, the rules, the tests. They read each one alike.
   (The grammar takes more than the parser does, as an editor must: what the parser refuses isn't compared.) <!-- checked: tests/parse_agreement.py "policy the parser refuses is not compared" -->
+- **A third evaluator**: [`tests/third.py`](../core/tests/third.py) was written from the language's reference
+  alone and imports nothing of the compiler's or the reference evaluator's. It reads each policy through the
+  editors' grammar, writes what the page says as Datalog rules, run by an engine of its own
+  ([`tests/datalog.py`](../core/tests/datalog.py)), and reads a world as rows, shares and custom roles.
+  [`tests/third_compare.py`](../core/tests/third_compare.py) holds the two evaluators to each other in many worlds
+  per policy: each relation and permission for each one who signs in, a share link's holder and nobody, the rows
+  each rule allows, who breaks each invariant. On each push: every policy in the repository and the cases worked
+  out by hand from the page (94 policies, 3,724 worlds, about 250,000 answers, in 40 seconds); each night, a
+  thousand random policies with new seeds too (about 7 million answers). A disagreement is made as small as it can be and
+  printed with the paragraphs of the page it concerns. The two share one input: which rows each condition holds
+  on, as neither runs SQL.
 - **Random data**: [`tests/difftest.py`](../core/tests/difftest.py) fills six policies' tables with random
   rows and makes a hundred random changes to each (moves, links, loops, groups inside groups, inheritance
   through two types at once, shares that start and end, ids that change, `TRUNCATE`, several statements in

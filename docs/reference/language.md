@@ -70,6 +70,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   and passes nothing on: a suspended user, an archived folder and what is inside it, a disbanded team's
   members (also through the team that holds it). <!-- answer: rows-hold-nothing --> No rule allows anything on it either: the app role can't
   read, change or delete an archived folder, so it can't un-archive one. <!-- checked: tests/difftest.py "CrossGen"; tests/unit_test.py "test_a_rule_gives_no_row_the_type_leaves_out" --> <!-- answer: rows-no-rule -->
+  An invariant isn't asked of it either: `never folder: not owner` holds on no archived folder. <!-- answer: rows-no-invariant -->
   Leave such rows to a job that runs
   as the owner, or say it in permissions instead (`can edit = ... and {not archived}`). <!-- answer: rows-in-permissions -->
 - **Relations** link rows to users or groups: from a column, from another table

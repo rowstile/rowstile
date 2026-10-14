@@ -5594,6 +5594,20 @@ class HandAnswers(unittest.TestCase):
     def test_an_invariant_no_one_breaks(self) -> None:
         self.check(self.INVARIANT, "user: 1\nfolder: 1\nfolder 1 viewer user 1\n", {}, broken="none")
 
+    @worked_from("rows-no-invariant")
+    def test_an_invariant_is_not_asked_of_a_row_the_where_leaves_out(self) -> None:
+        # nobody owns either folder, but the second is archived: only the first breaks it
+        policy = (
+            "type user = app.users\ntype folder = app.folders where {not archived}\n  owner : user = owner_id\n"
+            "  can view = owner\n  can orphan = not owner\ninvariants\n  never folder: orphan\n"
+        )
+        self.check(
+            policy, "user: 1\nfolder: 2\nfolder 2 fails its where\n", {"1": {"folder.orphan": ""}}, broken="none"
+        )
+        self.check(
+            policy, "user: 1\nfolder: 1, 2\nfolder 2 fails its where\n", {"1": {"folder.orphan": "1"}}, broken="1 on 1"
+        )
+
     ANCHOR = re.compile(r"<!-- answer: ([a-z0-9-]+(?:, [a-z0-9-]+)*) -->")
 
     def test_every_answering_paragraph_has_a_case(self) -> None:
@@ -8485,6 +8499,129 @@ class ParseAgreement(unittest.TestCase):
         self.assertEqual(compared, 1)
         self.assertEqual(len(problems), 1)
         self.assertIn("/types/doc/perms/view[0]: the parser reads 'or', the grammar 'and'", problems[0])
+
+
+class DatalogEngine(unittest.TestCase):
+    """tests/datalog.py, the engine the third evaluator runs its rules on: least fixpoints, semi-naively, and
+    negation stratified (a program that isn't, refused)."""
+
+    def setUp(self) -> None:
+        import datalog
+
+        self.d = datalog
+        self.X, self.Y, self.Z = datalog.Var("X"), datalog.Var("Y"), datalog.Var("Z")
+
+    def test_transitive_closure(self) -> None:
+        d, X, Y, Z = self.d, self.X, self.Y, self.Z
+        rules = [
+            d.Rule(d.Atom("path", (X, Y)), (d.Lit(d.Atom("edge", (X, Y))),)),
+            d.Rule(d.Atom("path", (X, Z)), (d.Lit(d.Atom("path", (X, Y))), d.Lit(d.Atom("edge", (Y, Z))))),
+        ]
+        # a chain of 30 and a loop back: every node reaches every other
+        edges = {(str(i), str(i + 1)) for i in range(30)} | {("30", "0")}
+        got = d.run(rules, {"edge": edges})["path"]
+        self.assertEqual(got, {(str(a), str(b)) for a in range(31) for b in range(31)})
+        # a chain without the loop: only forward
+        got = d.run(rules, {"edge": {(str(i), str(i + 1)) for i in range(5)}})["path"]
+        self.assertEqual(got, {(str(a), str(b)) for a in range(6) for b in range(a + 1, 6)})
+
+    def test_a_not_reads_a_lower_stratum_whole(self) -> None:
+        d, X, Y = self.d, self.X, self.Y
+        rules = [
+            d.Rule(d.Atom("reach", (X,)), (d.Lit(d.Atom("start", (X,))),)),
+            d.Rule(d.Atom("reach", (Y,)), (d.Lit(d.Atom("reach", (X,))), d.Lit(d.Atom("edge", (X, Y))))),
+            d.Rule(d.Atom("node", (X,)), (d.Lit(d.Atom("edge", (X, Y))),)),
+            d.Rule(d.Atom("node", (Y,)), (d.Lit(d.Atom("edge", (X, Y))),)),
+            # cut off: a node no path reaches, once reach is whole (the next stratum)
+            d.Rule(d.Atom("cut", (X,)), (d.Lit(d.Atom("node", (X,))), d.Lit(d.Atom("reach", (X,)), negated=True))),
+        ]
+        self.assertEqual(d.strata(rules), [["node"], ["reach"], ["cut"]])
+        got = d.run(rules, {"start": {("a",)}, "edge": {("a", "b"), ("b", "c"), ("x", "y"), ("c", "a")}})
+        self.assertEqual(got["cut"], {("x",), ("y",)})
+        self.assertEqual(got["reach"], {("a",), ("b",), ("c",)})
+
+    def test_a_not_inside_a_loop_is_refused(self) -> None:
+        d, X = self.d, self.X
+        win = d.Rule(d.Atom("p", (X,)), (d.Lit(d.Atom("d", (X,))), d.Lit(d.Atom("q", (X,)), negated=True)))
+        lose = d.Rule(d.Atom("q", (X,)), (d.Lit(d.Atom("d", (X,))), d.Lit(d.Atom("p", (X,)), negated=True)))
+        with self.assertRaisesRegex(d.NotStratified, "p depends on q through a `not`, and q on p"):
+            d.run([win, lose], {"d": {("1",)}})
+        # and a rule whose not reads a variable nothing binds
+        free = d.Rule(d.Atom("p", (X,)), (d.Lit(d.Atom("d", (X,))), d.Lit(d.Atom("q", (self.Y,)), negated=True)))
+        with self.assertRaisesRegex(d.Unsafe, "Y bound by no positive literal"):
+            d.run([free], {})
+
+
+class ThirdEvaluator(unittest.TestCase):
+    """tests/third.py, the evaluator written apart from authzlib, on a tree as `tree-sitter parse --xml` writes it
+    (the editor job compares it with the reference evaluator on every policy: tests/third_compare.py)."""
+
+    POLICY = (
+        "app role app_user\ntype user = app.users where {active}\ntype folder = app.folders\n"
+        "  parent : folder = parent_id\n  owner : user = owner_id\n  viewer : user, user:* shared\n"
+        "  can view = (owner or viewer or parent.view) and not {hidden}\n"
+    )
+    # what `tree-sitter parse --xml` writes for it, cut to what the evaluator reads
+    XML = (
+        '<sources><source name="{path}"><source_file>'
+        '<type>type<identifier field="name">user</identifier>=<table_name field="table">'
+        '<identifier field="schema">app</identifier>.<identifier field="name">users</identifier></table_name>'
+        'where<sql srow="1" scol="28" erow="1" ecol="36">{{<sql_text>active</sql_text>}}</sql></type>'
+        '<type>type<identifier field="name">folder</identifier>=<table_name field="table">'
+        '<identifier field="schema">app</identifier>.<identifier field="name">folders</identifier></table_name>'
+        '<relation><identifier field="name">parent</identifier>:<subject><identifier field="type">folder</identifier>'
+        "</subject>=<column><identifier>parent_id</identifier></column></relation>"
+        '<relation><identifier field="name">owner</identifier>:<subject><identifier field="type">user</identifier>'
+        "</subject>=<column><identifier>owner_id</identifier></column></relation>"
+        '<relation><identifier field="name">viewer</identifier>:<subject><identifier field="type">user</identifier>'
+        '</subject>,<subject><identifier field="type">user</identifier>:*</subject><shared>shared</shared></relation>'
+        '<permission>can<identifier field="name">view</identifier>=<and field="expression"><parenthesized>('
+        "<or><or><ref><identifier>owner</identifier></ref>or<ref><identifier>viewer</identifier></ref></or>or"
+        '<arrow><identifier field="relation">parent</identifier>.<identifier field="permission">view</identifier>'
+        "</arrow></or>)</parenthesized>and<not>not"
+        '<sql srow="6" scol="54" erow="6" ecol="62">{{<sql_text>hidden</sql_text>}}</sql></not></and></permission>'
+        "</type></source_file></source></sources>"
+    )
+
+    def test_it_reads_the_tree_and_answers(self) -> None:
+        import third
+
+        with tempfile.TemporaryDirectory() as d:
+            policy, xml = os.path.join(d, "p.authz"), os.path.join(d, "all.xml")
+            with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(self.POLICY)
+            with open(xml, "w", encoding="utf-8") as fh:
+                fh.write(self.XML.format(path=policy))
+            prog = third.Program(third.read(third.trees(xml), policy))
+        # folders 1 > 2 > 3 > 4, ann owns 1; 3 is hidden, so 4, which inherits from it, gets nothing either; folder 5
+        # is shared with every signed-in user, and 4 with ann by a share that ended; bo fails the user type's where
+        world = third.World(
+            tables={
+                "app.users": [{"id": "ann"}, {"id": "bo"}],
+                "app.folders": [
+                    {"id": "1", "owner_id": "ann"},
+                    {"id": "2", "parent_id": "1"},
+                    {"id": "3", "parent_id": "2"},
+                    {"id": "4", "parent_id": "3"},
+                    {"id": "5", "owner_id": "bo"},
+                ],
+            },
+            conds={("app.users", "active", 0), ("app.folders", "hidden", 2)},
+            shares=[
+                third.Share("folder", "5", "viewer", "user", "*"),
+                third.Share("folder", "4", "viewer", "user", "ann", ended=True),
+            ],
+            sessions=[
+                third.Session("ann", "user", "ann"),
+                third.Session("bo", "user", "bo"),
+                third.Session("nobody", None, None),
+            ],
+        )
+        got = third.evaluate(prog, world).held
+        self.assertEqual(got[("ann", "folder", "view")], {"1", "2", "5"})
+        self.assertEqual(got[("bo", "folder", "view")], set())  # bo is nobody: he fails the where
+        self.assertEqual(got[("nobody", "folder", "viewer")], set())
+        self.assertEqual(got[("ann", "folder", "owner")], {"1"})
 
 
 class Respelling(unittest.TestCase):

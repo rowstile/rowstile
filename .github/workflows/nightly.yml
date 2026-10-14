@@ -1,8 +1,8 @@
 # What ci.yml leaves out of each push, every night on main: every suite on PostgreSQL 17 and 18 (ci.yml runs
 # them all on 16, and only what depends on the version on 17 and 18), with upgrades from every release (each push:
 # from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
-# SDKs' conformance suites on 17 and 18, each statement of rowstile's PL/pgSQL the suites run (statements), and the
-# scale benchmark last.
+# SDKs' conformance suites on 17 and 18, the third evaluator on more policies (third), each statement of
+# rowstile's PL/pgSQL the suites run (statements), and the scale benchmark last.
 # On GitHub's runners, as ci.yml (or the one the repository variable RUNNER names). Run by hand too
 # (workflow_dispatch), all of it or one job: `gh workflow run nightly.yml -f only=bench`. And several soaks at
 # once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7`.
@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run only this job (suites, proofs, soak, conformance, statements, bench); empty: all of them"
+        description: "Run only this job (suites, proofs, soak, conformance, third, statements, bench); empty: all of them"
         default: ""
       soaks:
         description: "How many soaks to run at once (1 to 9), each with its own seed, on 16, 17 and 18 in turn"
@@ -149,6 +149,23 @@ jobs:
       - run: flock /tmp/rowstile-ci-conformance-python.lock bash integrations/fastapi/test.sh
       - run: npm ci --no-audit --no-fund
       - run: flock /tmp/rowstile-ci-conformance-typescript.lock bash integrations/nextjs/test.sh
+  # The third evaluator (core/tests/third.py, written apart from the reference evaluator, reading policies through the
+  # editors' grammar) against the reference evaluator, in four parts side by side: each 250 of genpolicy's policies,
+  # new seeds each night (from the run's id), and a quarter of core/tests/small.py's set up to size 5 where it is
+  # there (editor/test.sh --third; each push: the repository's policies and the hand cases)
+  third:
+    if: ${{ !inputs.only || inputs.only == 'third' }}
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        part: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - run: >-
+          bash editor/test.sh --third "--gen 250 --seed $(( ${{ github.run_id }} % 1000000 * 1000 + ${{ matrix.part }} * 250 ))
+          --small 5 --slice ${{ matrix.part }}/4 --no-hand --no-repository"
   # Each statement and branch of rowstile's PL/pgSQL the suites run, on 16: core/ci.sh --statements preloads
   # plpgsql_check's profiler (in the coverage image only; rowstile needs no extension) and keeps its counts, in the
   # parts run_tests.sh names, side by side. The counts are kept when a check fails too: they are worth reading then
