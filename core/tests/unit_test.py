@@ -6578,6 +6578,8 @@ class Decisions(unittest.TestCase):
                 return [asked]  # (one row of each type, named by the session)
             elif key[1] == "decisions":
                 return [[asked] * (3 if key[2] == "role share" else 2)]
+            elif key[1] == "pages":
+                return [[], []]  # (in pages, and whole in key order)
             return []
 
         class Made(difftest.DB):
@@ -8826,6 +8828,50 @@ class ParseAgreement(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("/types/doc/perms/view[0]: the parser reads 'or', the grammar 'and'", problems[0])
 
+    def test_small_policies_written_two_ways(self) -> None:
+        # small.py's set (to size 3: 96 policies), a slice of it, each as listed and written another way
+        import parse_agreement
+        import small
+
+        with tempfile.TemporaryDirectory() as d:
+            parse_agreement.write(d, 2, 3, (1, 4))
+            names = sorted(os.listdir(d))
+            mine = [k for k in range(len(small.the_set(3))) if k % 4 == 1]
+            self.assertEqual(len(mine), 24)
+            want = ["gen_1.authz", "gen_2.authz"] + [f"small_{k}{x}.authz" for k in mine for x in ("", "_other")]
+            self.assertEqual(names, sorted(want))
+            changed = 0
+            for k in mine:
+                with open(os.path.join(d, f"small_{k}.authz"), encoding="utf-8") as fh:
+                    listed = fh.read()
+                with open(os.path.join(d, f"small_{k}_other.authz"), encoding="utf-8") as fh:
+                    other = fh.read()
+                self.assertEqual(listed, small.policy_text(small.the_set(3)[k]))
+                parse_policy(other, "other.authz")  # (it reads)
+                changed += listed != other
+            self.assertGreater(changed, len(mine) // 2, "written another way: not the same text")
+
+    def test_several_xmls_counted_together(self) -> None:
+        # the nightly parses the whole set in chunks, an XML each: the counts and the differences are all of them
+        import parse_agreement
+
+        with tempfile.TemporaryDirectory() as d:
+            policy = os.path.join(d, "p.authz")
+            with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(self.POLICY)
+            xmls = []
+            for op in ("or", "and"):
+                xmls.append(os.path.join(d, f"{op}.xml"))
+                with open(xmls[-1], "w", encoding="utf-8") as fh:
+                    fh.write(self.XML.format(path=policy, op=op))
+            out = io.StringIO()
+            with mock.patch("sys.stdout", out):
+                code = parse_agreement.main(xmls)
+            self.assertEqual(code, 1)
+            self.assertIn(
+                "parse agreement: 2 policies read alike by the grammar and the parser, 1 differences", out.getvalue()
+            )
+
 
 class DatalogEngine(unittest.TestCase):
     """tests/datalog.py, the engine the third evaluator runs its rules on: least fixpoints, semi-naively, and
@@ -9005,6 +9051,43 @@ class Respelling(unittest.TestCase):
         self.assertIn('"Activé"', sql)  # a letter outside ASCII
         self.assertEqual(self.g.Spelling(awkward=True).cond("{active}"), '{"Activé"}')
 
+    def test_text_keys_that_are_words(self) -> None:
+        g = self.g
+        # half the seeds with text keys draw words, drawn apart: every other seed's policy and keys as before
+        drawn = [seed for seed in range(1, 401) if g.make(seed).spelling.worded]
+        texts = [seed for seed in range(1, 401) if g.make(seed).spelling.keytype == "text"]
+        self.assertLessEqual(set(drawn), set(texts))
+        self.assertTrue(len(texts) / 4 < len(drawn) < 3 * len(texts) / 4, (len(drawn), len(texts)))
+        for seed in texts:
+            plain, worded = g.make(seed, words=False), g.make(seed, words=True)
+            self.assertEqual((plain.objs, plain.invariants), (worded.objs, worded.invariants), seed)
+            self.assertFalse(plain.spelling.worded)
+            self.assertTrue(worded.spelling.worded)
+        self.assertFalse(g.make(texts[0], keytype="text").spelling.worded)  # (a caller that says text: numerals)
+        # row n's key: the nth word, then a word and n; and back
+        w = g.Spelling(keytype="text", words=g.WORDS)
+        keys = [w.ident(n) for n in range(1, 13)]
+        self.assertEqual(keys, [*g.WORDS, "ab11", "\u0130z12"])
+        self.assertEqual([w.number(k) for k in [*keys, "Iz500000"]], [*range(1, 13), 500000])
+        self.assertEqual(w.literal("O'Neil"), "'O''Neil'")
+        # what they are made of: a space, both quotes, capitals, accents, a dotted and a dotless i, a prefix
+        self.assertTrue(any(" " in k for k in keys) and any("'" in k for k in keys) and any('"' in k for k in keys))
+        self.assertTrue({"\u0130z", "\u0131z", "iz", "Iz", "B", "ab"} <= set(keys))
+        self.assertTrue(any(a != b and b.startswith(a) for a in keys for b in keys))
+        self.assertEqual(sorted(keys)[:2], ["B", "Iz"])  # (in byte order capitals first; not so in most collations)
+        # as SQL: the key of row n, and n of a key, which the next row's key (gp.nxt) is made of
+        self.assertIn("ARRAY['ab', '\u0130z', 'ab c', 'O''Neil', 'iz', 'say \"hi\"',", w.key_of("x"))
+        self.assertIn("array_position(", w.number_of("p"))
+        self.assertIn("CREATE FUNCTION gp.nxt(p text) RETURNS text", g.schema_text(g.make(drawn[0])))
+        # bigint keys have none (a world made plainer): numerals again
+        self.assertEqual(g.Spelling(keytype="bigint", words=g.WORDS).ident(3), "3")
+        # they are in the shapes the pairs are chosen by, and never with another key type
+        self.assertIn("word keys", g.features(g.make(drawn[0])))
+        self.assertIn(("bigint keys", "word keys"), g.APART)
+        latin1 = {c for word in g.WORDS_LATIN1 for c in word}
+        self.assertTrue(all(ord(c) < 256 for c in latin1))
+        self.assertEqual(len(g.WORDS_LATIN1), len(g.WORDS))
+
 
 class Worlds(unittest.TestCase):
     """around.py makes what is around a random policy: the tables under its tables, decoys, a search path. It
@@ -9112,6 +9195,24 @@ class Worlds(unittest.TestCase):
         self.assertEqual(self.a.raised(self.g.Spelling(True, "text")), "'9999' || \"Id\"")
         self.assertEqual(self.a.raised(self.g.Spelling()), "id + 1000000")
         self.assertIn("right(id::text, 12)::bigint + 1000000", self.a.raised(self.g.Spelling(keytype="uuid")))
+        # words: cut at row 5's, the second partition ending at a letter after every word in every collation a
+        # world's database may have (in a LATIN1 one, whose locale is C, its last letter), the one made later open
+        words, latin1 = (self.g.Spelling(keytype="text", words=w) for w in (self.g.WORDS, self.g.WORDS_LATIN1))
+        self.assertEqual(self.a.cut(words), ("'iz'", "'\u9999'", "MAXVALUE"))
+        self.assertEqual(self.a.cut(latin1), ("'iz'", "'\u00ff'", "MAXVALUE"))
+        self.assertEqual(self.a.raised(words), "'\u9999' || id")
+        self.assertTrue(all(w < "\u00ff" for w in self.g.WORDS_LATIN1))
+        # a seed with words in a LATIN1 world has the words LATIN1 holds; elsewhere, its own
+        for seed in range(1, 400):
+            spec, w = self.a.world_of(seed)
+            if spec.spelling.worded:
+                want = self.g.WORDS_LATIN1 if w.database == "latin1" else self.g.WORDS
+                self.assertEqual(spec.spelling.words, want, seed)
+                self.assertIn("keys: words", self.a.features(spec, w))
+                self.assertNotIn("keys: text", self.a.features(spec, w))
+        self.assertEqual(
+            [x.words for x in self.a.plainer_spellings(words)], [(), ()], "made plainer: numerals, then bigint keys"
+        )
         for keytype in ("text", "uuid", "int"):
             spec, w = self.world(3, False, keytype=keytype)
             sql = self.a.schema_text(spec, w)
@@ -9297,11 +9398,11 @@ class Worlds(unittest.TestCase):
         self.assertNotIn("login_", self.a.transaction(self.a.World(1, session="set role"), "1", checker, [], True))
 
     def test_every_two_features_of_the_worlds_meet_in_the_full_runs(self) -> None:
-        """--pairs 1000, what the full run checks: twenty worlds (no fewer could: five kinds of key, four of
-        database) in which every two FEATURES meet but two values of what a world has one of; every feature is
-        one a world can have, and every world's features are FEATURES'."""
+        """--pairs 1000, what the full run checks: twenty-five worlds (no fewer than twenty-four could: six kinds of
+        key, words among them, four of database) in which every two FEATURES meet but two values of what a world has
+        one of; every feature is one a world can have, and every world's features are FEATURES'."""
         seeds, unmet, never = self.a.covering(1000)
-        self.assertLessEqual(len(seeds), 22)
+        self.assertLessEqual(len(seeds), 26)
         self.assertEqual((unmet, never), (set(), set()))
         for seed in seeds:  # each one's policy can be checked: compiled, and not slow to plan
             sql = Compiler(parse_policy(self.a.policy_text(*self.a.world_of(seed)), "a.authz")).compile("a.authz")
@@ -9760,6 +9861,62 @@ class PreviousRelease(unittest.TestCase):
         )
         with self.assertRaises(self.p.Wrong):
             self.p.wheels({"meta": {}})
+
+
+class DocsApps(unittest.TestCase):
+    """tests/docs_app.py: upgrade.sh upgrades each release with the docs app it was released with, a copy in
+    tests/docs_apps/ where it differs from core/example's, core/example's where it is the same."""
+
+    def setUp(self) -> None:
+        import docs_app
+
+        self.d = docs_app
+
+    def test_each_release_is_upgraded_with_its_own(self) -> None:
+        d = self.d
+        record, main = d.recorded(), d.digest_of(d.files())
+        self.assertIn(d.FIRST, record)
+        for version, sha in record.items():
+            used = d.files(version)
+            # a copy where the release's docs app differs from this checkout's, none where it is the same: when
+            # core/example changes, every release that had it wants a copy (python3 tests/docs_app.py --sync)
+            self.assertEqual(d.digest_of(used), sha, f"{version}: not its docs app; python3 tests/docs_app.py --sync")
+            self.assertEqual(used == d.files(), sha == main, version)
+        copies = os.path.join(ROOT, d.COPIES)
+        for name in sorted(os.listdir(copies)):
+            if os.path.isdir(os.path.join(copies, name)):
+                self.assertIn(name, record, f"tests/docs_apps/{name}: a copy of no release recorded")
+                self.assertNotEqual(record[name], main, f"tests/docs_apps/{name}: the same as core/example")
+                self.assertEqual(sorted(os.listdir(os.path.join(copies, name))), sorted(f"{f}.txt" for f in d.FILES))
+
+    def test_as_the_tags_have_them(self) -> None:
+        # where the checkout has the tags (here; CI's suites' checkouts haven't): every release from the first on
+        # PyPI is recorded, as its tag has its docs app
+        tags = self.d.tags()
+        if tags:
+            self.assertEqual(list(self.d.recorded()), tags, "a release not recorded: python3 tests/docs_app.py --sync")
+            for version in tags:
+                self.assertEqual(self.d.digest(self.d.tagged(version)), self.d.recorded()[version], version)
+
+    def test_a_release_whose_docs_app_differs(self) -> None:
+        # the docs app changed after 1.0.0: 1.0.0 is upgraded with its copy, 1.1.0 with this checkout's
+        d = self.d
+        with tempfile.TemporaryDirectory() as core:
+            os.makedirs(os.path.join(core, d.MAIN))
+            os.makedirs(os.path.join(core, d.COPIES, "1.0.0"))
+            for name in d.FILES:
+                for path, text in (
+                    (os.path.join(d.MAIN, name), "now"),
+                    (os.path.join(d.COPIES, "1.0.0", name + ".txt"), "then"),
+                ):
+                    with open(os.path.join(core, path), "w", encoding="utf-8") as fh:
+                        fh.write(f"{text}: {name}\n")
+            with mock.patch.object(d, "CORE", core):
+                self.assertEqual(d.files("1.0.0"), [os.path.join(d.COPIES, "1.0.0", f + ".txt") for f in d.FILES])
+                self.assertEqual(d.files("1.1.0"), [os.path.join("example", f) for f in d.FILES])
+                self.assertNotEqual(d.digest_of(d.files("1.0.0")), d.digest_of(d.files("1.1.0")))
+                with open(os.path.join(core, d.files("1.0.0")[0]), encoding="utf-8") as fh:
+                    self.assertEqual(fh.read(), "then: docs.authz\n")
 
 
 class Delivery(unittest.TestCase):

@@ -8,7 +8,9 @@ repeatedly changes the data at random (moves, links, team nesting, shares,
 expiry, inheritance flags, deletes, id changes, TRUNCATE, several changes in
 one transaction) and after every change compares, for every user:
 
-  - authz.list() for every permission of every type
+  - authz.list() for every permission of every type, and for one of them (in
+    turn) in pages of two: each page after the last id of the one before, the
+    whole in key order as the database orders the key (its collation's)
   - authz.can() for every object and permission, plus ids that don't exist
   - the rows each RLS policy lets the app role read
   - every policy expression (USING and WITH CHECK) evaluated on every row
@@ -93,6 +95,7 @@ LATER = "now() + interval '1 day'"
 SHARE_COLUMNS = "object_type, object_id, relation, subject_type, subject_id, subject_relation, expires_at, starts_at"
 STEER = 0.25  # of the changes, those aimed at parts of the policy that have decided no answer yet (Gen.steered)
 AIMS = 3  # how many parts one such change aims at, at most; or an eighth of the parts left, when that is more
+PAGE = 2  # authz.list's page size, where it is asked in pages
 
 # How many sessions answer a snapshot's questions, side by side (DIFFTEST_SESSIONS=1: one after the other). The
 # questions are the same either way, each user's in one session from first to last: what it saves is the wait.
@@ -196,6 +199,21 @@ def idsql(t: Type, a: str | None = None, columns: Cols | None = None) -> str:
     if len(t.key) == 1:
         return f"{p}{q(cols[0])}::text"
     return "ROW(" + ", ".join(f"{p}{q(c)}::{ty}" for c, (_, ty) in zip(cols, t.key, strict=True)) + ")::text"
+
+
+def pages_sql(t: Type, p: str) -> str:
+    """authz.list(t, p) in pages of PAGE, each after the last id of the one before, and whole in key order as the
+    database orders the key (a text key by its collation): [pages, whole], which must be the same list."""
+    tp = f"{lit(t.name)}, {lit(p)}"
+    order = ", ".join(f"(x::{t.keytype}).{q(c)}" for c, _ in t.key) if t.composite else f"x::{t.pktype}"
+    return (
+        f"WITH RECURSIVE pages(n, page) AS (SELECT 1, ARRAY(SELECT x FROM authz.list({tp}, NULL, {PAGE}) x) "
+        f"UNION ALL SELECT n + 1, ARRAY(SELECT x FROM authz.list({tp}, page[{PAGE}], {PAGE}) x) "
+        f"FROM pages WHERE cardinality(page) = {PAGE} AND n < 1000) "
+        "SELECT json_build_array((SELECT coalesce(json_agg(x ORDER BY n, k), '[]') FROM pages, "
+        "unnest(page) WITH ORDINALITY u(x, k)), "
+        f"(SELECT coalesce(json_agg(x ORDER BY {order}), '[]') FROM authz.list({tp}) x))"
+    )
 
 
 def notnull(a: str, columns: Cols | None) -> str:
@@ -516,6 +534,8 @@ class Checker:
                         [u, "list", t.name, p],
                         f"SELECT coalesce(json_agg(x ORDER BY x), '[]') FROM authz.list({lit(t.name)}, {lit(p)}) x",
                     )
+                    if u == sharer:
+                        emit([u, "pages", t.name, p], pages_sql(t, p))
                     emit(
                         [u, "can", t.name, p],
                         f"SELECT coalesce(json_agg(json_build_array(i, authz.can({lit(t.name)}, i, {lit(p)}))), '[]') "
@@ -1156,6 +1176,12 @@ class Checker:
                         problems.append(
                             f"user {u}: authz.list('{t.name}', '{p}') "
                             f"extra {sorted(got - want)} missing {sorted(want - got)}"
+                        )
+                    pages = snap.get((u, "pages", t.name, p))
+                    if pages is not None and pages[0] != pages[1]:
+                        problems.append(
+                            f"user {u}: authz.list('{t.name}', '{p}') in pages of {PAGE} gives {pages[0]}, "
+                            f"in key order (as the database orders it) {pages[1]}"
                         )
                     for i, ok in snap[(u, "can", t.name, p)]:
                         if bool(ok) != (i in want):

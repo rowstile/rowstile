@@ -27,6 +27,8 @@ applies (schema authz), which only an upgrade finds as an older version left the
 their types and defaults, and their constraints.
 
 Each subcommand prints `ok ...` or `FAIL ...` lines (fill and fresh: only what failed) and exits 1 on a failure.
+The docs app is the one upgrade.sh names, the older release's own (UPGRADE_DOCS_POLICY and UPGRADE_DOCS_SCHEMA, from
+core/; tests/docs_app.py), core/example's where it doesn't.
 """
 
 from __future__ import annotations
@@ -60,6 +62,13 @@ SELECT 'table ' || conrelid::regclass::text || ' constraint ' || conname || ' ' 
 FROM pg_constraint WHERE connamespace = 'authz'::regnamespace
 ORDER BY 1;
 """
+
+
+class ReleaseDocsGen(DocsGen):
+    """difftest's docs world, on the docs app the older release was released with."""
+
+    policy = os.environ.get("UPGRADE_DOCS_POLICY") or DocsGen.policy
+    schema = os.environ.get("UPGRADE_DOCS_SCHEMA") or DocsGen.schema
 
 
 def sh(*cmd: str, stdin: bytes | None = None) -> bytes:
@@ -99,7 +108,7 @@ def api_shares(db: DB, r: random.Random) -> str:
 
 
 def fill(name: str, seed: int) -> list[str]:
-    gen, db = DocsGen(random.Random(seed)), DB(name)
+    gen, db = ReleaseDocsGen(random.Random(seed)), DB(name)
     db.run(gen.initial())
     db.run(gen.grants())
     db.run(api_shares(db, gen.r))
@@ -160,7 +169,7 @@ def copy(src: str, dst: str, table: str, columns: str = "*") -> None:
 def fresh(src: str, dst: str, policy: str) -> list[str]:
     sh("dropdb", "--if-exists", dst)
     sh("createdb", dst)
-    schema = os.path.join(CORE, "example", "app_schema.sql")
+    schema = os.path.join(CORE, ReleaseDocsGen.schema)
     sh("psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", dst, "-c", "SET client_min_messages = error", "-f", schema)
     order = tables(src)
     psql(dst, f"TRUNCATE {', '.join(order)} CASCADE;")
@@ -204,7 +213,7 @@ class Recording(Checker):
 
 
 def judged(name: str) -> tuple[Recording, list[str]]:
-    gen = DocsGen(random.Random(0))
+    gen = ReleaseDocsGen(random.Random(0))
     checker = Recording(DB(name), gen.policy, gen)
     return checker, checker.check()
 

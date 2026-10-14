@@ -12,7 +12,9 @@ policy for that seed and draws a world for it:
                 named as an app's own may be (genpolicy's AWKWARD: capitals, words SQL reserves, a quote, a
                 letter outside ASCII, 63 bytes). What the world makes beside them (the tables under them, the
                 decoys, a schema on the path) is named the same way, and every statement here quotes them
-  the keys      the seed's own too: bigint, int, text or uuid, or two columns (an org's and the row's). A table
+  the keys      the seed's own too: bigint, int, text or uuid, or two columns (an org's and the row's); text keys
+                that are words for some (genpolicy's WORDS: a space, quotes, capitals, accents, a dotted and a
+                dotless i, an order each collation has its own of), as the database can hold them. A table
                 is partitioned by its key whatever its type, and a link table follows a key of two columns
   the database  made as the server's others are, or with a locale and an encoding of its own (DATABASES): the C
                 locale, LATIN1, or Turkish (ICU), where lower('I') is not 'i'
@@ -92,8 +94,8 @@ import genpolicy  # noqa: E402
 from authzlib import evaluate  # noqa: E402
 from authzlib.parse import Rule  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
-from difftest import DB, Checker, Snapshot, idsql, lit  # noqa: E402
-from genpolicy import SCHEMA, Refused, Slow, Spec, Spelling  # noqa: E402
+from difftest import DB, Checker, Snapshot, idsql, lit, pages_sql  # noqa: E402
+from genpolicy import SCHEMA, WORDS_LATIN1, Refused, Slow, Spec, Spelling  # noqa: E402
 
 # The login roles of a run, named after its database (name_roles(): these are --db authz_around's)
 MEMBER = "authz_around_member"  # logs in, a member of app_user
@@ -231,13 +233,15 @@ def described(spec: Spec, w: World) -> str:
     n = spec.spelling
     names = "names as an app's own may be (genpolicy's AWKWARD); " if n.awkward else ""
     keys = "keys of two columns; " if n.composite else f"{n.keytype} keys; " if n.keytype != "bigint" else ""
+    keys = f"text keys that are words ({', '.join(n.words[:3])}, ...); " if n.worded else keys
     return names + keys + w.describe()
 
 
 def plainer_spellings(n: Spelling) -> list[Spelling]:
     """The policy's names and keys with one thing made plain: what a failing seed is tried with, last."""
     out = [dataclasses.replace(n, awkward=False)] if n.awkward else []
-    out += [dataclasses.replace(n, keytype="bigint")] if n.keytype != "bigint" else []
+    out += [dataclasses.replace(n, words=())] if n.worded else []
+    out += [dataclasses.replace(n, keytype="bigint", words=())] if n.keytype != "bigint" else []
     return out + ([dataclasses.replace(n, composite=False)] if n.composite else [])
 
 
@@ -276,7 +280,7 @@ READING = ("quote_all_identifiers", "transform_null_equals", "standard_conformin
 ONE_OF = ("keys", "database", "session", "signing in", "a user's row")
 FEATURES = [
     "names: awkward",
-    *[f"keys: {k}" for k in ("int", "text", "uuid", "two columns")],
+    *[f"keys: {k}" for k in ("int", "text", "uuid", "two columns", "words")],
     *[f"database: {d}" for d in DATABASES],
     *[f"session: {x}" for x in ("owner", "member", "set role")],
     *[f"signing in: {x}" for x in ("api key", "jwt")],
@@ -302,6 +306,7 @@ def features(spec: Spec, w: World) -> set[str]:
     n, links = spec.spelling, link_tables(spec)
     out = {"names: awkward"} if n.awkward else set()
     out |= {"keys: two columns"} if n.composite else {f"keys: {n.keytype}"} if n.keytype != "bigint" else set()
+    out = out - {"keys: text"} | {"keys: words"} if n.worded else out
     out |= {f"database: {w.database}"} if w.database else set()
     out |= {f"session: {w.session}"}
     out |= {f"signing in: {w.signs}"} if w.signs else set()
@@ -343,7 +348,16 @@ def apart(a: str, b: str) -> bool:
 def world_of(seed: int) -> tuple[Spec, World]:
     """The seed's policy (genpolicy's, with its own names and keys, and more to write to) and its world."""
     spec = with_write_rules(genpolicy.make(seed), seed)
-    return spec, draw(seed, spec)
+    w = draw(seed, spec)
+    return in_database(spec, w), w
+
+
+def in_database(spec: Spec, w: World) -> Spec:
+    """The policy as the world's database can hold it: where keys are words, a LATIN1 one has an accented i for the
+    dotted and the dotless ones (WORDS_LATIN1)."""
+    if w.database == "latin1" and spec.spelling.worded:
+        return dataclasses.replace(spec, spelling=dataclasses.replace(spec.spelling, words=WORDS_LATIN1))
+    return spec
 
 
 def covering(pool: int) -> tuple[list[int], set[tuple[str, str]], set[tuple[str, str]]]:
@@ -439,15 +453,26 @@ FOLLOWS = " ON DELETE CASCADE ON UPDATE CASCADE"
 def cut(n: Spelling) -> tuple[str, str, str]:
     """Where a table partitioned by range is cut, in SQL: between its two partitions, where the second ends (keys
     don't get that far by themselves) and where a partition made later ends. Text keys sort as text ('10' before
-    '5'): any cut will do, each row is in one partition or the other."""
+    '5'): any cut will do, each row is in one partition or the other. Words (genpolicy's WORDS) sort as the
+    database's collation says: the first cut is row 5's key, the second a letter after every word in all of them
+    (an ideograph; in a LATIN1 database, whose locale is C, its last letter), the partition made later goes on."""
+    if n.worded:
+        return n.literal(n.ident(5)), lit(top_word(n)), "MAXVALUE"
     if n.keytype == "text":
         return "'5'", "'9999'", "'99999999'"
     return n.literal(n.ident(5)), n.literal(n.ident(TOP)), n.literal(n.ident(2 * TOP))
 
 
+def top_word(n: Spelling) -> str:
+    """A text after every word of n's, in each database a world may have (cut())."""
+    return "\u00ff" if n.words == WORDS_LATIN1 else "\u9999"
+
+
 def raised(n: Spelling) -> str:
     """A row's key moved past where the second partition ends, in SQL: into a partition made later."""
     i = n.sql("id")
+    if n.worded:
+        return f"{lit(top_word(n))} || {i}"
     if n.keytype == "text":
         return f"'9999' || {i}"
     return n.key_of(f"right({i}::text, 12)::bigint + {TOP}") if n.keytype == "uuid" else f"{i} + {TOP}"
@@ -605,7 +630,8 @@ def initial(gen: genpolicy.GenPolicyGen, w: World) -> str:
     for line in gen.initial().splitlines():
         into = next((head for head in (*rows, *links) if line.startswith(head)), "")
         if into in rows:
-            if n.number(line.split(") VALUES (", 1)[1].split(", ")[len(first) - 1].strip("'")) % 2 == 0:
+            key = line.split(") VALUES (", 1)[1].split(", ")[len(first) - 1]  # (a literal: 'O''Neil')
+            if n.number(key[1:-1].replace("''", "'") if key.startswith("'") else key) % 2 == 0:
                 line = line.replace(n.table(rows[into]), n.table(f"{rows[into]}_old"), 1)
         elif into:
             seen[into] = seen.get(into, 0) + 1
@@ -809,6 +835,8 @@ class AroundChecker(Checker):
                             f"SELECT coalesce(json_agg(x ORDER BY x), '[]') FROM authz.list({lit(t.name)}, {lit(p)}) x",
                         )
                     )
+                    if (u, "pages", t.name, p) in snap:  # (in pages, for the user difftest asked so)
+                        body.append(emit([u, "pages", t.name, p], pages_sql(t, p)))
                     ids = ", ".join(lit(i) for i, _ in snap[(u, "can", t.name, p)])
                     body.append(
                         emit(

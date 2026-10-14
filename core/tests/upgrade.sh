@@ -11,6 +11,8 @@
 # Right after a release this version makes just what the release before made (a new version alone is no
 # migration): then migrate has nothing to write, and that database stays as the release before's migrations left
 # it, which must still be what this version leaves on a new one. The checks are as many either way.
+# The docs app is the one the older release was released with (tests/docs_app.py: its copy in tests/docs_apps/ where
+# it differs from core/example's, which an older release may not compile), on every database here, the new one too.
 # --from VERSION: from that release in place of the one before. --world: also a world of data (tests/upgrade_world.py,
 # as difftest makes the docs app's: shares in every state, links, moves, through the older release's own triggers
 # and authz.share), in a database it applied and in one its migration set up; this version upgrades them by reapply
@@ -78,12 +80,19 @@ case "$(OLD --version 2>&1)" in *" $OLD_VERSION "*)
   ok "$BEFORE, $OLD_VERSION, older than this $NEW_VERSION, installed from PyPI in a virtual environment of its own";;
   *) bad "${BEFORE}'s command" "$(OLD --version 2>&1)";; esac
 
-cp example/docs.authz "$P/policy.authz"
-cp example/docs.test.authz "$P/tests.authz"
+# the docs app as the older release was released with it: its policy, its tests, its schema
+APP=() said=$(python3 tests/docs_app.py "$OLD_VERSION" 2>&1 >/dev/null)
+mapfile -t APP < <(python3 tests/docs_app.py "$OLD_VERSION" 2>/dev/null)
+where="its copy, core/${APP[0]%/*}/"; [ "${APP[0]}" = example/docs.authz ] && where="core/example's, this checkout's"
+[ ${#APP[@]} -eq 3 ] && ok "the docs app $OLD_VERSION was released with: $where${said:+ ($said)}" ||
+  { bad "the docs app $OLD_VERSION was released with" "${APP[*]} $said"; echo "upgrade: 1 failed"; exit 1; }
+export UPGRADE_DOCS_POLICY=${APP[0]} UPGRADE_DOCS_SCHEMA=${APP[2]}   # (tests/upgrade_world.py's)
+cp "${APP[0]}" "$P/policy.authz"
+cp "${APP[1]}" "$P/tests.authz"
 printf 'policy = "policy.authz"\ndatabase = "dbname=%s"\n[migrations]\ntool = "sql"\ndir = "migrations"\n' "${DB}_migrate" > "$P/rowstile.toml"
-python3 compile_policy.py example/docs.authz --tests > "$T/docs_tests.sql" || exit 1
+python3 compile_policy.py "$P/policy.authz" --tests > "$T/docs_tests.sql" || exit 1
 fresh() { dropdb --if-exists "$1" 2>/dev/null; createdb "$1" || exit 1
-  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$1" -f example/app_schema.sql >/dev/null || exit 1; }
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$1" -f "${APP[2]}" >/dev/null || exit 1; }
 # every migration in the folder the database hasn't taken yet, in order, each in one transaction (as the tools do)
 migrate_db() {
   local f out

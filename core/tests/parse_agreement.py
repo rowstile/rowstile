@@ -6,8 +6,14 @@ them both: their answers would agree, and be wrong. The grammar was written apar
 the two read a policy alike, that reading has two witnesses.
 
     python3 tests/parse_agreement.py --write DIR N       # N of genpolicy's random policies, as DIR/gen_<seed>.authz
+    python3 tests/parse_agreement.py --write DIR 0 --small 4 [--slice K/N]   # and/or small.py's set up to size 4
     npx tree-sitter parse --xml --paths LIST > all.xml   # in editor/tree-sitter-authz: every file LIST names
-    python3 tests/parse_agreement.py all.xml             # each policy parse.py accepts, read alike? (exit 1 if not)
+    python3 tests/parse_agreement.py all.xml [more.xml]  # each policy parse.py accepts, read alike? (exit 1 if not)
+
+small.py's set (tests/small.py: every policy of the core language up to a size, and those of the next with a deny)
+is written twice: each policy as the set lists it (DIR/small_<k>.authz), and written another way, as small.py's
+second reading has it (DIR/small_<k>_other.authz: its names swapped, every `or` and `and` the other way round).
+--slice K/N: only the policies whose number is K modulo N. Many files are parsed in several XMLs, each compared.
 
 Alike: the app role; the types (table, key, whether they sign in, where); each relation's sources in order, with
 their subjects; the permissions, as expressions (or, and, not, grouped as parentheses say, a run of ors or of ands
@@ -367,27 +373,42 @@ def compare(xml_path: str) -> tuple[int, int, list[str]]:
     return compared, refused, problems
 
 
-def write(folder: str, n: int) -> None:
-    """n of genpolicy's random policies, seeds 1 to n, as folder/gen_<seed>.authz."""
+def write(folder: str, n: int, small: int = 0, part: tuple[int, int] = (0, 1)) -> None:
+    """n of genpolicy's random policies, seeds 1 to n, as folder/gen_<seed>.authz; and small.py's set up to size
+    small (those whose number is part[0] modulo part[1]), each as listed and written another way."""
     import genpolicy
 
     os.makedirs(folder, exist_ok=True)
-    for seed in range(1, n + 1):
-        with open(os.path.join(folder, f"gen_{seed}.authz"), "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(genpolicy.policy_text(genpolicy.make(seed)))
+    texts = {f"gen_{seed}": genpolicy.policy_text(genpolicy.make(seed)) for seed in range(1, n + 1)}
+    if small:
+        import small as smallset
+
+        for k, spec in enumerate(smallset.the_set(small)):
+            if k % part[1] == part[0]:
+                texts[f"small_{k}"] = smallset.policy_text(spec)
+                texts[f"small_{k}_other"] = smallset.policy_text(smallset.respelled(spec)[0])
+    for name, text in texts.items():
+        with open(os.path.join(folder, f"{name}.authz"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
 
 
 def main(argv: Sequence[str]) -> int:
     ap = argparse.ArgumentParser(description="The grammar reads each policy as parse.py does.")
-    ap.add_argument("xml", nargs="?", help="what `tree-sitter parse --xml` wrote")
+    ap.add_argument("xml", nargs="*", help="what `tree-sitter parse --xml` wrote (several: each, the counts together)")
     ap.add_argument("--write", nargs=2, metavar=("DIR", "N"), help="write N of genpolicy's policies into DIR")
+    ap.add_argument("--small", type=int, default=0, metavar="SIZE", help="--write: and small.py's set up to SIZE")
+    ap.add_argument("--slice", default="0/1", metavar="K/N", help="--small: those whose number is K modulo N")
     a = ap.parse_args(argv)
     if a.write:
-        write(a.write[0], int(a.write[1]))
+        k, n = (int(x) for x in a.slice.split("/"))
+        write(a.write[0], int(a.write[1]), a.small, (k, n))
         return 0
     if not a.xml:
         ap.error("name the XML, or --write")
-    compared, refused, problems = compare(a.xml)
+    compared, refused, problems = 0, 0, []
+    for xml in a.xml:
+        c, r, p = compare(xml)
+        compared, refused, problems = compared + c, refused + r, problems + p
     for p in problems:
         print(p)
     print(

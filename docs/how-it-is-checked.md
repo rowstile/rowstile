@@ -21,8 +21,10 @@ they would agree. So the evaluator is held to answers that neither of them wrote
 
 - **A second reading of the language**: the editors' grammar ([`editor/tree-sitter-authz`](../editor/tree-sitter-authz))
   was written apart from the parser. [`tests/parse_agreement.py`](../core/tests/parse_agreement.py) has both
-  read every policy in the repository and two hundred random ones, and compares what they read: the types,
-  each relation's sources, the permissions with their grouping, the rules, the tests. They read each one alike.
+  read every policy in the repository, two hundred random ones and the small policies up to size four (894, each
+  written two ways: as listed, and with its names swapped and its parts turned round), and compares what they
+  read: the types, each relation's sources, the permissions with their grouping, the rules, the tests. They read
+  each one alike. Each night they read all 70,983 small policies, both ways. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
   (The grammar takes more than the parser does, as an editor must: what the parser refuses isn't compared.) <!-- checked: tests/parse_agreement.py "policy the parser refuses is not compared" -->
 - **A third evaluator**: [`tests/third.py`](../core/tests/third.py) was written from the language's reference
   alone and imports nothing of the compiler's or the reference evaluator's. It reads each policy through the
@@ -40,7 +42,9 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   through two types at once, shares that start and end, ids that change, `TRUNCATE`, several statements in
   one transaction). After each change,
   `authz.can`, `authz.list`, `authz.explain`, `authz.who`, what row-level security lets each user read, every
-  rule's condition and the masked views are compared with the evaluator's answer. `authz.explain` is asked by
+  rule's condition and the masked views are compared with the evaluator's answer. One user a change, in turn,
+  is also asked `authz.list` in pages of two: the pages, one after another, must be the whole list in key order,
+  as the database orders the key (a text key by its collation). <!-- checked: tests/difftest.py "in key order (as the database orders it)" --> `authz.explain` is asked by
   each user too: about a row they can't see, it must say nothing more than about a missing one. <!-- checked: tests/difftest.py "explain self"; tests/adversarial.sh "explaining a folder she can't see (but may break the glass on) reads as a missing one" -->
   So is
   `authz.explain_rule`: nothing about such a row, and on the others, for an update or a delete, the rules' own
@@ -52,7 +56,10 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   `user`), with a quote or an accent, or as long as Postgres allows. Every name the compiler writes into SQL is
   then one it must quote.
   Nearly half give their keys another type than `bigint`: `int`, `text` or `uuid`; some key their rows by two
-  columns, an org's and the row's own. Some put two types' rows inside each other, so that one recursion runs
+  columns, an org's and the row's own. Half of those with `text` keys make them words, not numerals: with a
+  space, quotes of both kinds, capitals, accents, a dotted and a dotless `i`, one the start of another, in an
+  order each collation has its own of (`B` comes before `ab` in the C locale, after it in English). A key folded
+  to lower case, or compared in another collation than the database's, then changes an answer. Some put two types' rows inside each other, so that one recursion runs
   through both. Some have caveats, which some of their shares carry, and some scopes, with which one user is
   asked again after each change. Some mask a column in a view, and some give permissions by custom roles, or
   share by links; some rules say they are checked before or after the change. A quarter are written in two
@@ -60,7 +67,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
 - **Random worlds**: the two above compare answers in one setting: plain tables, and the owner's session
   switched to the app role. [`tests/around.py`](../core/tests/around.py) takes the random policies again and
   draws what is around each one too, under the names and with the keys the policy drew (the awkward names,
-  `uuid` and `text` keys, keys of two columns): tables that are partitioned, or have a table that inherits
+  `uuid` and `text` keys, text keys that are words, keys of two columns): tables that are partitioned, or have a table that inherits
   from them (the governed tables, the users' table, the link tables); a database in the C locale, in LATIN1,
   or in Turkish, where `lower('I')` is not `i`;
   default privileges of the owner's; a login role that is a member of the app role and signs each user in,
@@ -71,8 +78,8 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   app role on every row and undoes them (updates, deletes, and inserts of rows like the ones there), shares too (against who may share and what the relation's
   `shared if` says of the share), checks that no share outlives its row, that a role the policy
   doesn't name gets nothing, and that `authz.lint()` reports what changed and `rowstile apply` puts it right.
-  A few on every run; on the full run the twenty worlds, of a thousand seeds, in which every two of those
-  features meet; sixty with new seeds every night.
+  A few on every run; on the full run the twenty-five worlds, of a thousand seeds, in which every two of those
+  features meet (words for keys in the Turkish database among them); sixty with new seeds every night.
 - **Every small policy**: a random draw can wait long for the one small policy, and the one small world, that a
   mistake needs. [`tests/small.py`](../core/tests/small.py) lists every policy of the core language up to a size
   instead, each once (two that differ in their names alone, or in the order of an `or`'s or an `and`'s parts, are
@@ -190,9 +197,11 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   the app would, and each holds what applying this version on a new database leaves, down to the columns of the
   tables rowstile keeps across applies; the policy's tests and the scenario pass, and what the app made before
   still works. <!-- checked: tests/upgrade.sh "it holds what applying this version on a new database leaves"; tests/upgrade.sh "the API key made before still signs dave in" -->
-  Every night it does the same from every release on PyPI (six alphas today), and each also makes a world of
-  data the way the random checks do: shares in every state, links, moves, through that release's own triggers
-  and `authz.share`. After the upgrade, by `reapply` and by the next migration, `authz.can` answers every user,
+  It also makes a world of data the way the random checks do: shares in every state, links, moves, through that
+  release's own triggers and `authz.share`; every night it does all of this from every release on PyPI (six
+  alphas today). Each release is upgraded with the docs app it was released with: a copy in the tests where it
+  differs from today's ([`tests/docs_app.py`](../core/tests/docs_app.py)), so a change to the docs app that an
+  old release would not compile leaves its upgrade checked. <!-- checked: tests/unit_test.py "test_each_release_is_upgraded_with_its_own"; tests/upgrade.sh "the docs app" --> After the upgrade, by `reapply` and by the next migration, `authz.can` answers every user,
   object and permission (1,277 checks) as on a new database with the same rows, all of difftest's questions get
   the reference evaluator's answers, and the catalog and the inheritance rows are the new database's. <!-- checked: tests/upgrade_world.py "answers as on a new database"; tests/upgrade.sh "it holds what applying this version on a new database with its rows leaves" -->
 - **Cut half way**: [`tests/interrupt.py`](../core/tests/interrupt.py) runs `rowstile apply` (on a new database

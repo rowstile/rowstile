@@ -83,7 +83,7 @@ from authzlib.parse import (  # noqa: E402
 from authzlib.sqlutil import q, qt  # noqa: E402
 from difftest import DB, SESSIONS, Ids, idsql, lit  # noqa: E402
 from genpolicy import INCLUDED as INCLUDED_BY_GENPOLICY  # noqa: E402
-from genpolicy import UUID, Spec, gen_class, make, policy_text, schema_text, write_policy  # noqa: E402
+from genpolicy import UUID, Spec, Spelling, gen_class, make, policy_text, schema_text, write_policy  # noqa: E402
 
 Answer = Any
 Files = dict[str, str]
@@ -650,7 +650,7 @@ def through_shuffle(text: str, files: Files, pol: Policy) -> str:
     return render(blocks)
 
 
-def renum_next_sql(pol: Policy, ren: Renumbering) -> str:
+def renum_next_sql(pol: Policy, ren: Renumbering, spelling: Spelling) -> str:
     """renum_next(type, key): the new key of the row of t1 after the one whose old key is key's, in type's keys
     (one no row has, where there is none), for through_shuffle()."""
     t1 = pol.types.get("t1")
@@ -661,8 +661,7 @@ def renum_next_sql(pol: Policy, ren: Renumbering) -> str:
     rows: list[str] = []
     for t in pol.types.values():
         for old, new in ren.new.get(t.name, {}).items():
-            n = int(old[-12:]) + 1 if kt == "uuid" else int(old) + 1
-            succ = UUID.format(n) if kt == "uuid" else str(n)
+            succ = spelling.ident(spelling.number(old) + 1)  # (as genpolicy's gp.nxt: words too)
             nxt = ren.new.get("t1", {}).get(succ, UUID.format(0) if kt == "uuid" else "0")
             rows.append(f"({lit(t.name)}, {lit(new)}, {lit(nxt)})")
     values = ", ".join(rows) or "(NULL, NULL, NULL)"
@@ -794,7 +793,7 @@ def check(spec: Spec, db: DB, db2: DB, steps: int, workdir: str) -> tuple[list[s
     contexts = {ren.principal(u): gen.context(u) for u in [*users, ""]}
     db2.recreate()
     db2.run(schema_text(spec))
-    db2.run(renum_next_sql(pol, ren))
+    db2.run(renum_next_sql(pol, ren, spec.spelling))
     for table in ren.wheres:
         load(db2, qt(table), data[table])
     db2.run(compiled(through_shuffle(text, files, pol), {}))
