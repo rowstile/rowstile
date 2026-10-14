@@ -276,7 +276,8 @@ with tempfile.TemporaryDirectory() as d:
         (
             "a database that never answers",
             f'"host=127.0.0.1 port={silent.getsockname()[1]} dbname=authz_lsp"',
-            "rowstile lsp: no table or column names to complete: timed out",
+            f"rowstile lsp: no table or column names to complete: 127.0.0.1 port {silent.getsockname()[1]}: no answer "
+            "in 3 s (connect_timeout)",
         ),
     ):
         with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:

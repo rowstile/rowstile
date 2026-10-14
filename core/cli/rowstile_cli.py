@@ -267,7 +267,8 @@ def cant_connect(e: BaseException, dsn: str | None) -> str:
     database a .env file named: which file."""
     if dsn or any(os.environ.get(v) for v in ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE")):
         named = f"\n(the database is the one {ENV.where} names)" if ENV.where else ""
-        return f"can't connect: {e}{named}{ENV.note()}"
+        said = f"can't connect to {e.where}: {e.why}" if isinstance(e, pgwire.Unreachable) else f"can't connect: {e}"
+        return f"{said}{named}{ENV.note()}"
     return (
         f"can't connect: no database was named, and the default failed ({e})\n"
         f"name it with --db DSN, `database` in {CONFIG}, or DATABASE_URL (in the environment, .env.local or .env)"
@@ -1536,7 +1537,7 @@ def review_cmd(cfg: Config, args: list[str], opts: dict[str, str], flags: set[st
         try:
             conn = pgwire.connect(**pgwire.parse_dsn(dsn))
         except (ValueError, OSError, pgwire.PgError, pgwire.ProtocolError) as e:
-            fail(f"can't connect: {e}", 2)
+            fail(cant_connect(e, dsn), 2)
         conn.on_notice = lambda f: None
         conn.execute("BEGIN")
         db = Db(conn)

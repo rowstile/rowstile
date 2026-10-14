@@ -13,6 +13,17 @@ then runs on a Python 3.11 or later from your `PATH` if there is one, and says s
 long paths turned on in Windows (`LongPathsEnabled`), or a Python of your own (`pip install --pre rowstile`
 gives the same command).
 
+## "can't connect to ..."
+
+The command says where it tried and what the system said: `can't connect to db.example.com port 5433: connection
+refused`, or for a server on this machine `can't connect to the socket /var/run/postgresql/.s.PGSQL.5432: no such
+file or directory`. Check that a server runs there, and that the place is the one you meant. The database is
+`--db`, else `database` in `rowstile.toml`, else `DATABASE_URL`, else the `PG*` variables; `DATABASE_URL` and the
+variables may come from `.env.local` or `.env` beside `rowstile.toml`, and the message says when a file named the
+database. With none of them, the command tries what `psql` tries: your system's user, on the server's socket in
+`/var/run/postgresql` or `/tmp`, or `localhost` on Windows; the message then says nothing named a database, and
+how to name one.
+
 ## A `{condition}` with a subquery matches rows it shouldn't (or none)
 
 A bare column in a condition is the row's, unless a table the condition reads has one by that name: in

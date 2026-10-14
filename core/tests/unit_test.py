@@ -1430,20 +1430,24 @@ class Command(unittest.TestCase):
         self.assertEqual(stack._files(d, (".ts",), limit=2), ["a.ts", "b.ts"])
 
     def test_no_database_named_is_said(self) -> None:
-        # with no --db, no `database` in rowstile.toml and no variable, the defaults are tried (a local socket): when
-        # they fail the message says nothing named a database and how to name one, not only a host nobody gave
-        # (on Windows: "host=/var/run/postgresql is a Unix socket"). A database that was named fails as itself
-        e = OSError("host=/var/run/postgresql is a Unix socket, which Windows doesn't have: use host=localhost")
+        # with no --db, no `database` in rowstile.toml and no variable, libpq's defaults are tried (a local socket):
+        # when they fail the message says nothing named a database and how to name one, not only a socket nobody
+        # gave. A database that was named fails as itself
+        e = rowstile_cli.pgwire.Unreachable("the socket /var/run/postgresql/.s.PGSQL.5432", "no such file or directory")
         named = ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE")
         with mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if k not in named}, clear=True):
             said = rowstile_cli.cant_connect(e, None)
             self.assertTrue(
-                said.startswith("can't connect: no database was named, and the default failed (host="), said
+                said.startswith(
+                    "can't connect: no database was named, and the default failed (the socket "
+                    "/var/run/postgresql/.s.PGSQL.5432: no such file or directory)\n"
+                ),
+                said,
             )
             self.assertIn("--db DSN, `database` in rowstile.toml, or DATABASE_URL", said)
-            self.assertEqual(rowstile_cli.cant_connect(e, "host=db"), f"can't connect: {e}")
+            self.assertEqual(rowstile_cli.cant_connect(e, "host=db"), f"can't connect to {e}")
         with mock.patch.dict(os.environ, {"PGHOST": "db"}):
-            self.assertEqual(rowstile_cli.cant_connect(e, None), f"can't connect: {e}")
+            self.assertEqual(rowstile_cli.cant_connect(e, None), f"can't connect to {e}")
 
     def test_env_files_are_read_for_the_database_only(self) -> None:
         # a .env file as apps write them: comments, export, quotes, ${NAME} from the environment or the lines above
@@ -4119,6 +4123,56 @@ class Wire(unittest.TestCase):
         ):
             parse("host=h")
         self.assertEqual(parse("host=h user=x")["user"], "x")  # one named isn't looked up
+
+    def test_where_it_could_not_connect_is_said(self) -> None:
+        # a server it can't reach is said with where it tried (the host and port, or the socket's path) and why, in
+        # words, as psql says it: the database may have come from rowstile.toml, DATABASE_URL, a .env file or PG*
+        import socket
+
+        connect, Unreachable = self.pgwire.connect, self.pgwire.Unreachable
+        free = socket.socket()
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]  # bound, not listening: refused
+        try:
+            with self.assertRaises(Unreachable) as caught:
+                connect(host="127.0.0.1", port=port, sslmode="disable", timeout=5)
+        finally:
+            free.close()
+        self.assertEqual(str(caught.exception), f"127.0.0.1 port {port}: connection refused")
+        self.assertEqual(caught.exception.where, f"127.0.0.1 port {port}")
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(Unreachable) as caught:
+            connect(host=folder, port=5433, timeout=5)
+        self.assertEqual(str(caught.exception), f"the socket {folder}/.s.PGSQL.5433: no such file or directory")
+        # a name with no address (as the system's resolver says it)
+        no_name = socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        with mock.patch.object(socket, "getaddrinfo", side_effect=no_name), self.assertRaises(Unreachable) as caught:
+            connect(host="nosuchhost.invalid", port=5432, timeout=5)
+        self.assertEqual(str(caught.exception), "nosuchhost.invalid port 5432: name or service not known")
+        # something that takes the connection and never answers: as long as connect_timeout says
+        mute = socket.socket()
+        mute.bind(("127.0.0.1", 0))
+        mute.listen(1)  # never accepted: the system answers the connection, and nobody the start-up
+        port = mute.getsockname()[1]
+        try:
+            with self.assertRaises(Unreachable) as caught:
+                connect(host="127.0.0.1", port=port, sslmode="disable", timeout=0.5)
+        finally:
+            mute.close()
+        self.assertEqual(str(caught.exception), f"127.0.0.1 port {port}: no answer in 0.5 s (connect_timeout)")
+        # ... and the command says it so, with nothing named too (libpq's defaults, tried)
+        refused = Unreachable("db.example.com port 5433", "connection refused")
+        named = ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE")
+        with mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if k not in named}, clear=True):
+            self.assertEqual(
+                rowstile_cli.cant_connect(refused, "postgresql://me@db.example.com:5433/app"),
+                "can't connect to db.example.com port 5433: connection refused",
+            )
+            self.assertTrue(
+                rowstile_cli.cant_connect(refused, None).startswith(
+                    "can't connect: no database was named, and the default failed (db.example.com port 5433: "
+                    "connection refused)\n"
+                )
+            )
 
     def test_a_socket_on_windows(self) -> None:
         # Windows has no Unix sockets: a host that is a folder is refused, saying what to write instead
