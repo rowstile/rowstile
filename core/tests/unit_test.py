@@ -6252,26 +6252,57 @@ class SmallPolicies(unittest.TestCase):
         with self.assertRaises(self.s.Unloadable):
             self.s.load_sql(pol, dataclasses.replace(data, cond={("t1", "exists (select 1)"): ["1"]}))
 
-    def test_a_world_with_conditions_nothing_asked_reads(self) -> None:
+    def test_a_world_whose_conditions_the_rows_decide(self) -> None:
         # tests/rewrites.py replays a difference the review shows: the world is made as rows, but a condition that
-        # reads other tables holds where they say, not where the world says. Only those the answer asked reads count
+        # reads other tables holds where they say, not where the world says. So what the rows hold is read back: the
+        # replay holds when they hold the world but for such conditions, and fails when they don't
+        import rewrites
+
+        flag = "exists (select 1 from gp.flags)"
         pol = parse_policy(
-            "app role app_user\ntype user = gp.users\ntype t1 = gp.t1\n  r1 : user = c_r1\n  member : user = gp.m(a -> b)\n"
-            "  can p1 = r1 and {exists (select 1)}\n  can p2 = member or {b1}\n"
-            "type t2 = gp.t2\n  r2 : t1#member = gp.n(a -> b)\n  up : t1 = c_up\n  can p3 = r2 or up.p1\n",
+            "app role app_user\ntype user = gp.users\ntype t1 = gp.t1\n  r1 : user = c_r1\n"
+            f"  can p1 = r1 and not {{{flag}}}\n  can p2 = r1 and {{b1}}\n",
             "small.authz",
         )
-        self.assertEqual(self.s.conditions_read(pol, "t1", "p2"), {("t1", "b1")})
-        self.assertEqual(self.s.conditions_read(pol, "t2", "p3"), {("t1", "exists (select 1)")})
-        self.assertEqual(self.s.conditions_read(pol, "t2", "r2"), set())
-        data = self.s.data_of(pol, {"user": ["1", "2"], "t1": ["1"], "t2": ["1"]}, [])
-        data.cond[("t1", "exists (select 1)")] = []
+        world = self.s.data_of(
+            pol,
+            {"user": ["1"], "t1": ["1"]},
+            [("pair", "t1\tr1\t0\tuser\t", "1", "1", None), ("col", "t1", "1", "b1", True)],
+        )
+        world.cond[("t1", flag)] = ["1"]
         with self.assertRaises(self.s.Unloadable):
-            self.s.load_sql(pol, data)
-        with self.assertRaises(self.s.Unloadable):
-            self.s.load_sql(pol, data, read=self.s.conditions_read(pol, "t2", "p3"))
-        rows, _ = self.s.load_sql(pol, data, read=self.s.conditions_read(pol, "t1", "p2"))
-        self.assertIn('INSERT INTO "gp"."t2" ("id") VALUES (1);', rows)
+            self.s.load_sql(pol, world)
+        rows, _ = self.s.load_sql(pol, world, rows_decide=True)
+        self.assertEqual(
+            rows,
+            'INSERT INTO "gp"."users" ("id") VALUES (1);\nINSERT INTO "gp"."t1" ("id", "b1", "c_r1") VALUES (1, true, 1);',
+        )
+
+        def back(flagged: list[str], b1: list[str], pairs: list[list[str]]) -> evaluate.Data:
+            return evaluate.Data.of(
+                {
+                    ("ids", "user"): ["1"],
+                    ("valid", "user"): ["1"],
+                    ("ids", "t1"): ["1"],
+                    ("valid", "t1"): ["1"],
+                    ("pairs", "t1", "r1", 0, "user", ""): pairs,
+                    ("cond", "t1", flag): flagged,
+                    ("cond", "t1", "b1"): b1,
+                }
+            )
+
+        self.assertIsNone(rewrites.rows_hold(pol, world, back(["1"], ["1"], [["1", "1"]]), "1"))
+        # the flag holds nowhere in the rows: p1 holds there, not in the world, and that's the condition alone
+        self.assertEqual(rewrites.rows_hold(pol, world, back([], ["1"], [["1", "1"]]), "1"), "conditions")
+        # b1, a column the world gives: the rows must hold it as the world does
+        self.assertEqual(
+            rewrites.rows_hold(pol, world, back(["1"], [], [["1", "1"]]), "1"),
+            "t1.p2 holds on ['1'] in the world, [] in its rows",
+        )
+        self.assertEqual(
+            rewrites.rows_hold(pol, world, back([], ["1"], []), "1"),
+            "t1.p1 holds on ['1'] in the world, [] in its rows",
+        )
 
     def test_the_parts_made_wrong_are_told_apart(self) -> None:
         spec = self.s.decorated(

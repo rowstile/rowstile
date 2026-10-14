@@ -124,7 +124,9 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   policy's data, for everyone, before and after the rewrite, are the same too; and a rewrite that changes
   nothing is given no difference by either. The first difference the review shows for each policy is replayed in a
   database: the small world it was found in, made as rows, gives the user the answers the review says, under the
-  policy and under the rewrite.
+  policy and under the rewrite. A condition the review doesn't read (a subquery) holds where the rows say,
+  which may not be where the world says. So what the rows hold is read back: they must hold the world but
+  for such conditions, and the database must answer as the reference evaluator does on them.
 - **Changes that change nothing**: a policy written another way says the same, and data renumbered is the same
   data. [`tests/invariance.py`](../core/tests/invariance.py) writes each random policy three other ways: its
   blocks, the lines in each and the operands of every `or` and `and` in another order; its blocks spread over
