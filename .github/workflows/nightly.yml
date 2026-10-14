@@ -5,7 +5,8 @@
 # rowstile's PL/pgSQL the suites run (statements), and the scale benchmark last.
 # On GitHub's runners, as ci.yml (or the one the repository variable RUNNER names). Run by hand too
 # (workflow_dispatch), all of it or one job: `gh workflow run nightly.yml -f only=bench`. And several soaks at
-# once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7`. And every
+# once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7` (and
+# `-f part=policies`: one part of each). And every
 # small policy at once, seven jobs side by side (each night's soak checks a seventh): `-f only=small`.
 name: nightly
 on:
@@ -19,6 +20,9 @@ on:
       soaks:
         description: "How many soaks to run at once (1 to 9), each with its own seed, on 16, 17 and 18 in turn"
         default: "1"
+      part:
+        description: "With soak: only this part of each (changes-1, changes-2, policies, around, small, races); empty: all"
+        default: ""
 # One nightly at a time. Several soaks asked for by hand are a run of their own beside it: each is on its own runner;
 # so are the small policies and the full run asked for alone
 concurrency:
@@ -114,7 +118,9 @@ jobs:
       ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.soak.name }}-${{ matrix.part }}"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - run: |
+      # (`-f part=policies`: the other parts' jobs run nothing)
+      - if: ${{ !inputs.part || inputs.part == matrix.part }}
+        run: |
           echo "PostgreSQL $PG, seed $SOAK_SEED, part $ROWSTILE_PART"
           bash core/ci.sh --soak "$PG"
         env:
@@ -125,7 +131,7 @@ jobs:
           ROWSTILE_PART: "${{ matrix.part }}"
       - if: always()
         run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
-      - if: always()
+      - if: ${{ always() && (!inputs.part || inputs.part == matrix.part) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
         with:
           name: ${{ matrix.soak.name }}-${{ matrix.part }}
