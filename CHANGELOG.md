@@ -20,6 +20,12 @@ Each release upgrades from the one before it. How releases are numbered and made
   on it kept that share even in READ COMMITTED; it now locks the row and the user as `authz.share` does, and
   waits for the delete. A share now takes a short lock of its own on the object and the subject, so two shares
   of one object at once wait for each other, and in REPEATABLE READ the second fails with 40001.
+- `authz.explain` (and what calls it: refused writes' reasons, `authz.explain_rule`, `rowstile why`, Studio and
+  the SDKs' explain helpers) said a user held a relation by a share, then described the oldest share of that
+  relation on the object: often another user's, or another link than the one presented. Anyone a share was given
+  to saw who had made someone else's share there, until when, and its caveat, and might read another person's end
+  date as their own. It now describes the share that gives them the relation: their own, the link they presented,
+  or the one to every signed-in user. Apply the policy again (or the next migration) to take it.
 
 ## 0.1.0 (alpha)
 

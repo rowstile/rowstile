@@ -186,6 +186,18 @@ SELECT test.as(1);
 SELECT set_config('test.token2', authz.create_link('folder', 2, 'viewer', now() + interval '1 day'), false);
 SELECT test.ok('a second link, until tomorrow: both listed, the older first',
   (SELECT array_agg(l.expires_at IS NULL) FROM authz.list_links('folder', 2) l) = '{t,f}');
+-- why dave may view: the link he presented, never another one (its end is that link's)
+SELECT test.as(4);
+SELECT set_config('authz_ctx.links', current_setting('test.token2'), false);
+SELECT test.ok('dave, with the second link, is told of that one: until tomorrow',
+  (SELECT ltrim(l) FROM authz.explain('folder', 2, 'view') l WHERE l LIKE '%link you presented%')
+  LIKE 'yes  viewer: shared by a link you presented (by 00000000-0000-4000-8000-000000000001, until %)');
+SELECT set_config('authz_ctx.links', current_setting('test.token'), false);
+SELECT test.ok('... and with the first, of the first: no end',
+  (SELECT ltrim(l) FROM authz.explain('folder', 2, 'view') l WHERE l LIKE '%link you presented%')
+  = 'yes  viewer: shared by a link you presented (by 00000000-0000-4000-8000-000000000001)');
+RESET authz_ctx.links;
+SELECT test.as(1);
 SELECT test.ok('an id that names no link there is said',
   test.try($$SELECT authz.revoke_link('folder', 2, 'nothing')$$) = 'P0001'
   AND test.try(format('SELECT authz.revoke_link(''folder'', 1, %L)', current_setting('test.link'))) = 'P0001');

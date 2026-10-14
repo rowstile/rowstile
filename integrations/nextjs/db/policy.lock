@@ -202,7 +202,7 @@ function authz_int."project__share__why"(p_id integer, p_depth int, p_seen text[
 function authz_int."project__view__who"(p_id integer) | f9dc731c471c shape=531c7bc0
 function authz_int."project__view__why"(p_id integer, p_depth int, p_seen text[]) | 9688a46a81b6 shape=d7429dfb
 function authz_int."project__viewer__who"(p_id integer) | e5e6241fb96a shape=2310c66b
-function authz_int."project__viewer__why"(p_id integer, p_depth int, p_seen text[]) | af6ad74b9f46 shape=35731769
+function authz_int."project__viewer__why"(p_id integer, p_depth int, p_seen text[]) | 06bcbde99e06 shape=35731769
 function authz_int."rel_audit_1_del"() | 91f6820103b9 shape=ca2c96f6
 function authz_int."rel_audit_1_ins"() | a20b31612701 shape=b10e83cf
 function authz_int."rel_audit_1_trunc"() | 146987ea3f0e shape=95453c8d
