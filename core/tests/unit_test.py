@@ -7978,6 +7978,28 @@ class CoverageReport(unittest.TestCase):
         self.assertLess(report.index("  authz.ctx(key text)  (made in 1 database(s))"), uncounted)
         self.assertFalse([line for line in report if "start_review" in line])
 
+    def test_statements_lost_with_the_catalog_row(self) -> None:
+        # Postgres counts calls by the function's oid; the profiler, by its catalog row, which a GRANT or REVOKE
+        # (or applying again) makes anew: a function called and then granted, read after, has no statement counted
+        plpgsql = self.report.coverage_plpgsql
+        called = [
+            self.report.Called("s", "authz_a", "authz", "connection_check", "", 9, "plpgsql definer set", True),
+            self.report.Called("s", "authz_a", "authz", "can", "t text", 3, "plpgsql definer set", True),
+            self.report.Called("s", "authz_a", "authz", "lint", "", 0, "plpgsql definer set", False),  # never called
+            self.report.Called("s", "authz_a", "authz", "uid", "", 5, "sql", True),  # not PL/pgSQL
+            self.report.Called("s", "authz_b", "authz", "connection_check", "", 1, "plpgsql definer set", True),
+        ]
+        runs = [
+            plpgsql.Run("s", "authz_a", "authz", "connection_check", "", "m", {}, (0.0, 0.0)),
+            plpgsql.Run("s", "authz_a", "authz", "can", "t text", "m", {1: 3}, (1.0, 1.0)),
+            plpgsql.Run("s", "authz_a", "authz", "lint", "", "m", {}, (0.0, 0.0)),
+            # measured twice (before applying again, and when dropped): what the first read counted stands
+            plpgsql.Run("s", "authz_b", "authz", "connection_check", "", "m", {1: 1}, (1.0, 1.0)),
+            plpgsql.Run("s", "authz_b", "authz", "connection_check", "", "n", {}, (0.0, 0.0)),
+        ]
+        lost = self.report.lost(called, plpgsql.Measured({}, runs, []))
+        self.assertEqual(lost, ["  authz.connection_check() in authz_a (s)"])
+
     def test_the_steps_that_compare_answers_are_named_so(self) -> None:
         # the report knows them by their names in run_tests.sh: a step renamed must not leave the comparison
         steps = re.split(r'\n\s*step "', read("run_tests.sh"))[1:]
@@ -8121,6 +8143,23 @@ END outer;"""
         self.assertEqual(
             self.p.plain("PERFORM folder.view;", self.p.names("folder__view__has")), "PERFORM <type>.<name>;"
         )
+        # a rule on columns: its columns and what it needs are the policy's words too; its key, of one column or several
+        own = self.p.names("app.files:update:refuse")
+        for line, key in (
+            (
+                """RAISE EXCEPTION 'changing owner_id of app.files % needs: share', OLD."id" USING ERRCODE = 'x'""",
+                "OLD.<key>",
+            ),
+            (
+                """RAISE EXCEPTION 'changing a, b of app.files % needs: {s = ''x''} or edit', """
+                """ROW(OLD."org_id"::bigint, OLD."id"::bigint)::text USING ERRCODE = 'x'""",
+                "ROW(OLD.<key>, ...)::text",
+            ),
+        ):
+            self.assertEqual(
+                self.p.plain(line, own),
+                f"RAISE EXCEPTION 'changing <columns> of <table> % needs: <rule>', {key} USING ERRCODE = 'x'",
+            )
 
     def test_the_databases_names_are_taken_out_everywhere(self) -> None:
         # a table (by its functions app.files:...) and a type (folder__...) of the database, in another function

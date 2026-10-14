@@ -195,7 +195,11 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   PL/pgSQL that no suite runs, by kind of function, each `RAISE` first. It reads each function's source to know
   which statements begin which branch, and holds that reading to plpgsql_check's own figures. <!-- checked: tests/unit_test.py "test_which_statements_begin_which_arm" -->
   On 14 October 2026 the suites ran 2,926 of 4,551 statements (64%) and 1,634 of 3,046 branches (54%); 26
-  `RAISE` statements in functions they call were not reached.
+  `RAISE` statements in functions they call were not reached. Checks for each followed: the same day, with the
+  policy part run again, 3,016 of 4,698 statements (64%) and 1,695 of 3,194 branches (53%), and every `RAISE`.
+  A rule on columns counts once for each form of its refusal (a key of one column, of several), not once per
+  policy. A function Postgres counts as called whose statements the profiler read none of is listed: a GRANT, a
+  REVOKE or an apply after the calls made its catalog row anew, and the counts with it. <!-- checked: tests/unit_test.py "test_statements_lost_with_the_catalog_row" -->
 
 ## What a review of every file found
 
