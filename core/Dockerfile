@@ -7,12 +7,15 @@
 #   docker exec -u postgres pga rowstile apply /path/to/policy.authz
 # With --build-arg COVERAGE=1 it also measures what the suites run (ci.sh --coverage): coverage.py, which starts
 # in every Python process when COVERAGE_PROCESS_START names its settings (run_tests.sh sets it), and is not even
-# imported otherwise (a tenth of a second a process).
+# imported otherwise (a tenth of a second a process); and plpgsql_check (PGDG's package), whose profiler counts the
+# statements of the PL/pgSQL functions the suites run (ci.sh --statements preloads it; tests/coverage_plpgsql.py).
+# rowstile itself still needs no extension: it is made only for the moment the counts are read, then rolled back.
 ARG PG_MAJOR=16
 FROM postgres:${PG_MAJOR}
 ARG COVERAGE=
 RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 git ca-certificates ${COVERAGE:+python3-coverage} \
+ && apt-get install -y --no-install-recommends python3 git ca-certificates \
+      ${COVERAGE:+python3-coverage postgresql-$PG_MAJOR-plpgsql-check} \
  && rm -rf /var/lib/apt/lists/*
 RUN if [ -n "$COVERAGE" ]; then \
       echo 'import os; os.environ.get("COVERAGE_PROCESS_START") and __import__("coverage").process_startup()' \

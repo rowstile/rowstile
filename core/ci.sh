@@ -10,6 +10,8 @@
 #   ROWSTILE_UPGRADES=every core/ci.sh 16   # upgrades from every release on PyPI, not only the one before (nightly)
 #   core/ci.sh --coverage 16   # (before the others) and measure what the suites run, in the image built with
 #                              # COVERAGE=1: .ci/coverage-16 holds the data, and the report (tests/coverage_report.py)
+#   core/ci.sh --statements 16 # --coverage, and each statement and branch of rowstile's PL/pgSQL the suites run
+#                              # (plpgsql_check's profiler, preloaded: tests/coverage_plpgsql.py; nightly)
 # Needs Docker and bash (Git Bash works on Windows). Builds rowstile:<version> from Dockerfile,
 # mounts the repository, runs the tests in it and removes the container. Exit status: 0 only if
 # every version passed.
@@ -18,6 +20,7 @@ cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1           # Git Bash: don't rewrite /src into a Windows path
 REPO=$(pwd -W 2>/dev/null || pwd)
 COVERAGE=""; if [ "${1:-}" = --coverage ]; then COVERAGE=1; shift; fi
+STATEMENTS=""; if [ "${1:-}" = --statements ]; then COVERAGE=1; STATEMENTS=1; shift; fi
 MODE=--quick
 case "${1:-}" in --full) MODE=""; shift;; --proofs) MODE=--proofs; shift;; --short) MODE=--short; shift;; --soak) MODE=--soak; shift;; esac
 VERSIONS=${*:-16 17 18}
@@ -46,10 +49,14 @@ for v in $VERSIONS; do
   # labelled with the job (ROWSTILE_CI_JOB in CI), whose cleanup removes only its own
   # The server doesn't wait for the disk: the databases last as long as the container, and no suite stops the
   # server to see what it kept. What the suites check is the same, sooner (they make and drop many databases).
-  # (measuring, Postgres also counts the calls of every function: track_functions). wal_level = logical: a database
-  # can publish to another of the same server (tests/governance.sh copies the audit trail by a subscription)
+  # (measuring, Postgres also counts the calls of every function: track_functions; with --statements, plpgsql_check's
+  # profiler the statements of each PL/pgSQL one, in shared memory, tests/coverage_plpgsql.py, its warnings about
+  # cursors left open off, so the suites see what they see without it). wal_level = logical: a database can publish
+  # to another of the same server (tests/governance.sh copies the audit trail by a subscription)
   retry docker run -d --name "$name" --label "rowstile.ci=${ROWSTILE_CI_JOB:-local}" -e POSTGRES_HOST_AUTH_METHOD=trust -v "$REPO:/src" "$image" \
-    -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c wal_level=logical ${COVERAGE:+-c track_functions=all} >/dev/null || { failed+=("$v (start)"); continue; }
+    -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c wal_level=logical \
+    ${COVERAGE:+-c track_functions=all} ${STATEMENTS:+-c shared_preload_libraries=plpgsql_check -c plpgsql_check.profiler=on} \
+    ${STATEMENTS:+-c plpgsql_check.cursors_leaks=off -c plpgsql_check.max_stats_size=204800} >/dev/null || { failed+=("$v (start)"); continue; }
   for _ in $(seq 60); do docker exec "$name" pg_isready -q -h /var/run/postgresql 2>/dev/null && break; sleep 1; done
   sleep 2                              # the image's entrypoint restarts the server once after initdb
   out=".ci/$name"; rm -f "$out.log" "$out.rc"
@@ -59,7 +66,7 @@ for v in $VERSIONS; do
   # Python keeps the code it compiles, in the container (never the mounted checkout): each of the suites' hundreds
   # of Python processes starts sooner. The image keeps it off: anything that rewrites authzlib's files (a mutation
   # tried on them) must run without it, as Python knows a stale file by its size and its time to the second
-  retry docker exec -d -e PYTHONPYCACHEPREFIX=/tmp/pycache -e PYTHONDONTWRITEBYTECODE= -e SOAK_SEED="${SOAK_SEED:-}" -e ROWSTILE_PART="${ROWSTILE_PART:-}" -e ROWSTILE_UPGRADES="${ROWSTILE_UPGRADES:-}" -e ROWSTILE_COVERAGE="$cov" -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core "$name" \
+  retry docker exec -d -e PYTHONPYCACHEPREFIX=/tmp/pycache -e PYTHONDONTWRITEBYTECODE= -e SOAK_SEED="${SOAK_SEED:-}" -e ROWSTILE_PART="${ROWSTILE_PART:-}" -e ROWSTILE_UPGRADES="${ROWSTILE_UPGRADES:-}" -e ROWSTILE_COVERAGE="$cov" -e ROWSTILE_COVERAGE_STATEMENTS="$STATEMENTS" -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core "$name" \
     bash -c "${cov:+rm -rf $cov; }ROWSTILE_LANES='${ROWSTILE_LANES:-}' bash run_tests.sh $MODE > /src/$out.log 2>&1; echo \$? > /src/$out.rc" || { failed+=("$v (start)"); continue; }
   # the exit code appears when the suites end; a container that stopped or went first ends the wait too, and so
   # does the limit

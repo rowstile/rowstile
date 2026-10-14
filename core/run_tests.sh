@@ -496,6 +496,13 @@ fi
 # measuring: the function calls of the databases still here (each one dropped earlier was asked then)
 [ -z "${ROWSTILE_COVERAGE:-}" ] ||
   bash tests/coverage_functions.sh $(psql -X -At -d postgres -c "SELECT datname FROM pg_database WHERE datname LIKE 'authz%'")
+# and how much of its memory plpgsql_check's profiler filled, where it runs (ci.sh --statements says so:
+# ROWSTILE_COVERAGE_STATEMENTS; tests/coverage_plpgsql.py warns when it was full)
+if [ -n "${ROWSTILE_COVERAGE:-}" ] && [ -n "${ROWSTILE_COVERAGE_STATEMENTS:-}" ] && [ -n "${PGSUPERUSER:-}" ]; then
+  psql -X -q -U "$PGSUPERUSER" -d postgres -c "BEGIN; CREATE SCHEMA rowstile_coverage;
+      CREATE EXTENSION plpgsql_check SCHEMA rowstile_coverage; SELECT rowstile_coverage.plpgsql_check_profiler(); ROLLBACK" 2>&1 |
+    grep 'allocated stats' > "$ROWSTILE_COVERAGE/plpgsql-memory.txt"
+fi
 
 echo
 [ "$STEPS_RUN" -gt 0 ] || failed+=("no step ran")

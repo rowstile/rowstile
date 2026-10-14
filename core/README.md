@@ -98,6 +98,15 @@ measured (`.ci/coverage-16/`) and says:
   apply is lost (applying makes the functions anew), unless the suite measures first, as `tests/governance.sh`
   and `tests/devx.sh` do (`bash tests/coverage_functions.sh "$DB"`); a plain SQL function, which Postgres may
   inline, is listed apart too;
+- with `core/ci.sh --statements 16` (nightly), each statement and branch of rowstile's PL/pgSQL (schemas `authz`,
+  `authz_int`, `authz_gen`) that no suite runs, by kind of function, each `RAISE` first: the coverage image has
+  plpgsql_check (PGDG's package) and `--statements` preloads it with its profiler on, which counts every statement
+  any session runs, in the server's shared memory.
+  `tests/coverage_functions.sh` reads the counts before the drop, as the superuser, with the extension made in a
+  schema of its own inside a transaction it rolls back, so no suite ever sees it; `tests/coverage_plpgsql.py` keeps
+  them (`plpgsql.jsonl`) and reads each function's source to know which statements begin which arm of an `IF`, a
+  `CASE`, a loop or an `EXCEPTION` block (it checks its shares against plpgsql_check's own). What can't run says
+  why in `tests/coverage_plpgsql.txt` (`KIND | WORDS | WHY`), and is listed apart;
 - with `--diff main`: the lines changed since `main` that nothing runs (exit 1 if there are any).
 
 CI measures on 16 alone: 17 and 18 ran the same lines, branches and functions (compared on 2026-10-10). Code that

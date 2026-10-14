@@ -15,7 +15,9 @@ them into --out (the first DIR if not given): .coverage, coverage.json (coverage
     and difftest, genpolicy and around never judged it;
   - what the database runs: the kinds of rowstile's functions (authz_gen."<table>:update:refuse", a tree's
     refresh, authz.share) no suite ever called, and those whose every call raised, from the counts
-    tests/coverage_functions.sh kept (functions.tsv beside each DIR or data file).
+    tests/coverage_functions.sh kept (functions.tsv beside each DIR or data file);
+  - and statement by statement, where plpgsql_check's profiler counted them (plpgsql.jsonl beside each DIR or data
+    file; tests/coverage_plpgsql.py): the RAISEs, other statements and branches of rowstile's PL/pgSQL no suite ran.
 
 With --diff REF it also prints the lines changed since REF (git diff REF...HEAD) that nothing runs, and exits 1 if
 there are any.
@@ -36,6 +38,8 @@ import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+import coverage_plpgsql
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CODE = os.path.dirname(HERE)  # core/: where the measured code is
@@ -478,11 +482,19 @@ def main(argv: Sequence[str]) -> int:
     data, json_report = combine(a.dirs, out)
     files = read(json_report, steps_by_line(data))
     called = functions_measured(a.dirs)
+    statements = coverage_plpgsql.measured(a.dirs)
+    each = coverage_plpgsql.totals(statements, kind)
+    database = [""] + functions_report(called) if called else []
+    if statements.runs:
+        database += ["", *coverage_plpgsql.report(statements, each, a.dirs)]
     with open(os.path.join(out, "report.txt"), "w", encoding="utf-8") as fh:
-        fh.write("\n".join(report(files) + ([""] + functions_report(called) if called else [])) + "\n")
+        fh.write("\n".join(report(files) + database) + "\n")
     print("\n".join(table(files)))
     kinds = by_kind(called)
     calls = f"; {calls_summary(kinds)}" if kinds else ""
+    if statements.runs:
+        calls += f"; {coverage_plpgsql.summary(each)}"
+        print(*coverage_plpgsql.memory(a.dirs), sep="\n")
     print(f"\n{summary(files)}{calls}; what nothing runs, line by line: {os.path.join(out, 'report.txt')}")
     if not a.diff:
         return 0
