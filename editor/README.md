@@ -11,8 +11,11 @@ server (`rowstile lsp`, in `cli/lsp.py`):
 - **completion**: after `rel.` the target type's permissions, inside a type its relations and permissions, and
   with a `database` in `rowstile.toml`, table names and, inside `{ }`, the columns of the row the condition is
   about, quoted where SQL needs it (`"parentId"`). Names are read from the database once, when first needed; when
-  it can't be reached, the server's log says why;
+  it can't be reached, the server's log says why, and it is tried again some seconds later;
 - **test files** (only `test "..."` blocks) are checked against the policy `rowstile.toml` names.
+
+`rowstile.toml` is read again when it changes. A mistake in it is shown on it, and in a message; until it is
+fixed, the policy is checked without its settings.
 
 ## VS Code
 

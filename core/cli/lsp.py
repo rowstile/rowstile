@@ -2,8 +2,11 @@
 
 For .authz files: errors while typing (from the compiler), hover, go to definition, find references, an outline,
 and completion. It needs nothing but Python's standard library and the compiler next to it. With a database in
-rowstile.toml it also completes table and column names (read once from the catalog), a column inside { } as SQL
-names it.
+rowstile.toml it also completes table and column names (read once from the catalog; a database it can't reach is
+tried again later), a column inside { } as SQL names it.
+
+rowstile.toml is read again at each message, so that a change to it is taken at once. A mistake in it is shown on
+it (and in a message), and the server goes on without its settings until the mistake is fixed.
 
 A file of named tests (no types, only `test "..."` blocks) is checked against the policy rowstile.toml names.
 """
@@ -16,8 +19,9 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.parse
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
@@ -122,6 +126,8 @@ TYPE_WORDS = ["can", "shared", "by", "if", "where", "roles", "from", "principal"
 SHARE_FIELDS = ["object_id", "subject_type", "subject_id", "subject_relation"]  # what `shared if {...}` reads
 KIND_CLASS, KIND_FIELD, KIND_METHOD, KIND_NAMESPACE = 5, 8, 6, 3  # SymbolKind
 C_KEYWORD, C_FIELD, C_METHOD, C_CLASS, C_MODULE = 14, 5, 2, 7, 9  # CompletionItemKind
+SETTINGS_FILE = re.compile(r"(.*?(?:rowstile|rowfence)\.toml): (.*)", re.S)  # a mistake in it, as the command says it
+RETRY, RETRY_MOST = 5, 60  # seconds before a database that couldn't be read is tried again: 5, 10, 20, ... 60
 
 
 # Path.from_uri is Python 3.13's; the command runs on 3.11. The URIs must stay as they are: they are matched
@@ -143,8 +149,12 @@ def same_file(path: str) -> str:
 
 
 class Server:
-    def __init__(self, cfg: Config) -> None:
-        self.cfg = cfg
+    def __init__(self, settings: Callable[[], Config]) -> None:
+        self.settings = settings  # rowstile.toml as it is now
+        self.cfg: Config | None = None  # its settings; None while it has a mistake
+        self.mistake: tuple[str | None, str] | None = None  # (rowstile.toml, the mistake in it)
+        self.read: object = None  # what rowstile.toml held when last read, to see it change
+        self.marked: str | None = None  # the uri of the rowstile.toml its mistake is shown on
         self.docs: dict[str, str] = {}  # uri -> text
         self.open: dict[str, str] = {}  # the open files: same_file(path) -> the uri the editor calls it by
         self.sent: dict[str, set[str]] = {}  # uri checked -> the uris its last check published problems for
@@ -152,7 +162,58 @@ class Server:
         self.models: dict[str, tuple[Policy, dict[str, str], str]] = {}
         # {schema.table: [columns]} from the database, when there is one
         self.catalog: dict[str, list[str]] | None = None
+        self.failed, self.tried = 0, 0.0  # reads of the catalog that failed in a row, and when the last was tried
+        self.said = ""  # what the log said last of the database
         self.running = True
+
+    # --- rowstile.toml ---------------------------------------------------------------------------
+    def load(self) -> None:
+        """rowstile.toml as it is now. A change is taken at once: its mistake shown, or cleared, and the catalog read
+        again from the database it names; the open files are checked again."""
+        said = io.StringIO()
+        cfg: Config | None = None
+        try:
+            with contextlib.redirect_stderr(said):
+                cfg = self.settings()
+        except SystemExit:
+            pass
+        now = (cfg.path, cfg.data) if cfg else said.getvalue().strip()
+        if now == self.read:
+            return
+        first, self.read = self.read is None, now
+        if cfg is not None and said.getvalue():
+            print(said.getvalue(), end="", file=sys.stderr)  # a note (rowfence.toml is read for now)
+        self.cfg, self.catalog, self.failed, self.tried = cfg, None, 0, 0.0
+        self.show(None if cfg else said.getvalue().strip() or "rowstile.toml can't be read")
+        if not first:
+            for uri in list(self.docs):
+                self.check(uri)
+
+    def show(self, mistake: str | None) -> None:
+        """A mistake in rowstile.toml: on the file (its line), and in a message, for an editor that shows only the
+        open files' problems. None: the mistake shown last is cleared."""
+        if self.marked is not None:
+            self.notify("textDocument/publishDiagnostics", {"uri": self.marked, "diagnostics": []})
+            self.marked = None
+        self.mistake = None
+        if mistake is None:
+            return
+        m = SETTINGS_FILE.match(mistake)
+        path, words = (m.group(1), m.group(2)) if m else (None, mistake)
+        self.mistake = (path, words)
+        if path is not None:
+            line, width = settings_line(path, words)
+            self.marked = self.uri_of(path)
+            diag: Diagnostic = {
+                "range": rng(line, 0, line, width),
+                "severity": 1,
+                "source": "rowstile",
+                "message": words,
+            }
+            self.notify("textDocument/publishDiagnostics", {"uri": self.marked, "diagnostics": cast(Json, [diag])})
+        name = os.path.basename(path) if path else "rowstile.toml"
+        message = f"{name}: {words} (until it is fixed, the policy is checked without it)"
+        self.notify("window/showMessage", {"type": 1, "message": message})
 
     # --- files -----------------------------------------------------------------------------------
     def uri_of(self, path: str) -> str:
@@ -180,6 +241,11 @@ class Server:
     def named_policy(self) -> str | None:
         """The policy rowstile.toml names. One the command refuses (outside rowstile.toml's folder) is a mistake to
         show on the file being checked: the command stops on it, after saying why on stderr."""
+        if self.cfg is None:
+            if self.mistake is None:
+                return None
+            path, words = self.mistake
+            raise PolicyError(f"line 1: {os.path.basename(path or 'rowstile.toml')}: {words}")
         said = io.StringIO()
         try:
             with contextlib.redirect_stderr(said):
@@ -227,7 +293,7 @@ class Server:
                 try:
                     ptext = self.text_of(policy)
                 except OSError as e:
-                    named = self.cfg.setting(None, "policy")
+                    named = self.cfg.setting(None, "policy") if self.cfg else policy
                     raise PolicyError(f'line 1: rowstile.toml: policy = "{named}": {e.strerror or e}') from None
                 c = Compiler(parse_policy(ptext, None, files=self.includes(policy, ptext)))
                 c.add_test_files({THIS: text})
@@ -595,35 +661,51 @@ class Server:
     def tables(self) -> dict[str, list[str]]:
         """{schema.table: [columns]} from the database in rowstile.toml; empty without one. Only the tables a
         policy can name (no space in the name, say), and each column as a condition names it: quoted where SQL
-        needs it ("parentId", "user")."""
-        if self.catalog is None:
-            catalog: dict[str, list[str]] = {}
-            self.catalog = catalog  # read once, or tried once
-            try:
-                import pgwire
+        needs it ("parentId", "user"). Read once; a database that couldn't be read (not started yet, say) is tried
+        again at a completion some seconds later (5, then 10, 20, up to a minute: a try may wait 3 seconds)."""
+        if self.catalog is not None:
+            return self.catalog
+        wait = min(RETRY_MOST, RETRY * 2 ** (self.failed - 1)) if self.failed else 0
+        if self.cfg is None or time.monotonic() < self.tried + wait:
+            return {}
+        catalog: dict[str, list[str]] = {}
+        said = io.StringIO()
+        try:
+            import pgwire
 
+            with contextlib.redirect_stderr(said):
                 database = self.cfg.database  # stops the command when it names a variable that isn't set
-                if database:
-                    args = pgwire.parse_dsn(database)
-                    args["timeout"] = 3
-                    conn = pgwire.connect(**args)
-                    try:
-                        rows = conn.query(
-                            "SELECT c.table_schema, c.table_name, pg_catalog.quote_ident(c.column_name) "
-                            "FROM information_schema.columns c "
-                            "WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'authz', 'authz_gen', "
-                            "'authz_int') ORDER BY 1, 2, c.ordinal_position"
-                        )
-                    finally:
-                        conn.close()
-                    for schema, table, column in rows:
-                        if re.fullmatch(IDENT, str(schema)) and re.fullmatch(IDENT, str(table)):
-                            catalog.setdefault(f"{schema}.{table}", []).append(str(column))
-            except SystemExit:  # its variable isn't set: the command said so, on stderr (the editor's log)
-                pass
-            except Exception as e:  # no database there, or it refused: complete without it, and say why once
-                print(f"rowstile lsp: no table or column names to complete: {e}", file=sys.stderr)
-        return self.catalog
+            if database:
+                args = pgwire.parse_dsn(database)
+                args["timeout"] = 3
+                conn = pgwire.connect(**args)
+                try:
+                    rows = conn.query(
+                        "SELECT c.table_schema, c.table_name, pg_catalog.quote_ident(c.column_name) "
+                        "FROM information_schema.columns c "
+                        "WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'authz', 'authz_gen', "
+                        "'authz_int') ORDER BY 1, 2, c.ordinal_position"
+                    )
+                finally:
+                    conn.close()
+                for schema, table, column in rows:
+                    if re.fullmatch(IDENT, str(schema)) and re.fullmatch(IDENT, str(table)):
+                        catalog.setdefault(f"{schema}.{table}", []).append(str(column))
+        except SystemExit:  # its variable isn't set: what the command says of it
+            self.failing(said.getvalue().strip())
+            return {}
+        except Exception as e:  # no database there, or it refused: complete without it, and try again later
+            self.failing(f"rowstile lsp: no table or column names to complete: {e}")
+            return {}
+        self.catalog = catalog
+        return catalog
+
+    def failing(self, why: str) -> None:
+        """A read of the catalog failed: tried again later, and its log says why (once while the reason stays)."""
+        self.failed, self.tried = self.failed + 1, time.monotonic()
+        if why != self.said:
+            print(why, file=sys.stderr)
+            self.said = why
 
     # --- the protocol ----------------------------------------------------------------------------
     def notify(self, method: str, params: Json) -> None:
@@ -632,6 +714,8 @@ class Server:
     def handle(self, msg: Message) -> None:
         method, params, mid = msg.get("method"), obj(msg.get("params")), msg.get("id")
         result: Json = None
+        if method not in ("initialize", "shutdown", "exit"):
+            self.load()  # nothing may be sent before initialize is answered
         if method == "initialize":
             result = {
                 "capabilities": {
@@ -729,6 +813,30 @@ def dedupe(items: list[Completion]) -> list[Completion]:
     return out
 
 
+def settings_line(path: str, words: str) -> tuple[int, int]:
+    """(line, its width) of the mistake in rowstile.toml: the line TOML names, else the setting's, else the first."""
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            lines = fh.read().split("\n")
+    except (OSError, ValueError):
+        return 0, 1
+    at = re.search(r"\(at line (\d+), column \d+\)", words)
+    found = 0
+    if at:
+        found = min(int(at.group(1)), len(lines)) - 1
+    elif m := re.match(r"(?:\[([\w-]+)\] )?([\w-]+) is |\[([\w-]+)\] is ", words):
+        table, key = (m.group(1), m.group(2)) if m.group(2) else (None, m.group(3))
+        section = None
+        for n, line in enumerate(lines):
+            header = re.match(r"\s*\[\s*([\w-]+)\s*\]", line)
+            if header:
+                section = header.group(1)
+            elif section == table and re.match(rf'\s*"?{re.escape(key)}"?\s*=', line):
+                found = n
+                break
+    return found, max(1, len(lines[found]))
+
+
 def rng(l1: int, c1: int, l2: int, c2: int) -> Range:
     return {"start": {"line": l1, "character": c1}, "end": {"line": l2, "character": c2}}
 
@@ -755,8 +863,8 @@ def read() -> Message | None:
     return {str(k): v for k, v in got.items()} if isinstance(got, dict) else {}
 
 
-def serve(cfg: Config) -> None:
-    server = Server(cfg)
+def serve(settings: Callable[[], Config]) -> None:
+    server = Server(settings)
     while server.running:
         msg = read()
         if msg is None:

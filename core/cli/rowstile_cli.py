@@ -218,8 +218,10 @@ class EnvFiles:
         self.taken: set[str] = set()  # the names whose value in use is a file's
         self.skipped: list[str] = []  # files that weren't read, and why
         self.where = ""  # the files that named the database this command uses (".env"), once that is known
+        self.read: set[str] = set()  # the folders whose files were read
 
     def load(self, folder: str) -> None:
+        self.read.add(folder)
         top = os.path.realpath(folder)
         for name in ENV_FILES:
             path = os.path.join(folder, name)
@@ -548,6 +550,16 @@ def load_config() -> Config:
         if parent == d:
             return Config()
         d = parent
+
+
+def lsp_settings() -> Config:
+    """rowstile.toml as it is now, for the language server, which reads it again at each change in the editor (a
+    mistake fixed, a database named), and the .env files beside it, read once. A mistake stops this as it stops
+    the command (SystemExit, after saying it on stderr)."""
+    cfg = load_config()
+    if cfg.dir not in ENV.read:
+        ENV.load(cfg.dir)
+    return cfg
 
 
 def relative(path: str) -> str:
@@ -1118,17 +1130,16 @@ def main(argv: list[str]) -> None:
             f"{' '.join(args[most:])}? (rowstile --help)",
             2,
         )
-    cfg = load_config()
-    if dsn is None:  # --db names the database: no file then adds a host or a port to what the command line said
-        ENV.load(cfg.dir)
-
     if cmd == "lsp":
         if dsn is not None:  # the editor's folder says where its database is: --db would be ignored
             fail("rowstile lsp: --db is not an option it has: it reads the database rowstile.toml names", 2)
         from lsp import serve
 
-        serve(cfg)
+        serve(lsp_settings)  # it reads rowstile.toml itself: a mistake in it is the editor's to show
         return
+    cfg = load_config()
+    if dsn is None:  # --db names the database: no file then adds a host or a port to what the command line said
+        ENV.load(cfg.dir)
     if cmd == "mcp":
         import mcp
 
