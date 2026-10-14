@@ -189,6 +189,10 @@ Each release upgrades from the one before it. How releases are numbered and made
   database all the same) and was answered, and a `ping` sent meanwhile waited for it. Each call now runs beside
   the messages after it: a ping is answered at once, and a cancelled call's command is stopped as Ctrl-C stops it
   (a push keeps nothing) and gets no answer, as MCP asks.
+- The commands `rowstile mcp` ran for its calls kept running after the server was stopped (SIGTERM, as an
+  agent's client stops it once it has closed the server's input): a `push` waiting for a lock went on to the
+  lock timeout, a long `prove` to its end. The server now stops them first, as it stops a cancelled call, waits
+  for them (10 seconds, then they are killed), and ends after them.
 - `rowstile lsp` stopped at start (exit 2) on a mistake in `rowstile.toml` (a setting it doesn't know, a TOML
   mistake): the editor had no language server at all, and the mistake was only in the server's log. It starts
   now, shows the mistake on `rowstile.toml` (its line) and in a message, checks the policy without the file's
