@@ -1535,10 +1535,15 @@ class Core:
             if len(members) == 1:
                 # one type: start from what the user holds directly, then walk down.
                 # The starting points are a function, so their plan is made once per
-                # session instead of with every query that uses this permission.
+                # session instead of with every query that uses this permission. Called in FROM, never in a
+                # select list: a function scan keeps the rows it read and rereads them when a nested loop
+                # scans it again, where a select list would run the function again for each outer row.
                 tree = self.ensure_tree(t, edges)
                 start = self.start_function(t, perm, (t.name, edges))
-                sql = f"SELECT c.descendant AS id FROM authz_int.{q(tree)} c\n  WHERE c.ancestor IN (SELECT {start}())"
+                sql = (
+                    f"SELECT c.descendant AS id FROM authz_int.{q(tree)} c\n"
+                    f"  WHERE c.ancestor IN (SELECT s.id FROM {start}() s(id))"
+                )
                 self.add_view(name, sql, header, t)
                 self.view_state[name] = "done"
                 self.point_check_function(t, perm, tree, (t.name, edges))

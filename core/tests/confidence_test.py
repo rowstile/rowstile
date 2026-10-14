@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""confidence_test: rowstile prove, test --coverage, snapshot, indexes, plans and bench, on the docs example.
+"""confidence_test: rowstile prove, test --coverage, snapshot, indexes, plans and bench, on the docs example; and
+that a list runs each starting point of a permission once, on a random policy (genpolicy's seed 3).
 
 PGHOST=... PGUSER=... python3 tests/confidence_test.py [--db authz_confidence]
 """
@@ -17,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "cli"))
+sys.path.insert(0, HERE)
 import pgwire  # noqa: E402
 import rowstile_cli  # noqa: E402
 from authzlib import database, perf  # noqa: E402
@@ -603,8 +605,62 @@ def main() -> None:
 
     conn.close()
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
+    starting_points(db + "_start")
     print("confidence: all passed" if not fails else f"confidence: {fails} failed")
     sys.exit(1 if fails else 0)
+
+
+def starting_points(name: str) -> None:
+    """A recursive permission's starting points are a set-returning function (`authz_int.<type>__<perm>__start()`),
+    read in FROM: when a nested loop scans it again, it rereads the rows the function gave. Called in a select list,
+    it ran again for each outer row: on genpolicy's seed 3, `authz.list('t3', 'p3')` on seven rows called them
+    10,768 times and took over a second (76 calls and 10 ms read in FROM, PostgreSQL 16). The calls are counted
+    (track_functions, which only a superuser may set)."""
+    print("-- a list runs each starting point once")
+    su = os.environ.get("PGSUPERUSER")
+    if not su:
+        print("skip  the starting points' calls: they are counted as a superuser (PGSUPERUSER)")
+        return
+    import random
+
+    import genpolicy
+    from difftest import DB
+
+    spec = genpolicy.make(3)
+    db = DB(name)
+    with tempfile.TemporaryDirectory() as tmp:
+        pp, sp = os.path.join(tmp, "gen.authz"), os.path.join(tmp, "gen_schema.sql")
+        genpolicy.write_policy(pp, genpolicy.policy_text(spec), False)
+        with open(sp, "w", encoding="utf-8") as fh:
+            fh.write(genpolicy.schema_text(spec))
+        gen = genpolicy.gen_class(spec, pp, sp)(random.Random(spec.seed))
+        compiled = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "compile_policy.py"), pp], capture_output=True, text=True, check=True
+        )
+        db.recreate()
+        db.run(genpolicy.schema_text(spec))
+        # initial() draws each user's active flag with random(): the first three active, as when it was seen slow
+        db.run(gen.initial() + "\nUPDATE gp.users SET active = id <= 3;")
+        db.run(compiled.stdout)
+        db.run(gen.grants())
+    script = (
+        "SET track_functions = 'pl'; SET authz.user_id = '1'; SET ROLE app_user; BEGIN;\n"
+        "SELECT string_agg(id, ' ' ORDER BY id) FROM authz.list('t3', 'p3') id;\n"
+        "SELECT coalesce(sum(calls), 0) FROM pg_stat_xact_user_functions WHERE funcname LIKE '%\\_\\_start';\n"
+        "COMMIT;"
+    )
+    out = subprocess.run(
+        ["psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-U", su, "-d", name],
+        input=script,
+        capture_output=True,
+        text=True,
+    )
+    lines = out.stdout.split()
+    listed, calls = " ".join(lines[:-1]), int(lines[-1]) if lines and lines[-1].isdigit() else -1
+    check("a list on genpolicy's seed 3: its rows", listed == "(1,2) (1,4) (1,6) (2,7)", out.stdout + out.stderr)
+    # each call site runs once for each run of the statement or function it is in: a bound the rows don't move
+    check("... its starting points run once where they are read, not for each row", 0 < calls <= 200, calls)
+    subprocess.run(["dropdb", "--if-exists", name], capture_output=True)
 
 
 if __name__ == "__main__":

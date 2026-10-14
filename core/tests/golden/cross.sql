@@ -3591,7 +3591,7 @@ END $f$;
 CREATE VIEW authz_int."folder__file" AS
   SELECT x.id FROM (
   SELECT c.descendant AS id FROM authz_int."folder__parent__tree" c
-  WHERE c.ancestor IN (SELECT authz_int."folder__file__start"())) x
+  WHERE c.ancestor IN (SELECT s.id FROM authz_int."folder__file__start"() s(id))) x
   WHERE EXISTS (SELECT 1 FROM "cx"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
 CREATE VIEW authz_gen."folder__file" WITH (security_barrier) AS SELECT id FROM authz_int."folder__file";
 

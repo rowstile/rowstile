@@ -572,7 +572,7 @@ view authz_int."file__share" | b115197b8db4
 view authz_int."file__view" | 57b566bba746
 view authz_int."file__viewer" | 7883e7569617
 view authz_int."folder__break_glass" | a852f0a4dcd0
-view authz_int."folder__edit" | 1d29d1584bbd
+view authz_int."folder__edit" | fdca737fb6b6
 view authz_int."folder__editor" | c2402687b083
 view authz_int."folder__owner" | eb7e97407881
 view authz_int."folder__parent__edit" | 036d0852b547
@@ -581,12 +581,12 @@ view authz_int."folder__parent__tree_conds" | c135057e8878 tree=folder__parent__
 view authz_int."folder__parent__tree_links" | 38ba1185eeaa tree=folder__parent__tree
 view authz_int."folder__parent__tree_parents" | 590bbd145caa tree=folder__parent__tree
 view authz_int."folder__parent__view" | e0f9048d546a
-view authz_int."folder__share" | 5086d9dd015d
+view authz_int."folder__share" | 9c16d2df6664
 view authz_int."folder__share__direct" | a12545daa896
-view authz_int."folder__view" | 9d758c9732ad
+view authz_int."folder__view" | bf1f76871e76
 view authz_int."folder__viewer" | 0b3a23e87177
 view authz_int."group__admin" | 3a2a1c495fcd
-view authz_int."group__manage" | d1ae2118d001
+view authz_int."group__manage" | 35e06584090f
 view authz_int."group__manage__direct" | 7688a5ed333f
 view authz_int."group__member" | 07bfd9aed6fd
 view authz_int."group__owner" | c55f98e733f3

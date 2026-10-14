@@ -3235,7 +3235,7 @@ END $f$;
 -- user.oversee (line 7): manager or manager.oversee
 CREATE VIEW authz_int."user__oversee" AS
   SELECT c.descendant AS id FROM authz_int."user__manager__tree" c
-  WHERE c.ancestor IN (SELECT authz_int."user__oversee__start"());
+  WHERE c.ancestor IN (SELECT s.id FROM authz_int."user__oversee__start"() s(id));
 CREATE VIEW authz_gen."user__oversee" WITH (security_barrier) AS SELECT id FROM authz_int."user__oversee";
 
 -- user.oversee for one object (checks of single rows and authz.can)
@@ -3370,7 +3370,7 @@ END $f$;
 -- folder.edit (line 40): share or editor or parent.edit
 CREATE VIEW authz_int."folder__edit" AS
   SELECT c.descendant AS id FROM authz_int."folder__parent__tree" c
-  WHERE c.ancestor IN (SELECT authz_int."folder__edit__start"());
+  WHERE c.ancestor IN (SELECT s.id FROM authz_int."folder__edit__start"() s(id));
 CREATE VIEW authz_gen."folder__edit" WITH (security_barrier) AS SELECT id FROM authz_int."folder__edit";
 
 -- folder.edit for one object (checks of single rows and authz.can)

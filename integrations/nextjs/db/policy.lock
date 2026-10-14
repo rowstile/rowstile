@@ -391,7 +391,7 @@ view authz_gen."project__view" | 91b5008307cf
 view authz_gen."project__viewer" | c0cc94a80afd
 view authz_int."feedback__project__owner" | b5a1a8491824
 view authz_int."feedback__read" | 32c2a37126e2
-view authz_int."folder__edit" | 1d29d1584bbd
+view authz_int."folder__edit" | fdca737fb6b6
 view authz_int."folder__edit__direct" | 3d9ecbaee034
 view authz_int."folder__owner" | fcf00d3d9dcf
 view authz_int."folder__parent__edit" | 13fa719429c9
