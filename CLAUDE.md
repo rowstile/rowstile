@@ -282,6 +282,9 @@ For one suite, start a container and run it inside:
   resolve at run time); SQL-language functions referencing later objects sit between
   `check_function_bodies = off/on`. Things that may add views (`insight`, invariants, masked views) are
   generated before `self.view_sql` is expanded.
+- A feature lands with its entry in `core/tests/features.py` (what it covers, its page, its checks, and for one that
+  decides access its check against the reference evaluator): `Features` in `unit_test.py` fails on a new
+  `authz.*` function, command, flag, language form, error code or export that no feature covers.
 - Every behaviour change gets a check in the relevant suite; `tests/difftest.py` compares the database
   against an independent reference evaluator (`authzlib/evaluate.py`, also the review's) — keep it in sync with
   language changes. The two share the parser, so `HandAnswers` (`tests/unit_test.py`) holds the evaluator to

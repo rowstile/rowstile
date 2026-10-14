@@ -230,6 +230,79 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   policy. A function Postgres counts as called whose statements the profiler read none of is listed: a GRANT, a
   REVOKE or an apply after the calls made its catalog row anew, and the counts with it. <!-- checked: tests/unit_test.py "test_statements_lost_with_the_catalog_row" -->
 
+## Every feature, and what checks it
+
+Every feature is in one list, [`tests/features.py`](../core/tests/features.py): each `authz.*` function, each
+command and its flags, each form of the language, each error code, what each SDK exports, the language server's
+methods, the MCP server's tools and Studio's routes, each in one feature. A feature names the page that documents
+it, its fixed checks, and the checks that hold it to an answer the code didn't give: the reference evaluator, the
+third one, a rebuild, the policy applied whole, Postgres. The list is read against the code, and `Features` in
+[`tests/unit_test.py`](../core/tests/unit_test.py) fails on each push when a part of the surface is in no feature,
+when a check the list names is gone from its suite, when a feature of tier 1 (it decides access or keeps data) has
+no check against another answer, or when a refusal isn't asked for by its words. <!-- checked: tests/unit_test.py "test_every_item_is_in_a_feature_and_every_check_is_there"; tests/unit_test.py "test_each_refusal_is_asked_for_by_its_words"; tests/unit_test.py "test_a_check_gone_and_a_tier_one_feature_without_an_oracle_are_said" -->
+Tier 2 is an answer shown to people, tier 3 the tools around them. `python3 core/tests/features.py --matrix` prints
+each feature against each suite.
+
+<!-- features: the table below is written by core/tests/features.py -->
+
+| feature | tier | documented in | fixed checks | held to another answer by |
+|---|---|---|---|---|
+| Checks and lists: `authz.can`, `authz.list`, `authz.perms`, `authz.perms_of` | 1 | [app-code](reference/app-code.md) | `scenario.sql`, `devx.sh`, `capitals.sh` | `difftest.py`, `small.py`, `invariance.py`, `upgrade_world.py` |
+| Inheritance tables that match a rebuild: `authz.verify` | 1 | [app-code](reference/app-code.md) | `scenario.sql`, `moves.sh`, `keep.sh`, `apply.sh` | `difftest.py`, `interleave.py`, `stress.sh` |
+| Who holds a permission: `authz.who`, `authz.who_among` | 2 | [app-code](reference/app-code.md) | `devx.sh`, `principals.sh` | `difftest.py` |
+| Why, or why not: `authz.explain`, `authz.explain_rule` | 2 | [app-code](reference/app-code.md) | `devx.sh`, `adversarial.sh`, `docs_test.sh` | `difftest.py` |
+| Shares: `shared`, `shared by`, `shared if`, their start and end; `authz.share`, `authz.unshare`, `authz.list_shares` | 1 | [language](reference/language.md) | `multi_scenario.sql`, `governance.sh`, `concurrency.sh`, `scenario.sql`, `principals.sh` | `difftest.py`, `around.py`, `genpolicy.py`, hand answers |
+| Share links: `link`, `authz.create_link`, `authz.list_links`, `authz.revoke_link` | 1 | [app-code](reference/app-code.md) | `multi_scenario.sql`, `adversarial.sh` | `difftest.py`, `genpolicy.py` |
+| Custom roles at run time: `authz.create_role`, `authz.set_role_permissions`, `authz.delete_role`, `authz.roles_of` | 1 | [app-code](reference/app-code.md) | `multi_scenario.sql` | `difftest.py`, `genpolicy.py`, hand answers |
+| Signing in: `authz.act_as`, `authz.login_key`, `authz.login_jwt`, `authz.view_as`, `authz.principal`, `authz.connection_check`; signed sessions | 1 | [identity](reference/identity.md) | `sessions.sh`, `identity.sh`, `principals.sh`, `integrations/fastapi` | `around.py` |
+| API keys: `authz.create_api_key`, `authz.list_api_keys`, `authz.revoke_api_key` | 1 | [identity](reference/identity.md) | `identity.sh`, `principals.sh`, `children.sh` | `around.py`, `difftest.py` |
+| Group sync from an identity provider: `authz.sync_members` | 1 | [app-code](reference/app-code.md) | `identity.sh` | `difftest.py` |
+| Requests for access and breaking the glass: `authz.request_access`, `authz.decide_request`, `authz.cancel_request`, `authz.pending_requests`, `authz.break_glass` | 2 | [governance](reference/governance.md) | `governance.sh`, `concurrency.sh` | hand answers |
+| Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review` | 2 | [governance](reference/governance.md) | `governance.sh` |  |
+| The change feed: `authz.changes_since`, `authz.trim_changes` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` |  |
+| The audit trail: `authz.audit`, `authz.trim_audit` | 2 | [governance](reference/governance.md) | `governance.sh` |  |
+| Checking the database: `authz.lint`, `authz.check_invariants` | 2 | [governance](reference/governance.md) | `governance.sh`, `adversarial.sh` | `around.py` |
+| What apps see of a refusal: each code's SQLSTATE and HTTP answer, the reason in the error | 1 | [app-code](reference/app-code.md) | `unit_test.py`, `reference.sh`, `adversarial.sh`, `integrations/fastapi`, `integrations/nextjs` | `around.py` |
+| Applying a policy: `rowstile apply`, `check`, `push`, `diff`, `remove` | 1 | [tools](reference/tools.md) | `apply.sh`, `cli.sh`, `migrations.sh`, `children.sh` | `interrupt.py`, `around.py`, `migrate_test.py` |
+| Migrations: `rowstile migrate`, the lock file, trees built beside then swapped in | 1 | [migrations](reference/migrations.md) | `migrations.sh`, `unit_test.py` | `migrate_test.py`, `interrupt.py` |
+| Upgrading rowstile: `rowstile reapply`, migrations from an older release | 1 | [migrations](reference/migrations.md) | `upgrade.sh`, `apply.sh` | `upgrade_world.py` |
+| Running the policy's tests: `rowstile test` | 2 | [tools](reference/tools.md) | `cli.sh`, `devx.sh`, `confidence_test.py` |  |
+| Asking the database as someone: `rowstile can`, `explain`, `perms`, `list`, `who`, `explain-rule`, `sql` | 2 | [tools](reference/tools.md) | `cli.sh`, `devx.sh`, `capitals.sh` |  |
+| What would grant a permission: `rowstile why` | 2 | [tools](reference/tools.md) | `studio_test.py`, `unit_test.py` |  |
+| Reviewing a change: `rowstile review`, `rowstile snapshot` | 2 | [review](reference/review.md) | `review.sh`, `unit_test.py`, `confidence_test.py` | `rewrites.py` |
+| One layout for policies: `rowstile fmt` | 2 | [tools](reference/tools.md) | `review.sh`, `unit_test.py` | `invariance.py` |
+| Invariants in small worlds: `rowstile prove` | 2 | [tools](reference/tools.md) | `confidence_test.py`, `unit_test.py`, `cli.sh` | `third_compare.py` |
+| Speed: `rowstile indexes`, `plans`, `bench` | 2 | [tools](reference/tools.md) | `capitals.sh`, `confidence_test.py`, `unit_test.py` |  |
+| The diagram, the clients, lint and help: `rowstile graph`, `client`, `lint`, `help`, `--version` | 3 | [tools](reference/tools.md) | `cli.sh`, `tools_test.py`, `unit_test.py` |  |
+| The development loop: `rowstile dev` | 3 | [tools](reference/tools.md) | `devx.sh`, `migrations.sh` |  |
+| A first policy from the database: `rowstile init` | 3 | [tools](reference/tools.md) | `devx.sh`, `unit_test.py` |  |
+| Studio, reading: `rowstile studio`, the rows as anyone, why, the graph, the access diff, shares, tests | 2 | [tools](reference/tools.md) | `studio_test.py` |  |
+| Studio, writing (`--write`): share, unshare, decide a request | 1 | [tools](reference/tools.md) | `studio_test.py` | `difftest.py` |
+| The language server: `rowstile lsp` | 3 | [tools](reference/tools.md) | `lsp_test.py` |  |
+| The MCP server, for coding agents: `rowstile mcp` | 2 | [tools](reference/tools.md) | `mcp_test.py`, `reference.sh` |  |
+| Types and the rows that count: `type`, `where`, `app role` | 1 | [language](reference/language.md) | `unit_test.py`, `policy_errors.py`, `principals.sh`, `apply.sh` | `difftest.py`, `small.py`, `genpolicy.py`, hand answers |
+| Keys: of any type, of several columns | 1 | [language](reference/language.md) | `unit_test.py` | `difftest.py`, `genpolicy.py`, `around.py`, hand answers |
+| Policies in several files: `include` | 2 | [language](reference/language.md) | `unit_test.py`, `cli.sh`, `policy_errors.py` | `invariance.py`, `genpolicy.py` |
+| Relations and their sources: columns, pairs of columns, link tables | 1 | [language](reference/language.md) | `unit_test.py`, `scenario.sql` | `difftest.py`, `small.py`, `genpolicy.py`, hand answers |
+| Subjects and principals: a type, a group's members, `user:*`, `anyone`, `link`, services | 1 | [language](reference/language.md) | `principals.sh`, `unit_test.py` | `difftest.py`, `small.py`, hand answers |
+| Permissions: `can`, `or`, `and`, `not`, following a relation | 1 | [language](reference/language.md) | `unit_test.py`, `policy_errors.py` | `difftest.py`, `genpolicy.py`, `small.py`, `third_compare.py`, `rewrites.py`, hand answers |
+| Conditions: `{...}`, `this`, read with the policy's rights | 1 | [language](reference/language.md) | `devx.sh`, `apply.sh`, `unit_test.py` | `conditions_test.py`, `genpolicy.py`, hand answers |
+| Inheritance and denies: `parent.view`, `and {condition}`, `and not`; moves, loops | 1 | [language](reference/language.md) | `scenario.sql`, `moves.sh`, `concurrency.sh`, `policy_errors.py`, `unit_test.py` | `difftest.py`, `interleave.py`, `small.py`, `genpolicy.py`, `stress.sh`, hand answers |
+| Custom roles in the policy: `roles : ... from ...`, `roles` in a permission | 1 | [language](reference/language.md) | `multi_scenario.sql`, `unit_test.py` | `difftest.py`, `genpolicy.py`, hand answers |
+| Rules: `select`, `insert`, `update` (before, after, on columns), `delete` | 1 | [language](reference/language.md) | `devx.sh`, `adversarial.sh`, `children.sh`, `integrations/fastapi` | `difftest.py`, `around.py`, `genpolicy.py`, hand answers |
+| Masked columns: `mask`, the view | 1 | [language](reference/language.md) | `masks.sh`, `multi_scenario.sql`, `apply.sh` | `difftest.py`, `genpolicy.py`, hand answers |
+| Scopes: what a key or a token may do | 1 | [identity](reference/identity.md) | `identity.sh`, `sessions.sh` | `difftest.py`, `genpolicy.py` |
+| Caveats: conditions a share carries | 1 | [language](reference/language.md) | `multi_scenario.sql` | `difftest.py`, `genpolicy.py`, hand answers |
+| Invariants: `never` | 2 | [language](reference/language.md) | `governance.sh`, `principals.sh`, `unit_test.py` | `third_compare.py`, `genpolicy.py`, hand answers |
+| The policy's tests: checks, named tests, `given`, `as`, `with scope` | 2 | [language](reference/language.md) | `devx.sh`, `unit_test.py`, `cookbook.sh` | hand answers |
+| The Python SDK: signing in, refusals as answers, jobs | 2 | [app-code](reference/app-code.md) | `integrations/fastapi` |  |
+| The Python SDK's stacks: FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic, pytest | 2 | [app-code](reference/app-code.md) | `integrations/fastapi` |  |
+| The TypeScript SDK: `@rowstile/client` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
+| The TypeScript SDK's drivers: `/pg`, `/postgres`, `/prisma`, `/drizzle` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
+| The TypeScript SDK for Next.js and React: `/next`, `/react`, `/vitest` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
+
+<!-- features: end of the table -->
+
 ## What a review of every file found
 
 Before the first public release, every file was read with one question: what does the documentation promise

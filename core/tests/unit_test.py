@@ -47,6 +47,7 @@ from authzlib.review import Review  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 import around  # noqa: E402
 import decisions  # noqa: E402
+import features  # noqa: E402
 import genpolicy  # noqa: E402
 
 GOLDEN = os.path.join(ROOT, "tests", "golden")
@@ -8676,6 +8677,86 @@ class Guards(unittest.TestCase):
         self.assertNotIn("authz.break_glass", raisers["the policy does not allow sharing %.% with %"])
         self.assertEqual(raisers["% cannot be moved inside itself"], set())  # (the trees' own, in authz_int)
         self.assertIn("doesn't own", " ".join(self.runs("role % belongs to % %, which doesn''t own % %")))
+
+
+class Features(unittest.TestCase):
+    """tests/features.py, the registry of features, against the code: every item of the surface (the authz.*
+    functions, the command's commands and flags, the language's forms, the error codes, what the SDKs export, the
+    language server's methods, the MCP tools, Studio's routes) is in one feature; every check a feature names is
+    still in its suite; a feature that decides access or keeps data is held to another answer at random; each
+    refusal is asked for by its words. docs/how-it-is-checked.md shows its table (--update writes it)."""
+
+    PAGE = os.path.join(os.path.dirname(ROOT), "docs", "how-it-is-checked.md")
+
+    def test_every_item_is_in_a_feature_and_every_check_is_there(self) -> None:
+        self.assertEqual(features.problems(), [], "tests/features.py: python3 tests/features.py says what")
+
+    def test_each_refusal_is_asked_for_by_its_words(self) -> None:
+        unasked, _, _ = Guards().sorted_out()
+        where = features.guard_codes()
+        out = []
+        for line in unasked:
+            codes = sorted(where.get(line.split(": ")[0], set()))
+            owners = sorted({o for c in codes for o in features.owner(f"err.{c}")}) or ["(no code)"]
+            out.append(f"{', '.join(owners)}: {line}")
+        out += features.unnamed_codes()
+        self.assertEqual(out, [], "a refusal no check asks for by its words")
+        # every RAISE is found, and carries a code but the few ErrorCodes.UNCODED lists
+        self.assertEqual(len(where), len(Guards().guards()))
+        self.assertEqual(sum(1 for c in where.values() if not c), 7)
+
+    def test_the_page_shows_the_table(self) -> None:
+        with open(self.PAGE, encoding="utf-8") as fh:
+            page = fh.read()
+        start, end = page.index(features.BEGIN), page.index(features.END) + len(features.END)
+        if UPDATE:
+            with open(self.PAGE, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(page[:start] + features.page_table() + page[end:])
+            return
+        self.assertEqual(
+            page[start:end], features.page_table(), "docs/how-it-is-checked.md (python3 tests/unit_test.py --update)"
+        )
+
+    def test_a_new_item_without_a_feature_is_said(self) -> None:
+        with mock.patch.dict(features.SURFACES, {"made up": lambda: {"api.made_up", "cli.apply --made-up"}}):
+            found = features.problems()
+        self.assertIn("made up: api.made_up is in no feature", found)
+        self.assertIn("the command: cli.apply --made-up: no suite uses the flag", found)
+        self.assertNotIn("made up: cli.apply --made-up is in no feature", found)  # a flag is its command's
+
+    def test_a_check_gone_and_a_tier_one_feature_without_an_oracle_are_said(self) -> None:
+        f = next(x for x in features.FEATURES if x.id == "api.verify")
+        changed = dataclasses.replace(
+            f, checks=(*f.checks, features.Check("tests/apply.sh", "words no suite says")), oracle=()
+        )
+        found = features.problems([changed if x is f else x for x in features.FEATURES])
+        self.assertIn("api.verify: tests/apply.sh no longer says 'words no suite says'", found)
+        self.assertIn("api.verify: tier 1, and no check holds it to another answer at random", found)
+        found = features.problems([x for x in features.FEATURES if x is not f])
+        self.assertIn("the authz.* API: api.verify is in no feature", found)
+        gone = dataclasses.replace(f, oracle=(features.Check("tests/scenario.sql", "authz.verify()"),))
+        self.assertIn(
+            "api.verify: tests/scenario.sql holds it to no other answer (ORACLES)",
+            features.problems([gone if x is f else x for x in features.FEATURES]),
+        )
+
+    def test_the_surface_is_read_from_the_code(self) -> None:
+        found = features.surface()
+        self.assertIn("api.share", found["the authz.* API"])
+        self.assertIn("api.uid", found["the authz.* API"])  # callable by the app role, not generated
+        self.assertIn("cli.migrate --one-phase", found["the command"])
+        self.assertIn("cli.migrate --check", found["the command"])
+        self.assertNotIn("cli.review --check", found["the command"])  # 'migrate --check' on review's lines
+        self.assertIn("lsp.documentSymbol", found["the language server"])
+        self.assertIn("studio.decide", found["Studio"])
+        self.assertIn("sdk.ts.prisma.AuthzCalls", found["the TypeScript SDK"])
+        self.assertIn("sdk.ts.react.usePerms", found["the TypeScript SDK"])
+        self.assertIn("sdk.py.fastapi.Rowstile", found["the Python SDK"])
+        self.assertIn("lang.principal", found["the language"])
+        self.assertNotIn("lang.identifier", found["the language"])
+        self.assertEqual(features.owner("sdk.py.fastapi.Rowstile"), ["sdk.python.stacks"])
+        self.assertEqual(features.owner("sdk.py.Refused"), ["sdk.python"])
+        self.assertEqual(features.owner("cli.migrate --check"), ["cli.migrate"])
 
 
 class ParseAgreement(unittest.TestCase):
