@@ -162,6 +162,7 @@ class Connection:
         channel_binding: str = "prefer",
         require_auth: str | None = None,
         settings: dict[str, str] | None = None,
+        on_notice: Callable[[Fields], None] | None = None,
     ) -> None:
         self.sock = sock
         self.buf = b""
@@ -169,7 +170,9 @@ class Connection:
         self.in_error = False
         self.busy = False  # a query was sent and its answer not fully read (the connection is unusable)
         self.tag = ""  # what the last statement of query_described did, in the server's words ("DELETE 0")
-        self.on_notice: Callable[[Fields], None] | None = None  # called with each NOTICE / WARNING the server sends
+        # called with each NOTICE / WARNING the server sends, those it sends as the session starts too (a database's
+        # collation version that doesn't match the system's, a setting of the database's it can't take)
+        self.on_notice = on_notice
         self.address: tuple[str, int] | None = None  # where connect() went, for cancel()
         self.backend: tuple[int, int] | None = None  # this session's process id and key, for cancel()
         self._startup(user, password, database, options, channel_binding, _auth_rules(require_auth), settings or {})
@@ -296,9 +299,11 @@ class Connection:
             elif kind == b"K":
                 pid, key = struct.unpack("!ii", payload[:8])
                 self.backend = (pid, key)
+            elif kind == b"N":
+                if self.on_notice:
+                    self.on_notice(self._fields(payload))
             elif kind == b"Z":
                 return
-            # N (notice): ignored
 
     def _binding(self, mechs: list[str], channel_binding: str, rules: AuthRules | None) -> tuple[str, bytes | None]:
         """How SCRAM starts on this connection (its GS2 header), and what binds it to the TLS channel: the hash
@@ -1208,7 +1213,10 @@ def connect(
     require_auth: str | None = None,
     target_session_attrs: str = "any",
     settings: dict[str, str] | None = None,
+    on_notice: Callable[[Fields], None] | None = None,
 ) -> Connection:
+    """A session, signed in. on_notice: called with each NOTICE / WARNING the server sends, from the start (psql
+    prints those it sends as the session starts)."""
     where = f"the socket {os.path.join(host, f'.s.PGSQL.{port}')}" if host.startswith("/") else f"{host} port {port}"
     try:
         sock = _socket(host, port, timeout)
@@ -1220,7 +1228,9 @@ def connect(
                 sock, host, sslmode, sslrootcert, sslcrl, sslcrldir, ssl_min_protocol_version, ssl_max_protocol_version
             )
         # the timeout holds until it is signed in
-        conn = Connection(sock, user, password, database or user, options, channel_binding, require_auth, settings)
+        conn = Connection(
+            sock, user, password, database or user, options, channel_binding, require_auth, settings, on_notice
+        )
         _target(conn, target_session_attrs)
     except OSError as e:  # the connection broke, or nothing answered, before the session started
         sock.close()

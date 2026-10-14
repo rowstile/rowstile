@@ -281,6 +281,16 @@ def fail(msg: str | None, code: int = 1) -> NoReturn:
     sys.exit(code)
 
 
+def print_notice(f: pgwire.Fields) -> None:
+    """A WARNING or NOTICE the server sent, on stderr, as psql prints it."""
+    print(
+        f"{f.get('V', f.get('S', 'NOTICE'))}: {f.get('M', '')}"
+        + (f"\nDETAIL: {f['D']}" if f.get("D") else "")
+        + (f"\nHINT: {f['H']}" if f.get("H") else ""),
+        file=sys.stderr,
+    )
+
+
 class Db:
     """The connection authzlib.database works with (authzlib.connection.Db)."""
 
@@ -679,6 +689,11 @@ def stamp(files: list[str]) -> dict[str, int | None]:
     return out
 
 
+def notice_text(n: pgwire.Fields) -> str:
+    """A warning the server sent, as rowstile dev shows it: its message, then its detail and hint."""
+    return n.get("M", "") + (f"\n{n['D']}" if n.get("D") else "") + (f"\n{n['H']}" if n.get("H") else "")
+
+
 class Dev:
     def __init__(self, cfg: Config, dsn: str | None, policy_path: str) -> None:
         self.cfg, self.dsn, self.policy = cfg, dsn, policy_path
@@ -690,8 +705,11 @@ class Dev:
 
     def connect(self) -> pgwire.Connection:
         if self.conn is None:
-            conn = pgwire.connect(**pgwire.parse_dsn(self.dsn))
-            conn.on_notice = self.notices.append
+            self.notices.clear()
+            conn = pgwire.connect(**pgwire.parse_dsn(self.dsn), on_notice=self.notices.append)
+            for n in self.notices:  # what the server said as the session started, said once
+                self.say("!", notice_text(n))
+            self.notices.clear()
             conn.query("SELECT set_config('client_min_messages', 'warning', false)")
             self.conn = conn
         return self.conn
@@ -779,10 +797,7 @@ class Dev:
                 if state == "unchanged"
                 else f"applied in {took:.2f} s" + (" (the whole policy)" if state == "applied" else ""),
             )
-            warnings = [
-                n.get("M", "") + (f"\n{n['D']}" if n.get("D") else "") + (f"\n{n['H']}" if n.get("H") else "")
-                for n in self.notices
-            ]
+            warnings = [notice_text(n) for n in self.notices]
             for w in warnings:
                 if w not in (self.lint or ()):
                     self.say("!", w)
@@ -1213,15 +1228,9 @@ def main(argv: list[str]) -> None:
         return
 
     try:
-        conn = pgwire.connect(**pgwire.parse_dsn(dsn))
+        conn = pgwire.connect(**pgwire.parse_dsn(dsn), on_notice=print_notice)  # those it sends as it starts too
     except (ValueError, OSError, pgwire.PgError, pgwire.ProtocolError) as e:
         fail(cant_connect(e, dsn), 2)
-    conn.on_notice = lambda f: print(
-        f"{f.get('V', f.get('S', 'NOTICE'))}: {f.get('M', '')}"
-        + (f"\nDETAIL: {f['D']}" if f.get("D") else "")
-        + (f"\nHINT: {f['H']}" if f.get("H") else ""),
-        file=sys.stderr,
-    )
     q = conn.query
     try:
         q("SELECT set_config('client_min_messages', 'warning', false)")  # a session lost already is said as below
@@ -1535,7 +1544,9 @@ def review_cmd(cfg: Config, args: list[str], opts: dict[str, str], flags: set[st
     db: Db | None = None
     if dsn is not None:
         try:
-            conn = pgwire.connect(**pgwire.parse_dsn(dsn))
+            # what the server says as the session starts is said (a collation version that doesn't match), what
+            # the review's statements make it say isn't
+            conn = pgwire.connect(**pgwire.parse_dsn(dsn), on_notice=print_notice)
         except (ValueError, OSError, pgwire.PgError, pgwire.ProtocolError) as e:
             fail(cant_connect(e, dsn), 2)
         conn.on_notice = lambda f: None

@@ -72,6 +72,8 @@ keywords is quoted as for libpq (`password='it\'s'`). Where nothing names them, 
 system's user, a database named after it, and the server's socket in `/var/run/postgresql` (Debian's and Ubuntu's
 folder) or `/tmp` (libpq's own, as Homebrew and Postgres.app build it), whichever has it, or `localhost` on
 Windows. <!-- checked: tests/unit_test.py "test_the_defaults_are_libpqs" -->
+The warnings the server sends are printed on stderr, as `psql` prints them, those it sends as the session starts
+too (a collation version that doesn't match the system's, a setting of the database's it can't take). <!-- checked: tests/cli.sh "a warning the server sends as the session starts is said, on stderr"; tests/cli.sh "and by dev" -->
 
 TLS is used when the server has it and required with `sslmode=require`. <!-- checked: tests/unit_test.py "test_tls_as_sslmode_says" -->
 The server's certificate is checked

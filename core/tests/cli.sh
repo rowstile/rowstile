@@ -342,6 +342,17 @@ out=$(python3 cli/rowstile_cli.py --db "colour=blue" dev --once --no-studio "$T/
 [ $rc -eq 2 ] && case "$out" in "can't connect: "*"unknown connection setting 'colour'"*) true;; *) false;; esac &&
   ok "... by dev too, before its loop starts, exit 2" || bad "dev with a setting it doesn't know" "$rc ${out: -300}"
 out=$(PGDATABASE=$DB python3 cli/rowstile_cli.py test 2>&1); case "$out" in *"no policy is applied"*) ok "PGDATABASE is used when --db is left out";; *) bad "env" "${out:0:200}";; esac
+# what the server says as the session starts (here a setting of the database's it can't take; after a system
+# upgrade, a collation version that doesn't match), on stderr as psql shows it; and by dev, as it shows a warning
+PSQL -c "ALTER DATABASE $DB SET default_text_search_config = 'public.nosuch'" 2>/dev/null
+starting='WARNING: invalid value for parameter "default_text_search_config": "public.nosuch"'
+out=$(CLI test 2>&1 >/dev/null); rc=$?
+[ "$rc $out" = "1 $starting"$'\nno policy is applied [AZ609]\nHINT: rowstile apply db/policy.authz' ] &&
+  ok "a warning the server sends as the session starts is said, on stderr" || bad "a warning as the session starts" "$rc $out"
+run dev --once --no-studio "$T/main.authz"
+case "$out" in *$'\n  ok   compiles\n  !    '"${starting#WARNING: }"$'\n'*) ok "... and by dev";; *) bad "dev, a warning as the session starts" "$out";; esac
+PSQL -c "ALTER DATABASE $DB RESET default_text_search_config" 2>/dev/null
+CLI remove --yes >/dev/null 2>&1  # what dev applied: none again, as before
 out=$(python3 cli/rowstile_cli.py --db "dbname=authz_no_such_db" graph "$T/main.authz" 2>&1); case "$out" in "%% Generated"*) ok "check, graph and client of a file need no database";; *) bad "no database" "${out:0:200}";; esac
 
 # a named database that doesn't answer is said as that, with where it tried (unit_test.py has the case where nothing
