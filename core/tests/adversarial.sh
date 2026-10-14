@@ -121,6 +121,29 @@ agrees "composite" "42501: changing parent_type, parent_id of cx.folders (1,1) n
   { echo "FAIL  the rule on a composite key's column: $got"; fails=$((fails + 1)); }
 dropdb "$C"
 
+echo "-- a deny split from what a permission inherits (tests/alt.authz): sharing what feeds the part before it"
+C="${DB}_alt"
+dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
+python3 compile_policy.py tests/alt.authz > /tmp/authz_adversarial_alt.sql &&
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" -f tests/alt_schema.sql \
+  -f /tmp/authz_adversarial_alt.sql -c "INSERT INTO alt.users (id) VALUES (1), (2), (3)" \
+  -c "INSERT INTO alt.docs (doc_no, owner_id) VALUES (1, 1)" >/dev/null || exit 1
+# user 1 owns doc 1: she may share it (share = owner) and view it. view is (owner or reader ...) and not hidden,
+# so sharing reader gives view, and needs it
+alt_as_1() { error_of "$(psql -X -q -At -1 -U "$ATTACKER" -d "$C" -v VERBOSITY=verbose -c "$(sign 1)" "$@" 2>&1)"; }
+got=$(alt_as_1 -c "SELECT authz.share('doc', '1', 'reader', 'user', '2')" -c "SELECT 'shared'")
+agrees "alt" "shared" "$got" && echo "ok    the owner of a doc may share reader on it, as she may view it" ||
+  { echo "FAIL  the owner sharing reader: $got"; fails=$((fails + 1)); }
+# banned (sharing banned feeds only the deny, so it needs share alone), she may no longer view it, nor give it
+got=$(alt_as_1 -c "SELECT authz.share('doc', '1', 'banned', 'user', '1')" -c "SELECT authz.can('doc', '1', 'view')")
+agrees "alt" "f" "$got" && echo "ok    ... and once she bans herself from it she may not view it" ||
+  { echo "FAIL  the owner banned: $got"; fails=$((fails + 1)); }
+got=$(alt_as_1 -c "SELECT authz.share('doc', '1', 'reader', 'user', '3')")
+agrees "alt" "42501: you cannot grant doc.reader on doc 1: you do not hold view" "$got" &&
+  echo "ok    ... nor share reader: it feeds view before the deny, which she no longer holds" ||
+  { echo "FAIL  a banned owner sharing reader: $got"; fails=$((fails + 1)); }
+dropdb "$C"
+
 echo "-- grants the policy doesn't give, and schemas on the search path others may create in"
 C="${DB}_grants"
 CP() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$C" "$@"; }
@@ -207,6 +230,7 @@ for cursor in "'12abc'" "''" "'99999999999999999999999'"; do
     -c "SELECT count(*) FROM authz.list('file', 'view', $cursor, 5)"
 done
 expect "... and so is a negative page size" "22023: the page size must not be negative (got -1)" -c "SELECT count(*) FROM authz.list('file', 'view', NULL, -1)"
+expect "... while a page of none is no mistake: no row" "0" -c "SELECT count(*) FROM authz.list('file', 'view', NULL, 0)"
 expect "who may see a hidden object" "42501: you cannot see who has access to folder 5" -c "SELECT count(*) FROM authz.who('folder', '5', 'view')"
 expect "...is refused as for a missing one" "42501: you cannot see who has access to folder 999999" -c "SELECT count(*) FROM authz.who('folder', '999999', 'view')"
 expect "asking why for someone else" "42501: you cannot inspect access to file 11" -c "SELECT authz.explain('file', '11', 'view', '2')"

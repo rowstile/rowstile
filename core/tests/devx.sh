@@ -111,6 +111,12 @@ out=$(then_as 1 "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name)
   "UPDATE app.folders SET inherit = false WHERE id = 90")
 case "$out" in *"42501: permission denied: user 1 may not update this row of app.folders to these values"*"DETAIL:  no   update : edit  (line "*"  no   edit"*"HINT:  the update rule must hold on the row after the change too (Postgres checks both) (rowstile help AZ709)"*)
   ok "an update the rule refuses on the row after it says so, and that the rule holds on both sides";; *) bad "refused after the change" "$out";; esac
+# bob may edit Design docs (his team edits Engineering above it), not share it, and not edit Handbook: moving it
+# there fails both items of `update parent_id after`, and the second (an and) says which of its parts failed
+out=$(then_as 2 "SELECT 1" "UPDATE app.folders SET parent_id = 2 WHERE id = 4")
+want="DETAIL:  no   update parent_id after : parent.edit or ({parent_id is null} and share)  (line "*$'\n'"  no   parent.edit"$'\n'"    no   you have no access to folder 2"$'\n'"  no   ({parent_id is null} and share)"$'\n'"    no   {parent_id is null}"$'\n'"    no   share"$'\n'"HINT:  "
+case "$out" in *"42501: changing parent_id of app.folders 4 needs: parent.edit or ({parent_id is null} and share)"$'\n'$want*)
+  ok "a refused move says which part of an and failed, each on its own line below it";; *) bad "the parts of an and" "$out";; esac
 
 echo "-- authz.explain_rule"
 out=$(as 1 "SELECT array_to_string(authz.explain_rule('app.files', 'update', '11'), '|')")
