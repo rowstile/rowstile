@@ -43,12 +43,13 @@ fi
 
 if [ -n "$AGREE" ]; then
   echo "-- the grammar and the parser: $AGREE"
-  # (many files: parsed in chunks, each an XML of its own, compared together)
+  # (many files: parsed in chunks, each an XML of its own, compared together; a chunk with a file the grammar
+  # reads with an error exits 1, and the comparison says which, or that the parser refuses it too)
   docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz node:24-trixie bash -c '
     npm ci --no-audit --no-fund >/dev/null 2>&1 || { echo "FAIL  npm ci"; exit 1; }
     python3 /repo/core/tests/parse_agreement.py --write /tmp/agree 0 $1 &&
       find /tmp/agree -name "*.authz" | sort > /tmp/paths && split -l 4000 /tmp/paths /tmp/chunk_ || exit 1
-    for c in /tmp/chunk_*; do npx tree-sitter parse --xml --paths "$c" > "$c.xml" 2>/dev/null || { echo "FAIL  tree-sitter parse"; exit 1; }; done
+    for c in /tmp/chunk_*; do npx tree-sitter parse --xml --paths "$c" > "$c.xml" 2>/dev/null; [ -s "$c.xml" ] || { echo "FAIL  tree-sitter parse"; exit 1; }; done
     python3 /repo/core/tests/parse_agreement.py /tmp/chunk_*.xml > /tmp/agree.log 2>&1 &&
       echo "ok    $(tail -n 1 /tmp/agree.log)" || { tail -n 40 /tmp/agree.log; echo "FAIL  the grammar and the parser read a policy differently"; exit 1; }
   ' agree "$AGREE"
