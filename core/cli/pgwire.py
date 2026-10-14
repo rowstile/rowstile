@@ -989,9 +989,7 @@ def parse_dsn(text: str | None) -> ConnectArgs:
         raise ValueError("invalid SSL protocol version range")
     if tls["ssl_max_protocol_version"] and high < 12:
         raise refused("ssl_max_protocol_version", "TLS older than TLSv1.2")
-    host = one(given("host") or "/var/run/postgresql")
     port = given("port") or "5432"
-    user = given("user") or "postgres"
     timeout = given("connect_timeout") or "10"
     if not port.isdigit() or not timeout.isdigit():
         raise ValueError(
@@ -999,6 +997,8 @@ def parse_dsn(text: str | None) -> ConnectArgs:
             if not port.isdigit()
             else f"connect_timeout is a number of seconds, not {timeout!r}"
         )
+    host = one(given("host") or _default_host(int(port)))
+    user = given("user") or _system_user()
     return {
         "host": host,
         "port": int(port),
@@ -1022,6 +1022,37 @@ def parse_dsn(text: str | None) -> ConnectArgs:
             if (value := os.environ.get(var)) and value.lower() != "default"
         },
     }
+
+
+# the folders libpq looks for the server's socket in when nothing names a host, as it is built: Debian's and Ubuntu's,
+# then libpq's own default (Homebrew's, Postgres.app's, and any built from source), which comes first on macOS
+SOCKET_FOLDERS = ("/var/run/postgresql", "/tmp")
+
+
+def _default_host(port: int) -> str:
+    """The host where nothing names one, as libpq has it: localhost on Windows; elsewhere the socket folder of the
+    usual builds that holds the server's socket (the first, if none does)."""
+    if sys.platform == "win32":
+        return "localhost"
+    folders = SOCKET_FOLDERS[::-1] if sys.platform == "darwin" else SOCKET_FOLDERS
+    return next((f for f in folders if os.path.exists(os.path.join(f, f".s.PGSQL.{port}"))), folders[0])
+
+
+def _system_user() -> str:
+    """The user where nothing names one, as libpq has it: the system's, the one this process runs as (on Windows,
+    the one Windows signed in)."""
+    if sys.platform == "win32":
+        name = os.environ.get("USERNAME")
+        if not name:
+            raise ValueError("no user name from Windows (USERNAME): name one with user= or PGUSER")
+        return name
+    import pwd
+
+    uid = os.geteuid()
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        raise ValueError(f"no user name for the system's user {uid}: name one with user= or PGUSER") from None
 
 
 def _socket(host: str, port: int, timeout: float) -> socket.socket:

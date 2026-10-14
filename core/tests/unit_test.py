@@ -4074,9 +4074,54 @@ class Wire(unittest.TestCase):
             done()
             self.assertEqual((seen["cancel"], conn.sock.fileno()), (sent, -1), (listen, sent))
 
+    def test_the_defaults_are_libpqs(self) -> None:
+        # where nothing names them (no setting, no PG* variable): the user is the system's, as libpq has it (psql
+        # connects as `dev`, not postgres), the database is named after the user, and the host is the socket folder
+        # libpq is built with: Debian's and Ubuntu's (/var/run/postgresql), else /tmp (libpq's own default, as
+        # Homebrew and Postgres.app build it; first on macOS), whichever has the server's socket; localhost on Windows
+        import pwd
+
+        parse = self.pgwire.parse_dsn
+        me = pwd.getpwuid(os.geteuid()).pw_name
+        got = parse(None)
+        self.assertEqual((got["user"], got["database"], got["port"]), (me, me, 5432))
+        self.assertEqual(parse("dbname=app")["user"], me)
+        self.assertEqual(parse("user=ann")["database"], "ann")
+
+        def where(platform: str, sockets: set[str]) -> str:
+            with (
+                mock.patch.object(sys, "platform", platform),
+                mock.patch.object(os.path, "exists", lambda p: p in sockets),
+            ):
+                return parse("port=5433 user=u")["host"]
+
+        debian, tmp = "/var/run/postgresql/.s.PGSQL.5433", "/tmp/.s.PGSQL.5433"
+        self.assertEqual(where("linux", {debian, tmp}), "/var/run/postgresql")
+        self.assertEqual(where("linux", {tmp}), "/tmp")
+        self.assertEqual(where("linux", set()), "/var/run/postgresql")  # none there: libpq's on Debian, said
+        self.assertEqual(where("darwin", {debian, tmp}), "/tmp")
+        self.assertEqual(where("darwin", {debian}), "/var/run/postgresql")
+        self.assertEqual(where("darwin", set()), "/tmp")
+        self.assertEqual(where("win32", {debian, tmp}), "localhost")
+        # on Windows, the user is the one Windows signed in (USERNAME, what libpq asks Windows for)
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.dict(os.environ, {"USERNAME": "Ann"}):
+            got = parse(None)
+            self.assertEqual((got["host"], got["user"], got["database"]), ("localhost", "Ann", "Ann"))
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.dict(os.environ, {"PGUSER": "bo"}):
+            self.assertEqual(parse(None)["user"], "bo")
+        # a user the system can't name (a container's uid with no line in /etc/passwd) is said, with what to set
+        with (
+            mock.patch.object(pwd, "getpwuid", side_effect=KeyError("getpwuid(): uid not found: 4242")),
+            mock.patch.object(os, "geteuid", return_value=4242),
+            self.assertRaisesRegex(
+                ValueError, "^no user name for the system's user 4242: name one with user= or PGUSER$"
+            ),
+        ):
+            parse("host=h")
+        self.assertEqual(parse("host=h user=x")["user"], "x")  # one named isn't looked up
+
     def test_a_socket_on_windows(self) -> None:
-        # Windows has no Unix sockets: a host that is a folder (/var/run/postgresql is the default when nothing
-        # names the database) is refused, saying what to write instead
+        # Windows has no Unix sockets: a host that is a folder is refused, saying what to write instead
         said = "^host=/var/run/postgresql is a Unix socket, which Windows doesn't have: use host=localhost$"
         with mock.patch.object(sys, "platform", "win32"), self.assertRaisesRegex(self.pgwire.ProtocolError, said):
             self.pgwire.connect(host="/var/run/postgresql", timeout=1)

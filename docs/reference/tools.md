@@ -68,7 +68,10 @@ that changes neither what is checked nor where the command connects (`applicatio
 and the like), or refused, naming it: a service, a password file where no password is given, a host address apart
 from its name (`hostaddr`), several hosts, client certificates, GSS encryption, OAuth. <!-- checked: tests/unit_test.py "test_each_libpq_setting_is_honoured_left_alone_or_refused"; tests/unit_test.py "test_what_it_cannot_honour_is_refused_not_dropped"; tests/unit_test.py "test_a_url_and_its_options" -->
 A value in a string of
-keywords is quoted as for libpq (`password='it\'s'`).
+keywords is quoted as for libpq (`password='it\'s'`). Where nothing names them, the defaults are libpq's: the
+system's user, a database named after it, and the server's socket in `/var/run/postgresql` (Debian's and Ubuntu's
+folder) or `/tmp` (libpq's own, as Homebrew and Postgres.app build it), whichever has it, or `localhost` on
+Windows. <!-- checked: tests/unit_test.py "test_the_defaults_are_libpqs" -->
 
 TLS is used when the server has it and required with `sslmode=require`. <!-- checked: tests/unit_test.py "test_tls_as_sslmode_says" -->
 The server's certificate is checked

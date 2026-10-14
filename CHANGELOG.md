@@ -60,6 +60,11 @@ Each release upgrades from the one before it. How releases are numbered and made
   one-column id alone serves no such lookup, and is no longer taken as serving it.
 - `rowstile plans` no longer asks "an index missing?" of rowstile's own tables, which it reads whole for someone
   who reaches most rows (an org's admin): no index the app adds changes that.
+- Where nothing names them (no `--db`, `database`, `DATABASE_URL` or `PG*` variable), the command connects as
+  libpq does: as the system's user (it connected as `postgres`), and on Windows to `localhost` (it tried a Unix
+  socket, which Windows doesn't have); elsewhere to the server's socket in `/var/run/postgresql` or `/tmp`,
+  whichever has it (it tried only the first, Debian's; macOS's builds use `/tmp`). To connect as `postgres` as
+  before, set `PGUSER=postgres` or `user=postgres`.
 
 ### Fixed
 
