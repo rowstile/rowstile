@@ -27,7 +27,7 @@ from typing import NotRequired, TypeAlias, TypedDict
 from . import Compiler, PolicyError, migrate, parse_policy
 from .conditions import simple
 from .connection import Db
-from .evaluate import FOLLOWS, Difference, Reference, compare, worlds_to_try
+from .evaluate import FOLLOWS, Difference, Listing, Reference, compare, worlds_to_try
 from .parse import KEYWORDS, Expr, Loc, Perm, Policy, Rule, Type, read_lines
 from .statements import split
 
@@ -58,7 +58,7 @@ class Through(TypedDict):
 class Meaning(TypedDict):
     changed: list[Changed]
     through: list[Through]
-    equivalent: str | None  # 'text', or 'N small worlds' for a refactor that grants the same
+    equivalent: str | None  # 'text', or 'N small worlds and M listed: ...' for a refactor that grants the same
     counterexample: NotRequired[Difference]
     # what changed only in conditions the review can't read (a subquery, a function): it can't tell more or less
     unreadable: NotRequired[list[str]]
@@ -561,9 +561,11 @@ def meaning(b: Side, h: Side, worlds: int, refactor: bool = True) -> Meaning:
     if unreadable:
         out["unreadable"] = sorted(unreadable)
     if refactor:
-        found = compare(b.pol, as_read(b, h, unreadable), worlds=worlds)
+        head = as_read(b, h, unreadable)
+        listing = Listing((b.pol, head))
+        found = compare(b.pol, head, worlds=worlds, listing=listing)
         if found is None and not unreadable:
-            out["equivalent"] = f"{worlds} small worlds"
+            out["equivalent"] = f"{worlds} small worlds and {listing.said()}"
             return out
         if found is not None:
             # a rule named as the policy writes it (compare says `update check` for `after`)

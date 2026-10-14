@@ -11,8 +11,14 @@ says what a change does, in plain words, for the pull request:
   When only permissions and rules changed, each is checked against the base in
   many small worlds (made-up users, objects and links, `core/authzlib/evaluate.py`; among them the ones where
   every condition holds, or where most links do, so a change behind a long `and` shows, and chains of objects
-  one link longer than the policies read): if they all grant the same, the review says
-  "Meaning unchanged". <!-- checked: tests/review.sh "a refactor: meaning unchanged, checked in small worlds"; tests/unit_test.py "test_a_refactor_is_checked_in_small_worlds"; tests/unit_test.py "test_a_long_and_of_links_widened_is_found"; tests/unit_test.py "test_a_chain_deeper_than_the_drawn_worlds_is_found" -->
+  one link longer than the policies read), and in the worlds of up to three rows of each type, listed with the
+  fewest links first, every one with no link or one link among them: each row with every answer its
+  conditions can give, so a condition added to a long `and`, or one that must say one thing on a row and another
+  on the row it inherits from, shows. <!-- checked: tests/unit_test.py "test_a_condition_added_to_a_long_and_is_found"; tests/unit_test.py "test_conditions_that_differ_between_two_linked_rows_are_found"; tests/unit_test.py "test_the_small_worlds_are_listed" -->
+  The listing stops after 3,000 worlds, once those are tried. If they all grant the same, the review says
+  "Meaning unchanged", and how far the listing got: "every one of up to 3 rows of each type", with "at most 2
+  links" where it stopped there. <!-- checked: tests/review.sh "a refactor: meaning unchanged, checked in small worlds"; tests/unit_test.py "test_a_refactor_is_checked_in_small_worlds"; tests/unit_test.py "test_a_long_and_of_links_widened_is_found"; tests/unit_test.py "test_a_chain_deeper_than_the_drawn_worlds_is_found" -->
+  Worlds that are bigger, or hold custom roles, are only drawn: for them it is a search, not a proof. <!-- unchecked: a limit, said so that no more is expected of it -->
   Formatting and comments are "unchanged" too; text inside quotes is not formatting. <!-- checked: tests/unit_test.py "test_comments_only"; tests/unit_test.py "test_text_in_quotes_is_compared_as_written" -->
   A
   condition the worlds can't read (a subquery, a function: anything beyond the row's own columns and
