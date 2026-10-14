@@ -54,6 +54,9 @@ grants the same.
 
 The pull request that adds the policy has none at the base. Each declaration is listed as added, the app role
 and the user type too, and the review compares with a policy that allows nothing. <!-- checked: tests/review.sh "the pull request that adds the policy: each declaration added, its own app role and user type too"; tests/unit_test.py "test_a_new_policy_is_added_whole" -->
+A base whose policy has a mistake is reviewed the same way, so the pull request that fixes it gets a review too:
+it says first that the base has a mistake, with its line there and its code, in the text, the comment and the
+annotations (`--json`: `base_mistake`, with `line`, `message` and `code`), then reviews the policy as new. <!-- checked: tests/review.sh "a base whose policy has a mistake: said first, with its line there and its code, and the policy reviewed as new, exit 0"; tests/review.sh "json: base_mistake, its line, message and code"; tests/review.sh "markdown: said at the top of the comment"; tests/review.sh "annotations: on the policy file, first"; tests/unit_test.py "test_a_base_with_a_mistake_is_said_and_the_head_reviewed_as_new" -->
 
 [`review-ci/github/action.yml`](../../review-ci/github/action.yml) runs it on each pull request and keeps one comment up to date (and the annotations);
 [`review-ci/gitlab/rowstile-review.gitlab-ci.yml`](../../review-ci/gitlab/rowstile-review.gitlab-ci.yml) does the same for merge requests. <!-- unchecked: the action runs on this repository's pull requests (the review job in ci.yml), but no check asks what it does with the comment; the GitLab template runs on no CI here -->
@@ -85,7 +88,7 @@ reviewed as new and the base's tests left out. So check out the whole history, w
 
 The review reports; it doesn't gate. It exits 0 whatever it finds: a widened permission, a failing test and a
 lock file behind the policy are all in what it prints, for a person to read. <!-- checked: tests/review.sh "rowstile review runs, and exits 0 whatever it found (it reports, the tests gate)" -->
-(It exits 1 for a policy that
+(It exits 1 for a pull request whose policy
 doesn't compile, 2 when it can't run: no `--base` where there is no `main` or `master` to compare with, a commit
 git doesn't know, a file at the base git can't read, a database it can't reach.) <!-- checked: tests/review.sh "a mistake in the pull request's policy: check's message, exit 1"; tests/review.sh "and where there is no main or master, asks which commit"; tests/review.sh "a base git doesn't know: said, exit 2 (not the whole policy as new)"; tests/review.sh "a policy git lists at the base and can't read: the review stops, exit 2"; tests/review.sh "a review database that isn't there: can't connect, exit 2" -->
 What

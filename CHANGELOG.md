@@ -18,6 +18,10 @@ Each release upgrades from the one before it. How releases are numbered and made
   that nobody was signed in; `pending_requests` gave it an empty list, and `view_as` let a service the policy
   gave `impersonate` view as that user. A service still shares as itself, and a user holding `manage_keys` on
   it makes its keys. Apply the policy again (or the next migration) to take it.
+- `rowstile review` reviews a pull request whose base branch's policy has a mistake, where it refused (exit 1),
+  so the pull request that fixes the mistake got no review and the review's CI job failed. It says first that
+  the base has a mistake, with its line there and its code, and reviews the policy as new, as where the base has
+  none; `--json` has it as `base_mistake` (`line`, `message`, `code`).
 
 ### Fixed
 

@@ -2284,12 +2284,37 @@ rules app.folders
         with self.assertRaises(PolicyError) as e:
             self.small("can view = edit or viewer", "can view = edit or viewer or nosuch.view")
         self.assertEqual(e.exception.code, "AZ203")
-        with self.assertRaisesRegex(
-            self.review.BaseMistake, r"the policy at the base has a mistake: line \d+: .*\[AZ\d+\]"
-        ):
-            self.review.review(
-                (self.SMALL.replace("can see = member", "can see = nosuch"), {}, {}), (self.SMALL, {}, {})
-            )
+
+    def test_a_base_with_a_mistake_is_said_and_the_head_reviewed_as_new(self) -> None:
+        """The pull request that fixes the base's mistake is reviewed: as one that adds the policy, and every output
+        says first that the base has a mistake, where there and its code."""
+        broken = replaced(self.SMALL, "can see = member", "can see = nosuch")
+        r = self.review.review((broken, {}, {}), (self.SMALL, {}, {}), worlds=40)
+        mistake = r.get("base_mistake")
+        assert mistake is not None
+        self.assertEqual((mistake["line"], mistake["code"]), ("line 7", "AZ203"))
+        self.assertTrue(mistake["message"].startswith("org has no relation or permission 'nosuch'"), mistake)
+        # the rest is the review of a new policy, as where the base has none
+        new = self.review.review(None, (self.SMALL, {}, {}), worlds=40)
+        self.assertEqual({k: v for k, v in r.items() if k != "base_mistake"}, new)
+        self.assertNotIn("base_mistake", new)
+        said = f"line 7 there: {mistake['message']} [AZ203]"
+        note = f"The policy at the base has a mistake ({said}), so the review reads this one as new."
+        self.assertTrue(self.review.text(r).startswith(f"Base     {note}\nMeaning  "), self.review.text(r))
+        md = self.review.markdown(r).splitlines()
+        self.assertEqual(md[3:5], [note, ""])
+        self.assertEqual(json.loads(self.review.as_json(r))["base_mistake"], mistake)
+        notes = self.review.annotations(r, "db/policy.authz").splitlines()
+        self.assertEqual(notes[0], f"::warning file=db/policy.authz,title=rowstile review::{note}")
+        # a mistake that names no line: the whole message, no line
+        self.assertEqual(
+            self.review.mistake_of(PolicyError("the policy: something", "AZ999")),
+            {"line": None, "message": "the policy: something", "code": "AZ999"},
+        )
+        self.assertEqual(
+            self.review.mistake_of(PolicyError("roles.authz line 3: a 100% mistake", "AZ201"))["line"],
+            "roles.authz line 3",
+        )
 
     def test_the_details_are_written_when_the_meaning_is_unchanged(self) -> None:
         before = {"t.authz": 'test "carol"\n  user 3 can view file 11\n  user 3 cannot view file 12\n'}
@@ -2591,15 +2616,16 @@ test
     def test_a_base_with_a_mistake_is_said_in_the_language_it_is_written_in(self) -> None:
         # a base in the language before this one: this one would only say to write its old forms anew
         old = replaced(self.OLD, "can view = (edit or viewer) and", "can view = (edit or viewer or nosuch) and")
-        with self.assertRaisesRegex(
-            self.review.BaseMistake,
-            r"^the policy at the base has a mistake: line 13: folder has no relation or permission 'nosuch' .*\[AZ203\]$",
-        ):
-            self.review.review((old, {}, {}), (self.NEW, {}, {}), worlds=10)
+        mistake = self.review.review((old, {}, {}), (self.NEW, {}, {}), worlds=10).get("base_mistake")
+        assert mistake is not None
+        self.assertEqual((mistake["line"], mistake["code"]), ("line 13", "AZ203"))
+        self.assertRegex(mistake["message"], r"^folder has no relation or permission 'nosuch' ")
         # one that neither reads: as this one says it
         broken = replaced(self.OLD, "type folder = app.folders\n", "type folder app.folders\n")
-        with self.assertRaisesRegex(self.review.BaseMistake, r"line 1: write `app role app_user`.*\[AZ101\]$"):
-            self.review.review((broken, {}, {}), (self.NEW, {}, {}), worlds=10)
+        mistake = self.review.review((broken, {}, {}), (self.NEW, {}, {}), worlds=10).get("base_mistake")
+        assert mistake is not None
+        self.assertEqual((mistake["line"], mistake["code"]), ("line 1", "AZ101"))
+        self.assertTrue(mistake["message"].startswith("write `app role app_user`"), mistake)
 
     def test_the_review_data_in_words(self) -> None:
         """Who gains and loses, said as who they are: a service is no user, nor is someone not signed in (both were
