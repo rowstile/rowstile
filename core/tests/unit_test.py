@@ -5027,6 +5027,32 @@ class Confidence(unittest.TestCase):
         self.assertIsNone(evaluate.compare(a, b, worlds=10, listing=listing))
         self.assertEqual(listing.said(), "2,049 listed: every one of up to 3 rows of each type with at most 1 link")
 
+    def test_a_listed_world_shares_with_everyone_and_by_link(self) -> None:
+        # a share names a row of its subject's type, or `*` (every user, anyone), or a link's token: the one asked with
+        from authzlib import evaluate
+
+        doc = self.HEAD + "type doc = app.docs\n  viewer : user, user:*, anyone, link shared by view\n  can view = "
+        a, b = parse_policy(doc + "viewer\n", "a.authz"), parse_policy(doc + "viewer and signed_in\n", "b.authz")
+        listing = evaluate.Listing((a, b))
+        named = {(c.link[0][3], c.link[0][4], c.link[2]) for c in listing.candidates}
+        self.assertEqual(
+            named,
+            {
+                ("user", None, "1"),
+                ("user", None, "2"),
+                ("user", None, "3"),
+                ("user", "*", "*"),
+                ("anyone", None, "*"),
+                ("link", None, "tok1"),
+            },
+        )
+        found = evaluate.compare(a, b, listing=listing)
+        assert found is not None
+        self.assertEqual(
+            (found["what"], found["user"], found["before"], found["after"]),
+            ("doc.view", "(nobody signed in)", True, False),
+        )
+
     def test_the_listing_says_where_it_took_some_values_only(self) -> None:
         # four columns of nine values each (the seven named, one none of them names, NULL), read by one condition:
         # more combinations than a row's classes are made from, so only the first are, and the review says so
