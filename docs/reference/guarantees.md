@@ -29,7 +29,7 @@
   subject, so a concurrent delete can't slip in between. <!-- checked: tests/concurrency.sh "the share waits for the delete, then is refused"; tests/concurrency.sh "no share is left on the deleted id"; tests/concurrency.sh "breaking the glass waits for the delete, then is refused" -->
   A delete, a new id or a `TRUNCATE` in REPEATABLE READ or SERIALIZABLE whose snapshot is older than a
   share of the row fails with a serialization error (40001), to retry, and never leaves the share. <!-- checked: tests/concurrency.sh "the writer with the older snapshot gets a serialization error"; tests/concurrency.sh "no share is left on a row that is gone"; tests/concurrency.sh "a delete with an older snapshot"; tests/concurrency.sh "a new id with an older snapshot"; tests/concurrency.sh "the user deleted with an older snapshot"; tests/concurrency.sh "TRUNCATE with an older snapshot" -->
-- **Inheritance can't go stale.** <!-- checked: tests/races.sh "50 races, inheritance tables exact after each"; tests/stress.sh "the inheritance tables match a rebuild" -->
+- **Inheritance can't go stale.** <!-- checked: tests/interleave.py "inheritance tables exact after each"; tests/stress.sh "the inheritance tables match a rebuild" -->
   Writes to closure tables take a lock row per type;
   in REPEATABLE READ or SERIALIZABLE a writer with an old snapshot gets a
   serialization error to retry instead of storing stale ancestors. <!-- checked: tests/concurrency.sh "the late writer gets a serialization error (the app retries)" -->
