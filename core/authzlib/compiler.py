@@ -1261,24 +1261,8 @@ class Core:
                 f"WHERE {self.subject_id(src, 's', st)} {match}{extra}"
             )
         # shares and custom roles live in authz.shares
-        if sr == "*":
-            who = (
-                f"g.subject_type = {lit(st)} AND g.subject_relation = '' AND g.subject_id = '*' "
-                f"AND {self.me(st)} IS NOT NULL"
-            )
-        elif st == "anyone":
-            who = "g.subject_type = 'anyone'"
-        elif st == "link":
-            who = f"g.subject_type = 'link' AND g.subject_id = ANY ({LINKS})"
-        elif self.is_principal(st) and not sr:
-            who = f"g.subject_type = {lit(st)} AND g.subject_relation = '' AND g.subject_id = {self.me(st, text=True)}"
-        elif sr:
-            inner = self.view_ref(self.T(st), sr, src.loc)
-            who = (
-                f"g.subject_type = {lit(st)} AND g.subject_relation = {lit(sr)} "
-                f"AND g.subject_id {self.ids_in(inner, text=True)}"
-            )
-        else:
+        who = self.share_subject_sql(st, sr, src)
+        if who is None:
             return None
         if src.kind == "roles":
             rel = self.role_rel_sql(t, src, f"g.object_id::{t.pktype}")
@@ -1288,6 +1272,28 @@ class Core:
             f"SELECT g.object_id::{t.pktype} AS id FROM authz.shares g "
             f"WHERE g.object_type = {lit(t.name)} AND {rel} AND {who} AND {self.live()}"
         )
+
+    def share_subject_sql(self, st: str, sr: str | None, src: Source) -> str | None:
+        """The shares (g, in authz.shares) to subject st#sr that give the signed-in principal what they share: to them,
+        to a group they are in, to every signed-in st, to anyone, or to a link they presented. None: no share can."""
+        if sr == "*":
+            return (
+                f"g.subject_type = {lit(st)} AND g.subject_relation = '' AND g.subject_id = '*' "
+                f"AND {self.me(st)} IS NOT NULL"
+            )
+        if st == "anyone":
+            return "g.subject_type = 'anyone'"
+        if st == "link":
+            return f"g.subject_type = 'link' AND g.subject_id = ANY ({LINKS})"
+        if self.is_principal(st) and not sr:
+            return f"g.subject_type = {lit(st)} AND g.subject_relation = '' AND g.subject_id = {self.me(st, text=True)}"
+        if sr:
+            inner = self.view_ref(self.T(st), sr, src.loc)
+            return (
+                f"g.subject_type = {lit(st)} AND g.subject_relation = {lit(sr)} "
+                f"AND g.subject_id {self.ids_in(inner, text=True)}"
+            )
+        return None
 
     def pair_sql(
         self,

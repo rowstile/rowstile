@@ -390,7 +390,7 @@ END $f$;""")
     RETURN;
   END IF;""")
                 else:
-                    detail = self.share_detail_sql(t, r, src, st) if src.kind in ("shared", "roles") else "''"
+                    detail = self.share_detail_sql(t, r, src, st, sr) if src.kind in ("shared", "roles") else "''"
                     lines.append(f"""  IF p_id IN ({part}) THEN
     RETURN NEXT pad || 'yes  ' || {lit(how)} || {detail};
     RETURN;
@@ -447,8 +447,13 @@ END $f$;"""
             return f"{name}: shared by a link you presented"
         return f"{name}: shared with " + ("you" if (st, sr) == ("user", None) else "")
 
-    def share_detail_sql(self, t: Type, r: Relation, src: Source, st: str) -> str:
-        """' (by X, until Y, caveat Z)' for the share that applies."""
+    def share_detail_sql(self, t: Type, r: Relation, src: Source, st: str, sr: str | None) -> str:
+        """' (by X, until Y, caveat Z)' for the share that gives the signed-in principal the relation: theirs (or the
+        link they presented, the one to every signed-in user, to anyone), never another's."""
+        who = self.share_subject_sql(st, sr, src)
+        # (a share that can give no one signed in the relation, to a row of a type that doesn't sign in, has no
+        # source_sql for them: why_sql skips it before asking for its details)
+        assert who is not None, f"no share to {st} gives the relation {r.name}"
         rel = self.role_rel_sql(t, src, "p_id") if src.kind == "roles" else f"g.relation = {lit(r.name)}"
         role = (
             " || coalesce(' (role ' || (SELECT ro.name FROM authz.roles ro WHERE 'role:' || ro.id = g.relation) || ')', '')"
@@ -459,7 +464,7 @@ END $f$;"""
             f"coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), "
             f"coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')'){role} "
             f"FROM authz.shares g WHERE g.object_type = {lit(t.name)} AND g.object_id = p_id::text AND {rel} "
-            f"AND g.subject_type = {lit('user' if st in ('user',) else st)} AND {self.live()} "
+            f"AND {who} AND {self.live()} "
             f"ORDER BY g.created_at LIMIT 1), '')"
         )
 

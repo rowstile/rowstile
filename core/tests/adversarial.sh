@@ -200,6 +200,14 @@ got=$(said "SELECT authz.explain('folder', '21', 'edit')" "@")
 case "$got" in *"parent is a folder you can't see"*) case "$got" in *"folder 20"*|*"folder 5"*) ;; *)
   echo "ok    ... and the walk up from one she sees stops at a parent she can't see";; esac;; *) false;; esac ||
   { echo "FAIL  explain walks past a hidden parent: $got"; fails=$((fails + 1)); }
+# why she may view a file shared with her: her own share, never another user's (who made it, until when). Bob's,
+# made by alice an hour before hers and ending tomorrow, is the older
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at, created_by, created_at)
+         VALUES ('file', '13', 'viewer', 'user', '2', now() + interval '1 day', '1', now() - interval '1 hour'),
+                ('file', '13', 'viewer', 'user', '3', NULL, '5', now())" >/dev/null
+expect "explaining her share on a file shows hers, not another user's" "yes  viewer: shared with you (by 5)" \
+  -c "SELECT ltrim(l) FROM authz.explain('file', '13', 'view') l WHERE l LIKE '%shared with you%'"
+PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '13'" >/dev/null
 hidden=$(said "INSERT INTO app.files (folder_id, owner_id, name) VALUES (6, 3, 'x')" "folder 6")
 missing=$(said "INSERT INTO app.files (folder_id, owner_id, name) VALUES (999999, 3, 'x')" "folder 999999")
 [ "$hidden" = "$missing" ] && echo "ok    a write refused in a hidden folder explains as for a missing one" ||
