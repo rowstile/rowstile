@@ -166,7 +166,9 @@ rules sh.docs
 invariants
   never doc: view and not edit and not viewer
 POLICY
-python3 cli/rowstile_cli.py --db "dbname=$H" apply "/tmp/${H}.authz" >/dev/null 2>&1 || { bad "apply the policy that fails half way"; exit 1; }
+python3 compile_policy.py "/tmp/${H}.authz" > "/tmp/${H}.sql" &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$H" -f "/tmp/${H}.sql" >/dev/null ||
+  { bad "apply the policy that fails half way"; exit 1; }
 psql -X -q -d "$H" -c "SET authz.user_id = 1" -c "SELECT authz.share('doc', 1, 'viewer', 'user', 2)" \
   -c "SELECT authz.share('doc', 1, 'viewer', 'user', 3)" >/dev/null
 look=$(psql -X -q -At -d "$H" -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('half way', 'look')")
