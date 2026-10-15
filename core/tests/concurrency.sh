@@ -160,6 +160,23 @@ wait
 if grep -q "you cannot break the glass on folder 40" "$out.b"; then echo "ok    breaking the glass waits for the delete, then is refused"; else echo "FAIL  break_glass: $(tr '\n' ' ' < "$out.b")"; fails=$((fails + 1)); fi
 check "no share is left on the deleted folder" "SELECT NOT EXISTS (SELECT 1 FROM authz.shares WHERE object_type = 'folder' AND object_id = '40')"
 
+echo "-- 11. REPEATABLE READ: a folder renamed while another is moved"
+# a write that changes nothing the tree follows takes no tree lock: the older snapshot is no reason to fail
+reset
+psql -X -q -d "$DB" > "$out" 2>&1 <<'SQL' &
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT count(*) FROM app.folders;   -- snapshot taken here
+SELECT pg_sleep(1.5);
+UPDATE app.folders SET name = 'Design 2' WHERE id = 4;
+COMMIT;
+SQL
+sleep 0.5
+psql -X -q -d "$DB" -c "UPDATE app.folders SET parent_id = 20 WHERE id = 6"
+wait
+check "the rename commits beside the move, with no serialization error" \
+  "SELECT (SELECT name FROM app.folders WHERE id = 4) = 'Design 2' AND (SELECT parent_id FROM app.folders WHERE id = 6) = 20"
+check "inheritance tables match a rebuild" "SELECT authz.verify()"
+
 rm -f "$out" "$out.b"
 dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "concurrency: all passed"; else echo "concurrency: $fails failed"; exit 1; fi

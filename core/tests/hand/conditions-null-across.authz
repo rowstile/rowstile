@@ -1,0 +1,36 @@
+-- answer: conditions-null, inheritance
+-- Inheritance across types (a folder inside a file, a file inside a folder) stops where a condition is NULL, and
+-- goes on once the column says yes.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  parent : folder, file = (parent_type, parent_id)
+  can view = owner or (parent.view and {org_id > 0})
+type file = app.files
+  owner : user = owner_id
+  in    : folder = folder_id
+  can view = owner or in.view
+
+rules app.folders
+  select : view
+rules app.files
+  select : view
+
+test "a NULL condition stops inheritance across types until it holds"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given x   = {INSERT INTO app.files (owner_id) VALUES ($ann) RETURNING id}
+  given n   = {INSERT INTO app.folders (parent_type, parent_id, org_id) VALUES ('file', $x, NULL) RETURNING id}
+  given y   = {INSERT INTO app.files (folder_id) VALUES ($n) RETURNING id}
+  user $ann cannot view folder $n
+  user $ann cannot view file $y
+  as user $ann sees 0 {SELECT FROM app.files WHERE id = $y}
+  given {UPDATE app.folders SET org_id = 1 WHERE id = $n}
+  user $ann can view folder $n
+  user $ann can view file $y
+  as user $ann sees 1 {SELECT FROM app.files WHERE id = $y}
+  given {UPDATE app.folders SET org_id = NULL WHERE id = $n}
+  user $ann cannot view folder $n
+  user $ann cannot view file $y
+  as user $ann sees 0 {SELECT FROM app.files WHERE id = $y}

@@ -132,6 +132,46 @@ case "$got" in *'notification "authz_changes"'*) echo "ok    with notify_changes
   *) echo "FAIL  notify: $got"; fails=$((fails + 1));; esac
 PSQL -c "DELETE FROM authz.settings WHERE key = 'notify_changes'" >/dev/null
 expect_code "the app role cannot read the feed" "42501: permission denied for function changes_since" -c "SELECT * FROM authz.changes_since(0)"
+# folders and projects inside each other through links people share (one inheritance table for the two types): a new
+# link announces what it moves, and only that
+X="${DB}_across"
+XSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$X" "$@"; }
+dropdb --if-exists "$X" 2>/dev/null; createdb "$X" || exit 1
+cat > /tmp/authz_governance_across.authz <<'EOF'
+app role app_user
+type user = x.users
+type folder = x.folders
+  owner  : user = owner_id
+  parent : project shared
+  can share = owner
+  can view  = owner or parent.view
+type project = x.projects
+  owner  : user = owner_id
+  parent : folder shared
+  can share = owner
+  can view  = owner or parent.view
+EOF
+XSQL >/dev/null <<'SQL' || exit 1
+CREATE SCHEMA x;
+CREATE TABLE x.users (id bigint PRIMARY KEY);
+CREATE TABLE x.folders (id bigint PRIMARY KEY, owner_id bigint);
+CREATE TABLE x.projects (id bigint PRIMARY KEY, owner_id bigint);
+INSERT INTO x.users VALUES (1);
+INSERT INTO x.folders VALUES (1, 1), (2, 1), (3, NULL);
+INSERT INTO x.projects VALUES (10, NULL), (20, NULL);
+SQL
+python3 compile_policy.py /tmp/authz_governance_across.authz > /tmp/authz_governance_across.sql &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -f /tmp/authz_governance_across.sql >/dev/null || exit 1
+XSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES
+  ('project', '10', 'parent', 'folder', '1'), ('project', '20', 'parent', 'folder', '2')" >/dev/null
+POS=$(XSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+XSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', '3', 'parent', 'project', '10')" >/dev/null
+got=$(XSQL -c "SELECT string_agg(object_type || ' ' || array_to_string(object_ids, ','), '; ' ORDER BY pos)
+               FROM authz.changes_since($POS) WHERE cause = 'inheritance'")
+[ "$got" = "folder 3" ] && [ "$(XSQL -c "SET authz.user_id = 1" -c "SELECT authz.can('folder', 3, 'view')")" = t ] &&
+  echo "ok    a folder put inside a project by a share: the feed announces it, and nothing else, with inheritance as the cause" ||
+  { echo "FAIL  the feed after a link across types: expected 'folder 3', got '$got'"; fails=$((fails + 1)); }
+dropdb "$X"; rm -f /tmp/authz_governance_across.authz /tmp/authz_governance_across.sql
 
 
 echo "-- emergency access (break glass)"

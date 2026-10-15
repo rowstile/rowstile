@@ -1,0 +1,53 @@
+-- answer: conditions-null, inheritance, rows-hold-nothing
+-- A condition that is NULL holds nothing where inheritance stops either: a folder whose {org_id > 0} is NULL inherits
+-- nothing from its parent, until the column says yes. A team whose where is NULL passes nothing on, also to the
+-- teams that hold it.
+app role app_user
+
+type user = app.users
+type team = app.teams where {parent_id > 0}
+  member : user, team#member shared
+  can share = nobody
+type folder = app.folders
+  owner  : user = owner_id
+  parent : folder = parent_id
+  viewer : team#member shared
+  can share = owner
+  can view  = owner or viewer or (parent.view and {org_id > 0})
+
+rules app.folders
+  select : view
+
+test "a NULL condition stops inheritance"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given top = {INSERT INTO app.folders (owner_id, org_id) VALUES ($ann, 1) RETURNING id}
+  given yes = {INSERT INTO app.folders (parent_id, org_id) VALUES ($top, 1) RETURNING id}
+  given nul = {INSERT INTO app.folders (parent_id, org_id) VALUES ($top, NULL) RETURNING id}
+  given low = {INSERT INTO app.folders (parent_id, org_id) VALUES ($nul, 1) RETURNING id}
+  user $ann can view folder $yes
+  user $ann cannot view folder $nul
+  user $ann cannot view folder $low
+  as user $ann sees 0 {SELECT FROM app.folders WHERE id IN ($nul, $low)}
+  given {UPDATE app.folders SET org_id = 1 WHERE id = $nul}
+  user $ann can view folder $nul
+  user $ann can view folder $low
+  as user $ann sees 2 {SELECT FROM app.folders WHERE id IN ($nul, $low)}
+  given {UPDATE app.folders SET org_id = NULL WHERE id = $nul}
+  user $ann cannot view folder $nul
+  user $ann cannot view folder $low
+  as user $ann sees 0 {SELECT FROM app.folders WHERE id IN ($nul, $low)}
+
+test "a team whose where is NULL passes nothing on"
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given t1  = {INSERT INTO app.teams (id, parent_id) VALUES (1, 9) RETURNING id}
+  given t2  = {INSERT INTO app.teams (id, parent_id) VALUES (2, NULL) RETURNING id}
+  given t3  = {INSERT INTO app.teams (id, parent_id) VALUES (3, 9) RETURNING id}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('team', $t3, 'member', 'user', $bo)}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES ('team', $t2, 'member', 'team', $t3, 'member'), ('team', $t1, 'member', 'team', $t2, 'member')}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given g   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES ('folder', $f, 'viewer', 'team', $t1, 'member'), ('folder', $g, 'viewer', 'team', $t3, 'member')}
+  user $bo can view folder $g
+  user $bo cannot view folder $f
+  as user $bo sees 1 {SELECT FROM app.folders WHERE id IN ($f, $g)}
