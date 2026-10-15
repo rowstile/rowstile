@@ -303,7 +303,8 @@ PSQL -c "UPDATE app.folders SET owner_id = 6 WHERE id = 4" >/dev/null
 admin "a Globex user owning an Acme folder breaks it" "6|{4}" \
   "SELECT user_id || '|' || object_ids::text FROM authz.check_invariants()"
 got=$(psql -X -q -At -d "$DB" -f <(python3 compile_policy.py example/docs.authz --tests) 2>&1)
-case "$got" in *"FAIL  invariant"*"policy test(s) failed"*) echo "ok    the policy tests fail on it";;
+inv="invariant never folder: share and not org.member (line $(grep -n '^  never folder: ' example/docs.authz | cut -d: -f1))"
+case "$got" in *"WARNING:  FAIL  $inv: $inv: user 6 can reach {4}"*"policy test(s) failed"*) echo "ok    the policy tests fail on it, naming the invariant, its line and who breaks it";;
   *) echo "FAIL  policy tests with a broken invariant: $got"; fails=$((fails + 1));; esac
 # an invariant is checked in a view of its own: a permission of its type named never_1 takes nothing from it
 sed 's/^  can break_glass = org.member$/&\n  can never_1 = owner/' example/docs.authz > /tmp/authz_governance_never.authz

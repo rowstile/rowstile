@@ -85,12 +85,38 @@ sed 's/with scope read cannot edit/with scope read can edit/' "$T/s.authz" > "$T
 out=$(rows "$T/t.authz" | awk -F'\t' '$3 == "f" {print $4}')
 case "$out" in *"with scope read can edit file"*) ok "... and a check that fails under a scope says so";; *) bad "with scope, failing" "$out";; esac
 [ -z "$(PSQL -c "SELECT current_setting('authz.scopes', true)")" ] && ok "... and nothing of it stays in the session" || bad "with scope left a setting"
+# the tests put back the caller's own settings as they were: a SET LOCAL still ends with the caller's transaction
+fn=$(python3 -c "import compile_policy; print(compile_policy.load('example/docs.authz').tests_function_sql())")
+out=$(PGOPTIONS="-c client_min_messages=warning" psql -X -q -At -d "$DB" -c "BEGIN" -c "SET LOCAL authz.scopes = 'read'" \
+  -c "SET LOCAL authz.user_id = '1'" -c "$fn" -c "SELECT count(*) > 0 FROM pg_temp.authz_policy_tests()" -c "COMMIT" \
+  -c "SELECT '[' || coalesce(current_setting('authz.scopes', true), '') || '|' || coalesce(current_setting('authz.user_id', true), '') || ']'" 2>&1 | tr '\n' ' ')
+[ "$out" = "t [|] " ] && ok "... and a scope the caller set for its transaction ends with it, after the tests ran in it" ||
+  bad "the tests kept the caller's scope" "$out"
 sed 's/as user $bo refused {WITH/as user $bo allowed {WITH/' "$T/w.authz" > "$T/t.authz"
 out=$(rows "$T/t.authz" | awk -F'\t' '$3 == "f" {print $4}')
 case "$out" in *"refused: it changed no rows"*) ok "... 'allowed' on one fails, and says it changed no rows";; *) bad "allowed, no rows" "$out";; esac
 printf '%s\n' 'test "x"' '  given a = {SELECT 1 WHERE false}' '  anyone cannot view file 1' > "$T/x.authz"
 out=$(rows "$T/x.authz" | awk -F'\t' '$1 == "x" {print $4}')
 case "$out" in *"returned 0 rows: it must return one"*) ok "a given that returns no row is an error, named";; *) bad "given no row" "$out";; esac
+# what a failing statement says: the rows it saw, or 'allowed' (a read is never refused); and a statement Postgres
+# can't explain (SHOW, SET) is run as it is
+cat > "$T/d.authz" <<'EOF'
+test "what a failing statement says"
+  given ann  = {INSERT INTO app.users (id, name) VALUES (9001, 'Ann') RETURNING id}
+  given acme = {INSERT INTO app.orgs (id, name) VALUES (9001, 'Acme') RETURNING id}
+  given top  = {INSERT INTO app.folders (org_id, owner_id, name) VALUES ($acme, $ann, 'Top') RETURNING id}
+  as user $ann sees 2 {SELECT FROM app.folders WHERE id = $top}
+  as user $ann refused {SELECT FROM app.folders WHERE false}
+  as user $ann allowed {SHOW search_path}
+  as user $ann allowed {SET LOCAL statement_timeout = '5s'; SELECT FROM app.folders}
+EOF
+out=$(rows "$T/d.authz" | awk -F'\t' '$1 == "what a failing statement says" {print $3 ": " $4}')
+want="f: as user \$ann sees 2 {SELECT FROM app.folders WHERE id = \$top} | sees 1 row(s)
+f: as user \$ann refused {SELECT FROM app.folders WHERE false} | allowed"
+[ "$(head -n 2 <<<"$out")" = "$want" ] && ok "'sees' with another count fails, and says how many it saw; 'refused' on a read of no row fails, and says 'allowed'" ||
+  bad "failing statements" "$out"
+[ "$(tail -n +3 <<<"$out" | cut -c1-2 | tr -d '\n')" = "t:t:" ] && ok "... and SHOW, or SET then a read, is allowed: run, not explained" ||
+  bad "statements Postgres can't explain" "$out"
 
 echo "-- refusals that say why"
 out=$(as 1 "INSERT INTO app.files (folder_id, owner_id, name) VALUES (6, 2, 'x')")
@@ -343,6 +369,9 @@ CREATE TABLE lo.org_memberships (id bigserial PRIMARY KEY, org_id bigint NOT NUL
                                  user_id bigint NOT NULL REFERENCES lo.users, note text, UNIQUE (org_id, user_id));
 CREATE TABLE lo.projects (id bigserial PRIMARY KEY, org_id bigint REFERENCES lo.orgs, lead_id bigint REFERENCES lo.users);
 CREATE TABLE lo.tasks (id bigserial PRIMARY KEY, project_id bigint REFERENCES lo.projects, author_id bigint REFERENCES lo.users);
+CREATE TABLE lo.project_members (id bigserial PRIMARY KEY, project_id bigint NOT NULL REFERENCES lo.projects,
+                                 user_id bigint NOT NULL REFERENCES lo.users, role text, gone text);
+ALTER TABLE lo.project_members DROP COLUMN gone;
 SQL
 mkdir -p "$T/a"
 out=$(cd "$T/a" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_apps" init --schema lo 2>&1)
@@ -350,6 +379,9 @@ draft=$(cat "$T/a/db/policy.authz" 2>/dev/null)
 case "$draft" in *'type user = lo.users'*'type domain = lo.domains'*'membership : user = lo.org_memberships(org_id -> user_id)'*'can view = author or project.view'*)
   ok "a draft of real apps' shapes: users, not accounts; a membership with an id; each parent named once";; *) bad "draft apps" "$out $draft";; esac
 [ "$(grep -c 'update domain_id after' <<<"$draft")" = 1 ] && ok "... a foreign key declared twice is one relation" || bad "draft apps: the key twice" "$draft"
+# its columns are the ones the table has: none of Postgres's own (ctid, xmin), nor one dropped
+grep -qx '  member : user = lo.project_members(project_id -> user_id)' <<<"$draft" &&
+  ok "... a membership with an id, a role and a dropped column, no unique pair: a link" || bad "draft apps: the membership with a role" "$draft"
 out=$(cd "$T/a" && python3 "$OLDPWD/cli/rowstile_cli.py" check 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "... which compiles (the loop of foreign keys too)" || bad "draft apps compile" "$out"
 out=$(cd "$T/a" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_apps" apply 2>&1); rc=$?

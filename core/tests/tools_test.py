@@ -197,6 +197,12 @@ def main() -> None:
     a.use_links(["not-a-token"])
     a.use_links([])
     conn.execute("COMMIT")
+    # link tokens are for the transaction that presents them: none are left after it
+    conn.execute("BEGIN")
+    a.use_links(["a-token"])
+    conn.execute("COMMIT")
+    left = conn.query("SELECT coalesce(current_setting('authz_ctx.links', true), '')")
+    check("use_links: the tokens are for the transaction, none left after it", left == [("",)], left)
     client_sql = re.findall(r'"(SELECT [^"]+)"', compiler.client("py", "docs.authz"))
     bad = []
     for i, text in enumerate(client_sql):
@@ -220,6 +226,12 @@ def main() -> None:
         except pgwire.PgError as e:
             bad.append((text, e.message))
     check(f"every statement of the TypeScript client prepares ({len(ts_sql)})", not bad, bad)
+    links = re.search(r'useLinks: [^\n]*db\.query\("([^"]+)"', ts)
+    conn.execute("BEGIN")
+    conn.query(links.group(1) if links else "SELECT 'no useLinks'", ["a-token"] if links else [])
+    conn.execute("COMMIT")
+    left = conn.query("SELECT coalesce(current_setting('authz_ctx.links', true), '')")
+    check("useLinks: the tokens are for the transaction, none left after it", left == [("",)], left)
     typed = client_types.type_check(ts)
     if typed:
         check("tsc --strict accepts correct calls and rejects wrong names", typed[0], typed[1])
