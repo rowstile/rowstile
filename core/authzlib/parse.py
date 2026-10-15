@@ -517,13 +517,6 @@ def braced(text: str) -> list[str]:
     return [text[a + 1 : b - 1] for a, b in braced_at(text) if b > 0]
 
 
-def open_braces(text: str) -> int:
-    """How many { are still open at the end of a line."""
-    scan = Scanner()
-    scan.marks(text)
-    return scan.depth
-
-
 class Token(NamedTuple):
     kind: str  # or | and | not | ( | ) | cond | name
     text: str  # a condition's SQL, a name, or the word itself

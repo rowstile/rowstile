@@ -719,6 +719,7 @@ class LanguageForms(unittest.TestCase):
         with self.assertRaises(PolicyError) as e:
             Compiler(parse_policy("app role app_user\n")).compile("x")
         self.assertIsNone(e.exception.span)
+        self.assertIsNone(authzlib.parse.Loc(None, 3).span(0, 2))
 
     def test_the_parser_reads_on_after_a_mistake(self) -> None:
         # each mistake once: the lines of a block whose first line is wrong are not read, nor said again
