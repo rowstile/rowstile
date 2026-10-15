@@ -2010,6 +2010,17 @@ class Migrations(unittest.TestCase):
         self.assertEqual(m.summary, ["+ type file: can comment = folder.view"])
         self.assertIn("> type file: can comment = folder.view", m.lock)
 
+    def test_the_lock_holds_the_policys_lines_and_not_its_tests(self) -> None:
+        meaning = [x for x in self.lock(self.text).splitlines() if x.startswith("> ")]
+        self.assertEqual(meaning[:2], ["> app role app_user", "> type user = app.users"])
+        self.assertIn("> rules app.files", meaning)
+        self.assertEqual([x for x in meaning if x.startswith("> test")], [])
+        # a type line that changes is what the migration says changed
+        m = database.migration(
+            replaced(self.text, "type org = app.orgs\n", "type org = app.orgs (id int)\n"), {}, self.lock(self.text)
+        )
+        self.assertEqual(m.summary, ["- type org = app.orgs", "+ type org = app.orgs (id int)"])
+
     def test_lines_that_only_move_need_no_migration(self) -> None:
         moved = replaced(self.text, "app role app_user\n", "app role app_user\n\n-- a note\n")
         self.assertTrue(database.migration(moved, {}, self.lock(self.text)).empty)
@@ -2708,13 +2719,25 @@ test
         )
         self.assertFalse(any("signed_in" in note for note in pol.previous or []), pol.previous)
         # what it refused, a base is refused for (the review says the base has a mistake)
-        for old, new, code in (
-            ("  roles  : user grant view, edit from org\n", "  roles  : user grant view, edit from org\n" * 2, "AZ109"),
-            ("grant view, edit from", "grant view, nothing from", "AZ203"),
+        for old, new, code, words in (
+            (
+                "  roles  : user grant view, edit from org\n",
+                "  roles  : user grant view, edit from org\n" * 2,
+                "AZ109",
+                "",
+            ),
+            ("grant view, edit from", "grant view, nothing from", "AZ203", ""),
             (
                 "can view = (edit or viewer) and {not archived}",
                 "can view = edit and viewer and {not archived}",
                 "AZ210",
+                "that grants it, and several parts are joined with and [AZ210]",
+            ),
+            (
+                "can view = (edit or viewer) and {not archived}",
+                "can view = {not locked} and {not archived}",
+                "AZ210",
+                "that grants it, and it has none [AZ210]",
             ),
         ):
             text = self.OLD.replace(old, new)
@@ -2722,6 +2745,7 @@ test
             with self.assertRaises(PolicyError, msg=code) as e:
                 parse_policy(text, None, files={}, previous=True)
             self.assertEqual(e.exception.code, code, str(e.exception))
+            self.assertIn(words, str(e.exception))
 
     def test_a_flag_in_an_included_file_is_annotated_there(self) -> None:
         main = self.SMALL.replace(
@@ -5157,6 +5181,8 @@ class Confidence(unittest.TestCase):
             self.assertIsNone(simple(sql), sql)
         # 2^24 itself a real column holds, but not 2^24 + 1, which the worlds draw beside it: 2^24 - 2 is the last
         self.assertEqual([simple(f"price < {n}") is None for n in (16777214, 16777215, 16777216)], [False, True, True])
+        # one that ends on a `not` (as `x not in (...)` begins) is none the evaluator reads: never a crash
+        self.assertIsNone(simple("archived not"))
 
     def test_prove_reads_quoted_columns_and_long_decimals_as_postgres_does(self) -> None:
         """A quoted column was a condition prove couldn't read, so {"done"} and {not "done"} were drawn apart and
@@ -5542,6 +5568,108 @@ class Confidence(unittest.TestCase):
         self.assertGreater(9**4, evaluate.World.CORNER_CHOICES)
         drawn = evaluate.World("s", 4, pols=[pol]).columns(pol)
         self.assertEqual(evaluate.World("s", 4, {cond: True}, pols=[pol]).columns(pol), drawn)
+
+    def test_the_first_difference_comes_with_its_world_as_each_policys_data(self) -> None:
+        # what tests/rewrites.py loads into a database, to see it answer as the review says: a permission's
+        # difference, or a rule's
+        from authzlib import evaluate
+
+        doc = "type doc = app.docs\n  owner : user = owner_id\n  viewer : user = viewer_id\n  can view = owner"
+        for change, rule, what in (
+            (" or viewer", "owner", "doc.view"),
+            ("", "owner or viewer", "rule app.docs select"),
+        ):
+            a, b = (
+                parse_policy(self.HEAD + doc + x + f"\nrules app.docs\n  select : {r}\n", "p.authz")
+                for x, r in (("", "owner"), (change, rule))
+            )
+            found = evaluate.first_difference(a, b)
+            assert found is not None
+            diff, data_a, data_b = found
+            self.assertEqual((diff["what"], diff["before"], diff["after"]), (what, False, True))
+            self.assertEqual((data_a.ids, data_a.pairs), (data_b.ids, data_b.pairs))  # one world, the same relations
+
+    def test_a_worlds_column_a_relation_reads_holds_its_links_id(self) -> None:
+        # {parent_id is null} and the parent link are one fact: the rows a world gives the database (tests/small.py
+        # load_sql) have the column the link says, in drawn worlds and in chains
+        from authzlib import evaluate
+
+        pol = parse_policy(
+            self.HEAD + "type folder = app.folders\n  owner : user = owner_id\n  parent : folder = parent_id\n"
+            "  can view = owner or parent.view\n  can top = owner and {parent_id is null}\n",
+            "p.authz",
+        )
+        for k in range(10):
+            for chained in (False, True):
+                data = evaluate.World(f"s/{k}", 4, pols=[pol], chained=chained).data(pol)
+                links = dict(data.pairs[("folder", "parent", 0, "folder", "")])
+                columns = {i: row.get("parent_id") for i, row in data.columns["folder"].items()}
+                self.assertEqual(columns, {i: links.get(i) for i in data.ids["folder"]}, (k, chained))
+
+    def test_a_chain_world_nests_groups_in_a_chain_too(self) -> None:
+        # a team inside the next one, as a folder inside the next: what a policy reads at the end of a long nesting
+        from authzlib import evaluate
+
+        pol = parse_policy(
+            self.HEAD + "type team = app.teams\n  member : user = owner_id\n"
+            "  member : team#member = app.team_links(team_id -> sub_id)\n  can view = member\n",
+            "p.authz",
+        )
+        data = evaluate.World("s", 5, pols=[pol], chained=True).data(pol)
+        chain = [("1", "2"), ("2", "3"), ("3", "4"), ("4", "5")]
+        self.assertEqual(data.pairs[("team", "member", 1, "team", "member")], chain)
+
+    def test_a_dense_world_gives_most_of_the_custom_roles_it_could(self) -> None:
+        # as it holds most of the links it could (DENSITIES); a drawn one gives a few (World.ROLE)
+        from authzlib import evaluate
+
+        pol = parse_policy(
+            self.HEAD + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
+            "type doc = app.docs\n  org : org = org_id\n  roles : user from org\n  can view = roles\n",
+            "p.authz",
+        )
+
+        def given(density: float | None) -> float:
+            n = could = 0
+            for k in range(10):
+                data = evaluate.World(f"s/{k}", 4, pols=[pol], density=density).data(pol)
+                n += sum(len(pairs) for pairs in data.rolepairs.values())
+                could += len(data.ids["doc"]) * len(data.ids["user"])
+            return n / could
+
+        self.assertGreater(given(0.9), 0.75)
+        self.assertLess(given(None), 0.5)
+
+    def test_a_policy_that_reads_two_links_deep_is_tried_on_chains(self) -> None:
+        # a file's folder's org's members: two links deep, so beside the dense worlds a dozen chains of four
+        from authzlib import evaluate
+
+        pol = parse_policy(
+            self.HEAD
+            + "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n  can view = member\n"
+            "type folder = app.folders\n  org : org = org_id\n  can view = org.view\n"
+            "type file = app.files\n  in : folder = folder_id\n  can view = in.view\n",
+            "p.authz",
+        )
+        self.assertEqual(evaluate.reach([pol]), 2)
+        rare = list(evaluate.rare_worlds([pol], 80, "0"))
+        self.assertEqual(len(rare), evaluate.dense_worlds(80) + 12)
+        self.assertEqual([w.size for w in rare if w.chained], [4] * 12)
+
+    def test_a_corner_chooses_as_many_values_as_it_tries(self) -> None:
+        # four columns of eight values each (the six named, one none of them names, NULL): just as many combinations
+        # as a corner tries, so it chooses them, and the condition it says holds holds on every row
+        from authzlib import evaluate
+
+        cond = " and ".join(f"{c} in (1, 2, 3, 4, 5, 6)" for c in "abcd")
+        pol = parse_policy(
+            self.HEAD + f"type doc = app.docs\n  owner : user = owner_id\n  can view = owner and {{{cond}}}\n",
+            "p.authz",
+        )
+        self.assertEqual(8**4, evaluate.World.CORNER_CHOICES)
+        rows = evaluate.World("s", 4, {cond: True}, pols=[pol]).columns(pol)["doc"]
+        self.assertTrue(rows)
+        self.assertEqual([i for i, row in rows.items() if not all(row[c] in range(1, 7) for c in "abcd")], [])
 
     def test_a_corner_gives_both_policies_the_same_rows(self) -> None:
         # a corner chooses together the values of columns that conditions read together. The rewrite reads b1
