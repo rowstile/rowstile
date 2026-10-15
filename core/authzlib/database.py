@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, TypeAlias, TypedDict, TypeVar
 
 from . import __version__
 from .connection import Db, Value, flag, number, text, text_or_none
-from .parse import KEYWORDS, Expr, Loc, PolicyError, braced, parse_policy, read_lines
+from .parse import KEYWORDS, And, Cond, Expr, Loc, Not, Or, PolicyError, braced, parse_policy, read_lines
 from .sqlutil import (
     CAVEAT_ARG,
     DROP_MASKED_VIEWS,
@@ -778,11 +778,11 @@ def row_conditions(c: Compiler) -> list[tuple[str, str, Loc]]:
 
     def walk(table: str, node: Expr, loc: Loc) -> None:
         match node:
-            case ("cond", sql) if sql not in words:
+            case Cond(sql) if sql not in words:
                 out.append((table, sql, loc))
-            case ("not", item):
+            case Not(item):
                 walk(table, item, loc)
-            case ("and", items) | ("or", items):
+            case And(items) | Or(items):
                 for x in items:
                     walk(table, x, loc)
 

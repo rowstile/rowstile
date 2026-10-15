@@ -211,7 +211,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
         guarded = {(r.table, c) for r in self.rules if r.columns and r.command != "mask" for c in r.columns}
         has_update = {r.table for r in self.rules if r.command == "update" and not r.columns}
         # (`update : nobody` lets no one change any column: there is nothing to guard)
-        nobody = Cond("cond", KEYWORDS["nobody"])
+        nobody = Cond(KEYWORDS["nobody"])
         open_update = {r.table for r in self.rules if r.command == "update" and not r.columns and r.expr != nobody}
         unguarded = [
             (tb, c, what, loc, ask)
@@ -299,10 +299,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
         for t in self.types.values():
             for p in self.public_perms(t):
                 perm = t.perms[p]
-                n = max(
-                    self.expansions(self.row_sql(t, "o", Ref("ref", p), perm.loc, point=point))
-                    for point in (False, True)
-                )
+                n = max(self.expansions(self.row_sql(t, "o", Ref(p), perm.loc, point=point)) for point in (False, True))
                 if n > MANY_EXPANSIONS:
                     said = (
                         f"names permissions that name others more than once (' || "

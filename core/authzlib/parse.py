@@ -97,49 +97,48 @@ def fail(loc: Loc | int, msg: str, code: str, at: tuple[int, int] | None = None,
 
 
 # --- expressions: what a permission, a rule or an invariant says -----------------------------------
-# Each is a tuple whose first item names its kind, so code may still take one apart by index; new code
-# matches on the class.
-class Or(NamedTuple):
-    kind: Literal["or"]
+# A class for each kind, which code takes apart with match or isinstance; two of different kinds are never equal.
+@dataclass(frozen=True)
+class Or:
     items: list[Expr]
 
 
-class And(NamedTuple):
-    kind: Literal["and"]
+@dataclass(frozen=True)
+class And:
     items: list[Expr]
 
 
-class Not(NamedTuple):
-    kind: Literal["not"]
+@dataclass(frozen=True)
+class Not:
     item: Expr
 
 
-class Cond(NamedTuple):
+@dataclass(frozen=True)
+class Cond:
     """{sql}: a condition on the row, or a keyword standing for one (signed_in, anyone, nobody)."""
 
-    kind: Literal["cond"]
     sql: str
 
 
-class Ref(NamedTuple):
+@dataclass(frozen=True)
+class Ref:
     """A relation or permission of the same object."""
 
-    kind: Literal["ref"]
     name: str
 
 
-class Arrow(NamedTuple):
+@dataclass(frozen=True)
+class Arrow:
     """relation.permission: the permission on what the relation links to."""
 
-    kind: Literal["arrow"]
     rel: str
     perm: str
 
 
-class ArrowOn(NamedTuple):
+@dataclass(frozen=True)
+class ArrowOn:
     """An arrow followed only to some of the relation's subject types (made by the compiler)."""
 
-    kind: Literal["arrow_on"]
     rel: str
     perm: str
     types: tuple[str, ...]
@@ -560,7 +559,7 @@ def written(node: Expr, top: bool = True) -> str:
     """An expression as a policy writes it, with parentheses around each `and` and `or` inside another."""
     match node:
         case Or(items=items) | And(items=items):
-            s = f" {node.kind} ".join(written(x, False) for x in items)
+            s = (" or " if isinstance(node, Or) else " and ").join(written(x, False) for x in items)
             return s if top else f"({s})"
         case Not(item=item):
             return "not " + written(item, False)
@@ -609,7 +608,7 @@ class ExprParser:
             mixed = mixed or self.joined
         if len(items) == 1:
             return items[0]
-        node = Or("or", items)
+        node = Or(items)
         if mixed:
             fail(
                 self.loc,
@@ -625,7 +624,7 @@ class ExprParser:
             self.take()
             items.append(self.unary())
         self.joined = len(items) > 1
-        return items[0] if len(items) == 1 else And("and", items)
+        return items[0] if len(items) == 1 else And(items)
 
     def unary(self) -> Expr:
         kind = self.peek()
@@ -634,7 +633,7 @@ class ExprParser:
             fail(self.loc, "expression ends too early", "AZ102", at=(last.start, last.end) if last else None)
         if kind == "not":
             self.take()
-            return Not("not", self.unary())
+            return Not(self.unary())
         if kind == "(":
             opened = self.take()
             e = self.or_()
@@ -643,17 +642,17 @@ class ExprParser:
             self.take()
             return e
         if kind == "cond":
-            return Cond("cond", self.take().text)
+            return Cond(self.take().text)
         if kind == "name":
             tok = self.take()
             w = tok.text
             if w in KEYWORDS:
-                return Cond("cond", KEYWORDS[w])
+                return Cond(KEYWORDS[w])
             not_generated(w, self.loc, (tok.start, tok.end))
             if "." in w:
                 rel, perm = w.split(".")
-                return Arrow("arrow", rel, perm)
-            return Ref("ref", w)
+                return Arrow(rel, perm)
+            return Ref(w)
         self.unexpected()
 
 

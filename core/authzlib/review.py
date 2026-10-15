@@ -28,7 +28,7 @@ from . import Compiler, PolicyError, migrate, parse_policy
 from .conditions import simple
 from .connection import Db
 from .evaluate import FOLLOWS, Difference, Listing, Reference, compare, worlds_to_try
-from .parse import KEYWORDS, Expr, Loc, Perm, Policy, Rule, Type, read_lines
+from .parse import KEYWORDS, And, Arrow, Cond, Expr, Loc, Not, Or, Perm, Policy, Ref, Rule, Type, read_lines
 from .statements import split
 
 MARK = "<!-- rowstile review -->"
@@ -292,16 +292,16 @@ def uses(pol: Policy) -> dict[tuple[str, str], set[tuple[str, str]]]:
 
     def walk(t: Type, node: Expr, out: set[tuple[str, str]]) -> None:
         match node:
-            case ("ref", name):
+            case Ref(name):
                 out.add((t.name, name))
-            case ("arrow", rel, perm):
+            case Arrow(rel, perm):
                 out.add((t.name, rel))
                 for st, sr in t.relations[rel].subjects():
                     assert sr is None and st in pol.types, FOLLOWS
                     out.add((st, perm))
-            case ("not", item):
+            case Not(item):
                 walk(t, item, out)
-            case ("and", items) | ("or", items):
+            case And(items) | Or(items):
                 for x in items:
                     walk(t, x, out)
 
@@ -465,13 +465,13 @@ def unreadable_pairs(b: Expr, h: Expr) -> list[tuple[str, str]] | None:
         return simple(sql) is None and sql not in KEYWORDS.values()
 
     match b, h:
-        case (("cond", sb), ("cond", sh)):
+        case (Cond(sb), Cond(sh)):
             if squeeze(sb) == squeeze(sh):
                 return []
             return [(sb, sh)] if unread(sb) and unread(sh) else None
-        case (("not", ib), ("not", ih)):
+        case (Not(ib), Not(ih)):
             return unreadable_pairs(ib, ih)
-        case (("and", ib), ("and", ih)) | (("or", ib), ("or", ih)):
+        case (And(ib), And(ih)) | (Or(ib), Or(ih)):
             if len(ib) != len(ih):
                 return None
             out: list[tuple[str, str]] = []
@@ -604,15 +604,15 @@ def rule_head(r: Rule) -> str:
 
 def _walk_rule(t: Type, node: Expr, out: set[tuple[str, str]], pol: Policy) -> None:
     match node:
-        case ("ref", name):
+        case Ref(name):
             out.add((t.name, name))
-        case ("arrow", rel, perm):
+        case Arrow(rel, perm):
             for st, sr in t.relations[rel].subjects():
                 assert sr is None and st in pol.types, FOLLOWS
                 out.add((st, perm))
-        case ("not", item):
+        case Not(item):
             _walk_rule(t, item, out, pol)
-        case ("and", items) | ("or", items):
+        case And(items) | Or(items):
             for x in items:
                 _walk_rule(t, x, out, pol)
 
@@ -633,20 +633,20 @@ def subjects_of(pol: Policy) -> dict[tuple[str, str], set[tuple[str, str | None,
 
 def nots(node: Expr) -> list[Expr]:
     match node:
-        case ("not", _):
+        case Not(_):
             return [node]
-        case ("and", items) | ("or", items):
+        case And(items) | Or(items):
             return [n for x in items for n in nots(x)]
     return []
 
 
 def arrows(node: Expr) -> set[tuple[str, str]]:
     match node:
-        case ("arrow", rel, perm):
+        case Arrow(rel, perm):
             return {(rel, perm)}
-        case ("not", item):
+        case Not(item):
             return arrows(item)
-        case ("and", items) | ("or", items):
+        case And(items) | Or(items):
             return {a for x in items for a in arrows(x)}
     return set()
 
