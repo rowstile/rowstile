@@ -2936,8 +2936,8 @@ test
         self.assertIsNone(r["meaning"]["equivalent"])
 
     def test_a_where_on_a_link_table_narrows_or_widens_as_it_reads(self) -> None:
-        """A link table's rows are the same whatever its where says: adding a where, or a where that holds for fewer
-        rows, allows less; taking it off, or one that holds for more or other rows, allows more."""
+        """A link table's rows are the same whatever its where says: adding a where (even one the review can't
+        read), or a where that holds for fewer rows, allows less; taking it off, or one that holds for more or other rows, allows more."""
         plain = (
             "app role app_user\ntype user = app.users\ntype doc = app.docs\n"
             "  viewer : user = app.v(doc_id -> user_id)\n  can view = viewer\n"
@@ -2950,6 +2950,8 @@ test
             (where, where.replace("{active}", "{active and not banned}"), False),
             (where, where.replace("{active}", "{active or invited}"), True),
             (where, where.replace("{active}", "{role = 'admin'}"), True),
+            # one it can't read holds for some of the rows, drawn row by row: added, it narrows too
+            (plain, plain.replace("user_id)\n", "user_id) where {exists (select 1 from app.bans)}\n"), False),
         ):
             r = self.review.review((base, {}, {}), (head, {}, {}), worlds=40)
             self.assertEqual(flag in {f["why"] for f in r["risk"]}, widens, (head, r["risk"]))
