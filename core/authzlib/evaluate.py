@@ -27,7 +27,7 @@ from decimal import Decimal
 from typing import NamedTuple, TypeAlias, TypedDict, TypeVar, cast
 
 from .conditions import Node, Scalar, columns_of, simple, truth, uses_uid
-from .parse import KEYWORDS, ROLES, And, Expr, Or, Policy, Relation, Rule, Source, Type
+from .parse import KEYWORDS, ROLES, And, Arrow, ArrowOn, Cond, Expr, Not, Or, Policy, Ref, Relation, Rule, Source, Type
 
 # a relation or permission of a type, and the ids that hold it
 Name: TypeAlias = "tuple[str, str]"
@@ -140,18 +140,18 @@ class Reference:
             """What the expression of t's `key` reads, into graph[key] (and negated, under a not)."""
             found: set[Name] = set()
             match node:
-                case ("ref", name) if name == ROLES:
+                case Ref(name) if name == ROLES:
                     pass  # the role holders' groups: the roles line's subjects, below
-                case ("ref", name):
+                case Ref(name):
                     found.add((t.name, name))
-                case ("arrow", rel, perm):
+                case Arrow(rel, perm):
                     found.add((t.name, rel))
                     for st, sr in t.relations[rel].subjects():
                         assert sr is None and st in self.types, FOLLOWS
                         found.add((st, perm))
-                case ("not", item):
+                case Not(item):
                     walk(t, key, item, True)
-                case ("and", items) | ("or", items):
+                case And(items) | Or(items):
                     for x in items:
                         walk(t, key, x, neg)
             graph[key].update(found)
@@ -209,12 +209,12 @@ class Reference:
 
         def walk(t: Type, node: Expr) -> None:
             match node:
-                case ("cond", sql):
+                case Cond(sql):
                     found.add((t.name, sql))
-                case ("and", items) | ("or", items):
+                case And(items) | Or(items):
                     for x in items:
                         walk(t, x)
-                case ("not", item):
+                case Not(item):
                     walk(t, item)
 
         for t in self.types.values():
@@ -357,11 +357,11 @@ class Reference:
     def eval_expr(self, state: State, t: Type, node: Expr, defining: str | None = None) -> set[str]:
         """The ids of t for which the expression holds; defining: the permission it defines (what `roles` gives)."""
         match node:
-            case ("ref", name) if name == ROLES and defining is not None:
+            case Ref(name) if name == ROLES and defining is not None:
                 return self.role_holders(state, t, defining)
-            case ("ref", name):
+            case Ref(name):
                 return set(state[(t.name, name)])
-            case ("arrow", rel, perm):
+            case Arrow(rel, perm):
                 r = t.relations[rel]
                 out: set[str] = set()
                 for i, src in enumerate(r.sources):
@@ -370,14 +370,14 @@ class Reference:
                         held = state[(target, perm)]
                         out |= {o for o, s in self.pairs(t, r.name, i, target, None) if s in held}
                 return out
-            case ("cond", sql) if sql == KEYWORDS["anyone"]:
+            case Cond(sql) if sql == KEYWORDS["anyone"]:
                 return self.ids(t)  # anyone at all, signed in or not
-            case ("cond", sql) if sql == KEYWORDS["nobody"]:
+            case Cond(sql) if sql == KEYWORDS["nobody"]:
                 return set()
-            case ("cond", sql) if sql == KEYWORDS["signed_in"]:
+            case Cond(sql) if sql == KEYWORDS["signed_in"]:
                 # a user signed in (a service isn't: signed_in stays about users), on every row alike
                 return self.ids(t) if self.principal is not None and self.principal[0] == "user" else set()
-            case ("cond", sql) if (t.name, sql) not in self.data.cond and t.name in self.data.columns:
+            case Cond(sql) if (t.name, sql) not in self.data.cond and t.name in self.data.columns:
                 # a simple condition, on the row's column values (and who is signed in, for authz.uid())
                 facts = simple(sql)
                 if facts is None:
@@ -385,11 +385,11 @@ class Reference:
                 rows = self.row_values(t)
                 me = self.principal[1] if self.principal is not None and self.principal[0] == "user" else None
                 return {i for i in self.ids(t) if truth(facts, rows.get(i, {}), me) is True}
-            case ("cond", sql):
+            case Cond(sql):
                 return set(self.data.cond[(t.name, sql)])
-            case ("not", item):
+            case Not(item):
                 return self.ids(t) - self.eval_expr(state, t, item, defining)
-            case ("and", items):
+            case And(items):
                 return set.intersection(*[self.eval_expr(state, t, x, defining) for x in items])
             case _:
                 assert isinstance(node, Or), f"the reference evaluator doesn't evaluate {node!r}"
@@ -478,11 +478,11 @@ class World:
 
             def walk(t: Type, node: Expr) -> None:
                 match node:
-                    case ("arrow", rel, _) | ("arrow_on", rel, _, _):
+                    case Arrow(rel, _) | ArrowOn(rel, _, _):
                         out.add((t.name, rel))
-                    case ("not", item):
+                    case Not(item):
                         walk(t, item)
-                    case ("and", items) | ("or", items):
+                    case And(items) | Or(items):
                         for x in items:
                             walk(t, x)
 
@@ -886,11 +886,11 @@ def corners(pols: Iterable[Policy]) -> list[dict[str, bool]]:
 
     def walk(node: Expr, negated: bool) -> None:
         match node:
-            case ("cond", sql):
+            case Cond(sql):
                 (denied if negated else plain).add(sql)
-            case ("not", item):
+            case Not(item):
                 walk(item, not negated)
-            case ("and", items) | ("or", items):
+            case And(items) | Or(items):
                 for x in items:
                     walk(x, negated)
 
@@ -940,14 +940,14 @@ def reach(pols: Iterable[Policy]) -> int:
 
         def depth(t: Type, node: Expr, pol: Policy = pol) -> int:
             match node:
-                case ("ref", name):
+                case Ref(name):
                     return deep(t, name)
-                case ("arrow", rel, perm) | ("arrow_on", rel, perm, _) if rel in t.relations:
+                case Arrow(rel, perm) | ArrowOn(rel, perm, _) if rel in t.relations:
                     targets = [st for st, sr in t.relations[rel].subjects() if sr is None and st in pol.types]
                     return max((1 + deep(pol.types[st], perm) for st in targets), default=1)
-                case ("not", item):
+                case Not(item):
                     return depth(t, item)
-                case ("and", items) | ("or", items):
+                case And(items) | Or(items):
                     return max(depth(t, x) for x in items)
             return 0
 
@@ -1092,18 +1092,18 @@ def cone(pols: Sequence[Policy]) -> Cone | None:
     def walk(p: Policy, t: Type, node: Expr) -> None:
         out.types.add(t.name)
         match node:
-            case ("cond", sql):
+            case Cond(sql):
                 out.conds.add((t.name, sql))
-            case ("ref", name) if name == ROLES:
+            case Ref(name) if name == ROLES:
                 pass  # custom roles: the drawn worlds hold them, not the listed ones
-            case ("ref", name):
+            case Ref(name):
                 visit(p, t, name)
-            case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
+            case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                 visit(p, t, rel)
                 for st, _ in t.relations[rel].subjects():
                     assert st in p.types, FOLLOWS
                     visit(p, p.types[st], perm)
-            case ("not", item):
+            case Not(item):
                 walk(p, t, item)
             case _:
                 assert isinstance(node, (And, Or)), f"not an expression: {node!r}"
@@ -1485,14 +1485,14 @@ def expr_reads(ref: Reference, rule: Rule) -> set[Name]:
 
     def walk(t: Type, node: Expr) -> None:
         match node:
-            case ("ref", name):
+            case Ref(name):
                 out.add((t.name, name))
-            case ("arrow", rel, perm):
+            case Arrow(rel, perm):
                 out.add((t.name, rel))
                 out.update((st, perm) for st, _ in t.relations[rel].subjects() if st in ref.types)
-            case ("not", item):
+            case Not(item):
                 walk(t, item)
-            case ("and", items) | ("or", items):
+            case And(items) | Or(items):
                 for x in items:
                     walk(t, x)
 

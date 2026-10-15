@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from .compiler import Core, only_on, rule_name
 from .insight import expr_text
-from .parse import Expr, Rule, Type
+from .parse import And, Arrow, ArrowOn, Expr, Or, Ref, Rule, Type
 from .sqlutil import lit, q, qt, reads_more, row_cond
 
 EXPLAIN_LINES = 20  # lines of authz.explain per object, at most
@@ -25,7 +25,7 @@ TARGETS = 3  # objects explained per relation, at most
 def parts(node: Expr) -> list[Expr]:
     """The items of an and/or; none for anything else."""
     match node:
-        case ("and", items) | ("or", items):
+        case And(items) | Or(items):
             return list(items)
     return []
 
@@ -114,11 +114,9 @@ class RefusalMixin(Core):
 
         def deeper(node: Expr, idx: int, pad: str) -> str:
             match node:
-                case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
+                case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                     return arrow(node, rel, perm, idx, pad)
-                case ("ref", name) if (
-                    cmd != "insert" and rule.command != "update check" and name in self.public_perms(t)
-                ):
+                case Ref(name) if cmd != "insert" and rule.command != "update check" and name in self.public_perms(t):
                     return (
                         f"  IF NOT v[{idx}]{' AND p_stored' if both else ''} THEN\n"
                         f"    RETURN QUERY SELECT {lit(pad)} || l FROM authz.explain("

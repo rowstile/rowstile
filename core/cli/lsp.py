@@ -34,8 +34,14 @@ from authzlib.errors import split as split_code  # noqa: E402
 from authzlib.parse import (  # noqa: E402
     IDENT,
     QNAME,
+    And,
+    Arrow,
+    ArrowOn,
+    Cond,
     Expr,
     Loc,
+    Not,
+    Or,
     Policy,
     Type,
     collect_includes,
@@ -787,11 +793,11 @@ def denies(node: Expr) -> bool:
     """Whether the expression takes something away: a `not` over a relation or a permission (a {condition} with
     the word in it is no deny)."""
     match node:
-        case ("not", ("cond", _)):
+        case Not(Cond(_)):
             return False
-        case ("not", _):
+        case Not(_):
             return True
-        case ("and", items) | ("or", items):
+        case And(items) | Or(items):
             return any(denies(x) for x in items)
     return False
 
@@ -799,11 +805,11 @@ def denies(node: Expr) -> bool:
 def arrows(node: Expr) -> list[tuple[str, str]]:
     """(relation, permission) for every rel.perm in an expression."""
     match node:
-        case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
+        case Arrow(rel, perm) | ArrowOn(rel, perm, _):
             return [(rel, perm)]
-        case ("not", item):
+        case Not(item):
             return arrows(item)
-        case ("and", items) | ("or", items):
+        case And(items) | Or(items):
             return [a for x in items for a in arrows(x)]
     return []
 

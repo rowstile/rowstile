@@ -109,7 +109,7 @@ DEPENDS_ON_ITSELF = (
 def only_on(node: Expr) -> list[str] | None:
     """The subject types an arrow the compiler narrowed (arrow_on) follows; None for any other item."""
     match node:
-        case ("arrow_on", _, _, types):
+        case ArrowOn(_, _, types):
             return list(types)
     return None
 
@@ -128,13 +128,13 @@ def renamed(node: Expr, old: str, new: str) -> Expr:
     """The expression with each `old` (a name of the same object) written `new`."""
     match node:
         case Ref(name=name) if name == old:
-            return Ref("ref", new)
+            return Ref(new)
         case Not(item=item):
-            return Not("not", renamed(item, old, new))
+            return Not(renamed(item, old, new))
         case Or(items=items):
-            return Or("or", [renamed(x, old, new) for x in items])
+            return Or([renamed(x, old, new) for x in items])
         case And(items=items):
-            return And("and", [renamed(x, old, new) for x in items])
+            return And([renamed(x, old, new) for x in items])
     return node
 
 
@@ -438,9 +438,9 @@ class Core:
                 rest: list[Expr] = []
                 for x in p.expr.items:
                     match x:
-                        case ("cond", _) | ("not", ("cond", _)):
+                        case Cond(_) | Not(Cond(_)):
                             conds.append(x)
-                        case ("not", _):
+                        case Not(_):
                             negs.append(x)
                         case _:
                             rest.append(x)
@@ -456,10 +456,9 @@ class Core:
                 first = rest[0]
                 items = list(first.items) if isinstance(first, Or) else [first]
                 items = [
-                    (And("and", [*i.items, *conds]) if isinstance(i, And) else And("and", [i, *conds])) if conds else i
-                    for i in items
+                    (And([*i.items, *conds]) if isinstance(i, And) else And([i, *conds])) if conds else i for i in items
                 ]
-                inherit = items[0] if len(items) == 1 else Or("or", items)
+                inherit = items[0] if len(items) == 1 else Or(items)
                 if not negs:
                     p.expr = inherit
                     continue
@@ -484,14 +483,14 @@ class Core:
                     ),
                     p.name: p,
                 }
-                p.expr, p.base = And("and", [Ref("ref", base), *negs]), base
+                p.expr, p.base = And([Ref(base), *negs]), base
                 self.denies[(t.name, p.name)] = negs
                 graph[(t.name, base)] = set()
 
     def rename_arrows(self, t: Type, node: Expr, old: str, new: str, loc: Loc) -> Expr:
         """rel.old -> rel.new for relations to t itself (the base of a permission with a deny)."""
         match node:
-            case ("arrow", rel, perm) if perm == old and rel in t.relations:
+            case Arrow(rel, perm) if perm == old and rel in t.relations:
                 subjects = t.relations[rel].subjects()
                 if any(st == t.name and not sr for st, sr in subjects):
                     if any(st != t.name for st, _ in subjects):
@@ -501,13 +500,13 @@ class Core:
                             f"other types; give those their own relation",
                             "AZ306",
                         )
-                    return Arrow("arrow", rel, new)
-            case ("not", item):
-                return Not("not", self.rename_arrows(t, item, old, new, loc))
-            case ("and", items):
-                return And("and", [self.rename_arrows(t, x, old, new, loc) for x in items])
-            case ("or", items):
-                return Or("or", [self.rename_arrows(t, x, old, new, loc) for x in items])
+                    return Arrow(rel, new)
+            case Not(item):
+                return Not(self.rename_arrows(t, item, old, new, loc))
+            case And(items):
+                return And([self.rename_arrows(t, x, old, new, loc) for x in items])
+            case Or(items):
+                return Or([self.rename_arrows(t, x, old, new, loc) for x in items])
         return node
 
     def check_denies(self) -> None:
@@ -822,17 +821,17 @@ class Core:
 
         def walk(t: Type, node: Expr, loc: Loc) -> None:
             match node:
-                case ("ref", name):
+                case Ref(name):
                     self.lookup(t, name, loc)
                     used.add((t.name, name))
-                case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
+                case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                     r, _ = self.targets(t, rel, loc)  # what a dot follows: a relation to objects
                     used.add((t.name, rel))
                     for st, _sr in r.subjects():
                         used.add((st, perm))
-                case ("not", item):
+                case Not(item):
                     walk(t, item, loc)
-                case ("and", items) | ("or", items):
+                case And(items) | Or(items):
                     for x in items:
                         walk(t, x, loc)
 
@@ -885,19 +884,19 @@ class Core:
     # --- dependency analysis: which permissions recurse, and through what ----
     def deps(self, t: Type, node: Expr, out: set[Name]) -> None:
         match node:
-            case ("ref", name):
+            case Ref(name):
                 if name in t.perms:
                     out.add((t.name, name))
                 elif name in t.relations:
                     self.rel_deps(t, t.relations[name], out, set())
-            case ("arrow", rel, perm):
+            case Arrow(rel, perm):
                 if rel in t.relations:
                     for st, _ in t.relations[rel].subjects():
                         if st in self.types and perm in self.T(st).perms:
                             out.add((st, perm))
-            case ("not", item):
+            case Not(item):
                 self.deps(t, item, out)
-            case ("and", items) | ("or", items):
+            case And(items) | Or(items):
                 for x in items:
                     self.deps(t, x, out)
 
@@ -1019,11 +1018,11 @@ class Core:
                 return None, None
             for x in item.items:
                 match x:
-                    case ("cond", sql):
+                    case Cond(sql):
                         conds.append(sql)
-                    case ("not", ("cond", sql)):
+                    case Not(Cond(sql)):
                         conds.append(f"NOT coalesce(({sql}), false)")
-                    case ("arrow", _, _):
+                    case Arrow(_, _):
                         pass
                     case _:
                         return None, None
@@ -1055,9 +1054,9 @@ class Core:
         outside = [st for st, _ in r.subjects() if st not in inside]
         rest: Expr | None = None
         if outside:
-            rest = ArrowOn("arrow_on", arrow.rel, arrow.perm, tuple(outside))
+            rest = ArrowOn(arrow.rel, arrow.perm, tuple(outside))
             if conds:
-                rest = And("and", [rest, *(Cond("cond", c) for c in conds)])
+                rest = And([rest, *(Cond(c) for c in conds)])
         return [(arrow.rel, cond, st) for st in inside], rest
 
     # --- views ------------------------------------------------------------
@@ -1695,13 +1694,13 @@ class Core:
     def own_columns(self, t: Type, item: Expr) -> bool:
         """Whether item is decided by t's own columns (and small per-user sets), not by other rows of t."""
         match item:
-            case ("cond", sql):
+            case Cond(sql):
                 return not reads_tables(sql)
-            case ("not", inner):
+            case Not(inner):
                 return self.own_columns(t, inner)
-            case ("and", items) | ("or", items):
+            case And(items) | Or(items):
                 return all(self.own_columns(t, x) for x in items)
-            case ("ref", name) | ("arrow", name, _) | ("arrow_on", name, _, _) if name in t.relations:
+            case Ref(name) | Arrow(name, _) | ArrowOn(name, _, _) if name in t.relations:
                 r = t.relations[name]
                 return all(src.kind == "column" for src in r.sources) and not any(
                     sr and sr != "*" and self.is_group_loop(t, r, st, sr) for st, sr in r.subjects()
@@ -1712,18 +1711,18 @@ class Core:
         """Rough cost of checking item on one row, for ordering: 0 columns only, 1 lookups in small
         per-user sets, 2 recursive permissions (their views build every starting point)."""
         match item:
-            case ("cond", sql):
+            case Cond(sql):
                 return 1 if reads_tables(sql) else 0
-            case ("not", inner):
+            case Not(inner):
                 return self.item_cost(t, inner)
-            case ("and", items) | ("or", items):
+            case And(items) | Or(items):
                 return max(self.item_cost(t, x) for x in items)
-            case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
+            case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                 r = t.relations.get(rel)
                 assert r is not None, "validate refuses a dot that follows anything but a relation (AZ301)"
                 on = only_on(item)
                 names = on if on is not None else [st for st, _ in r.subjects()]
-                return max(max(1, self.item_cost(self.T(st), Ref("ref", perm))) for st in names)
+                return max(max(1, self.item_cost(self.T(st), Ref(perm))) for st in names)
             case _:
                 assert isinstance(item, Ref), f"not an expression: {item!r}"
                 name = item.name
@@ -1757,7 +1756,7 @@ class Core:
     def set_sql(self, t: Type, node: Expr, loc: Loc, flatten: Flatten = None) -> str:
         rid, tbl = self.key(t, "r"), qt(t.table)
         match node:
-            case ("ref", name):
+            case Ref(name):
                 self.lookup(t, name, loc)
                 if name in t.relations:
                     return f"SELECT id FROM authz_int.{q(self.ensure_rel_view(t, t.relations[name], loc))}"
@@ -1774,25 +1773,25 @@ class Core:
                     return union([self.set_sql(t, i, loc, flatten) for i in self.base_items(t, perm)])
                 self.ensure_view(t, perm)
                 return f"SELECT id FROM authz_int.{q(t.name + '__' + name)}"
-            case ("arrow", rel, perm_name) | ("arrow_on", rel, perm_name, _):
+            case Arrow(rel, perm_name) | ArrowOn(rel, perm_name, _):
                 r, targets = self.targets(t, rel, loc)
                 on = only_on(node)
                 names = on if on is not None else [x.name for x in targets]
                 view = self.ensure_link_view(t, r, perm_name, loc, targets=names)
                 return f"SELECT id FROM authz_int.{q(view)}"
-            case ("cond", sql):
+            case Cond(sql):
                 return f"SELECT {rid} AS id FROM {tbl} r WHERE coalesce(({row_cond(sql, 'r')}), false)"
-            case ("or", items):
+            case Or(items):
                 return union([self.set_sql(t, i, loc, flatten) for i in once(items)])
         items = once(node.items) if isinstance(node, And) else [node]
         where = []
         for item in items:
             match item:
-                case ("cond", sql):
+                case Cond(sql):
                     where.append(f"coalesce(({row_cond(sql, 'r')}), false)")
-                case ("not", ("cond", sql)):
+                case Not(Cond(sql)):
                     where.append(f"NOT coalesce(({row_cond(sql, 'r')}), false)")
-                case ("not", inner):
+                case Not(inner):
                     where.append(f"NOT EXISTS (SELECT 1 FROM ({self.set_sql(t, inner, loc)}) x WHERE x.id = {rid})")
                 case _:
                     where.append(self.key_in(t, "r", self.set_sql(t, item, loc)))
@@ -1885,17 +1884,17 @@ class Core:
         invoker: bool = False,
     ) -> str:
         match node:
-            case ("cond", sql):
+            case Cond(sql):
                 if invoker and reads_more(sql):
                     return self.definer_cond(t, sql, alias)
                 return f"coalesce(({row_cond(sql, alias)}), false)"
-            case ("not", inner_node):
+            case Not(inner_node):
                 # NULL (a NULL column, or no user) must mean "not held", as it does in the views
                 inner = self.row_sql(t, alias, inner_node, loc, stack, point, invoker)
-                return f"NOT {inner}" if inner_node[0] == "cond" else f"NOT coalesce({inner}, false)"
-            case ("and", items) | ("or", items):
+                return f"NOT {inner}" if isinstance(inner_node, Cond) else f"NOT coalesce({inner}, false)"
+            case And(items) | Or(items):
                 # cheapest first: Postgres evaluates AND and OR from the left and stops once the answer is known
-                joiner = f"\n    {node[0].upper()} "
+                joiner = f"\n    {'OR' if isinstance(node, Or) else 'AND'} "
                 return (
                     "("
                     + joiner.join(
@@ -1904,7 +1903,7 @@ class Core:
                     )
                     + ")"
                 )
-            case ("arrow", rel, perm_name) | ("arrow_on", rel, perm_name, _):
+            case Arrow(rel, perm_name) | ArrowOn(rel, perm_name, _):
                 return self.row_arrow(t, alias, node, rel, perm_name, loc, point, invoker)
             case _:
                 assert isinstance(node, Ref), f"not an expression: {node!r}"

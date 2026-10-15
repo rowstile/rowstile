@@ -121,15 +121,15 @@ def shuffled_expr(node: Expr, rank: Callable[[str], float]) -> Expr:
     what it takes away from."""
     match node:
         case Or(items=items):
-            return Or("or", sorted((shuffled_expr(x, rank) for x in items), key=lambda x: rank(written(x))))
+            return Or(sorted((shuffled_expr(x, rank) for x in items), key=lambda x: rank(written(x))))
         case And(items=items):
             plain = sorted(
                 (shuffled_expr(x, rank) for x in items if not isinstance(x, Not)), key=lambda x: rank(written(x))
             )
             nots = sorted((shuffled_expr(x, rank) for x in items if isinstance(x, Not)), key=lambda x: rank(written(x)))
-            return And("and", plain + nots)
+            return And(plain + nots)
         case Not(item=item):
-            return Not("not", shuffled_expr(item, rank))
+            return Not(shuffled_expr(item, rank))
         case _:
             return node
 

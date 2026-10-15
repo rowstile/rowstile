@@ -573,7 +573,7 @@ class SlowPlans(unittest.TestCase):
         team = c.types["team"]
         rule = next(r for r in c.rules if r.command == "select")
         self.assertEqual(c.expansions(c.rule_sql(team, "t", rule)), 50)
-        self.assertEqual(c.expansions(c.row_sql(team, "o", Ref("ref", "q"), team.perms["q"].loc)), 50)
+        self.assertEqual(c.expansions(c.row_sql(team, "o", Ref("q"), team.perms["q"].loc)), 50)
         self.assertEqual(re.findall(r"object := '([\w.]+)';\n  problem := 'names permissions", sql), ["team.p6"])
         self.assertNotIn("its select rule", sql)
 
@@ -668,7 +668,7 @@ class LanguageForms(unittest.TestCase):
             pol = parse_policy(
                 read(POLICIES["docs"]).replace("  can break_glass = org.member", f"  can break_glass = {word}")
             )
-            self.assertEqual(pol.types["folder"].perms["break_glass"].expr, authzlib.parse.Cond("cond", written))
+            self.assertEqual(pol.types["folder"].perms["break_glass"].expr, authzlib.parse.Cond(written))
 
     def test_sql_comments_in_a_condition_end_at_the_line(self) -> None:
         # the lines of a condition are joined into one: a comment left in would swallow the lines after it
@@ -688,10 +688,10 @@ class LanguageForms(unittest.TestCase):
             return expr.items[1]
 
         for cond in ('"we}ird" = 1', "note = $$--}$$", "note = E'a\\'}'", "note = 'it''s {'"):
-            self.assertEqual(condition("  can view = owner and {" + cond + "}\n"), authzlib.parse.Cond("cond", cond))
+            self.assertEqual(condition("  can view = owner and {" + cond + "}\n"), authzlib.parse.Cond(cond))
         # a quote may go on to the next line inside a condition; outside, an apostrophe opens none
         self.assertEqual(
-            condition("  can view = owner and {note = 'a\n  -- b}'}\n"), authzlib.parse.Cond("cond", "note = 'a -- b}'")
+            condition("  can view = owner and {note = 'a\n  -- b}'}\n"), authzlib.parse.Cond("note = 'a -- b}'")
         )
         pol = parse_policy(base + "  can view = owner\ntest Bob's test -- the comment\n  user 1 can view doc 1\n")
         self.assertEqual(pol.scenarios[0].name, "Bob's test")
@@ -9308,7 +9308,7 @@ class Why(unittest.TestCase):
                 return ["2" if oid == "1" else "1"]  # folder 1 is shown in folder 2, and 2 in 1
 
         g = Loop(c, cast("grant.Db", None), "user", "4")
-        ways = g.ways(c.types["folder"], "1", Ref("ref", "view"), 0, frozenset())
+        ways = g.ways(c.types["folder"], "1", Ref("view"), 0, frozenset())
         self.assertEqual(
             [[ch.text for ch in w] for w in ways],
             [["set owner_id of folder 1 to 4"], ["set owner_id of folder 2 to 4"]],

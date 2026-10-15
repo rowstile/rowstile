@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import TypeAlias
 
 from .compiler import Core
-from .parse import Expr, Perm, Type
+from .parse import And, Arrow, Cond, Expr, Not, Or, Perm, Ref, Type
 
 # what the clients are made from: {type: [permission]}, {type: {relation: [subject]}}, [scope]
 Perms: TypeAlias = "dict[str, list[str]]"
@@ -103,24 +103,24 @@ class DevMixin(Core):
 
         def is_cond(n: Expr) -> bool:
             match n:
-                case ("cond", _):
+                case Cond(_):
                     return True
-                case ("not", inner):
+                case Not(inner):
                     return is_cond(inner)
             return False
 
         match node:
-            case ("or", items) | ("and", items):
-                has_cond = cond or (node[0] == "and" and any(is_cond(n) for n in items))
+            case Or(items) | And(items):
+                has_cond = cond or (isinstance(node, And) and any(is_cond(n) for n in items))
                 for n in items:
                     self._graph_expr(t, p, n, edges, negated, has_cond)
-            case ("not", inner):
+            case Not(inner):
                 self._graph_expr(t, p, inner, edges, not negated, cond)
-            case ("ref", name):
+            case Ref(name):
                 lab = ("not" if negated else "") + (" if {…}" if cond else "")
                 arrow = f'-.->|"{lab.strip()}"|' if lab else "-->"
                 edges.append(f"  {src} {arrow} {_id(t.name, name)}")
-            case ("arrow", rel, perm):
+            case Arrow(rel, perm):
                 r = t.relations.get(rel)
                 targets = [st for st, sr in r.subjects() if not sr] if r else []
                 lab = rel + (" · not" if negated else "") + (" · if {…}" if cond else "")

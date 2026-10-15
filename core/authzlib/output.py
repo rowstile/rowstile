@@ -10,7 +10,7 @@ from .governance import GovernanceMixin, trigger_if_partitioned
 from .hardening import LintMixin, path_writers_sql
 from .identity import SESSION_OK, IdentityMixin
 from .insight import InsightMixin
-from .parse import Expr, Loc, Not, Ref, Rule, Type, fail
+from .parse import And, Arrow, ArrowOn, Expr, Loc, Not, Or, Ref, Rule, Type, fail
 from .refusals import RefusalMixin
 from .sqlutil import (
     CHILD_TRIGGERS,
@@ -138,9 +138,9 @@ class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, Li
     # --- what sharing a relation needs ---------------------------------------
     def positive_refs(self, node: Expr, out: set[str]) -> set[str]:
         match node:
-            case ("ref", name) | ("arrow", name, _) | ("arrow_on", name, _, _):
+            case Ref(name) | Arrow(name, _) | ArrowOn(name, _, _):
                 out.add(name)
-            case ("and", items) | ("or", items):
+            case And(items) | Or(items):
                 for x in items:
                     self.positive_refs(x, out)
         return out
@@ -322,7 +322,7 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
     # --- the API app code calls ----------------------------------------------
     def can_sql(self, t: Type, perm: str) -> str:
         """t.perm on the row aliased o, with the type's where (like the views): what authz.can returns."""
-        sql = self.row_sql(t, "o", Ref("ref", perm), t.perms[perm].loc, point=True)
+        sql = self.row_sql(t, "o", Ref(perm), t.perms[perm].loc, point=True)
         if t.where:
             sql = f"({sql}\n    AND coalesce(({row_cond(t.where, 'o')}), false))"
         return sql
@@ -343,7 +343,7 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
                 else f"o.{q(self.pk(t))} > p_after::{t.pktype}"
             )
             for p in self.public_perms(t):
-                cond = self.row_sql(t, "o", Ref("ref", p), t.perms[p].loc)
+                cond = self.row_sql(t, "o", Ref(p), t.perms[p].loc)
                 if t.where:
                     cond = f"({cond}\n    AND coalesce(({row_cond(t.where, 'o')}), false))"
                 rows = f"SELECT {self.key_text(t, 'o')} FROM {tbl} o\n        WHERE "

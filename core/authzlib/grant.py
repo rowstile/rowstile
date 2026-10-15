@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, TypeAlias
 
 from .conditions import Bool, Cmp, Col, Const, In, IsNull, Node, Scalar, simple
 from .connection import Db, Value, flag, number, text
-from .parse import And, Arrow, ArrowOn, Cols, Cond, Expr, Loc, Not, Ref, Relation, SharedSource, Source, Type, cols
+from .parse import And, Arrow, ArrowOn, Cols, Cond, Expr, Loc, Not, Or, Ref, Relation, SharedSource, Source, Type, cols
 from .sqlutil import lit, q, qt, reads_more, row_cond
 
 if TYPE_CHECKING:
@@ -479,14 +479,14 @@ class Grants:
     ) -> list[list[Change]]:
         """Candidate ways (lists of changes, all needed) that could make node hold on t oid for the person."""
         match node:
-            case ("ref", name):
+            case Ref(name):
                 if name in t.perms:
                     key = (t.name, oid, name)
                     if key in seen:
                         return []
                     return self.ways(t, oid, t.perms[name].expr, depth, seen | {key})
                 return self.relation(t, oid, t.relations[name], depth, seen)
-            case ("arrow", rel, perm):
+            case Arrow(rel, perm):
                 r = t.relations[rel]
                 out: list[list[Change]] = []
                 if depth >= DEPTH:
@@ -496,20 +496,20 @@ class Grants:
                         # a relation followed with a dot links to objects, not to groups or anyone (AZ301)
                         assert sr is None and target in self.c.types, f"{t.name}.{rel} is followed to {target}"
                         for x in self.linked(t, r, src, target, None, oid):
-                            out += self.ways(self.c.types[target], x, Ref("ref", perm), depth + 1, seen)
+                            out += self.ways(self.c.types[target], x, Ref(perm), depth + 1, seen)
                 return out
-            case ("cond", sql):
+            case Cond(sql):
                 self.notes.append(f"{t.name} {oid} must meet {{{sql}}}: no share or link changes that")
                 return []
-            case ("not", ("cond", sql)):
+            case Not(Cond(sql)):
                 self.notes.append(f"{t.name} {oid} must not meet {{{sql}}}: no share or link changes that")
                 return []
-            case ("not", _):
+            case Not(_):
                 self.notes.append(
                     f"a deny on {t.name} {oid} (not ...) may be what stops it: no share or link removes it"
                 )
                 return []
-            case ("or", items):
+            case Or(items):
                 return [w for x in items for w in self.ways(t, oid, x, depth, seen)]
         # an `and` (the compiler's own arrow_on is never in a permission's expression): a change for each part that
         # may not hold yet (or none, if it holds already)
@@ -541,7 +541,7 @@ class Grants:
                     # a group the object is linked to already: put the person in it
                     if depth < DEPTH:
                         for g in self.linked(t, r, src, st, sr, oid):
-                            out += self.ways(self.c.types[st], g, Ref("ref", sr), depth + 1, seen)
+                            out += self.ways(self.c.types[st], g, Ref(sr), depth + 1, seen)
         return out
 
     # --- trying them ---------------------------------------------------------------------------------
@@ -722,7 +722,7 @@ def how_to_grant(
         return answer
     candidates: list[Way] = []
     seen_sql: set[tuple[str, ...]] = set()
-    for changes in g.ways(t, oid, Ref("ref", perm), 0, frozenset()):
+    for changes in g.ways(t, oid, Ref(perm), 0, frozenset()):
         key = tuple(ch.sql for ch in changes)
         if key not in seen_sql:
             seen_sql.add(key)

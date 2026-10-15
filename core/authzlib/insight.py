@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from .compiler import Core, only_on
-from .parse import KEYWORDS, And, Expr, Or, Relation, Source, Type
+from .parse import KEYWORDS, And, Arrow, ArrowOn, Cond, Expr, Not, Or, Ref, Relation, Source, Type
 from .sqlutil import lit, q, qt, row_cond, union
 
 DEFINER_FROM_CURRENT = "SECURITY DEFINER SET search_path FROM CURRENT"
@@ -19,17 +19,17 @@ USER_DEPENDENT = re.compile(
 def expr_text(node: Expr) -> str:
     """An item of what the policy wrote (never the compiler's own arrow_on: it is only ever a starting point)."""
     match node:
-        case ("ref", name):
+        case Ref(name):
             return name if not name.startswith("roles:") else "a custom role"
-        case ("arrow", rel, perm):
+        case Arrow(rel, perm):
             return f"{rel}.{perm}"
-        case ("cond", sql):
+        case Cond(sql):
             return WORD_OF.get(sql, "{" + sql + "}")
-        case ("not", item):
+        case Not(item):
             return "not " + expr_text(item)
         case _:
             assert isinstance(node, (And, Or)), f"not an expression: {node!r}"
-            return "(" + f" {node.kind} ".join(expr_text(x) for x in node.items) + ")"
+            return "(" + (" or " if isinstance(node, Or) else " and ").join(expr_text(x) for x in node.items) + ")"
 
 
 class InsightMixin(Core):
@@ -49,9 +49,9 @@ class InsightMixin(Core):
     def who_items(self, t: Type, node: Expr, obj: str) -> str | None:
         """SQL of the user ids that may hold node on object obj; None: anyone may (a condition decides)."""
         match node:
-            case ("ref", name):
+            case Ref(name):
                 return f"SELECT x FROM {self.who_fn(t, name)}({obj}) x"
-            case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
+            case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                 r, targets = self.targets(t, rel, t.loc)
                 on = only_on(node)
                 names = on if on is not None else [x.name for x in targets]
@@ -64,9 +64,9 @@ class InsightMixin(Core):
                         for tsql in self.target_sql(t, r, src, st, obj):
                             parts.append(f"SELECT x FROM ({tsql}) tg, LATERAL {fn}(tg.id) x")
                 return union(parts) if parts else f"SELECT NULL::{self.T('user').pktype} WHERE false"
-            case ("cond", _) | ("not", _):
+            case Cond(_) | Not(_):
                 return None
-            case ("and", items):
+            case And(items):
                 sets = [s for s in (self.who_items(t, x, obj) for x in items) if s is not None]
                 if not sets:
                     return None
@@ -283,14 +283,14 @@ END $f$;"""
             f"    RETURN NEXT {pad} || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || {text};\n"
         )
         match node:
-            case ("ref", name):
+            case Ref(name):
                 return code + (
                     f"    IF {go} THEN {mark}RETURN QUERY SELECT * FROM {self.why_fn(t, name)}"
                     f"({obj}, {depth}, p_seen); END IF;\n"
                 )
-            case ("arrow", rel, perm) | ("arrow_on", rel, perm, _):
+            case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                 return code + self.why_arrow_sql(t, node, rel, perm, obj, pad, go, mark, depth)
-            case ("and", items) | ("or", items) if not nested:
+            case And(items) | Or(items) if not nested:
                 return code + "".join(self.why_item_sql(t, x, obj, nested=True) for x in items)
         return code
 
