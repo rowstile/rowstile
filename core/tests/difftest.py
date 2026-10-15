@@ -1481,7 +1481,7 @@ class Gen:
     def own(self, k: evaluate.PairsKey) -> bool:
         """Whether a table source is the subjects' own table: each subject's row names the object it is in."""
         _, src, st = self.source(k)
-        return src.table == st.table and cols(src.subj_col) == [c for c, _ in st.key]
+        return src.kind == "table" and src.table == st.table and cols(src.subj_col) == [c for c, _ in st.key]
 
     def tie(self, k: evaluate.PairsKey, o: str, s: str) -> str | None:
         """SQL that links object o to subject s through a source: a share, the object's columns, a row of a link
@@ -1496,6 +1496,7 @@ class Gen:
                 "ON CONFLICT (object_type, object_id, relation, subject_type, subject_id, subject_relation) "
                 "DO UPDATE SET expires_at = NULL, starts_at = NULL, caveat = NULL, caveat_args = NULL;"
             )
+        assert src.kind == "column" or src.kind == "table", f"no links of a {src.kind} source to write"
         kind = {src.type_col: k[3]} if src.type_col else {}
         if src.kind == "column":
             row, to = (
@@ -1506,12 +1507,12 @@ class Gen:
                 return None
             new = {**{c: v for c, v in to.items() if c not in row}, **kind}
             return f"UPDATE {qt(t.table)} SET {given(new, ', ')} WHERE {given(row)};" if new else None
-        table = qt(src.table or "")
+        table = qt(src.table)
         ends = dict(zip(cols(src.obj_col), parts(t, o), strict=True))
         there = dict(zip(cols(src.subj_col), parts(st, s), strict=True))
         if any(ends.get(c, v) != v for c, v in there.items()) or (src.where and src.table not in self.columns):
             return None  # (two values for one column; a `where` nobody said how to pass)
-        more = self.columns.get(src.table or "", {})
+        more = self.columns.get(src.table, {})
         if self.own(k):
             new = {c: v for c, v in ends.items() if c not in there}
             sets = ", ".join([given(new, ", "), *(f"{q(c)} = {v}" for c, v in more.items())])
@@ -1529,13 +1530,14 @@ class Gen:
                 f"DELETE FROM authz.shares WHERE object_type = {lit(k[0])} AND object_id = {lit(o)} "
                 f"AND relation = {lit(k[1])} AND subject_type = {lit(k[3])} AND subject_relation = {lit(k[4])};"
             )
+        assert src.kind == "column" or src.kind == "table", f"no links of a {src.kind} source to take away"
         kind = {src.type_col: k[3]} if src.type_col else {}
         if src.kind == "column":
             row = dict(zip([c for c, _ in t.key], parts(t, o), strict=True))
             gone = [c for c in [*cols(src.column), *kind] if c not in row]
             sets = ", ".join(f"{q(c)} = NULL" for c in gone)
             return f"UPDATE {qt(t.table)} SET {sets} WHERE {given({**row, **kind})};" if gone else None
-        table = qt(src.table or "")
+        table = qt(src.table)
         ends = dict(zip(cols(src.obj_col), parts(t, o), strict=True))
         if self.own(k):
             gone = [c for c in ends if c not in [c for c, _ in st.key]]

@@ -158,7 +158,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
         for t in self.types.values():
             for r in t.relations.values():
                 for src in r.sources:
-                    lead = (src.type_col,) if src.type_col else ()
+                    lead = (src.type_col,) if (src.kind == "column" or src.kind == "table") and src.type_col else ()
                     if src.kind == "table":  # (never a custom roles' relation: its source is the roles)
                         table = self.source_table(src)
                         link_tables.add(table)

@@ -4,7 +4,7 @@ access, access reviews, invariants, and previewing a policy change."""
 from __future__ import annotations
 
 from .compiler import Core
-from .parse import Relation, Source, Type
+from .parse import ColumnSource, Link, Relation, TableSource, Type
 from .parse import cols as columns_of
 from .sqlutil import IF_PARTITIONED, lit, on_row, q, qt
 from .statements import made
@@ -180,7 +180,7 @@ CREATE TRIGGER authz_role_audit AFTER INSERT OR UPDATE OR DELETE ON authz.roles
 CREATE TRIGGER authz_role_perm_audit AFTER INSERT OR DELETE ON authz.role_permissions
   FOR EACH ROW EXECUTE FUNCTION authz_int.on_role();"""
 
-    def subject_text(self, src: Source, a: str) -> str:
+    def subject_text(self, src: Link, a: str) -> str:
         """A column/table source's subject id as text (for any of its subject types), as the audit names it."""
         col = self.source_columns(src)
         if not src.type_col:
@@ -196,8 +196,8 @@ CREATE TRIGGER authz_role_perm_audit AFTER INSERT OR DELETE ON authz.role_permis
     def relationship_audit_sql(self) -> list[str]:
         """Audit and feed rows for relationships kept in your own tables."""
         out: list[str] = []
-        tables: dict[str, list[tuple[Type, Relation, Source]]] = {}  # link table -> [(type, relation, source)]
-        cols: dict[str, list[tuple[Relation, Source]]] = {}  # object type -> [(relation, source)]
+        tables: dict[str, list[tuple[Type, Relation, TableSource]]] = {}  # link table -> [(type, relation, source)]
+        cols: dict[str, list[tuple[Relation, ColumnSource]]] = {}  # object type -> [(relation, source)]
         for t in self.types.values():
             for r in t.relations.values():
                 for src in r.sources:

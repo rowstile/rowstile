@@ -153,21 +153,64 @@ Cols: TypeAlias = "str | tuple[str, ...]"
 Subject: TypeAlias = "tuple[str, str | None]"
 
 
-@dataclass
-class Source:
-    kind: str  # column | table | shared | roles
+# where a relation's links come from: a source of each kind is its own class, told apart by kind (`src.kind ==
+# "table"` narrows a Source to a TableSource)
+@dataclass(frozen=True)
+class ColumnSource:
+    """`= owner_id`, or `= (owner_type, owner_id)`: the row's own column says who it links to."""
+
     subjects: list[Subject]
     loc: Loc
-    column: Cols | None = None  # column source: the id column (a tuple for [a, b]: a composite key)
+    column: Cols  # the id column (a tuple for [a, b]: a composite key)
     type_col: str | None = None  # polymorphic: the column holding the subject's type name
-    table: str | None = None  # table source
-    obj_col: Cols | None = None
-    subj_col: Cols | None = None
+    kind: Literal["column"] = field(default="column", init=False)
+
+
+@dataclass(frozen=True)
+class TableSource:
+    """`= schema.table(object_col -> subject_col) [where {sql}]`: the rows of a link table."""
+
+    subjects: list[Subject]
+    loc: Loc
+    table: str
+    obj_col: Cols
+    subj_col: Cols
+    type_col: str | None = None  # polymorphic: the column holding the subject's type name
     where: str | None = None
-    shared_by: str | None = None  # shared: the permission needed to share it (default: share)
-    shared_if: str | None = None  # shared: extra SQL condition on each share
-    perm: str | None = None  # roles: the permission these role assignments grant
-    owner: str | None = None  # roles: the relation naming the object's owner, whose roles alone count here
+    kind: Literal["table"] = field(default="table", init=False)
+
+
+@dataclass(frozen=True)
+class SharedSource:
+    """`shared [by perm] [if {sql}]`: the shares made at run time (authz.shares)."""
+
+    subjects: list[Subject]
+    loc: Loc
+    shared_by: str | None = None  # the permission needed to share it (default: share)
+    shared_if: str | None = None  # an SQL condition on each share
+    kind: Literal["shared"] = field(default="shared", init=False)
+
+
+@dataclass(frozen=True)
+class RolesSource:
+    """Made by the compiler: the custom roles that give a permission."""
+
+    subjects: list[Subject]
+    loc: Loc
+    perm: str  # the permission these role assignments give
+    owner: str | None = None  # the relation naming the object's owner, whose roles alone count here
+    kind: Literal["roles"] = field(default="roles", init=False)
+
+
+Source: TypeAlias = "ColumnSource | TableSource | SharedSource | RolesSource"
+# a source whose rows name the subjects in columns (the others are shares)
+Link: TypeAlias = "ColumnSource | TableSource"
+
+
+def conditions_of(src: Source) -> list[str]:
+    """The SQL conditions a source writes: a link table's `where`, a share's `if`."""
+    sql = src.where if src.kind == "table" else src.shared_if if src.kind == "shared" else None
+    return [sql] if sql else []
 
 
 @dataclass
@@ -243,22 +286,49 @@ class Rule:
     columns: tuple[str, ...] = ()  # update rules on changed columns; mask rules: the masked columns
 
 
-@dataclass
-class Step:
-    """One line of a named test: given (data), check (can/cannot) or as (a statement as someone)."""
+# the lines of a test: each kind its own class, told apart by kind (`step.kind == "check"` narrows a Step)
+@dataclass(frozen=True)
+class GivenStep:
+    """`given ann = {INSERT ... RETURNING id}`: data a named test brings, and the $name it binds."""
 
-    kind: str  # given | check | as
     text: str
     loc: Loc
-    var: str | None = None  # given: the $name it binds
-    sql: str | None = None  # given, as: the statement
-    ptype: str | None = None  # check, as: the principal type, or 'anyone'
-    who: str | None = None  # check, as: an id or a $name
-    expect: bool | str | int | None = None  # check: True (can) / False; as: 'allowed' | 'refused' | a row count
-    perm: str | None = None
-    type: str | None = None
-    obj: str | None = None  # check: an id or a $name
-    scopes: tuple[str, ...] = ()  # check, as: `with scope a, b`: signed in limited to them, as a key with them is
+    sql: str
+    var: str | None = None
+    kind: Literal["given"] = field(default="given", init=False)
+
+
+@dataclass(frozen=True)
+class CheckStep:
+    """`user 3 can view file 11`: whether someone holds a permission on an object."""
+
+    text: str
+    loc: Loc
+    ptype: str  # the principal type, or 'anyone'
+    who: str | None  # an id or a $name (None for anyone)
+    expect: bool  # can, or cannot
+    perm: str
+    type: str
+    obj: str  # an id or a $name
+    scopes: tuple[str, ...] = ()  # `with scope a, b`: signed in limited to them, as a key with them is
+    kind: Literal["check"] = field(default="check", init=False)
+
+
+@dataclass(frozen=True)
+class AsStep:
+    """`as user $ann refused {UPDATE ...}`: a statement run as someone, and what it does."""
+
+    text: str
+    loc: Loc
+    ptype: str  # the principal type, or 'anyone'
+    who: str | None  # an id or a $name (None for anyone)
+    expect: str | int  # 'allowed', 'refused', or how many rows the SELECT sees
+    sql: str
+    scopes: tuple[str, ...] = ()  # `with scope a, b`: signed in limited to them, as a key with them is
+    kind: Literal["as"] = field(default="as", init=False)
+
+
+Step: TypeAlias = "GivenStep | CheckStep | AsStep"
 
 
 @dataclass
@@ -301,7 +371,7 @@ class Policy:
     role: str | None = None  # the app role (`app role app_user`): the Postgres role the rules apply to
     types: dict[str, Type] = field(default_factory=dict)
     rules: list[Rule] = field(default_factory=list)
-    tests: list[Step] = field(default_factory=list)  # the unnamed test section: checks of the data there
+    tests: list[CheckStep] = field(default_factory=list)  # the unnamed test section: checks of the data there
     scenarios: list[Scenario] = field(default_factory=list)
     scopes: dict[str, Scope] = field(default_factory=dict)
     caveats: dict[str, Caveat] = field(default_factory=dict)
@@ -833,28 +903,27 @@ def parse_subjects(text: str, loc: Loc, base: int = 0) -> list[Subject]:
     return subjects
 
 
-def parse_source(text: str, subjects: list[Subject], loc: Loc) -> Source:
+def parse_source(text: str, subjects: list[Subject], loc: Loc) -> Link:
     """= column | (type_col, id_col) | schema.table(obj -> subj) | schema.table(object: obj, subject: subj) [where {sql}]
     | schema.table(obj -> (type_col, id_col)) [where {sql}]; a column may be [a, b], the columns of a composite key"""
     text = text.strip()
     if re.fullmatch(COLS, text):
-        return Source("column", subjects, loc, column=parse_cols(text))
+        return ColumnSource(subjects, loc, parse_cols(text))
     m = re.fullmatch(rf"\(\s*({IDENT})\s*,\s*({COLS})\s*\)", text)
     if m:
-        return Source("column", subjects, loc, type_col=m.group(1), column=parse_cols(m.group(2)))
+        return ColumnSource(subjects, loc, parse_cols(m.group(2)), type_col=m.group(1))
     m = re.fullmatch(
         rf"({QNAME})\s*\(\s*({COLS})\s*->\s*(?:({COLS})|\(\s*({IDENT})\s*,\s*({COLS})\s*\))\s*\)"
         rf"\s*(?:where\s*\{{(.*)\}})?",
         text,
     )
     if m:
-        return Source(
-            "table",
+        return TableSource(
             subjects,
             loc,
-            table=m.group(1),
-            obj_col=parse_cols(m.group(2)),
-            subj_col=parse_cols(m.group(3) or m.group(5)),
+            m.group(1),
+            parse_cols(m.group(2)),
+            parse_cols(m.group(3) or m.group(5)),
             type_col=m.group(4),
             where=m.group(6),
         )
@@ -872,13 +941,12 @@ def parse_source(text: str, subjects: list[Subject], loc: Loc) -> Source:
         obj, subj = sides["object"], sides["subject"]
         if obj[0] is None:
             fail(loc, "the object side is one column: schema.table(object: col, subject: (type_col, id_col))", "AZ103")
-        return Source(
-            "table",
+        return TableSource(
             subjects,
             loc,
-            table=m.group(1),
-            obj_col=parse_cols(obj[0]),
-            subj_col=parse_cols(subj[0] or subj[2]),
+            m.group(1),
+            parse_cols(obj[0]),
+            parse_cols(subj[0] or subj[2]),
             type_col=subj[1],
             where=m.group(10),
         )
@@ -1085,7 +1153,7 @@ def parse_step(s: str, loc: Loc) -> Step:
     if m:
         if not m.group(2).strip():
             fail(loc, "given {...} needs a statement", "AZ106")
-        return Step("given", s, loc, var=m.group(1), sql=m.group(2).strip())
+        return GivenStep(s, loc, m.group(2).strip(), var=m.group(1))
     m = re.fullmatch(
         rf"as\s+(?:(anyone)|({IDENT})\s+{VALUE}{WITH_SCOPE})\s+(allowed|refused|sees\s+(\d+))\s*\{{(.*)\}}", s, re.S
     )
@@ -1102,30 +1170,28 @@ def parse_step(s: str, loc: Loc) -> Step:
                 "no row, write `as ... refused {...}` (a write that changes no row is refused)",
                 "AZ106",
             )
-        return Step(
-            "as",
+        return AsStep(
             s,
             loc,
-            ptype=m.group(1) or m.group(2),
-            who=None if m.group(1) else value(m.group(3)),
-            expect=expect,
-            sql=m.group(7).strip(),
+            m.group(1) or m.group(2),
+            None if m.group(1) else value(m.group(3)),
+            expect,
+            m.group(7).strip(),
             scopes=scopes_of(m.group(4)),
         )
     m = re.fullmatch(
         rf"(?:(anyone)|({IDENT})\s+{VALUE}{WITH_SCOPE})\s+(can|cannot)\s+({IDENT})\s+({IDENT})\s+{VALUE}", s
     )
     if m:
-        return Step(
-            "check",
+        return CheckStep(
             s,
             loc,
-            ptype=m.group(1) or m.group(2),
-            who=None if m.group(1) else value(m.group(3)),
-            expect=m.group(5) == "can",
-            perm=m.group(6),
-            type=m.group(7),
-            obj=value(m.group(8)),
+            m.group(1) or m.group(2),
+            None if m.group(1) else value(m.group(3)),
+            m.group(5) == "can",
+            m.group(6),
+            m.group(7),
+            value(m.group(8)),
             scopes=scopes_of(m.group(4)),
         )
     if re.match(r"(?:as\s+)?anyone\s+with\b", s):
@@ -1227,19 +1293,19 @@ def parse_type_line(t: Type, s: str, loc: Loc) -> None:
         fail(loc, f"{t.name}.{name} is already a permission", "AZ109")
     subjects = parse_subjects(subj_txt, loc, m.start(2))
     if source is None:
-        src = Source("shared", subjects, loc, shared_by=m.group(4), shared_if=m.group(5))
+        src: Source = SharedSource(subjects, loc, shared_by=m.group(4), shared_if=m.group(5))
     else:
-        src = parse_source(source, subjects, loc)
+        src = link = parse_source(source, subjects, loc)
         if any(sr == "*" or st in ("anyone", "link") for st, sr in subjects):
             fail(loc, "user:* (or another type:*), anyone and link can only be used with 'shared'", "AZ204")
-        if src.type_col is None and len(subjects) != 1:
+        if link.type_col is None and len(subjects) != 1:
             fail(
                 loc,
                 "a column or table source links to exactly one kind of subject; "
                 "for several, add a type column: (type_col, id_col)",
                 "AZ205",
             )
-        if src.type_col is not None and any(sr for _, sr in subjects):
+        if link.type_col is not None and any(sr for _, sr in subjects):
             fail(loc, "a (type_col, id_col) source links to objects, not groups", "AZ205")
     t.relations.setdefault(name, Relation(name, loc)).sources.append(src)
 

@@ -90,6 +90,7 @@ def source_py(s: Source) -> Shape:
     if s.kind == "table":
         where = condition(s.where) if s.where else None
         return ("table", subjects, s.table, cols(s.obj_col), cols(s.subj_col), s.type_col, where)
+    assert s.kind == "shared", f"a {s.kind} source is the compiler's, not the parser's"
     return ("shared", subjects, s.shared_by, condition(s.shared_if) if s.shared_if else None)
 
 

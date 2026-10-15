@@ -14,10 +14,11 @@ to the same declarations.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from typing import NamedTuple, TypeAlias
 
-from .parse import Scanner, meaning_lines
+from .parse import Scanner, Step, meaning_lines
 
 TOP = re.compile(r"^(type|rules|scope|caveat|app\s+role|include|invariants|test)\b")
 CONT = re.compile(r"^(or|and|where|if)\b")
@@ -281,16 +282,12 @@ def tests_of(text: str, files: dict[str, str]) -> list[object]:
     from .parse import parse_policy
 
     pol = parse_policy(text, None, files=files)
-    return [
-        *[(t.ptype, t.who, t.expect, t.perm, t.type, t.obj, t.scopes) for t in pol.tests],
-        *[
-            (
-                sc.name,
-                [(st.kind, st.var, st.sql, st.who, st.expect, st.perm, st.type, st.obj, st.scopes) for st in sc.steps],
-            )
-            for sc in pol.scenarios
-        ],
-    ]
+
+    def said(st: Step) -> tuple[object, ...]:
+        """What a test's line says, wherever and however it is written."""
+        return tuple(getattr(st, f.name) for f in dataclasses.fields(st) if f.name not in ("text", "loc"))
+
+    return [*[said(t) for t in pol.tests], *[(sc.name, [said(st) for st in sc.steps]) for sc in pol.scenarios]]
 
 
 def format(text: str, files: dict[str, str] | None = None) -> str:

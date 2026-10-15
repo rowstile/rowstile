@@ -564,14 +564,15 @@ class Renumbering:
             for rel in t.relations.values():
                 for src in rel.sources:
                     subject = src.subjects[0][0] if src.subjects else ""
+                    type_col = src.type_col if src.kind == "column" or src.kind == "table" else None
                     named = (
-                        (lambda row, c=src.type_col: pol.types.get(str(row[c])))
-                        if src.type_col
+                        (lambda row, c=type_col: pol.types.get(str(row[c])))
+                        if type_col
                         else (lambda row, s=subject: pol.types.get(s))
                     )
-                    if src.kind == "column" and src.column is not None:
+                    if src.kind == "column":
                         self.add(t.table, cols(src.column), named)
-                    elif src.kind == "table" and src.table and src.obj_col is not None and src.subj_col is not None:
+                    elif src.kind == "table":
                         self.add(src.table, cols(src.obj_col), lambda row, t=t: t)
                         self.add(src.table, cols(src.subj_col), named)
 
