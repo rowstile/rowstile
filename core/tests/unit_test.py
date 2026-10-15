@@ -3503,6 +3503,8 @@ class Wire(unittest.TestCase):
             (got["database"], got["password"], got["options"], got["sslmode"]),
             ("a+b", "x+y+z", "-c search_path=a+b", "require"),
         )
+        got = parse("postgresql://h/app?&sslmode=require&&port=5499&")  # an empty part is nothing, as libpq has it
+        self.assertEqual((got["sslmode"], got["port"]), ("require", 5499))
 
     def test_a_urls_ssl_option_as_libpq_reads_it(self) -> None:
         # libpq reads ssl=true in a URL's query as sslmode=require (JDBC's way to ask for TLS), in its place among
@@ -4117,6 +4119,14 @@ class Wire(unittest.TestCase):
             e = caught.exception
             self.assertEqual((e.code, e.message, e.fields["S"]), ended, send)
             conn.close()  # on a connection that is gone: nothing raised
+        # a warning before the FATAL (a shutdown's): read past, the FATAL is the reason
+        notice = said(b"N", b"SWARNING\0VWARNING\0C01000\0Mthe server is shutting down\0\0")
+        conn = session(then=notice + fatal)
+        with self.assertRaises(pgwire.PgError) as caught:
+            conn.query("SELECT 1")
+        e = caught.exception
+        self.assertEqual((e.code, e.message, e.fields["S"]), ended)
+        conn.close()
         conn = session()  # closed without a word (the network, a crash)
         with self.assertRaisesRegex(pgwire.ProtocolError, "^the server closed the connection$"):
             conn.query("SELECT 1")
@@ -4243,6 +4253,14 @@ class Wire(unittest.TestCase):
             self.assertEqual((got["host"], got["user"], got["database"]), ("localhost", "Ann", "Ann"))
         with mock.patch.object(sys, "platform", "win32"), mock.patch.dict(os.environ, {"PGUSER": "bo"}):
             self.assertEqual(parse(None)["user"], "bo")
+        with (
+            mock.patch.object(sys, "platform", "win32"),
+            mock.patch.dict(os.environ, {"USERNAME": ""}),
+            self.assertRaisesRegex(
+                ValueError, r"^no user name from Windows \(USERNAME\): name one with user= or PGUSER$"
+            ),
+        ):
+            parse(None)
         # a user the system can't name (a container's uid with no line in /etc/passwd) is said, with what to set
         with (
             mock.patch.object(pwd, "getpwuid", side_effect=KeyError("getpwuid(): uid not found: 4242")),
