@@ -174,6 +174,18 @@ CODES = {
         "type folder = app.folders\n  owner : user = owner_id\n  viewer : user  shared\n  can share = owner\n"
         "  can view = owner or viewer\ncaveat own_ip = {arg('ip') = authz.ctx('ip')}\n",
     ),
+    "AZ113": Code(
+        "A name rowstile keeps for itself",
+        "Names that start with `authz__` are rowstile's own. Where a condition is placed, its row has an alias, and "
+        "`this.column` is written with it. When a query inside the condition could call one of its tables by that "
+        "alias (`select 1 from app.users u` where the row is `u` too), the row is called `authz__this` there "
+        "instead, so that `this.` still names the row. A condition that wrote such a name could take it back: call "
+        "the table, the column or the function something else.",
+        "type folder = app.folders\n  owner : user = owner_id\n"
+        "  can view = owner and {not exists (select 1 from app.folder_links authz__l where authz__l.folder_id = this.id)}\n",
+        "type folder = app.folders\n  owner : user = owner_id\n"
+        "  can view = owner and {not exists (select 1 from app.folder_links l where l.folder_id = this.id)}\n",
+    ),
     "AZ201": Code(
         "Unknown type",
         "A relation's subjects, an invariant, a scope and a test name types the policy declares "

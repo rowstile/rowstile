@@ -468,6 +468,14 @@ run apply "$T/bad_cond.authz"
 case "$out" in "policy line $(grep -n '^  helper : ' "$T/bad_cond.authz" | cut -d: -f1): the condition {exists (select 1 from app.bots b where b.id::text = subject_id and b.note is null)} doesn't run: column b.note does not exist [AZ613]"*)
   [ $rc -eq 1 ] && ok "... and a shared if's, the same" || bad "apply after the app dropped a column a shared if reads: exit" "$rc";;
   *) bad "apply after the app dropped a column a shared if reads" "$out";; esac
+# a signing-in type's where whose subquery calls its table w, as the type's row is called where it is read: this.
+# is still the row (app.users has no owner_id)
+PSQL -c "CREATE TABLE app.agents (id bigint PRIMARY KEY, owner_id bigint)" >/dev/null
+{ cat example/docs.authz; printf '\ntype agent = app.agents principal where {exists (select 1 from app.users w where w.id = this.owner_id)}\n'; } > "$T/agent.authz"
+run apply "$T/agent.authz"; first=$out
+run apply "$T/agent.authz"
+case "$first|$out" in *"agent.authz: applied|"*"agent.authz: unchanged") ok "a signing-in type's where whose subquery calls its table w: applies, then is unchanged";;
+  *) bad "a where whose subquery calls its table w" "$first | $out";; esac
 dropdb "$DB"
 
 echo "-- conditions naming a function without its schema"

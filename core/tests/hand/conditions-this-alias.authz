@@ -1,0 +1,80 @@
+-- answer: conditions-this
+-- this. names the row a condition is about, whatever the condition's own subquery calls its table. Here each
+-- subquery calls app.marks by the alias the row has where the condition is placed: u in authz.uid(), w where a
+-- service signs in, o in authz.can and authz.list, r in the views another type looks into and in the inheritance
+-- tables, c in an inheritance table of two relations, s for a link table's row (x in the audit trail, which
+-- tests/governance.sh asks), share in shared if. browse reads the row's own table by its name, as the select rule
+-- has it. A mark (ref_id) blocks a row; a seal stops what a folder inherits.
+app role app_user
+
+type user = app.users where {not exists (select 1 from app.marks u where u.ref_id = this.id and u.kind = 'user')}
+type service = app.services principal where {not exists (select 1 from app.marks w where w.ref_id = this.id and w.kind = 'service')}
+type folder = app.folders
+  owner  : user = owner_id
+  parent : folder = parent_id
+  holder : folder = editor_id
+  viewer : user shared if {exists (select 1 from app.marks share where share.kind = 'invite' and share.subject_id = this.subject_id)}
+  can share  = owner
+  can view   = owner and {not exists (select 1 from app.marks o where o.ref_id = this.id and o.kind = 'folder')}
+  can open   = owner and {not exists (select 1 from app.marks r where r.ref_id = this.id and r.kind = 'folder')}
+  can browse = (owner or viewer) and {not exists (select 1 from app.folders where parent_id = this.id)}
+  can read   = owner or (parent.read and {not exists (select 1 from app.marks r where r.ref_id = this.id and r.kind = 'seal')})
+  can reach  = owner or (parent.reach and {not exists (select 1 from app.marks c where c.ref_id = this.id and c.kind = 'seal')})
+               or holder.reach
+type file = app.files
+  folder : folder = folder_id
+  can open  = folder.open
+  can read  = folder.read
+  can reach = folder.reach
+type project = app.projects
+  member : user = app.memberships(project_id -> user_id) where {not exists (select 1 from app.marks s where s.ref_id = this.id and s.kind = 'membership')}
+  helper : user = app.memberships(project_id -> user_id) where {not exists (select 1 from app.marks x where x.ref_id = this.id and x.kind = 'membership')}
+  can view = member
+  can help = helper
+
+rules app.folders
+  select : browse
+rules app.files
+  select : open
+  update : open
+
+test "this. names the row, whatever the condition's subquery calls its table"
+  given {INSERT INTO app.users (id) VALUES (1), (2), (3), (5)}
+  given {INSERT INTO app.services (id) VALUES (7), (8)}
+  given {INSERT INTO app.folders (id, owner_id, parent_id) VALUES (1, 1, NULL), (2, 1, 1), (3, 1, NULL), (4, 2, 1), (5, 2, 1)}
+  given {INSERT INTO app.files (id, folder_id, owner_id) VALUES (11, 1, 1), (13, 3, 1), (14, 4, 2), (15, 5, 2)}
+  given {INSERT INTO app.projects (id) VALUES (1)}
+  given {INSERT INTO app.memberships (id, project_id, user_id) VALUES (1, 1, 2), (2, 1, 3)}
+  given {INSERT INTO app.marks VALUES (100, 5, 'user', NULL), (101, 7, 'service', NULL), (102, 3, 'folder', NULL), (103, 1, 'membership', NULL), (104, NULL, 'invite', '2'), (105, 4, 'seal', NULL)}
+  as user 5 sees 0 {SELECT authz.uid() WHERE authz.uid() IS NOT NULL}
+  as user 1 sees 1 {SELECT authz.uid() WHERE authz.uid() IS NOT NULL}
+  as service 7 sees 0 {SELECT FROM authz.principal()}
+  as service 8 sees 1 {SELECT FROM authz.principal()}
+  user 1 can view folder 1
+  user 1 cannot view folder 3
+  as user 1 sees 2 {SELECT x FROM authz.list('folder', 'view') x}
+  user 1 can read folder 5
+  user 1 cannot read folder 4
+  user 1 can reach folder 5
+  user 1 cannot reach folder 4
+  as user 1 sees 4 {SELECT x FROM authz.list('folder', 'read') x}
+  as user 1 sees 4 {SELECT x FROM authz.list('folder', 'reach') x}
+  user 1 can read file 15
+  user 1 cannot read file 14
+  user 1 can reach file 15
+  user 1 cannot reach file 14
+  as user 1 sees 1 {SELECT x FROM authz.list('file', 'read') x WHERE x IN ('14', '15')}
+  as user 1 sees 1 {SELECT x FROM authz.list('file', 'reach') x WHERE x IN ('14', '15')}
+  as user 2 sees 1 {SELECT FROM authz.explain('folder', 4, 'read', '1') e WHERE e LIKE '    no   {not exists (select 1 from app.marks r %'}
+  as user 1 sees 0 {SELECT FROM authz.explain('folder', 3, 'view') WITH ORDINALITY x(e, n) WHERE n = 1 AND e LIKE 'yes%'}
+  user 1 can open file 11
+  user 1 cannot open file 13
+  as user 1 sees 1 {SELECT FROM app.files WHERE id IN (11, 13)}
+  as user 1 refused {UPDATE app.files SET name = 'b' WHERE id = 13}
+  as user 1 sees 2 {SELECT FROM app.folders}
+  as user 1 allowed {SELECT authz.share('folder', 3, 'viewer', 'user', 2)}
+  as user 1 refused {SELECT authz.share('folder', 3, 'viewer', 'user', 3)}
+  user 3 can view project 1
+  user 2 cannot view project 1
+  user 3 can help project 1
+  user 2 cannot help project 1

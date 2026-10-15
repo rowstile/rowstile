@@ -453,14 +453,59 @@ def this_alone(sql: str) -> bool:
     return any(code and re.search(r"(?<![\w.$\"])this\b(?!\s*\.)", text, re.IGNORECASE) for code, text in sql_code(sql))
 
 
+# The alias a condition's row gets where the condition's own SQL could hide the alias of the place it goes in
+# (on_row). A condition may write no name that starts with RESERVED (AZ113), so nothing in it can be called that.
+RESERVED = "authz__"
+ROW_ALIAS = RESERVED + "this"
+IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+QUOTED_RE = re.compile(r'"(?:[^"]|"")*"')
+
+
+def names_in(sql: str) -> set[str]:
+    """Every name a piece of SQL writes, in its code or quoted ("..."), in lower case."""
+    out: set[str] = set()
+    for code, text in sql_code(sql):
+        if code:
+            out.update(m.group(0).lower() for m in IDENT_RE.finditer(text))
+        elif text.startswith('"'):
+            out.add(text[1:-1].replace('""', '"').lower())
+    return out
+
+
+def reserved_names(sql: str) -> list[str]:
+    """The names a piece of SQL writes that start with RESERVED, as written."""
+    out: list[str] = []
+    for code, text in sql_code(sql):
+        if code:
+            out += [m.group(0) for m in IDENT_RE.finditer(text) if m.group(0).lower().startswith(RESERVED)]
+        elif text.startswith('"') and text[1:-1].lower().startswith(RESERVED):
+            out.append(text)
+    return out
+
+
 def on_row(sql: str, alias: str) -> str:
     """A condition with `this.` written as the alias its row has where the condition is placed: `this.id` is
-    `r.id` in a view, `"files".id` in a row-level security policy, `NEW`'s columns in a trigger."""
-    out, last = [], 0
-    for start, end in this_spans(sql):
-        out += [sql[last:start], alias + "."]
+    `r.id` in a view, `"files".id` in a row-level security policy, `NEW`'s columns in a trigger. Where a query
+    of the condition's own could call one of its tables by that alias (`select 1 from app.users u` where the row
+    is u, `from app.folders` where it is "folders"), `this.` would name that table there: then the row's columns
+    `this.` reads are taken first, under a name no condition writes, `(SELECT ... FROM (SELECT u.id) AS
+    authz__this)`. Elsewhere the condition reads the alias itself, as the planner likes best."""
+    spans = this_spans(sql)
+    if not spans:
+        return sql
+    name = alias[1:-1].replace('""', '"') if alias.startswith('"') else alias
+    hidden = reads_tables(sql) and name.lower() in names_in(sql)
+    out, last, cols = [], 0, []
+    for start, end in spans:
+        m = QUOTED_RE.match(sql, end) or IDENT_RE.match(sql, end)
+        if m and m.group(0) not in cols:
+            cols.append(m.group(0))
+        out += [sql[last:start], (ROW_ALIAS if hidden else alias) + "."]
         last = end
-    return "".join(out) + sql[last:]
+    cond = "".join(out) + sql[last:]
+    if not hidden:
+        return cond
+    return f"(SELECT ({cond}) FROM (SELECT {', '.join(f'{alias}.{c}' for c in cols)}) AS {ROW_ALIAS})"
 
 
 def row_cond(sql: str, alias: str) -> str:

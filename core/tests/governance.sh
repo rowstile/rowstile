@@ -588,5 +588,27 @@ else
   SU -d "$DB" -c "DROP PUBLICATION authz_governance_trail" >/dev/null
   dropdb "$COPY_DB"
 fi
+
+echo "-- this. in a condition whose subquery calls its table as the row is called (tests/hand/conditions-this-alias.authz)"
+TDB="${DB}_this"
+dropdb --if-exists "$TDB" 2>/dev/null; createdb "$TDB" || exit 1
+TQ() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$TDB" "$@" 2>&1; }
+# an invariant that the marked folder 3 breaks: its condition calls app.marks r, as the invariants' views call the row
+{ cat tests/hand/conditions-this-alias.authz
+  printf '\ninvariants\n  never folder: owner and not {not exists (select 1 from app.marks r where r.ref_id = this.id and r.kind = %s)}\n' "'folder'"
+} > /tmp/authz_governance_this.authz
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$TDB" -f tests/hand/schema.sql >/dev/null &&
+python3 cli/rowstile_cli.py --db "dbname=$TDB" apply /tmp/authz_governance_this.authz >/dev/null || exit 1
+TQ -c "INSERT INTO app.users (id) VALUES (1), (2), (3)" -c "INSERT INTO app.projects (id) VALUES (1)" \
+   -c "INSERT INTO app.folders (id, owner_id) VALUES (1, 1), (3, 1)" \
+   -c "INSERT INTO app.marks VALUES (102, 3, 'folder', NULL), (103, 1, 'membership', NULL)" \
+   -c "INSERT INTO app.memberships (id, project_id, user_id) VALUES (1, 1, 2), (2, 1, 3)" >/dev/null
+got=$(TQ -c "SELECT string_agg(relation || ' ' || subject_id, ', ' ORDER BY relation, subject_id) FROM authz.audit WHERE action = 'relate'")
+[ "$got" = "helper 3, member 3" ] && echo "ok    the audit trail relates only the link rows whose where holds, whatever its subquery calls its table" ||
+  { echo "FAIL  the audit trail of link rows with a where: $got"; fails=$((fails + 1)); }
+got=$(TQ -c "SELECT string_agg(user_id || ' ' || object_ids::text, ', ') FROM authz.check_invariants() WHERE invariant LIKE 'never folder: owner and%'")
+[ "$got" = "1 {3}" ] && echo "ok    ... and an invariant's condition reads the folder it is about: the marked folder breaks it" ||
+  { echo "FAIL  an invariant whose subquery calls its table r: $got"; fails=$((fails + 1)); }
+dropdb "$TDB"; rm -f /tmp/authz_governance_this.authz
 dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "governance: all passed"; else echo "governance: $fails failed"; exit 1; fi

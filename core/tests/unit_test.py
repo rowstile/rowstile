@@ -173,6 +173,27 @@ class ThisRow(unittest.TestCase):
         self.assertEqual(on_row("x = E'it''s \\' this.y' and this.z", "r"), "x = E'it''s \\' this.y' and r.z")
         self.assertEqual(on_row('"a""this".x = this.z', "r"), '"a""this".x = r.z')
         self.assertEqual(on_row("this.z = 'it''s this.y", "r"), "r.z = 'it''s this.y")
+        # a query of the condition's own that may call a table by the row's alias: this. reads the row's columns
+        # first, under a name no condition writes (AZ113); a mention in a string, or no query, changes nothing
+        self.assertEqual(
+            on_row('exists (select 1 from app.m r where r.p = this.id and r.q = this."Q" and r.z = this.id)', "r"),
+            '(SELECT (exists (select 1 from app.m r where r.p = authz__this.id and r.q = authz__this."Q" and '
+            'r.z = authz__this.id)) FROM (SELECT r.id, r."Q") AS authz__this)',
+        )
+        self.assertEqual(
+            on_row("not exists (select 1 from app.folders where parent_id = this.id)", '"folders"'),
+            "(SELECT (not exists (select 1 from app.folders where parent_id = authz__this.id)) "
+            'FROM (SELECT "folders".id) AS authz__this)',
+        )
+        self.assertEqual(
+            on_row('exists (select 1 from app.m "O" where "O".p = this.id)', "o"),
+            '(SELECT (exists (select 1 from app.m "O" where "O".p = authz__this.id)) FROM (SELECT o.id) AS authz__this)',
+        )
+        self.assertEqual(
+            on_row("exists (select 1 from app.m m where m.p = this.id and m.k = 'r')", "r"),
+            "exists (select 1 from app.m m where m.p = r.id and m.k = 'r')",
+        )
+        self.assertEqual(on_row("r(this.id)", "r"), "r(r.id)")
         self.assertTrue(names_this("this.a = 1") and not names_this("'this.a' = x"))
         self.assertTrue(this_alone("exists (select 1 from app.t this where this.x)") and not this_alone("this.x"))
 

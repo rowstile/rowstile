@@ -39,6 +39,8 @@ CREATE TABLE app.file_viewers (file_id bigint NOT NULL, user_id bigint NOT NULL,
 -- a key of two columns
 CREATE TABLE app.org_folders (
   org_id bigint NOT NULL, id bigint NOT NULL, parent_id bigint, owner_id bigint, PRIMARY KEY (org_id, id));
+-- a mark on a row of some kind (ref_id), or for a subject (subject_id): conditions read it in subqueries
+CREATE TABLE app.marks (id bigint PRIMARY KEY, ref_id bigint, kind text NOT NULL, subject_id text);
 GRANT USAGE ON SCHEMA app TO app_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA app TO app_user;
 GRANT INSERT, UPDATE, DELETE ON app.folders, app.files TO app_user;
