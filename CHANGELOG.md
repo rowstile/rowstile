@@ -74,6 +74,9 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- `rowstile review` flagged a `where` added to a link table's relation, or one that holds for fewer rows
+  (`{active}` made `{active and not banned}`), as a permission that allows more than before. It allows less, and
+  is no longer flagged.
 - `this.` in a condition named the subquery's table when the subquery's alias was u, w, o, r or share (or c, s
   or x), or, in a rule, when the subquery read the rule's own table without an alias: `{not exists
   (select 1 from app.bans u where u.user_id = this.id)}` in the user type's `where` compared each ban with

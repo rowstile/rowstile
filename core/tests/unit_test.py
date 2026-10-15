@@ -2935,6 +2935,30 @@ test
         self.assertEqual([f["why"] for f in r["risk"]], ["a permission widened"])
         self.assertIsNone(r["meaning"]["equivalent"])
 
+    def test_a_where_on_a_link_table_narrows_or_widens_as_it_reads(self) -> None:
+        """A link table's rows are the same whatever its where says: adding a where, or a where that holds for fewer
+        rows, allows less; taking it off, or one that holds for more or other rows, allows more."""
+        plain = (
+            "app role app_user\ntype user = app.users\ntype doc = app.docs\n"
+            "  viewer : user = app.v(doc_id -> user_id)\n  can view = viewer\n"
+        )
+        where = plain.replace("user_id)\n", "user_id) where {active}\n")
+        flag = "a permission widened through what it uses"
+        for base, head, widens in (
+            (plain, where, False),
+            (where, plain, True),
+            (where, where.replace("{active}", "{active and not banned}"), False),
+            (where, where.replace("{active}", "{active or invited}"), True),
+            (where, where.replace("{active}", "{role = 'admin'}"), True),
+        ):
+            r = self.review.review((base, {}, {}), (head, {}, {}), worlds=40)
+            self.assertEqual(flag in {f["why"] for f in r["risk"]}, widens, (head, r["risk"]))
+        # in the listed worlds too: the rows with no where hold every row the where holds for
+        listing = evaluate.Listing([parse_policy(plain, "a.authz"), parse_policy(where, "b.authz")])
+        for w in itertools.islice(listing.worlds(), 400):
+            no, yes = (set(w.data(p).pairs[("doc", "viewer", 0, "user", "")]) for p in listing.pols)
+            self.assertLessEqual(yes, no)
+
     def test_a_widening_the_comparison_found_is_flagged(self) -> None:
         """The other way round: when Risk's worlds (here, none) miss what the comparison found, the review said
         "not a refactor" and "nothing flagged" at once, of a permission that allows more."""
