@@ -197,6 +197,7 @@ build=$(ls "$P"/db/migrations/*.sql | sort | tail -n 2 | head -n 1); swap=$(ls "
 case "$out" in *"beside the ones in use"*"two migrations"*) [ "$(ls "$P"/db/migrations/*.sql | wc -l)" = $((before + 2)) ] &&
   case "$build" in *_authz_build_*) true;; *) false;; esac && ok "migrate writes two: build beside, then swap in" || bad "two files" "$(ls "$P/db/migrations")";;
   *) bad "two-phase migrate" "$out";; esac
+dropdb --if-exists "${DB}_5" 2>/dev/null; createdb --template "${DB}_2" "${DB}_5"   # (before the build: the oldest writer, below)
 ( PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "${DB}_2" -c "BEGIN" -f "$build" -c "SELECT pg_sleep(4)" -c "COMMIT" 2> "$T/build.log" >/dev/null ) &
 sleep 2
 out=$(psql -X -q -At -d "${DB}_2" -c "SET lock_timeout = '1s'" -c "UPDATE app.folders SET name = name WHERE id = 4" \
@@ -217,6 +218,17 @@ case "$out" in *"must run in one transaction"*"[AZ615]"*)
 out=$(migrate_db "${DB}_2" "$P/db/migrations") && [ "$(PSQL -d "${DB}_2" -c "SELECT authz.verify()")" = t ] &&
   [ "$(PSQL -d "${DB}_2" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 6 AND ancestor = 20")" = 1 ] &&
   ok "the second swaps it in, with what the app wrote meanwhile" || bad "swap" "$out"
+# a transaction that was the oldest one running when the build took its snapshot (its id is the snapshot's xmin)
+# and that adds a link then commits: the swap does that link again. The build's snapshot is set to say so, as on a
+# server where nothing older runs (here other databases' transactions may)
+PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_5" -f "$build" >/dev/null 2>&1 ||
+  bad "the build, on the copy"
+x=$(PSQL -d "${DB}_5" -c "BEGIN" -c "INSERT INTO app.folder_links VALUES (6, 20)" -c "SELECT pg_current_xact_id()" -c "COMMIT")
+PSQL -d "${DB}_5" -c "UPDATE authz_int.next_trees SET snap = '$x:$((x + 1)):$x'" >/dev/null
+out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_5" -f "$swap" 2>&1) &&
+  [ "$(PSQL -d "${DB}_5" -c "SELECT authz.verify()")" = t ] &&
+  [ "$(PSQL -d "${DB}_5" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 6 AND ancestor = 20")" = 1 ] &&
+  ok "... also a link from the transaction the build's snapshot was oldest of" || bad "swap, the oldest writer's link" "$out"
 # a development database that took the first of the two, then a push: it holds the build's lock, not the one the
 # policy in force was recorded with, so push applies the whole policy, and the tree built beside goes
 PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "$DB" -f "$build" >/dev/null 2>&1 ||
@@ -378,5 +390,5 @@ case "$moves" in *"cannot be moved inside itself"*) [ "$loop" = f ] && [ "$(psql
 dropdb --if-exists "$L" 2>/dev/null
 
 rm -rf "$T"
-for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4"; do dropdb --if-exists "$db" 2>/dev/null; done
+for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5"; do dropdb --if-exists "$db" 2>/dev/null; done
 [ $fails -eq 0 ] && echo "migrations: all passed" || { echo "migrations: $fails failed"; exit 1; }

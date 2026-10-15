@@ -201,6 +201,62 @@ got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1',
   ok "... and a column naming the group of one" || bad "explain through Folder#owner" "$got"
 [ -z "${KEEP:-}" ] && dropdb "$DB3"
 
+echo "-- custom roles of the org a folder is in, by a column or a link table; a type named with a capital"
+# whose roles count on a folder is read from the folder's table and from the link table, by their quoted names; a
+# folder filed inside another through a link table checks the one above with the type's own function, by its name
+DB4=authz_capitals_roles
+R() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB4" "$@"; }
+dropdb --if-exists "$DB4" 2>/dev/null; createdb "$DB4" || exit 1
+R >/dev/null <<'SQL' || exit 1
+CREATE TABLE "User" (id serial PRIMARY KEY);
+CREATE TABLE "Org" (id serial PRIMARY KEY, "adminId" integer NOT NULL REFERENCES "User");
+CREATE TABLE "Folder" (id serial PRIMARY KEY, "ownerId" integer NOT NULL REFERENCES "User", "orgId" integer REFERENCES "Org");
+CREATE TABLE "FolderOrg" (
+  "folderId" integer NOT NULL REFERENCES "Folder", "orgId" integer NOT NULL REFERENCES "Org",
+  PRIMARY KEY ("folderId", "orgId"));
+CREATE TABLE "FolderIn" (
+  "folderId" integer NOT NULL REFERENCES "Folder", "parentId" integer NOT NULL REFERENCES "Folder",
+  PRIMARY KEY ("folderId", "parentId"));
+GRANT SELECT ON "User", "Org", "Folder", "FolderOrg", "FolderIn" TO app_user;
+INSERT INTO "User" (id) VALUES (1), (2), (3), (4);
+INSERT INTO "Org" (id, "adminId") VALUES (1, 1), (2, 1);
+INSERT INTO "Folder" (id, "ownerId", "orgId") VALUES (1, 4, 1), (2, 4, NULL), (3, 4, NULL);
+INSERT INTO "FolderIn" VALUES (2, 1);
+INSERT INTO "FolderOrg" VALUES (3, 2);
+SQL
+cat > "$T/roles.authz" <<'EOF'
+app role app_user
+
+type user = public.User (id int)
+
+type org = public.Org (id int)
+  admin : user = adminId
+  can manage_roles = admin
+
+type Folder = public.Folder (id int)
+  owner  : user   = ownerId
+  org    : org    = orgId
+  org    : org    = public.FolderOrg(folderId -> orgId)
+  parent : Folder = public.FolderIn(folderId -> parentId)
+  roles  : user from org
+  can share = owner or org.admin
+  can view  = owner or org.admin or roles or parent.view
+EOF
+run --db "dbname=$DB4" apply "$T/roles.authz"
+case "$out" in *"roles.authz: applied") ok "apply: roles from an org named by a column and by a link table";; *) bad "apply, roles from a column and a link table" "$out";; esac
+R -c "SET authz.user_id = 1" -c "SELECT authz.create_role('org', 1, 'Folder', 'reader', ARRAY['view'])" \
+  -c "SELECT authz.create_role('org', 2, 'Folder', 'reader', ARRAY['view'])" >/dev/null || bad "create the roles"
+R -c "SET authz.user_id = 1" \
+  -c "SELECT authz.share('Folder', 1, 'role:' || (SELECT id FROM authz.roles WHERE owner_id = '1'), 'user', 2)" \
+  -c "SELECT authz.share('Folder', 3, 'role:' || (SELECT id FROM authz.roles WHERE owner_id = '2'), 'user', 3)" >/dev/null ||
+  bad "give the roles"
+views() { R -c "SET authz.user_id = $1" -c "SELECT string_agg(f::text || ':' || authz.can('Folder', f, 'view'), ' ' ORDER BY f) FROM generate_series(1, 3) f"; }
+[ "$(views 2)" = "1:true 2:true 3:false" ] &&
+  ok "a role of the org in the folder's column counts there, and in the folder filed inside it" || bad "a role through the column" "$(views 2)"
+[ "$(views 3)" = "1:false 2:false 3:true" ] &&
+  ok "a role of the org the link table puts a folder in counts there" || bad "a role through the link table" "$(views 3)"
+[ -z "${KEEP:-}" ] && dropdb "$DB4"
+
 rm -rf "$T"
 [ -z "${KEEP:-}" ] && dropdb "$DB" && dropdb "$DB2"
 if [ $fails -eq 0 ]; then echo "capitals: all passed"; else echo "capitals: $fails failed"; exit 1; fi

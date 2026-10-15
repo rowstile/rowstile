@@ -330,7 +330,7 @@ COMPILE = [
     (
         "brackets for a key of one column",
         "  dp : grp = [owner_id, up]\n",
-        "the subject is a grp, whose key is one column, but this source gives 2 columns",
+        "the subject is a grp, whose key is one column, but this source gives 2 columns [AZ206]",  # (no brackets)
         10,
     ),
     (
@@ -1237,30 +1237,42 @@ def main() -> None:
             capture_output=True,
         )
     ]
-    reset()
     v1 = compile_policy(BASE + "  shortcut : doc shared\n  can view = owner or shortcut.owner\n")
     v2 = compile_policy(BASE + "  shortcut : doc shared\n  can view = owner or shortcut.view\n")
-    setup = (
-        "INSERT INTO alt.users VALUES (1); INSERT INTO alt.docs (doc_no, owner_id) VALUES (1, 1), (2, 1);"
-        "INSERT INTO authz.shares VALUES ('doc', 1, 'shortcut', 'doc', 2, '', now() + interval '1 day');"
-    )
-    subprocess.run(
-        ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db],
-        input=v1 + setup,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    p = subprocess.run(
-        ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db], input=v2, capture_output=True, text=True
-    )
-    want = "1 existing shares of doc.shortcut have an expiry, a start time or a caveat, but links used for inheritance cannot"
-    ok = p.returncode != 0 and want in p.stderr and "[AZ605]" in p.stderr
-    fails += not ok
-    err = next((ln for ln in p.stderr.splitlines() if "ERROR" in ln), "(applied without error)")
-    print(
-        f"{'ok  ' if ok else 'FAIL'}  turning expiring shares into inheritance links: {err.split('ERROR:', 1)[-1].strip()}"
-    )
+    # beside a share that never ends nor starts later (which may become a link), one that expires, or one that starts
+    # later: only that one is counted
+    for what, when in (
+        ("expiring", "now() + interval '1 day', NULL"),
+        ("starting later", "NULL, now() + interval '1 day'"),
+    ):
+        reset()
+        setup = (
+            "INSERT INTO alt.users VALUES (1); INSERT INTO alt.docs (doc_no, owner_id) VALUES (1, 1), (2, 1), (3, 1);"
+            "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation,"
+            f" expires_at, starts_at) VALUES ('doc', 1, 'shortcut', 'doc', 2, '', {when}),"
+            " ('doc', 3, 'shortcut', 'doc', 2, '', NULL, NULL);"
+        )
+        subprocess.run(
+            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db],
+            input=v1 + setup,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        p = subprocess.run(
+            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db], input=v2, capture_output=True, text=True
+        )
+        want = (
+            "1 existing shares of doc.shortcut have an expiry, a start time or a caveat, but links used for inheritance"
+            " cannot"
+        )
+        ok = p.returncode != 0 and want in p.stderr and "[AZ605]" in p.stderr
+        fails += not ok
+        err = next((ln for ln in p.stderr.splitlines() if "ERROR" in ln), "(applied without error)")
+        print(
+            f"{'ok  ' if ok else 'FAIL'}  turning {what} shares into inheritance links: "
+            f"{err.split('ERROR:', 1)[-1].strip()}"
+        )
     # ... and once they are links, giving one that would expire, start later or carry a caveat is refused (a
     # trigger on authz.shares), at the share API and when a share that is there is changed; other shares may
     v3 = compile_policy(
@@ -1293,7 +1305,7 @@ def main() -> None:
 
     subprocess.run(["dropdb", db], capture_output=True)
     total = (
-        len(COMPILE) + len(WHOLE) + 1 + len(TESTS) + 2 + len(INCLUDES) + 1 + len(APPLY) + len(APPLY_OK) + 1 + len(LINKS)
+        len(COMPILE) + len(WHOLE) + 1 + len(TESTS) + 2 + len(INCLUDES) + 1 + len(APPLY) + len(APPLY_OK) + 2 + len(LINKS)
     )
     print(f"policy errors: {total - fails} of {total} cases behave as expected")
     sys.exit(1 if fails else 0)

@@ -1,0 +1,32 @@
+-- answer: conditions-null, inheritance, conditions-sql
+-- A condition that reads another table and is NULL there stops inheritance across types too, until a row of that
+-- table makes it hold.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  parent : folder, file = (parent_type, parent_id)
+  can view = owner or (parent.view and {(select u.active from app.users u where u.id = this.editor_id)})
+type file = app.files
+  owner : user = owner_id
+  in    : folder = folder_id
+  can view = owner or in.view
+
+rules app.folders
+  select : view
+rules app.files
+  select : view
+
+test "a condition NULL for want of a row holds once the row is there"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given x   = {INSERT INTO app.files (owner_id) VALUES ($ann) RETURNING id}
+  given n   = {INSERT INTO app.folders (parent_type, parent_id, editor_id) VALUES ('file', $x, 7) RETURNING id}
+  given y   = {INSERT INTO app.files (folder_id) VALUES ($n) RETURNING id}
+  user $ann cannot view folder $n
+  user $ann cannot view file $y
+  as user $ann sees 0 {SELECT FROM app.files WHERE id = $y}
+  given {INSERT INTO app.users (id) VALUES (7)}
+  user $ann can view folder $n
+  user $ann can view file $y
+  as user $ann sees 1 {SELECT FROM app.files WHERE id = $y}

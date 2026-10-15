@@ -16,14 +16,20 @@ test "a share counts between its start and its end"
   given dan = {INSERT INTO app.users (id) VALUES (4) RETURNING id}
   given eve = {INSERT INTO app.users (id) VALUES (5) RETURNING id}
   given fay = {INSERT INTO app.users (id) VALUES (6) RETURNING id}
+  given gus = {INSERT INTO app.users (id) VALUES (7) RETURNING id}
+  given hal = {INSERT INTO app.users (id) VALUES (8) RETURNING id}
   given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
   given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at) VALUES ('folder', $f, 'viewer', 'user', $bo, now() - interval '1 hour')}
   given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at) VALUES ('folder', $f, 'viewer', 'user', $cy, now() + interval '1 day')}
   given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at) VALUES ('folder', $f, 'viewer', 'user', $dan, now() + interval '1 day')}
   given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at) VALUES ('folder', $f, 'viewer', 'user', $eve, now() - interval '1 day')}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at) VALUES ('folder', $f, 'viewer', 'user', $gus, now())}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at) VALUES ('folder', $f, 'viewer', 'user', $hal, now())}
   as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'user', $fay, '', now() - interval '1 hour')}
   user $bo cannot view folder $f
   user $cy can view folder $f
   user $dan cannot view folder $f
   user $eve can view folder $f
   user $fay cannot view folder $f
+  user $gus cannot view folder $f  -- it ended at this instant (the test's transaction has one now())
+  user $hal can view folder $f     -- it starts at this instant
