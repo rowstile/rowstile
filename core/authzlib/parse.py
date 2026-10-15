@@ -33,6 +33,8 @@ class PolicyError(Exception):
     def __init__(self, message: str, code: str | None = None, span: Span | None = None) -> None:
         super().__init__(f"{message} [{code}]" if code else message)
         self.code, self.span = code, span
+        # every mistake the parser found in the policy, this one first (it reads on after one)
+        self.errors: list[PolicyError] = [self]
 
 
 class Loc:
@@ -889,140 +891,179 @@ def parse_source(text: str, subjects: list[Subject], loc: Loc) -> Source:
 
 
 def parse_policy(text: str, path: str | None = None, files: dict[str, str] | None = None) -> Policy:
-    pol = Policy()
-    section: str | None = None
-    # the block the indented lines below belong to
-    cur_type: Type | None = None
-    cur_table: str | None = None
-    cur_test: Scenario | None = None
+    """A policy's text read into a Policy; path: where it is, for its includes when files (name -> text) isn't
+    given. A mistake raises a PolicyError: the first one, with every mistake found in .errors."""
     if files is None:  # included files read from disk, next to the policy file (or here)
         files = collect_includes(text, disk_reader(os.path.dirname(path) if path else "."))
-    for loc, indent, s in read_lines(None, text, files):
-        for a, b in braced_at(s):
-            tag = DOLLAR_TAG.search(s, a, b) if b > 0 else None
-            if tag:
-                fail(
-                    loc,
-                    f"{{{s[a + 1 : b - 1].strip()}}} contains {tag.group(0)}, which ends the generated function it "
-                    f"goes in: write the text another way ('$' || 'f$')",
-                    "AZ110",
-                    at=tag.span(),
-                )
-        if indent == 0:
-            m_type = TYPE_RE.fullmatch(s)
-            m_rules = re.fullmatch(rf"rules\s+({QNAME})(?:\s+view\s+({QNAME}))?", s)
-            m_role = re.fullmatch(rf"app\s+role\s+({IDENT})", s)
-            m_scope = re.fullmatch(rf"scope\s+({IDENT}(?:[-:]{IDENT})*)\s*=\s*(.+)", s)
-            m_caveat = re.fullmatch(rf"caveat\s+({IDENT})\s*=\s*\{{(.*)\}}", s)
-            if m_type:
-                name = m_type.group(1)
-                if name in ("anyone", "link"):
-                    fail(
-                        loc,
-                        f"'{name}' is a subject of its own (shared with {name}); name the type differently",
-                        "AZ204",
-                    )
-                check_name(name, loc, m_type.span(1))
-                if name in pol.types:
-                    fail(loc, f"type {name} is defined twice", "AZ109")
-                cur_type = pol.types[name] = Type(
-                    name,
-                    m_type.group(2),
-                    parse_key(m_type.group(3), loc),
-                    loc,
-                    where=m_type.group(5),
-                    principal=bool(m_type.group(4)) or name == "user",
-                )
-                section = "type"
-            elif m_rules:
-                section, cur_table = "rules", m_rules.group(1)
-                if m_rules.group(2):
-                    if cur_table in pol.views and pol.views[cur_table] != m_rules.group(2):
-                        fail(loc, f"{cur_table} already has the view {pol.views[cur_table]}", "AZ109")
-                    pol.views[cur_table] = m_rules.group(2)
-                    pol.view_locs[cur_table] = loc
-            elif s == "test":
-                section = "test"
-            elif re.fullmatch(r"test\s+\S.*", s):
-                name = s[4:].strip()
-                if name[0] in "\"'":
-                    if len(name) < 2 or name[-1] != name[0]:
-                        fail(loc, f"the test's name has no closing {name[0]}: test {name}{name[0]}", "AZ106")
-                    name = name[1:-1]
-                if any(sc.name == name for sc in pol.scenarios):
-                    fail(loc, f"there is already a test named {name!r}", "AZ109")
-                cur_test = Scenario(name, loc)
-                pol.scenarios.append(cur_test)
-                section = "scenario"
-            elif s == "invariants":
-                section = "invariants"
-            elif m_role:
-                role = m_role.group(1)
-                if pol.role is not None:
-                    fail(loc, f"the app role is named twice ({pol.role} and {role}): a policy applies to one", "AZ109")
-                if role.lower() == "public":
-                    fail(
-                        loc,
-                        "the app role is the one role your app connects as, not PUBLIC (every role in the "
-                        "database could then sign in as anyone)",
-                        "AZ111",
-                    )
-                pol.role = role
-                section = None
-            elif m_scope:
-                if m_scope.group(1) in pol.scopes:
-                    fail(loc, f"scope {m_scope.group(1)} is defined twice", "AZ109")
-                pol.scopes[m_scope.group(1)] = Scope(
-                    m_scope.group(1), parse_scope_items(m_scope.group(2), loc, m_scope.start(2)), loc
-                )
-                section = None
-            elif m_caveat:
-                if m_caveat.group(1) in pol.caveats:
-                    fail(loc, f"caveat {m_caveat.group(1)} is defined twice", "AZ109")
-                pol.caveats[m_caveat.group(1)] = Caveat(m_caveat.group(1), m_caveat.group(2).strip(), loc)
-                section = None
-            else:
-                fail(
-                    loc,
-                    f"expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', "
-                    f"'test \"name\"' or 'include', got: {s}",
-                    "AZ101",
-                )
-            continue
+    return Reader().read(read_lines(None, text, files))
 
-        if section == "type" and cur_type is not None:
-            parse_type_line(cur_type, s, loc)
-        elif section == "rules" and cur_table is not None:
-            parse_rule_line(pol, cur_table, s, loc)
-        elif section == "test":
-            # the same checks as a named test's: user 3 can view file 11, service 2 cannot ..., anyone can ...
-            step = parse_step(s, loc) if re.match(r"(given|as)\b", s) is None else None
-            if step is None or step.kind != "check":
-                fail(
-                    loc,
-                    "the test section checks the data already there, as: user 3 can view file 11 (a test "
-                    'that brings its own data, or runs a statement, is named: test "...")',
-                    "AZ106",
-                )
-            pol.tests.append(step)
-        elif section == "scenario" and cur_test is not None:
-            cur_test.steps.append(parse_step(s, loc))
-        elif section == "invariants":
-            m = re.fullmatch(rf"never\s+({IDENT})\s*:\s*(.+)", s)
-            if not m:
-                fail(loc, "write invariants as: never file: view and not folder.in_org", "AZ106")
-            pol.invariants.append(
-                Invariant(m.group(1), ExprParser(m.group(2), loc, m.start(2)).parse(), m.group(2), loc)
-            )
+
+# a block's indented lines: what reads each
+Block: TypeAlias = "Callable[[Line], None]"
+
+
+def skip(_: Line) -> None:
+    """The lines of a block whose first line has a mistake (each would be one of its own)."""
+
+
+class Reader:
+    """Reads a policy's lines: one at the left margin starts a block (type, rules, test, invariants) or is one on
+    its own (app role, scope, caveat); the indented lines below belong to the block. A mistake ends its line, not
+    the reading: the lines after it are read too, each mistake kept, and read() raises the first."""
+
+    def __init__(self) -> None:
+        self.pol = Policy()
+        self.block: Block | None = None  # what reads the indented lines below; None: they belong to nothing
+        self.errors: list[PolicyError] = []
+
+    def read(self, lines: list[Line]) -> Policy:
+        for line in lines:
+            try:
+                if line.indent == 0:
+                    self.block = skip  # (until the line says which block it starts)
+                    no_dollar_tags(line)
+                    self.block = self.top(line)
+                    continue
+                no_dollar_tags(line)
+                if self.block is None:
+                    self.block = skip  # (once for the lines together)
+                    fail(line.loc, "indented line outside a type, rules, invariants or test block", "AZ101")
+                else:
+                    self.block(line)
+            except PolicyError as e:
+                self.errors.append(e)
+        self.finish()
+        if self.errors:
+            first = self.errors[0]
+            first.errors = self.errors
+            raise first
+        return self.pol
+
+    def top(self, line: Line) -> Block | None:
+        """Reads a line at the left margin; returns what reads the block's lines (None: it starts no block)."""
+        s, loc = line.text, line.loc
+        if m := TYPE_RE.fullmatch(s):
+            return self.type(m, loc)
+        if m := re.fullmatch(rf"rules\s+({QNAME})(?:\s+view\s+({QNAME}))?", s):
+            return self.rules(m, loc)
+        if s == "test":
+            return self.test_section
+        if re.fullmatch(r"test\s+\S.*", s):
+            return self.test(s[4:].strip(), loc)
+        if s == "invariants":
+            return self.invariant
+        if m := re.fullmatch(rf"app\s+role\s+({IDENT})", s):
+            self.app_role(m.group(1), loc)
+        elif m := re.fullmatch(rf"scope\s+({IDENT}(?:[-:]{IDENT})*)\s*=\s*(.+)", s):
+            if m.group(1) in self.pol.scopes:
+                fail(loc, f"scope {m.group(1)} is defined twice", "AZ109")
+            self.pol.scopes[m.group(1)] = Scope(m.group(1), parse_scope_items(m.group(2), loc, m.start(2)), loc)
+        elif m := re.fullmatch(rf"caveat\s+({IDENT})\s*=\s*\{{(.*)\}}", s):
+            if m.group(1) in self.pol.caveats:
+                fail(loc, f"caveat {m.group(1)} is defined twice", "AZ109")
+            self.pol.caveats[m.group(1)] = Caveat(m.group(1), m.group(2).strip(), loc)
         else:
-            fail(loc, "indented line outside a type, rules, invariants or test block", "AZ101")
-    for sc in pol.scenarios:
-        if not sc.steps:
-            fail(sc.loc or 0, f"test {sc.name!r} has no lines", "AZ106")
-    for t in pol.types.values():
-        if t.roles:
-            t.roles = (t.roles[0], granted_by_roles(t), t.roles[2])
-    return pol
+            fail(
+                loc,
+                f"expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', "
+                f"'test \"name\"' or 'include', got: {s}",
+                "AZ101",
+            )
+        return None
+
+    def type(self, m: re.Match[str], loc: Loc) -> Block:
+        name = m.group(1)
+        if name in ("anyone", "link"):
+            fail(loc, f"'{name}' is a subject of its own (shared with {name}); name the type differently", "AZ204")
+        check_name(name, loc, m.span(1))
+        if name in self.pol.types:
+            fail(loc, f"type {name} is defined twice", "AZ109")
+        t = self.pol.types[name] = Type(
+            name,
+            m.group(2),
+            parse_key(m.group(3), loc),
+            loc,
+            where=m.group(5),
+            principal=bool(m.group(4)) or name == "user",
+        )
+        return lambda line: parse_type_line(t, line.text, line.loc)
+
+    def rules(self, m: re.Match[str], loc: Loc) -> Block:
+        table, view = m.group(1), m.group(2)
+        if view:
+            if table in self.pol.views and self.pol.views[table] != view:
+                fail(loc, f"{table} already has the view {self.pol.views[table]}", "AZ109")
+            self.pol.views[table] = view
+            self.pol.view_locs[table] = loc
+        return lambda line: parse_rule_line(self.pol, table, line.text, line.loc)
+
+    def test_section(self, line: Line) -> None:
+        # the same checks as a named test's: user 3 can view file 11, service 2 cannot ..., anyone can ...
+        step = parse_step(line.text, line.loc) if re.match(r"(given|as)\b", line.text) is None else None
+        if step is None or step.kind != "check":
+            fail(
+                line.loc,
+                "the test section checks the data already there, as: user 3 can view file 11 (a test "
+                'that brings its own data, or runs a statement, is named: test "...")',
+                "AZ106",
+            )
+        self.pol.tests.append(step)
+
+    def test(self, name: str, loc: Loc) -> Block:
+        if name[0] in "\"'":
+            if len(name) < 2 or name[-1] != name[0]:
+                fail(loc, f"the test's name has no closing {name[0]}: test {name}{name[0]}", "AZ106")
+            name = name[1:-1]
+        if any(sc.name == name for sc in self.pol.scenarios):
+            fail(loc, f"there is already a test named {name!r}", "AZ109")
+        test = Scenario(name, loc)
+        self.pol.scenarios.append(test)
+        return lambda line: test.steps.append(parse_step(line.text, line.loc))
+
+    def invariant(self, line: Line) -> None:
+        m = re.fullmatch(rf"never\s+({IDENT})\s*:\s*(.+)", line.text)
+        if not m:
+            fail(line.loc, "write invariants as: never file: view and not folder.in_org", "AZ106")
+        expr = ExprParser(m.group(2), line.loc, m.start(2)).parse()
+        self.pol.invariants.append(Invariant(m.group(1), expr, m.group(2), line.loc))
+
+    def app_role(self, role: str, loc: Loc) -> None:
+        if self.pol.role is not None:
+            fail(loc, f"the app role is named twice ({self.pol.role} and {role}): a policy applies to one", "AZ109")
+        if role.lower() == "public":
+            fail(
+                loc,
+                "the app role is the one role your app connects as, not PUBLIC (every role in the database could "
+                "then sign in as anyone)",
+                "AZ111",
+            )
+        self.pol.role = role
+
+    def finish(self) -> None:
+        """What the whole policy says: each test has lines, and the permissions custom roles may give."""
+        for sc in self.pol.scenarios:
+            if not sc.steps:
+                try:
+                    fail(sc.loc or 0, f"test {sc.name!r} has no lines", "AZ106")
+                except PolicyError as e:
+                    self.errors.append(e)
+        for t in self.pol.types.values():
+            if t.roles:
+                t.roles = (t.roles[0], granted_by_roles(t), t.roles[2])
+
+
+def no_dollar_tags(line: Line) -> None:
+    """A condition with a dollar quote's tag ($f$) would end the generated function it goes in."""
+    for a, b in braced_at(line.text):
+        tag = DOLLAR_TAG.search(line.text, a, b) if b > 0 else None
+        if tag:
+            fail(
+                line.loc,
+                f"{{{line.text[a + 1 : b - 1].strip()}}} contains {tag.group(0)}, which ends the generated function "
+                f"it goes in: write the text another way ('$' || 'f$')",
+                "AZ110",
+                at=tag.span(),
+            )
 
 
 VALUE = r"(\$[A-Za-z_][A-Za-z0-9_]*|'(?:[^']|'')*'|[^\s{}']+)"

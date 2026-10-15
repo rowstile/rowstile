@@ -720,6 +720,21 @@ class LanguageForms(unittest.TestCase):
             Compiler(parse_policy("app role app_user\n")).compile("x")
         self.assertIsNone(e.exception.span)
 
+    def test_the_parser_reads_on_after_a_mistake(self) -> None:
+        # each mistake once: the lines of a block whose first line is wrong are not read, nor said again
+        text = (
+            "app role app_user\ntype user = app.users\ntype doc = app.docs (\n  owner : user = owner_id\n"
+            "type file = app.files\n  owner : user = owner_id\n  can view = owner or (owner\n  can edit = owner and }\n"
+            'scope s = select\nscope s = delete\n  stray\ntest "empty"\n'
+        )
+        with self.assertRaises(PolicyError) as e:
+            parse_policy(text)
+        self.assertEqual(
+            [(str(x).split(":")[0], x.code) for x in e.exception.errors],
+            [("line 3", "AZ101"), ("line 7", "AZ102"), ("line 8", "AZ102"), ("line 10", "AZ109"), ("line 12", "AZ106")],
+        )
+        self.assertIs(e.exception.errors[0], e.exception)
+
     def test_quotes_in_include_names_and_test_ids(self) -> None:
         pol = parse_policy('include "a--b.authz"  -- the rest\n', files={"a--b.authz": read(POLICIES["docs"])})
         self.assertIn("folder", pol.types)
