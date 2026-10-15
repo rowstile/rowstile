@@ -1,7 +1,7 @@
 """rowstile fmt: one way to write a policy, so a text diff holds only real changes.
 
 - top-level lines (app role, type, rules, scope, caveat, include, invariants, test) start the line; the lines
-  of a block are indented by two spaces; a continuation (or, and, where, if, grant) lines up under the
+  of a block are indented by two spaces; a continuation (or, and, where, if) lines up under the
   expression it continues
 - one blank line between blocks, none at the start or the end, never two in a row
 - in a run of relations, the ':' and the '=' line up; in a run of permissions, the '='; in a run of rules,
@@ -17,11 +17,10 @@ from __future__ import annotations
 import re
 from typing import NamedTuple, TypeAlias
 
-from .parse import meaning_lines
-from .parse import open_braces as parse_open_braces
+from .parse import Scanner, meaning_lines
 
 TOP = re.compile(r"^(type|rules|scope|caveat|app\s+role|include|invariants|test)\b")
-CONT = re.compile(r"^(or|and|where|if|grant)\b")
+CONT = re.compile(r"^(or|and|where|if)\b")
 
 
 class FormatError(Exception):
@@ -42,36 +41,9 @@ Rendered: TypeAlias = "tuple[str, int]"
 
 
 def scan(text: str) -> list[tuple[str, bool, int]]:
-    """Each character of text with whether it is quoted, and how many {braces} are open around it. Outside braces
-    'text' and "names" are quotes (a test's name, an include's file); inside, only '...' is, as the parser reads a
-    condition's SQL. A brace inside quotes opens nothing."""
-    out: list[tuple[str, bool, int]] = []
-    depth, quote = 0, ""
-    for c in text:
-        if quote:
-            out.append((c, True, depth))
-            if c == quote:
-                quote = ""
-        elif c == "'" or (c == '"' and depth == 0):
-            quote = c
-            out.append((c, True, depth))
-        elif c == "{":
-            out.append((c, False, depth))
-            depth += 1
-        elif c == "}":
-            depth = max(0, depth - 1)
-            out.append((c, False, depth))
-        else:
-            out.append((c, False, depth))
-    return out
-
-
-def split_comment(line: str) -> tuple[str, str]:
-    """(code, comment): a trailing -- comment, outside {} and quotes."""
-    for i, (c, quoted, depth) in enumerate(scan(line)):
-        if c == "-" and not quoted and depth == 0 and line[i : i + 2] == "--":
-            return line[:i].rstrip(), line[i:].rstrip()
-    return line.rstrip(), ""
+    """Each character of text with whether it is quoted, and how many {braces} are open around it, as the parser
+    reads them (parse.Scanner)."""
+    return [(c, m.quoted, m.depth) for c, m in zip(text, Scanner().marks(text), strict=True)]
 
 
 def squeeze(code: str) -> str:
@@ -119,7 +91,7 @@ def format_policy(text: str) -> str:
     lines = text.replace("\r\n", "\n").split("\n")
     items: list[Line] = []
     block: str | None = None
-    open_braces = 0
+    reading = Scanner()  # the lines as the parser reads them: what is a comment, which braces are open
     code_before = False  # a line of code before this one (not a blank line, nor a comment)
     for raw in lines:
         if not raw.strip():
@@ -129,7 +101,11 @@ def format_policy(text: str) -> str:
         if stripped.startswith("--"):
             items.append(Line("comment", "", stripped, 0 if not raw[:1].isspace() else 2))
             continue
-        code, comment = split_comment(raw)
+        open_braces = reading.depth
+        marks = reading.marks(raw)
+        # a trailing comment outside {}; one in a condition is SQL's, kept with it
+        at = next((i for i, m in enumerate(marks) if m.comment and not m.depth), len(raw))
+        code, comment = raw[:at].rstrip(), raw[at:].rstrip()
         indent = len(raw) - len(raw.lstrip())
         s = squeeze(code) if open_braces == 0 else code.strip()
         # a line that starts with or, and, ... continues the one before it, however it is indented (as the parser reads it)
@@ -141,7 +117,6 @@ def format_policy(text: str) -> str:
             items.append(Line("scope" if block == "scope" and top_split(s, "=") else "top", s, comment, 0))
         else:
             items.append(Line(kind_of(s, block), s, comment, 2))
-        open_braces = max(0, open_braces + parse_open_braces(code))  # as the parser counts them: not in quotes
         code_before = True
 
     # blank lines: one before each block that follows another (with its comments), none doubled, none at the ends

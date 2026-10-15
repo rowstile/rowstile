@@ -62,7 +62,7 @@ from authzlib.parse import (  # noqa: E402
     Source,
     Type,
     read_lines,
-    strip_comment,
+    strip_comments,
     written,
 )
 
@@ -254,7 +254,7 @@ def logical_lines(text: str) -> dict[int, str]:
     out: dict[int, str] = {}
     for k, start in enumerate(starts):
         end = starts[k + 1] if k + 1 < len(starts) else len(raw) + 1
-        out[start] = "\n".join(strip_comment(raw[n - 1]) for n in range(start, end))
+        out[start] = strip_comments("\n".join(raw[n - 1] for n in range(start, end)))
     return out
 
 
