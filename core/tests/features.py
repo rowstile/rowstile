@@ -16,8 +16,8 @@ server's tools and Studio's routes. Each item is in one feature, and each featur
   first cell);
 - its fixed checks: a suite, and words that suite holds (a check's label as it prints it, a test's name, the call
   it makes);
-- its oracle: the checks that hold it to an answer this code didn't give (the reference evaluator, the third one,
-  a rebuild, the policy applied whole, Postgres, the answers before), at random or over every case up to a size.
+- its oracle: the checks that hold it to an answer this code didn't give (the reference evaluator, a rebuild,
+  the policy applied whole, Postgres, the answers before), at random or over every case up to a size.
   A feature of tier 1 has one;
 - the hand answers worked out for it (the anchors of docs/reference/language.md), and the cases of the editors'
   grammar that parse its forms.
@@ -102,7 +102,6 @@ ORACLES: dict[str, str] = {
     "small.py": "the reference evaluator, on every small policy of the core language",
     "invariance.py": "the same answers, for a policy written another way and data renumbered",
     "rewrites.py": "the database's answers, for the review's verdict on rewritten permissions",
-    "third_compare.py": "a third evaluator written from the reference alone",
     "interleave.py": "a rebuild and the reference evaluator, after every order of two writes",
     "interrupt.py": "the answers before, after a cut after each statement",
     "upgrade_world.py": "a new database with the same rows, after an upgrade from each release",
@@ -531,7 +530,7 @@ FEATURES: list[Feature] = [
             T("unit_test.py", "test_prove_finds_a_counterexample_that_needs_conditions_at_once"),
             T("cli.sh", "run prove"),
         ),
-        (T("third_compare.py", "invariant never {inv.type}"),),
+        (T("genpolicy.py", "def invariant_problems("),),
     ),
     Feature(
         "cli.perf",
@@ -751,7 +750,6 @@ FEATURES: list[Feature] = [
             T(DIFF, "authz.can("),
             T("genpolicy.py", "def make("),
             T("small.py", "every policy judged"),
-            T("third_compare.py", "def differences("),
             T("rewrites.py", "def rewrites("),
         ),
         hand=("permission-operators", "follow-relation", "own-row"),
@@ -890,7 +888,7 @@ FEATURES: list[Feature] = [
             T("principals.sh", "invariants are asked as each service too, named as the audit trail names it"),
             T("unit_test.py", "test_prove_finds_the_smallest_counterexample"),
         ),
-        (T("third_compare.py", "invariant never {inv.type}"), T("genpolicy.py", "def invariant_problems(")),
+        (T("genpolicy.py", "def invariant_problems("),),
         hand=("invariants",),
         grammar=("Rules, masks, scopes, caveats, invariants",),
     ),

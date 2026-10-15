@@ -26,17 +26,6 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   read: the types, each relation's sources, the permissions with their grouping, the rules, the tests. They read
   each one alike. Each night they read all 70,983 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
   (The grammar takes more than the parser does, as an editor must: what the parser refuses isn't compared.) <!-- checked: tests/parse_agreement.py "policy the parser refuses is not compared" -->
-- **A third evaluator**: [`tests/third.py`](../core/tests/third.py) was written from the language's reference
-  alone and imports nothing of the compiler's or the reference evaluator's. It reads each policy through the
-  editors' grammar, writes what the page says as Datalog rules, run by an engine of its own
-  ([`tests/datalog.py`](../core/tests/datalog.py)), and reads a world as rows, shares and custom roles.
-  [`tests/third_compare.py`](../core/tests/third_compare.py) holds the two evaluators to each other in many worlds
-  per policy: each relation and permission for each one who signs in, a share link's holder and nobody, the rows
-  each rule allows, who breaks each invariant. On each push: every policy in the repository and the cases worked
-  out by hand from the page (94 policies, 3,724 worlds, about 250,000 answers, in 40 seconds); each night, a
-  thousand random policies with new seeds too (about 7 million answers). A disagreement is made as small as it can be and
-  printed with the paragraphs of the page it concerns. The two share one input: which rows each condition holds
-  on, as neither runs SQL.
 - **Random data**: [`tests/difftest.py`](../core/tests/difftest.py) fills six policies' tables with random
   rows and makes a hundred random changes to each (moves, links, loops, groups inside groups, inheritance
   through two types at once, shares that start and end, ids that change, `TRUNCATE`, several statements in
@@ -255,8 +244,8 @@ not a proof for worlds of any size, and it reads the policy, not your data.
 Every feature is in one list, [`tests/features.py`](../core/tests/features.py): each `authz.*` function, each
 command and its flags, each form of the language, each error code, what each SDK exports, the language server's
 methods, the MCP server's tools and Studio's routes, each in one feature. A feature names the page that documents
-it, its fixed checks, and the checks that hold it to an answer the code didn't give: the reference evaluator, the
-third one, a rebuild, the policy applied whole, Postgres. The list is read against the code, and `Features` in
+it, its fixed checks, and the checks that hold it to an answer the code didn't give: the reference evaluator, a
+rebuild, the policy applied whole, Postgres. The list is read against the code, and `Features` in
 [`tests/unit_test.py`](../core/tests/unit_test.py) fails on each push when a part of the surface is in no feature,
 when a check the list names is gone from its suite, when a feature of tier 1 (it decides access or keeps data) has
 no check against another answer, or when a refusal isn't asked for by its words. <!-- checked: tests/unit_test.py "test_every_item_is_in_a_feature_and_every_check_is_there"; tests/unit_test.py "test_each_refusal_is_asked_for_by_its_words"; tests/unit_test.py "test_a_check_gone_and_a_tier_one_feature_without_an_oracle_are_said" -->
@@ -291,7 +280,7 @@ each feature against each suite.
 | What would grant a permission: `rowstile why` | 2 | [tools](reference/tools.md) | `studio_test.py`, `unit_test.py` |  |
 | Reviewing a change: `rowstile review`, `rowstile snapshot` | 2 | [review](reference/review.md) | `review.sh`, `unit_test.py`, `confidence_test.py` | `rewrites.py` |
 | One layout for policies: `rowstile fmt` | 2 | [tools](reference/tools.md) | `review.sh`, `unit_test.py` | `invariance.py` |
-| Invariants in small worlds: `rowstile prove` | 2 | [tools](reference/tools.md) | `confidence_test.py`, `unit_test.py`, `cli.sh` | `third_compare.py` |
+| Invariants in small worlds: `rowstile prove` | 2 | [tools](reference/tools.md) | `confidence_test.py`, `unit_test.py`, `cli.sh` | `genpolicy.py` |
 | Speed: `rowstile indexes`, `plans`, `bench` | 2 | [tools](reference/tools.md) | `capitals.sh`, `confidence_test.py`, `unit_test.py` |  |
 | The diagram, the clients, lint and help: `rowstile graph`, `client`, `lint`, `help`, `--version` | 3 | [tools](reference/tools.md) | `cli.sh`, `tools_test.py`, `unit_test.py` |  |
 | The development loop: `rowstile dev` | 3 | [tools](reference/tools.md) | `devx.sh`, `migrations.sh` |  |
@@ -305,7 +294,7 @@ each feature against each suite.
 | Policies in several files: `include` | 2 | [language](reference/language.md) | `unit_test.py`, `cli.sh`, `policy_errors.py` | `invariance.py`, `genpolicy.py` |
 | Relations and their sources: columns, pairs of columns, link tables | 1 | [language](reference/language.md) | `unit_test.py`, `scenario.sql` | `difftest.py`, `small.py`, `genpolicy.py`, hand answers |
 | Subjects and principals: a type, a group's members, `user:*`, `anyone`, `link`, services | 1 | [language](reference/language.md) | `principals.sh`, `unit_test.py` | `difftest.py`, `small.py`, hand answers |
-| Permissions: `can`, `or`, `and`, `not`, following a relation | 1 | [language](reference/language.md) | `unit_test.py`, `policy_errors.py` | `difftest.py`, `genpolicy.py`, `small.py`, `third_compare.py`, `rewrites.py`, hand answers |
+| Permissions: `can`, `or`, `and`, `not`, following a relation | 1 | [language](reference/language.md) | `unit_test.py`, `policy_errors.py` | `difftest.py`, `genpolicy.py`, `small.py`, `rewrites.py`, hand answers |
 | Conditions: `{...}`, `this`, read with the policy's rights | 1 | [language](reference/language.md) | `devx.sh`, `apply.sh`, `unit_test.py` | `conditions_test.py`, `genpolicy.py`, hand answers |
 | Inheritance and denies: `parent.view`, `and {condition}`, `and not`; moves, loops | 1 | [language](reference/language.md) | `scenario.sql`, `moves.sh`, `concurrency.sh`, `policy_errors.py`, `unit_test.py` | `difftest.py`, `interleave.py`, `small.py`, `genpolicy.py`, `stress.sh`, hand answers |
 | Custom roles in the policy: `roles : ... from ...`, `roles` in a permission | 1 | [language](reference/language.md) | `multi_scenario.sql`, `unit_test.py` | `difftest.py`, `genpolicy.py`, hand answers |
@@ -313,7 +302,7 @@ each feature against each suite.
 | Masked columns: `mask`, the view | 1 | [language](reference/language.md) | `masks.sh`, `multi_scenario.sql`, `apply.sh` | `difftest.py`, `genpolicy.py`, hand answers |
 | Scopes: what a key or a token may do | 1 | [identity](reference/identity.md) | `identity.sh`, `sessions.sh` | `difftest.py`, `genpolicy.py` |
 | Caveats: conditions a share carries | 1 | [language](reference/language.md) | `multi_scenario.sql` | `difftest.py`, `genpolicy.py`, hand answers |
-| Invariants: `never` | 2 | [language](reference/language.md) | `governance.sh`, `principals.sh`, `unit_test.py` | `third_compare.py`, `genpolicy.py`, hand answers |
+| Invariants: `never` | 2 | [language](reference/language.md) | `governance.sh`, `principals.sh`, `unit_test.py` | `genpolicy.py`, hand answers |
 | The policy's tests: checks, named tests, `given`, `as`, `with scope` | 2 | [language](reference/language.md) | `devx.sh`, `unit_test.py`, `cookbook.sh` | hand answers |
 | The Python SDK: signing in, refusals as answers, jobs | 2 | [app-code](reference/app-code.md) | `integrations/fastapi` |  |
 | The Python SDK's stacks: FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic, pytest | 2 | [app-code](reference/app-code.md) | `integrations/fastapi` |  |
