@@ -48,7 +48,7 @@ class Loc:
         return hash((self.file, self.line))
 
 
-def fail(loc: Loc | int | str, msg: str, code: str) -> NoReturn:
+def fail(loc: Loc | int, msg: str, code: str) -> NoReturn:
     raise PolicyError(f"{loc if isinstance(loc, Loc) else f'line {loc}'}: {msg}", code)
 
 
@@ -155,20 +155,28 @@ Roles: TypeAlias = "tuple[list[Subject], list[str], Loc]"
 class Type:
     name: str
     table: str
-    pk: str | None  # the key column; None for a composite key
-    pktype: str  # its type; text for a composite key (ids are its canonical row text)
+    key: list[tuple[str, str]]  # [(column, type)]: several for a composite key
     loc: Loc
     where: str | None = None  # rows that fail it hold nothing, and nothing passes through them
     relations: dict[str, Relation] = field(default_factory=dict)
     perms: dict[str, Perm] = field(default_factory=dict)
     roles: Roles | None = None
     roles_from: str | None = None  # `roles : ... from org`: only roles owned by the object's org count
-    key: list[tuple[str, str]] = field(default_factory=list)  # [(column, type)]: several for a composite key
     principal: bool = False  # signs in and holds access itself (the user type, and `principal` types)
 
     @property
     def composite(self) -> bool:
         return len(self.key) > 1
+
+    @property
+    def pk(self) -> str | None:
+        """The key column; None for a composite key."""
+        return None if self.composite else self.key[0][0]
+
+    @property
+    def pktype(self) -> str:
+        """The key's type; text for a composite key (ids are its canonical row text)."""
+        return "text" if self.composite else self.key[0][1]
 
     @property
     def keytype(self) -> str:
@@ -410,8 +418,7 @@ class ExprParser:
             w = self.take()[1]
             if w in KEYWORDS:
                 return Cond("cond", KEYWORDS[w])
-            if "__" in w:
-                fail(self.loc, f"'{w}': names with '__' are generated ones, which a policy can't refer to", "AZ107")
+            not_generated(w, self.loc)
             if "." in w:
                 rel, perm = w.split(".")
                 return Arrow("arrow", rel, perm)
@@ -419,15 +426,22 @@ class ExprParser:
         fail(self.loc, f"unexpected '{self.toks[self.i][1]}'", "AZ102")
 
 
-def check_name(name: str, loc: Loc) -> str:
+def not_generated(name: str, loc: Loc) -> None:
+    """Generated names hold '__' (`view__base`, `folder__key`): a policy can neither name nor declare one."""
     if "__" in name:
-        fail(loc, f"'{name}': names can't contain '__' (generated names use it as a separator)", "AZ107")
+        fail(loc, f"'{name}': names with '__' are generated ones, which a policy can't use", "AZ107")
+
+
+def check_name(name: str, loc: Loc) -> str:
+    not_generated(name, loc)
     if name in RESERVED or name in KEYWORDS:
         fail(loc, f"'{name}' is a word of the language; choose another name", "AZ107")
     return name
 
 
 Line: TypeAlias = "tuple[Loc, int, str]"
+# a byte order mark, which some editors put at the start of a UTF-8 file: not part of the policy
+BOM = "\ufeff"
 # an include line, as the readers of included files see it (at the start of a line, maybe a comment after)
 INCLUDE = re.compile(r'include\s+"([^"]+)"\s*(?:--.*)?')
 
@@ -449,7 +463,7 @@ def collect_includes(text: str, read: Callable[[str], str | None]) -> dict[str, 
     todo = [("", text)]
     while todo:
         including, body = todo.pop()
-        for line in body.split("\n"):
+        for line in body.removeprefix(BOM).split("\n"):
             m = INCLUDE.fullmatch(line.rstrip())
             key = include_name(including, m.group(1)) if m else None
             if key is None or key in files:
@@ -499,7 +513,7 @@ def read_lines(
     files = files or {}
     name = None if top else path
     out: list[Line] = []
-    for n, raw in enumerate(text.removeprefix("﻿").split("\n"), 1):
+    for n, raw in enumerate(text.removeprefix(BOM).split("\n"), 1):
         loc = Loc(name, n)
         line = strip_comment(raw).rstrip()
         if not line.strip():
@@ -758,16 +772,12 @@ def parse_policy(text: str, path: str | None = None, files: dict[str, str] | Non
                 check_name(name, loc)
                 if name in pol.types:
                     fail(loc, f"type {name} is defined twice", "AZ109")
-                key = parse_key(m_type.group(3), loc)
-                composite = len(key) > 1
                 cur_type = pol.types[name] = Type(
                     name,
                     m_type.group(2),
-                    None if composite else key[0][0],
-                    "text" if composite else key[0][1],
+                    parse_key(m_type.group(3), loc),
                     loc,
                     where=m_type.group(5),
-                    key=key,
                     principal=bool(m_type.group(4)) or name == "user",
                 )
                 section = "type"
@@ -782,7 +792,9 @@ def parse_policy(text: str, path: str | None = None, files: dict[str, str] | Non
                 section = "test"
             elif re.fullmatch(r"test\s+\S.*", s):
                 name = s[4:].strip()
-                if len(name) > 1 and name[0] == name[-1] and name[0] in "\"'":
+                if name[0] in "\"'":
+                    if len(name) < 2 or name[-1] != name[0]:
+                        fail(loc, f"the test's name has no closing {name[0]}: test {name}{name[0]}", "AZ106")
                     name = name[1:-1]
                 if any(sc.name == name for sc in pol.scenarios):
                     fail(loc, f"there is already a test named {name!r}", "AZ109")
@@ -805,6 +817,8 @@ def parse_policy(text: str, path: str | None = None, files: dict[str, str] | Non
                 pol.role = role
                 section = None
             elif m_scope:
+                if m_scope.group(1) in pol.scopes:
+                    fail(loc, f"scope {m_scope.group(1)} is defined twice", "AZ109")
                 pol.scopes[m_scope.group(1)] = Scope(m_scope.group(1), parse_scope_items(m_scope.group(2), loc), loc)
                 section = None
             elif m_caveat:
@@ -938,8 +952,7 @@ def parse_scope_items(text: str, loc: Loc) -> list[ScopeItem]:
         if not m:
             fail(loc, f"bad scope item '{part}' (use select, view, app.files.update or file.edit)", "AZ404")
         qual, word = m.group(1), m.group(2)
-        if "__" in word:
-            fail(loc, f"'{part}': names with '__' are generated ones, which a policy can't refer to", "AZ107")
+        not_generated(part, loc)
         kind = "cmd" if word in COMMANDS else "perm"
         if kind == "cmd" and qual and "." not in qual:
             fail(loc, f"'{part}': commands are qualified by a table, e.g. app.files.{word}", "AZ404")

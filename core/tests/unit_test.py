@@ -684,6 +684,14 @@ class LanguageForms(unittest.TestCase):
         pol = parse_policy(read(POLICIES["docs"]) + "test\n  user 'it''s' cannot view file 'o''k'\n")
         self.assertEqual((pol.tests[-1].who, pol.tests[-1].obj), ("it's", "o'k"))
 
+    def test_a_byte_order_mark_before_an_include(self) -> None:
+        # some editors start a UTF-8 file with one: the includes read from disk were missed then
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "docs.authz"), "w", encoding="utf-8") as fh:
+                fh.write(read(POLICIES["docs"]))
+            text = '\ufeffinclude "docs.authz"\n'
+            self.assertIn("folder", parse_policy(text, os.path.join(d, "main.authz")).types)
+
     def test_the_test_section_signs_in_as_the_principal_it_names(self) -> None:
         text = (
             errors_prelude() + "type service = app.services principal\n  owner : user = owner_id\n"
