@@ -5039,6 +5039,14 @@ class Fmt(unittest.TestCase):
         self.assertEqual(format(src), want)
         self.assertEqual(format(want), want)
 
+    def test_a_continuation_at_the_start_of_its_line_hangs_too(self) -> None:
+        # the parser reads a line that starts with or (and, where, if, grant) as the line before it continued,
+        # however little it is indented: it hangs under the expression like any other, with no blank line before it
+        from authzlib.fmt import format
+
+        want = self.BASE.replace("  can view = owner\n", "  can view = owner\n          or {public}\n")
+        self.assertEqual(format(self.BASE.replace("  can view = owner\n", "  can view = owner\nor {public}\n")), want)
+
     def test_a_layout_that_would_change_what_the_policy_says_is_refused(self) -> None:
         # the layout is read back before it is written: a bug in it that changed a declaration, or a test, is refused
         from authzlib import fmt

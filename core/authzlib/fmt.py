@@ -132,7 +132,8 @@ def format_policy(text: str) -> str:
         code, comment = split_comment(raw)
         indent = len(raw) - len(raw.lstrip())
         s = squeeze(code) if open_braces == 0 else code.strip()
-        if open_braces > 0 or (indent > 0 and CONT.match(code.strip()) and code_before):
+        # a line that starts with or, and, ... continues the one before it, however it is indented (as the parser reads it)
+        if open_braces > 0 or (CONT.match(code.strip()) and code_before):
             items.append(Line("cont", code.strip() if open_braces else squeeze(code), comment, indent))
         elif indent == 0:  # an indented line is never a top-level one: `role : user = ...` is a relation
             m = TOP.match(stripped)
