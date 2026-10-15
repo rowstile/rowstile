@@ -61,6 +61,10 @@ run sql --as user:1 'UPDATE "Note" SET "authorId" = 2 WHERE id = 2'
 case "$out" in "changing authorId of public.Note 2 needs: nobody"*) ok "a column's rule refuses, naming the column";; *) bad "a column rule" "$out";; esac
 out=$(as 2 'SET ROLE app_user; INSERT INTO "Note" (title, "folderId", "authorId") VALUES ($$n$$, 3, 2)' 2>&1)
 case "$out" in *"permission denied: user 2 may not insert this row into public.Note"*) ok "a refused insert says who and where";; *) bad "a refused insert" "$out";; esac
+out=$(PSQL -c "SELECT added || '|' || removed FROM authz.sync_members('team', '1', 'member', ARRAY['3', '4'])" \
+           -c 'SELECT string_agg("userId"::text, $$,$$ ORDER BY "userId") FROM "TeamMember"' \
+           -c "SELECT added || '|' || removed FROM authz.sync_members('team', '1', 'member', ARRAY['3'])" 2>&1 | paste -sd' ')
+[ "$out" = "1|0 3,4 0|1" ] && ok "group sync writes the link table by its quoted name" || bad "sync_members on TeamMember" "$out"
 
 echo "-- moves"
 PSQL -c 'UPDATE "Folder" SET "parentId" = 4 WHERE id = 3'
@@ -98,6 +102,12 @@ run --db "dbname=$DB2" snapshot --out "$T/b.snapshot"
 [ $a -eq 0 ] && [ $rc -eq 0 ] && cmp -s "$T/a.snapshot" "$T/b.snapshot" && [ "$(psql -X -q -At -d "$DB2" -c "SELECT authz.verify()")" = t ] &&
   ok "the database that took the migrations answers as the one that was pushed to" || bad "the two databases differ" "$(diff "$T/a.snapshot" "$T/b.snapshot" | head -n 10)"
 run who folder 2 view; [ "$out" = 1 ] && ok "... and the sealed folder stops what comes from above" || bad "sealed" "$out"
+
+echo "-- a column the app adds to a masked table"
+PSQL -c 'ALTER TABLE "Note" ADD COLUMN "dueAt" date'
+run reapply
+[ $rc -eq 0 ] && [ "$(PSQL -c "SELECT has_column_privilege('app_user', 'public.\"Note\"', 'dueAt', 'SELECT'), has_column_privilege('app_user', 'public.\"Note\"', 'body', 'SELECT')")" = "t|f" ] &&
+  ok "reapply gives the app role the new column, and still not the masked one" || bad "a new column of a masked table" "$out"
 
 echo "-- without the mask, then removed"
 sed -i '/^  mask body/d; s/^rules public.Note view public.NoteShown$/rules public.Note/' "$T/db/policy.authz"

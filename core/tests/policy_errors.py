@@ -779,6 +779,16 @@ APPLY_OK = [
         "     or an_equally_long_relation_name_that_goes_on_and_on_and_on.a_permission_whose_name_is_also_far_too_long_to_fit\n",
         {},
     ),
+    (
+        "two types whose names differ only in case, on one table, both signing in: their functions and triggers apart",
+        "app role app_user\ntype user = alt.users\n"
+        + "".join(
+            f"type {name} = alt.groups (gid) principal\n  owner  : user = owner_id\n  reader : user shared\n"
+            "  can share = owner\n  can manage_keys = owner\n"
+            for name in ("Agent", "agent")
+        ),
+        {},
+    ),
     ("an empty search_path while applying", "  can view = owner\n", {"PGOPTIONS": "-c search_path="}),
     (
         "a table named with a reserved word",

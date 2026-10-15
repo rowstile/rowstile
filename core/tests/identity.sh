@@ -74,6 +74,10 @@ sleep 1
 check "... and requests with one key don't wait for each other" "1"   "SET statement_timeout = '1500ms'; BEGIN; SELECT authz.login_key('$FILES'); SELECT authz.uid(); COMMIT;"
 wait
 check "... last_used_at is kept, to the minute" "t"   "RESET ROLE; SELECT last_used_at > now() - interval '1 minute' FROM authz.api_keys WHERE name = 'script';"
+check "... not written again until a minute has passed" "t" \
+  "RESET ROLE; BEGIN; UPDATE authz.api_keys SET last_used_at = now() - interval '1 minute' WHERE name = 'script';
+   SET LOCAL ROLE app_user; SELECT authz.login_key('$FILES'); RESET ROLE;
+   SELECT last_used_at = now() - interval '1 minute' FROM authz.api_keys WHERE name = 'script'; ROLLBACK;"
 KEYID=$(state -c "SET authz.user_id = 1" -c "SELECT id FROM authz.list_api_keys() WHERE name = 'laptop'")
 expect_code "bob cannot revoke alice's key" "P0001: no API key $KEYID of yours" -c "SET authz.user_id = 2" -c "SELECT authz.revoke_api_key($KEYID)"
 PSQL -c "SET ROLE app_user; SET authz.user_id = 1; SELECT authz.revoke_api_key($KEYID)" >/dev/null
@@ -88,6 +92,9 @@ SHORT=$(state -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('for an
 check "a key with an end signs in until then" "1" "BEGIN; SELECT authz.login_key('$SHORT'); SELECT authz.uid(); COMMIT;"
 PSQL -c "UPDATE authz.api_keys SET expires_at = now() - interval '1 hour' WHERE name = 'for an hour'" >/dev/null
 expect_code "... and no longer after it" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$SHORT')"
+expect_code "... nor at the very moment it ends" "28000: invalid API key" -c "RESET ROLE" -c "BEGIN" \
+  -c "UPDATE authz.api_keys SET expires_at = now() WHERE name = 'for an hour'" -c "SET LOCAL ROLE app_user" \
+  -c "SELECT authz.login_key('$SHORT')"
 
 echo "-- JWT (HS256)"
 expect_code "no secret, no JWT login" "28000: JWT login is not configured (authz.settings jwt_secret)" -c "BEGIN" -c "SELECT authz.login_jwt('a.b.c')"
@@ -142,6 +149,27 @@ expect_code "a token for another audience" "28000: token for another audience" -
 check "a token for this audience" "2" "BEGIN; SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"aud": "docs-api"}')'); COMMIT;"
 check "... or for a list that holds it" "2" "BEGIN; SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"aud": ["other-api", "docs-api"]}')'); COMMIT;"
 PSQL -c "DELETE FROM authz.settings WHERE key = 'jwt_audience'" >/dev/null
+# a secret as long as SHA-256's block (64 bytes) is used as it is; a longer one is hashed first (HMAC, RFC 2104)
+for n in 64 65; do
+  secret=$(printf 'k%.0s' $(seq "$n"))
+  check "a secret of $n bytes signs as an HMAC library signs with it" "2" \
+    "RESET ROLE; BEGIN; UPDATE authz.settings SET value = '$secret' WHERE key = 'jwt_secret'; SET LOCAL ROLE app_user;
+     SELECT authz.login_jwt('$(jwt "$secret" 2 300 '{}')'); ROLLBACK;"
+done
+# a token made in the transaction that signs in with it, so that its exp or nbf is that transaction's now()
+b64url() { echo "rtrim(translate(encode($1, 'base64'), E'+/\\n', '-_'), '=')"; }   # $1: bytea, in SQL
+at_now() {  # $1: the claims beside sub and iss, as jsonb_build_object's arguments, with now_s the time now in seconds
+  local head body
+  head=$(b64url "convert_to('{\"alg\":\"HS256\",\"typ\":\"JWT\"}', 'UTF8')")
+  body=$(b64url "convert_to(jsonb_build_object('sub', '2', 'iss', 'https://id.example', $1)::text, 'UTF8')")
+  echo "SELECT set_config('test.token', m || '.' || $(b64url "authz_int.hmac_sha256(convert_to('s3cret-for-tests', 'UTF8'), convert_to(m, 'UTF8'))"), true)
+  FROM (SELECT $head || '.' || $body AS m FROM (SELECT extract(epoch FROM now()) AS now_s) n) t"
+}
+expect_code "a token is expired at the very moment of its exp" "28000: token expired or not yet valid" -c "RESET ROLE" -c "BEGIN" \
+  -c "$(at_now "'exp', now_s")" -c "SET LOCAL ROLE app_user" -c "SELECT authz.login_jwt(current_setting('test.token'))"
+check "... and valid from the very moment of its nbf" "2" \
+  "RESET ROLE; BEGIN; $(at_now "'exp', now_s + 300, 'nbf', now_s"); SET LOCAL ROLE app_user;
+   SELECT authz.login_jwt(current_setting('test.token')); COMMIT;"
 
 echo "-- view as (support)"
 check "erin (Acme admin) views as carol: carol's files, read-only" "3|3|5|false" \
@@ -160,6 +188,10 @@ for call in "share('folder', 1, 'viewer', 'user', 4)" "unshare('folder', 1, 'vie
 done
 check "the audit trail has the reason" "ticket 42" \
   "RESET ROLE; SELECT reason FROM authz.audit WHERE action = 'view_as' ORDER BY id DESC LIMIT 1;"
+check "... for that transaction only: what the session does next is on record without it" "none" \
+  "BEGIN; SET LOCAL authz.user_id = 5; SELECT authz.view_as('3', 'ticket 45'); COMMIT;
+   SET authz.user_id = 1; SELECT authz.create_api_key('after the ticket', 'read');
+   RESET ROLE; SELECT coalesce(reason, 'none') FROM authz.audit WHERE action = 'create_api_key' ORDER BY id DESC LIMIT 1;"
 expect_code "carol cannot view as erin" "42501: you cannot view as user 5" -c "SET authz.user_id = 3" -c "SELECT authz.view_as('5', 'curious')"
 expect_code "a reason is required" "22023: say why (the reason is kept in the audit trail)" -c "SET authz.user_id = 5" -c "SELECT authz.view_as('3', '')"
 expect_code "one view-as at a time" "42501: already viewing as someone" -c "BEGIN" -c "SET LOCAL authz.user_id = 5" \
@@ -175,6 +207,26 @@ expect_code "the app role cannot sync" "42501: permission denied for function sy
 expect_code "only a relation from one table of members syncs" \
   "P0001: folder.viewer has no single table of members to sync (it needs one source: table(group -> user), without where)" \
   -c "RESET ROLE" -c "SELECT * FROM authz.sync_members('folder', '1', 'viewer', ARRAY['4'])"
+
+echo "-- a group keyed by two columns, in a policy without impersonate (tests/composite.authz)"
+CX="${DB}_cx"
+dropdb --if-exists "$CX" 2>/dev/null; createdb "$CX" || exit 1
+CXQ() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$CX" "$@" 2>&1; }
+python3 compile_policy.py tests/composite.authz > /tmp/authz_identity_cx.sql || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$CX" -f tests/composite_schema.sql >/dev/null &&
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$CX" -f /tmp/authz_identity_cx.sql >/dev/null || exit 1
+CXQ -c "INSERT INTO cx.users VALUES (1), (2), (3)" -c "INSERT INTO cx.orgs VALUES (1)" \
+    -c "INSERT INTO cx.teams (org_id, slug) VALUES (1, 'red team'), (1, 'blue')" \
+    -c "INSERT INTO cx.team_members VALUES (1, 'red team', 1), (1, 'blue', 2)" >/dev/null
+members="SELECT string_agg(team_slug || ' ' || user_id, ', ' ORDER BY team_slug, user_id) FROM cx.team_members"
+got=$(CXQ -c "SELECT added || '|' || removed FROM authz.sync_members('team', '(1,\"red team\")', 'member', ARRAY['2', '3'])" -c "$members" | paste -sd' ')
+want="2|1 blue 2, red team 2, red team 3"
+[ "$got" = "$want" ] && echo "ok    sync a team keyed by (org_id, slug): its members are the list, the other team's are as they were" ||
+  { echo "FAIL  sync a team keyed by two columns: expected '$want', got '$got'"; fails=$((fails + 1)); }
+got=$(CXQ -c "SET ROLE app_user" -c "SET authz.user_id = 1" -c "SELECT authz.view_as('2', 'ticket 46')" | grep '^ERROR:')
+[ "$got" = "ERROR:  you cannot view as user 2" ] && echo "ok    the user type has no impersonate: a user may not view as another" ||
+  { echo "FAIL  view as, without impersonate: $got"; fails=$((fails + 1)); }
+dropdb "$CX"; rm -f /tmp/authz_identity_cx.sql
 
 dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "identity: all passed"; else echo "identity: $fails failed"; exit 1; fi

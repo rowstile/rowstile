@@ -287,6 +287,9 @@ SELECT test.ok('Design renumbered 4 -> 44: alice still edits it and its file',
 SET authz.user_id = 4;
 SELECT test.ok('... and dave''s share on the old id is gone', NOT authz.can('folder', 44, 'view'));
 RESET ROLE;
+SELECT test.ok('... while the share to user 4 on offer-letter.pdf stays: the folder that was 4 is not him',
+  EXISTS (SELECT 1 FROM authz.shares WHERE object_type = 'file' AND object_id = '13' AND subject_type = 'user'
+          AND subject_id = '4'));
 SELECT test.ok('... and the inheritance tables still match a rebuild', authz.verify());
 UPDATE app.folders SET id = 4 WHERE id = 44;
 

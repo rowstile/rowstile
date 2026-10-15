@@ -29,6 +29,9 @@ case "$out" in *"could still read masked columns of mt.docs"*) ok "a mask PUBLIC
   *) bad "apply with PUBLIC access" "$out";; esac
 PSQL -c "REVOKE SELECT ON mt.docs FROM PUBLIC" >/dev/null
 out=$(apply /tmp/authz_masks.sql); [ -z "$out" ] && ok "... and applies once that is revoked" || bad "apply" "$out"
+got=$(PSQL -c "SELECT string_agg(attname, ',' ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'mt.docs_visible'::regclass")
+[ "$got" = "id,container_type,container_id,author_id,body" ] && ok "the masked view has the table's columns, in their order, and no others" ||
+  bad "the masked view's columns" "$got"
 [ "$(PSQL -c "SELECT has_column_privilege('app_user', 'mt.docs', 'body', 'SELECT')")" = "f" ] &&
   ok "the app role cannot read the masked column from the table" || bad "column privilege"
 

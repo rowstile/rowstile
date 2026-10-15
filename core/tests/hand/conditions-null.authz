@@ -1,0 +1,34 @@
+-- answer: conditions-null
+-- A condition that is NULL holds nothing: a user whose name is unknown fails the type's where, so is nobody, even
+-- for their own folder; a share whose `shared if` is NULL (a user who reports to nobody) is refused.
+app role app_user
+
+type user = app.users where {name <> 'banned'}
+type folder = app.folders
+  owner  : user = owner_id
+  viewer : user shared if {(select x.manager_id from app.users x where x.id::text = this.subject_id) > 0}
+  can share = owner
+  can view  = owner or viewer
+
+rules app.folders
+  select : view
+
+test "a type's where that is NULL: nobody"
+  given ann = {INSERT INTO app.users (id, name) VALUES (1, 'ann') RETURNING id}
+  given eve = {INSERT INTO app.users (id) VALUES (5) RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given g   = {INSERT INTO app.folders (owner_id) VALUES ($eve) RETURNING id}
+  user $ann can view folder $f
+  user $eve cannot view folder $g
+  as user $eve sees 0 {SELECT FROM app.folders}
+  as user $eve sees 0 {SELECT authz.uid() WHERE authz.uid() IS NOT NULL}
+
+test "a shared if that is NULL: refused"
+  given ann = {INSERT INTO app.users (id, name) VALUES (1, 'ann') RETURNING id}
+  given bo  = {INSERT INTO app.users (id, name, manager_id) VALUES (2, 'bo', 1) RETURNING id}
+  given cy  = {INSERT INTO app.users (id, name) VALUES (3, 'cy') RETURNING id}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'user', $bo)}
+  as user $ann refused {SELECT authz.share('folder', $f, 'viewer', 'user', $cy)}
+  user $bo can view folder $f
+  user $cy cannot view folder $f
