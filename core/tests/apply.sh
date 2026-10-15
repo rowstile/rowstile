@@ -93,6 +93,18 @@ PSQL -c "DROP VIEW app.old_view" >/dev/null
 run apply "$T/docs.authz" --force
 [ "$out" = "$T/docs.authz: applied" ] && [ "$(PSQL -c "SELECT to_regprocedure('authz.can(text)') IS NULL")" = t ] &&
   ok "... and once nothing uses it, applying drops it" || bad "apply after dropping the view" "$out"
+# what an older version made under the names this one's functions have, with other arguments: applying drops each
+# (authz.uid() it keeps, and refuses another type of, AZ606; ctx and link_hashes are the base's)
+PSQL -c "DO \$o\$ DECLARE f name; BEGIN
+  FOR f IN SELECT DISTINCT proname FROM pg_proc WHERE pronamespace = 'authz'::regnamespace AND proname NOT IN ('ctx', 'link_hashes', 'uid') LOOP
+    EXECUTE format('CREATE FUNCTION authz.%I(p_older date) RETURNS int LANGUAGE sql AS ''SELECT 1''', f);
+  END LOOP; END \$o\$" >/dev/null
+older=$(PSQL -c "SELECT count(*) FROM pg_proc WHERE pronamespace = 'authz'::regnamespace AND 'date'::regtype = ANY (proargtypes)")
+run apply "$T/docs.authz" --force
+left=$(PSQL -c "SELECT coalesce(string_agg(oid::regprocedure::text, ', ' ORDER BY oid::regprocedure::text), '') FROM pg_proc WHERE pronamespace = 'authz'::regnamespace AND 'date'::regtype = ANY (proargtypes)")
+[ "$out" = "$T/docs.authz: applied" ] && [ "$older" -gt 40 ] && [ -z "$left" ] &&
+  ok "the $older functions an older version made under this one's names, with other arguments: applying drops each" ||
+  bad "older signatures of the generated functions" "$out; left: $left"
 PSQL -c "DROP VIEW app.my_files" >/dev/null
 PSQL -c "UPDATE authz.policy_versions SET version = '0.0.1' WHERE id = (SELECT max(id) FROM authz.policy_versions)" >/dev/null
 run apply "$T/docs.authz"; [ "$out" = "$T/docs.authz: applied" ] && ok "... and so is a policy another version of rowstile applied" || bad "apply after upgrade" "$out"
@@ -138,6 +150,21 @@ case "$out" in *"app.files has no rules any more, and row-level security is stil
   [ "$(PSQL -c "SELECT relrowsecurity FROM pg_class WHERE oid = 'app.files'::regclass")" = t ] &&
     ok "re-applying warns of a table that lost its rules, whose row-level security stays on" || bad "row-level security after the rules went";;
   *) bad "a table that lost its rules" "$out";; esac
+# the same, where an older version made the table's policies without the comment that marks them (one reading
+# nothing of rowstile's, which no schema's CASCADE takes along): they are known by their names, dropped, and the
+# warning given all the same
+run apply "$T/docs.authz" >/dev/null
+PSQL -c "DO \$u\$ DECLARE p name; BEGIN
+  FOR p IN SELECT polname FROM pg_policy WHERE polrelid = 'app.files'::regclass LOOP
+    EXECUTE format('COMMENT ON POLICY %I ON app.files IS NULL', p);
+  END LOOP; END \$u\$" -c "DROP POLICY authz_delete ON app.files" \
+     -c "CREATE POLICY authz_delete ON app.files FOR DELETE TO app_user USING (owner_id = 0)" >/dev/null
+unmarked=$(PSQL -c "SELECT count(*) FROM pg_policy p WHERE polrelid = 'app.files'::regclass AND obj_description(p.oid, 'pg_policy') IS NULL")
+run apply "$T/nofiles.authz"
+case "$out" in *"app.files has no rules any more, and row-level security is still on, so the app role sees none of its rows"*"$T/nofiles.authz: applied")
+  [ "$unmarked" -gt 0 ] && [ "$(PSQL -c "SELECT count(*) FROM pg_policy WHERE polrelid = 'app.files'::regclass")" = 0 ] &&
+    ok "... also when an older version made its policies unmarked: they are dropped by their names" || bad "unmarked policies left on app.files" "$unmarked unmarked before";;
+  *) bad "a table that lost its unmarked rules" "$out";; esac
 # a policy for another app role: the role it named before keeps no row and none of rowstile's functions
 psql -X -q -d postgres -c "DROP ROLE IF EXISTS authz_apply_web" -c "CREATE ROLE authz_apply_web" >/dev/null 2>&1
 sed 's/^app role app_user$/app role authz_apply_web/' "$T/docs.authz" > "$T/web.authz"
@@ -319,6 +346,8 @@ case "$out" in *"app.files was governed by the removed policy, and row-level sec
 [ "$(PSQL -c "SELECT count(*) FROM pg_event_trigger WHERE evtname LIKE 'authz%'")" = 0 ] && ok "its event triggers are gone" || bad "event triggers left"
 [ "$(PSQL -c "SELECT string_agg(proname, ',' ORDER BY proname) FROM pg_proc WHERE pronamespace = 'authz'::regnamespace")" = "ctx,link_hashes" ] &&
   ok "only the base functions are left in authz" || bad "functions left" "$(PSQL -c "SELECT string_agg(proname, ',') FROM pg_proc WHERE pronamespace = 'authz'::regnamespace")"
+idx=$(PSQL -c "SELECT string_agg(indexrelid::regclass::text, ' ' ORDER BY indexrelid::regclass::text) FROM pg_index WHERE indrelid = 'authz.shares'::regclass")
+[ "$idx" = "authz.shares_by_subject authz.shares_pkey" ] && ok "the indexes it made on authz.shares are gone, the base's stay" || bad "indexes left on authz.shares" "$idx"
 [ "$(PSQL -c "SELECT count(*) FROM authz.shares")" = "$nshares" ] && ok "the $nshares shares are kept" || bad "shares lost"
 run test; case "$out" in *"no policy is applied"*) ok "nothing to test once removed";; *) bad "test after remove" "$out";; esac
 out=$(CLI apply example/docs.authz 2>&1 && PSQL -c "SELECT authz.verify()" && CLI remove --yes 2>/dev/null)
@@ -351,10 +380,14 @@ sed 's/  mask body : edit/  mask body : view/' tests/multi.authz > "$T/mask.auth
 run apply "$T/mask.authz"
 case "$out" in *": applied") [ "$(PSQL -c "SELECT count(*) FROM pg_views WHERE schemaname = 'mt' AND viewname = 'my_docs'")" = 1 ] &&
   ok "... also when the mask changes" || bad "the app's view after a mask change";; *) bad "a mask change under the app's view" "$out";; esac
-PSQL -c "ALTER TABLE mt.docs ADD COLUMN note text" >/dev/null
+PSQL -c "ALTER TABLE mt.docs ADD COLUMN note text COLLATE \"C\"" >/dev/null
 run apply "$T/mask.authz" --force
 case "$out" in *": applied") [ "$(PSQL -c "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'mt' AND table_name = 'docs_visible' AND column_name = 'note'")" = 1 ] &&
   ok "... and when the table gets a column (the view gets it too)" || bad "new column in the masked view";; *) bad "a new column under the app's view" "$out";; esac
+# emptied in place, the view keeps each column's collation (note's is C, not its type's)
+run apply "$T/mask.authz" --force
+case "$out" in *": applied") [ "$(PSQL -c "SELECT collation_name FROM information_schema.columns WHERE table_schema = 'mt' AND table_name = 'docs_visible' AND column_name = 'note'")" = C ] &&
+  ok "... and again: a column with a collation of its own is emptied in place with it" || bad "the collated column after applying again";; *) bad "applying again with a collated column under the app's view" "$out";; esac
 PSQL -c "ALTER TABLE mt.docs RENAME COLUMN note TO remark" >/dev/null
 run apply "$T/mask.authz" --force
 case "$out" in *"the masked view mt.docs_visible can't be replaced in place: the columns of mt.docs changed"*"[AZ617]"*"mt.my_docs"*)
@@ -370,6 +403,14 @@ case "$out" in *"no longer makes a masked view that something in the database is
 PSQL -c "DROP VIEW mt.my_docs" -c "ALTER TABLE mt.docs DROP COLUMN note CASCADE" >/dev/null 2>&1
 run apply tests/multi.authz --force
 case "$out" in *": applied") ok "... and once the app's view is gone, a dropped column is no trouble";; *) bad "apply after the app's view is gone" "$out";; esac
+# removing doesn't take the app's view along with the masked view it is built on
+PSQL -c "CREATE VIEW mt.my_docs AS SELECT id FROM mt.docs_visible" >/dev/null
+run remove --yes
+case "$out" in *"cannot drop view mt.docs_visible because other objects depend on it"*"view mt.my_docs depends on view mt.docs_visible"*)
+  [ $rc -eq 1 ] && [ "$(PSQL -c "SELECT to_regclass('mt.my_docs') IS NOT NULL, to_regclass('mt.docs_visible') IS NOT NULL, to_regnamespace('authz_int') IS NOT NULL")" = "t|t|t" ] &&
+  ok "remove while the app's view is on the masked view: refused, naming it, nothing removed" || bad "remove under the app's view: exit $rc, or what is left";;
+  *) bad "remove under the app's view" "$out";; esac
+PSQL -c "DROP VIEW mt.my_docs" >/dev/null
 CLI remove --yes >/dev/null 2>&1
 [ "$(PSQL -c "SELECT has_table_privilege('app_user', 'mt.docs', 'SELECT')")" = t ] && ok "remove gives back the table-wide SELECT the mask replaced" || bad "mask privileges after remove"
 cols="FROM pg_attribute WHERE attrelid = 'mt.docs'::regclass AND attnum > 0 AND NOT attisdropped AND attacl IS NOT NULL"
@@ -387,6 +428,12 @@ for cond in "confidential or nme = 'x'|column \"nme\" does not exist" "confident
   case "$out" in "policy line 63: the condition {confidential or "*"} doesn't run: ${cond#*|} [AZ613]"*)
     ok "a condition that doesn't run names its line: {${cond%%|*}}";; *) bad "bad condition {${cond%%|*}}" "$out";; esac
 done
+# Postgres points at the condition's first letter (this. is r. there), and the statement holds another condition:
+# the one pointed at (tried alone on its table, it would fail another way: column files.nme)
+sed "s/not {confidential}/not {confidential} and {this.nme}/" example/docs.authz > "$T/bad_cond.authz"
+run apply "$T/bad_cond.authz"
+case "$out" in "policy line 63: the condition {this.nme} doesn't run: column r.nme does not exist [AZ613]"*)
+  ok "... also where the error points at its first letter, beside another condition";; *) bad "a condition pointed at from its start" "$out";; esac
 # a condition with authz.uid() is written another way in the compiled SQL: it is still the one named, not another one
 sed "s/: folder.edit and owner$/: folder.edit and {ownr_id = authz.uid()}/" example/docs.authz > "$T/bad_cond.authz"
 grep -q "ownr_id" "$T/bad_cond.authz" || bad "the example has no files insert rule (folder.edit and owner) to break"
@@ -645,6 +692,37 @@ out=$(python3 compile_policy.py tests/multi.authz | psql -X -q -v ON_ERROR_STOP=
 case "$out" in *"authz.uid() returns another type than this policy's user ids (uuid); drop it first"*"[AZ606]"*)
   ok "applying is refused, and says what to drop first";; *) bad "user ids of another type" "$out";; esac
 dropdb "$UDB"
+
+echo "-- a database an early version made"
+# before 0.1.0: the shares were authz.grants, with integer ids, and the history named the version extension_version
+EDB="${DB}_early"
+fresh "$EDB"
+quiet -d "$EDB" -f example/app_schema.sql >/dev/null || exit 1
+quiet -d "$EDB" >/dev/null <<'SQL' || exit 1
+CREATE SCHEMA authz;
+CREATE TABLE authz.grants (
+  object_type text NOT NULL, object_id bigint NOT NULL, relation text NOT NULL, subject_type text NOT NULL,
+  subject_id bigint NOT NULL, subject_relation text NOT NULL DEFAULT '', expires_at timestamptz, created_by bigint,
+  PRIMARY KEY (object_type, object_id, relation, subject_type, subject_id, subject_relation));
+CREATE INDEX grants_by_subject ON authz.grants (subject_type, subject_id, subject_relation, object_type, relation);
+INSERT INTO authz.grants VALUES ('file', 11, 'viewer', 'user', 3, '', NULL, 1);
+CREATE TABLE authz.policy_versions (
+  id bigserial PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), by_role text NOT NULL DEFAULT current_user,
+  action text NOT NULL CHECK (action IN ('apply', 'remove')), policy text, files jsonb NOT NULL DEFAULT '{}',
+  extension_version text NOT NULL);
+INSERT INTO authz.policy_versions (action, policy, extension_version) VALUES ('apply', 'an early policy', '0.0.9');
+SQL
+# (as plain SQL, the compiled policy as the first migration holds it: the command reads the history's version first)
+out=$(python3 compile_policy.py example/docs.authz | quiet -d "$EDB" 2>&1); rc=$?
+E() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$EDB" "$@"; }
+[ $rc -eq 0 ] && [ "$(E -c "SELECT to_regclass('authz.grants') IS NULL, (SELECT string_agg(format('%s %s %s %s %s', object_type, object_id, relation, subject_id, created_by), '; ') FROM authz.shares)")" = "t|file 11 viewer 3 1" ] &&
+  [ "$(E -c "SELECT string_agg(attname || ' ' || format_type(atttypid, atttypmod), ', ' ORDER BY attname) FROM pg_attribute WHERE attrelid = 'authz.shares'::regclass AND attname IN ('object_id', 'subject_id', 'created_by')")" = "created_by text, object_id text, subject_id text" ] &&
+  [ "$(E -c "SELECT string_agg(indexrelid::regclass::text, ' ') FROM pg_index WHERE indrelid = 'authz.shares'::regclass AND NOT indisprimary AND indexrelid::regclass::text NOT LIKE 'authz.shares_obj%'")" = "authz.shares_by_subject" ] &&
+  ok "the compiled policy turns authz.grants into authz.shares, its rows kept, its ids text" || bad "the early shares" "$out"
+[ "$(E -c "SELECT string_agg(policy || ' ' || version, '; ' ORDER BY id) FROM authz.policy_versions")" = "an early policy 0.0.9" ] &&
+  ok "... and the history's extension_version is its version column, the early row kept" || bad "the early history" "$(E -c "SELECT * FROM authz.policy_versions ORDER BY id" 2>&1)"
+[ "$(E -c "SET authz.user_id = 3" -c "SELECT authz.can('file', 11, 'view')")" = t ] && ok "... and the early share is in force (user 3 views file 11)" || bad "the early share in force"
+dropdb "$EDB"
 
 rm -rf "$T"
 if [ $fails -eq 0 ]; then echo "apply: all passed"; else echo "apply: $fails failed"; exit 1; fi

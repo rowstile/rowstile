@@ -90,6 +90,18 @@ PSQL -c "ALTER TABLE ch.docs_older INHERIT ch.docs"
 PSQL -c "DROP TRIGGER \"authz_update owner_id\" ON ch.docs_old"
 run apply; is applied && ok "a row trigger dropped from a table that inherits: apply applies" || bad "apply after a dropped copy" "$out"
 same "... and it is back" "$(triggers ch.docs_old)" "$rowtriggers"
+# the other way round: dropped from the table, while the tables that inherit keep their copies (the same name)
+PSQL -c "DROP TRIGGER \"authz_update owner_id\" ON ch.docs"
+run apply; is applied && ok "a row trigger dropped from the table, its copies left below: apply applies" || bad "apply after a dropped trigger above its copies" "$out"
+same "... and it is back there" "$(PSQL -c "SELECT count(*) FROM pg_trigger WHERE tgrelid = 'ch.docs'::regclass AND tgname = 'authz_update owner_id'")" 1
+# what lacks a copy is read from the catalog, whatever the search path of the session asking: a table of the
+# catalog's name in a schema before pg_catalog changes nothing
+PSQL -c "CREATE TABLE ch.docs_older_still () INHERITS (ch.docs)"
+same "a table made since lacks its copies, whatever the search path says first" \
+  "$(PSQL -c "CREATE SCHEMA shadow" -c "CREATE TABLE shadow.pg_inherits (LIKE pg_catalog.pg_inherits)" -c "SET client_min_messages = warning" -c "SET search_path = shadow, pg_catalog" \
+     -c "SELECT string_agg(child::text || ' ' || name, ', ' ORDER BY name) FROM authz_int.child_triggers()" -c "RESET search_path" -c "DROP SCHEMA shadow CASCADE")" \
+  "ch.docs_older_still authz_doc_col_audit_row, ch.docs_older_still authz_doc_forget_id, ch.docs_older_still authz_update owner_id"
+PSQL -c "DROP TABLE ch.docs_older_still"
 
 echo "-- a partitioned table: a row that stays in its partition, and one an update puts in another"
 as 1 -c "SELECT authz.share('note', 1, 'viewer', 'user', 2)" -c "SELECT authz.share('note', 3, 'viewer', 'user', 2)" \

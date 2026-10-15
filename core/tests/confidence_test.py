@@ -338,6 +338,16 @@ def main() -> None:
         re.fullmatch(r"\d+ people and principals: a snapshot is for small review data \(at most 3\)", refused),
         refused,
     )
+    many = int(refused.split(" ", 1)[0]) if refused[:1].isdigit() else 0
+    try:
+        at_limit = work(lambda d: database.snapshot(d, limit=many))
+    except database.Error as e:
+        at_limit = [str(e)]
+    check(
+        "exactly as many people as a snapshot is for: made, the same lines",
+        many > 3 and at_limit == lines,
+        f"{many}: {at_limit[:2]}",
+    )
     with tempfile.TemporaryDirectory() as tmp:
         snap = os.path.join(tmp, "access.snapshot")
         rc, out = cli(db, "snapshot", "--out", snap)
