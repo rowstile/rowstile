@@ -80,6 +80,9 @@ Each release upgrades from the one before it. How releases are numbered and made
   itself. `this.` now names the condition's row wherever it is placed. Names that start with `authz__` are
   rowstile's own, and a condition that writes one is refused (AZ113). Only such conditions are written anew:
   where a policy has one, apply it again (or make the next migration) to take it.
+- `rowstile fmt` left a line that starts with `or` (or `and`, `where`, `if`, `grant`) at the start of its line,
+  after a blank line it added, when it wasn't indented. The policy reads it as the line before it continued, and
+  fmt now lays it out so: under the expression it continues, as it does an indented one.
 - Studio's "Make a test" (`/api/test`) wrote a test for a permission the type doesn't have, or for a relation,
   which `rowstile test` then refused. It now refuses them as `why` does: 400, "no permission folder.nope in the
   policy", AZ707. A type the policy doesn't have is answered the same way: 400 and AZ707, where it was 404.
