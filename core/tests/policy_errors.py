@@ -305,7 +305,7 @@ COMPILE = [
     (
         "a name with the separator generated names use",
         "type my__doc = alt.docs (doc_no)\n",
-        "names can't contain '__'",
+        "'my__doc': names with '__' are generated ones, which a policy can't use",
         10,
     ),
     (
@@ -469,6 +469,13 @@ COMPILE = [
         12,
     ),
     ("the app role named twice", "app role other_app\n", "the app role is named twice (app_user and other_app)", 10),
+    ("a scope named twice", "scope s = select\nscope s = delete\n", "scope s is defined twice", 11),
+    (
+        "a test's name with no closing quote",
+        'test "owners\n  user 1 can share doc 1\n',
+        'the test\'s name has no closing ": test "owners"',
+        10,
+    ),
     (
         "impersonate on a type other than user",
         "  can impersonate = owner\n",

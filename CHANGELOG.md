@@ -87,6 +87,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- A scope defined twice is refused (AZ109), as a type or a caveat is: the second one replaced the first.
+- A policy file that starts with a byte order mark and includes another, read from disk, found it: the include
+  on its first line was missed, and the message said to pass the file in the `files` argument.
+- `test "name` without its closing quote is refused (AZ106), where the quote was taken as part of the name.
 - `rowstile review` flagged a `where` added to a link table's relation, or one that holds for fewer rows
   (`{active}` made `{active and not banned}`), as a permission that allows more than before. It allows less, and
   is no longer flagged.
