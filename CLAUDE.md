@@ -65,7 +65,7 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
     `init`), `studio.py` and `studio/` (Studio: a local web page and its JSON API; read-only transactions unless
     `--write` or `dev`; localhost and a token; `tests/studio_test.py`) and `pgwire.py` (stdlib Postgres client,
     SCRAM, notices, URLs, `script()` for many statements)
-  - `compile_policy.py` — the compiler without a database: SQL for psql (`--check|--tests|--diff|--graph|--client`);
+  - `compile_policy.py` — the compiler without a database: SQL for psql (`--check|--tests|--diff`; argparse, `options()` typed);
     used by the tests, the editor task and the benchmark
   - `example/` — docs app: `app_schema.sql`, `docs.authz`, `docs.test.authz` (the reference's running example,
     the playground's, and what most suites set up); nothing generated is kept there

@@ -5008,6 +5008,91 @@ class TestFiles(unittest.TestCase):
                 c.check_scenarios()
 
 
+class CompilePolicy(unittest.TestCase):
+    """compile_policy.py, the suites' compiler without a database: one mode at a time, a flag it doesn't know or
+    a flag's value missing is refused (exit 2) rather than read as something else, and a file it can't read is
+    named, whichever it is."""
+
+    POLICY = TestFiles.POLICY
+
+    def setUp(self) -> None:
+        import compile_policy
+
+        self.cp = compile_policy
+
+    def run_main(self, argv: list[str]) -> tuple[int, str, str]:
+        import contextlib
+
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                rc = self.cp.main(argv)
+            except SystemExit as stop:
+                rc = stop.code if isinstance(stop.code, int) else 1
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_what_each_command_line_reads_as(self) -> None:
+        o = self.cp.Options
+        for argv, read in (
+            (["p.authz"], o("p.authz", "compile", [], None)),
+            (["--check", "/dev/stdin"], o("/dev/stdin", "check", [], None)),
+            (["p.authz", "--tests"], o("p.authz", "tests", [], None)),
+            (["p.authz", "--tests", "a.authz", "b.authz"], o("p.authz", "tests", ["a.authz", "b.authz"], None)),
+            (["p.authz", "--diff"], o("p.authz", "diff", [], None)),
+            (["p.authz", "--diff", "--users", "1,,service:7"], o("p.authz", "diff", [], ["1", "service:7"])),
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.cp.options(argv), read)
+
+    def test_a_command_line_it_cant_read_one_way_is_refused(self) -> None:
+        for argv, said in (
+            (["p.authz", "--users", "--diff"], "--users: expected one argument"),
+            (["p.authz", "--test"], "unrecognized arguments: --test"),
+            (["p.authz", "--graph"], "unrecognized arguments: --graph"),
+            (["p.authz", "--client", "ts"], "unrecognized arguments: --client ts"),
+            (["p.authz", "--diff", "--tests"], "not allowed with argument"),
+            (["p.authz", "--check", "--diff"], "not allowed with argument"),
+            (["p.authz", "--users", "1,2"], "--users only goes with --diff"),
+            (["p.authz", "q.authz"], "unrecognized arguments: q.authz"),
+            ([], "the following arguments are required: policy"),
+        ):
+            with self.subTest(argv=argv):
+                rc, out, err = self.run_main(argv)
+                self.assertEqual((rc, out), (2, ""))
+                self.assertIn(said, err)
+                self.assertIn("usage: compile_policy.py", err)
+
+    def test_check_only_reports_a_mistake(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            broken = os.path.join(d, "broken.authz")
+            with open(broken, "w", encoding="utf-8") as fh:
+                fh.write(self.POLICY.replace("owner : user", "owner : person"))
+            rc, out, err = self.run_main([broken, "--check"])
+            self.assertEqual((rc, out), (1, ""))
+            self.assertRegex(err, rf"^{re.escape(broken)}: line 4: .+\n$")
+        rc, out, err = self.run_main([os.path.join(ROOT, "example", "docs.authz"), "--check"])
+        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual(out, f"{os.path.join(ROOT, 'example', 'docs.authz')}: ok\n")
+
+    def test_a_file_it_cant_read_is_the_one_named(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            policy, bad, missing = (os.path.join(d, n) for n in ("p.authz", "bad.authz", "missing.authz"))
+            with open(policy, "w", encoding="utf-8") as fh:
+                fh.write(self.POLICY)
+            with open(bad, "wb") as fh:
+                fh.write(b'test "a"\n  \xff\n')
+            for argv, said in (
+                ([policy, "--tests", bad], f"{bad}: not UTF-8: "),
+                ([policy, "--tests", missing], f"{missing}: No such file or directory"),
+                ([bad], f"{bad}: not UTF-8: "),
+                ([missing], f"{missing}: No such file or directory"),
+            ):
+                with self.subTest(argv=argv):
+                    rc, out, err = self.run_main(argv)
+                    self.assertEqual((rc, out), (2, ""))
+                    self.assertTrue(err.startswith(said), err)
+
+
 class Readers(unittest.TestCase):
     """authzlib/connection.py's typed readers of a row: a value of another type than asked is a TypeError that says
     which value and what was wanted (a boolean is no integer)."""

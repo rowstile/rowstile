@@ -247,13 +247,6 @@ PY
   handled "$id"
 done < <(blocks json)
 
-echo "-- the compiler without a database, as tools.md's table writes it"
-printf 'app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : person = owner_id\n' > "$T/broken.authz"
-out=$(python3 compile_policy.py "$T/broken.authz" --check 2>&1); rc=$?
-good=$(python3 compile_policy.py example/docs.authz --check 2>&1); grc=$?
-[ $rc -eq 1 ] && [[ "$out" =~ ^$T/broken\.authz:\ line\ 4:\ .+$ ]] && [ $grc -eq 0 ] && [ "$good" = "example/docs.authz: ok" ] &&
-  ok "compile_policy.py, as tools.md writes it, only reports a mistake: file, line, message, exit 1" || bad "compile_policy.py --check" "$rc $out / $grc $good"
-
 echo "-- every block"
 total=$(wc -l < "$T/blocks/list")
 left=$(cut -f1 "$T/blocks/list" | grep -vxF -f "$T/handled")

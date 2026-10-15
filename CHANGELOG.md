@@ -14,6 +14,12 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Changed
 
+- The reference no longer shows `core/compile_policy.py`, which no install carries: previewing a change is
+  `rowstile diff new.authz [--users 1,2]`. The script stays the suites' compiler without a database, with three
+  modes (`--check`, `--tests`, `--diff`; `rowstile graph` and `rowstile client` replace its `--graph` and
+  `--client`), and refuses a flag it doesn't know, two modes at once and `--users` without `--diff` (exit 2), where
+  it ignored them or read `--users --diff` as a preview for a user named `--diff`. A test file that isn't UTF-8 is
+  named, not the policy.
 - Access reviews are for users too: `start_review`, `review_items`, `review_decide` and `close_review` refuse a
   service signed in, "authz.start_review is for users, not services (service 7 is signed in)", AZ715. A service
   the policy let share an object could start a review of it, read and decide its items and close it, and the

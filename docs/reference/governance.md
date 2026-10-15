@@ -43,9 +43,9 @@
   someone who could unshare it; closing applies the decisions. <!-- checked: tests/governance.sh "closing the review revokes what was marked"; tests/governance.sh "dave (not decided) kept it"; tests/governance.sh "nor revoke it in a review" -->
   Reviews are for users: a service signed in is refused each call, saying so (AZ715). <!-- checked: tests/principals.sh "authz.start_review is for users: a service is told so"; tests/principals.sh "authz.review_items is for users: a service is told so"; tests/principals.sh "authz.review_decide is for users: a service is told so"; tests/principals.sh "authz.close_review is for users: a service is told so" -->
 - **Invariants** run with the policy's tests and on demand. <!-- checked: tests/governance.sh "the policy tests fail on it"; tests/governance.sh "a Globex user owning an Acme folder breaks it" -->
-- **Previewing a change**: `python3 core/compile_policy.py new.authz --diff [--users 1,2] | psql -d mydb`
+- **Previewing a change**: `rowstile diff new.authz [--users 1,2]`
   applies the new policy inside a transaction, lists every (user, object) pair that
-  gains or loses each permission, readable row and masked column, then rolls back. <!-- checked: tests/governance.sh "without links, erin would lose joint-plan.md"; tests/governance.sh "and could no longer read its row"; tests/governance.sh "the preview changed nothing"; tests/masks.sh "removing the mask: a viewer gains the text" -->
+  gains or loses each permission, readable row and masked column, then rolls back. <!-- checked: tests/cli.sh "diff lists who loses what"; tests/cli.sh "diff changed nothing"; tests/governance.sh "without links, erin would lose joint-plan.md"; tests/governance.sh "and could no longer read its row"; tests/governance.sh "the preview changed nothing"; tests/masks.sh "removing the mask: a viewer gains the text" -->
   It asks as
   every user, as every service or other principal (named `service:7`, also in `--users`) and as nobody. <!-- checked: tests/principals.sh "the preview lists what a service gains"; tests/governance.sh "limits the preview" -->
 - **Decision log**: `SET authz_debug.log_decisions = on` writes every `authz.can`
