@@ -225,9 +225,8 @@ jobs:
           done
       # the client `rowstile client ts` writes, under tsc --strict: correct calls pass, wrong names don't
       - run: python3 core/tests/client_types.py
-  # The editors: the Tree-sitter grammar (generated, its corpus, every policy in the repository parses), the third
-  # evaluator that reads policies through it, against the reference evaluator, and the Zed extension's build
-  # (editor/test.sh)
+  # The editors: the Tree-sitter grammar (generated, its corpus, every policy in the repository parses, read as the
+  # parser reads it) and the Zed extension's build (editor/test.sh)
   editor:
     needs: unit
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
