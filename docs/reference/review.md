@@ -35,6 +35,7 @@ says what a change does, in plain words, for the pull request:
   changed, because it is new on a table that had rules, through a relation that changed (another column, a
   `where` taken off a link table), or because a type's `where` changed; a mask, a column rule or an invariant
   removed; a scope changed. <!-- checked: tests/unit_test.py "test_risk_flags"; tests/unit_test.py "test_each_change_the_review_warns_of"; tests/unit_test.py "test_a_widening_is_flagged_however_it_is_made"; tests/review.sh "Risk: the permission widened, with an example" -->
+  A `where` added to a link table, or one that holds for fewer of its rows, allows less, and isn't flagged. <!-- checked: tests/unit_test.py "test_a_where_on_a_link_table_narrows_or_widens_as_it_reads" -->
   Each names its policy line; `--annotations` writes them for GitHub, on the file
   the line is in. <!-- checked: tests/review.sh "on the policy line, its path from the repository's top folder"; tests/unit_test.py "test_a_flag_in_an_included_file_is_annotated_there" -->
   "Nothing flagged" means none of these was found in the worlds tried, not a proof.

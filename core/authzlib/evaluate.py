@@ -544,29 +544,44 @@ class World:
                 if node is not None:
                     for col, how in columns_of(node).items():
                         hows.setdefault((tname, col), []).extend(how)
-        out: dict[tuple[str, str], list[Scalar]] = {}
-        for key, used in sorted(hows.items()):
-            values: list[Scalar] = []
-            consts = [v for how, v in used if how not in ("bool", "uid", "null") and v is not None]
-            if any(how == "bool" for how, _ in used) or any(isinstance(v, bool) for v in consts):
-                values += [True, False]
-            # (a number is an int or a Decimal; Decimal's 28 digits hold one of 15 and 2 more, exactly)
-            for how, v in used:
-                if how in ("<", "<=", ">", ">=") and isinstance(v, (int, Decimal)) and not isinstance(v, bool):
-                    values += [v - 1, v, v + 1]
-                elif how not in ("bool", "uid", "null") and v is not None:
-                    values.append(v)
-            if any(isinstance(v, str) for v in consts):
-                values.append("(another)")
-            numbers = [v for v in consts if isinstance(v, (int, Decimal)) and not isinstance(v, bool)]
-            if numbers:
-                values.append(max(numbers) + 2)
-            if any(how == "uid" for how, _ in used):
-                values += self.ids("user")
-            if not values:
-                values.append("x")  # only tested for NULL
-            out[key] = [*dict.fromkeys(values), None]
-        return out
+        return {key: self.values_of(used) for key, used in sorted(hows.items())}
+
+    def values_of(self, used: list[tuple[str, Scalar]]) -> list[Scalar]:
+        """The values a column takes, from how the simple conditions read it (columns_of's hows)."""
+        values: list[Scalar] = []
+        consts = [v for how, v in used if how not in ("bool", "uid", "null") and v is not None]
+        if any(how == "bool" for how, _ in used) or any(isinstance(v, bool) for v in consts):
+            values += [True, False]
+        # (a number is an int or a Decimal; Decimal's 28 digits hold one of 15 and 2 more, exactly)
+        for how, v in used:
+            if how in ("<", "<=", ">", ">=") and isinstance(v, (int, Decimal)) and not isinstance(v, bool):
+                values += [v - 1, v, v + 1]
+            elif how not in ("bool", "uid", "null") and v is not None:
+                values.append(v)
+        if any(isinstance(v, str) for v in consts):
+            values.append("(another)")
+        numbers = [v for v in consts if isinstance(v, (int, Decimal)) and not isinstance(v, bool)]
+        if numbers:
+            values.append(max(numbers) + 2)
+        if any(how == "uid" for how, _ in used):
+            values += self.ids("user")
+        if not values:
+            values.append("x")  # only tested for NULL
+        return [*dict.fromkeys(values), None]
+
+    def link_domains(self, pol: Policy, table: str) -> dict[str, list[Scalar]]:
+        """{column: the values it takes} for a link table's columns its simple wheres read, in any of the world's
+        policies (as domains, for a type's columns)."""
+        hows: dict[str, list[tuple[str, Scalar]]] = {}
+        for p in [*self.pols, pol]:
+            for t in p.types.values():
+                for r in t.relations.values():
+                    for src in r.sources:
+                        node = simple(src.where) if src.kind == "table" and src.table == table and src.where else None
+                        if node is not None:
+                            for col, how in columns_of(node).items():
+                                hows.setdefault(col, []).extend(how)
+        return {col: self.values_of(used) for col, used in sorted(hows.items())}
 
     def columns(self, pol: Policy) -> dict[str, dict[str, dict[str, Scalar]]]:
         """{type: {id: {column: value}}} for the columns the simple conditions read: drawn from the values the
@@ -745,6 +760,24 @@ class World:
         if src.kind == "column":
             return self.pick(key, lambda rng: [(o, rng.choice(subject_ids)) for o in ids if rng.random() < self.fill()])
         rate = self.LINK if self.density is None else self.density
+        if src.kind == "table" and src.where:
+            # the table's rows are the same whatever its where says, and the where holds for some of them: a policy
+            # that adds a where to a link table reads fewer of the same rows, never other ones
+            bare = ("pairs", *source_key(t, r.name, dataclasses.replace(src, where=None), st, sr))
+            rows = self.pick(bare, lambda rng: [(o, x) for o in ids for x in subject_ids if rng.random() < rate])
+            if src.where in self.conds:
+                return list(rows) if self.conds[src.where] else []
+            node = simple(src.where)
+            if node is None or uses_uid(node):
+                return self.pick((*key, "holds"), lambda rng: [row for row in rows if rng.random() < 0.5])
+            # a simple where reads the row's columns, drawn once a row for every policy: `{active}` and
+            # `{active and not banned}` read the same values, so the second never holds where the first doesn't
+            domains = self.link_domains(pol, src.table or "")
+            values = {
+                col: self.pick((*bare, col), lambda rng, vs=domains[col]: {row: rng.choice(vs) for row in rows})
+                for col in columns_of(node)
+            }
+            return [row for row in rows if truth(node, {c: v.get(row) for c, v in values.items()}, None) is True]
         return self.pick(key, lambda rng: [(o, x) for o in ids for x in subject_ids if rng.random() < rate])
 
     def principals(self, pols: Iterable[Policy]) -> list[str]:
@@ -1383,9 +1416,16 @@ class Listed(World):
                 for k, src in enumerate(r.sources):
                     for st, sr in src.subjects:
                         key = source_key(t, r.name, src, st, sr)
-                        out.pairs[(t.name, r.name, k, st, sr or "")] = [
-                            (o, s) for x, o, s in self.links_held if x == key
-                        ]
+                        # a link table's rows read with no where: also each row its wheres hold for (a where takes
+                        # rows away, never adds one)
+                        bare = src.kind == "table" and not src.where
+                        out.pairs[(t.name, r.name, k, st, sr or "")] = list(
+                            dict.fromkeys(
+                                (o, s)
+                                for x, o, s in self.links_held
+                                if x == key or (bare and x[:5] == key[:5] and x[6:] == key[6:])
+                            )
+                        )
             if t.roles:
                 subjects, perms, _ = t.roles
                 for p in perms:
