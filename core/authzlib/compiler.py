@@ -21,7 +21,6 @@ from .parse import (
     Or,
     Perm,
     Policy,
-    PolicyError,
     Ref,
     Relation,
     Rule,
@@ -655,12 +654,7 @@ class Core:
             if inv.type not in self.types:
                 fail(inv.loc, f"unknown type '{inv.type}'", "AZ201")
         self.check_unused_relations()
-        try:
-            self.check_runtime_permissions()
-        except PolicyError as e:
-            if self.pol.previous is None:
-                raise
-            self.pol.previous.append(f"{e} (the language before this one didn't check it)")
+        self.check_runtime_permissions()
         self.check_this()
 
     def check_this(self) -> None:

@@ -21,7 +21,6 @@ RESERVED = (
     set(COMMANDS)
     | set(parse.RESERVED)
     | set(parse.KEYWORDS)
-    | set(parse.RETIRED)
     | {
         "anyone",
         "link",

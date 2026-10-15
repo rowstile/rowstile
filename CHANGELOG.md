@@ -11,6 +11,13 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 - Apply the policy again (or the next migration) to take the faster lookups below. A closure table built through a
   `(type, id)` pair has a new definition: applying builds it again, once.
+- `rowstile review` no longer reads a base branch's policy written in the language before this one (`role`,
+  `everyone`, `roles : ... grant`, `and` next to `or` without parentheses): such a base is a base with a mistake,
+  and the review reads the head as new. Its `--json` no longer has `base_previous`. Upgrade the policy and merge
+  that before upgrading the review's version, or read the first review of the upgrade as new.
+- The language no longer names the forms it replaced in its messages: `role app_user` is a line it doesn't read
+  (AZ101), `everyone` an ordinary name (write `anyone`), and `roles : ... grant` a list of subjects it refuses
+  (AZ103). `everyone` and `grant` may be names now.
 
 ### Changed
 

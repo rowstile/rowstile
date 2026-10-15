@@ -190,14 +190,8 @@ out=$(CLI fmt 2>&1)
 lines=$(wc -l < "$P/db/policy.authz"); crlf=$(grep -c $'\r$' "$P/db/policy.authz")
 case "$out" in *"formatted db/policy.authz"*) [ "$lines" = "$crlf" ] && ok "... and fmt writes it back with CRLF" || bad "fmt on CRLF: endings" "$crlf of $lines";; *) bad "fmt on CRLF" "$out";; esac
 
-echo "-- a base in the language before this one (a pull request that upgrades rowstile rewrites the policy)"
+echo "-- a base whose policy has a mistake"
 G checkout -q -- db && G clean -q -fd db
-{ G checkout -q -b before && sed -i 's/^app role app_user/role app_user/' "$P/db/policy.authz" && G commit -q -am before &&
-  G checkout -q main; } || bad "setting up the branch before"
-out=$(CLI review --base before 2>&1); rc=$?
-case "$out" in "Base     The policy at the base is written in the language before"*"\`role app_user\`, now \`app role app_user\`"*"Meaning  unchanged"*)
-  [ $rc -eq 0 ] && ok "a base in the language before: read as that version meant it, and said" || bad "base before: exit" "$rc";;
-  *) bad "a base in the language before" "$out";; esac
 { G checkout -q -b broken && sed -i 's/can edit  = share or editor or/can edit  = share or edtor or/' "$P/db/policy.authz" &&
   G commit -q -am broken && G checkout -q main; } || bad "setting up the branch broken"
 # the pull request that fixes the mistake is reviewed: as one that adds the policy, the mistake said first

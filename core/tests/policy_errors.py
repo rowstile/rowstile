@@ -74,13 +74,6 @@ COMPILE = [
         10,
     ),
     (
-        "custom roles written the old way",
-        "  roles : user, grp#member grant view, share from parent\n",
-        "custom roles are written where they give a permission now: `roles : user, grp#member from parent`, and "
-        "`roles` in each of view, share",
-        10,
-    ),
-    (
         "roles under a not",
         "  roles : user\n  can view = owner and not roles\n",
         "doc.view: `not roles` would take a permission away",
@@ -245,24 +238,12 @@ COMPILE = [
         13,
     ),
     (
-        "a relation named like a word the language had",
-        "  everyone : user = owner_id\n  can view = everyone\n",
-        "'everyone' is a word of the language",
-        10,
-    ),
-    (
         "a relation named like a word of the language",
         "  nobody : user = owner_id\n  can view = nobody\n",
         "'nobody' is a word of the language",
         10,
     ),
     ("a permission named anyone", "  can anyone = owner\n", "'anyone' is a word of the language", 10),
-    (
-        "everyone in an expression",
-        "  can view = owner or everyone\n",
-        "write `anyone` instead of `everyone` (signed in or not",
-        10,
-    ),
     (
         "and next to or",
         "  can view = owner or parent.owner and {not locked}\n",
@@ -689,7 +670,6 @@ COMPILE = [
 # whole policies, without BASE: (what, policy, expected piece of the message, expected line)
 WHOLE = [
     ("no app role", "type user = alt.users\n", "name the app role, the Postgres role your app connects as", 1),
-    ("the app role written the old way", "role app_user\ntype user = alt.users\n", "write `app role app_user`", 1),
     ("PUBLIC as the app role", "app role public\ntype user = alt.users\n", "not PUBLIC", 1),
 ]
 

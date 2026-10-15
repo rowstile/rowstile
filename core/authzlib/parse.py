@@ -15,14 +15,9 @@ COMMANDS = ("select", "insert", "update", "delete")
 # words that stand for a condition in permissions and rules: a user signed in, anyone signed in or not, nobody
 KEYWORDS = {"signed_in": "authz.uid() IS NOT NULL", "anyone": "true", "nobody": "false"}
 # words that join expressions or continue a line: never a name
-RESERVED = ("or", "and", "not", "if", "where", "grant")
-# words the language had, and what to write instead: never a name either
-RETIRED = {"everyone": "anyone"}
+RESERVED = ("or", "and", "not", "if", "where")
 # in a permission, where a custom role that includes it gives it: `can edit = editor or roles`
 ROLES = "roles"
-# the language before this one (parse_policy(previous=True): what a review reads its base in when this one
-# refuses it) had these words for conditions; `anyone` and `nobody` were names then
-PREVIOUS_KEYWORDS = {"signed_in": KEYWORDS["signed_in"], "everyone": "true"}
 
 
 class PolicyError(Exception):
@@ -261,8 +256,6 @@ class Policy:
     invariants: list[Invariant] = field(default_factory=list)
     views: dict[str, str] = field(default_factory=dict)  # rules table -> masked view name
     view_locs: dict[str, Loc] = field(default_factory=dict)  # rules table -> where the view was named
-    # read in the language before this one (a review's base): each of its old forms, where, and what it is now
-    previous: list[str] | None = None
 
 
 # ----------------------------------------------------------------------
@@ -350,13 +343,11 @@ def written(node: Expr, top: bool = True) -> str:
 
 class ExprParser:
     """or  <  and  <  not  <  ( ) / name / rel.perm / {sql}. Where `and` and `or` meet, parentheses say which
-    goes first: `a or b and c` is refused, `a or (b and c)` is not. With previous (a list), the language before
-    this one: `a or b and c` is `a or (b and c)` and `everyone` is `anyone`, as it read them, each noted there."""
+    goes first: `a or b and c` is refused, `a or (b and c)` is not."""
 
-    def __init__(self, text: str, loc: Loc, previous: list[str] | None = None) -> None:
+    def __init__(self, text: str, loc: Loc) -> None:
         self.toks, self.i, self.loc = tokenize(text, loc), 0, loc
         self.joined = False  # whether the last `and` read joined two items or more, outside parentheses
-        self.previous = previous
 
     def peek(self) -> str | None:
         return self.toks[self.i][0] if self.i < len(self.toks) else None
@@ -383,14 +374,12 @@ class ExprParser:
         if len(items) == 1:
             return items[0]
         node = Or("or", items)
-        if mixed and self.previous is None:
+        if mixed:
             fail(
                 self.loc,
                 f"`and` and `or` meet without parentheses, which reads two ways: write {written(node)}",
                 "AZ102",
             )
-        if mixed and self.previous is not None:
-            self.previous.append(f"{self.loc}: `and` and `or` without parentheses, now `{written(node)}`")
         return node
 
     def and_(self) -> Expr:
@@ -419,18 +408,8 @@ class ExprParser:
             return Cond("cond", self.take()[1])
         if kind == "name":
             w = self.take()[1]
-            if self.previous is not None and w in PREVIOUS_KEYWORDS:
-                if w in RETIRED:
-                    self.previous.append(f"{self.loc}: `{w}`, now `{RETIRED[w]}`")
-                return Cond("cond", PREVIOUS_KEYWORDS[w])
-            if self.previous is None and w in KEYWORDS:
+            if w in KEYWORDS:
                 return Cond("cond", KEYWORDS[w])
-            if w in RETIRED:
-                fail(
-                    self.loc,
-                    f"write `{RETIRED[w]}` instead of `{w}` (signed in or not, the word shares and tests use)",
-                    "AZ102",
-                )
             if "__" in w:
                 fail(self.loc, f"'{w}': names with '__' are generated ones, which a policy can't refer to", "AZ107")
             if "." in w:
@@ -440,12 +419,10 @@ class ExprParser:
         fail(self.loc, f"unexpected '{self.toks[self.i][1]}'", "AZ102")
 
 
-def check_name(name: str, loc: Loc, previous: bool = False) -> str:
-    """previous: the words of the language before this one (`anyone` and `nobody` were names then)."""
+def check_name(name: str, loc: Loc) -> str:
     if "__" in name:
         fail(loc, f"'{name}': names can't contain '__' (generated names use it as a separator)", "AZ107")
-    words = PREVIOUS_KEYWORDS if previous else {**KEYWORDS, **RETIRED}
-    if name in RESERVED or name in words:
+    if name in RESERVED or name in KEYWORDS:
         fail(loc, f"'{name}' is a word of the language; choose another name", "AZ107")
     return name
 
@@ -551,7 +528,7 @@ def read_lines(
             out += read_lines(inc, files[inc], seen, top=False, files=files)
             continue
         # ('where : user = ...' declares a relation named where, which check_name refuses: not a continuation)
-        if out and (re.match(r"(or|and|if|where|grant)\b(?!\s*:)", s) or open_braces(out[-1][2]) > 0):
+        if out and (re.match(r"(or|and|if|where)\b(?!\s*:)", s) or open_braces(out[-1][2]) > 0):
             last = out[-1]
             out[-1] = (last[0], last[1], last[2] + " " + s)
         else:
@@ -745,13 +722,8 @@ def parse_source(text: str, subjects: list[Subject], loc: Loc) -> Source:
     )
 
 
-def parse_policy(
-    text: str, path: str | None = None, files: dict[str, str] | None = None, previous: bool = False
-) -> Policy:
-    """previous: read the policy in the language before this one, its old forms as it meant them, each noted in
-    pol.previous: what a review reads its base in when this language refuses it (a pull request that upgrades
-    rowstile and rewrites the policy). Everywhere else they are refused, saying what to write."""
-    pol = Policy(previous=[] if previous else None)
+def parse_policy(text: str, path: str | None = None, files: dict[str, str] | None = None) -> Policy:
+    pol = Policy()
     section: str | None = None
     # the block the indented lines below belong to
     cur_type: Type | None = None
@@ -773,7 +745,6 @@ def parse_policy(
             m_type = TYPE_RE.fullmatch(s)
             m_rules = re.fullmatch(rf"rules\s+({QNAME})(?:\s+view\s+({QNAME}))?", s)
             m_role = re.fullmatch(rf"app\s+role\s+({IDENT})", s)
-            m_old_role = re.fullmatch(rf"role\s+({IDENT})", s)
             m_scope = re.fullmatch(rf"scope\s+({IDENT}(?:[-:]{IDENT})*)\s*=\s*(.+)", s)
             m_caveat = re.fullmatch(rf"caveat\s+({IDENT})\s*=\s*\{{(.*)\}}", s)
             if m_type:
@@ -784,7 +755,7 @@ def parse_policy(
                         f"'{name}' is a subject of its own (shared with {name}); name the type differently",
                         "AZ204",
                     )
-                check_name(name, loc, previous)
+                check_name(name, loc)
                 if name in pol.types:
                     fail(loc, f"type {name} is defined twice", "AZ109")
                 key = parse_key(m_type.group(3), loc)
@@ -820,15 +791,8 @@ def parse_policy(
                 section = "scenario"
             elif s == "invariants":
                 section = "invariants"
-            elif m_old_role and pol.previous is None:
-                fail(
-                    loc,
-                    f"write `app role {m_old_role.group(1)}`: the line names the Postgres role your app connects "
-                    f"as (`roles` are the custom roles people define)",
-                    "AZ101",
-                )
-            elif (m_app := m_role or m_old_role) is not None:
-                role = m_app.group(1)
+            elif m_role:
+                role = m_role.group(1)
                 if pol.role is not None:
                     fail(loc, f"the app role is named twice ({pol.role} and {role}): a policy applies to one", "AZ109")
                 if role.lower() == "public":
@@ -838,8 +802,6 @@ def parse_policy(
                         "database could then sign in as anyone)",
                         "AZ111",
                     )
-                if m_old_role and pol.previous is not None:
-                    pol.previous.append(f"{loc}: `role {role}`, now `app role {role}`")
                 pol.role = role
                 section = None
             elif m_scope:
@@ -860,7 +822,7 @@ def parse_policy(
             continue
 
         if section == "type" and cur_type is not None:
-            parse_type_line(cur_type, s, loc, pol.previous)
+            parse_type_line(cur_type, s, loc)
         elif section == "rules" and cur_table is not None:
             parse_rule_line(pol, cur_table, s, loc)
         elif section == "test":
@@ -873,10 +835,6 @@ def parse_policy(
                     'that brings its own data, or runs a statement, is named: test "...")',
                     "AZ106",
                 )
-            if pol.previous is not None and step.ptype not in ("user", "anyone"):
-                # the language before this one read the line's first word and checked a user
-                pol.previous.append(f"{loc}: `{step.text}` in the test section checked user {step.who}")
-                step.ptype = "user"
             pol.tests.append(step)
         elif section == "scenario" and cur_test is not None:
             cur_test.steps.append(parse_step(s, loc))
@@ -884,9 +842,7 @@ def parse_policy(
             m = re.fullmatch(rf"never\s+({IDENT})\s*:\s*(.+)", s)
             if not m:
                 fail(loc, "write invariants as: never file: view and not folder.in_org", "AZ106")
-            pol.invariants.append(
-                Invariant(m.group(1), ExprParser(m.group(2), loc, pol.previous).parse(), m.group(2), loc)
-            )
+            pol.invariants.append(Invariant(m.group(1), ExprParser(m.group(2), loc).parse(), m.group(2), loc))
         else:
             fail(loc, "indented line outside a type, rules, invariants or test block", "AZ101")
     for sc in pol.scenarios:
@@ -894,12 +850,7 @@ def parse_policy(
             fail(sc.loc or 0, f"test {sc.name!r} has no lines", "AZ106")
     for t in pol.types.values():
         if t.roles:
-            if pol.previous is not None:
-                join_roles(t)
             t.roles = (t.roles[0], granted_by_roles(t), t.roles[2])
-    if pol.previous is not None and pol.role is None:
-        pol.role = "PUBLIC"
-        pol.previous.append("no app role line: the rules applied to PUBLIC")
     return pol
 
 
@@ -998,27 +949,9 @@ def parse_scope_items(text: str, loc: Loc) -> list[ScopeItem]:
     return items
 
 
-def parse_roles_line(t: Type, s: str, loc: Loc, previous: list[str] | None = None) -> None:
+def parse_roles_line(t: Type, s: str, loc: Loc) -> None:
     """`roles : user, team#member [from org]`: who may hold the type's custom roles, and with `from`, whose roles
-    count on an object. Which permissions a role may give is where the permissions write `roles`. previous: the
-    language before this one, `roles : ... grant p1, p2 [from org]` (join_roles writes `roles` in them)."""
-    m = re.fullmatch(rf"roles\s*:\s*(.+?)\s+grant\s+(.+?)(?:\s+from\s+({IDENT}))?", s)
-    if m:
-        perms = ", ".join(p.strip() for p in m.group(2).split(","))
-        if previous is None:
-            fail(
-                loc,
-                f"custom roles are written where they give a permission now: `roles : {m.group(1).strip()}"
-                f"{' from ' + m.group(3) if m.group(3) else ''}`, and `roles` in each of {perms}, e.g. "
-                f"`can {perms.split(',')[0]} = ... or roles`",
-                "AZ103",
-            )
-        if t.roles:
-            fail(loc, f"{t.name} declares custom roles twice", "AZ109")
-        previous.append(f"{loc}: `grant {perms}`, now `roles` in {perms}")
-        t.roles_from = m.group(3)
-        t.roles = (parse_subjects(m.group(1), loc), [p.strip() for p in m.group(2).split(",")], loc)
-        return
+    count on an object. Which permissions a role may give is where the permissions write `roles`."""
     if re.fullmatch(r"roles\s*:\s*[^=]*(=|\s+shared\b).*", s):
         fail(loc, "`roles : ...` says who may hold custom roles; name the relation something else", "AZ107")
     m = re.fullmatch(rf"roles\s*:\s*(.+?)(?:\s+from\s+({IDENT}))?", s)
@@ -1047,39 +980,12 @@ def granted_by_roles(t: Type) -> list[str]:
     return [name for name, p in t.perms.items() if any(not neg for neg in names_roles(p.expr))]
 
 
-def join_roles(t: Type) -> None:
-    """The language before this one: `roles : ... grant p1, p2` made a role one more way to hold what each
-    permission's `or` part gives, so what is joined to that part with `and` holds for role holders too.
-    `(owner or parent.view) and {not archived}` reads `(owner or parent.view or roles) and {not archived}`."""
-    assert t.roles is not None
-    _, perms, loc = t.roles
-    for p in perms:
-        if p not in t.perms:
-            fail(loc, f"custom roles on {t.name} can't grant '{p}': {t.name} has no such permission", "AZ203")
-        perm, role = t.perms[p], Ref("ref", ROLES)
-        if isinstance(perm.expr, And):
-            grants = [x for x in perm.expr.items if not isinstance(x, (Cond, Not))]
-            if len(grants) != 1:
-                fail(
-                    loc,
-                    f"custom roles on {t.name} can't grant '{p}': a role joins the part of `{p} = {perm.src}` "
-                    f"that grants it, and {'it has none' if not grants else 'several parts are joined with and'}",
-                    "AZ210",
-                )
-            part = grants[0]
-            joined = Or("or", [*part.items, role]) if isinstance(part, Or) else Or("or", [part, role])
-            perm.expr = And("and", [joined if x is part else x for x in perm.expr.items])
-        else:
-            perm.expr = Or("or", [*perm.expr.items, role]) if isinstance(perm.expr, Or) else Or("or", [perm.expr, role])
-
-
-def parse_type_line(t: Type, s: str, loc: Loc, previous: list[str] | None = None) -> None:
-    """previous: the language before this one (parse_policy)."""
+def parse_type_line(t: Type, s: str, loc: Loc) -> None:
     if s.startswith("can "):
         m = re.fullmatch(rf"can\s+({IDENT})\s*=\s*(.+)", s)
         if not m:
             fail(loc, "write permissions as: can name = expression", "AZ104")
-        name = check_name(m.group(1), loc, previous is not None)
+        name = check_name(m.group(1), loc)
         if name in t.perms or name in t.relations:
             fail(loc, f"{t.name}.{name} is defined twice", "AZ109")
         if name in COMMANDS:
@@ -1091,10 +997,10 @@ def parse_type_line(t: Type, s: str, loc: Loc, previous: list[str] | None = None
                 f"permission something else",
                 "AZ107",
             )
-        t.perms[name] = Perm(name, ExprParser(m.group(2), loc, previous).parse(), m.group(2), loc)
+        t.perms[name] = Perm(name, ExprParser(m.group(2), loc).parse(), m.group(2), loc)
         return
     if re.match(r"roles\s*:", s):
-        parse_roles_line(t, s, loc, previous)
+        parse_roles_line(t, s, loc)
         return
     m = re.fullmatch(
         rf"({IDENT})\s*:\s*([^=]+?)\s*(?:=\s*(.+)|\s+shared(?:\s+by\s+({IDENT}))?(?:\s+if\s*\{{(.*)\}})?)", s
@@ -1105,7 +1011,7 @@ def parse_type_line(t: Type, s: str, loc: Loc, previous: list[str] | None = None
             "write relations as: name : subject = source   (or: name : subjects shared [by perm] [if {sql}])",
             "AZ103",
         )
-    name, subj_txt, source = check_name(m.group(1), loc, previous is not None), m.group(2), m.group(3)
+    name, subj_txt, source = check_name(m.group(1), loc), m.group(2), m.group(3)
     if name in t.perms:
         fail(loc, f"{t.name}.{name} is already a permission", "AZ109")
     subjects = parse_subjects(subj_txt, loc)
@@ -1168,7 +1074,7 @@ def parse_rule_line(pol: Policy, table: str, s: str, loc: Loc) -> None:
         Rule(
             table,
             "update check" if check else command,
-            ExprParser(expr.strip(), loc, pol.previous).parse(),
+            ExprParser(expr.strip(), loc).parse(),
             expr.strip(),
             loc,
             columns,
