@@ -203,6 +203,10 @@ check "... so a column that still names it grants nothing, nor does user:*" "fal
 check "... and the same for a service its table doesn't have" "false|0"   "SET authz.user_id = '77'; SET authz.principal_type = 'service'; SELECT authz.can('doc', 20, 'edit')::text || '|' || (SELECT count(*) FROM ps.docs);"
 PSQL -c "INSERT INTO ps.users VALUES (99)" >/dev/null
 check "once the row is there, they are someone" "99|true" "$AS_GONE SELECT authz.uid() || '|' || authz.can('doc', 20, 'edit')::text;"
+check "an administrator whose session names a service the table doesn't have views as a user: as that user" "3|user:3" \
+  "RESET ROLE; BEGIN; SET LOCAL authz.user_id = '77'; SET LOCAL authz.principal_type = 'service';
+   SELECT authz.view_as('3', 'ticket 13');
+   SELECT authz.uid() || '|' || (SELECT principal_type || ':' || principal_id FROM authz.principal()); ROLLBACK;"
 # a share to someone goes with their row: a new row with the same id later must not find it
 PSQL -c "SET authz.user_id = '1'" -c "SELECT authz.share('doc', 1, 'reader', 'user', 99)" >/dev/null
 before=$(PSQL -c "SELECT count(*) FROM authz.shares WHERE subject_type = 'user' AND subject_id = '99'")

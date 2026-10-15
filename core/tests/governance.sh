@@ -323,6 +323,14 @@ got=$(psql -X -q -At -d "$DB" -c "SET ROLE app_user" -c "SET client_min_messages
        -c "SET authz.user_id = 1" -c "SELECT authz.can('file', 11, 'view')" 2>&1)
 case "$got" in *'authz decision: user="1" type="file" id="11" perm="view" -> true'*) echo "ok    each decision is logged when asked";;
   *) echo "FAIL  decision log: $got"; fails=$((fails + 1));; esac
+got=$(psql -X -q -At -d "$DB" -c "SET ROLE app_user" -c "SET client_min_messages = log" -c "SET authz_debug.log_decisions = on" \
+       -c "SET authz.user_id = 1" -c "SELECT authz.can('file', 11, 'view'), authz.can('folder', 6, 'view')" 2>&1 | grep -o 'authz decision: .*' | paste -sd'|')
+[ "$got" = 'authz decision: user="1" type="file" id="11" perm="view" -> true|authz decision: user="1" type="folder" id="6" perm="view" -> false' ] &&
+  echo "ok    ... every one, two in one statement too" || { echo "FAIL  two decisions in one statement: $got"; fails=$((fails + 1)); }
+got=$(psql -X -q -At -d "$DB" -c "SET ROLE app_user" -c "SET client_min_messages = log" -c "SET authz_debug.log_decisions = on" \
+       -c "SELECT authz.can('file', 11, 'view')" 2>&1)
+case "$got" in *'authz decision: user=none type="file" id="11" perm="view" -> false'*) echo "ok    ... and in a session where nobody has signed in yet, as user none";;
+  *) echo "FAIL  decision log with nobody signed in: $got"; fails=$((fails + 1));; esac
 
 echo "-- previewing a policy change"
 TMPD=$(mktemp -d)
