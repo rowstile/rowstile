@@ -449,6 +449,15 @@ lint() { PSQL -c "SELECT severity || ' ' || object FROM authz.lint() ORDER BY 1"
 for want in "error app.files" "error app.all_files" "error app.team_members" "info app.files_name" "info app.files_pkey" "warning app.peek(bigint)"; do
   [ "$(lint "^$want\$")" -ge 1 ] && echo "ok    lint finds: $want" || { echo "FAIL  lint misses: $want"; fails=$((fails + 1)); }
 done
+admin "... and says of the function what it does" \
+  "SECURITY DEFINER, callable by the app role, and seems to use a governed table: it reads rows without row-level security unless its owner is subject to it" \
+  "SELECT problem FROM authz.lint() WHERE object = 'app.peek(bigint)'"
+# a unique index on a table without rules tells nothing the app role may not read: only a governed table's is named
+PSQL -c "CREATE UNIQUE INDEX gov_team_pairs ON app.team_members (user_id, team_id)" >/dev/null
+admin "... and of the unique indexes the app role may insert against, those on tables with rules only" \
+  "app.files_name|a unique index on app.files: inserting a duplicate fails even when the existing row is hidden, which tells the user it exists" \
+  "SELECT string_agg(object || '|' || problem, ', ') FROM authz.lint() WHERE problem LIKE 'a unique index on %'"
+PSQL -c "DROP INDEX app.gov_team_pairs" >/dev/null
 # a table beside the policy's that it doesn't name: said, while the app role may read it
 PSQL -c "CREATE TABLE app.secrets (id int PRIMARY KEY, hash text)" -c "GRANT SELECT ON app.secrets TO app_user" >/dev/null
 admin "lint finds a table the policy doesn't name, which the app role may read" "info" \
@@ -483,6 +492,13 @@ PSQL -c "GRANT CREATE ON SCHEMA app TO app_user" -c "ALTER TABLE app.files OWNER
 [ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'is owned by%'")" = "1" ] &&
   echo "ok    lint finds: a governed table owned by the app role" || { echo "FAIL  lint misses the owner"; fails=$((fails + 1)); }
 PSQL -c "ALTER TABLE app.files OWNER TO CURRENT_USER" -c "REVOKE CREATE ON SCHEMA app FROM app_user" >/dev/null
+# ...and by a role the app role is a member of, whose rights it has
+PGOPTIONS="-c client_min_messages=error" PSQL -c "DROP ROLE IF EXISTS authz_gov_owners" -c "CREATE ROLE authz_gov_owners" \
+     -c "GRANT authz_gov_owners TO app_user" -c "GRANT CREATE ON SCHEMA app TO authz_gov_owners" -c "ALTER TABLE app.files OWNER TO authz_gov_owners" >/dev/null
+admin "... and one owned by a role the app role is a member of" \
+  "error|is owned by app_user (or a role it belongs to): owners skip row-level security unless you ALTER TABLE app.files FORCE ROW LEVEL SECURITY" \
+  "SELECT severity || '|' || problem FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'is owned by%'"
+PSQL -c "ALTER TABLE app.files OWNER TO CURRENT_USER" -c "REVOKE CREATE ON SCHEMA app FROM authz_gov_owners" -c "DROP ROLE authz_gov_owners" >/dev/null
 PSQL -c "ALTER TABLE app.files DISABLE ROW LEVEL SECURITY" >/dev/null
 admin "lint finds row-level security off on a table with rules: an error" "1"   "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'app.files' AND problem LIKE 'row-level security is off%'"
 PSQL -c "ALTER TABLE app.files ENABLE ROW LEVEL SECURITY" >/dev/null
@@ -518,6 +534,27 @@ admin "... and an index that starts with the key's columns, in another order, se
   "SELECT count(*) FROM authz.lint() WHERE object = 'app.gov_boxes.org_id, id'"
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_governance.sql >/dev/null
 PSQL -c "DROP TABLE app.gov_boxes" >/dev/null
+# a row placed under a node or a folder by a (type, id) pair of columns (named as no other table's are): both grant
+# a relation, and the id moves the row; an 'after' rule on the whole row checks where it goes
+PSQL -c "CREATE TABLE app.gov_nodes (id bigint PRIMARY KEY, node_kind text, node_above bigint, owner_id bigint)" \
+     -c "GRANT SELECT, UPDATE ON app.gov_nodes TO app_user" >/dev/null
+{ sed '/^test$/,$d' example/docs.authz
+  printf 'type node = app.gov_nodes\n  above : node, folder = (node_kind, node_above)\n  owner : user = owner_id\n  can edit = owner or above.edit\n'
+  printf 'rules app.gov_nodes\n  select : edit\n  update : edit\n'; } > /tmp/authz_nodes.authz
+python3 compile_policy.py /tmp/authz_nodes.authz > /tmp/authz_nodes.sql && reapply /tmp/authz_nodes.sql
+admin "lint finds both columns of a (type, id) pair that grant a relation an editor may change" \
+  "app.gov_nodes.node_above,app.gov_nodes.node_kind,app.gov_nodes.owner_id" \
+  "SELECT string_agg(object, ',' ORDER BY object) FROM authz.lint() WHERE object LIKE 'app.gov_nodes.%' AND problem LIKE 'grants %'"
+L=$(grep -n '^  above : node, folder' /tmp/authz_nodes.authz | cut -d: -f1)
+admin "... and the move by its id, which nothing checks the destination of" \
+  "warning|moves a row under another (above, line $L), and nothing checks where it moves to, so anyone who may update a row may put it inside something they may not change: add a rule such as \"update node_above after : above.edit\"" \
+  "SELECT severity || '|' || problem FROM authz.lint() WHERE object = 'app.gov_nodes.node_above' AND problem LIKE 'moves %'"
+printf '  update after : edit\n' >> /tmp/authz_nodes.authz
+python3 compile_policy.py /tmp/authz_nodes.authz > /tmp/authz_nodes.sql && reapply /tmp/authz_nodes.sql
+admin "... and none with an 'after' rule for every column" "0" "SELECT count(*) FROM authz.lint() WHERE problem LIKE 'moves a row under another%'"
+reapply /tmp/authz_governance.sql
+PSQL -c "DROP TABLE app.gov_nodes" >/dev/null
+rm -f /tmp/authz_nodes.authz /tmp/authz_nodes.sql
 # a permission that names others more than once is slow to plan wherever it is checked, a rule or not: here no rule
 # reads note.read, and authz.list and authz.can plan its 191 views (p6 names p5 twice, ... down to p0)
 PSQL -c "CREATE TABLE app.gov_crowds (id bigint PRIMARY KEY, a boolean, b boolean)" \
@@ -565,6 +602,29 @@ admin "lint finds the audit trail's guard on in ordinary sessions only, and says
 bash tests/coverage_functions.sh "$DB"
 python3 cli/rowstile_cli.py --db "dbname=$DB" reapply >/dev/null 2>&1
 admin "... and nothing once rowstile reapply has run" "0" "SELECT count(*) FROM authz.lint() WHERE object = 'authz.audit'"
+
+echo "-- explaining what a link table's rows, shares and the type's where give (authz.explain)"
+# a shelf holds folders by the rows of a link table that are active (not those whose active is unknown), is hosted
+# by folders by sharing, and is a shelf only while it is open (one whose open is unknown is none)
+PSQL -c "CREATE TABLE app.gov_shelves (id bigint PRIMARY KEY, owner_id bigint, open boolean)" \
+     -c "CREATE TABLE app.gov_shelf_folders (shelf_id bigint, folder_id bigint, active boolean)" \
+     -c "INSERT INTO app.gov_shelves VALUES (1, 5, true), (2, 5, true), (3, 5, NULL)" \
+     -c "INSERT INTO app.gov_shelf_folders VALUES (1, 3, true), (1, 4, NULL), (1, 2, false), (2, 4, true)" >/dev/null
+{ sed '/^test$/,$d' example/docs.authz
+  printf 'type shelf = app.gov_shelves where {open}\n  owner  : user   = owner_id\n'
+  printf '  holder : folder = app.gov_shelf_folders(shelf_id -> folder_id) where {active}\n  host   : folder shared\n'
+  printf '  can share = owner\n  can view  = holder.view or host.view\n'; } > /tmp/authz_shelves.authz
+python3 compile_policy.py /tmp/authz_shelves.authz > /tmp/authz_shelves.sql && reapply /tmp/authz_shelves.sql
+PSQL -c "SET authz.user_id = 5" -c "SELECT authz.share('shelf', 1, 'host', 'folder', 4)" -c "SELECT authz.share('shelf', 2, 'host', 'folder', 3)" >/dev/null
+admin "explain lists the folders a shelf's active rows and its own shares name, and no others" \
+  "yes  user 1 holds view on shelf 1|  shelf.view = holder.view or host.view|  yes  holder.view|    yes  holder is folder 3, which has view|  yes  host.view|    yes  host is folder 4, which has view" \
+  "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('shelf', '1', 'view', '1') WITH ORDINALITY x(e, n) WHERE e NOT LIKE '      %'"
+admin "... and of a shelf whose where is unknown, that it fails it" \
+  "no   user 1 does not hold view on shelf 3|  no   shelf 3 fails the type's where {open}" \
+  "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('shelf', '3', 'view', '1') WITH ORDINALITY x(e, n)"
+reapply /tmp/authz_governance.sql
+PSQL -c "DROP TABLE app.gov_shelves, app.gov_shelf_folders" >/dev/null
+rm -f /tmp/authz_shelves.authz /tmp/authz_shelves.sql
 
 echo "-- retention"
 POS=$(PSQL -c "SELECT max(pos) FROM authz.changes")

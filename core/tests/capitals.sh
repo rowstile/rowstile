@@ -42,6 +42,12 @@ echo "-- lint and indexes"
 [ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity IN ('error', 'warning')")" = 0 ] && ok "lint: no error, no warning" || bad "lint" "$(PSQL -c "SELECT * FROM authz.lint()")"
 [ "$(PSQL -c "SELECT string_agg(object, ' ' ORDER BY object) FROM authz.lint() WHERE problem LIKE '%may read every row%'")" = 'public."Team" public."TeamMember" public."User"' ] &&
   ok "lint names the tables read in full as Postgres writes them (the link table too), and not Prisma's own" || bad "lint, tables read in full" "$(PSQL -c "SELECT object, problem FROM authz.lint()")"
+# the app's own check of its connection finds the tables by their quoted names too
+PSQL -c 'ALTER TABLE "Folder" DISABLE ROW LEVEL SECURITY'
+got=$(PSQL -c "SET ROLE app_user" -c "SELECT problem FROM authz.connection_check() WHERE problem LIKE 'row-level security%'")
+PSQL -c 'ALTER TABLE "Folder" ENABLE ROW LEVEL SECURITY'
+[ "$got" = "row-level security is off on public.\"Folder\": the policy's rules don't apply to it" ] &&
+  ok "connection_check: a table with rules and row-level security off, named as Postgres writes it" || bad "connection_check" "$got"
 run indexes; [ "$out" = "every lookup the policy makes into the app's tables has an index" ] && ok "indexes: Prisma's indexes are found" || bad "indexes" "$out"
 PSQL -c 'DROP INDEX "Note_folderId_idx"'
 run indexes --check; case "$out" in *'public.Note'*'folderId'*) [ $rc -eq 1 ] && ok "... and one that is missing is named" || bad "indexes --check exit" "$rc";; *) bad "a missing index" "$out";; esac
@@ -168,6 +174,31 @@ L -c 'INSERT INTO "FolderInNote" ("folderId", "noteId") VALUES (2, 1)'
   bad "lint, the two-type tree" "$(L -c "SELECT * FROM authz.lint() WHERE severity IN ('error', 'warning')")"
 L -c 'DELETE FROM "FolderInNote"'
 [ "$(can_1)" = f ] && [ "$(L -c "SELECT authz.verify()")" = t ] && ok "... and the link row deleted, the access is gone" || bad "a link row deleted" "$(can_1)"
+
+echo "-- types named with capitals: explain finds their views by their quoted names"
+cat > "$T/types.authz" <<'EOF'
+app role app_user
+
+type user = public.User (id int)
+
+type Folder = public.Folder (id int)
+  owner : user = ownerId
+  can view = owner
+
+type Note = public.Note (id int)
+  folder : Folder       = folderId
+  keeper : Folder#owner = folderId   -- a column naming a group: the owners of the note's folder
+  can view = folder.view
+  can keep = keeper
+EOF
+run --db "dbname=$DB3" apply "$T/types.authz"
+case "$out" in *"types.authz: applied") ok "apply: types named with capitals";; *) bad "apply, types named with capitals" "$out";; esac
+got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1', 'view', '1') WITH ORDINALITY x(e, n)")
+[ "$got" = "yes  user 1 holds view on Note 1|  Note.view = folder.view|  yes  folder.view|    yes  folder is Folder 1, which has view|      Folder.view = owner|      yes  owner|        yes  owner: ownerId is you" ] &&
+  ok "explain follows a relation to a type named with capitals" || bad "explain through folder.view" "$got"
+got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1', 'keep', '1') WITH ORDINALITY x(e, n)")
+[ "$got" = "yes  user 1 holds keep on Note 1|  Note.keep = keeper|  yes  keeper|    yes  keeper: folderId is Folder 1, and you are owner there|      yes  owner: ownerId is you" ] &&
+  ok "... and a column naming the group of one" || bad "explain through Folder#owner" "$got"
 [ -z "${KEEP:-}" ] && dropdb "$DB3"
 
 rm -rf "$T"
