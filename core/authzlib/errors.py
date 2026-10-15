@@ -43,8 +43,7 @@ CODES = {
         "A line the language doesn't read",
         "A policy is made of blocks that start at the left margin (`app role`, `type`, `rules`, `scope`, `caveat`, "
         "`invariants`, `test`, `include`) and indented lines that belong to the block above them. This line is "
-        "neither: a word no block starts with (often a typo), or an indented line with no block above it. The "
-        "app role's line was written `role` before; it is `app role` now.",
+        "neither: a word no block starts with (often a typo), or an indented line with no block above it.",
         "typ folder = app.folders\n  owner : user = owner_id\n  can view = owner\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\n",
     ),
@@ -109,8 +108,7 @@ CODES = {
     "AZ107": Code(
         "A name the policy can't use",
         "Names can't contain `__`: generated names use it (`view__base`), and a policy can't refer to those. "
-        "`signed_in`, `anyone`, `nobody`, `or`, `and`, `not`, `if`, `where` and `grant` are words of the language "
-        "(so is `everyone`, which `anyone` replaced), and a "
+        "`signed_in`, `anyone`, `nobody`, `or`, `and`, `not`, `if` and `where` are words of the language, and a "
         "permission can't be called like a command "
         "(`select`, `insert`, `update`, `delete`). Choose another name.",
         "type folder = app.folders\n  owner : user = owner_id\n  can select = owner\n",

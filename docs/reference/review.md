@@ -54,13 +54,6 @@ says what a change does, in plain words, for the pull request:
   A lock file behind the policy is called out. With no lock
   file on either side, the project applies its policy (`rowstile apply`) and keeps no migrations: Deploy says so. <!-- checked: tests/unit_test.py "test_no_lock_file_is_no_migration"; tests/review.sh "a project without migrations: the policy applied whole on the review data, its tests run there, all undone" -->
 
-A pull request that upgrades rowstile across a change to the language rewrites the policy too, and the
-base's policy is in the language before. The review reads it as that version meant it (`role app_user` as
-`app role app_user`, `grant view, edit` as `roles` written where the role joined, and so on), and says so
-at the top, with the old forms it found (`--json` lists them all). <!-- checked: tests/review.sh "a base in the language before: read as that version meant it, and said"; tests/unit_test.py "test_a_base_in_the_language_before_is_read_as_it_meant" -->
-Meaning then says whether the rewrite
-grants the same.
-
 The pull request that adds the policy has none at the base. Each declaration is listed as added, the app role
 and the user type too, and the review compares with a policy that allows nothing. <!-- checked: tests/review.sh "the pull request that adds the policy: each declaration added, its own app role and user type too"; tests/unit_test.py "test_a_new_policy_is_added_whole" -->
 A base whose policy has a mistake is reviewed the same way, so the pull request that fixes it gets a review too:

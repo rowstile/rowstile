@@ -192,8 +192,6 @@ class Review(TypedDict):
     tests: Tests
     deploy: Deploy
     access: Access | None
-    # the base is in the language before this one: each old form it was read with, where, and what it is now
-    base_previous: NotRequired[list[str]]
     # the base's policy has a mistake: the head is reviewed as new, as where the base has no policy
     base_mistake: NotRequired[BaseMistake]
 
@@ -339,26 +337,13 @@ def mistake_of(e: PolicyError) -> BaseMistake:
     return {"line": m.group(1) if m else None, "message": m.group(2) if m else text, "code": code}
 
 
-def written_before(policy: str, files: dict[str, str] | None) -> bool:
-    """Whether a policy is written in the language before this one: read that way, it has old forms."""
-    try:
-        return bool(parse_policy(policy, None, files=files or {}, previous=True).previous)
-    except PolicyError:
-        return False
-
-
 class Side:
-    def __init__(
-        self, policy: str, files: dict[str, str] | None, tests: dict[str, str] | None, previous: bool = False
-    ) -> None:
-        """previous: read in the language before this one (parse_policy), for a base this one refuses."""
-        self.policy, self.files, self.tests, self.previous = policy, files or {}, tests or {}, previous
-        self.pol = parse_policy(policy, None, files=self.files, previous=previous)
+    def __init__(self, policy: str, files: dict[str, str] | None, tests: dict[str, str] | None) -> None:
+        self.policy, self.files, self.tests = policy, files or {}, tests or {}
+        self.pol = parse_policy(policy, None, files=self.files)
         # what `rowstile check` refuses is refused here, with its message: the rest reads a policy that compiles, as
         # written (a copy is compiled: compiling changes the policy it is given, and adds permissions of its own)
-        copy = parse_policy(policy, None, files=self.files, previous=previous)
-        Compiler(copy).compile("the policy", transaction=False)
-        self.pol.previous = copy.previous  # (with what compiling read the old way too)
+        Compiler(parse_policy(policy, None, files=self.files)).compile("the policy", transaction=False)
         self.entities = entities(policy, self.files, self.pol)
 
 
@@ -372,21 +357,15 @@ def review(
 ) -> Review:
     """base, head: (policy text, files, tests {name: text}); base None: there is no policy at the base, the pull
     request adds it. base_lock/head_lock: the lock files' text (for Deploy). db: a database at the base branch's
-    state with the review data (for Access and Tests). A base this language refuses is read in the one before (a
-    pull request that upgrades rowstile, and rewrites the policy for it): Meaning then says whether the rewrite says
-    the same. A base neither reads has a mistake: the head is reviewed as new, and base_mistake says so (the pull
-    request that fixes the mistake is reviewed all the same)."""
+    state with the review data (for Access and Tests). A base with a mistake: the head is reviewed as new, and
+    base_mistake says so (the pull request that fixes the mistake is reviewed all the same)."""
     mistake: BaseMistake | None = None
     b: Side | None = None
     if base is not None:
         try:
             b = Side(*base)
         except PolicyError as e:
-            try:
-                b = Side(*base, previous=True)
-            except PolicyError as old:
-                # the mistake as the language it is written in says it: this one would only name its old forms
-                mistake = mistake_of(old if written_before(base[0], base[1]) else e)
+            mistake = mistake_of(e)
     h = Side(*head)
     if b is None:
         # a new policy: compared with one that allows nothing, in the head's own app role and user type (made up
@@ -405,8 +384,6 @@ def review(
         "deploy": deploy(b, h, base_lock, head_lock),
         "access": access(db, h) if db is not None else None,
     }
-    if b.pol.previous is not None:
-        out["base_previous"] = b.pol.previous
     if mistake is not None:
         out["base_mistake"] = mistake
     if db is not None:
@@ -935,7 +912,7 @@ def unread_tests(side: Side) -> list[Unread]:
     good: dict[str, str] = {}
     for name, body in sorted(side.tests.items()):
         try:
-            c = Compiler(parse_policy(side.policy, None, files=side.files, previous=side.previous))
+            c = Compiler(parse_policy(side.policy, None, files=side.files))
             c.add_test_files({**good, name: body})
             c.tests_function_sql()
         except PolicyError as e:
@@ -957,7 +934,7 @@ def checks(side: Side, unread: Iterable[str] = ()) -> dict[tuple[str, str], tupl
         if name in unread:
             continue
         try:
-            scenarios += [(sc, name) for sc in parse_policy(body, name, files={}, previous=side.previous).scenarios]
+            scenarios += [(sc, name) for sc in parse_policy(body, name, files={}).scenarios]
         except PolicyError:
             pass  # (the base's own: the pull request's are in unread)
     for sc, file in scenarios:
@@ -1281,18 +1258,6 @@ def summary(r: Review) -> dict[str, str]:
     return lines
 
 
-def previous_note(r: Review) -> str | None:
-    """A base read in the language before this one: a sentence saying so, with its first old forms."""
-    old = r.get("base_previous")
-    if old is None:
-        return None
-    shown = "; ".join(old[:4]) + (f"; and {len(old) - 4} more" if len(old) > 4 else "")
-    return (
-        "The policy at the base is written in the language before this version of rowstile, and was read as "
-        "that version meant it" + (f": {shown}." if shown else ".")
-    )
-
-
 def mistake_note(r: Review) -> str | None:
     """A base whose policy has a mistake: a sentence saying so, with the mistake, its line there and its code."""
     m = r.get("base_mistake")
@@ -1305,9 +1270,9 @@ def mistake_note(r: Review) -> str | None:
 def markdown(r: Review, title: str = "rowstile: what this pull request changes") -> str:
     s = summary(r)
     out = [MARK, f"### {title}", ""]
-    for note in (mistake_note(r), previous_note(r)):
-        if note:
-            out += [note, ""]
+    note = mistake_note(r)
+    if note:
+        out += [note, ""]
     for k in ("Meaning", "Access", "Risk", "Tests", "Deploy"):
         out.append(f"**{k}**: {s[k]}  ")
     m = r["meaning"]
@@ -1397,7 +1362,7 @@ def tests_details(r: Review) -> list[str]:
 
 def text(r: Review) -> str:
     s = summary(r)
-    out = [f"{'Base':<8} {note}" for note in (mistake_note(r), previous_note(r)) if note] + [
+    out = [f"{'Base':<8} {note}" for note in (mistake_note(r),) if note] + [
         f"{k:<8} {s[k]}" for k in ("Meaning", "Access", "Risk", "Tests", "Deploy")
     ]
     m = r["meaning"]

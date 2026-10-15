@@ -669,13 +669,6 @@ class LanguageForms(unittest.TestCase):
                 read(POLICIES["docs"]).replace("  can break_glass = org.member", f"  can break_glass = {word}")
             )
             self.assertEqual(pol.types["folder"].perms["break_glass"].expr, authzlib.parse.Cond("cond", written))
-        # the word `anyone` replaced: refused, saying which to write
-        with self.assertRaises(PolicyError) as e:
-            parse_policy(
-                read(POLICIES["docs"]).replace("  can break_glass = org.member", "  can break_glass = everyone")
-            )
-        self.assertIn("write `anyone` instead of `everyone`", str(e.exception))
-        self.assertEqual(e.exception.code, "AZ102")
 
     def test_sql_comments_in_a_condition_end_at_the_line(self) -> None:
         # the lines of a condition are joined into one: a comment left in would swallow the lines after it
@@ -2643,132 +2636,6 @@ rules app.folders
         self.assertIn("removed from carol: `user 3 cannot view file 12`", md)
         self.assertIn("removed from carol: user 3 cannot view file 12", self.review.text(r))
 
-    # a policy as the language before this version wrote it (a pull request that upgrades rowstile rewrites it), and
-    # the same policy now: `role`, `and` meeting `or`, `grant` (a role joins the permission's `or` part, under the
-    # `and`), `everyone`, and a test section line that checked a user whatever its first word
-    OLD = """role app_user
-type user = app.users
-type service = app.services principal
-type org = app.orgs
-  admin  : user = app.org_members(org_id -> user_id) where {role = 'admin'}
-  can manage_roles = admin
-type folder = app.folders
-  org    : org = org_id
-  owner  : user = owner_id
-  viewer : user shared by edit
-  roles  : user grant view, edit from org
-  can edit = owner or org.admin and {not locked}
-  can view = (edit or viewer) and {not archived}
-  can open = everyone
-rules app.folders
-  select : view or open
-  update : edit
-test
-  service 1 can view folder 2
-"""
-    NEW = (
-        OLD.replace("role app_user", "app role app_user")
-        .replace("grant view, edit from org", "from org")
-        .replace("owner or org.admin and {not locked}", "owner or (org.admin and {not locked}) or roles")
-        .replace("(edit or viewer) and", "(edit or viewer or roles) and")
-        .replace("everyone", "anyone")
-        .replace("service 1 can", "user 1 can")
-    )
-
-    def test_a_base_in_the_language_before_is_read_as_it_meant(self) -> None:
-        r = self.review.review((self.OLD, {}, {}), (self.NEW, {}, {}), worlds=120)
-        # (each permission and rule read as it meant is the same: nothing to tell apart in a listed world)
-        self.assertEqual(
-            r["meaning"]["equivalent"], "120 small worlds and 1 listed: every one of up to 3 rows of each type"
-        )
-        self.assertEqual(r["risk"], [])
-        self.assertEqual(
-            r.get("base_previous"),
-            [
-                "line 1: `role app_user`, now `app role app_user`",
-                "line 11: `grant view, edit`, now `roles` in view, edit",
-                "line 12: `and` and `or` without parentheses, now `owner or (org.admin and {not locked})`",
-                "line 14: `everyone`, now `anyone`",
-                "line 19: `service 1 can view folder 2` in the test section checked user 1",
-            ],
-        )
-        self.assertIn(
-            "The policy at the base is written in the language before this version of rowstile, and was "
-            "read as that version meant it: line 1: `role app_user`",
-            self.review.markdown(r),
-        )
-        self.assertTrue(self.review.text(r).startswith("Base     The policy at the base is written in the language"))
-        # the same policy in this language is read as it is, with nothing to say
-        self.assertNotIn("base_previous", self.review.review((self.NEW, {}, {}), (self.NEW, {}, {}), worlds=40))
-
-    def test_the_note_on_the_language_before_names_four_old_forms(self) -> None:
-        # four of them, each said; a fifth is counted ("and 1 more")
-        old = replaced(self.OLD, "test\n  service 1 can view folder 2\n", "")
-        r = self.review.review(
-            (old, {}, {}), (replaced(self.NEW, "test\n  user 1 can view folder 2\n", ""), {}, {}), worlds=10
-        )
-        self.assertEqual(len(r.get("base_previous") or []), 4)
-        self.assertTrue((self.review.previous_note(r) or "").endswith("; line 14: `everyone`, now `anyone`."))
-        r = self.review.review((self.OLD, {}, {}), (self.NEW, {}, {}), worlds=10)
-        self.assertTrue(
-            (self.review.previous_note(r) or "").endswith("; line 14: `everyone`, now `anyone`; and 1 more.")
-        )
-
-    def test_a_rewrite_that_moves_a_role_out_of_its_and_is_flagged(self) -> None:
-        # `roles` outside the `and`: role holders would see archived folders, which `grant` never gave them
-        head = self.NEW.replace(
-            "(edit or viewer or roles) and {not archived}", "((edit or viewer) and {not archived}) or roles"
-        )
-        r = self.review.review((self.OLD, {}, {}), (head, {}, {}), worlds=120)
-        self.assertIsNone(r["meaning"]["equivalent"])
-        self.assertIn("a permission widened", {f["why"] for f in r["risk"]})
-
-    def test_what_the_language_before_didnt_check_is_said(self) -> None:
-        # no app role line (the rules applied to PUBLIC), and a permission the runtime never asked for there
-        base = self.OLD.replace("role app_user\n", "").replace(
-            "  can open = everyone\n", "  can open = everyone\n  can impersonate = owner\n"
-        )
-        r = self.review.review((base, {}, {}), (self.NEW, {}, {}), worlds=40)
-        old = r.get("base_previous") or []
-        self.assertIn("no app role line: the rules applied to PUBLIC", old)
-        self.assertTrue(any("[AZ307] (the language before this one didn't check it)" in x for x in old), old)
-
-    def test_the_language_before_read_signed_in_and_had_its_own_mistakes(self) -> None:
-        # signed_in meant then what it means now: nothing to say about it
-        pol = parse_policy(self.OLD.replace("everyone", "signed_in"), None, files={}, previous=True)
-        self.assertEqual(
-            pol.types["folder"].perms["open"].expr, authzlib.parse.Cond("cond", authzlib.parse.KEYWORDS["signed_in"])
-        )
-        self.assertFalse(any("signed_in" in note for note in pol.previous or []), pol.previous)
-        # what it refused, a base is refused for (the review says the base has a mistake)
-        for old, new, code, words in (
-            (
-                "  roles  : user grant view, edit from org\n",
-                "  roles  : user grant view, edit from org\n" * 2,
-                "AZ109",
-                "",
-            ),
-            ("grant view, edit from", "grant view, nothing from", "AZ203", ""),
-            (
-                "can view = (edit or viewer) and {not archived}",
-                "can view = edit and viewer and {not archived}",
-                "AZ210",
-                "that grants it, and several parts are joined with and [AZ210]",
-            ),
-            (
-                "can view = (edit or viewer) and {not archived}",
-                "can view = {not locked} and {not archived}",
-                "AZ210",
-                "that grants it, and it has none [AZ210]",
-            ),
-        ):
-            text = self.OLD.replace(old, new)
-            self.assertNotEqual(text, self.OLD)
-            with self.assertRaises(PolicyError, msg=code) as e:
-                parse_policy(text, None, files={}, previous=True)
-            self.assertEqual(e.exception.code, code, str(e.exception))
-            self.assertIn(words, str(e.exception))
-
     def test_a_flag_in_an_included_file_is_annotated_there(self) -> None:
         main = self.SMALL.replace(
             "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n"
@@ -2993,20 +2860,6 @@ test
         )
         self.assertNotIn("a condition it can't read changed", {f["why"] for f in r["risk"]})
         self.assertIn("  not a refactor: doc.view differs for nobody signed in on doc 1\n", self.review.text(r))
-
-    def test_a_base_with_a_mistake_is_said_in_the_language_it_is_written_in(self) -> None:
-        # a base in the language before this one: this one would only say to write its old forms anew
-        old = replaced(self.OLD, "can view = (edit or viewer) and", "can view = (edit or viewer or nosuch) and")
-        mistake = self.review.review((old, {}, {}), (self.NEW, {}, {}), worlds=10).get("base_mistake")
-        assert mistake is not None
-        self.assertEqual((mistake["line"], mistake["code"]), ("line 13", "AZ203"))
-        self.assertRegex(mistake["message"], r"^folder has no relation or permission 'nosuch' ")
-        # one that neither reads: as this one says it
-        broken = replaced(self.OLD, "type folder = app.folders\n", "type folder app.folders\n")
-        mistake = self.review.review((broken, {}, {}), (self.NEW, {}, {}), worlds=10).get("base_mistake")
-        assert mistake is not None
-        self.assertEqual((mistake["line"], mistake["code"]), ("line 1", "AZ101"))
-        self.assertTrue(mistake["message"].startswith("write `app role app_user`"), mistake)
 
     def test_the_review_data_in_words(self) -> None:
         """Who gains and loses, said as who they are: a service is no user, nor is someone not signed in (both were
