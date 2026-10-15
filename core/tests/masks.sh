@@ -72,6 +72,12 @@ PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_typ
 out=$(python3 compile_policy.py /tmp/authz_nomask.authz --diff | PGOPTIONS="-c client_min_messages=error" psql -X -q -d "$DB" 2>&1)
 case "$out" in *"gains  | 00000000-0000-4000-8000-000000000002 | mt.docs | column body readable"*) ok "removing the mask: a viewer gains the text";;
   *) bad "diff without the mask" "$out";; esac
+# a mask of a column the table doesn't have (a typo): the preview names the policy's line, as applying does
+sed 's/^  mask body : edit /  mask bodyx : edit /' tests/multi.authz > /tmp/authz_masks_typo.authz
+out=$(python3 cli/rowstile_cli.py --db "dbname=$DB" diff /tmp/authz_masks_typo.authz 2>&1); rc=$?
+case "$out" in *"line "*": column bodyx not found in mt.docs [AZ601]"*) [ $rc -eq 1 ] && ok "previewing a mask of a column the table doesn't have names its line" || bad "diff of a typo'd mask: exit" "$rc";;
+  *) bad "diff of a typo'd mask" "$out";; esac
+rm -f /tmp/authz_masks_typo.authz
 
 echo "-- why a write is refused, on a table whose column the app role can't read"
 DOC=10000000-0000-4000-8000-000000000001

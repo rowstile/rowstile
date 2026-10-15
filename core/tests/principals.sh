@@ -115,6 +115,8 @@ expect_code "a role the policy doesn't govern can't sign in as a service" "42501
 
 check "invariants are asked as each service too, named as the audit trail names it" "service:7|{1}"   "RESET ROLE; SELECT string_agg(user_id || '|' || object_ids::text, ' ') FROM authz.check_invariants() WHERE invariant LIKE 'never doc: edit and not owner%';"
 check "... and as nobody: the row with no user" "1"   "RESET ROLE; SELECT count(*) FROM authz.check_invariants() WHERE user_id IS NULL AND invariant LIKE 'never doc: not view%';"
+check "... in that order: nobody, the users, then the other principals" "nobody 1 2 3 service:7 service:8 service:9" \
+  "RESET ROLE; SELECT string_agg(coalesce(user_id, 'nobody'), ' ') FROM authz.check_invariants() WHERE invariant LIKE 'never doc: not view%';"
 # a rule on a column is checked by a trigger, which runs as the app role and reads its text then: the signed-in
 # service (authz_int."service__me") is not the app role's to name, so the rule is behind a function made once
 check "a rule on a column that names a service: the service it names changes the column" "1" \
