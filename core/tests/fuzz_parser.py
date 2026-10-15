@@ -7,7 +7,8 @@ Starts from the example policies and mutates them at random (drop, repeat, swap 
 lines, insert odd characters, cut the text short), then parses and compiles each. A policy may be
 accepted or refused; what must never happen is any other exception (an IndexError, a KeyError, a
 RecursionError...), a refusal without a line number or at a line the policy doesn't have (rowstile dev shows
-that line), or a case taking seconds. Policy authors are trusted (see docs/threat-model.md), so this is about
+that line), the words a refusal is about (its span, which an editor underlines) outside the policy's text or
+before its line, or a case taking seconds. Policy authors are trusted (see docs/threat-model.md), so this is about
 robustness and clear errors, not an attack surface.
 """
 
@@ -22,7 +23,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from authzlib import Compiler  # noqa: E402
-from authzlib.parse import PolicyError, parse_policy  # noqa: E402
+from authzlib.parse import PolicyError, Span, parse_policy  # noqa: E402
 
 SEEDS = ["example/docs.authz", "tests/alt.authz", "tests/multi.authz", "tests/composite.authz"]
 ODD = [
@@ -103,6 +104,17 @@ def mutate(rnd: random.Random, text: str) -> str:
     return "".join(toks)
 
 
+def within(span: Span, lines: list[str], line: int) -> bool:
+    """Whether a refusal's span is words of the policy: on its line or one it goes on to, not empty."""
+    start, col, end, end_col = span
+    return (
+        line <= start <= end <= len(lines)
+        and col >= 0
+        and end_col <= len(lines[end - 1])
+        and (start, col) < (end, end_col)
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", type=int, default=3000)
@@ -133,6 +145,10 @@ def main() -> int:
             line = re.match(r"line (\d+):", str(e))
             if line and not 0 < int(line.group(1)) <= len(text.split("\n")):  # rowstile dev shows that line
                 problems.append((n, f"refused at a line the policy doesn't have: {e}", text))
+            if e.span and not within(
+                e.span, text.removeprefix("\ufeff").split("\n"), int(line.group(1)) if line else 1
+            ):
+                problems.append((n, f"refused about words that aren't in its text, {e.span}: {e}", text))
         except Exception:
             problems.append((n, traceback.format_exc(limit=3), text))
         took = time.perf_counter() - started

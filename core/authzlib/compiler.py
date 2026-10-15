@@ -559,7 +559,7 @@ class Core:
                         if st in ("anyone", "link"):
                             continue
                         if st not in self.types:
-                            fail(src.loc, f"{t.name}.{r.name}: unknown type '{st}'", "AZ201")
+                            fail(src.loc, f"{t.name}.{r.name}: unknown type '{st}'", "AZ201", word=st)
                         if sr == "*" and not self.T(st).principal:
                             fail(
                                 src.loc,
@@ -568,7 +568,12 @@ class Core:
                                 "AZ204",
                             )
                         if sr and sr != "*" and sr not in self.T(st).relations and sr not in self.T(st).perms:
-                            fail(src.loc, f"{t.name}.{r.name}: {st} has no relation or permission '{sr}'", "AZ203")
+                            fail(
+                                src.loc,
+                                f"{t.name}.{r.name}: {st} has no relation or permission '{sr}'",
+                                "AZ203",
+                                word=sr,
+                            )
                     if src.kind == "column":
                         column = self.source_columns(src)
                         self.check_key_columns(t, r, src, column, [st for st, _ in src.subjects], "subject")
@@ -645,14 +650,19 @@ class Core:
                     fail(sc.loc, f"scope {sc.name}: no type maps to {qual}", "AZ404")
                 if kind == "perm" and qual:
                     if qual not in self.types:
-                        fail(sc.loc, f"scope {sc.name}: unknown type '{qual}'", "AZ201")
+                        fail(sc.loc, f"scope {sc.name}: unknown type '{qual}'", "AZ201", word=qual)
                     if word not in self.public_perms(self.T(qual)):
-                        fail(sc.loc, f"scope {sc.name}: {qual} has no permission '{word}'", "AZ404")
+                        fail(
+                            sc.loc,
+                            f"scope {sc.name}: {qual} has no permission '{word}'",
+                            "AZ404",
+                            word=f"{qual}.{word}",
+                        )
                 if kind == "perm" and not qual and not any(word in self.public_perms(t) for t in self.types.values()):
                     fail(sc.loc, f"scope {sc.name}: no type has a permission '{word}'", "AZ404")
         for inv in self.pol.invariants:
             if inv.type not in self.types:
-                fail(inv.loc, f"unknown type '{inv.type}'", "AZ201")
+                fail(inv.loc, f"unknown type '{inv.type}'", "AZ201", word=inv.type)
         self.check_unused_relations()
         self.check_runtime_permissions()
         self.check_this()
@@ -859,7 +869,7 @@ class Core:
             return
         known = sorted([n for n in t.relations if not t.relations[n].synthetic] + self.public_perms(t))
         has = f"it has: {', '.join(known)}" if known else "it has none"
-        fail(loc, f"{t.name} has no relation or permission '{name}' ({has})", "AZ203")
+        fail(loc, f"{t.name} has no relation or permission '{name}' ({has})", "AZ203", word=name)
 
     def targets(self, t: Type, relname: str, loc: Loc) -> tuple[Relation, list[Type]]:
         """A relation followed with a dot must point at objects of one or several types; users are rows of

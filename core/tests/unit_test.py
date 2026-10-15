@@ -696,6 +696,30 @@ class LanguageForms(unittest.TestCase):
         pol = parse_policy(base + "  can view = owner\ntest Bob's test -- the comment\n  user 1 can view doc 1\n")
         self.assertEqual(pol.scenarios[0].name, "Bob's test")
 
+    def test_a_mistake_says_which_words_it_is_about(self) -> None:
+        # (line, column, end line, end column): what an editor underlines; a line that goes on is followed there
+        base = "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+        for tail, words in (
+            ("  can view = owner\n      or parent.nosuch\n", (6, 9, 6, 15)),  # (doc has no relation `parent`)
+            ("  can view = owner or nosuch\n", (5, 22, 5, 28)),
+            ("  can view = owner or (owner and {x}\n", (5, 22, 5, 23)),
+            ("  can view = owner or } x\n", (5, 22, 5, 23)),
+            ("  can view = owner or owner and {a}\n", (5, 13, 5, 35)),
+            ("  ed__it : user = owner_id\n", (5, 2, 5, 8)),
+            ("  r : user, teem#member shared\n", (5, 12, 5, 16)),
+            ("  r : user,, user shared\n", (5, 11, 5, 12)),
+            ("  can view = owner and {a = $f$x$f$}\n", (5, 28, 5, 31)),
+            ("  can view = owner and {a = 1\n      and b} and {\n", (6, 17, 6, 18)),
+            ("invariants\n  never teem: owner\n", (6, 8, 6, 12)),
+        ):
+            with self.subTest(tail), self.assertRaises(PolicyError) as e:
+                Compiler(parse_policy(base + tail)).compile("x")
+            self.assertEqual(e.exception.span, words, str(e.exception))
+        # a line the parser didn't read has no words to point at
+        with self.assertRaises(PolicyError) as e:
+            Compiler(parse_policy("app role app_user\n")).compile("x")
+        self.assertIsNone(e.exception.span)
+
     def test_quotes_in_include_names_and_test_ids(self) -> None:
         pol = parse_policy('include "a--b.authz"  -- the rest\n', files={"a--b.authz": read(POLICIES["docs"])})
         self.assertIn("folder", pol.types)
