@@ -69,6 +69,14 @@ run apply "$T/docs.authz"
 case "$out" in *"took back 1 privileges on rowstile's schemas"*"$T/docs.authz: applied") true;; *) false;; esac &&
   [ "$(PSQL -c "SELECT has_table_privilege('app_user', 'authz.shares', 'SELECT'), has_function_privilege('public', 'authz.trim_audit(interval)', 'EXECUTE')")" = "f|f" ] &&
   ok "... or a privilege on rowstile's own schemas given since, which it takes back" || bad "apply after a grant" "$out"
+PSQL -c "GRANT SELECT (subject_id) ON authz.shares TO app_user" >/dev/null
+got=$(PSQL -c "SELECT object || '|' || problem FROM authz.lint() WHERE object LIKE 'authz.shares%'")
+[ "$got" = "authz.shares (subject_id)|app_user holds SELECT on it, which the policy doesn't give (a default privilege of the owner, or a grant made since the last apply): the next apply takes it back, or REVOKE SELECT (subject_id) ON authz.shares FROM app_user CASCADE" ] &&
+  ok "lint names a privilege on one column of rowstile's tables, and the REVOKE that takes it back" || bad "lint, a column's privilege" "$got"
+run apply "$T/docs.authz"
+case "$out" in *"took back 1 privileges on rowstile's schemas"*"$T/docs.authz: applied") true;; *) false;; esac &&
+  [ "$(PSQL -c "SELECT has_column_privilege('app_user', 'authz.shares', 'subject_id', 'SELECT')")" = f ] &&
+  ok "... and applying takes it back" || bad "apply after a column's grant" "$out"
 # (tables made under one with rules since, partitions and tables that inherit: tests/children.sh)
 run apply "$T/docs.authz"; [ "$out" = "$T/docs.authz: unchanged" ] && ok "... and then it is unchanged again" || bad "unchanged after repairs" "$out"
 # the app's own views and functions may call the authz.* functions: applying replaces those in place

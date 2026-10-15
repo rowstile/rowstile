@@ -329,3 +329,84 @@ SELECT test.ok('a loop through links does not hang and changes nothing for carol
 RESET ROLE;
 RESET authz.user_id;
 SELECT test.ok('every inheritance table matches a from-scratch rebuild', authz.verify());
+
+-- ---------------------------------------------------------------------
+-- explain in full: each line, as the user asks it
+-- ---------------------------------------------------------------------
+CREATE FUNCTION test.explained(p_type text, p_id text, p_perm text, p_user text DEFAULT NULL) RETURNS text
+LANGUAGE sql AS $$ SELECT string_agg(e, E'\n' ORDER BY n) FROM authz.explain(p_type, p_id, p_perm, p_user) WITH ORDINALITY x(e, n) $$;
+GRANT EXECUTE ON FUNCTION test.explained(text, text, text, text) TO app_user;
+SET ROLE app_user;
+SET authz.user_id = 3;
+SELECT test.ok('explain: carol views Company through its share with Acme''s members, and the row that makes her one',
+  test.explained('folder', '1', 'view') = $e$yes  user 3 holds view on folder 1
+  folder.view = edit or viewer or (parent.view and {inherit}) or linked_into.view
+  no   edit
+  yes  viewer
+    yes  viewer: shared with org 1, and you are member there
+      yes  member: a row in app.org_members names you
+  no   (parent.view and {inherit})
+    no   parent.view
+    yes  {inherit}
+  no   linked_into.view$e$);
+SET authz.user_id = 1;
+SELECT test.ok('explain: alice edits Engineering as its owner, and what she lacks is followed down to the relation she doesn''t hold',
+  test.explained('folder', '3', 'edit') = $e$yes  user 1 holds edit on folder 3
+  folder.edit = share or editor or (parent.edit and {inherit})
+  yes  share
+    folder.share = owner or org.admin or (parent.share and {inherit})
+    yes  owner
+      yes  owner: owner_id is you
+    no   org.admin
+      no   org is org 1, without admin
+        no   you do not hold org.admin
+    no   (parent.share and {inherit})
+      no   parent.share
+        no   parent is folder 1, without share
+          folder.share = owner or org.admin or (parent.share and {inherit})
+          no   owner
+          no   org.admin
+            no   org is org 1, without admin
+          no   (parent.share and {inherit})
+            no   parent.share
+            yes  {inherit}
+      yes  {inherit}
+  yes  editor
+  no   (parent.edit and {inherit})
+    no   parent.edit
+      no   parent is folder 1, without edit
+        folder.edit = share or editor or (parent.edit and {inherit})
+        no   share
+        no   editor
+        no   (parent.edit and {inherit})
+          no   parent.edit
+          yes  {inherit}
+    yes  {inherit}$e$);
+RESET ROLE;
+BEGIN;
+-- a team with two sub-teams: dave is in the second one only
+INSERT INTO app.teams VALUES (13, 1, 10, 'Design');
+INSERT INTO app.team_members VALUES (13, 4);
+SELECT test.ok('explain: dave edits Engineering through the sub-team he is in, not the first one',
+  (SELECT array_agg(ltrim(e)) FROM authz.explain('folder', '3', 'edit', '4') e WHERE e LIKE '%through team%')
+  = '{"yes  through team 13, whose member count here too"}');
+-- a share to a group gina is in, made before the one asked about: the group named is the share's own
+SET authz.user_id = 5;
+SELECT authz.share('folder', 6, 'viewer', 'team', 10, 'member');
+SELECT authz.share('folder', 2, 'viewer', 'team', 12, 'member');
+SELECT test.ok('explain: gina views Handbook through its share with Platform, and is in Platform',
+  (SELECT array_agg(ltrim(e)) FROM authz.explain('folder', '2', 'view', '7') e WHERE e LIKE '%you are member there%')
+  = '{"yes  viewer: shared with team 12, and you are member there"}');
+-- 19 folders in a chain under Engineering: alice may view the last one as Engineering's owner, 60 steps down
+-- (view, edit, share, then share on each folder above, three steps each)
+INSERT INTO app.folders (id, org_id, parent_id, owner_id, name, inherit)
+  SELECT 200 + i, 1, CASE WHEN i = 1 THEN 3 ELSE 199 + i END, 5, 'deep ' || i, true FROM generate_series(1, 19) i;
+SELECT test.ok('explain goes 60 steps deep, and stops after: ... only past it',
+  (SELECT string_agg(DISTINCT ((length(e) - length(ltrim(e))) / 2)::text, ',') FROM authz.explain('folder', '219', 'view', '1') e
+   WHERE ltrim(e) = '...') = '61');
+ROLLBACK;
+-- a new session, where nobody has signed in yet: an administrator's explain says nobody holds it
+\c
+\o /dev/null
+SELECT test.ok('explain in a new session, nobody signed in: nobody holds it',
+  (SELECT e FROM authz.explain('folder', '1', 'view') e LIMIT 1) = 'no   nobody does not hold view on folder 1');

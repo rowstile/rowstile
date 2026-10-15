@@ -556,6 +556,31 @@ class SlowPlans(unittest.TestCase):
         self.assertEqual(re.findall(r"object := '([\w.]+)';\n  problem := 'names permissions", sql), warned)
         self.assertIn('object := to_regclass(\'"app"."docs"\')::text;\n  problem := \'its select rule', sql)
 
+    def test_fifty_view_definitions_are_not_many(self) -> None:
+        # q names p5 (32), p4 (16) and p1 (2): 50, the most that says nothing, as a permission and as a select rule;
+        # a rule for another command is no select rule, whatever it names (p6's 64 are said once, as p6's)
+        from authzlib.parse import Ref
+
+        text = (
+            self.heavy(6).split("type doc")[0]
+            + "  can q = (p5 and {a}) or (p4 and {b}) or (p1 and {a and b})\n"
+            + "rules app.teams\n  select : q\n  update : p6\n"
+        )
+        c = Compiler(parse_policy(text, "x.authz"))
+        sql = c.compile("x.authz")
+        team = c.types["team"]
+        rule = next(r for r in c.rules if r.command == "select")
+        self.assertEqual(c.expansions(c.rule_sql(team, "t", rule)), 50)
+        self.assertEqual(c.expansions(c.row_sql(team, "o", Ref("ref", "q"), team.perms["q"].loc)), 50)
+        self.assertEqual(re.findall(r"object := '([\w.]+)';\n  problem := 'names permissions", sql), ["team.p6"])
+        self.assertNotIn("its select rule", sql)
+
+    def test_a_table_named_like_rowstiles_schemas_counts_its_views_only(self) -> None:
+        # the rule reads the row's columns under the table's name, quoted: authz_gen."team__p6" would read as the view
+        text = self.heavy(6).replace("app.docs", "app.authz_gen").replace("team = team_id", "team = team__p6")
+        sql = Compiler(parse_policy(text)).compile("x")
+        self.assertRegex(sql, r"problem := 'its select rule .* 191 view definitions to plan before a row is read")
+
     @staticmethod
     def chain(levels: int) -> str:
         """Types in a chain (an org, its workspaces, their projects, ...): each row is inside one of the type

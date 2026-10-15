@@ -2,8 +2,8 @@
 # run to it (tests/check_counts.py): fewer or more fails, so that a count that changes is in the diff. After adding
 # or taking away checks on purpose, write the new count here, or python3 tests/check_counts.py --write LOG.
 adversarial 96
-apply 124
-capitals 43
+apply 126
+capitals 47
 children 59
 cli 133
 concurrency 23
@@ -14,7 +14,7 @@ cuts half way, every statement 31
 cuts half way, other policies 1
 devx 121
 docs 11
-governance 190
+governance 198
 hand answers 189
 identity 69
 interleavings 324
@@ -32,10 +32,10 @@ policy errors 186
 principals 93
 reference 18
 review 57
-scenario 94
+scenario 100
 signed sessions 53
 small policies 3
 studio 197
 tools 38
-unit 463
+unit 465
 upgrade 71
