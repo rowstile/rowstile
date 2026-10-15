@@ -12,7 +12,6 @@ do the calls running when the server is stopped (SIGTERM): none runs on after it
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import re
@@ -254,15 +253,14 @@ def run(dsn: str | None, args: list[str], running: Running | None = None) -> tup
     p = running.start(argv, env)
     try:
         out, _ = p.communicate(timeout=TIMEOUT)
+        code = p.returncode
     except subprocess.TimeoutExpired:
         stop(p)
         p.communicate()
-        if running.cancelled:
-            raise Cancelled from None
-        return 2, f"rowstile {args[0]} took more than {TIMEOUT} s and was stopped"
+        out, code = f"rowstile {args[0]} took more than {TIMEOUT} s and was stopped".encode(), 2
     if running.cancelled:
         raise Cancelled
-    return p.returncode, out.decode("utf-8", "replace").replace("\r\n", "\n")
+    return code, out.decode("utf-8", "replace").replace("\r\n", "\n")
 
 
 def call(dsn: str | None, name: Json, arguments: Json, running: Running | None = None) -> Message:
@@ -307,15 +305,15 @@ class Server:
         self.dsn = dsn
         self.lock = threading.Lock()
         self.running: dict[str, Running] = {}  # the calls in progress, by their request's id (as JSON writes it)
-        self.ending = False  # stopped: no call starts any more
 
     def end(self) -> None:
         """The server stopped (SIGTERM: how an MCP client ends one that hasn't ended once its input closed): each call
         running cancelled, as notifications/cancelled cancels one, and its command waited for, killed once GRACE
         seconds have passed, so that none runs on after the server."""
-        with self.lock:
-            self.ending = True
-            running = list(self.running.values())
+        # the lock held to the end: no call starts any more (one that was to waits for it). Not waited for if this
+        # thread holds it already (the signal came while it read the calls): nothing else starts a call then
+        self.lock.acquire(timeout=1)
+        running = list(self.running.values())
         for call in running:
             call.cancel()
         end = time.monotonic() + GRACE
@@ -372,8 +370,6 @@ class Server:
         if method == "tools/call":
             key, running = json.dumps(mid), Running()
             with self.lock:
-                if self.ending:
-                    return None
                 if key in self.running:  # its cancellation would stop both
                     return error(mid, -32600, f"request {key} is running already: each request has an id of its own")
                 self.running[key] = running
@@ -443,10 +439,10 @@ def serve(dsn: str | None = None) -> None:
     def ended(signum: int, frame: object) -> None:
         print(f"rowstile mcp: stopped (signal {signum}): the commands running are stopped first", file=sys.stderr)
         server.end()
-        writing.acquire(timeout=5)  # an answer another thread is writing is written whole (not one this thread is)
-        with contextlib.suppress(OSError, ValueError, RuntimeError):
-            out.flush()
-        os._exit(128 + signum)
+        # held to the end: an answer another thread is writing is written whole, and no other is begun (a thread
+        # left writing would stop the interpreter's own end); not waited for if this thread was writing one
+        writing.acquire(timeout=5)
+        raise SystemExit(128 + signum)  # the interpreter's own end: what is open is flushed and closed
 
     signal.signal(signal.SIGTERM, ended)
     for raw in sys.stdin.buffer:

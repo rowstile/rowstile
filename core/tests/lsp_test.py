@@ -395,6 +395,31 @@ with tempfile.TemporaryDirectory() as d:
         and "(at line 1, column 23)" in shown[0]["message"],
         [diags, shown],
     )
+    # the line of each kind of mistake: the setting's under its [table]; the first line for one it can't find (a
+    # name in quotes, a table written inline) or a file it can't read (not UTF-8)
+    lines = []
+    for text in (
+        b'policy = "policy.authz"\n[migrations]\ntool = "alembic"\ntol = "x"\n',
+        b'policy = "policy.authz"\n"my key" = 1\n',
+        b'policy = "policy.authz"\nclients = { py = 3 }\n',
+        b'policy = "\xff"\n',
+    ):
+        with open(toml, "wb") as fh:
+            fh.write(text)
+        c.notify("textDocument/didSave", {"textDocument": {"uri": u}})
+        diags, shown = flushed(c, u)
+        lines += [(x["range"], x["message"][:40]) for x in diags.get(mu, [])]
+    ok(
+        "each mistake on its line: the setting's under its [table], else the first line",
+        lines
+        == [
+            (rng(3, 0, 3, 9), "[migrations] tol is not a setting rowsti"),
+            (rng(0, 0, 0, 23), "my key is not a setting rowstile knows ("),
+            (rng(0, 0, 0, 23), "[clients] py is text: py = ..."),
+            (rng(0, 0, 0, 1), "'utf-8' codec can't decode byte 0xff in "),
+        ],
+        lines,
+    )
     with open(toml, "w", encoding="utf-8") as fh:
         fh.write('policy = "policy.authz"\n')
     c.notify("textDocument/didSave", {"textDocument": {"uri": u}})
@@ -406,6 +431,19 @@ with tempfile.TemporaryDirectory() as d:
     )
     said = c.close()
     ok("... and the server's log has nothing of it", said == "", said)
+    # the old name, read for now: the note the command gives, in the server's log, once
+    os.rename(toml, os.path.join(d, "rowfence.toml"))
+    c = Client(d)
+    c.request("initialize", {"capabilities": {}})
+    c.notify("initialized", {})
+    c.notify("textDocument/didOpen", {"textDocument": {"uri": tu, "languageId": "authz", "version": 1, "text": good}})
+    diags, shown = flushed(c, u)
+    said = c.close()
+    ok(
+        "rowfence.toml (the old name): read, and its log says to rename it, once",
+        diags.get(tu) == [] and shown == [] and said.count("rowfence.toml: rowstile was called rowfence") == 1,
+        [diags, shown, said],
+    )
 
 # a policy split into files: the included file is a part of the policy, opened alone or not
 with tempfile.TemporaryDirectory() as d:
@@ -947,6 +985,10 @@ else:
         c.request("initialize", {"capabilities": {}})
         e = Editor(c, path, typed)
         first = e.offered(typed, "type extra = app.", len("type extra = app."))
+        # rowstile.toml naming it another way (a URL): tried again at once, and failing the same way, not said again
+        with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
+            fh.write(f'policy = "policy.authz"\ndatabase = "postgresql:///{later}"\n')
+        first += e.offered(typed, "type extra = app.", len("type extra = app."))
         tried = time.monotonic()
         subprocess.run(["createdb", later], check=True)
         subprocess.run(
@@ -982,7 +1024,7 @@ else:
             other,
         )
         ok(
-            "... its log said why the first failed, once",
+            "... its log said why the reads failed, once for the same reason twice",
             said == f'rowstile lsp: no table or column names to complete: 3D000: database "{later}" does not exist\n',
             said,
         )

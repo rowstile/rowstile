@@ -152,7 +152,7 @@ class Server:
     def __init__(self, settings: Callable[[], Config]) -> None:
         self.settings = settings  # rowstile.toml as it is now
         self.cfg: Config | None = None  # its settings; None while it has a mistake
-        self.mistake: tuple[str | None, str] | None = None  # (rowstile.toml, the mistake in it)
+        self.mistake: tuple[str, str] | None = None  # (rowstile.toml, the mistake in it)
         self.read: object = None  # what rowstile.toml held when last read, to see it change
         self.marked: str | None = None  # the uri of the rowstile.toml its mistake is shown on
         self.docs: dict[str, str] = {}  # uri -> text
@@ -184,35 +184,32 @@ class Server:
         if cfg is not None and said.getvalue():
             print(said.getvalue(), end="", file=sys.stderr)  # a note (rowfence.toml is read for now)
         self.cfg, self.catalog, self.failed, self.tried = cfg, None, 0, 0.0
-        self.show(None if cfg else said.getvalue().strip() or "rowstile.toml can't be read")
+        self.clear()
+        if cfg is None:
+            self.show(said.getvalue().strip())
         if not first:
             for uri in list(self.docs):
                 self.check(uri)
 
-    def show(self, mistake: str | None) -> None:
-        """A mistake in rowstile.toml: on the file (its line), and in a message, for an editor that shows only the
-        open files' problems. None: the mistake shown last is cleared."""
+    def clear(self) -> None:
+        """The mistake in rowstile.toml shown last, cleared: the file was fixed, or has another one."""
         if self.marked is not None:
             self.notify("textDocument/publishDiagnostics", {"uri": self.marked, "diagnostics": []})
             self.marked = None
         self.mistake = None
-        if mistake is None:
-            return
+
+    def show(self, mistake: str) -> None:
+        """A mistake in rowstile.toml, as the command says it: on the file (its line), and in a message, for an
+        editor that shows only the open files' problems."""
         m = SETTINGS_FILE.match(mistake)
-        path, words = (m.group(1), m.group(2)) if m else (None, mistake)
+        assert m, mistake  # the command names the file first in each mistake it finds in it
+        path, words = m.group(1), m.group(2)
         self.mistake = (path, words)
-        if path is not None:
-            line, width = settings_line(path, words)
-            self.marked = self.uri_of(path)
-            diag: Diagnostic = {
-                "range": rng(line, 0, line, width),
-                "severity": 1,
-                "source": "rowstile",
-                "message": words,
-            }
-            self.notify("textDocument/publishDiagnostics", {"uri": self.marked, "diagnostics": cast(Json, [diag])})
-        name = os.path.basename(path) if path else "rowstile.toml"
-        message = f"{name}: {words} (until it is fixed, the policy is checked without it)"
+        line, width = settings_line(path, words)
+        self.marked = self.uri_of(path)
+        diag: Diagnostic = {"range": rng(line, 0, line, width), "severity": 1, "source": "rowstile", "message": words}
+        self.notify("textDocument/publishDiagnostics", {"uri": self.marked, "diagnostics": cast(Json, [diag])})
+        message = f"{os.path.basename(path)}: {words} (until it is fixed, the policy is checked without it)"
         self.notify("window/showMessage", {"type": 1, "message": message})
 
     # --- files -----------------------------------------------------------------------------------
@@ -242,10 +239,11 @@ class Server:
         """The policy rowstile.toml names. One the command refuses (outside rowstile.toml's folder) is a mistake to
         show on the file being checked: the command stops on it, after saying why on stderr."""
         if self.cfg is None:
-            if self.mistake is None:
-                return None
+            assert (
+                self.mistake is not None
+            )  # no settings: rowstile.toml has a mistake (read before any file is checked)
             path, words = self.mistake
-            raise PolicyError(f"line 1: {os.path.basename(path or 'rowstile.toml')}: {words}")
+            raise PolicyError(f"line 1: {os.path.basename(path)}: {words}")
         said = io.StringIO()
         try:
             with contextlib.redirect_stderr(said):
