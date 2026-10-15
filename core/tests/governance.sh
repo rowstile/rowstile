@@ -72,6 +72,20 @@ admin "an owner change in the same UPDATE as a new key is recorded" "relate|40|o
   "SELECT action || '|' || object_id || '|' || relation || '|' || subject_id FROM authz.audit
    WHERE object_type = 'folder' AND relation = 'owner' ORDER BY id DESC LIMIT 1"
 PSQL -c "UPDATE app.folders SET id = 4, owner_id = 1 WHERE id = 40" >/dev/null
+# a team given a folder in app.folder_team_access: viewer for any access, editor only where {access = 'edit'}
+# holds (access may be NULL here, where the condition is neither true nor false)
+B=$(PSQL -c "SELECT max(id) FROM authz.audit")
+since() { echo "SELECT string_agg(action || '|' || object_id || '|' || relation || '|' || subject_type || '|' || subject_id || '|' || subject_relation, ', ' ORDER BY id)
+   FROM authz.audit WHERE id > $B"; }
+PSQL -c "ALTER TABLE app.folder_team_access ALTER COLUMN access DROP NOT NULL" \
+     -c "INSERT INTO app.folder_team_access VALUES (6, 11, 'view'), (6, 12, NULL)" >/dev/null
+admin "a team given a folder in your table is recorded as its members (team#member), under the relations whose where holds" \
+  "relate|6|viewer|team|11|member, relate|6|viewer|team|12|member" "$(since)"
+B=$(PSQL -c "SELECT max(id) FROM authz.audit")
+PSQL -c "UPDATE app.folder_team_access SET access = 'edit' WHERE folder_id = 6 AND team_id = 11" >/dev/null
+admin "... a change of access records the relation it adds, and nothing for the one it keeps" "relate|6|editor|team|11|member" "$(since)"
+PSQL -c "DELETE FROM app.folder_team_access WHERE folder_id = 6" \
+     -c "ALTER TABLE app.folder_team_access ALTER COLUMN access SET NOT NULL" >/dev/null
 POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 PSQL -c "TRUNCATE app.folder_links" -c "INSERT INTO app.folder_links VALUES (21, 1)" >/dev/null
 admin "emptying a link table is recorded" "truncate|folder" \
@@ -103,6 +117,9 @@ admin "moving a folder announces it (and what sits below it)" "t" \
   "SELECT bool_or(object_type = 'folder' AND '4' = ANY (object_ids)) FROM authz.changes_since($POS)"
 admin "... with inheritance as the cause" "t" \
   "SELECT bool_or(cause = 'inheritance') FROM authz.changes_since($POS)"
+admin "reading from a position gives what came after it, not the entry at it" "0|1" \
+  "SELECT (SELECT count(*) FROM authz.changes_since(m)) || '|' || (SELECT count(*) FROM authz.changes_since(m - 1))
+   FROM (SELECT max(pos) AS m FROM authz.changes) x"
 PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" >/dev/null
 got=$(psql -X -q -At -d "$DB" -c "LISTEN authz_changes" -c "SET ROLE app_user" -c "SET authz.user_id = 5" \
        -c "SELECT authz.share('file', 11, 'viewer', 'user', 4)" -c "SELECT 1" 2>&1)
@@ -146,6 +163,30 @@ expect_code "the id may be a number, as for authz.can" ok -c "SET authz.user_id 
 expect_code "... for a review too" ok -c "SET authz.user_id = 5" -c "BEGIN" -c "SELECT authz.start_review('folder', 3)" -c "ROLLBACK"
 expect_code "... and for an owner's roles (the docs policy has none: refused, not unknown)" "42501: you cannot see roles of org 1" -c "SET authz.user_id = 5" \
   -c "SELECT * FROM authz.roles_of('org', 1)"
+# in a transaction rolled back after it: carol's shares on Keys taken away and rows put in as the owner ($1), then
+# carol breaks the glass on Keys (viewer, an hour), then what the owner reads ($2)
+glass() {
+  PSQL -c "BEGIN" -c "DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'; $1" \
+       -c "SET LOCAL ROLE app_user" -c "SET LOCAL authz.user_id = 3" -c "SELECT authz.break_glass('folder', '6', 'viewer', 'INC-8', '1 hour')" \
+       -c "RESET ROLE" -c "$2" -c "ROLLBACK" 2>&1 | tail -n 1
+}
+SHARE="INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at, expires_at) VALUES"
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '4', NULL, NULL)" \
+  "SELECT string_agg(subject_id || ':' || (expires_at IS NOT NULL), ',' ORDER BY subject_id) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6'")
+[ "$got" = "3:true,4:false" ] && echo "ok    breaking the glass beside someone else's share on the folder gives her one of her own, and leaves theirs" ||
+  { echo "FAIL  break glass beside another share: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', now(), NULL)" \
+  "SELECT coalesce(expires_at::text, 'no end') || '|' || (starts_at = now()) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
+[ "$got" = "no end|true" ] && echo "ok    a share of hers that starts this very moment already lets her in: it is left as it is" ||
+  { echo "FAIL  break glass over a share starting now: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', NULL, now() + interval '1 hour')" \
+  "SELECT count(*) FROM authz.audit WHERE action = 'share_changed' AND txid = txid_current()")
+[ "$got" = 0 ] && echo "ok    ... and so is one that ends just when the emergency access would: nothing changed, nothing recorded" ||
+  { echo "FAIL  break glass over a share ending at the same time: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', NULL, now() + interval '5 minutes'), ('folder', '6', 'editor', 'user', '3', NULL, now() + interval '10 minutes')" \
+  "SELECT string_agg(relation || '|' || (expires_at - now()), ', ' ORDER BY relation) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
+[ "$got" = "editor|00:10:00, viewer|01:00:00" ] && echo "ok    one ending sooner is made to last the hour, and her shares of other relations are left as they are" ||
+  { echo "FAIL  break glass over shares ending sooner: $got"; fails=$((fails + 1)); }
 
 echo "-- access requests"
 REQ=$(as 3 -c "SELECT authz.request_access('folder', 5, 'viewer', 'need the offer letter template', '7 days')")
@@ -163,6 +204,8 @@ expect_code "a request says why" "22023: say why you need it" -c "SET authz.user
   -c "SELECT authz.request_access('folder', 6, 'viewer', '  ')"
 expect_code "... and how long it may last is more than nothing" "22023: the duration must be positive" -c "SET authz.user_id = 4" \
   -c "SELECT authz.request_access('folder', 6, 'viewer', 'please', '-1 day')"
+expect_code "... none at all is refused too" "22023: the duration must be positive" -c "SET authz.user_id = 4" \
+  -c "SELECT authz.request_access('folder', 6, 'viewer', 'please', '0')"
 expect_code "nobody signed in asks for nothing" "42501: sign in first" -c "SELECT authz.request_access('folder', 6, 'viewer', 'please')"
 said=$(psql -X -q -At -d "$DB" -c "SET ROLE app_user" -c "SELECT authz.request_access('folder', 6, 'viewer', 'please')" 2>&1 | grep '^HINT:  ')
 [ "$said" = "HINT:  rowstile help AZ714" ] && echo "ok    ... and its code is sign in first (AZ714, a 401), not a refusal" ||
@@ -266,7 +309,7 @@ admin "the audit trail has the requests, their answers and the reviews" "approve
    WHERE action IN ('request_access', 'approve_request', 'deny_request', 'start_review', 'close_review')"
 
 echo "-- reviews respect 'shared by'"
-sed -e 's/^  editor      : user, team#member shared$/  editor      : user, team#member, link shared by manage_editors/' \
+sed -e 's/^  editor      : user, team#member shared$/  editor      : user, team, team#member, link shared by manage_editors/' \
     -e 's/^  can share = owner or org.admin or (parent.share and {inherit})$/&\n  can manage_editors = owner/' \
     example/docs.authz > /tmp/authz_governance_by.authz
 grep -q "can manage_editors = owner" /tmp/authz_governance_by.authz && grep -q "shared by manage_editors" /tmp/authz_governance_by.authz ||
@@ -294,11 +337,27 @@ admin "alice (manage_editors) turns it off, and the audit trail has it as an uns
    FROM authz.audit ORDER BY id DESC LIMIT 1"
 as 1 -c "SELECT authz.create_link('folder', 3, 'editor')" >/dev/null
 admin "an administrator lists a link and turns it off" "0"   "SELECT authz.revoke_link('folder', 3, (SELECT id FROM authz.list_links('folder', 3))); SELECT count(*) FROM authz.list_links('folder', 3)"
+# a team itself and its members are two shares: a review revokes the one it was asked to
+as 1 -c "SELECT authz.share('folder', 3, 'editor', 'team', 11)" -c "SELECT authz.share('folder', 3, 'editor', 'team', 11, 'member')" >/dev/null
+editors() { echo "SELECT string_agg(subject_type || ':' || subject_id || ':' || subject_relation, ', ' ORDER BY subject_type, subject_relation)
+   FROM authz.shares WHERE object_type = 'folder' AND object_id = '3' AND relation = 'editor'"; }
+REV4=$(as 1 -c "SELECT authz.start_review('folder', '3')")
+item() { as 1 -c "SELECT item FROM authz.review_items($1) WHERE subject_type = '$2' AND subject_relation = '$3'"; }
+as 1 -c "SELECT authz.review_decide($REV4, $(item "$REV4" user ''), true)" -c "SELECT authz.review_decide($REV4, $(item "$REV4" team member), false)" >/dev/null
+check "alice keeps dave, revokes team 11's members and leaves team 11 undecided: closing revokes one share" "1" \
+  "SET authz.user_id = 1; SELECT authz.close_review($REV4)"
+admin "... the members' one, not the team's own" "team:11:, user:4:" "$(editors)"
+REV5=$(as 1 -c "SELECT authz.start_review('folder', '3')")
+as 1 -c "SELECT authz.review_decide($REV5, $(item "$REV5" user ''), true)" >/dev/null
+check "closing with undecided items revoked revokes the one nobody decided" "1" "SET authz.user_id = 1; SELECT authz.close_review($REV5, true)"
+admin "... and keeps the one marked keep" "user:4:" "$(editors)"
 reapply /tmp/authz_governance.sql
 as 1 -c "SELECT authz.unshare('folder', 3, 'editor', 'user', 4)" >/dev/null
 
 echo "-- invariants"
 admin "the example data keeps the invariant" "0" "SELECT count(*) FROM authz.check_invariants()"
+admin "checking them as everyone leaves the session signed in as it was" "5" \
+  "BEGIN; SET LOCAL authz.user_id = '5'; SELECT count(*) FROM authz.check_invariants(); SELECT current_setting('authz.user_id'); COMMIT;"
 PSQL -c "UPDATE app.folders SET owner_id = 6 WHERE id = 4" >/dev/null
 admin "a Globex user owning an Acme folder breaks it" "6|{4}" \
   "SELECT user_id || '|' || object_ids::text FROM authz.check_invariants()"

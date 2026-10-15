@@ -7893,6 +7893,10 @@ class SearchPath(unittest.TestCase):
             self.assertGreater(len(running), 5, name)
             for st in running:
                 self.assertNotIn("search_path = pg_catalog", st.split("$f$")[0], f"{name}: {st[:120]}")
+                # nor on the caller's path, which may lack the schema the condition's names are in: a BEGIN ATOMIC
+                # body is resolved when applying, any other names the path it keeps
+                if "BEGIN ATOMIC" not in st:
+                    self.assertIn("SET search_path FROM CURRENT", st.split("$f$")[0], f"{name}: {st[:120]}")
 
 
 class ErrorCodes(unittest.TestCase):

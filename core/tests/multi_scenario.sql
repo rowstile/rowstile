@@ -286,6 +286,13 @@ SELECT test.ok('... and there are none for a type without custom roles, even gra
 SELECT test.ok('Acme''s roles are listed for Acme members', (SELECT count(*) FROM authz.roles_of('org', '1')) = 2);
 SELECT set_config('test.reviewer', (SELECT id::text FROM authz.roles_of('org', '1') WHERE name = 'reviewer'), false);
 SELECT set_config('test.writer', (SELECT id::text FROM authz.roles_of('org', '1') WHERE name = 'writer'), false);
+SELECT test.as(3);
+SELECT test.ok('carol asks for the writer role on folder 1, and may withdraw it',
+  test.try(format($$SELECT authz.cancel_request(authz.request_access('folder', '1', 'role:%s', 'to write the spec'))$$,
+                  current_setting('test.writer'))) = 'ok');
+SELECT test.ok('... but not for a role that doesn''t exist',
+  test.error($$SELECT authz.request_access('folder', '1', 'role:999999', 'to write the spec')$$)
+    = 'P0001: the policy does not allow sharing folder.role:999999 with a user');
 SELECT test.as(1);
 SELECT test.ok('alice gives dave the reviewer role on folder 1',
   test.try(format($$SELECT authz.share('folder', '1', 'role:%s', 'user', '00000000-0000-4000-8000-000000000004')$$,

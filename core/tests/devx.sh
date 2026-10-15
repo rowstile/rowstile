@@ -207,6 +207,10 @@ case "$out" in "yes  update : edit  (line "*"|after the change:|  no   update : 
   ok "a plain update rule after the change: its reasons are the changed row's, not the stored row's";; *) bad "explain update after the change" "$out";; esac
 out=$(as 1 "SELECT authz.explain_rule('app.nothing', 'insert')")
 case "$out" in *"no rules for table app.nothing"*) ok "a table without rules is named";; *) bad "no rules" "$out";; esac
+# a folder put at the top has no parent: parent.edit is no, with nothing to explain it on (not even an empty line)
+out=$(as 1 "SELECT array_to_string(authz.explain_rule('app.folders', 'insert', NULL, '{\"org_id\": 1, \"owner_id\": 1, \"name\": \"x\"}'), '|', 'NULL')")
+case "$out" in "no   insert : parent.edit and owner  (line "*")|  no   parent.edit|  yes  owner") ok "an insert at the top: no parent.edit, and no lines about a parent there isn't";;
+  *) bad "explain an insert at the top" "$out";; esac
 
 echo "-- an update after rule: what the row after the change answers to"
 # (applying makes rowstile's functions anew, and Postgres's counts of their calls go with the old ones: while the
@@ -232,6 +236,11 @@ out=$(then_as 2 "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (9
   bad "allowed by the after rule" "$out"
 case "$out" in "yes  update : share  (line "*"|after the change:|  yes  update after : edit  (line "*) ok "... which explain_rule says: after the change, the after rule";;
   *) bad "explain_rule with an update after rule" "$out";; esac
+# a token limited to the files scope may update files: the after rule's explanation says nothing against the scope
+out=$(then_as 2 "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (91, 4, 2, 'his')" "SET LOCAL authz.scopes = 'files'" \
+  "SELECT array_to_string(authz.explain_rule('app.files', 'update', '91', '{\"owner_id\": 7}'), '|')")
+case "$out" in "yes  update : share  (line "*")|  yes  share|after the change:|  yes  update after : edit  (line "*")|    yes  edit") ok "... and with a token limited to updating files, the after rule's scopes allow it";;
+  *) bad "explain_rule with an update after rule and scopes" "$out";; esac
 # without a rule on folder_id, a file moved where its editor edits nothing is refused by the update rule itself,
 # on the row after the change: bob edits file 11 in Design docs, not in Handbook
 sed '/^  update folder_id after  *: folder.edit$/d' example/docs.authz > "$T/moves.authz"
@@ -242,6 +251,30 @@ case "$out" in *"42501: permission denied: user 2 may not update this row of app
   *) bad "the update rule refusing the row after the change" "$out";; esac
 bash tests/coverage_functions.sh "$DB"
 CLI apply example/docs.authz >/dev/null 2>&1
+
+echo "-- the wheres an explanation reads: the type's, a link table's"
+bash tests/coverage_functions.sh "$DB"
+# body is NULL in every file, so the file type's where is neither true nor false; Design docs (4) is linked into
+# Handbook (live), Secrets (live NULL) and Globex (not live), and Joint project into Company (live)
+PSQL -c "ALTER TABLE app.folder_links ADD COLUMN live boolean" -c "UPDATE app.folder_links SET live = true" \
+     -c "INSERT INTO app.folder_links VALUES (4, 2, true), (4, 5, NULL), (4, 20, false)" >/dev/null
+sed -e "s/^type file = app.files$/type file = app.files where {body <> 'gone'}/" \
+    -e 's/^  linked_into : folder      = app.folder_links(folder_id -> parent_id)/& where {live}/' \
+    -e 's/^  delete                               : share$/  delete                               : share or linked_into.edit/' \
+    example/docs.authz > "$T/wheres.authz"
+[ "$(grep -c "where {body <> 'gone'}\|where {live}\|: share or linked_into.edit$" "$T/wheres.authz")" = 3 ] || bad "could not make the policy with wheres"
+run apply "$T/wheres.authz"; case "$out" in *": applied") ;; *) bad "the policy with wheres applies" "$out";; esac
+out=$(as 1 "SELECT array_to_string(authz.explain_rule('app.files', 'insert', NULL, '{\"folder_id\": 4, \"owner_id\": 1, \"name\": \"x\"}'), '|')")
+case "$out" in "no   insert : folder.edit and owner  (line "*")|  no   the row fails the file type's where {body <> 'gone'}|  yes  folder.edit|  yes  owner")
+  ok "a row whose type's where is NULL fails it, and the explanation says so";; *) bad "explain a row failing the type's where" "$out";; esac
+# bob edits Design docs, and may not delete it: linked_into.edit is explained on the live link only
+out=$(as 2 "WITH e AS (SELECT l, n FROM unnest(authz.explain_rule('app.folders', 'delete', '4')) WITH ORDINALITY u(l, n))
+  SELECT string_agg(l, '|' ORDER BY n) FROM e WHERE n > (SELECT n FROM e WHERE l = '  no   linked_into.edit')")
+[ "$out" = "    no   you have no access to folder 2" ] && ok "a missing rel.perm is explained on what the row's link rows point at, where the link table's where holds" ||
+  bad "explain linked_into.edit" "$out"
+bash tests/coverage_functions.sh "$DB"
+CLI apply example/docs.authz >/dev/null 2>&1
+PSQL -c "DELETE FROM app.folder_links WHERE folder_id = 4" -c "ALTER TABLE app.folder_links DROP COLUMN live" >/dev/null
 
 echo "-- authz.who_among"
 out=$(as '' "SELECT string_agg(x, ',' ORDER BY x) FROM authz.who_among('file', 11, 'view', ARRAY['1','2','3','4','5','6','7']) x")
