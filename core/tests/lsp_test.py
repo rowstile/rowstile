@@ -182,6 +182,19 @@ with tempfile.TemporaryDirectory() as d:
         d1 and d1[0].get("code") == "AZ203" and not d1[0]["message"].endswith("]"),
         d1,
     )
+    twice = policy.replace("can edit  = share or editor", "can edit  = share or (editor", 1)
+    twice += "\nscope twice = select\nscope twice = delete\n"
+    c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 3}, "contentChanges": [{"text": twice}]})
+    d2 = c.diagnostics(u)
+    ok(
+        "every mistake the parser finds is shown, not the first alone",
+        [(d["range"]["start"]["line"], d["message"]) for d in d2 or []]
+        == [
+            (pos(twice, "(editor")["line"], "missing )"),
+            (pos(twice, "scope twice = delete")["line"], "scope twice is defined twice"),
+        ],
+        d2,
+    )
     c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 3}, "contentChanges": [{"text": policy}]})
     ok("... and goes away when fixed", c.diagnostics(u) == [])
 

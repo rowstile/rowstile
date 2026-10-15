@@ -25,6 +25,9 @@ Each release upgrades from the one before it. How releases are numbered and made
   `(` that isn't closed, the subject a list can't read), where it underlined the whole line; on a line that goes on
   to the next, the words are where they are. `PolicyError.span` says where they are, for code that compiles a
   policy.
+- The parser reads on after a mistake, and the language server shows every mistake it finds in the policy, where
+  it showed the first. The lines of a block whose first line is wrong are left out, so each mistake is said once.
+  `PolicyError.errors` holds them all; the message, and what `rowstile check` says, are still the first.
 - The reference no longer shows `core/compile_policy.py`, which no install carries: previewing a change is
   `rowstile diff new.authz [--users 1,2]`. The script stays the suites' compiler without a database, with three
   modes (`--check`, `--tests`, `--diff`; `rowstile graph` and `rowstile client` replace its `--graph` and

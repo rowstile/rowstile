@@ -303,28 +303,31 @@ class Server:
                 self.models[uri] = (pol, files, path)
                 Compiler(pol).compile("the policy", transaction=False)
         except PolicyError as e:
-            m = ERROR.match(split_code(str(e))[0])
-            name, line, msg = (m.group(1), int(m.group(2)), m.group(3)) if m else (None, 1, split_code(str(e))[0])
-            target = uri if main is None else self.uri_of(main)
-            if name and name != THIS:
-                target = self.uri_of(os.path.join(os.path.dirname(path), *name.split("/")))
-                diags.setdefault(target, [])
-            lines = (self.docs.get(target) or "").split("\n")
-            width = len(lines[line - 1]) if 0 < line <= len(lines) else 200
-            indent = len(lines[line - 1]) - len(lines[line - 1].lstrip()) if 0 < line <= len(lines) else 0
-            # the words the mistake is about when the parser knows them, else the line
-            where = rng(line - 1, indent, line - 1, width)
-            if e.span:
-                where = rng(e.span[0] - 1, e.span[1], e.span[2] - 1, e.span[3])
-            diag: Diagnostic = {
-                "range": where,
-                "severity": 1,
-                "source": "rowstile",
-                "message": msg,
-            }
-            if e.code:
-                diag["code"] = e.code  # rowstile help AZ201
-            diags[target].append(diag)
+            for mistake in e.errors:  # (every one the parser found; the compiler stops at its first)
+                m = ERROR.match(split_code(str(mistake))[0])
+                name, line, msg = (
+                    (m.group(1), int(m.group(2)), m.group(3)) if m else (None, 1, split_code(str(mistake))[0])
+                )
+                target = uri if main is None else self.uri_of(main)
+                if name and name != THIS:
+                    target = self.uri_of(os.path.join(os.path.dirname(path), *name.split("/")))
+                    diags.setdefault(target, [])
+                lines = (self.docs.get(target) or "").split("\n")
+                width = len(lines[line - 1]) if 0 < line <= len(lines) else 200
+                indent = len(lines[line - 1]) - len(lines[line - 1].lstrip()) if 0 < line <= len(lines) else 0
+                # the words the mistake is about when the parser knows them, else the line
+                where = rng(line - 1, indent, line - 1, width)
+                if mistake.span:
+                    where = rng(mistake.span[0] - 1, mistake.span[1], mistake.span[2] - 1, mistake.span[3])
+                diag: Diagnostic = {
+                    "range": where,
+                    "severity": 1,
+                    "source": "rowstile",
+                    "message": msg,
+                }
+                if mistake.code:
+                    diag["code"] = mistake.code  # rowstile help AZ201
+                diags[target].append(diag)
         except Exception as e:  # a compiler bug must not take the editor down
             diags[uri].append(
                 {
