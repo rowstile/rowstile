@@ -1669,13 +1669,17 @@ CREATE TABLE cn.team_members (team_id bigint REFERENCES cn.teams, user_id bigint
 CREATE TABLE cn.rooms (id bigint PRIMARY KEY, owner_id bigint REFERENCES cn.users);
 CREATE TABLE cn.room_mics (room_id bigint REFERENCES cn.rooms, user_id bigint REFERENCES cn.users,
   PRIMARY KEY (room_id, user_id));
+CREATE TABLE cn."Stage" (id bigint PRIMARY KEY, "ownerId" bigint REFERENCES cn.users);
+CREATE TABLE cn."StageMic" ("stageId" bigint REFERENCES cn."Stage", "userId" bigint REFERENCES cn.users,
+  "isOn" boolean NOT NULL DEFAULT false, PRIMARY KEY ("stageId", "userId"));
 GRANT USAGE ON SCHEMA cn TO app_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA cn TO app_user;
 -- ann (1) owns docs 1 to 5, each inside the one before, and doc 6, archived; bo (2) is in group 2, which is in
 -- group 1, as group 3 is; dee (4) is no longer active; bot 1 may view doc 4; ann leads project (1,5) and is one of
 -- its members, and group 3's members are its members too; cy is in club 2; shelf 1 is closed, shelf 2 open,
 -- and whether shelf 3 is closed isn't known (NULL: the type's where doesn't hold); bo and eve (5) are team 7; ann
--- owns rooms 1 and 3, nobody room 2; bo has the mic in room 1
+-- owns rooms 1 and 3, nobody room 2; bo has the mic in room 1; groups 4 to 7 are each inside the one before; ann
+-- owns doc 7, and stage 1, where bo's mic is off (its tables named in capitals, as Prisma names them)
 INSERT INTO cn.clubs VALUES (1), (2);
 INSERT INTO cn.users VALUES (1, true, NULL), (2, true, NULL), (3, true, 2), (4, false, NULL), (5, true, NULL);
 INSERT INTO cn.bots VALUES (1, 1);
@@ -1692,6 +1696,10 @@ INSERT INTO cn.teams VALUES (7);
 INSERT INTO cn.team_members VALUES (7, 2), (7, 5);
 INSERT INTO cn.rooms VALUES (1, 1), (2, NULL), (3, 1);
 INSERT INTO cn.room_mics VALUES (1, 2);
+INSERT INTO cn.groups VALUES (4, NULL), (5, 4), (6, 5), (7, 6);
+INSERT INTO cn.docs VALUES (7, NULL, 1, false);
+INSERT INTO cn."Stage" VALUES (1, 1);
+INSERT INTO cn."StageMic" VALUES (1, 2, false);
 """
 WHY_POLICY = """app role app_user
 
@@ -1751,6 +1759,16 @@ type room = cn.rooms
   can enter   = owner or host or guest
   can speak   = (owner or host) and not guest
   can present = owner and mic
+
+type stage = cn.Stage
+  owner : user = ownerId
+  mic   : user = cn.StageMic(stageId -> userId) where {"isOn"}
+  star  : user shared
+  can share   = owner
+  can tune    = star
+  can light   = star
+  can bow     = star
+  can perform = (owner and mic) or star
 """
 
 
@@ -1767,7 +1785,7 @@ def corners(db: str) -> None:
     if rc:
         raise SystemExit(out)
     # cy (3) could view doc 3 until yesterday; bot 1 may view doc 4; eve hosts room 1, and room 3 as its guest too;
-    # page 2 was shared with every user before page 1, above it, was hidden
+    # page 2 was shared with every user before page 1, above it, was hidden; doc 7 is shared with group 4's members
     psql(
         db,
         "SELECT authz.act_as('user', '1'); "
@@ -1776,7 +1794,8 @@ def corners(db: str) -> None:
         "SELECT authz.share('room', '1', 'host', 'user', '5'); "
         "SELECT authz.share('room', '3', 'host', 'user', '5'); SELECT authz.share('room', '3', 'guest', 'user', '5'); "
         "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) "
-        "VALUES ('page', '2', 'reader', 'user', '*')",
+        "VALUES ('page', '2', 'reader', 'user', '*'); "
+        "SELECT authz.share('doc', '7', 'viewer', 'grp', '4', 'belong')",
     )
     data = "SELECT (SELECT string_agg(s::text, ' ' ORDER BY s::text) FROM authz.shares s), " + ", ".join(
         f"(SELECT string_agg(x::text, ' ' ORDER BY x::text) FROM {t} x)"
@@ -1792,6 +1811,8 @@ def corners(db: str) -> None:
             "cn.shelf_keepers",
             "cn.rooms",
             "cn.room_mics",
+            'cn."Stage"',
+            'cn."StageMic"',
         )
     )
     before = psql(db, data)
@@ -1996,6 +2017,50 @@ def corners(db: str) -> None:
             "from 1 person)  [line 51]"
         ]
         and after == [],
+        said,
+    )
+    # tables and columns named in capitals: a row added, and a row there whose column the link's where reads changed
+    rc, said, ways, after = why("--as", "user:1", "stage", "1", "perform")
+    check(
+        "a link table named in capitals: the row it adds, its columns quoted, with the column its where asks",
+        rc == 0
+        and ways
+        == [
+            "add user 1 to cn.StageMic for stage 1, with isOn = true  [line 62]",
+            "share star on stage 1 with user 1 (also gives bow, light, tune on it)  [line 63]",
+        ]
+        and after == [],
+        said,
+    )
+    rc, said, ways, after = why("--as", "user:2", "stage", "1", "perform")
+    check(
+        "... and the row there (bo's mic, off): its column set, beside the owner; one change before two, though the "
+        "share gives more",
+        rc == 0
+        and ways
+        == [
+            "share star on stage 1 with user 2 (also gives bow, light, tune on it)  [line 63]",
+            "set ownerId of stage 1 to 2 and set isOn = true on user 2's row of cn.StageMic for stage 1 (also gives "
+            "share on it) (takes share on it from 1 person)  [line 61, line 62]",
+        ]
+        and after == [],
+        said,
+    )
+    rc, said, ways, after = why("--as", "user:3", "doc", "7", "view")
+    check(
+        "groups inside groups: joining one three deep at most (4, 5 and 6, not 7, inside 6), the fewest others first",
+        rc == 0
+        and ways
+        == [
+            "share viewer on doc 7 with user 3  [line 17]",
+            *(
+                f"add user 3 to cn.group_members for grp {g} (also gives belong on {n} more grp{'s' * (n > 1)} for "
+                "user:3)  [line 9]"
+                for g, n in ((4, 1), (5, 2), (6, 3))
+            ),
+            "set owner_id of doc 7 to 3 (also gives archive, edit, share on it) (takes view, archive, edit, share on "
+            "it from 1 person)  [line 15]",
+        ],
         said,
     )
     # what no change makes count: an object or a person that isn't there (as authz.share says of a subject), or a row

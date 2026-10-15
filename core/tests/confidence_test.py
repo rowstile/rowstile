@@ -57,15 +57,18 @@ type folder = app.folders
   can view   = (owner or viewer or parent.view) and not hidden
   can see    = signed_in
 """
-# a table that holds only its key and its owner
+# a table that holds only its key and its owner; and one keyed by text, its other column named in capitals
 TAGS_SCHEMA = """CREATE SCHEMA app;
 CREATE TABLE app.users (id bigint PRIMARY KEY);
 CREATE TABLE app.tags (id bigint PRIMARY KEY, owner_id bigint NOT NULL REFERENCES app.users);
 CREATE INDEX ON app.tags (owner_id);
+CREATE TABLE app."Notes" (slug text PRIMARY KEY, "Title" text NOT NULL, owner_id bigint NOT NULL REFERENCES app.users);
+CREATE INDEX ON app."Notes" (owner_id);
 GRANT USAGE ON SCHEMA app TO app_user;
 GRANT SELECT, UPDATE ON ALL TABLES IN SCHEMA app TO app_user;
 INSERT INTO app.users VALUES (1), (2);
 INSERT INTO app.tags VALUES (1, 1), (2, 2);
+INSERT INTO app."Notes" VALUES ('intro', 'Intro', 1);
 """
 TAGS_POLICY = """app role app_user
 type user = app.users
@@ -76,6 +79,12 @@ rules app.tags
   select : edit
   update : edit
   update owner_id : nobody
+type note = app.Notes (slug text)
+  owner : user = owner_id
+  can edit = owner
+rules app.Notes
+  select : edit
+  update : edit
 """
 # tests/composite_schema.sql's tables, a few thousand rows: users in teams, teams in teams, folders in folders and
 # in projects, files in folders (each row in the org of what it points at)
@@ -498,6 +507,25 @@ def main() -> None:
         (said, refused, after),
     )
 
+    def partitioned_in_capitals(d: Db) -> str:
+        # the same, its name in capitals as Prisma writes it: the table is found by its quoted name
+        d.script(
+            'CREATE TABLE app."Events" (id bigint, owner_id bigint, at date NOT NULL, PRIMARY KEY (id, at)) '
+            "PARTITION BY RANGE (at)"
+        )
+        text, files = database.applied(d)
+        c = database.policy_compiler(
+            text + "\ntype event = app.Events\n  owner : user = owner_id\n  can view = owner\n", files
+        )
+        return perf.describe_missing(perf.missing_indexes(d, c), "sql")
+
+    said = work(partitioned_in_capitals)
+    check(
+        "... and one named in capitals: the index to add without CONCURRENTLY too",
+        said.endswith('\n  add: CREATE INDEX "Events_owner_id_idx" ON "app"."Events" ("owner_id");'),
+        said,
+    )
+
     def keyed_by_its_user(d: Db) -> tuple[list[perf.Missing], list[perf.Missing]]:
         # a table keyed by its user's id, and a relation that reads that key: lists find the profiles by it, a lookup
         # like any other (authz.lint() names it too), which its primary key serves, and without one nothing does
@@ -589,6 +617,22 @@ def main() -> None:
     )
 
     print("-- plans and bench")
+
+    def beside_the_apps_own(d: Db) -> str | None:
+        # policies the app wrote itself, for roles of its own: not rowstile's, so not the role plans and bench read as
+        # (a_confidence_* before app_user in the alphabet, where an answer that took any policy's role would find it)
+        d.script(
+            "CREATE ROLE a_confidence_reports; CREATE ROLE a_confidence_audit; "
+            "CREATE POLICY reports_read ON app.orgs FOR SELECT TO a_confidence_reports USING (true); "
+            "CREATE POLICY audit_read ON app.users FOR SELECT TO a_confidence_audit USING (true); "
+            "COMMENT ON POLICY audit_read ON app.users IS 'the auditors read every user'"
+        )
+        return perf.app_role(d)
+
+    check(
+        "the app role is the one rowstile's policies are for, not that of a policy the app wrote itself",
+        work(beside_the_apps_own) == "app_user",
+    )
     p = work(lambda d: perf.plans(d, database.policy_compiler(*database.applied(d)), ("user", "1")))
     tables = {t["table"]: t for t in p["tables"]}
     check(
@@ -674,7 +718,12 @@ def main() -> None:
         rc, out = cli(db + "_tags", "bench", "--people", "1", "--rounds", "1") if rc == 0 else (rc, out)
         check(
             "bench: no update timed on a table with no column to write back unchanged",
-            rc == 0 and "  read app.tags " in out and "  authz.can tag edit " in out and "update" not in out,
+            rc == 0 and "  read app.tags " in out and "  authz.can tag edit " in out and "update app.tags" not in out,
+            out,
+        )
+        check(
+            "bench: an update of a table keyed by text, its column named in capitals, timed: p50 and p95",
+            rc == 0 and re.search(r"\n  update app\.Notes +\d+(\.\d+)? +\d+(\.\d+)?(\n|$)", out) is not None,
             out,
         )
     subprocess.run(["dropdb", "--if-exists", db + "_tags"], capture_output=True)

@@ -2207,6 +2207,32 @@ class Review(unittest.TestCase):
         self.assertIn("a permission widened", [f["why"] for f in r["risk"]])
         self.assertEqual(len(r["deploy"]["migrations"]), 2)  # built beside, then swapped in
         self.assertTrue(r["deploy"]["migrations"][0]["builds_beside"])
+        # the tree the first builds beside, the second swaps in: neither rebuilds it under lock. No lock file at the
+        # head (the pull request hasn't run rowstile migrate), so none is said to be behind
+        tree = "folder__linked_into_parent__tree"
+        self.assertEqual(
+            [(m["builds_beside"], m["swaps_in"], m["rebuilds"]) for m in r["deploy"]["migrations"]],
+            [([tree], [], []), ([], [tree], [])],
+        )
+        self.assertEqual(
+            self.review.summary(r)["Deploy"],
+            '2 migrations. Locks `"app"."files"`, `"app"."folder_links"`, `"app"."folders"` while it runs. '
+            f"Builds {tree} beside the tables in use, then swaps in.",
+        )
+
+    def test_what_changes_through_a_groups_members(self) -> None:
+        # who is in a team: what is shared with the team's members (team#member) changes through it
+        r = self.run_review(
+            replaced(
+                self.text,
+                "  member : user        = app.team_members(team_id -> user_id)\n",
+                "  member : user        = app.team_users(team_id -> user_id)\n",
+            )
+        )
+        m = r["meaning"]
+        self.assertEqual([c["what"] for c in m["changed"]], ["team.member"])
+        self.assertIn({"what": "folder.view", "via": ["team.member"], "line": "line 50"}, m["through"])
+        self.assertIn({"what": "file.view", "via": ["team.member"], "line": "line 63"}, m["through"])
 
     def test_a_test_file_that_doesnt_parse_is_said(self) -> None:
         # its checks are missing from the comparison, which read as "no change to what the tests claim"
@@ -2603,6 +2629,19 @@ test
         # the same policy in this language is read as it is, with nothing to say
         self.assertNotIn("base_previous", self.review.review((self.NEW, {}, {}), (self.NEW, {}, {}), worlds=40))
 
+    def test_the_note_on_the_language_before_names_four_old_forms(self) -> None:
+        # four of them, each said; a fifth is counted ("and 1 more")
+        old = replaced(self.OLD, "test\n  service 1 can view folder 2\n", "")
+        r = self.review.review(
+            (old, {}, {}), (replaced(self.NEW, "test\n  user 1 can view folder 2\n", ""), {}, {}), worlds=10
+        )
+        self.assertEqual(len(r.get("base_previous") or []), 4)
+        self.assertTrue((self.review.previous_note(r) or "").endswith("; line 14: `everyone`, now `anyone`."))
+        r = self.review.review((self.OLD, {}, {}), (self.NEW, {}, {}), worlds=10)
+        self.assertTrue(
+            (self.review.previous_note(r) or "").endswith("; line 14: `everyone`, now `anyone`; and 1 more.")
+        )
+
     def test_a_rewrite_that_moves_a_role_out_of_its_and_is_flagged(self) -> None:
         # `roles` outside the `and`: role holders would see archived folders, which `grant` never gave them
         head = self.NEW.replace(
@@ -2799,7 +2838,17 @@ test
             r = self.small("can view = edit or viewer", "can view = edit or viewer or org.see")
         self.assertIsNone(r["meaning"]["equivalent"])
         self.assertIn("a permission widened", {f["why"] for f in r["risk"]})
-        self.assertIn("**Meaning**: 1 permission changed", self.review.markdown(r))
+        md = self.review.markdown(r)
+        self.assertIn("**Meaning**: 1 permission changed", md)
+        # three flags: the summary names all three (no "..."), and the comment lists each under Risk
+        self.assertEqual(len(r["risk"]), 3)
+        self.assertIn(f"**Risk**: 3 flags: {'; '.join(f['flag'] for f in r['risk'])}  \n", md)
+        self.assertIn(f"\n<details><summary>Risk</summary>\n\n- {r['risk'][0]['flag']} (", md)
+        # and when all Risk found is that it allows more, no other flag beside it
+        with mock.patch.object(self.review, "compare", return_value=None):
+            r = self.small("can remove = owner and {status = 'a  b'}", "can remove = owner")
+        self.assertEqual([f["why"] for f in r["risk"]], ["a permission widened"])
+        self.assertIsNone(r["meaning"]["equivalent"])
 
     def test_a_widening_the_comparison_found_is_flagged(self) -> None:
         """The other way round: when Risk's worlds (here, none) miss what the comparison found, the review said
@@ -2907,6 +2956,30 @@ test
             self.assertTrue(s["Deploy"].endswith(deploy), s["Deploy"])
             if error:
                 self.assertEqual(s["Tests"], f"not run: applying the policy fails: {error}.")
+
+    def test_the_review_data_shows_three_examples_of_a_change(self) -> None:
+        # five users gain view on five files: all counted, three of them kept as examples, two shown in the comment's
+        # table, under its header
+        rows = [
+            {"change": "gains", "user_id": str(u), "type": "file", "what": "permission view", "id": str(10 + u)}
+            for u in range(1, 6)
+        ]
+        ran = {"deployed": 0.2, "error": None, "tests": [], "how": {}}
+        with (
+            mock.patch.object(database, "diff", return_value=rows),
+            mock.patch.object(database, "review_run", return_value=ran),
+        ):
+            head = replaced(self.text, "  can break_glass = org.member\n", "")
+            r = self.review.review((self.text, {}, {}), (head, {}, {}), None, None, mock.Mock(), worlds=10)
+        a = r["access"]
+        assert a is not None
+        [g] = a["groups"]
+        self.assertEqual((g["users"], g["objects"], [e["id"] for e in g["examples"]]), (5, 5, ["11", "12", "13"]))
+        self.assertIn(
+            "\n| change | what | who | objects | examples |\n|---|---|---|---|---|\n"
+            "| gains | `file` view | 5 users | 5 | user 1, file 11; user 2, file 12 |\n",
+            self.review.markdown(r),
+        )
 
     def test_how_someone_gains_is_what_grants_it(self) -> None:
         # authz.explain's answer (as the database gave it): {inherit} holds, inside a part that doesn't, so it is no
@@ -5114,6 +5187,34 @@ class Confidence(unittest.TestCase):
         self.assertIn("folder 1: status = 'gone'", r["world"])
         self.assertIn("folder.owner: folder 1 -> user 1", r["world"])
 
+    def test_a_counterexample_names_who_holds_it_and_the_types_between(self) -> None:
+        # who holds it (a user, or a service by its type), with their row, and the types its links go through, with
+        # theirs; no other type's rows
+        from authzlib import prove
+
+        def found(text: str) -> tuple[list[str], str]:
+            [r] = prove.prove(parse_policy(self.HEAD + text + "invariants\n  never doc: view\n", "p.authz"))
+            return r.get("world", []), prove.describe([r])
+
+        world, said = found(
+            "type bot = app.bots principal\ntype doc = app.docs\n  owner : user = owner_id\n"
+            "  viewer : bot shared by edit\n  can edit = owner\n  can view = viewer\n"
+        )
+        self.assertEqual(world, ["bot: 1", "doc: 1", "doc.viewer: doc 1 -> bot 1"])
+        self.assertIn("\n  no   bot 1 holds it on doc 1 in this world", said)
+        # a user no link names: their row still
+        world, _ = found("type doc = app.docs\n  can view = {public}\n")
+        self.assertEqual(world, ["user: 1", "doc: 1", "doc 1: public = true"])
+        # a team its members hold it through: the team's row, which only the link from it names
+        world, _ = found(
+            "type team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
+            "type doc = app.docs\n  viewer : team#member = app.doc_teams(doc_id -> team_id)\n  can view = viewer\n"
+        )
+        self.assertEqual(
+            world,
+            ["user: 1", "team: 1", "doc: 1", "doc.viewer: doc 1 -> team#member 1", "team.member: team 1 -> user 1"],
+        )
+
     def test_a_polymorphic_row_has_one_parent(self) -> None:
         both = "  owner : user = owner_id\n  can x = owner\n  can y = not owner\n"
         text = (
@@ -5493,6 +5594,17 @@ class Indexes(unittest.TestCase):
             pairs("composite"), [("cx.folders", ("parent_type", "org_id", "parent_id"), ("org_id", "parent_id"))]
         )
 
+    def test_why_a_link_tables_lookup_is_needed(self) -> None:
+        # the members of an org, of a team: what each check looks up in the link table by its object's column
+        from authzlib import perf
+
+        c = Compiler(parse_policy(read(POLICIES["docs"])))
+        why = {(table, columns): why for table, columns, why, _, _ in perf.needed_indexes(c)}
+        self.assertEqual(why[("app.org_members", ("org_id",))], "finding the members of an org (checks, explanations)")
+        self.assertEqual(
+            why[("app.team_members", ("team_id",))], "finding the members of a team (checks, explanations)"
+        )
+
 
 class Plans(unittest.TestCase):
     """rowstile plans: what it reads in EXPLAIN's JSON (tests/confidence_test.py reads a database's own plans)."""
@@ -5559,6 +5671,68 @@ class Plans(unittest.TestCase):
         out: list[str] = []
         perf.walk(plan, out, "app.files")
         self.assertEqual(out, ["reads all of app.org_members (12001 rows): an index missing?"])
+
+    def test_the_bounds_of_a_warning(self) -> None:
+        # a scan that reads BIG rows is named, one fewer isn't; a subplan run 1000 times is named, 999 isn't
+        from authzlib import perf
+
+        def said(plan: dict[str, Value]) -> list[str]:
+            out: list[str] = []
+            perf.walk(plan, out, "app.files")
+            return out
+
+        scan = lambda rows: {
+            "Node Type": "Seq Scan",
+            "Relation Name": "org_members",
+            "Schema": "app",
+            "Actual Rows": rows - 100,
+            "Rows Removed by Filter": 100,
+            "Actual Loops": 1,
+        }
+        self.assertEqual(said(scan(perf.BIG)), [f"reads all of app.org_members ({perf.BIG} rows): an index missing?"])
+        self.assertEqual(said(scan(perf.BIG - 1)), [])
+        sub = lambda loops: {"Node Type": "Subquery Scan", "Subplan Name": "SubPlan 3", "Actual Loops": loops}
+        self.assertEqual(said(sub(1000)), ["SubPlan 3 runs once per row (1000 times)"])
+        self.assertEqual(said(sub(999)), [])
+
+    class Planned:
+        """A database whose reads of app.folders take a little more than SLOW_MS, and of app.files that exactly."""
+
+        class Refused(Exception):
+            pass
+
+        @property
+        def errors(self) -> type[Exception]:
+            return self.Refused
+
+        def rows(self, sql: str, args: Sequence[Value] = ()) -> list[Row]:
+            from authzlib import perf
+
+            if "pg_policy" in sql:
+                return [{"r": "app_user"}]
+            if "pg_has_role" in sql:
+                return [{"me": "owner", "ok": True}]
+            if sql.startswith("EXPLAIN"):
+                ms = perf.SLOW_MS + (0.01 if "folders" in sql else 0)
+                plan = {"Node Type": "Seq Scan", "Actual Rows": 3, "Actual Loops": 1}
+                return [{"QUERY PLAN": json.dumps([{"Plan": plan, "Execution Time": ms}])}]
+            return []
+
+        def script(self, sql: str) -> None:
+            pass
+
+        def warn(self, message: str, detail: str | None = None, hint: str | None = None) -> None:
+            pass
+
+    def test_a_read_slower_than_the_limit_is_named(self) -> None:
+        from authzlib import perf
+
+        c = Compiler(parse_policy(read(POLICIES["docs"])))
+        p = perf.plans(self.Planned(), c, ("user", "1"))
+        self.assertEqual(
+            [(t["table"], t["ms"], t["warnings"]) for t in p["tables"]],
+            [("app.files", 100.0, []), ("app.folders", 100.01, ["took 100.01 ms"])],
+        )
 
 
 HandCase = Callable[["HandAnswers"], None]

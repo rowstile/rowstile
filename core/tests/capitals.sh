@@ -51,6 +51,8 @@ echo "-- asking, reading and writing as someone"
 run who folder 3 view; [ "$out" = 1 ] && ok "who" || bad "who" "$out"
 run list --as user:2 folder view; [ "$out" = 4 ] && ok "list" || bad "list" "$out"
 run why --as user:2 folder 3 edit; case "$out" in *"would be granted by:"*"share editor on folder 3 with user 2"*"set ownerId of folder 3 to 2"*) ok "why: the shares and the column that would grant it";; *) bad "why" "$out";; esac
+run plans --as user:1
+case "$out" in *failed*) bad "plans" "$out";; "as user:1:"$'\n'"  public.Folder: "[0-9]*" ms"*$'\n'"  public.Note: "[0-9]*" ms"*) ok "plans: each table read as the app, by its quoted name";; *) bad "plans" "$out";; esac
 as 1 "SELECT authz.share('folder', 1, 'viewer', 'user', 2)" >/dev/null
 [ "$(as 2 'SET ROLE app_user; SELECT id FROM "Folder" ORDER BY id' | tr '\n' ' ')" = "1 2 3 4 " ] && ok "a share on the top folder shows what is under it" || bad "rows after a share"
 [ "$(as 2 'SET ROLE app_user; SELECT count(*), count(body) FROM "NoteShown" WHERE id IN (1, 2)')" = "2|0" ] && ok "the masked view shows a viewer the notes without their text" || bad "the masked view"
