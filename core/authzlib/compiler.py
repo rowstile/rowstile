@@ -16,6 +16,7 @@ from .parse import (
     Cols,
     Cond,
     Expr,
+    Link,
     Loc,
     Not,
     Or,
@@ -23,11 +24,14 @@ from .parse import (
     Policy,
     Ref,
     Relation,
+    RolesSource,
     Rule,
     Source,
     Subject,
+    TableSource,
     Type,
     cols,
+    conditions_of,
     fail,
     names_roles,
 )
@@ -338,7 +342,7 @@ class Core:
                 rel = Relation(
                     f"roles:{p.name}",
                     loc,
-                    [Source("roles", subjects, loc, perm=p.name, owner=t.roles_from)],
+                    [RolesSource(subjects, loc, p.name, owner=t.roles_from)],
                     synthetic=True,
                 )
                 t.relations[rel.name] = rel
@@ -369,7 +373,7 @@ class Core:
             )
         return st
 
-    def role_rel_sql(self, t: Type, src: Source, obj: str) -> str:
+    def role_rel_sql(self, t: Type, src: RolesSource, obj: str) -> str:
         """The share g is an assignment of a custom role that grants src.perm on object obj (an id of t) and, with
         `from rel`, one owned by what rel links obj to now: an assignment from another owner grants nothing."""
         sql = f"g.relation = ANY ((SELECT authz_int.role_relations({lit(t.name)}, {lit(src.perm)}))::text[])"
@@ -392,6 +396,7 @@ class Core:
                     f"WHERE {self.key_is(t, 'w', obj)}"
                 )
             else:
+                assert o.kind == "table", f"{t.name}.{t.roles_from}: custom roles come from a link"
                 where = f" AND coalesce(({row_cond(o.where, 'w')}), false)" if o.where else ""
                 owners.append(
                     f"SELECT ({self.subject_id(o, 'w', ot)})::text FROM {qt(self.source_table(o))} w "
@@ -677,9 +682,7 @@ class Core:
         for t in self.types.values():
             written += [(c, p.loc) for p in t.perms.values() for c in conds(p.expr)]
             written += [(t.where, t.loc)] if t.where else []
-            written += [
-                (c, src.loc) for r in t.relations.values() for src in r.sources for c in (src.where, src.shared_if) if c
-            ]
+            written += [(c, src.loc) for r in t.relations.values() for src in r.sources for c in conditions_of(src)]
         written += [(c, r.loc) for r in self.rules for c in conds(r.expr)]
         written += [(c, i.loc) for i in self.pol.invariants for c in conds(i.expr)]
         for sql, loc in written + [(cv.sql, cv.loc) for cv in self.pol.caveats.values()]:
@@ -769,25 +772,21 @@ class Core:
             )
 
     @staticmethod
-    def source_table(src: Source) -> str:
+    def source_table(src: TableSource) -> str:
         """A table source's table."""
-        assert src.table is not None, f"a {src.kind} source has no table"
         return src.table
 
     @staticmethod
-    def source_obj_columns(src: Source) -> Cols:
+    def source_obj_columns(src: TableSource) -> Cols:
         """A table source's column(s) naming the object."""
-        assert src.obj_col is not None, f"a {src.kind} source has no object column"
         return src.obj_col
 
     @staticmethod
-    def source_columns(src: Source) -> Cols:
+    def source_columns(src: Link) -> Cols:
         """A column or table source's subject column(s)."""
-        columns = src.column if src.kind == "column" else src.subj_col
-        assert columns is not None, f"a {src.kind} source without a subject column"
-        return columns
+        return src.column if src.kind == "column" else src.subj_col
 
-    def pair_alone(self, src: Source) -> tuple[str, ...]:
+    def pair_alone(self, src: Link) -> tuple[str, ...]:
         """The columns an index on which serves a (type, id) pair's lookup by itself (none without a type column), as
         rowstile indexes and authz.lint() count them. Ids of two columns are compared column by column (key_in): an
         index on them. An id of one column is compared through (CASE WHEN type = 'x' THEN id END), which no index on
@@ -1235,13 +1234,13 @@ class Core:
             return f"{self.key(t, a)} = ANY ({arr})"
         return self.key_in(t, a, f"SELECT unnest({arr}) AS id")
 
-    def of_type(self, src: Source, a: str, subj_type: str, sql: str) -> str:
+    def of_type(self, src: Link, a: str, subj_type: str, sql: str) -> str:
         """sql, which compares the id of row a's (type, id) pair with ids of subj_type, with the type's own condition
         beside it: the same answer (the pair's id is NULL on the other types' rows, and so is sql), and an index on
         (type, id) serves the type's part at least. A source without a type column: sql as it is."""
         return f"({a}.{q(src.type_col)} = {lit(subj_type)} AND {sql})" if src.type_col else sql
 
-    def subject_is(self, src: Source, a: str, subj_type: str, v: str) -> str:
+    def subject_is(self, src: Link, a: str, subj_type: str, v: str) -> str:
         """A column/table source's subject columns on row a hold v, an id of subj_type."""
         st = self.T(subj_type)
         if not st.composite:
@@ -1249,7 +1248,7 @@ class Core:
         sql = self.key_is(st, a, v, self.source_columns(src))
         return sql + (f" AND {a}.{q(src.type_col)} = {lit(subj_type)}" if src.type_col else "")
 
-    def subject_in(self, src: Source, a: str, subj_type: str, view: str) -> str:
+    def subject_in(self, src: Link, a: str, subj_type: str, view: str) -> str:
         """A column/table source's subject columns on row a hold one of the subj_type ids in view. A composite
         key's columns are compared column by column (key_in), so an index on them serves the lookup: its
         built id, compared as text, would need every row read."""
@@ -1264,7 +1263,7 @@ class Core:
         sql = self.key_in(st, a, ids, self.source_columns(src))
         return sql + (f" AND {a}.{q(src.type_col)} = {lit(subj_type)}" if src.type_col else "")
 
-    def subject_id(self, src: Source, alias: str, subj_type: str) -> str:
+    def subject_id(self, src: Link, alias: str, subj_type: str) -> str:
         """The subject id of a column/table source, typed as subj_type's key."""
         col = self.source_columns(src)
         st = self.types.get(subj_type)
@@ -1290,7 +1289,7 @@ class Core:
         """Ids of t linked through one source of relation r to what the current
         principal is (subject subj: a user or other principal, a group, user:*, anyone or a link)."""
         st, sr = subj
-        if src.kind in ("column", "table"):
+        if src.kind == "column" or src.kind == "table":
             a = "r" if src.kind == "column" else "s"
             if self.is_principal(st) and not sr:
                 match = self.of_type(src, a, st, f"{self.subject_id(src, a, st)} = {self.me(st)}")
@@ -1300,7 +1299,6 @@ class Core:
                 return None
             if src.kind == "column":
                 return f"SELECT {self.key(t, 'r')} AS id FROM {qt(t.table)} r WHERE {match}"
-            assert src.table is not None and src.obj_col is not None
             extra = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
             return f"SELECT {self.ref(t, 's', src.obj_col)} AS id FROM {qt(src.table)} s WHERE {match}{extra}"
         # shares and custom roles live in authz.shares
@@ -1358,11 +1356,11 @@ class Core:
         column (for composite keys, where a filter on the built id can't use an index)."""
         s = self.T(subj_type)
         side, v = match or (None, "")
-        if src.kind in ("column", "table"):
+        if src.kind == "column" or src.kind == "table":
             a = "r" if src.kind == "column" else "s"
             m = ""
             if side == "obj":
-                m = " AND " + (self.key_is(t, a, v) if src.kind == "column" else self.key_is(t, a, v, src.obj_col))
+                m = " AND " + (self.key_is(t, a, v, src.obj_col) if src.kind == "table" else self.key_is(t, a, v))
             elif side == "subj":
                 m = " AND " + self.subject_is(src, a, subj_type, v)
             sid = self.subject_id(src, a, subj_type)
@@ -1371,7 +1369,6 @@ class Core:
                     f"SELECT {extra}{self.key(t, 'r')} AS {obj}, {sid} AS {subj} "
                     f"FROM {qt(t.table)} r WHERE {sid} IS NOT NULL{m}"
                 )
-            assert src.table is not None and src.obj_col is not None
             where = f" AND coalesce(({on_row(src.where, 's')}), false)" if src.where else ""
             oid = self.ref(t, "s", src.obj_col)
             return (
@@ -1467,7 +1464,8 @@ class Core:
             self.nested[name] = t.pktype
         else:
             sql = union(direct)
-        label = r.name if not r.synthetic else f"custom roles granting {r.sources[0].perm}"
+        roles = r.sources[0]
+        label = f"custom roles granting {roles.perm}" if r.synthetic and roles.kind == "roles" else r.name
         header = f"-- {t.name}.{label}" + (" (sources other than columns)" if ext else "") + f" ({r.loc})\n"
         self.add_view(name, sql, header, t)
         if name in self.nested:

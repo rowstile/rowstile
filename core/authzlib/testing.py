@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 from .compiler import Core
-from .parse import Loc, PolicyError, Scenario, Step, fail, parse_policy
+from .parse import AsStep, CheckStep, Loc, PolicyError, Scenario, Step, fail, parse_policy
 from .sqlutil import lit
 from .statements import WORD, split
 
@@ -66,8 +66,9 @@ class TestMixin(Core):
                         "AZ501",
                     )
 
-        section = Scenario("test section", None, self.tests)
-        for sc in ([section] if self.tests else []) + self.pol.scenarios:
+        section = Scenario("test section", None, [*self.tests])
+        scenarios: list[Scenario] = ([section] if self.tests else []) + self.pol.scenarios
+        for sc in scenarios:
             bound: set[str] = set()
             for st in sc.steps:
                 if st.kind == "given":
@@ -76,7 +77,8 @@ class TestMixin(Core):
                         bound.add(st.var)
                     continue
                 known(st.who, st.loc, bound)
-                known(st.sql, st.loc, bound)
+                if st.kind == "as":
+                    known(st.sql, st.loc, bound)
                 if st.ptype != "anyone" and not self.is_principal(st.ptype or ""):
                     signs_in = [t.name for t in self.types.values() if t.principal]
                     fail(
@@ -107,8 +109,8 @@ class TestMixin(Core):
         authz.explain's answer: the branches it made true (database.coverage)."""
         self.coverage_rows = coverage
         self.check_scenarios()
-        section = Scenario("test section", None, self.tests)
-        scenarios = ([section] if self.tests else []) + self.pol.scenarios
+        section = Scenario("test section", None, [*self.tests])
+        scenarios: list[Scenario] = ([section] if self.tests else []) + self.pol.scenarios
         variables: list[str] = []
         blocks: list[str] = []
         for n, sc in enumerate(scenarios, 1):
@@ -174,7 +176,7 @@ BEGIN
 END $authz_tests$;
 """
 
-    def coverage_sql(self, st: Step, obj: str) -> str:
+    def coverage_sql(self, st: CheckStep, obj: str) -> str:
         if not self.coverage_rows:
             return ""
         explain = f"(SELECT string_agg(l, {SQL_NL}) FROM authz.explain({lit(st.type)}, {obj}, {lit(st.perm)}) l)"
@@ -211,7 +213,7 @@ END $authz_tests$;
         parts = split(sql or "")
         return parts[0][1] if len(parts) == 1 else sql or ""
 
-    def sign_in_sql(self, st: Step, names: dict[str, str]) -> str:
+    def sign_in_sql(self, st: CheckStep | AsStep, names: dict[str, str]) -> str:
         uid = "''" if st.ptype == "anyone" else self.value_sql(st.who, names)
         pt = "''" if st.ptype in ("anyone", "user") else lit(st.ptype)
         # the scopes a key or a token would carry (`with scope read`); none: not limited

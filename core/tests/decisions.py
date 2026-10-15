@@ -393,7 +393,7 @@ class Decisions:
         return sr is None and st in self.pol.types and not self.pol.types[st].principal
 
     def source(self, t: Type, rname: str, i: int, src: Source, st: str, sr: str | None) -> None:
-        how = {"column": "column", "table": f"table {src.table}"}.get(src.kind, src.kind)
+        how = f"table {src.table}" if src.kind == "table" else src.kind
         what = f"{t.name}.{rname}"
         self.add(Part(("source", t.name, rname, i, st, sr or ""), what, f"{self.subject(st, sr)} ({how})", src.loc))
         if src.kind == "shared" and not self.followed(st, sr):  # (a share to an object is a link: it never expires)

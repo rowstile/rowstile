@@ -626,7 +626,7 @@ def subjects_of(pol: Policy) -> dict[tuple[str, str], set[tuple[str, str | None,
             for src in r.sources:
                 for st, sr in src.subjects:
                     out.setdefault((t.name, r.name), set()).add(
-                        (st, sr, src.kind, src.shared_by or ("share" if src.kind == "shared" else None))
+                        (st, sr, src.kind, (src.shared_by or "share") if src.kind == "shared" else None)
                     )
     return out
 

@@ -90,7 +90,7 @@ def needed_indexes(c: Compiler) -> list[Lookup]:
     for t in c.types.values():
         for r in t.relations.values():
             for src in r.sources:
-                lead = (src.type_col,) if src.type_col else ()
+                lead = (src.type_col,) if (src.kind == "column" or src.kind == "table") and src.type_col else ()
                 if src.kind == "column":
                     # (the row's own key too, `owner : user = user_id` on a table keyed by its user's id: its primary
                     # key serves the lookup, and without one nothing does)

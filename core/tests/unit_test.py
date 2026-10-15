@@ -877,9 +877,10 @@ class CompositeKeys(unittest.TestCase):
         folder = pol.types["folder"]
         self.assertEqual(folder.key, [("org_id", "bigint"), ("id", "bigint")])
         self.assertEqual(pol.types["team"].key, [("org_id", "bigint"), ("slug", "text")])
-        parent = folder.relations["parent"].sources
-        self.assertEqual((parent[0].type_col, parent[0].column), ("parent_type", ("org_id", "parent_id")))
-        self.assertEqual((parent[1].obj_col, parent[1].subj_col), (("org_id", "child_id"), ("org_id", "parent_id")))
+        column, table = folder.relations["parent"].sources
+        assert column.kind == "column" and table.kind == "table", (column, table)
+        self.assertEqual((column.type_col, column.column), ("parent_type", ("org_id", "parent_id")))
+        self.assertEqual((table.obj_col, table.subj_col), (("org_id", "child_id"), ("org_id", "parent_id")))
 
     def test_lookups_by_key_go_column_by_column(self) -> None:
         """A composite id compared as a whole can't use the table's index: lookups into app tables go

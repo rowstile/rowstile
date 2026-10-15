@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, TypeAlias
 
 from .conditions import Bool, Cmp, Col, Const, In, IsNull, Node, Scalar, simple
 from .connection import Db, Value, flag, number, text
-from .parse import And, Arrow, ArrowOn, Cols, Cond, Expr, Loc, Not, Ref, Relation, Source, Type, cols
+from .parse import And, Arrow, ArrowOn, Cols, Cond, Expr, Loc, Not, Ref, Relation, SharedSource, Source, Type, cols
 from .sqlutil import lit, q, qt, reads_more, row_cond
 
 if TYPE_CHECKING:
@@ -302,7 +302,9 @@ class Grants:
         else:
             self.db.rows("SELECT authz.act_as(NULL, NULL)")
 
-    def shared_if(self, t: Type, r: Relation, src: Source, oid: str, st: str, sid: str, sr: str, who: str) -> bool:
+    def shared_if(
+        self, t: Type, r: Relation, src: SharedSource, oid: str, st: str, sid: str, sr: str, who: str
+    ) -> bool:
         """Whether the relation's `shared if` lets this share be made, judged as authz.share judges it: as the one
         who shares (it may read who that is), someone who may share t oid. Noted when it lets nobody who may."""
         from .database import text_array
@@ -394,9 +396,8 @@ class Grants:
                 )
             # a row of a link table, or a column of the object's own row (relation() never asks for a custom
             # role's): the subject's columns, each with its value, and in a polymorphic source the one naming its type
-            assert src.kind in ("table", "column"), f"{t.name}.{r.name}: no change for a {src.kind} source"
+            assert src.kind == "table" or src.kind == "column", f"{t.name}.{r.name}: no change for a {src.kind} source"
             on = src.subj_col if src.kind == "table" else src.column
-            assert on, f"{t.name}.{r.name}: a source names its subject's columns"
             subject = holding(self.c.types[st], on, sid) + ([(src.type_col, lit(st))] if src.type_col else [])
             if src.kind == "table":
                 assert src.table and src.obj_col, f"{t.name}.{r.name}: a link table names the object's columns"

@@ -60,15 +60,15 @@ class DevMixin(Core):
             if t.name == "user":
                 out.append('    user(("user")):::user')
             for r in t.relations.values():
-                label = f"custom roles → {r.sources[0].perm}" if r.synthetic else r.name
+                roles = r.sources[0]
+                label = f"custom roles → {roles.perm}" if r.synthetic and roles.kind == "roles" else r.name
                 out.append(f'    {_id(t.name, r.name)}["{_label(label)}"]:::rel')
                 for src in r.sources:
-                    col = src.column if isinstance(src.column, str) else "[" + ", ".join(src.column or ()) + "]"
-                    how = {"shared": "shared", "roles": "roles", "table": src.table or "", "column": col or ""}[
-                        src.kind
-                    ]
-                    if src.kind == "column" and src.type_col:
-                        how = f"({src.type_col}, {col})"
+                    if src.kind == "column":
+                        col = src.column if isinstance(src.column, str) else "[" + ", ".join(src.column) + "]"
+                        how = f"({src.type_col}, {col})" if src.type_col else col
+                    else:
+                        how = src.table if src.kind == "table" else src.kind
                     for st, sr in src.subjects:
                         drawn = st in self.types and (st != "user" or bool(self.types[st].perms))  # its box is there
                         if st in ("anyone", "link"):
