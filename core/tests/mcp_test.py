@@ -271,6 +271,56 @@ def protocol(folder: str) -> None:
         and result["content"][0]["text"] == "rowstile check took more than 0.001 s and was stopped",
         r,
     )
+    stopping()
+
+
+def child(*code: str) -> subprocess.Popen[bytes]:
+    """A command for the server's functions to stop: Python running the lines given, once it has said it runs them."""
+    p = subprocess.Popen(
+        [sys.executable, "-c", "\n".join([*code, "print('ready', flush=True)", "time.sleep(60)"])],
+        stdout=subprocess.PIPE,
+    )
+    assert p.stdout is not None and p.stdout.readline() == b"ready\n"
+    return p
+
+
+def stopping() -> None:
+    """How the server stops a command, asked of its functions in this process (each child here is this process's,
+    waited for): what the protocol's checks seldom meet."""
+    running = mcp.Running()
+    running.cancel()
+    try:
+        running.start([sys.executable, "-c", "pass"], dict(os.environ))
+        started: object = running.process
+    except mcp.Cancelled:
+        started = "cancelled"
+    check("a call cancelled before its command started: the command never starts", started == "cancelled", started)
+    done = subprocess.Popen([sys.executable, "-c", "pass"])
+    done.wait()
+    mcp.stop(done)
+    check("a command that has ended: nothing sent to it", done.returncode == 0, done.returncode)
+    p = child("import time")
+    with mock.patch.object(mcp.os, "name", "nt"):
+        mcp.stop(p)
+    check(
+        "on Windows, which has no Ctrl-C for one process: ended (terminate)",
+        p.wait(10) == -signal.SIGTERM,
+        p.returncode,
+    )
+    # the server stopped: a call whose command hasn't started yet, and one whose command doesn't heed Ctrl-C
+    server = mcp.Server()
+    waiting, deaf = mcp.Running(), mcp.Running()
+    deaf.process = child("import signal, time", "signal.signal(signal.SIGINT, signal.SIG_IGN)")
+    server.running = {'"a"': waiting, '"b"': deaf}
+    began = time.monotonic()
+    with mock.patch.object(mcp, "GRACE", 0.5):
+        server.end()
+    took = time.monotonic() - began
+    check(
+        "the server stopped: a command not started never starts, one that doesn't heed Ctrl-C killed after the wait",
+        waiting.cancelled and deaf.process.returncode == -signal.SIGKILL and took < 5,
+        [waiting.cancelled, deaf.process.returncode, f"{took:.1f} s"],
+    )
 
 
 def cancelling(folder: str) -> None:
