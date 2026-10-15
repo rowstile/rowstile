@@ -1672,6 +1672,11 @@ CREATE TABLE cn.room_mics (room_id bigint REFERENCES cn.rooms, user_id bigint RE
 CREATE TABLE cn."Stage" (id bigint PRIMARY KEY, "ownerId" bigint REFERENCES cn.users);
 CREATE TABLE cn."StageMic" ("stageId" bigint REFERENCES cn."Stage", "userId" bigint REFERENCES cn.users,
   "isOn" boolean NOT NULL DEFAULT false, PRIMARY KEY ("stageId", "userId"));
+CREATE TABLE cn.orgs (id bigint PRIMARY KEY);
+CREATE TABLE cn.org_members (org_id bigint REFERENCES cn.orgs, user_id bigint REFERENCES cn.users, role text NOT NULL,
+  PRIMARY KEY (org_id, user_id));
+CREATE TABLE cn.desks (id bigint PRIMARY KEY, org_id bigint REFERENCES cn.orgs);
+CREATE TABLE cn.chairs (id bigint PRIMARY KEY, desk_id bigint REFERENCES cn.desks);
 GRANT USAGE ON SCHEMA cn TO app_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA cn TO app_user;
 -- ann (1) owns docs 1 to 5, each inside the one before, and doc 6, archived; bo (2) is in group 2, which is in
@@ -1700,6 +1705,11 @@ INSERT INTO cn.groups VALUES (4, NULL), (5, 4), (6, 5), (7, 6);
 INSERT INTO cn.docs VALUES (7, NULL, 1, false);
 INSERT INTO cn."Stage" VALUES (1, 1);
 INSERT INTO cn."StageMic" VALUES (1, 2, false);
+-- ann is org 1's admin and eve one of its members; bo is org 2's admin; desk 1 is org 1's, chair 1 at it
+INSERT INTO cn.orgs VALUES (1), (2);
+INSERT INTO cn.org_members VALUES (1, 1, 'admin'), (1, 5, 'member'), (2, 2, 'admin');
+INSERT INTO cn.desks VALUES (1, 1);
+INSERT INTO cn.chairs VALUES (1, 1);
 """
 WHY_POLICY = """app role app_user
 
@@ -1769,6 +1779,17 @@ type stage = cn.Stage
   can light   = star
   can bow     = star
   can perform = (owner and mic) or star
+type org = cn.orgs
+  admin : user = cn.org_members(org_id -> user_id) where {role = 'admin'}
+
+type desk = cn.desks
+  keeper : org#admin = org_id
+  can keep = keeper
+  can sit  = {exists (select 1 from cn.org_members m where m.org_id = this.org_id and m.user_id = authz.uid())}
+
+type chair = cn.chairs
+  desk : desk = desk_id
+  can use = desk.sit
 """
 
 
@@ -1984,6 +2005,17 @@ def corners(db: str) -> None:
         "a column that changes hands: all the owner it replaces loses on it",
         "set owner_id of room 1 to 2 (also gives present, share, speak on it) (takes enter, share, speak on it from 1 "
         "person)  [line 51]" in ways,
+        said,
+    )
+    # a column naming org 1's admins: moving the desk to org 2 replaces them (ann), not every row of cn.org_members
+    # (eve's, a member's, whose sit and chair a condition gives: not the people the change unlinks)
+    rc, said, ways, _ = why("--as", "user:2", "desk", "1", "keep")
+    check(
+        "a column naming a group a where narrows: what it takes from others is from the group's people only",
+        rc == 0
+        and "set org_id of desk 1 to 2 (also gives sit on it, and use on 1 more chair for user:2) (takes keep, sit on "
+        "it from 1 person, and use on 1 other chair from 1 person)  [line 73]"
+        in ways,
         said,
     )
     rc, said, ways, _ = why("--as", "user:2", "room", "2", "enter")
