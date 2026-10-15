@@ -392,6 +392,8 @@ class Mark(NamedTuple):
 
 # a dollar quote's tag in SQL: $$, or $name$
 DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
+# what may start a quote, open or close a brace, or start a comment: the text between is read in one step
+SPECIAL = re.compile(r"""['"{}$]|--""")
 
 
 def quote_end(line: str, i: int, quote: str) -> int:
@@ -434,6 +436,12 @@ class Scanner:
                 stop = len(line) if end < 0 else end
                 out += [Mark(True, self.depth, False)] * (stop - i)
                 self.quote, i = (self.quote if end < 0 else ""), stop
+                continue
+            special = SPECIAL.search(line, i)
+            stop = special.start() if special else len(line)
+            if stop > i:
+                out += [Mark(False, self.depth, False)] * (stop - i)
+                i = stop
                 continue
             c = line[i]
             if line.startswith("--", i):
@@ -490,6 +498,8 @@ def braced_at(text: str) -> list[tuple[int, int]]:
     """Where each top-level {...} of a line is: the index of its `{`, and the one after its `}` (-1 for one left
     open)."""
     out: list[tuple[int, int]] = []
+    if "{" not in text:
+        return out
     start = -1
     for i, m in enumerate(Scanner().marks(text)):
         if m.quoted or m.comment or m.depth:
