@@ -44,6 +44,12 @@ COMPILE = [
         10,
     ),
     (
+        "a name that starts with authz__ in a condition",
+        '  can see = owner and {not exists (select 1 from alt.holds "authz__h" where "authz__h".target = this.doc_no)}\n',
+        'names "authz__h": names that start with authz__ are rowstile\'s own',
+        10,
+    ),
+    (
         "a character that doesn't print, shown escaped",
         "  can see = owner \x01\n",
         "unexpected '\\x01' in expression",

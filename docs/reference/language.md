@@ -113,6 +113,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   the membership's id, and applying warns). `this` is the object in a permission, a rule or an invariant,
   the type's row in its `where`, the link table's row in a link table's `where`, and the share being made in
   `shared if`. A caveat has no row. <!-- answer: conditions-this -->
+  `this.` names the row whatever a subquery of the condition calls its tables, even by the name rowstile gives the row where it is checked. <!-- checked: tests/hand/conditions-this-alias.authz "this. names the row, whatever the condition's subquery calls its table" -->
+  Names that start with `authz__` are rowstile's own: a condition that writes one is refused (AZ113). <!-- checked: tests/policy_errors.py "a name that starts with authz__ in a condition" -->
 - **Conditions read with the policy's rights**, wherever they are checked (a rule, a permission, `authz.can`,
   another type's rule through `rel.perm`), as relations do: a subquery sees every row of the tables it reads,
   not only those the signed-in user may. <!-- checked: tests/devx.sh "a rule condition that reads a governed table runs with the policy's rights, as a function"; tests/apply.sh "a condition in a permission sees every membership in its table's rules too" --> <!-- answer: conditions-rights -->

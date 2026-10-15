@@ -34,6 +34,8 @@ from .parse import (
 )
 from .sqlutil import (
     CAVEAT_ARG,
+    RESERVED,
+    ROW_ALIAS,
     check_stable_condition,
     lit,
     names_this,
@@ -43,6 +45,7 @@ from .sqlutil import (
     qt,
     reads_more,
     reads_tables,
+    reserved_names,
     row_cond,
     this_alone,
     union,
@@ -675,6 +678,16 @@ class Core:
             ]
         written += [(c, r.loc) for r in self.rules for c in conds(r.expr)]
         written += [(c, i.loc) for i in self.pol.invariants for c in conds(i.expr)]
+        for sql, loc in written + [(cv.sql, cv.loc) for cv in self.pol.caveats.values()]:
+            mine = reserved_names(sql)
+            if mine:
+                fail(
+                    loc,
+                    f"{{{sql}}} names {mine[0]}: names that start with {RESERVED} are rowstile's own (where a "
+                    f"query of the condition's could hide the row's alias, the row is called {ROW_ALIAS}); call it "
+                    f"something else",
+                    "AZ113",
+                )
         for sql, loc in written:
             if this_alone(sql):
                 fail(

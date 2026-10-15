@@ -74,6 +74,12 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- `this.` in a condition named the subquery's table when the subquery's alias was u, w, o, r or share (or c, s
+  or x), or, in a rule, when the subquery read the rule's own table without an alias: `{not exists
+  (select 1 from app.bans u where u.user_id = this.id)}` in the user type's `where` compared each ban with
+  itself. `this.` now names the condition's row wherever it is placed. Names that start with `authz__` are
+  rowstile's own, and a condition that writes one is refused (AZ113). Only such conditions are written anew:
+  where a policy has one, apply it again (or make the next migration) to take it.
 - Studio's "Make a test" (`/api/test`) wrote a test for a permission the type doesn't have, or for a relation,
   which `rowstile test` then refused. It now refuses them as `why` does: 400, "no permission folder.nope in the
   policy", AZ707. A type the policy doesn't have is answered the same way: 400 and AZ707, where it was 404.

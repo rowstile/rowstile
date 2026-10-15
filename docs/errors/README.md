@@ -16,6 +16,7 @@ Every mistake rowstile reports ends with its code: `line 4: folder.owner: unknow
 - [AZ110](AZ110.md): A dollar-quote tag in a condition
 - [AZ111](AZ111.md): No app role
 - [AZ112](AZ112.md): `this` where there is no row
+- [AZ113](AZ113.md): A name rowstile keeps for itself
 
 ## Types and relations
 
