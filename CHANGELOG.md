@@ -21,6 +21,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Changed
 
+- The language server underlines the words a mistake is about (`nosuch` in `can view = owner or nosuch`, the
+  `(` that isn't closed, the subject a list can't read), where it underlined the whole line; on a line that goes on
+  to the next, the words are where they are. `PolicyError.span` says where they are, for code that compiles a
+  policy.
 - The reference no longer shows `core/compile_policy.py`, which no install carries: previewing a change is
   `rowstile diff new.authz [--users 1,2]`. The script stays the suites' compiler without a database, with three
   modes (`--check`, `--tests`, `--diff`; `rowstile graph` and `rowstile client` replace its `--graph` and

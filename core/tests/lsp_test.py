@@ -173,6 +173,11 @@ with tempfile.TemporaryDirectory() as d:
         d1,
     )
     ok(
+        "... the name it is about underlined, not the whole line",
+        d1 and d1[0]["range"] == {"start": pos(broken, "edtor"), "end": pos(broken, "edtor", 5)},
+        d1,
+    )
+    ok(
         "... with its code beside the message (rowstile help AZ203)",
         d1 and d1[0].get("code") == "AZ203" and not d1[0]["message"].endswith("]"),
         d1,

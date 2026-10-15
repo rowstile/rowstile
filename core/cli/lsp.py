@@ -312,8 +312,12 @@ class Server:
             lines = (self.docs.get(target) or "").split("\n")
             width = len(lines[line - 1]) if 0 < line <= len(lines) else 200
             indent = len(lines[line - 1]) - len(lines[line - 1].lstrip()) if 0 < line <= len(lines) else 0
+            # the words the mistake is about when the parser knows them, else the line
+            where = rng(line - 1, indent, line - 1, width)
+            if e.span:
+                where = rng(e.span[0] - 1, e.span[1], e.span[2] - 1, e.span[3])
             diag: Diagnostic = {
-                "range": rng(line - 1, indent, line - 1, width),
+                "range": where,
                 "severity": 1,
                 "source": "rowstile",
                 "message": msg,

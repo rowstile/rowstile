@@ -20,31 +20,56 @@ RESERVED = ("or", "and", "not", "if", "where")
 ROLES = "roles"
 
 
+# where in its file a mistake is: (line, column, end line, end column), lines from 1, columns from 0, the end's
+# column after its last character
+Span: TypeAlias = "tuple[int, int, int, int]"
+
+
 class PolicyError(Exception):
     """A mistake in a policy: 'line 12: message [AZ201]'. code is the mistake's stable code (authzlib/errors.py,
-    a page in docs/errors/, `rowstile help AZ201`)."""
+    a page in docs/errors/, `rowstile help AZ201`); span, when the parser knows it, the words the mistake is
+    about (an editor underlines them; the message names the line alone)."""
 
-    def __init__(self, message: str, code: str | None = None) -> None:
+    def __init__(self, message: str, code: str | None = None, span: Span | None = None) -> None:
         super().__init__(f"{message} [{code}]" if code else message)
-        self.code = code
+        self.code, self.span = code, span
 
 
 class Loc:
-    """Where something was written: 'line 12', or 'roles.authz line 3' for included files. origin, for a line the
-    parser read: where each of its parts starts, (index in its text, line, column): a line that goes on over
-    several (`or ...`, an open `{`) is read as one, its parts joined by a space."""
+    """Where something was written: 'line 12', or 'roles.authz line 3' for included files. For a line the parser
+    read, text is the line as it read it, and origin where each of its parts starts, (index in text, line,
+    column): a line that goes on over several (`or ...`, an open `{`) is read as one, its parts joined by a space."""
 
-    def __init__(self, file: str | None, line: int, origin: list[tuple[int, int, int]] | None = None) -> None:
-        self.file, self.line = file, line
+    def __init__(
+        self, file: str | None, line: int, text: str = "", origin: list[tuple[int, int, int]] | None = None
+    ) -> None:
+        self.file, self.line, self.text = file, line, text
         self.origin = origin or []
 
     def at(self, offset: int) -> tuple[int, int]:
-        """The line and column (from 0) in the file of the character at offset in the line's text."""
+        """The line and column (from 0) in the file of the character at offset in text."""
         line, col = self.line, offset
         for start, n, c in self.origin:
             if start <= offset:
                 line, col = n, c + offset - start
         return line, col
+
+    def span(self, start: int, end: int) -> Span | None:
+        """Where text[start:end] is in the file; None for a place the parser didn't read."""
+        if not self.origin:
+            return None
+        if end <= start:  # a place, not words (an empty item between two commas): the character there
+            start, end = (start, start + 1) if start < len(self.text) else (max(0, start - 1), max(1, start))
+        last = self.at(end - 1)
+        return (*self.at(start), last[0], last[1] + 1)
+
+    def word(self, word: str) -> tuple[int, int] | None:
+        """Where a name is in text, as a word (`nosuch`, or in `parent.nosuch`): after what the line declares (up
+        to its first = or :) if it is there."""
+        head = re.match(r"[^=:{]*[=:]", self.text)
+        found = re.compile(rf"(?<!\w){re.escape(word)}(?!\w)")
+        m = found.search(self.text, head.end() if head else 0) or found.search(self.text)
+        return m.span() if m else None
 
     def __str__(self) -> str:
         return f"line {self.line}" if self.file is None else f"{self.file} line {self.line}"
@@ -59,8 +84,14 @@ class Loc:
         return hash((self.file, self.line))
 
 
-def fail(loc: Loc | int, msg: str, code: str) -> NoReturn:
-    raise PolicyError(f"{loc if isinstance(loc, Loc) else f'line {loc}'}: {msg}", code)
+def fail(loc: Loc | int, msg: str, code: str, at: tuple[int, int] | None = None, word: str | None = None) -> NoReturn:
+    """Raise a policy's mistake, at a line. at: where in the line's text it is (start, end); word: a name it is
+    about, found in that text."""
+    span: Span | None = None
+    if isinstance(loc, Loc):
+        at = at or (loc.word(word) if word else None)
+        span = loc.span(*at) if at else None
+    raise PolicyError(f"{loc if isinstance(loc, Loc) else f'line {loc}'}: {msg}", code, span)
 
 
 # --- expressions: what a permission, a rule or an invariant says -----------------------------------
@@ -412,10 +443,15 @@ def open_braces(text: str) -> int:
     return scan.depth
 
 
-Token: TypeAlias = "tuple[str, str]"
+class Token(NamedTuple):
+    kind: str  # or | and | not | ( | ) | cond | name
+    text: str  # a condition's SQL, a name, or the word itself
+    start: int  # where it is in the line's text
+    end: int
 
 
-def tokenize(s: str, loc: Loc) -> list[Token]:
+def tokenize(s: str, loc: Loc, base: int = 0) -> list[Token]:
+    """An expression's words; base: where it starts in the line's text (for the places of its mistakes)."""
     toks: list[Token] = []
     i = 0
     while i < len(s):
@@ -425,15 +461,15 @@ def tokenize(s: str, loc: Loc) -> list[Token]:
         elif c == "{":
             end = braced_at(s[i:])[0][1]
             if end < 0:
-                fail(loc, "a { condition is missing its closing }", "AZ102")
+                fail(loc, "a { condition is missing its closing }", "AZ102", at=(base + i, base + i + 1))
             j = i + end - 1
             sql = s[i + 1 : j].strip()
             if not sql:
-                fail(loc, "empty {} condition", "AZ102")
-            toks.append(("cond", sql))
+                fail(loc, "empty {} condition", "AZ102", at=(base + i, base + j + 1))
+            toks.append(Token("cond", sql, base + i, base + j + 1))
             i = j + 1
         elif c in "()":
-            toks.append((c, c))
+            toks.append(Token(c, c, base + i, base + i + 1))
             i += 1
         else:
             m = re.match(rf"{IDENT}(\.{IDENT})?", s[i:])
@@ -441,9 +477,9 @@ def tokenize(s: str, loc: Loc) -> list[Token]:
                 # a character that doesn't print (a stray control character) is shown escaped, or the message
                 # would show nothing between its quotes
                 shown = c if c.isprintable() else c.encode("unicode_escape").decode("ascii")
-                fail(loc, f"unexpected '{shown}' in expression", "AZ102")
+                fail(loc, f"unexpected '{shown}' in expression", "AZ102", at=(base + i, base + i + 1))
             w = m.group(0)
-            toks.append((w, w) if w in ("or", "and", "not") else ("name", w))
+            toks.append(Token(w if w in ("or", "and", "not") else "name", w, base + i, base + i + len(w)))
             i += len(w)
     return toks
 
@@ -466,28 +502,33 @@ def written(node: Expr, top: bool = True) -> str:
 
 class ExprParser:
     """or  <  and  <  not  <  ( ) / name / rel.perm / {sql}. Where `and` and `or` meet, parentheses say which
-    goes first: `a or b and c` is refused, `a or (b and c)` is not."""
+    goes first: `a or b and c` is refused, `a or (b and c)` is not. base: where text starts in the line's."""
 
-    def __init__(self, text: str, loc: Loc) -> None:
-        self.toks, self.i, self.loc = tokenize(text, loc), 0, loc
+    def __init__(self, text: str, loc: Loc, base: int = 0) -> None:
+        self.toks, self.i, self.loc = tokenize(text, loc, base), 0, loc
         self.joined = False  # whether the last `and` read joined two items or more, outside parentheses
 
     def peek(self) -> str | None:
-        return self.toks[self.i][0] if self.i < len(self.toks) else None
+        return self.toks[self.i].kind if self.i < len(self.toks) else None
 
     def take(self) -> Token:
         tok = self.toks[self.i]
         self.i += 1
         return tok
 
+    def unexpected(self) -> NoReturn:
+        tok = self.toks[self.i]
+        fail(self.loc, f"unexpected '{tok.text}'", "AZ102", at=(tok.start, tok.end))
+
     def parse(self) -> Expr:
         # (never given an empty one: the lines it reads end in what follows `=` or `:`, which isn't blank)
         e = self.or_()
         if self.i < len(self.toks):
-            fail(self.loc, f"unexpected '{self.toks[self.i][1]}'", "AZ102")
+            self.unexpected()
         return e
 
     def or_(self) -> Expr:
+        first = self.i
         items = [self.and_()]
         mixed = self.joined
         while self.peek() == "or":
@@ -502,6 +543,7 @@ class ExprParser:
                 self.loc,
                 f"`and` and `or` meet without parentheses, which reads two ways: write {written(node)}",
                 "AZ102",
+                at=(self.toks[first].start, self.toks[self.i - 1].end),
             )
         return node
 
@@ -516,41 +558,43 @@ class ExprParser:
     def unary(self) -> Expr:
         kind = self.peek()
         if kind is None:
-            fail(self.loc, "expression ends too early", "AZ102")
+            last = self.toks[-1] if self.toks else None
+            fail(self.loc, "expression ends too early", "AZ102", at=(last.start, last.end) if last else None)
         if kind == "not":
             self.take()
             return Not("not", self.unary())
         if kind == "(":
-            self.take()
+            opened = self.take()
             e = self.or_()
             if self.peek() != ")":
-                fail(self.loc, "missing )", "AZ102")
+                fail(self.loc, "missing )", "AZ102", at=(opened.start, opened.end))
             self.take()
             return e
         if kind == "cond":
-            return Cond("cond", self.take()[1])
+            return Cond("cond", self.take().text)
         if kind == "name":
-            w = self.take()[1]
+            tok = self.take()
+            w = tok.text
             if w in KEYWORDS:
                 return Cond("cond", KEYWORDS[w])
-            not_generated(w, self.loc)
+            not_generated(w, self.loc, (tok.start, tok.end))
             if "." in w:
                 rel, perm = w.split(".")
                 return Arrow("arrow", rel, perm)
             return Ref("ref", w)
-        fail(self.loc, f"unexpected '{self.toks[self.i][1]}'", "AZ102")
+        self.unexpected()
 
 
-def not_generated(name: str, loc: Loc) -> None:
+def not_generated(name: str, loc: Loc, at: tuple[int, int] | None = None) -> None:
     """Generated names hold '__' (`view__base`, `folder__key`): a policy can neither name nor declare one."""
     if "__" in name:
-        fail(loc, f"'{name}': names with '__' are generated ones, which a policy can't use", "AZ107")
+        fail(loc, f"'{name}': names with '__' are generated ones, which a policy can't use", "AZ107", at=at)
 
 
-def check_name(name: str, loc: Loc) -> str:
-    not_generated(name, loc)
+def check_name(name: str, loc: Loc, at: tuple[int, int] | None = None) -> str:
+    not_generated(name, loc, at)
     if name in RESERVED or name in KEYWORDS:
-        fail(loc, f"'{name}' is a word of the language; choose another name", "AZ107")
+        fail(loc, f"'{name}' is a word of the language; choose another name", "AZ107", at=at)
     return name
 
 
@@ -644,9 +688,10 @@ def file_lines(name: str | None, text: str) -> list[Line]:
         if out and (open_before or CONTINUES.match(s)):
             last = out[-1]
             last.loc.origin.append((len(last.text) + 1, n, indent))
-            out[-1] = last._replace(text=last.text + " " + s)
+            last.loc.text = last.text + " " + s
+            out[-1] = last._replace(text=last.loc.text)
         else:
-            out.append(Line(Loc(name, n, [(0, n, indent)]), indent, s))
+            out.append(Line(Loc(name, n, s, [(0, n, indent)]), indent, s))
     return out
 
 
@@ -754,9 +799,17 @@ def parse_cols(text: str) -> Cols:
     return text
 
 
-def parse_subjects(text: str, loc: Loc) -> list[Subject]:
+def parts(text: str, base: int = 0) -> list[tuple[str, tuple[int, int]]]:
+    """A list written with commas: each item without the spaces around it, and where it is (base: where text
+    starts in the line's)."""
+    return [(m.group(1), (base + m.start(1), base + m.end(1))) for m in re.finditer(r"\s*([^,]*?)\s*(?:,|$)", text)][
+        : text.count(",") + 1
+    ]
+
+
+def parse_subjects(text: str, loc: Loc, base: int = 0) -> list[Subject]:
     subjects: list[Subject] = []
-    for part in [p.strip() for p in text.split(",")]:
+    for part, at in parts(text, base):
         if part in ("anyone", "link"):
             subjects.append((part, None))
             continue
@@ -770,9 +823,10 @@ def parse_subjects(text: str, loc: Loc) -> list[Subject]:
                 loc,
                 f"bad subject '{part}' (use a type, type#relation, user:* or another type:*, anyone or link)",
                 "AZ103",
+                at=at,
             )
         if sm.group(1) in ("anyone", "link"):
-            fail(loc, f"bad subject '{part}': {sm.group(1)} stands alone, without #relation", "AZ204")
+            fail(loc, f"bad subject '{part}': {sm.group(1)} stands alone, without #relation", "AZ204", at=at)
         subjects.append((sm.group(1), sm.group(2)))
     return subjects
 
@@ -844,14 +898,15 @@ def parse_policy(text: str, path: str | None = None, files: dict[str, str] | Non
     if files is None:  # included files read from disk, next to the policy file (or here)
         files = collect_includes(text, disk_reader(os.path.dirname(path) if path else "."))
     for loc, indent, s in read_lines(None, text, files):
-        for sql in braced(s):
-            tag = DOLLAR_TAG.search(sql)
+        for a, b in braced_at(s):
+            tag = DOLLAR_TAG.search(s, a, b) if b > 0 else None
             if tag:
                 fail(
                     loc,
-                    f"{{{sql.strip()}}} contains {tag.group(0)}, which ends the generated function it goes "
-                    f"in: write the text another way ('$' || 'f$')",
+                    f"{{{s[a + 1 : b - 1].strip()}}} contains {tag.group(0)}, which ends the generated function it "
+                    f"goes in: write the text another way ('$' || 'f$')",
                     "AZ110",
+                    at=tag.span(),
                 )
         if indent == 0:
             m_type = TYPE_RE.fullmatch(s)
@@ -867,7 +922,7 @@ def parse_policy(text: str, path: str | None = None, files: dict[str, str] | Non
                         f"'{name}' is a subject of its own (shared with {name}); name the type differently",
                         "AZ204",
                     )
-                check_name(name, loc)
+                check_name(name, loc, m_type.span(1))
                 if name in pol.types:
                     fail(loc, f"type {name} is defined twice", "AZ109")
                 cur_type = pol.types[name] = Type(
@@ -917,7 +972,9 @@ def parse_policy(text: str, path: str | None = None, files: dict[str, str] | Non
             elif m_scope:
                 if m_scope.group(1) in pol.scopes:
                     fail(loc, f"scope {m_scope.group(1)} is defined twice", "AZ109")
-                pol.scopes[m_scope.group(1)] = Scope(m_scope.group(1), parse_scope_items(m_scope.group(2), loc), loc)
+                pol.scopes[m_scope.group(1)] = Scope(
+                    m_scope.group(1), parse_scope_items(m_scope.group(2), loc, m_scope.start(2)), loc
+                )
                 section = None
             elif m_caveat:
                 if m_caveat.group(1) in pol.caveats:
@@ -954,7 +1011,9 @@ def parse_policy(text: str, path: str | None = None, files: dict[str, str] | Non
             m = re.fullmatch(rf"never\s+({IDENT})\s*:\s*(.+)", s)
             if not m:
                 fail(loc, "write invariants as: never file: view and not folder.in_org", "AZ106")
-            pol.invariants.append(Invariant(m.group(1), ExprParser(m.group(2), loc).parse(), m.group(2), loc))
+            pol.invariants.append(
+                Invariant(m.group(1), ExprParser(m.group(2), loc, m.start(2)).parse(), m.group(2), loc)
+            )
         else:
             fail(loc, "indented line outside a type, rules, invariants or test block", "AZ101")
     for sc in pol.scenarios:
@@ -1043,19 +1102,19 @@ def parse_step(s: str, loc: Loc) -> Step:
     )
 
 
-def parse_scope_items(text: str, loc: Loc) -> list[ScopeItem]:
+def parse_scope_items(text: str, loc: Loc, base: int = 0) -> list[ScopeItem]:
     items: list[ScopeItem] = []
-    for part in [p.strip() for p in text.split(",")]:
+    for part, at in parts(text, base):
         m = re.fullmatch(rf"(?:({QNAME}|{IDENT})\.)?({IDENT})", part)
         if not m:
-            fail(loc, f"bad scope item '{part}' (use select, view, app.files.update or file.edit)", "AZ404")
+            fail(loc, f"bad scope item '{part}' (use select, view, app.files.update or file.edit)", "AZ404", at=at)
         qual, word = m.group(1), m.group(2)
-        not_generated(part, loc)
+        not_generated(part, loc, at)
         kind = "cmd" if word in COMMANDS else "perm"
         if kind == "cmd" and qual and "." not in qual:
-            fail(loc, f"'{part}': commands are qualified by a table, e.g. app.files.{word}", "AZ404")
+            fail(loc, f"'{part}': commands are qualified by a table, e.g. app.files.{word}", "AZ404", at=at)
         if kind == "perm" and qual and "." in qual:
-            fail(loc, f"'{part}': permissions are qualified by a type, e.g. file.{word}", "AZ404")
+            fail(loc, f"'{part}': permissions are qualified by a type, e.g. file.{word}", "AZ404", at=at)
         items.append((kind, qual, word))
     return items
 
@@ -1071,7 +1130,7 @@ def parse_roles_line(t: Type, s: str, loc: Loc) -> None:
     if t.roles:
         fail(loc, f"{t.name} declares custom roles twice", "AZ109")
     t.roles_from = m.group(2)
-    t.roles = (parse_subjects(m.group(1), loc), [], loc)
+    t.roles = (parse_subjects(m.group(1), loc, m.start(1)), [], loc)
 
 
 def names_roles(node: Expr, under_not: bool = False) -> list[bool]:
@@ -1096,7 +1155,7 @@ def parse_type_line(t: Type, s: str, loc: Loc) -> None:
         m = re.fullmatch(rf"can\s+({IDENT})\s*=\s*(.+)", s)
         if not m:
             fail(loc, "write permissions as: can name = expression", "AZ104")
-        name = check_name(m.group(1), loc)
+        name = check_name(m.group(1), loc, m.span(1))
         if name in t.perms or name in t.relations:
             fail(loc, f"{t.name}.{name} is defined twice", "AZ109")
         if name in COMMANDS:
@@ -1108,7 +1167,7 @@ def parse_type_line(t: Type, s: str, loc: Loc) -> None:
                 f"permission something else",
                 "AZ107",
             )
-        t.perms[name] = Perm(name, ExprParser(m.group(2), loc).parse(), m.group(2), loc)
+        t.perms[name] = Perm(name, ExprParser(m.group(2), loc, m.start(2)).parse(), m.group(2), loc)
         return
     if re.match(r"roles\s*:", s):
         parse_roles_line(t, s, loc)
@@ -1122,10 +1181,10 @@ def parse_type_line(t: Type, s: str, loc: Loc) -> None:
             "write relations as: name : subject = source   (or: name : subjects shared [by perm] [if {sql}])",
             "AZ103",
         )
-    name, subj_txt, source = check_name(m.group(1), loc), m.group(2), m.group(3)
+    name, subj_txt, source = check_name(m.group(1), loc, m.span(1)), m.group(2), m.group(3)
     if name in t.perms:
         fail(loc, f"{t.name}.{name} is already a permission", "AZ109")
-    subjects = parse_subjects(subj_txt, loc)
+    subjects = parse_subjects(subj_txt, loc, m.start(2))
     if source is None:
         src = Source("shared", subjects, loc, shared_by=m.group(4), shared_if=m.group(5))
     else:
@@ -1185,7 +1244,7 @@ def parse_rule_line(pol: Policy, table: str, s: str, loc: Loc) -> None:
         Rule(
             table,
             "update check" if check else command,
-            ExprParser(expr.strip(), loc).parse(),
+            ExprParser(expr.strip(), loc, len(s) - len(expr.lstrip())).parse(),
             expr.strip(),
             loc,
             columns,
