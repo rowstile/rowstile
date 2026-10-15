@@ -47,7 +47,8 @@ Shape = Any  # a reading of a policy, as lists, tuples and dicts that compare wi
 # ----------------------------------------------------------------------
 def condition(text: str) -> str:
     """A condition's text as both readings give it: its -- comments out (outside quotes), white space single."""
-    out = "\n".join(parse.strip_comment(line) for line in text.split("\n"))
+    scan = parse.Scanner(depth=1)  # (SQL: inside the condition's braces)
+    out = "\n".join(line[: parse.comment_at(line, scan.marks(line))] for line in text.split("\n"))
     return " ".join(out.split())
 
 

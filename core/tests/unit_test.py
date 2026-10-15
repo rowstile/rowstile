@@ -678,6 +678,24 @@ class LanguageForms(unittest.TestCase):
         compile_ = lambda t: Compiler(parse_policy(t)).compile("x")
         self.assertEqual(compile_(text), compile_(commented))
 
+    def test_quotes_in_a_condition_are_read_as_sql_reads_them(self) -> None:
+        # a brace or -- inside "a name", $$text$$ or E'text' is the condition's text: it closes or comments nothing
+        base = "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+
+        def condition(text: str) -> object:
+            expr = parse_policy(base + text).types["doc"].perms["view"].expr
+            assert isinstance(expr, authzlib.parse.And), expr
+            return expr.items[1]
+
+        for cond in ('"we}ird" = 1', "note = $$--}$$", "note = E'a\\'}'", "note = 'it''s {'"):
+            self.assertEqual(condition("  can view = owner and {" + cond + "}\n"), authzlib.parse.Cond("cond", cond))
+        # a quote may go on to the next line inside a condition; outside, an apostrophe opens none
+        self.assertEqual(
+            condition("  can view = owner and {note = 'a\n  -- b}'}\n"), authzlib.parse.Cond("cond", "note = 'a -- b}'")
+        )
+        pol = parse_policy(base + "  can view = owner\ntest Bob's test -- the comment\n  user 1 can view doc 1\n")
+        self.assertEqual(pol.scenarios[0].name, "Bob's test")
+
     def test_quotes_in_include_names_and_test_ids(self) -> None:
         pol = parse_policy('include "a--b.authz"  -- the rest\n', files={"a--b.authz": read(POLICIES["docs"])})
         self.assertIn("folder", pol.types)

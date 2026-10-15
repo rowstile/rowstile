@@ -87,6 +87,11 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- A condition reads quotes as SQL does: a `}` or `--` inside `"a name"`, `$$text$$` or `E'it\'s'` is part of
+  the condition, where it closed the condition or began a comment, and a quote may go on to the next line. Outside
+  conditions, a quote that doesn't close on its line is an apostrophe: `test Bob's test -- note` names the test
+  "Bob's test", where the comment was kept in its name. `rowstile fmt` reads quotes, braces and comments the same
+  way as the parser.
 - A scope defined twice is refused (AZ109), as a type or a caveat is: the second one replaced the first.
 - A policy file that starts with a byte order mark and includes another, read from disk, found it: the include
   on its first line was missed, and the message said to pass the file in the `files` argument.

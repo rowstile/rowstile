@@ -30,10 +30,21 @@ class PolicyError(Exception):
 
 
 class Loc:
-    """Where something was written: 'line 12', or 'roles.authz line 3' for included files."""
+    """Where something was written: 'line 12', or 'roles.authz line 3' for included files. origin, for a line the
+    parser read: where each of its parts starts, (index in its text, line, column): a line that goes on over
+    several (`or ...`, an open `{`) is read as one, its parts joined by a space."""
 
-    def __init__(self, file: str | None, line: int) -> None:
+    def __init__(self, file: str | None, line: int, origin: list[tuple[int, int, int]] | None = None) -> None:
         self.file, self.line = file, line
+        self.origin = origin or []
+
+    def at(self, offset: int) -> tuple[int, int]:
+        """The line and column (from 0) in the file of the character at offset in the line's text."""
+        line, col = self.line, offset
+        for start, n, c in self.origin:
+            if start <= offset:
+                line, col = n, c + offset - start
+        return line, col
 
     def __str__(self) -> str:
         return f"line {self.line}" if self.file is None else f"{self.file} line {self.line}"
@@ -267,21 +278,138 @@ class Policy:
 
 
 # ----------------------------------------------------------------------
-# Lines and expressions
+# Quotes, braces and comments
 # ----------------------------------------------------------------------
+class Mark(NamedTuple):
+    """What a character of a line is."""
+
+    quoted: bool
+    depth: int  # how many {braces} are open around it (a condition's own `{` and `}` are outside it)
+    comment: bool  # in a -- comment, which runs to the end of the line
+
+
+# a dollar quote's tag in SQL: $$, or $name$
+DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
+
+
+def quote_end(line: str, i: int, quote: str) -> int:
+    """Where a quote open before line[i] ends: the index after its closing mark, or -1 if the line ends first.
+    A quote doubled ('it''s', "a""b") is part of the text; in E'...' a backslash escapes the next character."""
+    if quote.startswith("$"):
+        j = line.find(quote, i)
+        return -1 if j < 0 else j + len(quote)
+    close = quote[-1]
+    while i < len(line):
+        if (quote == "E'" and line[i] == "\\") or line.startswith(close * 2, i):
+            i += 2
+        elif line[i] == close:
+            return i + 1
+        else:
+            i += 1
+    return -1
+
+
+@dataclass
+class Scanner:
+    """How the lines of a policy read, one after another: which characters are quoted, inside how many {braces},
+    in a comment. The one reading the parser, rowstile fmt and the editors' helpers share.
+
+    Outside braces, the policy's own text: '...' and "..." are quotes when they close on the same line (an
+    apostrophe in a test's name opens none), and -- starts a comment. Inside braces, SQL: '...' (E'...' with its
+    backslashes), "names", $$...$$ and $tag$...$tag$ are quotes, which may go on to the next line, and -- starts an
+    SQL comment, which also runs to the end of the line (the lines of a condition are joined into one). Braces
+    nest; one inside quotes opens nothing, and a `}` with none open is text."""
+
+    depth: int = 0
+    quote: str = ""  # a quote inside braces the last line left open: ', ", E' or a dollar quote's tag
+
+    def marks(self, line: str) -> list[Mark]:
+        out: list[Mark] = []
+        i = 0
+        while i < len(line):
+            if self.quote:
+                end = quote_end(line, i, self.quote)
+                stop = len(line) if end < 0 else end
+                out += [Mark(True, self.depth, False)] * (stop - i)
+                self.quote, i = (self.quote if end < 0 else ""), stop
+                continue
+            c = line[i]
+            if line.startswith("--", i):
+                out += [Mark(False, self.depth, True)] * (len(line) - i)
+                break
+            if c in "'\"" and self.depth == 0:
+                end = quote_end(line, i + 1, c)
+                if end < 0:
+                    out.append(Mark(False, 0, False))  # (an apostrophe)
+                    i += 1
+                else:
+                    out += [Mark(True, 0, False)] * (end - i)
+                    i = end
+                continue
+            dollar = DOLLAR_QUOTE.match(line, i) if c == "$" and self.depth else None
+            if c in "'\"" or dollar:
+                tag = dollar.group(0) if dollar else c
+                if (
+                    c == "'"
+                    and i
+                    and line[i - 1] in "Ee"
+                    and not (i > 1 and (line[i - 2].isalnum() or line[i - 2] == "_"))
+                ):
+                    tag = "E'"
+                out += [Mark(True, self.depth, False)] * (len(tag) if dollar else 1)
+                self.quote, i = tag, i + (len(tag) if dollar else 1)
+                continue
+            if c == "}" and self.depth:
+                self.depth -= 1
+            out.append(Mark(False, self.depth, False))
+            if c == "{":
+                self.depth += 1
+            i += 1
+        return out
+
+
+def comment_at(line: str, marks: list[Mark]) -> int:
+    """Where a line's comment starts (its length when it has none)."""
+    return next((i for i, m in enumerate(marks) if m.comment), len(line))
+
+
 def strip_comment(line: str) -> str:
-    """Drop a trailing -- comment, but not inside quotes ('...' or "..."). Inside {...} it is an SQL comment,
-    which also runs to the end of the line: dropped too, as the lines of a condition are joined into one."""
-    quote = ""
-    for i, c in enumerate(line):
-        if quote:
-            if c == quote:
-                quote = ""
-        elif c in "'\"":
-            quote = c
-        elif c == "-" and line[i : i + 2] == "--":
-            return line[:i]
-    return line
+    """A line without its -- comment (one line read alone: strip_comments reads several)."""
+    return line[: comment_at(line, Scanner().marks(line))]
+
+
+def strip_comments(text: str) -> str:
+    """Each line of text without its -- comment, a quote or a brace left open on one going on to the next."""
+    scan = Scanner()
+    return "\n".join(line[: comment_at(line, scan.marks(line))] for line in text.split("\n"))
+
+
+def braced_at(text: str) -> list[tuple[int, int]]:
+    """Where each top-level {...} of a line is: the index of its `{`, and the one after its `}` (-1 for one left
+    open)."""
+    out: list[tuple[int, int]] = []
+    start = -1
+    for i, m in enumerate(Scanner().marks(text)):
+        if m.quoted or m.comment or m.depth:
+            continue
+        if text[i] == "{":
+            start = i
+        elif text[i] == "}" and start >= 0:
+            out.append((start, i + 1))
+            start = -1
+    return out + ([(start, -1)] if start >= 0 else [])
+
+
+def braced(text: str) -> list[str]:
+    """The SQL inside each top-level {...} of a line, closed."""
+    return [text[a + 1 : b - 1] for a, b in braced_at(text) if b > 0]
+
+
+def open_braces(text: str) -> int:
+    """How many { are still open at the end of a line."""
+    scan = Scanner()
+    scan.marks(text)
+    return scan.depth
 
 
 Token: TypeAlias = "tuple[str, str]"
@@ -295,23 +423,10 @@ def tokenize(s: str, loc: Loc) -> list[Token]:
         if c.isspace():
             i += 1
         elif c == "{":
-            depth, j, quote = 0, i, False
-            while j < len(s):
-                ch = s[j]
-                if quote:
-                    if ch == "'":
-                        quote = False
-                elif ch == "'":
-                    quote = True
-                elif ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                j += 1
-            else:
+            end = braced_at(s[i:])[0][1]
+            if end < 0:
                 fail(loc, "a { condition is missing its closing }", "AZ102")
+            j = i + end - 1
             sql = s[i + 1 : j].strip()
             if not sql:
                 fail(loc, "empty {} condition", "AZ102")
@@ -439,11 +554,22 @@ def check_name(name: str, loc: Loc) -> str:
     return name
 
 
-Line: TypeAlias = "tuple[Loc, int, str]"
+class Line(NamedTuple):
+    """A line as the parser reads it: where it starts, its indent, and its text without comments, the lines it goes
+    on over joined to it."""
+
+    loc: Loc
+    indent: int
+    text: str
+
+
 # a byte order mark, which some editors put at the start of a UTF-8 file: not part of the policy
 BOM = "\ufeff"
-# an include line, as the readers of included files see it (at the start of a line, maybe a comment after)
-INCLUDE = re.compile(r'include\s+"([^"]+)"\s*(?:--.*)?')
+# an include line (at the start of a line)
+INCLUDE = re.compile(r'include\s+"([^"]+)"')
+# a line that goes on from the one before ('where : user = ...' declares a relation named where, which check_name
+# refuses)
+CONTINUES = re.compile(r"(or|and|if|where)\b(?!\s*:)")
 
 
 def include_name(including: str, name: str) -> str | None:
@@ -463,8 +589,8 @@ def collect_includes(text: str, read: Callable[[str], str | None]) -> dict[str, 
     todo = [("", text)]
     while todo:
         including, body = todo.pop()
-        for line in body.removeprefix(BOM).split("\n"):
-            m = INCLUDE.fullmatch(line.rstrip())
+        for line in file_lines(including or None, body):
+            m = INCLUDE.fullmatch(line.text) if line.indent == 0 else None
             key = include_name(including, m.group(1)) if m else None
             if key is None or key in files:
                 continue  # the compiler reports files included twice, with the line
@@ -503,50 +629,58 @@ def disk_reader(folder: str) -> Callable[[str], str | None]:
     return read
 
 
-def read_lines(
-    path: str | None, text: str, seen: set[str] | None = None, top: bool = True, files: dict[str, str] | None = None
-) -> list[Line]:
-    """Logical lines (loc, indent, text), with includes expanded. A line starting
-    with 'or'/'and' continues the previous one. Includes are looked up in `files` (name -> text),
-    relative to the including file, and never on disk."""
-    seen = seen or set()
-    files = files or {}
-    name = None if top else path
+def file_lines(name: str | None, text: str) -> list[Line]:
+    """A file's lines as the parser reads them, without comments or blank lines: a line starting with or, and, if
+    or where goes on from the one before, as does each line while a { is open."""
+    scan = Scanner()
     out: list[Line] = []
     for n, raw in enumerate(text.removeprefix(BOM).split("\n"), 1):
-        loc = Loc(name, n)
-        line = strip_comment(raw).rstrip()
-        if not line.strip():
+        open_before = scan.depth > 0
+        code = raw[: comment_at(raw, scan.marks(raw))].rstrip()
+        s = code.strip()
+        if not s:
             continue
-        indent = len(line) - len(line.lstrip())
-        s = line.strip()
-        m = re.fullmatch(r'include\s+"([^"]+)"', s)
-        if m and indent == 0:
-            inc = include_name(name or "", m.group(1))
-            if inc is None:
-                fail(
-                    loc,
-                    f"{m.group(1)}: an included file is in the policy's folder or below it, "
-                    f"named with / and without .. out of the folder",
-                    "AZ108",
-                )
-            if inc in seen:
-                fail(loc, f"{m.group(1)} is included twice (or includes itself)", "AZ108")
-            if inc not in files:
-                fail(
-                    loc,
-                    f'can\'t find {m.group(1)}: pass it in the files argument, e.g. \'{{"{inc}": "..."}}\'',
-                    "AZ108",
-                )
-            seen.add(inc)
-            out += read_lines(inc, files[inc], seen, top=False, files=files)
-            continue
-        # ('where : user = ...' declares a relation named where, which check_name refuses: not a continuation)
-        if out and (re.match(r"(or|and|if|where)\b(?!\s*:)", s) or open_braces(out[-1][2]) > 0):
+        indent = len(code) - len(code.lstrip())
+        if out and (open_before or CONTINUES.match(s)):
             last = out[-1]
-            out[-1] = (last[0], last[1], last[2] + " " + s)
+            last.loc.origin.append((len(last.text) + 1, n, indent))
+            out[-1] = last._replace(text=last.text + " " + s)
         else:
-            out.append((loc, indent, s))
+            out.append(Line(Loc(name, n, [(0, n, indent)]), indent, s))
+    return out
+
+
+def read_lines(
+    name: str | None, text: str, files: dict[str, str] | None = None, seen: set[str] | None = None
+) -> list[Line]:
+    """The lines of a policy (name None) or of a file it includes, with includes expanded. Includes are looked up
+    in `files` (name -> text), relative to the including file, and never on disk."""
+    files = files or {}
+    seen = set() if seen is None else seen
+    out: list[Line] = []
+    for line in file_lines(name, text):
+        loc, m = line.loc, INCLUDE.fullmatch(line.text) if line.indent == 0 else None
+        if m is None:
+            out.append(line)
+            continue
+        inc = include_name(name or "", m.group(1))
+        if inc is None:
+            fail(
+                loc,
+                f"{m.group(1)}: an included file is in the policy's folder or below it, "
+                f"named with / and without .. out of the folder",
+                "AZ108",
+            )
+        if inc in seen:
+            fail(loc, f"{m.group(1)} is included twice (or includes itself)", "AZ108")
+        if inc not in files:
+            fail(
+                loc,
+                f'can\'t find {m.group(1)}: pass it in the files argument, e.g. \'{{"{inc}": "..."}}\'',
+                "AZ108",
+            )
+        seen.add(inc)
+        out += read_lines(inc, files[inc], files, seen)
     return out
 
 
@@ -570,45 +704,9 @@ def meaning_lines(policy: str, files: dict[str, str] | None) -> list[str]:
     return out
 
 
-def braced(text: str) -> list[str]:
-    """The SQL inside each top-level {...} of a line (quoted strings kept whole)."""
-    out: list[str] = []
-    depth, quote, cur = 0, False, ""
-    for c in text:
-        if depth and not (c == "}" and depth == 1 and not quote):
-            cur += c
-        if quote:
-            quote = c != "'"
-        elif c == "'":
-            quote = True
-        elif c == "{":
-            depth += 1
-        elif c == "}" and depth:
-            depth -= 1
-            if not depth:
-                out.append(cur)
-                cur = ""
-    return out
-
-
 # a dollar-quote tag ($f$, $body$): the generated functions' bodies are quoted with such tags, so one in a
 # condition would end the body it is placed in ('$$' is fine: no body uses it around a condition)
 DOLLAR_TAG = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*\$")
-
-
-def open_braces(text: str) -> int:
-    """How many { are still open at the end of text (ignoring quoted strings)."""
-    depth, quote = 0, False
-    for c in text:
-        if quote:
-            quote = c != "'"
-        elif c == "'":
-            quote = True
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-    return depth
 
 
 # ----------------------------------------------------------------------
@@ -745,7 +843,7 @@ def parse_policy(text: str, path: str | None = None, files: dict[str, str] | Non
     cur_test: Scenario | None = None
     if files is None:  # included files read from disk, next to the policy file (or here)
         files = collect_includes(text, disk_reader(os.path.dirname(path) if path else "."))
-    for loc, indent, s in read_lines(path, text, files=files):
+    for loc, indent, s in read_lines(None, text, files):
         for sql in braced(s):
             tag = DOLLAR_TAG.search(sql)
             if tag:
