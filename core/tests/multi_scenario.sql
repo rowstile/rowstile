@@ -171,6 +171,10 @@ SELECT set_config('authz_ctx.links', current_setting('test.token'), false);
 SELECT test.ok('dave with the link token: folder 2 and below', test.docs() = '01, 02');
 SELECT set_config('authz_ctx.links', 'wrong-token', false);
 SELECT test.ok('a wrong token does nothing', test.docs() = '-');
+SELECT set_config('authz_ctx.links', ' , ' || current_setting('test.token') || ' ,', false);
+SELECT test.ok('blank tokens beside the link''s are left out: one hash, its token''s, and it opens folder 2',
+  authz.link_hashes() = ARRAY[encode(sha256(convert_to(current_setting('test.token'), 'UTF8')), 'hex')]
+  AND test.docs() = '01, 02');
 RESET authz_ctx.links;
 
 -- the links on an object, and turning one off

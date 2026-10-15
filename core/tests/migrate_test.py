@@ -46,6 +46,7 @@ SCHEMAS = {
 }
 
 REORDERED_COLUMN_RULES = "column rules written in another order"  # (whose migration must make no trigger again)
+LOST_RULES = "a table with no rules any more"  # (whose migration warns that row-level security stays on)
 # (name, schema, old policy, new policy)
 CASES: list[tuple[str, str, str, str]] = [
     (
@@ -139,7 +140,7 @@ CASES: list[tuple[str, str, str, str]] = [
         ),
     ),
     (
-        "a table with no rules any more",
+        LOST_RULES,
         "docs",
         DOCS,
         edit(
@@ -194,6 +195,14 @@ CASES: list[tuple[str, str, str, str]] = [
                 "  can edit = author or roles\n  can view = edit or container.view",
             ),
         ),
+    ),
+    # the views on a type's key are made again when its line changes: the masked view reads them, and stays (emptied
+    # in place while they go) under the app's view
+    (
+        "a type's line changes under the masked view, under a view of the app's",
+        "multi",
+        MULTI,
+        edit(MULTI, ("type project = mt.projects\n", "type project = mt.projects where {id > 0}\n")),
     ),
     (
         "a new permission on composite keys",
@@ -306,9 +315,16 @@ def apply_whole(db: str, policy: str) -> None:
 
 
 def run_migration(db: str, sql: str) -> str:
-    return sh(
-        "psql", "-X", "-q", "-1", "-v", "ON_ERROR_STOP=1", "-d", db, stdin="SET client_min_messages = error;\n" + sql
+    """What the migration's run says (its warnings: the notices below them are left out)."""
+    p = subprocess.run(
+        ["psql", "-X", "-q", "-1", "-v", "ON_ERROR_STOP=1", "-d", db],
+        input="SET client_min_messages = warning;\n" + sql,
+        capture_output=True,
+        text=True,
     )
+    if p.returncode:
+        raise RuntimeError(f"psql -1 failed:\n{p.stderr[-3000:]}")
+    return p.stderr
 
 
 SNAPSHOT = r"""
@@ -465,11 +481,11 @@ def main() -> None:
             try:
                 if len(ms) == 1:
                     psql(db_m, changes)
-                    run_migration(db_m, ms[0].sql)
+                    said = run_migration(db_m, ms[0].sql)
                 else:
                     run_migration(db_m, ms[0].sql)  # built beside ...
                     psql(db_m, changes)  # ... while the app writes ...
-                    run_migration(db_m, ms[1].sql)  # ... then swapped in
+                    said = run_migration(db_m, ms[1].sql)  # ... then swapped in
             except RuntimeError as e:
                 failed += 1
                 print(f"FAIL  {label}: the migration fails\n{e}")
@@ -482,6 +498,11 @@ def main() -> None:
                 print(f"FAIL  {label}: applying whole fails\n{e}")
                 continue
             diffs = compare(snapshot(db_m), snapshot(db_w))
+            lost = 'WARNING:  "app"."files" has no rules any more, and row-level security is still on, so the app role sees'
+            if name == LOST_RULES and not direction and lost not in said:
+                diffs.append(
+                    f"  the migration doesn't warn that app.files keeps row-level security on: {said[-300:]!r}"
+                )
             if app and not diffs:
                 # the app's view is still there, and reads the view as it is now (not the emptied one)
                 for db in (db_m, db_w):

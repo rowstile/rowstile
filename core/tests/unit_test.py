@@ -194,6 +194,8 @@ class ThisRow(unittest.TestCase):
             "exists (select 1 from app.m m where m.p = r.id and m.k = 'r')",
         )
         self.assertEqual(on_row("r(this.id)", "r"), "r(r.id)")
+        # a condition that starts with a quote is no E'' string, whatever letter it ends with
+        self.assertEqual(on_row("'\\' <> this.name or true", "r"), "'\\' <> r.name or true")
         self.assertTrue(names_this("this.a = 1") and not names_this("'this.a' = x"))
         self.assertTrue(this_alone("exists (select 1 from app.t this where this.x)") and not this_alone("this.x"))
 
@@ -1910,6 +1912,13 @@ class Statements(unittest.TestCase):
         for sql in ("SELECT 'a; b", 'SELECT "a; b', "SELECT E'\\'; SELECT 1"):
             self.assertEqual(split(sql), [("", sql)], sql)
 
+    def test_a_quote_that_starts_the_text(self) -> None:
+        # nothing is before it: not an E'' string, nor a $ inside a name, whatever the text's last letter is
+        from authzlib.statements import split
+
+        self.assertEqual(split("'a\\'; SELECT 1 e"), [("", "'a\\'"), ("", "SELECT 1 e")])
+        self.assertEqual(split("$a$ x; $a$; SELECT 1"), [("", "$a$ x; $a$"), ("", "SELECT 1")])
+
     def test_what_each_makes(self) -> None:
         from authzlib.statements import made
 
@@ -1925,6 +1934,19 @@ class Statements(unittest.TestCase):
             ("trigger", '"t" ON "app"."x"'),
         )
         self.assertEqual(made("DO $mv$ BEGIN END $mv$", '-- @object view "mt"."v"'), ("view", '"mt"."v"'))
+        # the forms that make it again or only if it isn't there name what they make too
+        self.assertEqual(made("CREATE OR REPLACE VIEW authz_gen.v AS SELECT 1"), ("view", "authz_gen.v"))
+        self.assertEqual(
+            made('CREATE OR REPLACE TRIGGER "t" AFTER INSERT ON "app"."x" FOR EACH ROW EXECUTE FUNCTION f()'),
+            ("trigger", '"t" ON "app"."x"'),
+        )
+        self.assertEqual(made("CREATE TABLE IF NOT EXISTS authz.x (a int)"), ("table", "authz.x"))
+        self.assertEqual(made("CREATE INDEX IF NOT EXISTS x_a ON authz.x (a)"), ("index", "x_a"))
+        # a parenthesis in a quoted default doesn't end the arguments
+        self.assertEqual(
+            made("CREATE FUNCTION authz.f(p text DEFAULT ')', q int) RETURNS int AS $$ $$"),
+            ("function", "authz.f(p text, q int)"),
+        )
         self.assertIsNone(made("INSERT INTO authz_int.x VALUES (1)"))
 
 

@@ -53,6 +53,22 @@ PSQL -c 'DROP INDEX "Note_folderId_idx"'
 run indexes --check; case "$out" in *'public.Note'*'folderId'*) [ $rc -eq 1 ] && ok "... and one that is missing is named" || bad "indexes --check exit" "$rc";; *) bad "a missing index" "$out";; esac
 PSQL -c 'CREATE INDEX "Note_folderId_idx" ON "Note" ("folderId")'
 
+echo "-- conditions on a table named with a word SQL reserves (User)"
+# a select rule's condition that doesn't run: Postgres gives no position there, so the condition is tried alone on
+# its table, named as Postgres writes it ("public"."User" AS "User")
+{ cat tests/prisma.authz; printf '\nrules public.User\n  select : {nme is not null}\n'; } > "$T/user_rule.authz"
+run apply "$T/user_rule.authz"
+case "$out" in "policy line $(grep -c '' "$T/user_rule.authz"): the condition {nme is not null} doesn't run: column \"nme\" does not exist [AZ613]"*)
+  [ $rc -eq 1 ] && ok "a select rule's condition on User that doesn't run: refused with its line" || bad "a select rule on User: exit" "$rc";;
+  *) bad "a select rule's condition on User that doesn't run" "$out";; esac
+# a bare column name a subquery's table takes: Postgres is asked which columns the condition reads from User's rows
+sed 's/^type user = public.User (id int)$/type user = public.User (id int)\n  can see = {exists (select 1 from public."Folder" f where f."ownerId" = id)}/' tests/prisma.authz > "$T/user_captured.authz"
+run apply "$T/user_captured.authz"
+case "$out" in *'the condition {exists (select 1 from public."Folder" f where f."ownerId" = id)} names id, a column of public.User'"'"'s rows, but reads it from another table the condition names'*"for the row's, write this.id"*)
+  [ $rc -eq 0 ] && ok "... and one with a bare id that Folder takes: applied, with the warning" || bad "the captured id on User: exit" "$rc";;
+  *) bad "the captured id on User" "$out";; esac
+run apply; is applied || bad "applying the policy again" "$out"
+
 echo "-- asking, reading and writing as someone"
 run who folder 3 view; [ "$out" = 1 ] && ok "who" || bad "who" "$out"
 run list --as user:2 folder view; [ "$out" = 4 ] && ok "list" || bad "list" "$out"
