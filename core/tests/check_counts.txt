@@ -3,11 +3,11 @@
 # or taking away checks on purpose, write the new count here, or python3 tests/check_counts.py --write LOG.
 adversarial 96
 apply 124
-capitals 42
+capitals 43
 children 59
 cli 133
 concurrency 23
-confidence 56
+confidence 59
 cookbook 79
 cuts half way 28
 cuts half way, every statement 31
@@ -35,7 +35,7 @@ review 57
 scenario 94
 signed sessions 53
 small policies 3
-studio 194
+studio 197
 tools 36
-unit 450
+unit 457
 upgrade 71
