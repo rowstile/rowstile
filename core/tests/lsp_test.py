@@ -552,6 +552,46 @@ with tempfile.TemporaryDirectory() as d:
     ok("'is not null' in a condition is no deny", h and "has a deny" not in h["contents"]["value"], h)
     c.close()
 
+# what the compiler makes of a policy, a custom role's relation (roles:view) and a deny's hidden inheritance
+# (view__base), isn't the policy's own: never offered or shown, in the policy or in its tests
+with tempfile.TemporaryDirectory() as d:
+    made = (
+        "app role app_user\ntype user = app.users\n\n"
+        "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n\n"
+        "type folder = app.folders\n  org     : org = org_id\n  parent  : folder = parent_id\n"
+        "  owner   : user = owner_id\n  blocked : user = blocked_id\n  roles : user from org\n"
+        "  can denied = blocked or parent.denied\n  can view = (owner or roles or parent.view) and not denied\n"
+    )
+    path = os.path.join(d, "policy.authz")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(made)
+    with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
+        fh.write('policy = "policy.authz"\n')
+    c = Client(d)
+    c.request("initialize", {"capabilities": {}})
+    e = Editor(c, path, made)
+    ok("a policy with custom roles and a deny has no errors", c.diagnostics(e.u) == [], c.diagnostics(e.u))
+    inside = set(e.offered(made, "  can denied", 2))
+    ok(
+        "completion inside a type offers the relations and permissions written, not the compiler's",
+        {"owner", "parent", "view"} <= inside and not {"roles:view", "view__base"} & inside,
+        sorted(inside),
+    )
+    after = set(e.offered(made, "parent.view)", len("parent.")))
+    ok(
+        "... and after a dot",
+        {"view", "owner"} <= after and not {"roles:view", "view__base"} & after,
+        sorted(after),
+    )
+    h = value(e.ask("textDocument/hover", made, "type folder", 6))
+    ok("... and hover on the type", "`owner`" in h and "roles:view" not in h and "view__base" not in h, h)
+    body = 'test "first"\n  user 1 can view folder 1\n'
+    t = Editor(c, os.path.join(d, "policy.test.authz"), body)
+    ok("its test file has no errors", c.diagnostics(t.u) == [], c.diagnostics(t.u))
+    h = value(t.ask("textDocument/hover", body, "folder 1", 1))
+    ok("... and hover on a type there leaves them out too", "`owner`" in h and "roles:view" not in h, h)
+    c.close()
+
 # what an editor asks less often: a type with a where, a deny, completion at the start of a line, after a schema
 # and inside braces, a save, a request the server doesn't know, a parameter of the wrong kind, questions about
 # nothing, and a test file when no policy is named (no rowstile.toml here)

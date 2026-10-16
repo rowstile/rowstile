@@ -266,6 +266,25 @@ class Golden(unittest.TestCase):
 
 
 class Compiling(unittest.TestCase):
+    def test_the_policy_compiled_stays_as_parsed(self) -> None:
+        """The compiler adds relations and permissions of its own (a custom role's, a deny's inheritance) and rewrites
+        what names them, in its own copy: what else reads the parsed policy (the language server) sees it as written."""
+        text = errors_prelude() + (
+            "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
+            "type folder = app.folders\n  org : org = org_id\n  parent : folder = parent_id\n  owner : user = owner_id\n"
+            "  blocked : user = blocked_id\n  roles : user from org\n  can denied = blocked or parent.denied\n"
+            "  can view = (owner or roles or parent.view) and not denied\n"
+        )
+        pol = parse_policy(text)
+        c = Compiler(pol)
+        c.compile("the policy")
+        self.assertEqual(pol, parse_policy(text))
+        folder = c.pol.types["folder"]
+        self.assertEqual(
+            ({"roles:view"} & set(folder.relations), {"view__base"} & set(folder.perms)),
+            ({"roles:view"}, {"view__base"}),
+        )
+
     def test_a_name_stands_for_one_thing(self) -> None:
         """A function made when first asked for is made once, and a second source for its name is a bug, not the
         first function used again: a condition's function is named by a hash of the condition, cut short."""

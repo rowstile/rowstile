@@ -477,8 +477,9 @@ class Server:
             ]
             if t.where:
                 parts.append(f"rows hold nothing unless `{t.where}`")
-            if t.relations:
-                parts.append("relations: " + ", ".join(f"`{r}`" for r in t.relations))
+            relations = [r.name for r in t.relations.values() if not r.synthetic]
+            if relations:
+                parts.append("relations: " + ", ".join(f"`{r}`" for r in relations))
             perms = [p for p in t.perms.values() if not p.hidden]
             if perms:
                 parts.append("permissions: " + ", ".join(f"`{p.name}`" for p in perms))
@@ -624,7 +625,7 @@ class Server:
             if t and pol and first in t.relations:
                 for target in self.targets(pol, t, first):
                     add([p for p, x in target.perms.items() if not x.hidden], C_METHOD, f"{target.name} permission")
-                    add(target.relations, C_FIELD, f"{target.name} relation")
+                    add([r for r, x in target.relations.items() if not x.synthetic], C_FIELD, f"{target.name} relation")
                 return dedupe(items)
             for table in self.tables():
                 schema, _, name = table.partition(".")
@@ -654,7 +655,7 @@ class Server:
             return items
         t = self.home_type(uri, line)
         if t:
-            add(t.relations, C_FIELD, "relation")
+            add([r for r, x in t.relations.items() if not x.synthetic], C_FIELD, "relation")
             add([p for p, x in t.perms.items() if not x.hidden], C_METHOD, "permission")
         if pol:
             add(pol.types, C_CLASS, "type")
