@@ -88,7 +88,7 @@ class InsightMixin(Core):
             sid = self.subject_id(src, "s", st)
             where = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
             return [
-                f"SELECT {sid} AS id FROM {qt(self.source_table(src))} s WHERE {self.key_is(t, 's', obj, src.obj_col)} "
+                f"SELECT {sid} AS id FROM {qt(src.table)} s WHERE {self.key_is(t, 's', obj, src.obj_col)} "
                 f"AND {sid} IS NOT NULL{where}"
             ]
         assert src.kind == "shared", f"a {src.kind} source"  # (an arrow follows no custom roles' relation)
@@ -135,11 +135,11 @@ class InsightMixin(Core):
                     where = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
                     if (st, sr) == ("user", None):
                         parts.append(
-                            f"SELECT {col} FROM {qt(self.source_table(src))} s WHERE {self.key_is(t, 's', obj, src.obj_col)}{where}"
+                            f"SELECT {col} FROM {qt(src.table)} s WHERE {self.key_is(t, 's', obj, src.obj_col)}{where}"
                         )
                     elif sr:
                         parts.append(
-                            f"SELECT x FROM {qt(self.source_table(src))} s, LATERAL {self.who_fn(self.T(st), sr)}({col}) x "
+                            f"SELECT x FROM {qt(src.table)} s, LATERAL {self.who_fn(self.T(st), sr)}({col}) x "
                             f"WHERE {self.key_is(t, 's', obj, src.obj_col)}{where}"
                         )
                 else:
@@ -417,7 +417,7 @@ END $f$;"""
             col = self.subject_id(src, "s", st)
             assert src.table is not None
             return (
-                f"SELECT {col} AS gid FROM {qt(self.source_table(src))} s WHERE {self.key_is(t, 's', 'p_id', src.obj_col)} "
+                f"SELECT {col} AS gid FROM {qt(src.table)} s WHERE {self.key_is(t, 's', 'p_id', src.obj_col)} "
                 f"AND {col} IN (SELECT id FROM authz_int.{q(view)})"
             )
         rel = self.role_rel_sql(t, src, "p_id") if src.kind == "roles" else f"g.relation = {lit(r.name)}"

@@ -165,8 +165,8 @@ def reads(c: Compiler) -> dict[Part, set[tuple[Fact, bool]]]:
                     out |= {(("share", t.name, r.name), False)} | ({(ANY, False)} if c.pol.caveats else set())
                 elif src.kind == "table":
                     # the row's columns that name the object and the subject, or (a where) any of them
-                    x = c.source_table(src)
-                    on = [*cols(c.source_obj_columns(src)), *cols(src.subj_col or ()), *cols(src.type_col or ())]
+                    x = src.table
+                    on = [*cols(src.obj_col), *cols(src.subj_col or ()), *cols(src.type_col or ())]
                     out |= (
                         {(ANY if reads_more(src.where) else ("table", x), False)}
                         if src.where

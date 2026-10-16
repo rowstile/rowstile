@@ -202,7 +202,7 @@ CREATE TRIGGER authz_role_perm_audit AFTER INSERT OR DELETE ON authz.role_permis
             for r in t.relations.values():
                 for src in r.sources:
                     if src.kind == "table":
-                        tables.setdefault(self.source_table(src), []).append((t, r, src))
+                        tables.setdefault(src.table, []).append((t, r, src))
                     elif src.kind == "column":
                         cols.setdefault(t.name, []).append((r, src))
         for i, (table, uses) in enumerate(sorted(tables.items(), key=lambda x: x[0])):
@@ -217,7 +217,7 @@ CREATE TRIGGER authz_role_perm_audit AFTER INSERT OR DELETE ON authz.role_permis
                         (
                             which,
                             f"SELECT {lit(action)} AS action, {lit(t.name)} AS ot, "
-                            f"{self.ref_text(t, 'x', self.source_obj_columns(src))} AS oid, "
+                            f"{self.ref_text(t, 'x', src.obj_col)} AS oid, "
                             f"{lit(r.name)} AS rel, {styp} AS st, {self.subject_text(src, 'x')} AS sid, {srel} AS sr "
                             f"FROM {which} x WHERE true{where}",
                         )

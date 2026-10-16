@@ -281,8 +281,8 @@ LANGUAGE sql {DEF} AS $f$
                     continue
                 src = srcs[0]
                 # a user's key is one column, so the subject is one column
-                obj = self.source_obj_columns(src)
-                tbl, sc = qt(self.source_table(src)), q(cols(self.source_columns(src))[0])
+                obj = src.obj_col
+                tbl, sc = qt(src.table), q(cols(self.source_columns(src))[0])
                 ocs = ", ".join(q(c) for c in cols(obj))
                 vals = (
                     ", ".join(f"(p_id::{t.keytype}).{q(c)}" for c, _ in t.key) if t.composite else f"p_id::{t.pktype}"
