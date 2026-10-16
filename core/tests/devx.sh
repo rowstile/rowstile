@@ -88,9 +88,10 @@ case "$out" in *"with scope read can edit file"*) ok "... and a check that fails
 # the tests put back the caller's own settings as they were: a SET LOCAL still ends with the caller's transaction
 fn=$(python3 -c "import compile_policy; print(compile_policy.load('example/docs.authz').tests_function_sql())")
 out=$(PGOPTIONS="-c client_min_messages=warning" psql -X -q -At -d "$DB" -c "BEGIN" -c "SET LOCAL authz.scopes = 'read'" \
-  -c "SET LOCAL authz.user_id = '1'" -c "$fn" -c "SELECT count(*) > 0 FROM pg_temp.authz_policy_tests()" -c "COMMIT" \
+  -c "SET LOCAL authz.user_id = '1'" -c "$fn" -c "SELECT count(*) > 0 FROM pg_temp.authz_policy_tests()" \
+  -c "SELECT current_setting('authz.scopes') || '|' || current_setting('authz.user_id')" -c "COMMIT" \
   -c "SELECT '[' || coalesce(current_setting('authz.scopes', true), '') || '|' || coalesce(current_setting('authz.user_id', true), '') || ']'" 2>&1 | tr '\n' ' ')
-[ "$out" = "t [|] " ] && ok "... and a scope the caller set for its transaction ends with it, after the tests ran in it" ||
+[ "$out" = "t read|1 [|] " ] && ok "... and a scope the caller set for its transaction is as it was after the tests, and ends with it" ||
   bad "the tests kept the caller's scope" "$out"
 sed 's/as user $bo refused {WITH/as user $bo allowed {WITH/' "$T/w.authz" > "$T/t.authz"
 out=$(rows "$T/t.authz" | awk -F'\t' '$3 == "f" {print $4}')

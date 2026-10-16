@@ -177,6 +177,25 @@ check "the rename commits beside the move, with no serialization error" \
   "SELECT (SELECT name FROM app.folders WHERE id = 4) = 'Design 2' AND (SELECT parent_id FROM app.folders WHERE id = 6) = 20"
 check "inheritance tables match a rebuild" "SELECT authz.verify()"
 
+echo "-- a write to one tree doesn't wait for a write to another's (each takes its own types' lock)"
+X="${DB}_cross"
+dropdb --if-exists "$X" 2>/dev/null; createdb "$X" || exit 1
+python3 compile_policy.py tests/cross.authz > "/tmp/${DB}_cross.sql" &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -f tests/cross_schema.sql >/dev/null &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -f "/tmp/${DB}_cross.sql" >/dev/null &&
+  psql -X -q -v ON_ERROR_STOP=1 -d "$X" -c "INSERT INTO cx.users VALUES (1, 'a')" -c "INSERT INTO cx.regions (id, chief_id) VALUES (1, 1), (2, 1)" \
+    -c "INSERT INTO cx.folders (id, owner_id) VALUES (1, 1), (2, 1)" >/dev/null || { echo "setup failed (cross)"; exit 1; }
+# session A links region 2 under region 1 and holds its transaction open; B moves a folder meanwhile
+psql -X -q -d "$X" -c "BEGIN" -c "INSERT INTO cx.region_links VALUES (2, 1)" -c "SELECT pg_sleep(3)" -c "COMMIT" > "$out" 2>&1 &
+sleep 1
+got=$(psql -X -q -At -d "$X" -c "SET lock_timeout = '1s'" -c "UPDATE cx.folders SET parent_type = 'folder', parent_id = 1 WHERE id = 2" 2>&1)
+wait
+if [ -z "$got" ]; then echo "ok    a folder moved while a region's link is written, without waiting"
+else echo "FAIL  a folder moved while a region's link is written: $got"; fails=$((fails + 1)); fi
+[ "$(psql -X -Atq -d "$X" -c "SELECT authz.verify()")" = t ] && echo "ok    ... and both trees match a rebuild" ||
+  { echo "FAIL  the trees after the two writes"; fails=$((fails + 1)); }
+dropdb "$X"; rm -f "/tmp/${DB}_cross.sql"
+
 rm -f "$out" "$out.b"
 dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "concurrency: all passed"; else echo "concurrency: $fails failed"; exit 1; fi
