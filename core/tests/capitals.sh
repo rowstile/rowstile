@@ -212,6 +212,13 @@ L -c 'INSERT INTO "FolderInNote" ("folderId", "noteId") VALUES (2, 1)'
   bad "lint, the two-type tree" "$(L -c "SELECT * FROM authz.lint() WHERE severity IN ('error', 'warning')")"
 L -c 'DELETE FROM "FolderInNote"'
 [ "$(can_1)" = f ] && [ "$(L -c "SELECT authz.verify()")" = t ] && ok "... and the link row deleted, the access is gone" || bad "a link row deleted" "$(can_1)"
+# a condition on the tree's links that reads another table (User): what watches that table is found by its quoted name
+sed 's/^  can view = owner or in.view$/  can view = owner or (in.view and {exists (select 1 from public."User" u where u.id = this."ownerId")})/' \
+  "$T/link.authz" > "$T/link_reads.authz"
+run --db "dbname=$DB3" apply "$T/link_reads.authz"
+case "$out" in *"link_reads.authz: applied") [ "$(L -c "SELECT authz.verify()")" = t ] &&
+  ok "a condition on the links that reads another table: applied, the tree right" || bad "verify, a condition that reads User";;
+  *) bad "apply, a condition on the links that reads User" "$out";; esac
 
 echo "-- types named with capitals: explain finds their views by their quoted names"
 cat > "$T/types.authz" <<'EOF'
@@ -328,7 +335,7 @@ INSERT INTO "TeamMember" VALUES (2, 2);
 CREATE TABLE "FolderBacking" ("folderId" integer REFERENCES "Folder", "backerType" text, "backerId" integer);
 GRANT SELECT ON "FolderBacking" TO app_user;
 SQL
-{ sed 's/^  can view  = owner or org.admin or roles or parent.view$/  viewer : Team#member shared by share\n  can see   = owner or viewer\n  can view  = owner or org.admin or roles or viewer or parent.view/' "$T/roles_look.authz"
+{ sed 's/^  can view  = owner or org.admin or roles or parent.view$/  viewer : Team#member shared by share\n  can see   = owner or viewer or backer\n  can view  = owner or org.admin or roles or viewer or parent.view/' "$T/roles_look.authz"
   printf '\ntype Team = public.Team (id int)\n  member : user        = public.TeamMember(teamId -> userId)\n  member : Team#member = public.Team(parentId -> id)\n'
 } | sed 's/^  viewer : Team#member shared by share$/&\n  backer : user, Team  = public.FolderBacking(folderId -> (backerType, backerId))/' > "$T/teams.authz"
 run --db "dbname=$DB4" apply "$T/teams.authz"; case "$out" in *"teams.authz: applied") ;; *) bad "apply, teams" "$out";; esac

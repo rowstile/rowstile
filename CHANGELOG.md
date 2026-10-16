@@ -95,6 +95,9 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- A permission with a deny that depends on itself through another permission of its type is named as written in
+  the mistake (AZ302): `folder.view depends on itself`, where it said `folder.view__base`, the name of the
+  inheritance rowstile makes of it.
 - The language server offered `roles:view`, which rowstile makes of a permission that writes `roles`, as a
   relation of the type, in completions and in the type's hover. Compiling a policy no longer changes it: code
   that parses a policy and compiles it reads it as written, without that relation or a deny's hidden permission.
