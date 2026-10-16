@@ -39,6 +39,7 @@ CREATE TABLE ps.team_members (team_id bigint REFERENCES ps.teams, user_id bigint
 CREATE TABLE ps.team_services (team_id bigint REFERENCES ps.teams, service_id bigint REFERENCES ps.services,
   PRIMARY KEY (team_id, service_id));
 CREATE TABLE ps.docs (id bigint PRIMARY KEY, owner_id bigint, bot_id bigint, body text);
+CREATE TABLE ps.albums (id bigint PRIMARY KEY, owner_id bigint);
 INSERT INTO ps.users VALUES (1), (2), (3);
 INSERT INTO ps.services VALUES (7, 1, true), (8, 2, true), (9, 1, false);
 INSERT INTO ps.teams VALUES (1);
@@ -71,6 +72,10 @@ type doc = ps.docs
   can break_glass = bot
   helper : user  shared by view          -- any viewer may name a helper, if they may assist themselves
   can assist = owner or helper
+type album = ps.albums                   -- custom roles, and no share permission: nobody may give them but an admin
+  owner : user = owner_id
+  roles : user
+  can view = owner or roles
 rules ps.docs
   select : view
   update : edit
@@ -197,6 +202,21 @@ check "... and nothing changed: the role and the request are as they were, no ke
 check "a user still decides the request" "approved" \
   "SET authz.user_id = '1'; SELECT authz.decide_request($REQ, true); RESET ROLE; SELECT status FROM authz.requests WHERE id = $REQ;"
 
+echo "-- a custom role, given"
+# alice, doc 1's owner, gives the team's reviewer role to user 2: explain says which role the view comes through
+PSQL -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SELECT authz.share('doc', 1, 'role:$ROLE', 'user', 2)" >/dev/null
+check "explain names the custom role a permission comes through" "yes  a custom role given to you (by 1) (role reviewer)" \
+  "SET authz.user_id = '2'; SELECT btrim(e) FROM authz.explain('doc', 1, 'view') e WHERE e LIKE '%custom role given%';"
+expect_code "viewing as someone, the role's permissions can't be changed" \
+  "42501: this session is read-only (viewing as someone else, or a read-only token)" \
+  -c "SET authz.user_id = '2'; SET authz.acting_user = '9'" -c "SELECT authz.set_role_permissions($ROLE, ARRAY['view'])"
+PSQL -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SELECT authz.revoke('doc', 1, 'role:$ROLE', 'user', 2)" >/dev/null
+# a role on albums, which have no share permission, though docs do: nobody may ask for it
+AROLE=$(state -c "SET authz.user_id = '2'" -c "SELECT authz.create_role('team', 1, 'album', 'looker', ARRAY['view'])")
+expect_code "a role on a type with no share permission can't be asked for" \
+  "P0001: the policy does not allow sharing album.role:$AROLE with a user" \
+  -c "SET authz.user_id = '3'" -c "SELECT authz.request_access('album', 1, 'role:$AROLE', 'to look')"
+
 echo "-- whoever signs in is a row of their type"
 PSQL -c "INSERT INTO ps.docs VALUES (20, 99, 77, 'its owner and its bot are gone')" >/dev/null
 AS_GONE="SET authz.user_id = '99'; SET authz.principal_type = '';"
@@ -322,6 +342,10 @@ check "applying the policy deletes the keys of a principal whose row is gone" "0
 PSQL -c "TRUNCATE ps.services CASCADE" >/dev/null
 check "emptying the services' table deletes every service's keys" "0" \
   "RESET ROLE; SELECT count(*) FROM authz.api_keys WHERE principal_type = 'service';"
+# teams are named by shares only (a doc given to team 1's members): deleting one takes the shares that name it
+check "a doc is shared with team 1's members" "1" "RESET ROLE; SELECT count(*) FROM authz.shares WHERE subject_type = 'team';"
+PSQL -c "DELETE FROM ps.team_members WHERE team_id = 1" -c "DELETE FROM ps.teams WHERE id = 1" >/dev/null
+check "... and deleting the team takes that share" "0" "RESET ROLE; SELECT count(*) FROM authz.shares WHERE subject_type = 'team';"
 
 echo "-- a row's marks go with it, and only its own"
 # A share, a key or a request marks each row it names (authz_int.row_marks), so a delete with an older snapshot fails
@@ -413,6 +437,15 @@ else echo "FAIL  a key made for a bot while it is deleted: expected 42501: you c
 got=$(MPSQL -c "SELECT count(*) FROM authz.api_keys WHERE principal_type = 'bot' AND user_id = '4'")
 [ "$got" = 0 ] && echo "ok    ... and no key is left on the bot that is gone" ||
   { echo "FAIL  keys left on a deleted bot: $got"; fails=$((fails + 1)); }
+# a user's key, where users have no manage_keys though bots do: another user can't revoke it
+MPSQL -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SELECT authz.create_api_key('mine')" >/dev/null
+UKEY=$(MPSQL -c "SELECT id FROM authz.api_keys WHERE name = 'mine'")
+got=$(psql -X -q -At -d "$MDB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "SET authz.user_id = '2'" \
+  -c "SELECT authz.revoke_api_key($UKEY)" 2>&1 | grep '^ERROR:  ' | tail -n 1)
+got=${got#ERROR:  }
+if agrees "a user can't revoke another's key" "P0001: no API key $UKEY of yours" "${got:-ok}"; then
+  echo "ok    a user can't revoke another's key, where only bots' keys have a manage_keys permission"
+else echo "FAIL  revoking another user's key: expected no API key $UKEY of yours, got ${got:-ok}"; fails=$((fails + 1)); fi
 [ -n "${KEEP:-}" ] || dropdb "$MDB"
 
 [ -n "${KEEP:-}" ] || dropdb "$DB"

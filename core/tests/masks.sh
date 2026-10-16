@@ -34,6 +34,8 @@ got=$(PSQL -c "SELECT string_agg(attname, ',' ORDER BY attnum) FROM pg_attribute
   bad "the masked view's columns" "$got"
 [ "$(PSQL -c "SELECT has_column_privilege('app_user', 'mt.docs', 'body', 'SELECT')")" = "f" ] &&
   ok "the app role cannot read the masked column from the table" || bad "column privilege"
+[ "$(PSQL -c "SELECT has_column_privilege('app_user', 'mt.docs', 'ctid', 'SELECT') OR has_column_privilege('app_user', 'mt.docs', 'xmin', 'SELECT')")" = "f" ] &&
+  ok "... nor Postgres's own columns of it (only the table's own columns are given back)" || bad "system columns given"
 
 echo "-- later grants: lint reports them, and applying again takes them back (no event triggers)"
 [ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object = 'mt.docs.body'")" = "0" ] && ok "lint: nothing to report on the mask" || bad "lint on a clean mask"
@@ -102,6 +104,27 @@ case "$out" in *"loses  | 00000000-0000-4000-8000-000000000002 | mt.docs | colum
   *) bad "diff adding the mask" "$out";; esac
 case "$out" in *"00000000-0000-4000-8000-000000000001 | mt.docs | column body"*) bad "the lead should keep the text" "$out";;
   *) ok "... and the lead keeps it";; esac
+
+echo "-- two masked columns, two masked tables"
+# either masked column readable around the view is refused, not only both
+sed 's/^  mask body : edit /  mask author_id : edit\n  mask body : edit /' tests/multi.authz > /tmp/authz_masks_two.authz
+grep -q "mask author_id" /tmp/authz_masks_two.authz || bad "the variant with two masked columns"
+python3 compile_policy.py /tmp/authz_masks_two.authz > /tmp/authz_masks_two.sql || exit 1
+fresh
+PSQL -c "GRANT SELECT (author_id) ON mt.docs TO PUBLIC" >/dev/null
+out=$(apply /tmp/authz_masks_two.sql)
+case "$out" in *"could still read masked columns of mt.docs"*) ok "one of two masked columns readable by PUBLIC: refused";; *) bad "one of two masked columns readable" "$out";; esac
+PSQL -c "REVOKE SELECT (author_id) ON mt.docs FROM PUBLIC" >/dev/null
+# the projects masked too, then not: they get back the SELECT they had, and the docs stay masked
+{ cat tests/multi.authz; printf '\nrules mt.projects view mt.projects_visible\n  select : view\n  mask lead_id : edit\n'; } > /tmp/authz_masks_projects.authz
+python3 compile_policy.py /tmp/authz_masks_projects.authz > /tmp/authz_masks_projects.sql || exit 1
+out=$(apply /tmp/authz_masks_projects.sql); [ -z "$out" ] || bad "apply, two masked tables" "$out"
+[ "$(PSQL -c "SELECT has_table_privilege('app_user', 'mt.projects', 'SELECT'), has_table_privilege('app_user', 'mt.docs', 'SELECT')")" = "f|f" ] ||
+  bad "two masked tables: table-wide SELECT left"
+out=$(apply /tmp/authz_masks.sql); [ -z "$out" ] || bad "apply, the projects no longer masked" "$out"
+[ "$(PSQL -c "SELECT has_table_privilege('app_user', 'mt.projects', 'SELECT'), has_table_privilege('app_user', 'mt.docs', 'SELECT')")" = "t|f" ] &&
+  ok "a table no longer masked gets its SELECT back; the one still masked doesn't" || bad "unmasking one of two tables"
+rm -f /tmp/authz_masks_two.authz /tmp/authz_masks_two.sql /tmp/authz_masks_projects.authz /tmp/authz_masks_projects.sql
 
 [ -z "${KEEP:-}" ] && dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "masks: all passed"; else echo "masks: $fails failed"; exit 1; fi

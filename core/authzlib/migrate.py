@@ -319,7 +319,6 @@ class Migration:
     lock: str  # the lock file after it
     summary: list[str]  # what changed, in plain words (the migration's first comment lines)
     rebuilt: list[str]  # inheritance trees it rebuilds
-    locks: list[str]  # app tables it changes policies or triggers on (they are locked while it runs)
 
     @property
     def empty(self) -> bool:
@@ -360,13 +359,11 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
     summary = describe(old, c)
     new_hash = digest(new_lock, 16)
     if not old.empty and old.text == new_lock:
-        return Migration("", new_lock, [], [], [])
+        return Migration("", new_lock, [], [])
     if old.empty:
         body = compiled_sql
         rebuilt = [it.name for it in c.items if isinstance(it, Tree)]
-        return Migration(
-            render(name, summary, None, body, c, new_hash), new_lock, summary, rebuilt, sorted(app_tables(c.objects()))
-        )
+        return Migration(render(name, summary, None, body, c, new_hash), new_lock, summary, rebuilt)
 
     objs = {o.ident: o for o in c.objects()}
     trees = [it for it in c.items if isinstance(it, Tree)]
@@ -419,7 +416,7 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
     if not lines and not changed and same_steps:
         # only lines moved, or only the version of rowstile changed: that alone needs no migration; the next one
         # writes the new lines (and version) too
-        return Migration("", old.text, [], [], [])
+        return Migration("", old.text, [], [])
     # what can't outlive a dropped object is dropped and made again with it
     gone = {unquoted(old.objects[k]["key"]) for k in removed} | {objs[k].name for k in drop}
     while True:
@@ -562,19 +559,8 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
             f"so the app role sees none of its rows. If that is not what you want: ALTER TABLE % DISABLE ROW "
             f"LEVEL SECURITY', {sql_lit(tbl)}, {sql_lit(tbl)};\nEND $authz_lost$;"
         )
-    touched = [objs[k] for k in create | replace | restub | refill if k in objs] + [
-        o for t in trees if t.name in rebuild for o in t.objs
-    ]
     body_sql = "\n\n".join(parts)
-    return Migration(
-        render(name, summary, old.hash, body_sql, c, new_hash),
-        new_lock,
-        summary,
-        sorted(rebuild),
-        sorted(
-            app_tables(touched) | {key.split(" ON ")[1] for kd, key in victims.values() if kd in ("policy", "trigger")}
-        ),
-    )
+    return Migration(render(name, summary, old.hash, body_sql, c, new_hash), new_lock, summary, sorted(rebuild))
 
 
 def swap_sql(t: Tree) -> str:
@@ -664,7 +650,7 @@ def build_migration(c: Compiled, old: Lock, trees: list[Tree], name: str) -> Mig
         f"{'them' if len(trees) > 1 else 'it'} in"
     ]
     sql = render(f"{name} (1 of 2)", summary, old.hash, "\n\n".join(body), c, new_hash, record=False)
-    return Migration(sql, lock, summary, [t.name for t in trees], [])
+    return Migration(sql, lock, summary, [t.name for t in trees])
 
 
 def statements_sql(stmts: Iterable[tuple[str, str]]) -> str:
@@ -673,18 +659,6 @@ def statements_sql(stmts: Iterable[tuple[str, str]]) -> str:
 
 def sql_lit(s: object) -> str:
     return "'" + str(s).replace("'", "''") + "'"
-
-
-def app_tables(objs: Iterable[Obj]) -> set[str]:
-    out: set[str] = set()
-    for o in objs:
-        if o.kind in ("policy", "trigger"):
-            tbl = o.key.split(" ON ")[1]
-            if not tbl.split(".")[0].strip('"').startswith("authz"):
-                out.add(tbl)
-        elif o.kind == "rls":
-            out.add(o.key)
-    return out
 
 
 def dollar(text: str, tag: str = "authz_policy") -> str:

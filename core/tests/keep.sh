@@ -63,6 +63,13 @@ SQL
 apply "$DOCS"
 [ "$(trees)" != "$BEFORE" ] && verify && ok "a recreated link table rebuilds the trees that read it" || bad "recreated table" "$(trees)"
 
+# an index on share ids for a type the policy no longer has (made for a type gone since): applying drops it, so a
+# share of another type of that name, with ids of another kind, isn't refused by its cast
+PSQL -c "CREATE INDEX shares_obj_ghost_bigint ON authz.shares ((object_id::bigint), relation) WHERE object_type = 'ghost'" >/dev/null
+apply "$DOCS"
+[ "$(PSQL -c "SELECT to_regclass('authz.shares_obj_ghost_bigint') IS NULL, to_regclass('authz.shares_obj_folder_bigint') IS NOT NULL")" = "t|t" ] &&
+  ok "applying drops an index on share ids no type of the policy has, and keeps the policy's own" || bad "share indexes after apply"
+
 rm -r "$T"
 dropdb "$DB"
 echo "keep: $fails failure(s)"

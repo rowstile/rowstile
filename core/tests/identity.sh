@@ -44,6 +44,10 @@ check "read-only key: UPDATE changes nothing" "0" \
   "BEGIN; SELECT authz.login_key('$READ'); WITH u AS (UPDATE app.files SET body = 'x' WHERE id = 11 RETURNING 1) SELECT count(*) FROM u; ROLLBACK;"
 expect_code "read-only key: cannot share" "42501: this session is read-only (viewing as someone else, or a read-only token)" -c "BEGIN" -c "SELECT authz.login_key('$READ')" \
   -c "SELECT authz.share('file', 11, 'viewer', 'user', 4)"
+got=$(psql -X -q -At -d "$DB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "BEGIN" -c "SELECT authz.login_key('$READ')" \
+  -c "INSERT INTO app.files (folder_id, owner_id, name) VALUES (6, 1, 'x')" 2>&1)
+case "$got" in *"no   the sign-in's scopes do not allow insert on app.files"*) echo "ok    read-only key: a refused insert says the scopes allow no insert";;
+  *) echo "FAIL  read-only key, an insert: $got"; fails=$((fails + 1));; esac
 expect_code "read-only key: cannot approve a request" "42501: this session is read-only (viewing as someone else, or a read-only token)" -c "BEGIN" -c "SELECT authz.login_key('$READ')" \
   -c "SELECT authz.decide_request(1, true)"
 expect_code "a read-only session cannot mint a broader key" "42501: this session is read-only (viewing as someone else, or a read-only token)" -c "BEGIN" -c "SELECT authz.login_key('$READ')" \
@@ -124,6 +128,8 @@ PY
 )
 check "a valid token signs in as bob, with its scope" "2|read" \
   "BEGIN; SELECT authz.login_jwt('$T_OK'); SELECT authz.uid() || '|' || current_setting('authz.scopes'); COMMIT;"
+check "... a scope the policy doesn't have is left out of it" "read" \
+  "BEGIN; SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"scope": "boat read"}')'); SELECT current_setting('authz.scopes'); COMMIT;"
 check "... and turns JIT off for the transaction" "off" \
   "BEGIN; SET LOCAL jit = on; SELECT authz.login_jwt('$T_OK'); SELECT current_setting('jit'); COMMIT;"
 expect_code "wrong signature" "28000: invalid token" -c "BEGIN" -c "SELECT authz.login_jwt('$T_BADSIG')"

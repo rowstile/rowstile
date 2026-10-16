@@ -147,6 +147,13 @@ COMPILE = [
         11,
     ),
     (
+        "a permission with a deny that depends on itself through another of its type: named as written",
+        "  blocked : user = owner_id\n  can edit = owner or parent.view\n"
+        "  can view = (owner or edit or parent.view) and not blocked\n",
+        "doc.view depends on itself; a permission can only recurse as 'or rel.perm'",
+        12,
+    ),
+    (
         "following a relation to users, to something they don't have (they have nothing)",
         "  can view = owner.view\n",
         "user has no relation or permission 'view' (it has none)",

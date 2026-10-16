@@ -1038,7 +1038,9 @@ class Core:
                                     "AZ304",
                                 )
                     if inner & members:
-                        fail(perm.loc, DEPENDS_ON_ITSELF.format(f"{tn}.{pn}"), "AZ302")
+                        # (the inheritance a deny's permission was split into is named as the permission written)
+                        shown = next((q.name for q in self.T(tn).perms.values() if q.base == pn), pn)
+                        fail(perm.loc, DEPENDS_ON_ITSELF.format(f"{tn}.{shown}"), "AZ302")
             if len(set(tnames)) != len(tnames):
                 fail(
                     first.loc,
