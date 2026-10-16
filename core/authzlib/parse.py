@@ -7,7 +7,7 @@ import posixpath
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal, NamedTuple, NoReturn, TypeAlias
+from typing import Literal, NamedTuple, NoReturn, TypeAlias, TypeVar
 
 IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 QNAME = rf"{IDENT}\.{IDENT}"
@@ -65,14 +65,6 @@ class Loc:
         last = self.at(end - 1)
         return (*self.at(start), last[0], last[1] + 1)
 
-    def word(self, word: str) -> tuple[int, int] | None:
-        """Where a name is in text, as a word (`nosuch`, or in `parent.nosuch`): after what the line declares (up
-        to its first = or :) if it is there."""
-        head = re.match(r"[^=:{]*[=:]", self.text)
-        found = re.compile(rf"(?<!\w){re.escape(word)}(?!\w)")
-        m = found.search(self.text, head.end() if head else 0) or found.search(self.text)
-        return m.span() if m else None
-
     def __str__(self) -> str:
         return f"line {self.line}" if self.file is None else f"{self.file} line {self.line}"
 
@@ -86,18 +78,27 @@ class Loc:
         return hash((self.file, self.line))
 
 
-def fail(loc: Loc | int, msg: str, code: str, at: tuple[int, int] | None = None, word: str | None = None) -> NoReturn:
-    """Raise a policy's mistake, at a line. at: where in the line's text it is (start, end); word: a name it is
-    about, found in that text."""
-    span: Span | None = None
-    if isinstance(loc, Loc):
-        at = at or (loc.word(word) if word else None)
-        span = loc.span(*at) if at else None
+def fail(loc: Loc | int, msg: str, code: str, at: tuple[int, int] | None = None, span: Span | None = None) -> NoReturn:
+    """Raise a policy's mistake, at a line. at: where in the line's text it is (start, end); span: where in the
+    file, for words the parser read before (a name the compiler looks up keeps where it was written)."""
+    if span is None and at and isinstance(loc, Loc):
+        span = loc.span(*at)
     raise PolicyError(f"{loc if isinstance(loc, Loc) else f'line {loc}'}: {msg}", code, span)
+
+
+def head(span: Span | None, n: int) -> Span | None:
+    """The first n characters of words written on one line (`parent` in `parent.view`, `team` in `team#member`)."""
+    return None if span is None else (span[0], span[1], span[0], span[1] + n)
+
+
+def tail(span: Span | None, n: int) -> Span | None:
+    """The last n characters of words written on one line (`view` in `parent.view`)."""
+    return None if span is None else (span[2], span[3] - n, span[2], span[3])
 
 
 # --- expressions: what a permission, a rule or an invariant says -----------------------------------
 # A class for each kind, which code takes apart with match or isinstance; two of different kinds are never equal.
+# A name keeps where it was written (span: None for one the compiler made), which no comparison looks at.
 @dataclass(frozen=True)
 class Or:
     items: list[Expr]
@@ -125,6 +126,7 @@ class Ref:
     """A relation or permission of the same object."""
 
     name: str
+    span: Span | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,7 @@ class Arrow:
 
     rel: str
     perm: str
+    span: Span | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -142,6 +145,7 @@ class ArrowOn:
     rel: str
     perm: str
     types: tuple[str, ...]
+    span: Span | None = field(default=None, compare=False, repr=False)
 
 
 Expr: TypeAlias = "Or | And | Not | Cond | Ref | Arrow | ArrowOn"
@@ -153,7 +157,7 @@ Subject: TypeAlias = "tuple[str, str | None]"
 
 
 # where a relation's links come from: a source of each kind is its own class, told apart by kind (`src.kind ==
-# "table"` narrows a Source to a TableSource)
+# "table"` narrows a Source to a TableSource); spans: where each subject was written, which no comparison looks at
 @dataclass(frozen=True)
 class ColumnSource:
     """`= owner_id`, or `= (owner_type, owner_id)`: the row's own column says who it links to."""
@@ -162,6 +166,7 @@ class ColumnSource:
     loc: Loc
     column: Cols  # the id column (a tuple for [a, b]: a composite key)
     type_col: str | None = None  # polymorphic: the column holding the subject's type name
+    spans: tuple[Span | None, ...] = field(default=(), compare=False, repr=False)
     kind: Literal["column"] = field(default="column", init=False)
 
 
@@ -176,6 +181,7 @@ class TableSource:
     subj_col: Cols
     type_col: str | None = None  # polymorphic: the column holding the subject's type name
     where: str | None = None
+    spans: tuple[Span | None, ...] = field(default=(), compare=False, repr=False)
     kind: Literal["table"] = field(default="table", init=False)
 
 
@@ -187,6 +193,7 @@ class SharedSource:
     loc: Loc
     shared_by: str | None = None  # the permission needed to share it (default: share)
     shared_if: str | None = None  # an SQL condition on each share
+    spans: tuple[Span | None, ...] = field(default=(), compare=False, repr=False)
     kind: Literal["shared"] = field(default="shared", init=False)
 
 
@@ -198,12 +205,18 @@ class RolesSource:
     loc: Loc
     perm: str  # the permission these role assignments give
     owner: str | None = None  # the relation naming the object's owner, whose roles alone count here
+    spans: tuple[Span | None, ...] = field(default=(), compare=False, repr=False)  # the roles line's
     kind: Literal["roles"] = field(default="roles", init=False)
 
 
 Source: TypeAlias = "ColumnSource | TableSource | SharedSource | RolesSource"
 # a source whose rows name the subjects in columns (the others are shares)
 Link: TypeAlias = "ColumnSource | TableSource"
+
+
+def subject_spans(src: Source) -> list[Span | None]:
+    """Where each of a source's subjects is written (None for a source the compiler made)."""
+    return list(src.spans) or [None] * len(src.subjects)
 
 
 def conditions_of(src: Source) -> list[str]:
@@ -248,6 +261,7 @@ class Type:
     perms: dict[str, Perm] = field(default_factory=dict)
     roles: Roles | None = None
     roles_from: str | None = None  # `roles : ... from org`: only roles owned by the object's org count
+    roles_spans: tuple[Span | None, ...] = field(default=(), compare=False, repr=False)  # where roles' subjects are
     principal: bool = False  # signs in and holds access itself (the user type, and `principal` types)
 
     @property
@@ -348,6 +362,7 @@ class Scope:
     name: str
     items: list[ScopeItem]
     loc: Loc
+    spans: list[Span | None] = field(default_factory=list, compare=False, repr=False)  # where each item is
 
 
 @dataclass
@@ -363,6 +378,7 @@ class Invariant:
     expr: Expr
     src: str
     loc: Loc
+    type_span: Span | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass
@@ -652,10 +668,11 @@ class ExprParser:
             if w in KEYWORDS:
                 return Cond(KEYWORDS[w])
             not_generated(w, self.loc, (tok.start, tok.end))
+            span = self.loc.span(tok.start, tok.end)
             if "." in w:
                 rel, perm = w.split(".")
-                return Arrow(rel, perm)
-            return Ref(w)
+                return Arrow(rel, perm, span)
+            return Ref(w, span)
         self.unexpected()
 
 
@@ -829,48 +846,211 @@ DOLLAR_TAG = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*\$")
 
 
 # ----------------------------------------------------------------------
+# A line's pieces
+# ----------------------------------------------------------------------
+class Piece(NamedTuple):
+    """A piece of a line, as the line's reader takes it: a name, a number, a {condition} (open: one left open,
+    which runs to the line's end), a quote ('...' or "...", closed on the line), or a mark (any other character;
+    -> is one)."""
+
+    kind: str  # name | number | cond | open | quote | mark
+    text: str  # a condition's SQL, between its braces; anything else as written
+    start: int  # where it is in the line's text
+    end: int
+
+
+# a name or a number: what runs on without a space or a mark
+RUN = re.compile(r"[A-Za-z0-9_]+")
+NOT_SPACE = re.compile(r"\S")
+
+
+def piece_at(text: str, i: int) -> Piece:
+    """The piece that starts at text[i], which isn't a space."""
+    c = text[i]
+    if c == "{":
+        end = braced_at(text[i:])[0][1]
+        if end < 0:
+            return Piece("open", text[i + 1 :], i, len(text))
+        return Piece("cond", text[i + 1 : i + end - 1], i, i + end)
+    if c in "'\"" and (end := quote_end(text, i + 1, c)) > 0:
+        return Piece("quote", text[i:end], i, end)
+    if m := RUN.match(text, i):
+        return Piece("number" if c.isdigit() else "name", m.group(0), i, m.end())
+    mark = "->" if text.startswith("->", i) else c
+    return Piece("mark", mark, i, i + len(mark))
+
+
+# a line's pieces, as Words lexes them: the place read from -> where the next piece starts, and the piece
+Pieces: TypeAlias = "dict[int, tuple[int, Piece | None]]"
+
+
+class Unread(Exception):
+    """A line isn't the form being read: where reading stopped, (start, end) in its text."""
+
+    def __init__(self, at: tuple[int, int]) -> None:
+        super().__init__(at)
+        self.at = at
+
+
+T = TypeVar("T")
+
+
+class Words:
+    """A line's pieces, taken in order from start. A line form's reader takes the pieces it expects, and where
+    another is, stops (Unread, at that piece). Spaces matter only where the form says: `app.users` is written
+    without any, `principal` after one."""
+
+    def __init__(self, text: str, start: int = 0, pieces: Pieces | None = None) -> None:
+        self.text, self.pos = text, start  # pos: after the piece taken last
+        # the piece after each place read from, and where it starts: each is lexed once, however many forms are
+        # tried on the line (pass the same dict to each)
+        self.pieces = {} if pieces is None else pieces
+
+    def copy(self) -> Words:
+        return Words(self.text, self.pos, self.pieces)
+
+    def after(self) -> tuple[int, Piece | None]:
+        got = self.pieces.get(self.pos)
+        if got is None:
+            m = NOT_SPACE.search(self.text, self.pos)
+            i = m.start() if m else len(self.text)
+            got = self.pieces[self.pos] = (i, piece_at(self.text, i) if i < len(self.text) else None)
+        return got
+
+    def next_start(self) -> int:
+        return self.after()[0]
+
+    def peek(self) -> Piece | None:
+        return self.after()[1]
+
+    def spaced(self) -> bool:
+        """Whether a space comes before the next piece."""
+        return self.next_start() > self.pos
+
+    def take(self, kind: str, *texts: str, spaced: bool = False, glued: bool = False) -> Piece | None:
+        """The next piece if it is of that kind (and one of those texts), after a space if spaced, right after the
+        last if glued; None, and nothing taken, if not."""
+        p = self.peek()
+        if p is None or p.kind != kind or (texts and p.text not in texts):
+            return None
+        if (spaced and not self.spaced()) or (glued and self.spaced()):
+            return None
+        self.pos = p.end
+        return p
+
+    def name(self, *texts: str, spaced: bool = False, glued: bool = False) -> Piece | None:
+        return self.take("name", *texts, spaced=spaced, glued=glued)
+
+    def mark(self, text: str, glued: bool = False) -> Piece | None:
+        return self.take("mark", text, glued=glued)
+
+    def here(self) -> tuple[int, int]:
+        """Where the next piece is: where reading stops if it isn't what the form expects (the line's end, after
+        the last)."""
+        p = self.peek()
+        return (p.start, p.end) if p else (len(self.text), len(self.text))
+
+    def need(self, piece: T | None) -> T:
+        """What a form must have here."""
+        if piece is None:
+            raise Unread(self.here())
+        return piece
+
+    def must(self, ok: bool) -> None:
+        if not ok:
+            raise Unread(self.here())
+
+    def end(self) -> None:
+        """The line ends here."""
+        self.must(self.peek() is None)
+
+    def rest(self) -> tuple[str, int]:
+        """The text from the next piece to the line's end (an expression, a list), and where it starts; there must
+        be some."""
+        i = self.next_start()
+        self.must(i < len(self.text))
+        self.pos = len(self.text)
+        return self.text[i:], i
+
+    def until(self, c: str) -> tuple[str, int]:
+        """The text up to the next c, not read as pieces (a type's key, up to its `)`), and where it starts."""
+        j = self.text.find(c, self.pos)
+        self.must(j >= 0)
+        start, self.pos = self.pos, j + 1
+        return self.text[start:j], start
+
+    def all(self) -> list[Piece]:
+        """Every piece left."""
+        out: list[Piece] = []
+        while (p := self.peek()) is not None:
+            self.pos = p.end
+            out.append(p)
+        return out
+
+
+def reading(loc: Loc, msg: str, code: str, read: Callable[[], T]) -> T:
+    """What read() reads of a line; where it stops, the mistake msg, about the piece there."""
+    try:
+        return read()
+    except Unread as stop:
+        raise PolicyError(f"{loc}: {msg}", code, loc.span(*stop.at)) from None
+
+
+def qname(w: Words) -> Piece:
+    """schema.name, written without spaces."""
+    first = w.need(w.name())
+    w.need(w.mark(".", glued=True))
+    second = w.need(w.name(glued=True))
+    return Piece("name", f"{first.text}.{second.text}", first.start, second.end)
+
+
+def read_cols(w: Words) -> Cols:
+    """A column, or [a, b]: the columns of a composite key."""
+    if w.mark("[") is None:
+        return w.need(w.name()).text
+    names = [w.need(w.name()).text]
+    while w.mark(","):
+        names.append(w.need(w.name()).text)
+    w.need(w.mark("]"))
+    return tuple(names)
+
+
+# ----------------------------------------------------------------------
 # The policy file
 # ----------------------------------------------------------------------
-TYPE_RE = re.compile(
-    rf"type\s+({IDENT})\s*=\s*({QNAME})(?:\s*\(([^)]*)\))?(\s+principal)?"
-    rf"(?:\s+where\s*\{{(.*)\}})?"
-)
-# one column, or [a, b] for the columns of a composite key
-COLS = rf"(?:{IDENT}|\[\s*{IDENT}(?:\s*,\s*{IDENT})*\s*\])"
 # composite keys are compared as text: only types whose text form is canonical
 KEY_TYPES = ("bigint", "int8", "integer", "int", "int4", "smallint", "int2", "text", "uuid", "varchar")
 
 
-def parse_key(text: str | None, loc: Loc) -> list[tuple[str, str]]:
-    """(id uuid) or (org_id, id) or (org_id bigint, id uuid) -> [(column, type)]"""
-    if text is None:
+def parse_key(key: tuple[str, int] | None, loc: Loc) -> list[tuple[str, str]]:
+    """(id uuid) or (org_id, id) or (org_id bigint, id uuid) -> [(column, type)]; key: the text between the
+    parentheses, and where it starts."""
+    if key is None:
         return [("id", "bigint")]
-    key: list[tuple[str, str]] = []
-    for part in text.split(","):
-        m = re.fullmatch(rf"\s*({IDENT})(?:\s+({IDENT}))?\s*", part)
+    out: list[tuple[str, str, tuple[int, int]]] = []
+    for part, at in parts(*key):
+        m = re.fullmatch(rf"({IDENT})(?:\s+({IDENT}))?", part)
         if not m:
-            fail(loc, "write the key as (column [type]), or (col1 [type], col2 [type]) for a composite key", "AZ206")
-        key.append((m.group(1), (m.group(2) or "bigint").lower()))
-    if len({c for c, _ in key}) != len(key):
-        fail(loc, "a key column is named twice", "AZ206")
-    if len(key) > 1:
-        for c, ty in key:
+            fail(
+                loc,
+                "write the key as (column [type]), or (col1 [type], col2 [type]) for a composite key",
+                "AZ206",
+                at=at,
+            )
+        if any(c == m.group(1) for c, _, _ in out):
+            fail(loc, "a key column is named twice", "AZ206", at=at)
+        out.append((m.group(1), (m.group(2) or "bigint").lower(), at))
+    if len(out) > 1:
+        for c, ty, at in out:
             if ty not in KEY_TYPES:
                 fail(
                     loc,
                     f"{c} is {ty}: a composite key's columns must be integers, text or uuid "
                     f"(ids are compared as text, which must not depend on settings)",
                     "AZ206",
+                    at=at,
                 )
-    return key
-
-
-def parse_cols(text: str) -> Cols:
-    """'col' -> 'col'; '[a, b]' -> ('a', 'b')"""
-    text = text.strip()
-    if text.startswith("["):
-        return tuple(c.strip() for c in text[1:-1].split(","))
-    return text
+    return [(c, ty) for c, ty, _ in out]
 
 
 def parts(text: str, base: int = 0) -> list[tuple[str, tuple[int, int]]]:
@@ -881,9 +1061,12 @@ def parts(text: str, base: int = 0) -> list[tuple[str, tuple[int, int]]]:
     ]
 
 
-def parse_subjects(text: str, loc: Loc, base: int = 0) -> list[Subject]:
+def parse_subjects(text: str, loc: Loc, base: int = 0) -> tuple[list[Subject], tuple[Span | None, ...]]:
+    """Who a relation links to, and where each is written."""
     subjects: list[Subject] = []
+    spans: list[Span | None] = []
     for part, at in parts(text, base):
+        spans.append(loc.span(*at))
         if part in ("anyone", "link"):
             subjects.append((part, None))
             continue
@@ -902,62 +1085,76 @@ def parse_subjects(text: str, loc: Loc, base: int = 0) -> list[Subject]:
         if sm.group(1) in ("anyone", "link"):
             fail(loc, f"bad subject '{part}': {sm.group(1)} stands alone, without #relation", "AZ204", at=at)
         subjects.append((sm.group(1), sm.group(2)))
-    return subjects
+    return subjects, tuple(spans)
 
 
-def parse_source(text: str, subjects: list[Subject], loc: Loc) -> Link:
+SOURCE = (
+    "a source is a column, (type_col, id_col), schema.table(this_col -> subject_col) "
+    "or schema.table(object: col, subject: col) [where {sql}], or 'shared'"
+)
+
+
+def read_side(w: Words) -> tuple[Cols, str | None]:
+    """A link table's side: col, [a, b], or (type_col, id_col) -> (the id column(s), the type column)."""
+    if w.mark("(") is None:
+        return read_cols(w), None
+    type_col = w.need(w.name()).text
+    w.need(w.mark(","))
+    column = read_cols(w)
+    w.need(w.mark(")"))
+    return column, type_col
+
+
+def read_where(w: Words) -> str | None:
+    """`where {sql}` after a link table's columns, and the line's end."""
+    where = w.need(w.take("cond")).text if w.name("where") else None
+    w.end()
+    return where
+
+
+def parse_source(w: Words, subjects: list[Subject], spans: tuple[Span | None, ...], loc: Loc) -> Link:
     """= column | (type_col, id_col) | schema.table(obj -> subj) | schema.table(object: obj, subject: subj) [where {sql}]
     | schema.table(obj -> (type_col, id_col)) [where {sql}]; a column may be [a, b], the columns of a composite key"""
-    text = text.strip()
-    if re.fullmatch(COLS, text):
-        return ColumnSource(subjects, loc, parse_cols(text))
-    m = re.fullmatch(rf"\(\s*({IDENT})\s*,\s*({COLS})\s*\)", text)
-    if m:
-        return ColumnSource(subjects, loc, parse_cols(m.group(2)), type_col=m.group(1))
-    m = re.fullmatch(
-        rf"({QNAME})\s*\(\s*({COLS})\s*->\s*(?:({COLS})|\(\s*({IDENT})\s*,\s*({COLS})\s*\))\s*\)"
-        rf"\s*(?:where\s*\{{(.*)\}})?",
-        text,
-    )
-    if m:
-        return TableSource(
-            subjects,
-            loc,
-            m.group(1),
-            parse_cols(m.group(2)),
-            parse_cols(m.group(3) or m.group(5)),
-            type_col=m.group(4),
-            where=m.group(6),
-        )
-    # the same with the columns named, in either order: schema.table(object: col, subject: col)
-    side = rf"(object|subject)\s*:\s*(?:({COLS})|\(\s*({IDENT})\s*,\s*({COLS})\s*\))"
-    m = re.fullmatch(rf"({QNAME})\s*\(\s*{side}\s*,\s*{side}\s*\)\s*(?:where\s*\{{(.*)\}})?", text)
-    if m:
-        sides = {m.group(2): m.group(3, 4, 5), m.group(6): m.group(7, 8, 9)}
+
+    def read() -> Link:
+        ahead = w.copy()
+        if not (ahead.name() and ahead.mark(".", glued=True)):  # a column of the row: col, [a, b], (type_col, id_col)
+            column, type_col = read_side(w)
+            w.end()
+            return ColumnSource(subjects, loc, column, type_col=type_col, spans=spans)
+        table = qname(w).text
+        w.need(w.mark("("))
+        ahead = w.copy()
+        if not (ahead.name("object", "subject") and ahead.mark(":")):  # schema.table(obj -> subj)
+            obj = read_cols(w)
+            w.need(w.mark("->"))
+            subj, type_col = read_side(w)
+            w.need(w.mark(")"))
+            return TableSource(subjects, loc, table, obj, subj, type_col=type_col, where=read_where(w), spans=spans)
+        # the same with the columns named, in either order: schema.table(object: col, subject: col)
+        sides: dict[str, tuple[Cols, str | None]] = {}
+        for i in range(2):
+            if i:
+                w.need(w.mark(","))
+            side = w.need(w.name("object", "subject")).text
+            w.need(w.mark(":"))
+            sides[side] = read_side(w)
+        w.need(w.mark(")"))
+        return finish_named_sides(table, sides, read_where(w))
+
+    def finish_named_sides(table: str, sides: dict[str, tuple[Cols, str | None]], where: str | None) -> Link:
         if set(sides) != {"object", "subject"}:
             fail(
                 loc,
                 "name one 'object' column and one 'subject' column: schema.table(object: col, subject: col)",
                 "AZ103",
             )
-        obj, subj = sides["object"], sides["subject"]
-        if obj[0] is None:
+        (obj, obj_type), (subj, type_col) = sides["object"], sides["subject"]
+        if obj_type is not None:
             fail(loc, "the object side is one column: schema.table(object: col, subject: (type_col, id_col))", "AZ103")
-        return TableSource(
-            subjects,
-            loc,
-            m.group(1),
-            parse_cols(obj[0]),
-            parse_cols(subj[0] or subj[2]),
-            type_col=subj[1],
-            where=m.group(10),
-        )
-    fail(
-        loc,
-        "a source is a column, (type_col, id_col), schema.table(this_col -> subject_col) "
-        "or schema.table(object: col, subject: col) [where {sql}], or 'shared'",
-        "AZ103",
-    )
+        return TableSource(subjects, loc, table, obj, subj, type_col=type_col, where=where, spans=spans)
+
+    return reading(loc, SOURCE, "AZ103", read)
 
 
 def parse_policy(text: str, path: str | None = None, files: dict[str, str] | None = None) -> Policy:
@@ -974,6 +1171,17 @@ Block: TypeAlias = "Callable[[Line], None]"
 
 def skip(_: Line) -> None:
     """The lines of a block whose first line has a mistake (each would be one of its own)."""
+
+
+# what a line at the left margin starts with, and what it is if it starts with none of them
+TOP_WORDS = ("type", "rules", "test", "invariants", "app", "scope", "caveat")
+
+
+def expected_top(s: str) -> str:
+    return (
+        f"expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', "
+        f"'test \"name\"' or 'include', got: {s}"
+    )
 
 
 class Reader:
@@ -1010,66 +1218,108 @@ class Reader:
         return self.pol
 
     def top(self, line: Line) -> Block | None:
-        """Reads a line at the left margin; returns what reads the block's lines (None: it starts no block)."""
+        """Reads a line at the left margin; returns what reads the block's lines (None: it starts no block). Each
+        form is read whole before what it says is checked."""
         s, loc = line.text, line.loc
-        if m := TYPE_RE.fullmatch(s):
-            return self.type(m, loc)
-        if m := re.fullmatch(rf"rules\s+({QNAME})(?:\s+view\s+({QNAME}))?", s):
-            return self.rules(m, loc)
-        if s == "test":
-            return self.test_section
-        if re.fullmatch(r"test\s+\S.*", s):
-            return self.test(s[4:].strip(), loc)
-        if s == "invariants":
-            return self.invariant
-        if m := re.fullmatch(rf"app\s+role\s+({IDENT})", s):
-            self.app_role(m.group(1), loc)
-        elif m := re.fullmatch(rf"scope\s+({IDENT}(?:[-:]{IDENT})*)\s*=\s*(.+)", s):
-            if m.group(1) in self.pol.scopes:
-                fail(loc, f"scope {m.group(1)} is defined twice", "AZ109")
-            self.pol.scopes[m.group(1)] = Scope(m.group(1), parse_scope_items(m.group(2), loc, m.start(2)), loc)
-        elif m := re.fullmatch(rf"caveat\s+({IDENT})\s*=\s*\{{(.*)\}}", s):
-            if m.group(1) in self.pol.caveats:
-                fail(loc, f"caveat {m.group(1)} is defined twice", "AZ109")
-            self.pol.caveats[m.group(1)] = Caveat(m.group(1), m.group(2).strip(), loc)
-        else:
+        w = Words(s)
+        first = w.name(*TOP_WORDS)
+        if first is None:
+            fail(loc, expected_top(s), "AZ101", at=w.here())
+        word = first.text
+
+        def read() -> Block | None:
+            match word:
+                case "type":
+                    return self.type(w, loc)
+                case "rules":
+                    return self.rules(w, loc)
+                case "test":
+                    if w.peek() is None:
+                        return self.test_section
+                    w.must(w.spaced())
+                    return self.test(s[w.next_start() :], w.next_start(), loc)
+                case "invariants":
+                    w.end()
+                    return self.invariant
+                case "app":
+                    w.need(w.name("role"))
+                    role = w.need(w.name())
+                    w.end()
+                    self.app_role(role.text, loc)
+                case "scope":
+                    self.scope(w, loc)
+                case _:
+                    self.caveat(w, loc)
+            return None
+
+        return reading(loc, expected_top(s), "AZ101", read)
+
+    def type(self, w: Words, loc: Loc) -> Block:
+        """type name = schema.table [(key)] [principal] [where {sql}]"""
+        name = w.need(w.name())
+        w.need(w.mark("="))
+        table = qname(w).text
+        key = w.until(")") if w.mark("(") else None
+        principal = w.name("principal", spaced=True) is not None
+        where = w.need(w.take("cond")).text if w.name("where", spaced=True) else None
+        w.end()
+        at = (name.start, name.end)
+        if name.text in ("anyone", "link"):
             fail(
                 loc,
-                f"expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', "
-                f"'test \"name\"' or 'include', got: {s}",
-                "AZ101",
+                f"'{name.text}' is a subject of its own (shared with {name.text}); name the type differently",
+                "AZ204",
+                at=at,
             )
-        return None
-
-    def type(self, m: re.Match[str], loc: Loc) -> Block:
-        name = m.group(1)
-        if name in ("anyone", "link"):
-            fail(loc, f"'{name}' is a subject of its own (shared with {name}); name the type differently", "AZ204")
-        check_name(name, loc, m.span(1))
-        if name in self.pol.types:
-            fail(loc, f"type {name} is defined twice", "AZ109")
-        t = self.pol.types[name] = Type(
-            name,
-            m.group(2),
-            parse_key(m.group(3), loc),
-            loc,
-            where=m.group(5),
-            principal=bool(m.group(4)) or name == "user",
+        check_name(name.text, loc, at)
+        if name.text in self.pol.types:
+            fail(loc, f"type {name.text} is defined twice", "AZ109", at=at)
+        t = self.pol.types[name.text] = Type(
+            name.text, table, parse_key(key, loc), loc, where=where, principal=principal or name.text == "user"
         )
         return lambda line: parse_type_line(t, line.text, line.loc)
 
-    def rules(self, m: re.Match[str], loc: Loc) -> Block:
-        table, view = m.group(1), m.group(2)
+    def rules(self, w: Words, loc: Loc) -> Block:
+        """rules schema.table [view schema.view]"""
+        table = qname(w).text
+        view = qname(w) if w.name("view") else None
+        w.end()
         if view:
-            if table in self.pol.views and self.pol.views[table] != view:
-                fail(loc, f"{table} already has the view {self.pol.views[table]}", "AZ109")
-            self.pol.views[table] = view
+            if table in self.pol.views and self.pol.views[table] != view.text:
+                fail(loc, f"{table} already has the view {self.pol.views[table]}", "AZ109", at=(view.start, view.end))
+            self.pol.views[table] = view.text
             self.pol.view_locs[table] = loc
         return lambda line: parse_rule_line(self.pol, table, line.text, line.loc)
 
+    def scope(self, w: Words, loc: Loc) -> None:
+        """scope name = items (a name may go on with - or :, read-only, files:read)"""
+        first = w.need(w.name())
+        name, end = first.text, first.end
+        while (sep := w.peek()) and sep.kind == "mark" and sep.text in ("-", ":") and not w.spaced():
+            w.pos = sep.end
+            more = w.need(w.name(glued=True))
+            name, end = name + sep.text + more.text, more.end
+        w.need(w.mark("="))
+        text, start = w.rest()
+        if name in self.pol.scopes:
+            fail(loc, f"scope {name} is defined twice", "AZ109", at=(first.start, end))
+        items, spans = parse_scope_items(text, loc, start)
+        self.pol.scopes[name] = Scope(name, items, loc, spans)
+
+    def caveat(self, w: Words, loc: Loc) -> None:
+        """caveat name = {sql}"""
+        name = w.need(w.name())
+        w.need(w.mark("="))
+        sql = w.need(w.take("cond")).text
+        w.end()
+        if name.text in self.pol.caveats:
+            fail(loc, f"caveat {name.text} is defined twice", "AZ109", at=(name.start, name.end))
+        self.pol.caveats[name.text] = Caveat(name.text, sql.strip(), loc)
+
     def test_section(self, line: Line) -> None:
         # the same checks as a named test's: user 3 can view file 11, service 2 cannot ..., anyone can ...
-        step = parse_step(line.text, line.loc) if re.match(r"(given|as)\b", line.text) is None else None
+        pieces: Pieces = {}
+        step = None if Words(line.text, 0, pieces).name("given", "as") else parse_step(line.text, line.loc, pieces)
         if step is None or step.kind != "check":
             fail(
                 line.loc,
@@ -1079,23 +1329,34 @@ class Reader:
             )
         self.pol.tests.append(step)
 
-    def test(self, name: str, loc: Loc) -> Block:
+    def test(self, name: str, start: int, loc: Loc) -> Block:
+        """test name, or test "name" (start: where the name is in the line)"""
+        at = (start, start + len(name))
         if name[0] in "\"'":
             if len(name) < 2 or name[-1] != name[0]:
-                fail(loc, f"the test's name has no closing {name[0]}: test {name}{name[0]}", "AZ106")
+                fail(loc, f"the test's name has no closing {name[0]}: test {name}{name[0]}", "AZ106", at=at)
             name = name[1:-1]
         if any(sc.name == name for sc in self.pol.scenarios):
-            fail(loc, f"there is already a test named {name!r}", "AZ109")
+            fail(loc, f"there is already a test named {name!r}", "AZ109", at=at)
         test = Scenario(name, loc)
         self.pol.scenarios.append(test)
         return lambda line: test.steps.append(parse_step(line.text, line.loc))
 
     def invariant(self, line: Line) -> None:
-        m = re.fullmatch(rf"never\s+({IDENT})\s*:\s*(.+)", line.text)
-        if not m:
-            fail(line.loc, "write invariants as: never file: view and not folder.in_org", "AZ106")
-        expr = ExprParser(m.group(2), line.loc, m.start(2)).parse()
-        self.pol.invariants.append(Invariant(m.group(1), expr, m.group(2), line.loc))
+        """never type: expression"""
+        w = Words(line.text)
+
+        def read() -> tuple[Piece, tuple[str, int]]:
+            w.need(w.name("never"))
+            t = w.need(w.name())
+            w.need(w.mark(":"))
+            return t, w.rest()
+
+        t, (text, start) = reading(
+            line.loc, "write invariants as: never file: view and not folder.in_org", "AZ106", read
+        )
+        expr = ExprParser(text, line.loc, start).parse()
+        self.pol.invariants.append(Invariant(t.text, expr, text, line.loc, line.loc.span(t.start, t.end)))
 
     def app_role(self, role: str, loc: Loc) -> None:
         if self.pol.role is not None:
@@ -1136,67 +1397,123 @@ def no_dollar_tags(line: Line) -> None:
             )
 
 
-VALUE = r"(\$[A-Za-z_][A-Za-z0-9_]*|'(?:[^']|'')*'|[^\s{}']+)"
-# after who a line is about: `with scope read` or `with scope read, files`
-WITH_SCOPE = rf"(?:\s+with\s+scope\s+({IDENT}(?:\s*,\s*{IDENT})*))?"
+# a test's id: a 'quoted' literal, or anything up to the next space ($ann, 11, a uuid)
+VALUE = re.compile(r"'(?:[^']|'')*'|[^\s{}']+")
 
 
-def value(v: str) -> str:
-    """A test's id: $name as written, a quoted literal unquoted, anything else as is."""
+def test_value(w: Words) -> str:
+    """A test's id, after a space and before one: $name as written, a quoted literal unquoted, anything else as
+    is."""
+    i = w.next_start()
+    m = VALUE.match(w.text, i) if i > w.pos else None
+    w.must(m is not None and (m.end() == len(w.text) or w.text[m.end()].isspace()))
+    assert m is not None
+    w.pos = m.end()
+    v = m.group(0)
     return v[1:-1].replace("''", "'") if v.startswith("'") else v
 
 
-def scopes_of(text: str | None) -> tuple[str, ...]:
-    return tuple(x.strip() for x in text.split(",")) if text else ()
+def principal(w: Words, anyone: bool) -> tuple[str, str | None, tuple[str, ...]]:
+    """Who a test's line is about: anyone (nobody signed in), or a type and an id, then `with scope a, b` (signed
+    in limited to them, as a key with them is)."""
+    if anyone:
+        w.need(w.name("anyone"))
+        return "anyone", None, ()
+    ptype = w.need(w.name()).text
+    who = test_value(w)
+    scopes: list[str] = []
+    if w.name("with"):
+        w.need(w.name("scope"))
+        scopes.append(w.need(w.name()).text)
+        while w.mark(","):
+            scopes.append(w.need(w.name()).text)
+    return ptype, who, tuple(scopes)
 
 
-def parse_step(s: str, loc: Loc) -> Step:
-    m = re.fullmatch(rf"given\s+(?:({IDENT})\s*=\s*)?\{{(.*)\}}", s, re.S)
-    if m:
-        if not m.group(2).strip():
-            fail(loc, "given {...} needs a statement", "AZ106")
-        return GivenStep(s, loc, m.group(2).strip(), var=m.group(1))
-    m = re.fullmatch(
-        rf"as\s+(?:(anyone)|({IDENT})\s+{VALUE}{WITH_SCOPE})\s+(allowed|refused|sees\s+(\d+))\s*\{{(.*)\}}", s, re.S
-    )
-    if m:
-        expect: str | int = int(m.group(6)) if m.group(6) else m.group(5)
-        if not m.group(7).strip():
-            fail(loc, "as ... {...} needs a statement", "AZ106")
-        # `sees N` counts the rows of a query, which a write can't be put inside: at run time that was a bare
-        # "syntax error" from Postgres
-        if isinstance(expect, int) and re.match(r"\s*(insert|update|delete|merge)\b", m.group(7), re.I):
-            fail(
-                loc,
-                "`sees N` counts the rows of a SELECT, and this statement writes: for a write that must change "
-                "no row, write `as ... refused {...}` (a write that changes no row is refused)",
-                "AZ106",
-            )
-        return AsStep(
-            s,
+def either(w: Words, read: Callable[[Words, bool], T]) -> T:
+    """read(w, anyone) of a test's line: about anyone, or else about a principal (`anyone 3` is one of type
+    anyone, which the compiler refuses); stopping, where the reading that got further stopped."""
+    try:
+        return read(w.copy(), True)
+    except Unread as first:
+        try:
+            return read(w.copy(), False)
+        except Unread as second:
+            raise Unread(max(first.at, second.at)) from None
+
+
+def given_step(s: str, loc: Loc, w: Words) -> GivenStep:
+    """given [name =] {INSERT ... RETURNING id}"""
+    w.need(w.name("given"))
+    w.must(w.spaced())
+    var = w.name()
+    if var:
+        w.need(w.mark("="))
+    sql = w.need(w.take("cond")).text
+    w.end()
+    if not sql.strip():
+        fail(loc, "given {...} needs a statement", "AZ106")
+    return GivenStep(s, loc, sql.strip(), var=var.text if var else None)
+
+
+def as_step(s: str, loc: Loc, w: Words) -> AsStep:
+    """as who allowed|refused|sees N {SQL}"""
+
+    def read(w: Words, anyone: bool) -> tuple[tuple[str, str | None, tuple[str, ...]], str | int, str]:
+        w.need(w.name("as"))
+        who = principal(w, anyone)
+        verb = w.need(w.name("allowed", "refused", "sees"))
+        expect: str | int = verb.text
+        if verb.text == "sees":
+            n = w.need(w.take("number"))
+            if not n.text.isdigit():
+                raise Unread((n.start, n.end))
+            expect = int(n.text)
+        sql = w.need(w.take("cond")).text
+        w.end()
+        return who, expect, sql
+
+    (ptype, who, scopes), expect, sql = either(w, read)
+    if not sql.strip():
+        fail(loc, "as ... {...} needs a statement", "AZ106")
+    # `sees N` counts the rows of a query, which a write can't be put inside: at run time that was a bare
+    # "syntax error" from Postgres
+    if isinstance(expect, int) and re.match(r"\s*(insert|update|delete|merge)\b", sql, re.I):
+        fail(
             loc,
-            m.group(1) or m.group(2),
-            None if m.group(1) else value(m.group(3)),
-            expect,
-            m.group(7).strip(),
-            scopes=scopes_of(m.group(4)),
+            "`sees N` counts the rows of a SELECT, and this statement writes: for a write that must change "
+            "no row, write `as ... refused {...}` (a write that changes no row is refused)",
+            "AZ106",
         )
-    m = re.fullmatch(
-        rf"(?:(anyone)|({IDENT})\s+{VALUE}{WITH_SCOPE})\s+(can|cannot)\s+({IDENT})\s+({IDENT})\s+{VALUE}", s
-    )
-    if m:
-        return CheckStep(
-            s,
-            loc,
-            m.group(1) or m.group(2),
-            None if m.group(1) else value(m.group(3)),
-            m.group(5) == "can",
-            m.group(6),
-            m.group(7),
-            value(m.group(8)),
-            scopes=scopes_of(m.group(4)),
-        )
-    if re.match(r"(?:as\s+)?anyone\s+with\b", s):
+    return AsStep(s, loc, ptype, who, expect, sql.strip(), scopes=scopes)
+
+
+def check_step(s: str, loc: Loc, w: Words) -> CheckStep:
+    """who can|cannot perm type id"""
+
+    def read(w: Words, anyone: bool) -> CheckStep:
+        ptype, who, scopes = principal(w, anyone)
+        can = w.need(w.name("can", "cannot")).text == "can"
+        perm = w.need(w.name()).text
+        type_ = w.need(w.name()).text
+        obj = test_value(w)
+        w.end()
+        return CheckStep(s, loc, ptype, who, can, perm, type_, obj, scopes=scopes)
+
+    return either(w, read)
+
+
+def parse_step(s: str, loc: Loc, pieces: Pieces | None = None) -> Step:
+    stops: list[tuple[int, int]] = []
+    pieces = {} if pieces is None else pieces
+    for form in (given_step, as_step, check_step):
+        try:
+            return form(s, loc, Words(s, 0, pieces))
+        except Unread as stop:
+            stops.append(stop.at)
+    w = Words(s, 0, pieces)
+    w.name("as")
+    if w.name("anyone") and w.name("with"):
         fail(
             loc,
             "`anyone` is nobody signed in, and a scope limits someone who is: write `user 3 with scope read ...`",
@@ -1208,11 +1525,14 @@ def parse_step(s: str, loc: Loc) -> Step:
         "or as user $name allowed|refused|sees N {SQL} (after who: `with scope read`, to check as a key limited "
         "to a scope)",
         "AZ106",
+        at=max(stops),
     )
 
 
-def parse_scope_items(text: str, loc: Loc, base: int = 0) -> list[ScopeItem]:
+def parse_scope_items(text: str, loc: Loc, base: int = 0) -> tuple[list[ScopeItem], list[Span | None]]:
+    """A scope's items, and where each is written."""
     items: list[ScopeItem] = []
+    spans: list[Span | None] = []
     for part, at in parts(text, base):
         m = re.fullmatch(rf"(?:({QNAME}|{IDENT})\.)?({IDENT})", part)
         if not m:
@@ -1225,21 +1545,36 @@ def parse_scope_items(text: str, loc: Loc, base: int = 0) -> list[ScopeItem]:
         if kind == "perm" and qual and "." in qual:
             fail(loc, f"'{part}': permissions are qualified by a type, e.g. file.{word}", "AZ404", at=at)
         items.append((kind, qual, word))
-    return items
+        spans.append(loc.span(*at))
+    return items, spans
 
 
 def parse_roles_line(t: Type, s: str, loc: Loc) -> None:
     """`roles : user, team#member [from org]`: who may hold the type's custom roles, and with `from`, whose roles
     count on an object. Which permissions a role may give is where the permissions write `roles`."""
-    if re.fullmatch(r"roles\s*:\s*[^=]*(=|\s+shared\b).*", s):
-        fail(loc, "`roles : ...` says who may hold custom roles; name the relation something else", "AZ107")
-    m = re.fullmatch(rf"roles\s*:\s*(.+?)(?:\s+from\s+({IDENT}))?", s)
-    if not m:
-        fail(loc, "write custom roles as: roles : user, team#member [from org]", "AZ103")
+    w = Words(s)
+    w.name("roles")
+    colon = w.need(w.mark(":"))
+    pieces = w.all()
+    for i, p in enumerate(pieces):
+        after = pieces[i - 1].end if i else colon.end
+        if (p.kind, p.text) == ("mark", "=") or ((p.kind, p.text) == ("name", "shared") and p.start > after):
+            fail(
+                loc,
+                "`roles : ...` says who may hold custom roles; name the relation something else",
+                "AZ107",
+                at=(p.start, p.end),
+            )
+    if not pieces:
+        fail(loc, "write custom roles as: roles : user, team#member [from org]", "AZ103", at=w.here())
+    end, owner = pieces[-1].end, None
+    frm = pieces[-2] if len(pieces) >= 3 else None
+    if frm and (frm.kind, frm.text) == ("name", "from") and frm.start > pieces[-3].end and pieces[-1].kind == "name":
+        end, owner = pieces[-3].end, pieces[-1].text
     if t.roles:
         fail(loc, f"{t.name} declares custom roles twice", "AZ109")
-    t.roles_from = m.group(2)
-    t.roles = (parse_subjects(m.group(1), loc, m.start(1)), [], loc)
+    subjects, t.roles_spans = parse_subjects(s[pieces[0].start : end], loc, pieces[0].start)
+    t.roles_from, t.roles = owner, (subjects, [], loc)
 
 
 def names_roles(node: Expr, under_not: bool = False) -> list[bool]:
@@ -1259,14 +1594,35 @@ def granted_by_roles(t: Type) -> list[str]:
     return [name for name, p in t.perms.items() if any(not neg for neg in names_roles(p.expr))]
 
 
+def shared_tail(w: Words) -> tuple[str | None, str | None] | Unread:
+    """What follows `shared` in a relation: [by perm] [if {sql}], to the line's end; where reading stopped if
+    something else does."""
+    try:
+        by = w.need(w.name()).text if w.name("by") else None
+        cond = w.need(w.take("cond")).text if w.name("if") else None
+        w.end()
+    except Unread as stop:
+        return stop
+    return by, cond
+
+
+RELATION = "write relations as: name : subject = source   (or: name : subjects shared [by perm] [if {sql}])"
+
+
 def parse_type_line(t: Type, s: str, loc: Loc) -> None:
+    pieces: Pieces = {}
     if s.startswith("can "):
-        m = re.fullmatch(rf"can\s+({IDENT})\s*=\s*(.+)", s)
-        if not m:
-            fail(loc, "write permissions as: can name = expression", "AZ104")
-        name = check_name(m.group(1), loc, m.span(1))
+        w = Words(s, len("can"), pieces)
+
+        def read() -> tuple[Piece, tuple[str, int]]:
+            name = w.need(w.name())
+            w.need(w.mark("="))
+            return name, w.rest()
+
+        name_p, (text, start) = reading(loc, "write permissions as: can name = expression", "AZ104", read)
+        name = check_name(name_p.text, loc, (name_p.start, name_p.end))
         if name in t.perms or name in t.relations:
-            fail(loc, f"{t.name}.{name} is defined twice", "AZ109")
+            fail(loc, f"{t.name}.{name} is defined twice", "AZ109", at=(name_p.start, name_p.end))
         if name in COMMANDS:
             fail(loc, f"'{name}' is a command name; call the permission something else", "AZ107")
         if name == ROLES:
@@ -1276,28 +1632,53 @@ def parse_type_line(t: Type, s: str, loc: Loc) -> None:
                 f"permission something else",
                 "AZ107",
             )
-        t.perms[name] = Perm(name, ExprParser(m.group(2), loc, m.start(2)).parse(), m.group(2), loc)
+        t.perms[name] = Perm(name, ExprParser(text, loc, start).parse(), text, loc)
         return
-    if re.match(r"roles\s*:", s):
+    probe = Words(s, 0, pieces)
+    if probe.name("roles") and probe.mark(":"):
         parse_roles_line(t, s, loc)
         return
-    m = re.fullmatch(
-        rf"({IDENT})\s*:\s*([^=]+?)\s*(?:=\s*(.+)|\s+shared(?:\s+by\s+({IDENT}))?(?:\s+if\s*\{{(.*)\}})?)", s
-    )
-    if not m:
-        fail(
-            loc,
-            "write relations as: name : subject = source   (or: name : subjects shared [by perm] [if {sql}])",
-            "AZ103",
-        )
-    name, subj_txt, source = check_name(m.group(1), loc, m.span(1)), m.group(2), m.group(3)
+    parse_relation_line(t, s, loc, pieces)
+
+
+def parse_relation_line(t: Type, s: str, loc: Loc, pieces: Pieces) -> None:
+    """name : subjects = source, or name : subjects shared [by perm] [if {sql}]. The subjects end where `shared`
+    starts what may follow it, or else at the first `=`."""
+    w = Words(s, 0, pieces)
+
+    def read() -> tuple[Piece, Piece]:
+        name = w.need(w.name())
+        return name, w.need(w.mark(":"))
+
+    name_p, colon = reading(loc, RELATION, "AZ103", read)
+    after_colon = w.all()
+    eq = next((i for i, p in enumerate(after_colon) if (p.kind, p.text) == ("mark", "=")), len(after_colon))
+    stops: list[tuple[int, int]] = []  # where what followed each `shared` stopped being what may follow it
+    shared: tuple[str | None, str | None] | None = None
+    end = colon.end
+    for k in range(eq):
+        p, after = after_colon[k], after_colon[k - 1].end if k else colon.end
+        # `shared` after the subjects and a space
+        if (p.kind, p.text) != ("name", "shared") or p.start == after or p.start - colon.end < 2:
+            continue
+        got = shared_tail(Words(s, p.end, pieces))
+        if isinstance(got, Unread):
+            stops.append(got.at)
+            continue
+        shared, end = got, p.start
+        break
+    if shared is None:
+        if eq == len(after_colon) or eq + 1 == len(after_colon) or after_colon[eq].start == colon.end:
+            fail(loc, RELATION, "AZ103", at=max(stops) if stops else (len(s), len(s)))
+        end = after_colon[eq].start
+    name = check_name(name_p.text, loc, (name_p.start, name_p.end))
     if name in t.perms:
-        fail(loc, f"{t.name}.{name} is already a permission", "AZ109")
-    subjects = parse_subjects(subj_txt, loc, m.start(2))
-    if source is None:
-        src: Source = SharedSource(subjects, loc, shared_by=m.group(4), shared_if=m.group(5))
+        fail(loc, f"{t.name}.{name} is already a permission", "AZ109", at=(name_p.start, name_p.end))
+    subjects, spans = parse_subjects(s[colon.end : end].rstrip(), loc, colon.end)
+    if shared is not None:
+        src: Source = SharedSource(subjects, loc, shared_by=shared[0], shared_if=shared[1], spans=spans)
     else:
-        src = link = parse_source(source, subjects, loc)
+        src = link = parse_source(Words(s, after_colon[eq].end, pieces), subjects, spans, loc)
         if any(sr == "*" or st in ("anyone", "link") for st, sr in subjects):
             fail(loc, "user:* (or another type:*), anyone and link can only be used with 'shared'", "AZ204")
         if link.type_col is None and len(subjects) != 1:
