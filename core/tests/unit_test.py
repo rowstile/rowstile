@@ -264,6 +264,17 @@ class Golden(unittest.TestCase):
         self.check("multi.diff.sql", c.compile_diff(POLICIES["multi"], ["1", "2"]))
 
 
+class Compiling(unittest.TestCase):
+    def test_a_name_stands_for_one_thing(self) -> None:
+        """A function made when first asked for is made once, and a second source for its name is a bug, not the
+        first function used again: a condition's function is named by a hash of the condition, cut short."""
+        c = Compiler(parse_policy(read(POLICIES["docs"])))
+        self.assertTrue(c.first_time("doc__check_x", "{a}"))
+        self.assertFalse(c.first_time("doc__check_x", "{a}"))
+        with self.assertRaisesRegex(AssertionError, "doc__check_x would stand for two things"):
+            c.first_time("doc__check_x", "{b}")
+
+
 class Walks(unittest.TestCase):
     def test_walks_look_up_each_source(self) -> None:
         """Tree walks must not join the sources' UNION ALL view: the planner can't use indexes through it,
