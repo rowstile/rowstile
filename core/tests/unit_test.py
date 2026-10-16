@@ -42,6 +42,7 @@ from authzlib import (  # noqa: E402
     parse_policy,
     statements,
 )
+from authzlib.compiler import strongly_connected  # noqa: E402
 from authzlib.conditions import Scalar  # noqa: E402
 from authzlib.connection import Row, Value  # noqa: E402
 from authzlib.review import Review  # noqa: E402
@@ -273,6 +274,14 @@ class Compiling(unittest.TestCase):
         self.assertFalse(c.first_time("doc__check_x", "{a}"))
         with self.assertRaisesRegex(AssertionError, "doc__check_x would stand for two things"):
             c.first_time("doc__check_x", "{b}")
+
+    def test_loops_of_permissions_are_found_each_after_what_it_reaches(self) -> None:
+        a, b, c, d = ("t", "a"), ("t", "b"), ("t", "c"), ("u", "d")
+        # a and b name each other, and c; c names itself; d is named by nothing and names a
+        graph = {a: {b, c}, b: {a}, c: {c}, d: {a}}
+        self.assertEqual(
+            [sorted(x) for x in strongly_connected(graph)], [[c], [a, b], [d]], "each one after those it reaches"
+        )
 
 
 class Walks(unittest.TestCase):

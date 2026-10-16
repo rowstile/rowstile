@@ -117,6 +117,40 @@ def not_users(t: Type, r: Relation) -> str:
     )
 
 
+def strongly_connected(graph: Mapping[Name, set[Name]]) -> list[list[Name]]:
+    """The strongly connected components of graph (Tarjan's algorithm), each one after those it reaches."""
+    index: dict[Name, int] = {}  # in the order first visited
+    low: dict[Name, int] = {}
+    stack: list[Name] = []
+    on: set[Name] = set()
+    out: list[list[Name]] = []
+
+    def visit(v: Name) -> None:
+        index[v] = low[v] = len(index)
+        stack.append(v)
+        on.add(v)
+        for w in graph.get(v, ()):
+            if w not in index:
+                visit(w)
+                low[v] = min(low[v], low[w])
+            elif w in on:
+                low[v] = min(low[v], index[w])
+        if low[v] == index[v]:
+            comp: list[Name] = []
+            while True:
+                w = stack.pop()
+                on.discard(w)
+                comp.append(w)
+                if w == v:
+                    break
+            out.append(comp)
+
+    for v in graph:
+        if v not in index:
+            visit(v)
+    return out
+
+
 def only_on(node: Expr) -> list[str] | None:
     """The subject types an arrow the compiler narrowed (arrow_on) follows; None for any other item."""
     match node:
@@ -423,12 +457,7 @@ class Core:
         inherits through the same links; check_denies), it equals `view__base and not denied`, with
         view__base = viewer or parent.view__base (hidden), which they can. Conditions joined with `and`
         go on every item: `(a or parent.view) and {c}` is `(a and {c}) or (parent.view and {c})`."""
-        graph: dict[Name, set[Name]] = {}
-        for t in self.types.values():
-            for p in t.perms.values():
-                out: set[Name] = set()
-                self.deps(t, p.expr, out)
-                graph[(t.name, p.name)] = out
+        graph = self.perm_graph()
 
         def loops(v: Name) -> bool:
             seen: set[Name] = set()
@@ -953,46 +982,22 @@ class Core:
                 elif sr in s.relations:
                     self.rel_deps(s, s.relations[sr], out, seen)
 
-    def analyze_recursion(self) -> None:
+    def perm_graph(self) -> dict[Name, set[Name]]:
+        """Each permission -> the permissions it names, of its type or through a relation (deps)."""
         graph: dict[Name, set[Name]] = {}
         for t in self.types.values():
             for p in t.perms.values():
                 out: set[Name] = set()
                 self.deps(t, p.expr, out)
                 graph[(t.name, p.name)] = out
-        # Tarjan's strongly connected components
-        index: dict[Name, int] = {}
-        low: dict[Name, int] = {}
-        stack: list[Name] = []
-        on: set[Name] = set()
-        sccs: list[list[Name]] = []
-        counter = [0]
+        return graph
 
-        def visit(v: Name) -> None:
-            index[v] = low[v] = counter[0]
-            counter[0] += 1
-            stack.append(v)
-            on.add(v)
-            for w in graph.get(v, ()):
-                if w not in index:
-                    visit(w)
-                    low[v] = min(low[v], low[w])
-                elif w in on:
-                    low[v] = min(low[v], index[w])
-            if low[v] == index[v]:
-                comp: list[Name] = []
-                while True:
-                    w = stack.pop()
-                    on.discard(w)
-                    comp.append(w)
-                    if w == v:
-                        break
-                sccs.append(comp)
-
-        for v in graph:
-            if v not in index:
-                visit(v)
-        for comp in sccs:
+    def analyze_recursion(self) -> None:
+        """Which permissions recurse, and through what: each loop of permissions (a strongly connected component of
+        perm_graph) inherits only through relations to objects, one permission per type, and becomes one closure
+        (self.recursive, self.scc_members)."""
+        graph = self.perm_graph()
+        for comp in strongly_connected(graph):
             members = set(comp)
             if len(comp) == 1 and comp[0] not in graph[comp[0]]:
                 continue
