@@ -110,6 +110,13 @@ DEPENDS_ON_ITSELF = (
 )
 
 
+def not_users(t: Type, r: Relation) -> str:
+    """What AZ301 says of a relation to objects used where users are asked for."""
+    return (
+        f"{t.name}.{r.name} links to {r.subjects()[0][0]} objects, not users; follow it with a dot, e.g. {r.name}.view"
+    )
+
+
 def only_on(node: Expr) -> list[str] | None:
     """The subject types an arrow the compiler narrowed (arrow_on) follows; None for any other item."""
     match node:
@@ -1106,13 +1113,7 @@ class Core:
         if state == "done":
             return False
         if state == "busy":
-            fail(
-                loc,
-                f"{what} depends on itself; a permission can only recurse as "
-                f"'or rel.perm' through a relation to objects, and a group only as "
-                f"'member : group#member'",
-                "AZ302",
-            )
+            fail(loc, DEPENDS_ON_ITSELF.format(what), "AZ302")
         self.view_state[name] = "busy"
         return True
 
@@ -1437,12 +1438,7 @@ class Core:
             ):
                 direct.append(f"SELECT NULL::{t.pktype} AS id WHERE false")
             else:
-                fail(
-                    loc,
-                    f"{t.name}.{r.name} links to {r.subjects()[0][0]} objects, not users; "
-                    f"follow it with a dot, e.g. {r.name}.view",
-                    "AZ301",
-                )
+                fail(loc, not_users(t, r), "AZ301")
         if loops:
             # nested groups: members of a sub-group are members of the group, to
             # any depth; UNION stops on loops in the nesting. Nested through columns or
@@ -2027,12 +2023,7 @@ class Core:
             ext = any(src.kind == "column" for src in r.sources)  # only split off when needed
             parts.append(self.lookup_sql(self.ensure_rel_view(t, r, loc, ext=ext), self.key(t, alias), point))
         if not parts:
-            fail(
-                loc,
-                f"{t.name}.{r.name} links to {r.subjects()[0][0]} objects, not users; "
-                f"follow it with a dot, e.g. {r.name}.view",
-                "AZ301",
-            )
+            fail(loc, not_users(t, r), "AZ301")
         return or_join(parts)
 
     def rule_sql(self, t: Type, alias: str, rule: Rule, point: bool = False, invoker: bool = False) -> str:
