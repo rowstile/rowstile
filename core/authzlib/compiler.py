@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable, Mapping, Sequence
-from typing import TypeAlias, TypedDict
+from typing import TypeAlias, TypedDict, assert_never
 
 from .parse import (
     ROLES,
@@ -238,6 +238,7 @@ class Core:
         return what
 
     def lines_sql(self) -> str:
+        """The table authz_gen.policy_lines: where each thing line_sql looks up is written."""
         rows = ",\n  ".join(f"({lit(w)}, {lit(loc)})" for w, loc in sorted(self.lines.items()))
         return (
             "-- where each rule, relation and invariant is written, for messages (Core.line_sql)\n"
@@ -916,6 +917,7 @@ class Core:
                 )
 
     def lookup(self, t: Type, name: str, loc: Loc, span: Span | None = None) -> None:
+        """Refuses a name t has no relation or permission of, saying the ones it has (AZ203)."""
         if name in t.perms or name in t.relations:
             return
         known = sorted([n for n in t.relations if not t.relations[n].synthetic] + self.public_perms(t))
@@ -942,6 +944,7 @@ class Core:
 
     # --- dependency analysis: which permissions recurse, and through what ----
     def deps(self, t: Type, node: Expr, out: set[Name]) -> None:
+        """Adds to out the permissions node depends on: those it names, and through a dot or a group, others' (rel_deps)."""
         match node:
             case Ref(name):
                 if name in t.perms:
@@ -960,6 +963,7 @@ class Core:
                     self.deps(t, x, out)
 
     def rel_deps(self, t: Type, r: Relation, out: set[Name], seen: set[Name]) -> None:
+        """Adds to out the permissions relation r depends on: those its groups name (team#lead), through groups of groups."""
         if (t.name, r.name) in seen:
             return
         seen.add((t.name, r.name))
@@ -1041,6 +1045,7 @@ class Core:
 
     @staticmethod
     def top_items(perm: Perm) -> list[Expr]:
+        """The operands of the permission's top `or` (itself if it has none)."""
         return perm.expr.items if isinstance(perm.expr, Or) else [perm.expr]
 
     def split_inherit(self, t: Type, perm: Perm, item: Expr) -> tuple[Arrow, list[str]] | tuple[None, None]:
@@ -1147,6 +1152,7 @@ class Core:
         return False
 
     def view_ref(self, t: Type, name: str, loc: Loc) -> str:
+        """The view of t's relation or permission `name`, made if it isn't yet."""
         self.lookup(t, name, loc)
         if name in t.perms:
             self.ensure_view(t, t.perms[name])
@@ -1200,10 +1206,12 @@ class Core:
 
     @staticmethod
     def caveat_sql(c: Caveat, alias: str = "g") -> str:
+        """The caveat's condition on the share aliased alias: arg('x') reads what the share was made with."""
         return with_uid(CAVEAT_ARG.sub(rf"({alias}.caveat_args ->> '\1')", c.sql))
 
     # --- functions over every type: one branch per type, the id converted to its key ----------------
     def id_vars(self) -> str:
+        """The variables dispatch_type converts an id into, one per key type."""
         return "".join(f" v_{pt} {pt};" for pt in sorted({t.pktype for t in self.types.values()}))
 
     def dispatch_type(self, per_type: Callable[[Type], str], missing_type: str = NO_SUCH_TYPE) -> str:
@@ -1273,9 +1281,11 @@ class Core:
         return "ROW(" + ", ".join(f"{q(c)}::{ty}" for c, ty in t.key) + ")::text"
 
     def key_text(self, t: Type, a: str) -> str:
+        """The id of t's row aliased a, as text."""
         return self.key(t, a) if t.composite else f"{self.key(t, a)}::text"
 
     def ref_text(self, t: Type, a: str, columns: Cols) -> str:
+        """The id of the t that row a's columns point at, as text."""
         return self.ref(t, a, columns) if t.composite else f"{self.ref(t, a, columns)}::text"
 
     def key_any(self, t: Type, a: str, arr: str) -> str:
@@ -1327,6 +1337,7 @@ class Core:
         )
 
     def is_principal(self, st: str) -> bool:
+        """Whether st is a type that signs in."""
         return st in self.types and self.T(st).principal
 
     def me(self, st: str, text: bool = False) -> str:
@@ -1434,6 +1445,7 @@ class Core:
         return f"{pairs} {self.shares_of(t, *conds)}"
 
     def is_group_loop(self, t: Type, r: Relation, st: str, sr: str | None) -> bool:
+        """Whether subject st#sr of t.r is r itself: groups in groups (`member : user, team#member`)."""
         return st == t.name and sr == r.name
 
     def ensure_rel_view(self, t: Type, r: Relation, loc: Loc, ext: bool = False) -> str:
@@ -1594,12 +1606,15 @@ class Core:
         return items
 
     def scc_edges(self, key: SccKey) -> Edges:
+        """The inheritance edges of every permission of a recursion."""
         edges: set[Edge] = set()
         for tn, pn in self.scc_members[key]:
             edges |= self.perm_edges(self.T(tn), self.T(tn).perms[pn]) or frozenset()
         return frozenset(edges)
 
     def ensure_view(self, t: Type, perm: Perm) -> None:
+        """Makes the view of t.perm, if it isn't yet: a union of its operands, or a walk of its closure table when it
+        recurses."""
         name = f"{t.name}__{perm.name}"
         if not self.begin_view(name, perm.loc, f"{t.name}.{perm.name}"):
             return
@@ -1739,9 +1754,7 @@ class Core:
                 on = only_on(item)
                 names = on if on is not None else [st for st, _ in r.subjects()]
                 return max(max(1, self.item_cost(self.T(st), Ref(perm))) for st in names)
-            case _:
-                assert isinstance(item, Ref), f"not an expression: {item!r}"
-                name = item.name
+            case Ref(name):
                 if name in t.relations:
                     rn = t.relations[name]
                     direct = all(src.kind == "column" for src in rn.sources) and all(
@@ -1752,11 +1765,14 @@ class Core:
                     return 2
                 perm_ = t.perms.get(name)
                 return max((self.item_cost(t, i) for i in self.top_items(perm_)), default=0) if perm_ else 2
+            case _:
+                assert_never(item)
 
     def start_function(self, t: Type, perm: Perm, flatten: Flatten) -> str:
+        """The function giving where t.perm's walk starts for the user signed in (start_sql), made if it isn't yet.
+        A permission walks one type's tree (flatten) or a recursion across types (None), the same each time."""
         name = f"{t.name}__{perm.name}__start"
         fn = f"authz_int.{q(name)}"
-        # (a permission walks within one type's tree or in a recursion across types, whichever call asks)
         if not self.first_time(name, f"{t.name}.{perm.name}" + (" in one walk" if flatten else "")):
             return fn
         body = self.start_sql(t, perm, flatten)
@@ -1770,6 +1786,8 @@ class Core:
 
     # --- set SQL: ids of t for which the expression holds -----------------
     def set_sql(self, t: Type, node: Expr, loc: Loc, flatten: Flatten = None) -> str:
+        """The ids of t for which node holds, for the user signed in: a query of `id`. flatten: what the walk this is
+        part of covers already (start_sql)."""
         rid, tbl = self.key(t, "r"), qt(t.table)
         match node:
             case Ref(name):
@@ -1921,14 +1939,15 @@ class Core:
                 )
             case Arrow(rel, perm_name) | ArrowOn(rel, perm_name, _):
                 return self.row_arrow(t, alias, node, rel, perm_name, loc, point, invoker)
-            case _:
-                assert isinstance(node, Ref), f"not an expression: {node!r}"
-                self.lookup(t, node.name, loc)
-                if node.name in t.relations:
-                    return self.row_relation(t, t.relations[node.name], alias, loc, point)
-                perm = t.perms[node.name]
+            case Ref(name):
+                self.lookup(t, name, loc)
+                if name in t.relations:
+                    return self.row_relation(t, t.relations[name], alias, loc, point)
+                perm = t.perms[name]
                 items = self.cheapest_first(t, self.prune(t, self.flat_items(t, perm, stack)))
                 return or_join([self.row_sql(t, alias, item, perm.loc, point=point, invoker=invoker) for item in items])
+            case _:
+                assert_never(node)
 
     def definer_cond(self, t: Type, sql: str, alias: str) -> str:
         """A condition that reads more than its row's columns, where the app role checks it: a call of a function
@@ -2024,6 +2043,8 @@ class Core:
         return sorted(items, key=lambda i: self.item_cost(t, i))
 
     def row_relation(self, t: Type, r: Relation, alias: str, loc: Loc, point: bool = False) -> str:
+        """Whether the user holds relation r on t's row aliased alias: its columns compared, and the other sources
+        looked up (their view)."""
         if any(sr and sr != "*" and self.is_group_loop(t, r, st, sr) for st, sr in r.subjects()):
             return self.lookup_sql(self.ensure_rel_view(t, r, loc), self.key(t, alias), point)
         parts = []
