@@ -113,6 +113,11 @@ SELECT test.ok('moving a folder inside itself through a project is refused, by i
     = '23514: folder 1 cannot be moved inside itself'
   AND test.hint('UPDATE mt.folders SET parent_type = ''project'', parent_id = 1 WHERE id = 1') = '23514: rowstile help AZ713'
   AND (SELECT parent_id IS NULL FROM mt.folders WHERE id = 1) AND authz.verify());
+-- only the type of a polymorphic parent changes (folder 3's, from project 1 to folder 1): the tree follows
+UPDATE mt.folders SET parent_type = 'folder' WHERE id = 3;
+SELECT test.ok('a parent''s type changed alone (project 1 to folder 1): the tree across the two types follows', authz.verify());
+UPDATE mt.folders SET parent_type = 'project' WHERE id = 3;
+SELECT test.ok('... and back', authz.verify());
 SET ROLE app_user;
 
 -- ---------------------------------------------------------------------

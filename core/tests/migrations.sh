@@ -216,6 +216,7 @@ case "$out" in *"beside the ones in use"*"two migrations"*) [ "$(ls "$P"/db/migr
   case "$build" in *_authz_build_*) true;; *) false;; esac && ok "migrate writes two: build beside, then swap in" || bad "two files" "$(ls "$P/db/migrations")";;
   *) bad "two-phase migrate" "$out";; esac
 dropdb --if-exists "${DB}_5" 2>/dev/null; createdb --template "${DB}_2" "${DB}_5"   # (before the build: the oldest writer, below)
+for n in 6 7 8; do dropdb --if-exists "${DB}_$n" 2>/dev/null; createdb --template "${DB}_2" "${DB}_$n"; done   # (and three more)
 said=$(sed -n 3p "$build")
 [ "$said" = "-- builds folder__linked_into_parent__tree beside the ones in use; the next migration swaps it in" ] &&
   ok "... the first says which tree it builds beside, and that the next swaps it in" || bad "the first's summary" "$said"
@@ -250,6 +251,33 @@ out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 
   [ "$(PSQL -d "${DB}_5" -c "SELECT authz.verify()")" = t ] &&
   [ "$(PSQL -d "${DB}_5" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 6 AND ancestor = 20")" = 1 ] &&
   ok "... also a link from the transaction the build's snapshot was oldest of" || bad "swap, the oldest writer's link" "$out"
+# a folder moved in the swap's own transaction, before it (its row's xmin is the swap's own): done again too
+PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_8" -f "$build" >/dev/null 2>&1 ||
+  bad "the build, on another copy"
+out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_8" \
+        -c "UPDATE app.folders SET parent_id = 1 WHERE id = 4" -f "$swap" 2>&1) &&
+  [ "$(PSQL -d "${DB}_8" -c "SELECT authz.verify()")" = t ] &&
+  [ "$(PSQL -d "${DB}_8" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 4 AND ancestor = 1")" = 1 ] &&
+  ok "... and a folder moved in the swap's own transaction" || bad "swap with a move of its own transaction" "$out"
+# the link table emptied between the two: the swap builds the tree again from what is there (the emptying says
+# nothing of which rows went)
+PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_7" -f "$build" >/dev/null 2>&1 ||
+  bad "the build, on another copy"
+PSQL -d "${DB}_7" -c "TRUNCATE app.folder_links" >/dev/null
+out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_7" -f "$swap" 2>&1) &&
+  [ "$(PSQL -d "${DB}_7" -c "SELECT authz.verify()")" = t ] &&
+  ok "... and a link table emptied meanwhile" || bad "swap after an emptying" "$out"
+# the build's record gone: the swap refuses rather than catch up from nothing. (The build records no policy: it
+# moves the lock the last one was recorded with, and no earlier one's)
+locks() { PSQL -d "${DB}_6" -c "SELECT string_agg(coalesce(lock, '-'), ' ' ORDER BY id) FROM authz.policy_versions WHERE id < (SELECT max(id) FROM authz.policy_versions)"; }
+earlier=$(locks)
+PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_6" -f "$build" >/dev/null 2>&1 ||
+  bad "the build, on a third copy"
+[ -n "$earlier" ] && [ "$(locks)" = "$earlier" ] && ok "the build moves the last policy's lock, no earlier one's" || bad "earlier locks after the build" "$earlier / $(locks)"
+PSQL -d "${DB}_6" -c "DELETE FROM authz_int.next_trees" >/dev/null
+out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_6" -f "$swap" 2>&1)
+case "$out" in *"folder__linked_into_parent__tree was not built beside the one in use"*"[AZ608]"*)
+  ok "a swap whose build left no record is refused (AZ608)";; *) bad "a swap without the build's record" "$out";; esac
 # a development database that took the first of the two, then a push: it holds the build's lock, not the one the
 # policy in force was recorded with, so push applies the whole policy, and the tree built beside goes
 PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "$DB" -f "$build" >/dev/null 2>&1 ||
@@ -411,5 +439,5 @@ case "$moves" in *"cannot be moved inside itself"*) [ "$loop" = f ] && [ "$(psql
 dropdb --if-exists "$L" 2>/dev/null
 
 rm -rf "$T"
-for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5"; do dropdb --if-exists "$db" 2>/dev/null; done
+for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8"; do dropdb --if-exists "$db" 2>/dev/null; done
 [ $fails -eq 0 ] && echo "migrations: all passed" || { echo "migrations: $fails failed"; exit 1; }

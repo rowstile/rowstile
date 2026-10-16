@@ -1,0 +1,57 @@
+-- answer: conditions-null, inheritance, rows-hold-nothing
+-- A condition that is NULL holds nothing wherever it is read: in an inheritance with two conditions (one NULL, the
+-- other true), in a type's where on the folder a walk goes through, in a list, in what explain may show, and in a
+-- condition that reads another table and only later says yes. Each is asked a level below where it is NULL too:
+-- a folder's own conditions are checked on its row, the ones above it in the walk.
+app role app_user
+
+type user = app.users
+type project = app.projects where {owner_id > 0}
+  owner : user = owner_id
+  can see = owner
+type folder = app.folders where {editor_id > 0 or editor_id = 0}
+  owner  : user = owner_id
+  parent : folder = parent_id
+  can edit = owner or (parent.edit and {exists (select 1 from app.marks m where m.ref_id = this.id) or null})
+  can view = owner or (parent.view and {org_id > 0} and {not archived})
+
+rules app.folders
+  select : view
+
+test "an inheritance with a NULL condition and a true one passes nothing"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given top = {INSERT INTO app.folders (owner_id, org_id, editor_id) VALUES ($ann, 1, 0) RETURNING id}
+  given nul = {INSERT INTO app.folders (parent_id, org_id, editor_id) VALUES ($top, NULL, 0) RETURNING id}
+  given low = {INSERT INTO app.folders (parent_id, org_id, editor_id) VALUES ($nul, 1, 0) RETURNING id}
+  user $ann cannot view folder $nul
+  user $ann cannot view folder $low
+  as user $ann sees 0 {SELECT FROM authz.list('folder', 'view') x WHERE x IN ($nul::text, $low::text)}
+
+test "a folder whose where is NULL passes nothing down, and is in no list"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given top = {INSERT INTO app.folders (owner_id, org_id, editor_id) VALUES ($ann, 1, 0) RETURNING id}
+  given mid = {INSERT INTO app.folders (parent_id, org_id, editor_id, owner_id) VALUES ($top, 1, NULL, $ann) RETURNING id}
+  given low = {INSERT INTO app.folders (parent_id, org_id, editor_id) VALUES ($mid, 1, 0) RETURNING id}
+  given end = {INSERT INTO app.folders (parent_id, org_id, editor_id) VALUES ($low, 1, 0) RETURNING id}
+  user $ann can view folder $top
+  user $ann cannot view folder $mid
+  user $ann cannot view folder $low
+  user $ann cannot view folder $end
+  as user $ann sees 0 {SELECT FROM authz.list('folder', 'view') x WHERE x IN ($mid::text, $low::text, $end::text)}
+
+test "explain shows nothing of a project whose where is NULL"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given p   = {INSERT INTO app.projects (id, owner_id) VALUES (1, NULL) RETURNING id}
+  as user $ann sees 1 {SELECT FROM authz.explain('project', $p::text, 'see') e WHERE e = 'no   you have no access to project ' || $p}
+
+test "a condition that reads another table, NULL at first, then true"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given top = {INSERT INTO app.folders (owner_id, org_id, editor_id) VALUES ($ann, 1, 0) RETURNING id}
+  given sub = {INSERT INTO app.folders (parent_id, org_id, editor_id) VALUES ($top, 1, 0) RETURNING id}
+  given low = {INSERT INTO app.folders (parent_id, org_id, editor_id) VALUES ($sub, 1, 0) RETURNING id}
+  given {INSERT INTO app.marks (id, ref_id, kind) VALUES (1, $low, 'open')}
+  user $ann cannot edit folder $sub
+  user $ann cannot edit folder $low
+  given {INSERT INTO app.marks (id, ref_id, kind) VALUES (2, $sub, 'open')}
+  user $ann can edit folder $sub
+  user $ann can edit folder $low

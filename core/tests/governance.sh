@@ -132,6 +132,13 @@ case "$got" in *'notification "authz_changes"'*) echo "ok    with notify_changes
   *) echo "FAIL  notify: $got"; fails=$((fails + 1));; esac
 PSQL -c "DELETE FROM authz.settings WHERE key = 'notify_changes'" >/dev/null
 expect_code "the app role cannot read the feed" "42501: permission denied for function changes_since" -c "SELECT * FROM authz.changes_since(0)"
+# a share moved to another object (an administrator's UPDATE): the object it left is announced too
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('file', '11', 'viewer', 'user', '4')" >/dev/null
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+PSQL -c "UPDATE authz.shares SET object_id = '12' WHERE object_type = 'file' AND object_id = '11' AND subject_id = '4'" >/dev/null
+admin "a share moved to another file: both files are announced" "11,12" \
+  "SELECT string_agg(DISTINCT x, ',' ORDER BY x) FROM authz.changes_since($POS), unnest(object_ids) x WHERE object_type = 'file'"
+PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '12' AND subject_id = '4'" >/dev/null
 # folders and projects inside each other through links people share (one inheritance table for the two types): a new
 # link announces what it moves, and only that
 X="${DB}_across"
@@ -187,6 +194,10 @@ expect_code "... more than nothing: none at all is refused too" "22023: emergenc
   -c "SET authz.user_id = 3" -c "SELECT authz.break_glass('folder', '6', 'viewer', 'outage', '0')"
 expect_code "frank (Globex) cannot break the glass on an Acme folder" "42501: you cannot break the glass on folder 6" -c "SET authz.user_id = 6" \
   -c "SELECT authz.break_glass('folder', '6', 'viewer', 'outage')"
+expect_code "... nor anyone on a file, which has no break_glass permission" "42501: you cannot break the glass on file 11" \
+  -c "SET authz.user_id = 3" -c "SELECT authz.break_glass('file', '11', 'viewer', 'outage')"
+expect_code "... nor on an id that is no folder's" "42501: you cannot break the glass on folder abc" -c "SET authz.user_id = 3" \
+  -c "SELECT authz.break_glass('folder', 'abc', 'viewer', 'outage')"
 got=$(psql -X -q -At -d "$DB" -c "LISTEN authz_alerts" -c "SET ROLE app_user" -c "SET authz.user_id = 3" \
        -c "SELECT authz.break_glass('folder', '6', 'viewer', 'prod outage INC-7')" -c "SELECT 1" 2>&1)
 case "$got" in *'notification "authz_alerts"'*) echo "ok    carol breaks the glass, and the alert goes out";;
@@ -340,7 +351,12 @@ expect_code "carol cannot decide in it" "42501: you cannot decide in review 2" -
 expect_code "... nor read its items" "42501: you cannot see review $REV" -c "SET authz.user_id = 3" -c "SELECT * FROM authz.review_items($REV)"
 expect_code "... nor close it" "42501: you cannot close review $REV" -c "SET authz.user_id = 3" -c "SELECT authz.close_review($REV)"
 expect_code "erin decides on the items it has" "P0001: no item 999 in review $REV" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV, 999, false)"
+# a share on a file with the folder's id, relation and subject is no item of the folder's review
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('file', '5', 'viewer', 'user', '3')" >/dev/null
 check "closing the review revokes what was marked" "1" "SET authz.user_id = 5; SELECT authz.close_review($REV)"
+admin "... on the folder only: a file's share like it stays" "1" \
+  "SELECT count(*) FROM authz.shares WHERE object_type = 'file' AND object_id = '5' AND relation = 'viewer' AND subject_id = '3'"
+PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '5' AND subject_id = '3'" >/dev/null
 check "... carol lost the offer letter" "f" "SET authz.user_id = 3; SELECT authz.can('file', 13, 'view')"
 check "... dave (not decided) kept it" "t" "SET authz.user_id = 4; SELECT authz.can('file', 13, 'view')"
 expect_code "a closed review cannot be changed" "42501: you cannot decide in review 2" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV, 1, false)"
@@ -351,8 +367,10 @@ admin "the audit trail has the requests, their answers and the reviews" "approve
 echo "-- reviews respect 'shared by'"
 sed -e 's/^  editor      : user, team#member shared$/  editor      : user, team, team#member, link shared by manage_editors/' \
     -e 's/^  can share = owner or org.admin or (parent.share and {inherit})$/&\n  can manage_editors = owner/' \
+    -e 's/^  viewer      : user, team#member, org#member shared$/&\n  viewer      : user:* shared by manage_editors/' \
     example/docs.authz > /tmp/authz_governance_by.authz
-grep -q "can manage_editors = owner" /tmp/authz_governance_by.authz && grep -q "shared by manage_editors" /tmp/authz_governance_by.authz ||
+grep -q "can manage_editors = owner" /tmp/authz_governance_by.authz && grep -q "shared by manage_editors" /tmp/authz_governance_by.authz &&
+  grep -q "user:\* shared by manage_editors" /tmp/authz_governance_by.authz ||
   { echo "FAIL  could not make the variant policy"; fails=$((fails + 1)); }
 python3 compile_policy.py /tmp/authz_governance_by.authz > /tmp/authz_governance_by.sql && reapply /tmp/authz_governance_by.sql
 as 1 -c "SELECT authz.share('folder', 3, 'editor', 'user', 4)" >/dev/null
@@ -363,6 +381,11 @@ ITEM2=$(as 5 -c "SELECT item FROM authz.review_items($REV2) WHERE subject_id = '
 expect_code "... nor revoke it in a review" "42501: you cannot decide on editor in review 3 (you could not unshare it)" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV2, $ITEM2, false)"
 check "... nor by closing the review with undecided items revoked" "0" "SET authz.user_id = 5; SELECT authz.close_review($REV2, true)"
 check "dave is still an editor" "t" "SET authz.user_id = 4; SELECT authz.can('folder', 3, 'edit')"
+# a share with every user is shared by manage_editors, though a share with one user is shared by share
+as 1 -c "SELECT authz.share('folder', 3, 'viewer', 'user', '*')" >/dev/null
+expect_code "erin cannot unshare what alice shared with every user (needs manage_editors)" \
+  "42501: you cannot unshare viewer on folder 3 (needs manage_editors)" -c "SET authz.user_id = 5" -c "SELECT authz.unshare('folder', 3, 'viewer', 'user', '*')"
+as 1 -c "SELECT authz.unshare('folder', 3, 'viewer', 'user', '*')" >/dev/null
 as 1 -c "SELECT authz.create_link('folder', 3, 'editor')" >/dev/null
 LINK=$(as 1 -c "SELECT id FROM authz.list_links('folder', 3)")
 check "erin (share) sees the editors' link alice made" "$LINK|editor|1"   "SET authz.user_id = 5; SELECT id || '|' || relation || '|' || created_by FROM authz.list_links('folder', 3)"
@@ -489,6 +512,8 @@ lint() { PSQL -c "SELECT severity || ' ' || object FROM authz.lint() ORDER BY 1"
 for want in "error app.files" "error app.all_files" "error app.team_members" "info app.files_name" "info app.files_pkey" "warning app.peek(bigint)"; do
   [ "$(lint "^$want\$")" -ge 1 ] && echo "ok    lint finds: $want" || { echo "FAIL  lint misses: $want"; fails=$((fails + 1)); }
 done
+admin "... of the link table, that the app role may change it (an insert is enough)" "1" \
+  "SELECT count(*) FROM authz.lint() WHERE object = 'app.team_members' AND problem LIKE '%may change it, and it decides who is in what%'"
 admin "... and says of the function what it does" \
   "SECURITY DEFINER, callable by the app role, and seems to use a governed table: it reads rows without row-level security unless its owner is subject to it" \
   "SELECT problem FROM authz.lint() WHERE object = 'app.peek(bigint)'"
@@ -498,6 +523,10 @@ admin "... and of the unique indexes the app role may insert against, those on t
   "app.files_name|a unique index on app.files: inserting a duplicate fails even when the existing row is hidden, which tells the user it exists" \
   "SELECT string_agg(object || '|' || problem, ', ') FROM authz.lint() WHERE problem LIKE 'a unique index on %'"
 PSQL -c "DROP INDEX app.gov_team_pairs" >/dev/null
+# nor one on a governed table the app role may not insert into
+PSQL -c "CREATE UNIQUE INDEX gov_folder_names ON app.folders (id, name)" -c "REVOKE INSERT ON app.folders FROM app_user" >/dev/null
+admin "... nor of a table the app role may not insert into" "0" "SELECT count(*) FROM authz.lint() WHERE object = 'app.gov_folder_names'"
+PSQL -c "GRANT INSERT ON app.folders TO app_user" -c "DROP INDEX app.gov_folder_names" >/dev/null
 # a table beside the policy's that it doesn't name: said, while the app role may read it
 PSQL -c "CREATE TABLE app.secrets (id int PRIMARY KEY, hash text)" -c "GRANT SELECT ON app.secrets TO app_user" >/dev/null
 admin "lint finds a table the policy doesn't name, which the app role may read" "info" \
@@ -548,6 +577,13 @@ grep -v "update parent_id after" example/docs.authz > /tmp/authz_no_after.authz
 python3 compile_policy.py /tmp/authz_no_after.authz > /tmp/authz_no_after.sql && reapply /tmp/authz_no_after.sql
 admin "lint finds a move nothing checks the destination of" "1" \
   "SELECT count(*) FROM authz.lint() WHERE object = 'app.folders.parent_id' AND problem LIKE 'moves a row under another%'"
+# nor where nobody may update a folder at all (no update rule, so no 'after' rule nor column rule either)
+grep -v -e "^  update parent_id after" -e "^  update                               : edit$" -e "^  update id, owner_id, org_id, inherit : share$" \
+  example/docs.authz > /tmp/authz_no_update.authz
+python3 compile_policy.py /tmp/authz_no_update.authz > /tmp/authz_no_update.sql && reapply /tmp/authz_no_update.sql
+admin "... but none where nobody may update the row" "0" \
+  "SELECT count(*) FROM authz.lint() WHERE problem LIKE 'moves a row under another%'"
+rm -f /tmp/authz_no_update.authz /tmp/authz_no_update.sql
 reapply /tmp/authz_governance.sql
 admin "...and none with the rule back" "0" \
   "SELECT count(*) FROM authz.lint() WHERE problem LIKE 'moves a row under another%'"
@@ -677,6 +713,12 @@ expect_code "a reader behind the trimmed part is told to read everything again" 
 admin "... a reader past it goes on" "t" "SELECT count(*) > 0 FROM authz.changes_since($POS)"
 PSQL -c "INSERT INTO authz.settings VALUES ('changes_keep', '1 hour')" >/dev/null
 admin "how long the feed keeps entries is a setting" "0" "SELECT authz.trim_changes()"
+# an entry exactly as old as the period (written an hour before this transaction began) is not older: it stays
+PSQL -c "SELECT authz.trim_changes(interval '0')" >/dev/null
+admin "an entry exactly as old as the period stays" "0" \
+  "BEGIN; INSERT INTO app.folders (org_id, parent_id, owner_id, name) VALUES (1, 1, 5, 'now');
+   UPDATE authz.changes SET at = now() - interval '1 hour' WHERE pos = (SELECT max(pos) FROM authz.changes);
+   SELECT authz.trim_changes(interval '1 hour'); COMMIT"
 expect_code "trimming the audit trail needs a period" "22023: say how long to keep the audit trail, e.g. authz.trim_audit(interval '2 years')" -c "RESET ROLE" -c "SELECT authz.trim_audit(NULL)"
 admin "entries younger than the period stay" "0" "SELECT authz.trim_audit(interval '1 day')"
 N=$(PSQL -c "SELECT count(*) FROM authz.audit")

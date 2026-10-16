@@ -302,6 +302,17 @@ class Compiling(unittest.TestCase):
             [sorted(x) for x in strongly_connected(graph)], [[c], [a, b], [d]], "each one after those it reaches"
         )
 
+    def test_who_may_hold_what_a_condition_narrows(self) -> None:
+        """authz.who lists the people a permission's relations name; an `or` of conditions inside an `and` narrows
+        nothing it can list (anyone may pass it), so the owner's list is the permission's."""
+        text = (
+            errors_prelude()
+            + "type doc = app.docs\n  owner : user = owner_id\n  can see = owner and ({public} or {listed})\n"
+        )
+        sql = Compiler(parse_policy(text)).compile("the policy")
+        body = sql.split('CREATE FUNCTION authz_int."doc__see__who"(p_id bigint)', 1)[1].split("$f$")[1]
+        self.assertEqual(body.strip(), 'SELECT x FROM authz_int."doc__owner__who"(p_id) x')
+
     def test_the_conditions_on_rows(self) -> None:
         """What an apply that fails asks Postgres about one at a time (AZ613), and the captured names' warning: a
         type's where, a link table's, a permission's and a rule's, each on its table, the keywords left out."""
@@ -2223,6 +2234,18 @@ class Migrations(unittest.TestCase):
         pushed = self.migrate.migration(sql, comp, self.migrate.parse_lock(self.lock(self.text)), lines=True)
         self.assertIn("DELETE FROM authz_gen.policy_lines", pushed.sql)
 
+    def test_a_body_that_calls_what_goes_is_not_made_again(self) -> None:
+        # a PL/pgSQL or SQL body looks up what it calls when it runs: rebuilding a tree (the views and functions
+        # made from it) makes none of the API's functions again, only what can't outlive them (atomic bodies, views)
+        changed = replaced(
+            self.text,
+            "can view  = edit or viewer or (parent.view and {inherit})",
+            "can view  = edit or viewer or parent.view",
+        )
+        swap = database.migrations(changed, {}, self.lock(self.text), "x")[-1].sql
+        self.assertIn("folder__linked_into_parent__tree", swap)
+        self.assertIsNone(re.search(r"CREATE (OR REPLACE )?FUNCTION authz\.create_api_key\(", swap))
+
     def test_a_new_version_alone_needs_no_migration(self) -> None:
         # upgrading rowstile fails no one's `migrate --check` unless the new version makes something different
         lock = self.lock(self.text)
@@ -2237,6 +2260,17 @@ class Migrations(unittest.TestCase):
         self.assertIn("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;", m.sql)
         self.assertEqual(m.summary, ["the same policy; what rowstile makes of it changed"])
         self.assertIn(f"always | {self.migrate.always_hash(database.migratable(self.text, {})[1])}", m.lock)
+        # those steps alone: a new type with a shared relation changes others (the tables, the share indexes, the
+        # sweep), and leaves the hash as it was
+        more = replaced(
+            self.text,
+            "type folder = app.folders\n",
+            "type org2 = app.orgs\n  reader : user shared by see\n  can see = reader\n\ntype folder = app.folders\n",
+        )
+        self.assertEqual(
+            self.migrate.always_hash(database.migratable(more, {})[1]),
+            self.migrate.always_hash(database.migratable(self.text, {})[1]),
+        )
 
     def test_a_lock_without_those_steps_goes_by_its_version(self) -> None:
         # a lock written before they were recorded: the version that wrote it makes the same; another may not
@@ -5439,6 +5473,10 @@ class Confidence(unittest.TestCase):
         self.assertEqual([simple(f"price < {n}") is None for n in (16777214, 16777215, 16777216)], [False, True, True])
         # one that ends on a `not` (as `x not in (...)` begins) is none the evaluator reads: never a crash
         self.assertIsNone(simple("archived not"))
+        # up to 15 digits written (1 + 2^-14, its neighbours held by every column), not 16 (1 + 2^-15); and null
+        self.assertEqual(simple("price < 1.00006103515625"), Cmp("<", Col("price"), Const(Decimal("1.00006103515625"))))
+        self.assertIsNone(simple("price < 1.000030517578125"))
+        self.assertEqual(simple("price = null"), Cmp("=", Col("price"), Const(None)))
 
     def test_prove_reads_quoted_columns_and_long_decimals_as_postgres_does(self) -> None:
         """A quoted column was a condition prove couldn't read, so {"done"} and {not "done"} were drawn apart and
@@ -5717,6 +5755,27 @@ class Confidence(unittest.TestCase):
             + "  can a = parent.x\n  can b = parent.y\ninvariants\n  never folder: a and b\n  never folder: a and not b\n"
         )
         self.assertEqual(self.proofs(text), [True, False])
+
+    def test_what_worlds_compare_beyond_permissions_and_rules(self) -> None:
+        # a type moved to another table, or roles no longer limited by `from`: more than permissions and rules
+        # changed, so no narrower comparison is made (None); and a policy without conditions has no corners
+        from authzlib import evaluate
+
+        base = (
+            self.HEAD + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
+            "type doc = app.docs\n  owner : user = owner_id\n  org : org = org_id\n  roles : user from org\n"
+            "  can view = owner or roles\nrules app.docs\n  select : view\n"
+        )
+        moved = base.replace("type doc = app.docs\n", "type doc = app.docs2\n").replace(
+            "rules app.docs\n", "rules app.docs2\n"
+        )
+        for head in (moved, base.replace("  roles : user from org\n", "  roles : user\n")):
+            a, b = parse_policy(base), parse_policy(head)
+            self.assertIsNone(evaluate.apart(a, b), head)
+            self.assertIsNone(evaluate.cone([a, b]), head)
+        self.assertEqual(
+            evaluate.corners([parse_policy(self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n")]), []
+        )
 
     def test_a_polymorphic_row_names_an_object_of_its_type(self) -> None:
         # in every world drawn: a row's (type, id) gives one link, to an object of that type that is there

@@ -42,6 +42,14 @@ echo "-- lint and indexes"
 [ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity IN ('error', 'warning')")" = 0 ] && ok "lint: no error, no warning" || bad "lint" "$(PSQL -c "SELECT * FROM authz.lint()")"
 [ "$(PSQL -c "SELECT string_agg(object, ' ' ORDER BY object) FROM authz.lint() WHERE problem LIKE '%may read every row%'")" = 'public."Team" public."TeamMember" public."User"' ] &&
   ok "lint names the tables read in full as Postgres writes them (the link table too), and not Prisma's own" || bad "lint, tables read in full" "$(PSQL -c "SELECT object, problem FROM authz.lint()")"
+# a table beside the policy's that it doesn't name, and a view of Folder that runs with its owner's rights: lint finds
+# both from the policy's tables, by their quoted names
+PSQL -c 'CREATE TABLE "Lookup" (id int)' -c 'CREATE VIEW "FolderView" AS SELECT id FROM "Folder"' \
+     -c 'GRANT SELECT ON "Lookup", "FolderView" TO app_user'
+got=$(PSQL -c "SELECT string_agg(object || ' ' || severity, ', ' ORDER BY object) FROM authz.lint() WHERE object LIKE '%Lookup%' OR object LIKE '%FolderView%'")
+[ "$got" = 'public."FolderView" error, public."Lookup" info' ] &&
+  ok "lint: a table beside Folder that no rule names, and a view of Folder that skips its rules" || bad "lint, beside and views" "$got"
+PSQL -c 'DROP VIEW "FolderView"' -c 'DROP TABLE "Lookup"'
 # the app's own check of its connection finds the tables by their quoted names too
 PSQL -c 'ALTER TABLE "Folder" DISABLE ROW LEVEL SECURITY'
 got=$(PSQL -c "SET ROLE app_user" -c "SELECT problem FROM authz.connection_check() WHERE problem LIKE 'row-level security%'")
@@ -81,6 +89,8 @@ as 1 "SELECT authz.share('folder', 1, 'viewer', 'user', 2)" >/dev/null
 [ "$(PSQL -c "SELECT has_column_privilege('app_user', 'public.\"Note\"', 'body', 'SELECT'), has_column_privilege('app_user', 'public.\"Note\"', 'title', 'SELECT')")" = "f|t" ] &&
   ok "... and the table doesn't give the masked column" || bad "column privileges"
 run explain-rule --as user:2 public.Note update 2; case "$out" in *"no   update"*": edit"*) ok "explain-rule: why a viewer may not update";; *) bad "explain-rule" "$out";; esac
+run explain-rule --as user:2 public.Note insert --row '{"folderId": 3, "authorId": 2}'
+case "$out" in *"no   insert : folder.edit and author"*) ok "... and why one may not insert this row: the row read as a Note";; *) bad "explain-rule insert" "$out";; esac
 run sql --as user:1 'UPDATE "Note" SET "authorId" = 2 WHERE id = 2'
 case "$out" in "changing authorId of public.Note 2 needs: nobody"*) ok "a column's rule refuses, naming the column";; *) bad "a column rule" "$out";; esac
 out=$(as 2 'SET ROLE app_user; INSERT INTO "Note" (title, "folderId", "authorId") VALUES ($$n$$, 3, 2)' 2>&1)
@@ -132,6 +142,18 @@ PSQL -c 'ALTER TABLE "Note" ADD COLUMN "dueAt" date'
 run reapply
 [ $rc -eq 0 ] && [ "$(PSQL -c "SELECT has_column_privilege('app_user', 'public.\"Note\"', 'dueAt', 'SELECT'), has_column_privilege('app_user', 'public.\"Note\"', 'body', 'SELECT')")" = "t|f" ] &&
   ok "reapply gives the app role the new column, and still not the masked one" || bad "a new column of a masked table" "$out"
+PSQL -c 'ALTER TABLE "Note" RENAME COLUMN "dueAt" TO "dueOn"'
+run reapply
+[ $rc -eq 0 ] && [ "$(PSQL -c "SELECT string_agg(attname, ',') FROM pg_attribute WHERE attrelid = 'public.\"NoteShown\"'::regclass AND attname LIKE 'due%'")" = dueOn ] &&
+  ok "... and a column renamed: the masked view, which can't rename one in place, is made anew" || bad "a column renamed under a masked view" "$out"
+# something of the app's built on the masked view: it can't be made anew, and applying says so, naming it
+PSQL -c 'CREATE VIEW "NoteTitles" AS SELECT id, title FROM "NoteShown"' -c 'ALTER TABLE "Note" RENAME COLUMN "dueOn" TO "dueBy"'
+run reapply
+case "$out" in *'the masked view public.NoteShown can'"'"'t be replaced in place'*'[AZ617]'*'NoteTitles'*) [ $rc -ne 0 ] &&
+  ok "... unless something is built on it: refused, naming what" || bad "AZ617 on NoteShown: rc" "$rc";;
+  *) bad "a column renamed under a masked view something is built on" "$out";; esac
+PSQL -c 'DROP VIEW "NoteTitles"'
+run reapply; [ $rc -eq 0 ] || bad "reapply after the view built on it is gone" "$out"
 
 echo "-- without the mask, then removed"
 sed -i '/^  mask body/d; s/^rules public.Note view public.NoteShown$/rules public.Note/' "$T/db/policy.authz"
@@ -271,6 +293,63 @@ views() { R -c "SET authz.user_id = $1" -c "SELECT string_agg(f::text || ':' || 
   ok "a role of the org in the folder's column counts there, and in the folder filed inside it" || bad "a role through the column" "$(views 2)"
 [ "$(views 3)" = "1:false 2:false 3:true" ] &&
   ok "a role of the org the link table puts a folder in counts there" || bad "a role through the link table" "$(views 3)"
+# what reads the tree of folders filed in folders, Folder__parent__tree, by its quoted name
+run --db "dbname=$DB4" who Folder 2 view
+[ "$(echo "$out" | sort | tr '\n' ' ')" = "1 2 4 " ] && ok "who: through the tree of a type named with a capital" || bad "who on Folder" "$out"
+tree() { R -c "SELECT 'authz_int.\"Folder__parent__tree\"'::regclass::oid"; }
+before=$(tree)
+sed 's/^  can share = owner or org.admin$/  can share = owner or org.admin\n  can look  = owner/' "$T/roles.authz" > "$T/roles_look.authz"
+run --db "dbname=$DB4" apply "$T/roles_look.authz"
+case "$out" in *"roles_look.authz: applied") [ "$(tree)" = "$before" ] && ok "a permission added: the tree is kept, the same table" ||
+  bad "the tree kept" "$before then $(tree)";; *) bad "apply, a permission added" "$out";; esac
+# the link table made anew between applies: the tree is built again, even with the same definition
+R >/dev/null <<'SQL'
+SET client_min_messages = warning;
+ALTER TABLE "FolderIn" RENAME TO "FolderInOld";
+CREATE TABLE "FolderIn" (LIKE "FolderInOld" INCLUDING ALL);
+INSERT INTO "FolderIn" SELECT * FROM "FolderInOld";
+DROP TABLE "FolderInOld" CASCADE;
+GRANT SELECT ON "FolderIn" TO app_user;
+SQL
+before=$(tree)
+run --db "dbname=$DB4" apply "$T/roles_look.authz" --force
+[ "$(tree)" != "$before" ] && [ "$(R -c "SELECT authz.verify()")" = t ] && ok "... and the link table made anew: the tree is built again" ||
+  bad "the tree after its table was made anew" "$out"
+run --db "dbname=$DB4" reapply --force
+[ $rc -eq 0 ] && [ "$(views 2)" = "1:true 2:true 3:false" ] && [ "$(R -c "SELECT authz.verify()")" = t ] &&
+  ok "reapply --force computes the tree again, by its quoted name" || bad "reapply --force" "$out"
+# teams in teams, named with a capital: explain says which sub-team a member is in
+R >/dev/null <<'SQL' || bad "the teams"
+CREATE TABLE "Team" (id serial PRIMARY KEY, "parentId" integer REFERENCES "Team");
+CREATE TABLE "TeamMember" ("teamId" integer REFERENCES "Team", "userId" integer REFERENCES "User", PRIMARY KEY ("teamId", "userId"));
+GRANT SELECT ON "Team", "TeamMember" TO app_user;
+INSERT INTO "Team" (id, "parentId") VALUES (1, NULL), (2, 1);
+INSERT INTO "TeamMember" VALUES (2, 2);
+CREATE TABLE "FolderBacking" ("folderId" integer REFERENCES "Folder", "backerType" text, "backerId" integer);
+GRANT SELECT ON "FolderBacking" TO app_user;
+SQL
+{ sed 's/^  can view  = owner or org.admin or roles or parent.view$/  viewer : Team#member shared by share\n  can see   = owner or viewer\n  can view  = owner or org.admin or roles or viewer or parent.view/' "$T/roles_look.authz"
+  printf '\ntype Team = public.Team (id int)\n  member : user        = public.TeamMember(teamId -> userId)\n  member : Team#member = public.Team(parentId -> id)\n'
+} | sed 's/^  viewer : Team#member shared by share$/&\n  backer : user, Team  = public.FolderBacking(folderId -> (backerType, backerId))/' > "$T/teams.authz"
+run --db "dbname=$DB4" apply "$T/teams.authz"; case "$out" in *"teams.authz: applied") ;; *) bad "apply, teams" "$out";; esac
+R -c "SET authz.user_id = 4" -c "SELECT authz.share('Folder', 3, 'viewer', 'Team', 1, 'member')" >/dev/null || bad "share with a team"
+got=$(R -c "SELECT string_agg(btrim(e), '|') FROM authz.explain('Folder', '3', 'see', '2') e WHERE e LIKE '%through Team%'")
+[ "$got" = "yes  through Team 2, whose member count here too" ] && ok "explain: a member of a sub-team, through Team 2" || bad "explain through a sub-team" "$got"
+# a link table naming users or teams by a pair of columns: each row is in the audit trail, its subject read by its column
+# (one naming a type the policy hasn't too: it gives nothing, and the trail still says what it names)
+R -c "INSERT INTO \"FolderBacking\" VALUES (3, 'user', 2), (3, 'Team', 1), (3, 'robot', 9)" >/dev/null || bad "rows of a link table with a type column"
+[ "$(R -c "SELECT string_agg(subject_type || ':' || coalesce(subject_id, '?'), ' ' ORDER BY subject_type COLLATE \"C\") FROM authz.audit WHERE action = 'relate' AND relation = 'backer'")" = "Team:1 robot:9 user:2" ] &&
+  ok "... the audit trail names who each row of a link table with a type column names" || bad "the audit of a link table with a type column"
+# two types whose names differ only in case, each a tree: each has functions of its own
+{ cat "$T/teams.authz"
+  printf '\ntype folder = public.Team (id int)\n  member : user   = public.TeamMember(teamId -> userId)\n  parent : folder = parentId\n  can view = member or parent.view\n'
+} > "$T/cases.authz"
+run --db "dbname=$DB4" apply "$T/cases.authz"
+case "$out" in *"cases.authz: applied")
+  run --db "dbname=$DB4" who folder 2 view; a=$out; run --db "dbname=$DB4" who Folder 2 view
+  [ "$a" = 2 ] && [ "$(echo "$out" | sort | tr '\n' ' ')" = "1 2 4 " ] && ok "folder and Folder, each its own tree: who asks each" ||
+    bad "who on folder and Folder" "$a / $out";;
+  *) bad "apply, folder and Folder" "$out";; esac
 [ -z "${KEEP:-}" ] && dropdb "$DB4"
 
 rm -rf "$T"
