@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import TypeAlias, TypedDict, assert_never
 
 from .parse import (
@@ -114,6 +115,11 @@ def not_users(t: Type, r: Relation) -> str:
     return (
         f"{t.name}.{r.name} links to {r.subjects()[0][0]} objects, not users; follow it with a dot, e.g. {r.name}.view"
     )
+
+
+def own_copy(t: Type) -> Type:
+    """t, with relations and permissions of its own: what the compiler changes (Core.__init__)."""
+    return replace(t, relations=dict(t.relations), perms={name: replace(p) for name, p in t.perms.items()})
 
 
 def strongly_connected(graph: Mapping[Name, set[Name]]) -> list[list[Name]]:
@@ -247,6 +253,9 @@ class Core:
         )
 
     def __init__(self, pol: Policy) -> None:
+        # the compiler adds to the types what it makes of them (custom roles' relations, a deny's hidden
+        # inheritance) and rewrites their permissions: in its own copy, so the policy it is given stays as parsed
+        pol = replace(pol, types={name: own_copy(t) for name, t in pol.types.items()})
         self.pol = pol
         if pol.role is None:
             fail(

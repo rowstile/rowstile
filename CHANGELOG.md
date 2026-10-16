@@ -95,6 +95,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- The language server offered `roles:view`, which rowstile makes of a permission that writes `roles`, as a
+  relation of the type, in completions and in the type's hover. Compiling a policy no longer changes it: code
+  that parses a policy and compiles it reads it as written, without that relation or a deny's hidden permission.
+  Two groups nested in each other are refused with the words a permission that depends on itself has (AZ302).
 - The language server underlined the wrong word when a line names it twice: in `can view = owner or
   parent.owner`, where a folder has no `owner`, it underlined the file's own `owner` (#281). A name the compiler
   looks up keeps where it was written: in a permission, a relation's subjects, a scope's items, an invariant's
