@@ -1329,32 +1329,33 @@ class Core:
             rel = self.role_rel_sql(t, src, f"g.object_id::{t.pktype}")
         else:
             rel = f"g.relation = {lit(r.name)}"
-        return (
-            f"SELECT g.object_id::{t.pktype} AS id FROM authz.shares g "
-            f"WHERE g.object_type = {lit(t.name)} AND {rel} AND {who} AND {self.live()}"
-        )
+        return f"SELECT g.object_id::{t.pktype} AS id {self.shares_of(t, rel, who, self.live())}"
 
     def share_subject_sql(self, st: str, sr: str | None, src: Source) -> str | None:
         """The shares (g, in authz.shares) to subject st#sr that give the signed-in principal what they share: to them,
         to a group they are in, to every signed-in st, to anyone, or to a link they presented. None: no share can."""
         if sr == "*":
-            return (
-                f"g.subject_type = {lit(st)} AND g.subject_relation = '' AND g.subject_id = '*' "
-                f"AND {self.me(st)} IS NOT NULL"
-            )
+            return f"{self.shared_with(st, '')} AND g.subject_id = '*' AND {self.me(st)} IS NOT NULL"
         if st == "anyone":
             return "g.subject_type = 'anyone'"
         if st == "link":
             return f"g.subject_type = 'link' AND g.subject_id = ANY ({LINKS})"
         if self.is_principal(st) and not sr:
-            return f"g.subject_type = {lit(st)} AND g.subject_relation = '' AND g.subject_id = {self.me(st, text=True)}"
+            return f"{self.shared_with(st, '')} AND g.subject_id = {self.me(st, text=True)}"
         if sr:
             inner = self.view_ref(self.T(st), sr, src.loc)
-            return (
-                f"g.subject_type = {lit(st)} AND g.subject_relation = {lit(sr)} "
-                f"AND g.subject_id {self.ids_in(inner, text=True)}"
-            )
+            return f"{self.shared_with(st, sr)} AND g.subject_id {self.ids_in(inner, text=True)}"
         return None
+
+    @staticmethod
+    def shares_of(t: Type, *conds: str) -> str:
+        """FROM the shares (g, in authz.shares) of objects of t that meet each of conds."""
+        return f"FROM authz.shares g WHERE g.object_type = {lit(t.name)} AND " + " AND ".join(conds)
+
+    @staticmethod
+    def shared_with(st: str, sr: str) -> str:
+        """The share g is to subjects st#sr (sr empty: to a st itself)."""
+        return f"g.subject_type = {lit(st)} AND g.subject_relation = {lit(sr)}"
 
     def pair_sql(
         self,
@@ -1362,7 +1363,7 @@ class Core:
         r: Relation,
         src: Source,
         subj_type: str,
-        subj_rel: str | None,
+        subj_rel: str,
         obj: str,
         subj: str,
         extra: str = "",
@@ -1396,13 +1397,11 @@ class Core:
                 f"FROM {qt(src.table)} s WHERE {sid} IS NOT NULL "
                 f"AND {oid} IS NOT NULL{where}{m}"
             )
-        live = "" if tree else f" AND {self.live()}"
-        m = {"obj": f" AND g.object_id = ({v})::text", "subj": f" AND g.subject_id = ({v})::text"}.get(side or "", "")
-        return (
-            f"SELECT {extra}g.object_id::{t.pktype} AS {obj}, g.subject_id::{s.pktype} AS {subj} "
-            f"FROM authz.shares g WHERE g.object_type = {lit(t.name)} AND g.relation = {lit(r.name)} "
-            f"AND g.subject_type = {lit(subj_type)} AND g.subject_relation = {lit(subj_rel)}{live}{m}"
-        )
+        conds = [f"g.relation = {lit(r.name)}", self.shared_with(subj_type, subj_rel)]
+        conds += [] if tree else [self.live()]
+        conds += [f"g.{'object' if side == 'obj' else 'subject'}_id = ({v})::text"] if side else []
+        pairs = f"SELECT {extra}g.object_id::{t.pktype} AS {obj}, g.subject_id::{s.pktype} AS {subj}"
+        return f"{pairs} {self.shares_of(t, *conds)}"
 
     def is_group_loop(self, t: Type, r: Relation, st: str, sr: str | None) -> bool:
         return st == t.name and sr == r.name
@@ -1524,12 +1523,11 @@ class Core:
                         f"WHERE {self.subject_in(src, 's', st, inner)}{extra}"
                     )
                 else:
-                    parts.append(
-                        f"SELECT g.object_id::{t.pktype} AS id FROM authz.shares g "
-                        f"WHERE g.object_type = {lit(t.name)} AND g.relation = {lit(r.name)} "
-                        f"AND g.subject_type = {lit(st)} AND g.subject_relation = '' "
-                        f"AND g.subject_id {self.ids_in(inner, text=True)} AND {self.live()}"
+                    holds = f"g.subject_id {self.ids_in(inner, text=True)}"
+                    shares = self.shares_of(
+                        t, f"g.relation = {lit(r.name)}", self.shared_with(st, ""), holds, self.live()
                     )
+                    parts.append(f"SELECT g.object_id::{t.pktype} AS id {shares}")
         # each type is named by a source read here: without the column sources (ext, row_arrow), the arrow follows
         # every type of the relation, which the sources left name some of
         assert parts, f"no source of {t.name}.{r.name} names {', '.join(targets)}"
@@ -1952,12 +1950,9 @@ class Core:
                         f"{self.key_is(t, 's', obj, src.obj_col)}{extra} AND {holds})"
                     )
                 else:
-                    parts.append(
-                        f"EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = {lit(t.name)} "
-                        f"AND g.object_id = {obj}::text AND g.relation = {lit(r.name)} "
-                        f"AND g.subject_type = {lit(st)} AND g.subject_relation = '' AND {self.live()} "
-                        f"AND {fn}(g.subject_id::{self.T(st).pktype}))"
-                    )
+                    of = [f"g.object_id = {obj}::text", f"g.relation = {lit(r.name)}", self.shared_with(st, "")]
+                    holds = f"{fn}(g.subject_id::{self.T(st).pktype})"
+                    parts.append(f"EXISTS (SELECT 1 {self.shares_of(t, *of, self.live(), holds)})")
         return parts
 
     def definer_links(
