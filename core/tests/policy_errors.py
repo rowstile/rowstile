@@ -625,8 +625,8 @@ COMPILE = [
         "two groups nested in each other",
         "type team = alt.projects\n  lead : user, team#helper shared by see\n  helper : user, team#lead shared by see\n"
         "  can see = lead or helper\n",
-        "team.lead depends on itself; a permission can only recurse as 'or rel.perm' through a relation to objects, "
-        "and a group only as 'member : group#member'",
+        "team.lead depends on itself; a permission can only recurse as 'or rel.perm' (optionally 'and {condition}') "
+        "through a relation to objects, and a group only as 'member : group#member'",
         11,
     ),
     (
