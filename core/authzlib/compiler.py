@@ -1073,17 +1073,25 @@ class Core:
         return [(arrow.rel, cond, st) for st in inside], rest
 
     # --- views ------------------------------------------------------------
+    def where_holds(self, t: Type, id_sql: str) -> str:
+        """The t whose id is id_sql passes the type's where. One that fails it holds nothing, and nothing passes
+        through it: every view, walk and check of one object asks this."""
+        assert t.where is not None, f"{t.name} has no where"
+        return (
+            f"EXISTS (SELECT 1 FROM {qt(t.table)} w WHERE {self.key_is(t, 'w', id_sql)} "
+            f"AND coalesce(({row_cond(t.where, 'w')}), false))"
+        )
+
+    def where_kept(self, t: Type, sql: str) -> str:
+        """sql (a query of ids of t) without the ids that fail the type's where."""
+        return f"SELECT x.id FROM (\n  {sql}) x\n  WHERE {self.where_holds(t, 'x.id')}" if t.where else sql
+
     # Every relation and permission becomes a plain view in authz_int, which the
     # planner can flatten and push lookups into, plus a security-barrier view in
     # authz_gen with the same name: the only thing app roles can read, and it
     # only returns ids the current user holds.
     def add_view(self, name: str, sql: str, header: str, t: Type, public: bool = True) -> None:
-        if t.where:
-            sql = (
-                f"SELECT x.id FROM (\n  {sql}) x\n"
-                f"  WHERE EXISTS (SELECT 1 FROM {qt(t.table)} w WHERE {self.key_is(t, 'w', 'x.id')} "
-                f"AND coalesce(({row_cond(t.where, 'w')}), false))"
-            )
+        sql = self.where_kept(t, sql)
         self.view_sql.append(
             f"{header}CREATE VIEW authz_int.{q(name)} AS\n  {sql};"
             + (
@@ -1445,14 +1453,7 @@ class Core:
             # each read. Nested through shares, even this estimates high (the random-change
             # tests: 5.8M, JIT inlining every read), so those keep the join.
             # A group that fails the type's where passes nothing on: the walk doesn't go through it.
-            valid = (
-                (
-                    f"EXISTS (SELECT 1 FROM {qt(t.table)} w WHERE {self.key_is(t, 'w', 'm.id')} "
-                    f"AND coalesce(({row_cond(t.where, 'w')}), false))"
-                )
-                if t.where
-                else ""
-            )
+            valid = self.where_holds(t, "m.id") if t.where else ""
             if loop_kinds <= {"column", "table"} and t.composite:
                 # a composite id compared as text would read every row at each step: its columns are looked up
                 step = f"SELECT unnest(ARRAY(SELECT e.obj FROM (\n  {union(looked_up)}) e)) FROM m" + (
@@ -1634,13 +1635,7 @@ class Core:
             if items
             else f"SELECT NULL::{t.pktype} AS id WHERE false"
         )
-        if t.where:
-            body = (
-                f"SELECT x.id FROM (\n  {body}) x\n"
-                f"  WHERE EXISTS (SELECT 1 FROM {qt(t.table)} w WHERE {self.key_is(t, 'w', 'x.id')} "
-                f"AND coalesce(({row_cond(t.where, 'w')}), false))"
-            )
-        return body
+        return self.where_kept(t, body)
 
     def point_check_function(self, t: Type, perm: Perm, tree: str, flatten: Flatten) -> None:
         """t.perm for one object: its ancestors (and itself) tested against the starting points, one index
@@ -1650,14 +1645,7 @@ class Core:
         name = f"{t.name}__{perm.name}__has"
         self.point_checks[f"{t.name}__{perm.name}"] = name
         # like every view (add_view): an object failing its type's where holds nothing
-        where = (
-            (
-                f"\n    AND EXISTS (SELECT 1 FROM {qt(t.table)} w WHERE {self.key_is(t, 'w', 'p_id')} "
-                f"AND coalesce(({row_cond(t.where, 'w')}), false))"
-            )
-            if t.where
-            else ""
-        )
+        where = f"\n    AND {self.where_holds(t, 'p_id')}" if t.where else ""
         self.view_sql.append(
             f"-- {t.name}.{perm.name} for one object (checks of single rows and authz.can)\n"
             f"CREATE FUNCTION authz_gen.{q(name)}(p_id {t.pktype}) RETURNS boolean\n"
