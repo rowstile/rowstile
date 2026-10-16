@@ -82,19 +82,16 @@ def report(c: Compiler, explanations: Iterable[str | None]) -> Report:
     return {"total": len(all_), "covered": len(all_) - len(missing), "missing": missing}
 
 
-def describe(r: Report, limit: int | None = None) -> str:
+def describe(r: Report) -> str:
     if not r["total"]:
         return "coverage: no permissions"
     head = f"coverage: {r['covered']} of {r['total']} branches made true by a test"
     if not r["missing"]:
         return head + " (all of them)"
-    shown = r["missing"] if limit is None else r["missing"][:limit]
-    more = len(r["missing"]) - len(shown)
     return (
         head
         + '; no "can" check reaches:\n'
-        + "\n".join(f"  {line}: {name}: {item}" for line, name, item in shown)
-        + (f"\n  ... and {more} more" if more > 0 else "")
+        + "\n".join(f"  {line}: {name}: {item}" for line, name, item in r["missing"])
     )
 
 

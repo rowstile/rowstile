@@ -252,6 +252,9 @@ if [ -n "${PGSUPERUSER:-}" ]; then
   ROLE=authz_sess_bypass expect "a login in the app role with BYPASSRLS: an error, and the only one" \
     "error: authz_sess_bypass has BYPASSRLS: row-level security does not apply to it" \
     -c "SELECT string_agg(severity || ': ' || problem, '; ') FROM authz.connection_check()"
+  # BYPASSRLS without being a superuser is enough to be an administrator after SET ROLE
+  ROLE=authz_sess_bypass expect "... and after SET ROLE app_user, that it logs in as an administrator" "1" -c "SET ROLE app_user" \
+    -c "SELECT count(*) FROM authz.connection_check() WHERE problem LIKE 'this connection logs in as authz_sess_bypass, %'"
   psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS authz_sess_bypass" >/dev/null 2>&1
 fi
 expect "a login in the app role: no errors" "0" -c "SELECT count(*) FROM authz.connection_check() WHERE severity = 'error'"
@@ -259,6 +262,34 @@ expect "... nor after SET ROLE app_user" "0" -c "SET ROLE app_user" -c "SELECT c
 PSQL -c "ALTER TABLE app.files DISABLE ROW LEVEL SECURITY"
 expect "row-level security off on a table with rules: an error" "row-level security is off on app.files: the policy's rules don't apply to it"   -c "SELECT problem FROM authz.connection_check() WHERE severity = 'error'"
 PSQL -c "ALTER TABLE app.files ENABLE ROW LEVEL SECURITY"
+
+echo "-- what a function sets lasts its transaction"
+# each sets the settings for its own transaction only: the next one has what the session had before (in the
+# owner's session, where a setting the session made itself is believed)
+after() {   # $1 the settings the session makes, $2 what runs in a transaction: the four settings after it
+  PSQL -c "$1" -c "BEGIN" -c "$2" -c "COMMIT" -c "SELECT format('%s|%s|%s|%s|%s', current_setting('authz.user_id', true),
+    current_setting('authz.principal_type', true), current_setting('authz.scopes', true),
+    current_setting('authz.acting_user', true), current_setting('authz_debug.logging', true))" 2>&1 | tail -n 1
+}
+SESSION="SET authz.user_id = '9'; SET authz.principal_type = ''; SET authz.scopes = 'read'; SET authz.acting_user = '8'"
+KEY=$(PSQL -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('sessions', 'files')")
+while IFS='|' read -r label what; do
+  got=$(after "$SESSION" "$what")
+  [ "$got" = "9||read|8|" ] && ok "$label: the next transaction has the session's own settings" || bad "$label: after" "$got"
+done <<EOF2
+act_as|SELECT authz.act_as('user', '3')
+login_key|SELECT authz.login_key('$KEY')
+check_invariants, signed in as a bot|SET LOCAL authz.user_id = '1'; SET LOCAL authz.principal_type = 'bot'; SELECT count(*) FROM authz.check_invariants()
+EOF2
+got=$(after "SET authz_debug.log_decisions = on" "SELECT authz.can('file', '11', 'view')")
+[ "${got##*|}" != on ] && ok "the decision log: the next transaction's decisions are logged too" || bad "decision log after" "$got"
+# a session that never set any: nobody acted, and a refused write says so
+got=$(PSQL -c "SELECT authz_int.actor() IS NULL" -c "SET authz.principal_type = 'bot'" -c "SELECT authz_int.actor() IS NULL")
+[ "$got" = "$(printf 't\nt')" ] && ok "nothing set in the session (or a principal type alone): nobody acted, and no error" ||
+  bad "actor, nothing set" "$got"
+got=$(PSQL -c "SET ROLE app_user" -c "INSERT INTO app.files (folder_id, name) VALUES (1, 'x')" 2>&1 | head -n 1)
+[ "$got" = "ERROR:  permission denied: someone not signed in may not insert this row into app.files" ] &&
+  ok "... and an insert refused says someone not signed in may not" || bad "a refusal, nothing set" "$got"
 
 echo "-- who may sign in whom"
 expect "the key is out of the app role's reach" "42501: permission denied for table settings" -c "SELECT value FROM authz.settings WHERE key = 'session_key'"

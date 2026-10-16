@@ -45,7 +45,7 @@ from authzlib import (  # noqa: E402
 from authzlib.compiler import strongly_connected  # noqa: E402
 from authzlib.conditions import Scalar  # noqa: E402
 from authzlib.connection import Row, Value  # noqa: E402
-from authzlib.review import Review  # noqa: E402
+from authzlib.review import Group, Review  # noqa: E402
 
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 import around  # noqa: E402
@@ -300,6 +300,24 @@ class Compiling(unittest.TestCase):
         graph = {a: {b, c}, b: {a}, c: {c}, d: {a}}
         self.assertEqual(
             [sorted(x) for x in strongly_connected(graph)], [[c], [a, b], [d]], "each one after those it reaches"
+        )
+
+    def test_the_conditions_on_rows(self) -> None:
+        """What an apply that fails asks Postgres about one at a time (AZ613), and the captured names' warning: a
+        type's where, a link table's, a permission's and a rule's, each on its table, the keywords left out."""
+        text = errors_prelude().replace("type user = app.users", "type user = app.users where {active}") + (
+            "type team = app.teams\n  member : user = app.team_members(team_id -> user_id) where {not banned}\n"
+            "  can see = member and {open} and signed_in\nrules app.teams\n  select : see or {public}\n"
+        )
+        got = [(table, cond) for table, cond, _ in database.row_conditions(Compiler(parse_policy(text)))]
+        self.assertEqual(
+            sorted(got),
+            [
+                ("app.team_members", "not banned"),
+                ("app.teams", "open"),
+                ("app.teams", "public"),
+                ("app.users", "active"),
+            ],
         )
 
 
@@ -1046,6 +1064,11 @@ class CompositeKeys(unittest.TestCase):
         exec(c.client("py", "x"), ns)
         self.assertEqual(ns["_id"]((1, 'x,y "q"')), '("1","x,y \\"q\\"")')
         self.assertEqual(ns["_id"](7), "7")
+
+    def test_client_names_each_types_permissions(self) -> None:
+        # a type checker refuses a permission the type hasn't: each type's are a Literal
+        c = Compiler(parse_policy(read(POLICIES["docs"])))
+        self.assertIn('FilePermission = Literal["share", "edit", "view"]', c.client("py", "x").split("\n"))
 
 
 class Principals(unittest.TestCase):
@@ -2088,6 +2111,15 @@ class Statements(unittest.TestCase):
             made("CREATE FUNCTION authz.f(p text DEFAULT ')', q int) RETURNS int AS $$ $$"),
             ("function", "authz.f(p text, q int)"),
         )
+        # nor one in a quoted name; a comma inside a type's parentheses or an array's brackets parts no argument
+        self.assertEqual(
+            made(
+                'CREATE FUNCTION authz.f("a)" int, b numeric(10, 2) DEFAULT round(1, 2), c text[] DEFAULT '
+                "ARRAY['x', 'y']) RETURNS int AS $$ $$"
+            ),
+            ("function", 'authz.f("a)" int, b numeric(10, 2), c text[])'),
+        )
+        self.assertEqual(made("CREATE SCHEMA IF NOT EXISTS authz"), ("schema", "authz"))
         self.assertIsNone(made("INSERT INTO authz_int.x VALUES (1)"))
 
 
@@ -2678,6 +2710,11 @@ rules app.folders
         self.assertIn(
             "a type's where loosened", {f["why"] for f in self.small(" where {active}", "")["risk"]}
         )  # the user type's
+        # the type whose where changed is named, not the other one that has a where, with a permission it widens
+        for old, shown in ((" where {not archived}", "`type folder`: its where changed, and more rows count: `folder.edit`"),
+                           (" where {active}", "`type user`: its where changed, and more rows count: `org.manage`")):  # fmt: skip
+            flags = [f["flag"] for f in self.small(old, "")["risk"] if f["why"] == "a type's where loosened"]
+            self.assertEqual([f.split(" allows")[0] for f in flags], [shown], old)
 
     def test_each_change_the_review_warns_of(self) -> None:
         def risk(base: str, head: str) -> set[str]:
@@ -2711,6 +2748,14 @@ rules app.folders
         for why, (b, h) in cases.items():
             self.assertNotEqual(b, h, why)
             self.assertIn(why, risk(b, h), why)
+        # which it is, a mask or a column rule, is said
+        ruled = replaced(base, "  update : edit\n", "  update : edit\n  update owner_id : edit\n")
+        for b, h, said in (
+            (base, base.replace(mask, ""), "the mask `app.folders mask status` is removed"),
+            (ruled, base, "the column rule `app.folders update owner_id` is removed"),
+        ):
+            flags = [f["flag"] for f in self.review.review((b, {}, {}), (h, {}, {}), worlds=40)["risk"]]
+            self.assertIn(said, flags)
 
     def test_a_tightening_is_not_flagged(self) -> None:
         for old, new in (
@@ -3167,6 +3212,37 @@ rules app.folders
         # each in a savepoint undone after it: nothing an example did stays, a bot's sign-in say
         self.assertEqual(sum("ROLLBACK TO SAVEPOINT authz_review_explain" in sql for sql, _ in db.said), 4)
 
+    def test_the_summary_at_its_edges(self) -> None:
+        # three groups are all said, with no "and 0 more"; a permission lost is said before the rows lost with it;
+        # a test that failed without a detail; and of two statements locking a table alike, the first says why
+        r = self.run_review(self.text)
+
+        def group(change: str, what: str, objects: int) -> Group:
+            return {"change": change, "type": "file", "what": what, "users": 1, "who": "1 user", "objects": objects,
+                    "examples": []}  # fmt: skip
+
+        r["access"] = {
+            "groups": [
+                group("gains", "permission view", 1),
+                group("gains", "permission edit", 2),
+                group("gains", "permission share", 3),
+                group("loses", "rows to select", 4),
+                group("loses", "permission view", 5),
+            ],
+            "users_in_data": 1,
+        }
+        r["tests"]["run"] = {"checks": 1, "failed": [{"test": "a test", "line": None, "detail": None}]}
+        self.assertEqual(
+            self.review.summary(r)["Access"],
+            "1 user gains `view` on 1 file; 1 user gains `edit` on 2 files; 1 user gains `share` on 3 files. "
+            "1 user loses `view` on 5 files.",
+        )
+        self.assertIn("- fails: a test : ``", self.review.tests_details(r))
+        sql = "ALTER TABLE app.docs ENABLE ROW LEVEL SECURITY;\nDROP TRIGGER t ON app.docs;\n"
+        self.assertEqual(
+            self.review.table_locks(sql), {"app.docs": ("ACCESS EXCLUSIVE", "row-level security turned on")}
+        )
+
 
 class Graph(unittest.TestCase):
     """rowstile graph: the Mermaid diagram's nodes."""
@@ -3261,6 +3337,12 @@ class Graph(unittest.TestCase):
                 "",
             ],
         )
+
+    def test_a_condition_on_what_is_inherited_is_drawn(self) -> None:
+        # the docs app's folders pass access down only while the folder above isn't sealed: the arrow says so
+        c = Compiler(parse_policy(read(POLICIES["docs"]), None, files={}))
+        c.compile("the policy")
+        self.assertIn('  folder__view ==>|"parent · if {…}"| folder__view', c.graph().split("\n"))
 
 
 class AgentsNote(unittest.TestCase):
@@ -5133,6 +5215,24 @@ class Fmt(unittest.TestCase):
         self.assertEqual(format(src), want)
         self.assertEqual(format(want), want)
 
+    def test_a_comment_inside_a_relation_or_at_the_end(self) -> None:
+        # a comment line inside a relation's condition: what follows it lines up as it would without it, under the
+        # subjects (no source) or the source; and a policy may end on a comment
+        from authzlib.fmt import format
+
+        src = (
+            "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+            "  editor : user shared if {a = 1\n  -- why\n and b = 2}\n"
+            "  viewer : user = app.dv(doc_id -> user_id) where {c = 1\n  -- why\n and d = 2}\n-- the end\n"
+        )
+        want = (
+            "app role app_user\n\ntype user = app.users\n\ntype doc = app.docs\n  owner  : user = owner_id\n"
+            "  editor : user shared if {a = 1\n  -- why\n       and b = 2}\n"
+            "  viewer : user = app.dv(doc_id -> user_id) where {c = 1\n  -- why\n              and d = 2}\n"
+            "-- the end\n"
+        )
+        self.assertEqual(format(src), want)
+
     def test_every_policy_formats_the_same_twice_and_says_the_same(self) -> None:
         from authzlib.fmt import format
         from authzlib.migrate import meaning_lines
@@ -5259,6 +5359,28 @@ class Confidence(unittest.TestCase):
         self.assertEqual((r["who"], r["type"]), ("1", "folder"))
         self.assertEqual(r["world"], ["user: 1", "folder: 1", "folder.owner: folder 1 -> user 1"])
         self.assertIn("no   user 1 holds it on folder 1", prove.describe([r]))
+
+    def test_a_counterexample_shows_the_types_it_uses(self) -> None:
+        # the rows of the types it names: the invariant's, the holder's (none for someone not signed in), and those a
+        # link goes to, though the type is named nowhere else
+        from authzlib import prove
+
+        def world(body: str, invariant: str) -> tuple[str | None, list[str] | None]:
+            [r] = prove.prove(parse_policy(self.HEAD + body + f"invariants\n  never doc: {invariant}\n", "p.authz"))
+            return r.get("who"), r.get("world")
+
+        self.assertEqual(
+            world("type doc = app.docs\n  owner : user = owner_id\n  can view = {public} and not signed_in\n", "view"),
+            ("nobody", ["doc: 1", "doc 1: public = true"]),
+        )
+        self.assertEqual(
+            world(
+                "type org = app.orgs\n  can see = signed_in\ntype doc = app.docs\n  owner : user = owner_id\n"
+                "  org : org = org_id\n  can view = org.see\n",
+                "view and not owner",
+            ),
+            ("1", ["user: 1", "org: 1", "doc: 1", "doc.org: doc 1 -> org 1"]),
+        )
 
     def test_prove_says_when_none_is_found(self) -> None:
         from authzlib import evaluate, prove
@@ -5595,6 +5717,21 @@ class Confidence(unittest.TestCase):
             + "  can a = parent.x\n  can b = parent.y\ninvariants\n  never folder: a and b\n  never folder: a and not b\n"
         )
         self.assertEqual(self.proofs(text), [True, False])
+
+    def test_a_polymorphic_row_names_an_object_of_its_type(self) -> None:
+        # in every world drawn: a row's (type, id) gives one link, to an object of that type that is there
+        from authzlib.evaluate import World
+
+        pol = parse_policy(
+            self.HEAD + "type project = app.projects\n  owner : user = owner_id\n  can see = owner\n"
+            "type folder = app.folders\n  parent : folder, project = (parent_type, parent_id)\n  can see = parent.see\n"
+        )
+        for seed in range(40):
+            data = World(str(seed), 4).data(pol)
+            links = {st: data.pairs[("folder", "parent", 0, st, "")] for st in ("folder", "project")}
+            for st, pairs in links.items():
+                self.assertTrue(all(s in data.ids[st] for _, s in pairs), (seed, st, pairs))
+            self.assertFalse({o for o, _ in links["folder"]} & {o for o, _ in links["project"]}, seed)
 
     def test_a_rule_gives_no_row_the_type_leaves_out(self) -> None:
         head = "type folder = app.folders where {not archived}\n  owner : user = owner_id\n  can view = owner\nrules app.folders\n"
@@ -6111,6 +6248,22 @@ class Indexes(unittest.TestCase):
 
 class Plans(unittest.TestCase):
     """rowstile plans: what it reads in EXPLAIN's JSON (tests/confidence_test.py reads a database's own plans)."""
+
+    def test_what_plans_says_of_each_table(self) -> None:
+        from authzlib import perf
+
+        p: perf.Plans = {
+            "as": "user:7",
+            "tables": [
+                {"table": "app.docs", "ms": 3.5, "rows": 2, "warnings": []},
+                {"table": "app.files", "ms": 9.0, "rows": 1, "warnings": ["a", "b"]},
+                {"table": "app.notes", "ms": None, "rows": None, "warnings": ["failed: x"]},
+            ],
+        }
+        self.assertEqual(
+            perf.describe_plans(p),
+            "as user:7:\n  app.docs: 3.5 ms\n  app.files: 9.0 ms  <- a; b\n  app.notes  <- failed: x",
+        )
 
     def test_a_subplan_run_once_per_row_is_named(self) -> None:
         # the plan Postgres 16 gives a read of app.files as an org admin with 15,000 files and work_mem at 64kB, cut
@@ -9221,6 +9374,16 @@ class Why(unittest.TestCase):
         nothing = grant.describe(grant.Answer(False, [], "view = owner  (line 3)"), "user:2", "doc", "1", "view")
         self.assertTrue(nothing.endswith("no single change to shares or links grants it"))
 
+    def test_what_a_change_takes_in_words(self) -> None:
+        from authzlib import grant
+
+        self.assertEqual(
+            grant.taken([("doc", "view", 0, 1), ("doc", "edit", 1, 2), ("folder", "view", 2, 3)], "view"),
+            ["view on it from 1 person", "edit on 1 other doc from 2 people", "view on 2 other folders from 3 people"],
+        )
+        self.assertEqual(grant.more_of([("doc", "view", 1), ("doc", "edit", 2)], "view"),
+                         ["view on 1 more doc", "edit on 2 more docs"])  # fmt: skip
+
     def test_what_isnt_a_permission_is_refused_before_the_database_is_asked(self) -> None:
         """A type the policy doesn't have, a permission it doesn't, a relation, or a permission the compiler made (a
         deny's split): refused in authz.can's words, with its code, before the database is asked anything (here
@@ -11839,6 +12002,10 @@ class Version(unittest.TestCase):
         names = os.listdir(os.path.dirname(os.path.abspath(authzlib.__file__)))
         with mock.patch("os.listdir", return_value=[*names, "__pycache__", "notes.txt"]):
             self.assertEqual(authzlib._build(), authzlib.BUILD)
+        # and each of them counts: one source fewer is another build
+        if authzlib.__version__.endswith("-dev"):
+            with mock.patch("os.listdir", return_value=[n for n in names if n != "fmt.py"]):
+                self.assertNotEqual(authzlib._build(), authzlib.BUILD)
 
     def test_one_version(self) -> None:
         # the packages and the review for CI carry the compiler's version (packaging/version.py sets them all)

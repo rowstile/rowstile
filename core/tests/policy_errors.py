@@ -147,9 +147,9 @@ COMPILE = [
         11,
     ),
     (
-        "following a relation to users, to something they don't have",
+        "following a relation to users, to something they don't have (they have nothing)",
         "  can view = owner.view\n",
-        "user has no relation or permission 'view'",
+        "user has no relation or permission 'view' (it has none)",
         10,
     ),
     (
