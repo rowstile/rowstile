@@ -160,13 +160,13 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
                 for src in r.sources:
                     lead = (src.type_col,) if (src.kind == "column" or src.kind == "table") and src.type_col else ()
                     if src.kind == "table":  # (never a custom roles' relation: its source is the roles)
-                        table = self.source_table(src)
+                        table = src.table
                         link_tables.add(table)
                         link_readers.setdefault(table, []).append(f"{t.name}.{r.name}")
                         index_cols.append(
                             (
                                 table,
-                                ", ".join(cols(self.source_obj_columns(src))),
+                                ", ".join(cols(src.obj_col)),
                                 f"{t.name}.{r.name}: find the members of an object",
                                 "",
                             )

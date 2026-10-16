@@ -29,7 +29,6 @@ from .parse import (
     Source,
     Span,
     Subject,
-    TableSource,
     Type,
     cols,
     conditions_of,
@@ -446,7 +445,7 @@ class Core:
                 assert o.kind == "table", f"{t.name}.{t.roles_from}: custom roles come from a link"
                 where = f" AND coalesce(({row_cond(o.where, 'w')}), false)" if o.where else ""
                 owners.append(
-                    f"SELECT ({self.subject_id(o, 'w', ot)})::text FROM {qt(self.source_table(o))} w "
+                    f"SELECT ({self.subject_id(o, 'w', ot)})::text FROM {qt(o.table)} w "
                     f"WHERE {self.key_is(t, 'w', obj, o.obj_col)}{where}"
                 )
         return " UNION ALL ".join(owners)
@@ -830,16 +829,6 @@ class Core:
                 f"type has `can manage_roles` (on the org, say: can manage_roles = admin)",
                 "AZ307",
             )
-
-    @staticmethod
-    def source_table(src: TableSource) -> str:
-        """A table source's table."""
-        return src.table
-
-    @staticmethod
-    def source_obj_columns(src: TableSource) -> Cols:
-        """A table source's column(s) naming the object."""
-        return src.obj_col
 
     @staticmethod
     def source_columns(src: Link) -> Cols:

@@ -87,7 +87,7 @@ class RefusalMixin(Core):
                         (
                             st,
                             f"SELECT ({self.subject_id(src, 's', st)})::text AS id "
-                            f"FROM (SELECT (p_row).*) AS {alias} JOIN {qt(self.source_table(src))} s "
+                            f"FROM (SELECT (p_row).*) AS {alias} JOIN {qt(src.table)} s "
                             f"ON {self.key_is(t, 's', self.key(t, alias), src.obj_col)}{where}",
                         )
                     )

@@ -102,7 +102,7 @@ def needed_indexes(c: Compiler) -> list[Lookup]:
                         c.pair_alone(src),
                     )
                 elif src.kind == "table":
-                    table = c.source_table(src)
+                    table = src.table
                     add(
                         table,
                         lead + cols(c.source_columns(src)),
@@ -112,7 +112,7 @@ def needed_indexes(c: Compiler) -> list[Lookup]:
                     )
                     add(
                         table,
-                        cols(c.source_obj_columns(src)),
+                        cols(src.obj_col),
                         f"finding the {r.name}s of {an(t.name)} (checks, explanations)",
                         r.loc,
                     )
