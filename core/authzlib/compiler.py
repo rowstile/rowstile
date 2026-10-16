@@ -27,13 +27,17 @@ from .parse import (
     RolesSource,
     Rule,
     Source,
+    Span,
     Subject,
     TableSource,
     Type,
     cols,
     conditions_of,
     fail,
+    head,
     names_roles,
+    subject_spans,
+    tail,
 )
 from .sqlutil import (
     CAVEAT_ARG,
@@ -342,7 +346,7 @@ class Core:
                 rel = Relation(
                     f"roles:{p.name}",
                     loc,
-                    [RolesSource(subjects, loc, p.name, owner=t.roles_from)],
+                    [RolesSource(subjects, loc, p.name, owner=t.roles_from, spans=t.roles_spans)],
                     synthetic=True,
                 )
                 t.relations[rel.name] = rel
@@ -524,7 +528,7 @@ class Core:
             for x in negs:
                 assert isinstance(x, Not) and isinstance(x.item, Ref), "split_denies refuses any other deny (AZ306)"
                 name = x.item.name
-                self.lookup(t, name, base.loc)
+                self.lookup(t, name, base.loc, x.item.span)
                 if name not in t.perms:
                     fail(
                         base.loc,
@@ -559,11 +563,11 @@ class Core:
                 self.pk_checks.append((t.table, c, ty, t.loc))
             for r in t.relations.values():
                 for src in r.sources:
-                    for st, sr in src.subjects:
+                    for (st, sr), at in zip(src.subjects, subject_spans(src), strict=True):
                         if st in ("anyone", "link"):
                             continue
                         if st not in self.types:
-                            fail(src.loc, f"{t.name}.{r.name}: unknown type '{st}'", "AZ201", word=st)
+                            fail(src.loc, f"{t.name}.{r.name}: unknown type '{st}'", "AZ201", span=head(at, len(st)))
                         if sr == "*" and not self.T(st).principal:
                             fail(
                                 src.loc,
@@ -576,7 +580,7 @@ class Core:
                                 src.loc,
                                 f"{t.name}.{r.name}: {st} has no relation or permission '{sr}'",
                                 "AZ203",
-                                word=sr,
+                                span=tail(at, len(sr)),
                             )
                     if src.kind == "column":
                         column = self.source_columns(src)
@@ -649,24 +653,24 @@ class Core:
                     "AZ109",
                 )
         for sc in self.pol.scopes.values():
-            for kind, qual, word in sc.items:
+            for (kind, qual, word), at in zip(sc.items, sc.spans or [None] * len(sc.items), strict=True):
                 if kind == "cmd" and qual and not any(t.table == qual for t in self.types.values()):
                     fail(sc.loc, f"scope {sc.name}: no type maps to {qual}", "AZ404")
                 if kind == "perm" and qual:
                     if qual not in self.types:
-                        fail(sc.loc, f"scope {sc.name}: unknown type '{qual}'", "AZ201", word=qual)
+                        fail(sc.loc, f"scope {sc.name}: unknown type '{qual}'", "AZ201", span=head(at, len(qual)))
                     if word not in self.public_perms(self.T(qual)):
                         fail(
                             sc.loc,
                             f"scope {sc.name}: {qual} has no permission '{word}'",
                             "AZ404",
-                            word=f"{qual}.{word}",
+                            span=at,
                         )
                 if kind == "perm" and not qual and not any(word in self.public_perms(t) for t in self.types.values()):
                     fail(sc.loc, f"scope {sc.name}: no type has a permission '{word}'", "AZ404")
         for inv in self.pol.invariants:
             if inv.type not in self.types:
-                fail(inv.loc, f"unknown type '{inv.type}'", "AZ201", word=inv.type)
+                fail(inv.loc, f"unknown type '{inv.type}'", "AZ201", span=inv.type_span)
         self.check_unused_relations()
         self.check_runtime_permissions()
         self.check_this()
@@ -822,10 +826,13 @@ class Core:
         def walk(t: Type, node: Expr, loc: Loc) -> None:
             match node:
                 case Ref(name):
-                    self.lookup(t, name, loc)
+                    self.lookup(t, name, loc, node.span)
                     used.add((t.name, name))
                 case Arrow(rel, perm) | ArrowOn(rel, perm, _):
-                    r, _ = self.targets(t, rel, loc)  # what a dot follows: a relation to objects
+                    # what a dot follows: a relation to objects, each of which has what follows it
+                    r, objects = self.targets(t, rel, loc, head(node.span, len(rel)))
+                    for o in objects:
+                        self.lookup(o, perm, loc, tail(node.span, len(perm)))
                     used.add((t.name, rel))
                     for st, _sr in r.subjects():
                         used.add((st, perm))
@@ -862,23 +869,29 @@ class Core:
                     "AZ208",
                 )
 
-    def lookup(self, t: Type, name: str, loc: Loc) -> None:
+    def lookup(self, t: Type, name: str, loc: Loc, span: Span | None = None) -> None:
         if name in t.perms or name in t.relations:
             return
         known = sorted([n for n in t.relations if not t.relations[n].synthetic] + self.public_perms(t))
         has = f"it has: {', '.join(known)}" if known else "it has none"
-        fail(loc, f"{t.name} has no relation or permission '{name}' ({has})", "AZ203", word=name)
+        fail(loc, f"{t.name} has no relation or permission '{name}' ({has})", "AZ203", span=span)
 
-    def targets(self, t: Type, relname: str, loc: Loc) -> tuple[Relation, list[Type]]:
+    def targets(self, t: Type, relname: str, loc: Loc, span: Span | None = None) -> tuple[Relation, list[Type]]:
         """A relation followed with a dot must point at objects of one or several types; users are rows of
-        a type too (`person.has_blocked`), groups (team#member), anyone and links are not."""
+        a type too (`person.has_blocked`), groups (team#member), anyone and links are not. span: where the
+        relation is written."""
         if relname not in t.relations:
-            self.lookup(t, relname, loc)
-            fail(loc, f"'{relname}' is a permission; only relations can be followed with a dot", "AZ301")
+            self.lookup(t, relname, loc, span)
+            fail(loc, f"'{relname}' is a permission; only relations can be followed with a dot", "AZ301", span=span)
         r = t.relations[relname]
         subjects = r.subjects()
         if any(sr or st in ("anyone", "link") for st, sr in subjects):
-            fail(loc, f"{t.name}.{relname} links to groups, anyone or links, so there is nothing to follow", "AZ301")
+            fail(
+                loc,
+                f"{t.name}.{relname} links to groups, anyone or links, so there is nothing to follow",
+                "AZ301",
+                span=span,
+            )
         return r, [self.T(st) for st, _ in subjects]
 
     # --- dependency analysis: which permissions recurse, and through what ----
@@ -1054,7 +1067,7 @@ class Core:
         outside = [st for st, _ in r.subjects() if st not in inside]
         rest: Expr | None = None
         if outside:
-            rest = ArrowOn(arrow.rel, arrow.perm, tuple(outside))
+            rest = ArrowOn(arrow.rel, arrow.perm, tuple(outside), arrow.span)
             if conds:
                 rest = And([rest, *(Cond(c) for c in conds)])
         return [(arrow.rel, cond, st) for st in inside], rest

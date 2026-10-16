@@ -24,7 +24,8 @@ Each release upgrades from the one before it. How releases are numbered and made
 - The language server underlines the words a mistake is about (`nosuch` in `can view = owner or nosuch`, the
   `(` that isn't closed, the subject a list can't read), where it underlined the whole line; on a line that goes on
   to the next, the words are where they are. `PolicyError.span` says where they are, for code that compiles a
-  policy.
+  policy. A line that isn't the form its first word starts (`type folder app.folders`, `can view owner`) has the
+  word underlined where it stops being one.
 - The parser reads on after a mistake, and the language server shows every mistake it finds in the policy, where
   it showed the first. The lines of a block whose first line is wrong are left out, so each mistake is said once.
   `PolicyError.errors` holds them all; the message, and what `rowstile check` says, are still the first.
@@ -94,6 +95,15 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- The language server underlined the wrong word when a line names it twice: in `can view = owner or
+  parent.owner`, where a folder has no `owner`, it underlined the file's own `owner` (#281). A name the compiler
+  looks up keeps where it was written: in a permission, a relation's subjects, a scope's items, an invariant's
+  type and the custom roles' line. A typo after a dot (`parent.ownr`) is said as the name it is, where it was said
+  as the relation it then leaves unused.
+- A condition ends at the brace that closes it, not at the line's last `}`: `shared if {a} and {b}` was read as
+  the one condition `a} and {b`, which Postgres refused only when applying, and two lines run together (`given a
+  = {...} given b = {...}`) as one statement. The same for a type's and a link table's `where`, a caveat, and a
+  test's `given` and `as`. Such a line is refused now (AZ101, AZ103, AZ106).
 - A condition reads quotes as SQL does: a `}` or `--` inside `"a name"`, `$$text$$` or `E'it\'s'` is part of
   the condition, where it closed the condition or began a comment, and a quote may go on to the next line. Outside
   conditions, a quote that doesn't close on its line is an apostrophe: `test Bob's test -- note` names the test

@@ -711,6 +711,21 @@ class LanguageForms(unittest.TestCase):
             ("  can view = owner and {a = $f$x$f$}\n", (5, 28, 5, 31)),
             ("  can view = owner and {a = 1\n      and b} and {\n", (6, 17, 6, 18)),
             ("invariants\n  never teem: owner\n", (6, 8, 6, 12)),
+            # a name written twice on its line: the one the mistake is about (folder has no owner; doc has)
+            (
+                "  parent : folder = folder_id\n  can view = owner or parent.owner\n"
+                "type folder = app.folders\n  viewer : user = viewer_id\n  can see = viewer\n",
+                (6, 29, 6, 34),
+            ),
+            ("  can view = owner.view\n", (5, 19, 5, 23)),  # (user has no view)
+            ("  can view = owner\nscope s = doc.view, teem.view\n", (6, 20, 6, 24)),
+            ("  roles : user, teem#member\n  can view = owner or roles\n", (5, 16, 5, 20)),
+            # a line that isn't its form: the piece where reading stopped
+            ("  can view owner\n", (5, 11, 5, 16)),
+            ("type folder app.folders\n", (5, 12, 5, 15)),
+            ("  r : user = app.links(doc_id => user_id)\n", (5, 30, 5, 31)),
+            ("  can view = owner\ntest t\n  as user 1 alowed {SELECT 1}\n", (7, 12, 7, 18)),
+            ("  can view = owner\ninvariants\n  never doc view\n", (7, 12, 7, 16)),
         ):
             with self.subTest(tail), self.assertRaises(PolicyError) as e:
                 Compiler(parse_policy(base + tail)).compile("x")
@@ -720,6 +735,28 @@ class LanguageForms(unittest.TestCase):
             Compiler(parse_policy("app role app_user\n")).compile("x")
         self.assertIsNone(e.exception.span)
         self.assertIsNone(authzlib.parse.Loc(None, 3).span(0, 2))
+
+    def test_a_condition_ends_at_its_closing_brace(self) -> None:
+        # not at the line's last }: `if {a} and {b}` was read as the one condition `a} and {b`, which only Postgres
+        # refused, when applying; and two lines run together as one
+        base = "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+        for tail, wrong in (
+            ("  r : user shared if {true} and {false}\n", "and {false}"),
+            ("  r : user = app.links(doc_id -> user_id) where {a} and {b}\n", "and {b}"),
+            ("  can view = owner\ntype note = app.notes where {a} and {b}\n", "and {b}"),
+            ("  can view = owner\ncaveat c = {a} caveat d = {b}\n", "caveat d"),
+            ("  can view = owner\ntest t\n  given a = {SELECT 1} given b = {SELECT 2}\n", "given b"),
+            ("  can view = owner\ntest t\n  as user 1 allowed {SELECT 1}} as user 2 allowed {SELECT 2}\n", "}"),
+        ):
+            text = base + tail
+            with self.subTest(tail), self.assertRaises(PolicyError) as e:
+                parse_policy(text)
+            assert e.exception.span is not None, str(e.exception)
+            line, col = e.exception.span[:2]
+            self.assertTrue(text.split("\n")[line - 1][col:].startswith(wrong), (str(e.exception), e.exception.span))
+        pol = parse_policy(base + "  r : user shared if {a = '}'}\n  can view = owner or r\n")  # (a } in quotes)
+        source = pol.types["doc"].relations["r"].sources[0]
+        self.assertEqual(source.shared_if if source.kind == "shared" else None, "a = '}'")
 
     def test_the_parser_reads_on_after_a_mistake(self) -> None:
         # each mistake once: the lines of a block whose first line is wrong are not read, nor said again
@@ -8122,9 +8159,15 @@ class ErrorCodes(unittest.TestCase):
                 if not isinstance(node, ast.Call):
                     continue
                 kind = node.func.id if isinstance(node.func, ast.Name) else None
-                if kind not in ("fail", "PolicyError") or (kind == "PolicyError" and name == "parse.py"):
-                    continue  # fail() itself raises the PolicyError
-                code = node.args[-1] if kind == "fail" or len(node.args) == 2 else None
+                if kind not in ("fail", "PolicyError", "reading") or (kind == "PolicyError" and name == "parse.py"):
+                    continue  # fail() itself raises the PolicyError, and reading() (a line form read, or its mistake)
+                code = (
+                    node.args[2]
+                    if kind == "reading"
+                    else node.args[-1]
+                    if kind == "fail" or len(node.args) == 2
+                    else None
+                )
                 value = code.value if isinstance(code, ast.Constant) else None
                 self.assertTrue(
                     isinstance(value, str) and value in CODES,
