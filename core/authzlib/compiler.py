@@ -223,7 +223,9 @@ class Core:
             )
         self.role: str = pol.role
         self.types, self.rules, self.tests = pol.types, pol.rules, pol.tests
-        self.view_state: dict[str, str] = {}  # view name -> 'busy' | 'done'
+        # each view, and each function made when first asked for, by name -> what it is made from (first_time)
+        self.made_from: dict[str, str] = {}
+        self.making: set[str] = set()  # views begun and not yet added: one asked for again depends on itself
         self.view_sql: list[str] = []  # CREATE VIEW / FUNCTION statements, dependency order
         self.trees: dict[TreeKey, str] = {}  # tree key -> tree name
         # tree name -> (hash of its definition, tables it reads): kept across applies
@@ -236,7 +238,7 @@ class Core:
         self.nested: dict[str, str] = {}  # relation views that expand nested groups -> their type's key type
         self.point_checks: dict[str, str] = {}  # recursive permission view -> its function checking one object
         self.direct_checks: dict[str, str] = {}  # recursive permission view -> view of what its columns give
-        self.direct_sql: dict[str, str] = {}  # such views -> their SQL (permissions with the same share one)
+        self.direct_by_sql: dict[str, str] = {}  # such views' SQL -> their name (permissions with the same share one)
         self.locked_types: set[str] = set()  # types with closure tables (one lock row each)
         self.cond_lines: dict[tuple[str, str], Loc] = {}  # (type, condition) -> loc, for apply-time errors
         self.columns: list[tuple[str, str, Loc]] = []  # (table, column, loc) to check exist
@@ -1099,6 +1101,9 @@ class Core:
     # only returns ids the current user holds.
     def add_view(self, name: str, sql: str, header: str, t: Type, public: bool = True) -> None:
         sql = self.where_kept(t, sql)
+        assert name not in self.made_from, f"the view {name} is made twice"
+        self.making.discard(name)
+        self.made_from[name] = sql
         self.view_sql.append(
             f"{header}CREATE VIEW authz_int.{q(name)} AS\n  {sql};"
             + (
@@ -1109,13 +1114,24 @@ class Core:
         )
 
     def begin_view(self, name: str, loc: Loc, what: str) -> bool:
-        state = self.view_state.get(name)
-        if state == "done":
+        """Whether the view `name` is still to be made: it is then being made until add_view adds it, and asked
+        for again before that, what it is of (`what`) depends on itself."""
+        if name in self.made_from:
             return False
-        if state == "busy":
+        if name in self.making:
             fail(loc, DEPENDS_ON_ITSELF.format(what), "AZ302")
-        self.view_state[name] = "busy"
+        self.making.add(name)
         return True
+
+    def first_time(self, name: str, source: str) -> bool:
+        """Whether the function `name` is still to be made, from source (what decides its SQL). A name stands for
+        one thing: made again from another source, it would silently be the first one."""
+        made = self.made_from.get(name)
+        if made is None:
+            self.made_from[name] = source
+            return True
+        assert made == source, f"{name} would stand for two things:\n{made}\n{source}"
+        return False
 
     def view_ref(self, t: Type, name: str, loc: Loc) -> str:
         self.lookup(t, name, loc)
@@ -1485,7 +1501,6 @@ class Core:
                 f"LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
                 f"BEGIN\n  RETURN ARRAY(SELECT id FROM authz_int.{q(name)});\nEND $f$;"
             )
-        self.view_state[name] = "done"
         return name
 
     def ensure_link_view(
@@ -1528,7 +1543,6 @@ class Core:
         # every type of the relation, which the sources left name some of
         assert parts, f"no source of {t.name}.{r.name} names {', '.join(targets)}"
         self.add_view(view, union(parts), f"-- {t.name}.{r.name}.{perm_name}\n", t)
-        self.view_state[view] = "done"
         return view
 
     # --- permissions ------------------------------------------------------
@@ -1600,7 +1614,6 @@ class Core:
                     f"  WHERE c.ancestor IN (SELECT s.id FROM {start}() s(id))"
                 )
                 self.add_view(name, sql, header, t)
-                self.view_state[name] = "done"
                 self.point_check_function(t, perm, tree, (t.name, edges))
                 self.direct_view(t, perm, name)
                 return
@@ -1618,7 +1631,6 @@ class Core:
                 + ")"
             )
         self.add_view(name, sql, header, t)
-        self.view_state[name] = "done"
 
     def start_sql(self, t: Type, perm: Perm, flatten: Flatten) -> str:
         """The ids where a recursive permission starts for the current user: what it holds directly (none, for
@@ -1662,15 +1674,11 @@ class Core:
         if not items:
             return
         sql = union([self.set_sql(t, i, perm.loc) for i in items])
-        same = [v for v, s in self.direct_sql.items() if s == sql]
-        if same:
-            self.direct_checks[view] = same[0]
-            return
-        name = f"{t.name}__{perm.name}__direct"
-        self.add_view(name, sql, f"-- {t.name}.{perm.name}: what the object's own columns give\n", t)
-        self.view_state[name] = "done"
-        self.direct_sql[name] = sql
-        self.direct_checks[view] = name
+        if sql not in self.direct_by_sql:
+            name = f"{t.name}__{perm.name}__direct"
+            self.add_view(name, sql, f"-- {t.name}.{perm.name}: what the object's own columns give\n", t)
+            self.direct_by_sql[sql] = name
+        self.direct_checks[view] = self.direct_by_sql[sql]
 
     def start_items(self, t: Type, perm: Perm, edges: Edges) -> list[Expr]:
         """A recursive permission's starting items, with same-type permissions that one walk covers
@@ -1735,9 +1743,9 @@ class Core:
     def start_function(self, t: Type, perm: Perm, flatten: Flatten) -> str:
         name = f"{t.name}__{perm.name}__start"
         fn = f"authz_int.{q(name)}"
-        if self.view_state.get(name) == "done":
+        # (a permission walks within one type's tree or in a recursion across types, whichever call asks)
+        if not self.first_time(name, f"{t.name}.{perm.name}" + (" in one walk" if flatten else "")):
             return fn
-        self.view_state[name] = "done"
         body = self.start_sql(t, perm, flatten)
         self.view_sql.append(
             f"-- {t.name}.{perm.name}: where inheritance starts, for the current user\n"
@@ -1914,8 +1922,7 @@ class Core:
         that runs it as the owner on the row, as the views and authz.can do, so it sees what the policy sees."""
         name = f"{t.name}__check_{hashlib.sha1(sql.encode()).hexdigest()[:10]}"
         fn = f"authz_gen.{q(name)}"
-        if self.view_state.get(name) != "done":
-            self.view_state[name] = "done"
+        if self.first_time(name, sql):
             bare = q(t.table.split(".")[1])
             self.view_sql.append(
                 f"-- {t.name}: a condition that reads other rows, run with the policy's rights wherever it is checked\n"
@@ -1959,9 +1966,8 @@ class Core:
         suffix = "" if names == [st for st, _ in r.subjects()] else "__on_" + "_".join(names)
         name = f"{t.name}__{r.name}__{perm_name}{suffix}__links"
         fn = f"authz_gen.{q(name)}"
-        if self.view_state.get(name) != "done":
-            self.view_state[name] = "done"
-            body = or_join(self.link_checks(t, r, names, checks, "p_id"))
+        body = or_join(self.link_checks(t, r, names, checks, "p_id"))
+        if self.first_time(name, body):
             self.view_sql.append(
                 f"-- {t.name}.{r.name}.{perm_name} for one object, through link tables and shares: as the owner\n"
                 f"CREATE FUNCTION {fn}(p_id {t.pktype}) RETURNS boolean\n"

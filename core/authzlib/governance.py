@@ -681,7 +681,6 @@ END $f$;"""
                 t,
                 public=False,
             )
-            self.view_state[view] = "done"
             checks.append(f"""      v_ids := ARRAY(SELECT id::text FROM authz_int.{q(view)} ORDER BY 1 LIMIT 5);
       IF cardinality(v_ids) > 0 THEN
         invariant := {lit(f"never {t.name}: {inv.src} (")} || {self.line_sql(f"invariant never {t.name}: {inv.src}", inv.loc)} || ')'; user_id := nullif(CASE WHEN v_p = '' THEN v_u ELSE v_p || ':' || v_u END, ''); object_ids := v_ids;
