@@ -405,6 +405,9 @@ CREATE TABLE lo.tasks (id bigserial PRIMARY KEY, project_id bigint REFERENCES lo
 CREATE TABLE lo.project_members (id bigserial PRIMARY KEY, project_id bigint NOT NULL REFERENCES lo.projects,
                                  user_id bigint NOT NULL REFERENCES lo.users, role text, gone text);
 ALTER TABLE lo.project_members DROP COLUMN gone;
+CREATE TABLE lo.seats (id bigserial PRIMARY KEY, org_id bigint NOT NULL REFERENCES lo.orgs,
+                       user_id bigint NOT NULL REFERENCES lo.users, note text);
+CREATE UNIQUE INDEX ON lo.seats (org_id, user_id) WHERE note IS NULL;
 SQL
 mkdir -p "$T/a"
 out=$(cd "$T/a" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_apps" init --schema lo 2>&1)
@@ -415,6 +418,9 @@ case "$draft" in *'type user = lo.users'*'type domain = lo.domains'*'membership 
 # its columns are the ones the table has: none of Postgres's own (ctid, xmin), nor one dropped
 grep -qx '  member : user = lo.project_members(project_id -> user_id)' <<<"$draft" &&
   ok "... a membership with an id, a role and a dropped column, no unique pair: a link" || bad "draft apps: the membership with a role" "$draft"
+# a pair unique only where a condition holds may repeat: the table is no link
+grep -q 'lo.seats(' <<<"$draft" && bad "draft apps: a pair unique in part read as a link" "$draft" ||
+  ok "... a membership with an id and a note, its pair unique only in part: not a link"
 out=$(cd "$T/a" && python3 "$OLDPWD/cli/rowstile_cli.py" check 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "... which compiles (the loop of foreign keys too)" || bad "draft apps compile" "$out"
 out=$(cd "$T/a" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_apps" apply 2>&1); rc=$?
