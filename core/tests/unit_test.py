@@ -726,10 +726,15 @@ class LanguageForms(unittest.TestCase):
             ("  r : user = app.links(doc_id => user_id)\n", (5, 30, 5, 31)),
             ("  can view = owner\ntest t\n  as user 1 alowed {SELECT 1}\n", (7, 12, 7, 18)),
             ("  can view = owner\ninvariants\n  never doc view\n", (7, 12, 7, 16)),
+            ("  can view = owner\ntest t\n  as user 1 sees 3x {SELECT 1}\n", (7, 17, 7, 19)),
+            ("  can view = owner\nscope files-:read = doc.view\n", (6, 12, 6, 13)),
         ):
             with self.subTest(tail), self.assertRaises(PolicyError) as e:
                 Compiler(parse_policy(base + tail)).compile("x")
             self.assertEqual(e.exception.span, words, str(e.exception))
+        # a scope's name may go on with - and :, written without spaces
+        pol = parse_policy(base + "  can view = owner\nscope files:read-only = doc.view\n")
+        self.assertEqual(list(pol.scopes), ["files:read-only"])
         # a line the parser didn't read has no words to point at
         with self.assertRaises(PolicyError) as e:
             Compiler(parse_policy("app role app_user\n")).compile("x")
