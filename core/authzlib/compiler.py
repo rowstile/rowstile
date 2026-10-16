@@ -566,6 +566,22 @@ class Core:
                     )
 
     def validate(self) -> None:
+        """What the policy must get right before anything is made of it. What only the database knows (the
+        columns and keys named) is collected for applying to check: self.columns, self.pk_checks."""
+        self.check_sources()
+        self.check_rules()
+        self.check_views()
+        self.check_scopes()
+        for inv in self.pol.invariants:
+            if inv.type not in self.types:
+                fail(inv.loc, f"unknown type '{inv.type}'", "AZ201", span=inv.type_span)
+        self.check_unused_relations()
+        self.check_runtime_permissions()
+        self.check_this()
+
+    def check_sources(self) -> None:
+        """Each source names types and relations that exist, as many key columns as its types have, and a share
+        permission where it is shared."""
         for t in self.types.values():
             for c, ty in t.key:
                 self.columns.append((t.table, c, t.loc))
@@ -617,6 +633,9 @@ class Core:
                                 f"{t.name}: add `can share = ...` or write `shared by <permission>`",
                                 "AZ207",
                             )
+
+    def check_rules(self) -> None:
+        """Rules are for a table one type maps to, and a column is masked once."""
         for rule in self.rules:
             mapped = [t.name for t in self.types.values() if t.table == rule.table]
             if not mapped:
@@ -644,6 +663,9 @@ class Core:
                 if (rule.table, c) in masked:
                     fail(rule.loc, f"{rule.table}.{c} is masked twice (also on {masked[rule.table, c]})", "AZ109")
                 masked[rule.table, c] = rule.loc
+
+    def check_views(self) -> None:
+        """A masked view shows a table's select rule, and is a new name, for one table."""
         shows: dict[str, str] = {}  # each view, as the SQL names it -> the table it shows
         for table, view in self.pol.views.items():
             view_loc = self.pol.view_locs[table]
@@ -661,6 +683,9 @@ class Core:
                     f"its own",
                     "AZ109",
                 )
+
+    def check_scopes(self) -> None:
+        """A scope names tables of the policy and permissions its types have."""
         for sc in self.pol.scopes.values():
             for (kind, qual, word), at in zip(sc.items, sc.spans or [None] * len(sc.items), strict=True):
                 if kind == "cmd" and qual and not any(t.table == qual for t in self.types.values()):
@@ -677,12 +702,6 @@ class Core:
                         )
                 if kind == "perm" and not qual and not any(word in self.public_perms(t) for t in self.types.values()):
                     fail(sc.loc, f"scope {sc.name}: no type has a permission '{word}'", "AZ404")
-        for inv in self.pol.invariants:
-            if inv.type not in self.types:
-                fail(inv.loc, f"unknown type '{inv.type}'", "AZ201", span=inv.type_span)
-        self.check_unused_relations()
-        self.check_runtime_permissions()
-        self.check_this()
 
     def check_this(self) -> None:
         """`this.` names the row a condition is about; a caveat has none, and `this` is no other name."""
