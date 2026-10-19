@@ -11551,9 +11551,13 @@ class Delivery(unittest.TestCase):
     def test_images_are_pinned_by_digest(self) -> None:
         # a tag can be pushed again with other contents; Dependabot moves the digests (its docker folders).
         # core/Dockerfile follows the newest patch release of each Postgres on purpose, and says so
-        listed = subprocess.run(
-            ["git", "ls-files", "*Dockerfile"], cwd=self.REPO, capture_output=True, text=True, check=True
-        ).stdout.split()
+        # walked, not asked of git: the suites' containers may not trust the mounted checkout
+        listed = []
+        for root, dirs, files in os.walk(self.REPO):
+            dirs[:] = sorted(d for d in dirs if d not in {".git", "node_modules", ".venv", ".ci", "dist"})
+            if "Dockerfile" in files:
+                listed.append(os.path.relpath(os.path.join(root, "Dockerfile"), self.REPO).replace(os.sep, "/"))
+        self.assertIn("packaging/docker/Dockerfile", listed)
         dependabot = read("../.github/dependabot.yml")
         folders = search(r"package-ecosystem: docker\n    directories: \[([^\]]*)\]", dependabot).group(1)
         loose = []
