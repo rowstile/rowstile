@@ -144,6 +144,12 @@ echo "-- a partition made after the policy was applied"
 PSQL -c "CREATE TABLE ch.notes_top PARTITION OF ch.notes FOR VALUES FROM (1000) TO (2000)" \
      -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ch.notes_top TO app_user" -c "INSERT INTO ch.notes VALUES (1001, 3, NULL, 'carol''s')"
 same "lint says the app role may use it directly" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.notes_top'")" 1
+# ... with any one of those privileges (reading too: its table has rules)
+for p in SELECT INSERT UPDATE DELETE; do
+  PSQL -c "REVOKE ALL ON ch.notes_top FROM app_user" -c "GRANT $p ON ch.notes_top TO app_user" >/dev/null
+  same "... with $p alone on it too" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.notes_top'")" 1
+done
+PSQL -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ch.notes_top TO app_user" >/dev/null
 # its rows are written through the table from the day it is made (a job that makes next month's partition
 # doesn't apply the policy): the rule on a column has to hold there before the next apply
 as 3 -c "SELECT authz.share('note', 1001, 'viewer', 'user', 2)" >/dev/null

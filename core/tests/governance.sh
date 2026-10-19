@@ -538,6 +538,9 @@ lint() { PSQL -c "SELECT severity || ' ' || object FROM authz.lint() ORDER BY 1"
 for want in "error app.files" "error app.all_files" "error app.team_members" "info app.files_name" "info app.files_pkey" "warning app.peek(bigint)"; do
   [ "$(lint "^$want\$")" -ge 1 ] && echo "ok    lint finds: $want" || { echo "FAIL  lint misses: $want"; fails=$((fails + 1)); }
 done
+# (the link table's key the app role may insert into is no governed table's: its rows hide nothing)
+[ "$(lint "^info app.team_members_pkey\$")" = 0 ] && echo "ok    ... and not the key of a table without rules" ||
+  { echo "FAIL  lint names the key of a table without rules"; fails=$((fails + 1)); }
 admin "... of the link table, that the app role may change it (an insert is enough)" "1" \
   "SELECT count(*) FROM authz.lint() WHERE object = 'app.team_members' AND problem LIKE '%may change it, and it decides who is in what%'"
 admin "... and says of the function what it does" \
@@ -704,6 +707,11 @@ admin "lint finds the audit trail's guard on in ordinary sessions only, and says
 bash tests/coverage_functions.sh "$DB"
 python3 cli/rowstile_cli.py --db "dbname=$DB" reapply >/dev/null 2>&1
 admin "... and nothing once rowstile reapply has run" "0" "SELECT count(*) FROM authz.lint() WHERE object = 'authz.audit'"
+PSQL -c "ALTER TABLE authz.audit ENABLE REPLICA TRIGGER authz_audit_append_only" >/dev/null
+admin "... and on in replica sessions only: lint says ordinary sessions may change the trail" "warning" \
+  "SELECT severity FROM authz.lint() WHERE object = 'authz.audit'
+     AND problem = 'the trigger authz_audit_append_only guards it with session_replication_role = replica only: an ordinary session may change the trail. rowstile reapply puts it back, in every replication role'"
+PSQL -c "ALTER TABLE authz.audit ENABLE ALWAYS TRIGGER authz_audit_append_only" >/dev/null
 
 echo "-- explaining what a link table's rows, shares and the type's where give (authz.explain)"
 # a shelf holds folders by the rows of a link table that are active (not those whose active is unknown), is hosted
