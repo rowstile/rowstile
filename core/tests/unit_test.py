@@ -11673,12 +11673,15 @@ class DocsApps(unittest.TestCase):
     def test_as_the_tags_have_them(self) -> None:
         # where the checkout has the tags (here, and the release run's; CI's suites' checkouts haven't): every
         # release from the first on PyPI is recorded, as its tag has its docs app, and the release this checkout is
-        # (its own commit records it, before its tag is made)
+        # (its own commit records it, before its tag is made); after that commit and before its tag, one more
         tags = self.d.tags()
         if tags:
-            self.assertEqual(
-                list(self.d.recorded()), self.d.expected(), "a release not recorded: python3 tests/docs_app.py --sync"
-            )
+            recorded, want = list(self.d.recorded()), self.d.expected()
+            self.assertEqual(recorded[: len(want)], want, "a release not recorded: python3 tests/docs_app.py --sync")
+            later = recorded[len(want) :]
+            newest = self.d.key(want[-1])
+            assert newest is not None
+            self.assertTrue(len(later) <= 1 and all((self.d.key(v) or ()) > newest for v in later), later)
             for version in tags:
                 self.assertEqual(self.d.digest(self.d.tagged(version)), self.d.recorded()[version], version)
 
