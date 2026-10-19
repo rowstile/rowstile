@@ -1,0 +1,18 @@
+-- answer: conditions-null
+-- A principal type's where that is NULL makes the one signed in nobody: a service whose name is unknown holds
+-- nothing, not even what it keeps.
+app role app_user
+
+type user = app.users
+type service = app.services principal where {name <> 'retired'}
+type project = app.projects
+  keeper : service = app.backings(project_id -> backer_id)
+  can view = keeper
+
+test "a service whose where is NULL is nobody"
+  given {INSERT INTO app.services (id, name) VALUES (1, 'sync'), (2, NULL)}
+  given {INSERT INTO app.projects (id) VALUES (1)}
+  given {INSERT INTO app.backings VALUES (1, 'service', 1), (1, 'service', 2)}
+  service 1 can view project 1
+  service 2 cannot view project 1
+  as service 2 sees 0 {SELECT FROM authz.principal()}

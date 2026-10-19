@@ -281,6 +281,32 @@ act_as|SELECT authz.act_as('user', '3')
 login_key|SELECT authz.login_key('$KEY')
 check_invariants, signed in as a bot|SET LOCAL authz.user_id = '1'; SET LOCAL authz.principal_type = 'bot'; SELECT count(*) FROM authz.check_invariants()
 EOF2
+# who, explain and the policy tests switch who is signed in while they ask, then put back the transaction's own: in a
+# session signed in as a service and a transaction as a user, the next transaction is the service's again
+# (the policy tests' function alone: the block that reports them raises when one fails, which undoes everything)
+python3 compile_policy.py example/docs.authz --tests | sed '/^DO \$t\$/,$d' > /tmp/authz_sessions_tests.sql || exit 1
+BOT="SET authz.user_id = '9'; SET authz.principal_type = 'bot'; SET authz.scopes = 'read'; SET authz.acting_user = '8'"
+AS_ERIN="SET LOCAL authz.user_id = '5'; SET LOCAL authz.principal_type = ''; SET LOCAL authz.scopes = ''"
+while IFS='|' read -r label what; do
+  got=$(after "$BOT" "$AS_ERIN; $what")
+  [ "$got" = "9|bot|read|8|" ] && ok "$label: the next transaction has the session's own settings" || bad "$label: after" "$got"
+done <<EOF2
+who|SELECT count(*) FROM authz.who('folder', '1', 'view')
+explain, for another user|SELECT count(*) FROM authz.explain('folder', '1', 'view', '3')
+EOF2
+got=$(PSQL -c "$BOT" -c "BEGIN" -c "$AS_ERIN" -f /tmp/authz_sessions_tests.sql \
+  -c "SELECT count(*) FROM pg_temp.authz_policy_tests()" -c "COMMIT" -c "SELECT format('%s|%s|%s|%s',
+  current_setting('authz.user_id', true), current_setting('authz.principal_type', true), current_setting('authz.scopes', true),
+  current_setting('authz.acting_user', true))" 2>/dev/null | tail -n 1)
+[ "$got" = "9|bot|read|8" ] && ok "the policy tests: the next transaction has the session's own settings" ||
+  bad "the policy tests: after" "$got"
+# ... and the transaction itself goes on as it was: the same principal, scopes and acting user
+got=$(PSQL -c "$BOT" -c "BEGIN" -c "SET LOCAL authz.user_id = '1'; SET LOCAL authz.scopes = 'files'" \
+  -c "SELECT count(*) FROM authz.check_invariants()" -c "SELECT format('%s|%s|%s|%s', current_setting('authz.user_id', true),
+  current_setting('authz.principal_type', true), current_setting('authz.scopes', true),
+  current_setting('authz.acting_user', true))" -c "COMMIT" 2>&1 | tail -n 1)
+[ "$got" = "1|bot|files|8" ] && ok "check_invariants, signed in as a service: the transaction goes on as that service" ||
+  bad "check_invariants: within" "$got"
 got=$(after "SET authz_debug.log_decisions = on" "SELECT authz.can('file', '11', 'view')")
 [ "${got##*|}" != on ] && ok "the decision log: the next transaction's decisions are logged too" || bad "decision log after" "$got"
 # a session that never set any: nobody acted, and a refused write says so

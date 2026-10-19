@@ -1,0 +1,37 @@
+-- answer: conditions-null, inheritance
+-- A link table's where that is NULL links nothing in an inheritance across types either: a folder linked into a file
+-- by such a row (here, the row naming file 2) inherits nothing from it, nor do the folders and files below it. The
+-- folder's own condition is asked too: folder 14, in org 0, inherits nothing from file 1.
+app role app_user
+
+type user = app.users
+type folder = app.folders
+  owner  : user = owner_id
+  parent : folder, file = app.backings(project_id -> (backer_type, backer_id)) where {nullif(backer_id <> 2, false)}
+  can view = owner or (parent.view and {coalesce(org_id, 1) > 0})
+type file = app.files
+  owner : user = owner_id
+  in    : folder = folder_id
+  can view = owner or in.view
+
+rules app.folders
+  select : view
+rules app.files
+  select : view
+
+test "a link whose where is NULL passes nothing down"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given {INSERT INTO app.files (id, owner_id) VALUES (1, $ann), (2, $ann)}
+  given {INSERT INTO app.folders (id, org_id) VALUES (10, NULL), (11, NULL), (12, NULL), (13, NULL), (14, 0), (15, NULL)}
+  given {INSERT INTO app.backings VALUES (10, 'file', 2), (11, 'file', 1), (12, 'folder', 10), (13, 'folder', 11), (14, 'file', 1), (15, 'folder', 14)}
+  given {INSERT INTO app.files (id, folder_id) VALUES (3, 13), (4, 12)}
+  user $ann cannot view folder 10
+  user $ann can view folder 11
+  user $ann cannot view folder 12
+  user $ann can view folder 13
+  user $ann cannot view folder 14
+  user $ann cannot view folder 15
+  user $ann can view file 3
+  user $ann cannot view file 4
+  as user $ann sees 2 {SELECT FROM app.folders}
+  as user $ann sees 3 {SELECT FROM app.files}

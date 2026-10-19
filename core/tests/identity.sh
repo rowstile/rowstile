@@ -153,7 +153,11 @@ PSQL -c "INSERT INTO authz.settings VALUES ('jwt_audience', 'docs-api')" >/dev/n
 expect_code "a token for no audience, once one is asked" "28000: token for another audience" -c "BEGIN" -c "SELECT authz.login_jwt('$T_OK')"
 expect_code "a token for another audience" "28000: token for another audience" -c "BEGIN" -c "SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"aud": "other-api"}')')"
 check "a token for this audience" "2" "BEGIN; SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"aud": "docs-api"}')'); COMMIT;"
+check "a JWT login lasts its transaction: the session's acting user is back after it" "8" \
+  "SET authz.acting_user = '8'; BEGIN; SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"aud": "docs-api"}')'); COMMIT;
+   SELECT current_setting('authz.acting_user');"
 check "... or for a list that holds it" "2" "BEGIN; SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"aud": ["other-api", "docs-api"]}')'); COMMIT;"
+expect_code "... but not for a list that doesn't" "28000: token for another audience" -c "BEGIN" -c "SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 '{"aud": ["other-api"]}')')"
 PSQL -c "DELETE FROM authz.settings WHERE key = 'jwt_audience'" >/dev/null
 # a secret as long as SHA-256's block (64 bytes) is used as it is; a longer one is hashed first (HMAC, RFC 2104)
 for n in 64 65; do
@@ -184,6 +188,9 @@ check "... and turns JIT off for the transaction" "off" \
   "BEGIN; SET LOCAL jit = on; SET LOCAL authz.user_id = 5; SELECT authz.view_as('3', 'ticket 42'); SELECT current_setting('jit'); COMMIT;"
 expect_code "... and cannot change anything" "42501: this session is read-only (viewing as someone else, or a read-only token)" -c "BEGIN" -c "SET LOCAL authz.user_id = 5" \
   -c "SELECT authz.view_as('3', 'ticket 42')" -c "SELECT authz.share('folder', 2, 'viewer', 'user', 4)"
+check "... nor through the rules: viewing as alice, an UPDATE of her own file changes nothing" "0" \
+  "BEGIN; SET LOCAL authz.user_id = 5; SELECT authz.view_as('1', 'ticket 47');
+   WITH u AS (UPDATE app.files SET body = 'x' WHERE id = 11 RETURNING 1) SELECT count(*) FROM u; ROLLBACK;"
 # the scope view-as carries refuses sharing too; without it (the owner's session sets the settings), only the
 # read-only check is left to refuse
 for call in "share('folder', 1, 'viewer', 'user', 4)" "unshare('folder', 1, 'viewer', 'org', 1, 'member')" \
@@ -229,6 +236,11 @@ got=$(CXQ -c "SELECT added || '|' || removed FROM authz.sync_members('team', '(1
 want="2|1 blue 2, red team 2, red team 3"
 [ "$got" = "$want" ] && echo "ok    sync a team keyed by (org_id, slug): its members are the list, the other team's are as they were" ||
   { echo "FAIL  sync a team keyed by two columns: expected '$want', got '$got'"; fails=$((fails + 1)); }
+# a link table naming a team by its two columns: the audit trail names the team by its whole id, as authz.share would
+got=$(CXQ -c "INSERT INTO cx.folders (org_id, id, owner_id) VALUES (1, 1, 1)" -c "INSERT INTO cx.folder_teams VALUES (1, 1, 'red team')" \
+  -c "SELECT subject_id FROM authz.audit WHERE action = 'relate' AND relation = 'editor' ORDER BY id DESC LIMIT 1" | tail -n 1)
+[ "$got" = '(1,"red team")' ] && echo "ok    the audit trail names a team linked by two columns by its whole id" ||
+  { echo "FAIL  the audit of a link to a team keyed by two columns: $got"; fails=$((fails + 1)); }
 got=$(CXQ -c "SET ROLE app_user" -c "SET authz.user_id = 1" -c "SELECT authz.view_as('2', 'ticket 46')" | grep '^ERROR:')
 [ "$got" = "ERROR:  you cannot view as user 2" ] && echo "ok    the user type has no impersonate: a user may not view as another" ||
   { echo "FAIL  view as, without impersonate: $got"; fails=$((fails + 1)); }
