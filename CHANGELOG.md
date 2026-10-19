@@ -102,6 +102,8 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- `rowstile why` names both columns of a pair it would set, and the type: `set owner_type, owner_id of doc 1 to
+  user 4`, where it said `set owner_id of doc 1 to 4` (the change it tried set both already).
 - A permission with a deny that depends on itself through another permission of its type is named as written in
   the mistake (AZ302): `folder.view depends on itself`, where it said `folder.view__base`, the name of the
   inheritance rowstile makes of it.

@@ -462,7 +462,12 @@ class Grants:
                 return None
             return Change(
                 "column",
-                f"set {', '.join(cols(on))} of {t.name} {oid} to {sid}",
+                # a pair: its type column is set too (subject), so the change names it and the type
+                (
+                    f"set {src.type_col}, {', '.join(cols(on))} of {t.name} {oid} to {st} {sid}"
+                    if src.type_col
+                    else f"set {', '.join(cols(on))} of {t.name} {oid} to {sid}"
+                ),
                 f"UPDATE {qt(t.table)} r SET {', '.join(f'{q(c)} = {v}' for c, v in subject)} "
                 f"WHERE {self.c.key_is(t, 'r', lit(oid))}",
                 src.loc,

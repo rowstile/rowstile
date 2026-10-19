@@ -393,11 +393,19 @@ INSERT INTO "Squad" VALUES (1, 'red');
 CREATE TABLE "Watch" ("orgId" integer, "squadSlug" text, "userId" integer, "isActive" boolean, "isBanned" boolean);
 GRANT SELECT ON "Watch" TO app_user;
 INSERT INTO "Watch" VALUES (1, 'red', 4, true, true);
+CREATE TABLE "Desk" (id integer PRIMARY KEY, "ownerType" text, "ownerId" integer);
+GRANT SELECT ON "Desk" TO app_user;
+INSERT INTO "Desk" VALUES (1, 'Team', 1), (2, 'Team', 1);
+CREATE TABLE "DeskIn" ("deskId" integer, "parentId" integer);   -- a desk on another; the other end may be missing
+GRANT SELECT ON "DeskIn" TO app_user;
+INSERT INTO "DeskIn" VALUES (2, NULL), (2, 1);
 SQL
 { sed 's/^  backer : user, Team .*$/&\n  crew   : Team#member  = public.FolderTeam(folderId -> teamId)\n  can muster = crew/' "$T/teams.authz"
   printf '\ntype Bot = public.Bot (id int) principal\n\ntype Log = public.Log (id int)\n  owner : user = ownerId\n  can view = owner\n'
   printf '\ntype Squad = public.Squad (orgId int, slug text)\n  member : user = public.SquadMember([orgId, squadSlug] -> userId)\n  can gather = member\n'
   printf '  watcher : user = public.Watch([orgId, squadSlug] -> userId) where {"isActive" and not "isBanned"}\n  can see = watcher\n'
+  printf '\ntype Desk = public.Desk (id int)\n  owner  : user, Team = (ownerType, ownerId)\n  parent : Desk = public.DeskIn(deskId -> parentId)\n'
+  printf '  can use = owner or parent.use\n'
   printf '\nrules public.Log\n  select : view\n\ninvariants\n  never Folder: look and not share\n'
 } > "$T/more.authz"
 run --db "dbname=$DB4" apply "$T/more.authz"
@@ -423,6 +431,17 @@ case "$out" in *"more.authz: applied")
   run --db "dbname=$DB4" why --as user:4 Squad '(1,red)' see
   case "$out" in *"would be granted by:"*"set isActive = true, isBanned = false on user 4's row of public.Watch for Squad (1,red)"*)
     ok "why: a row of a link table that its where leaves out, its columns set as the where asks";; *) bad "why through Watch" "$out";; esac
+  # a desk owned by a team (the pair names users or teams): making user 4 its owner sets both columns, and takes the
+  # desk from no person (a team is no one who signs in)
+  run --db "dbname=$DB4" why --as user:4 Desk 1 use
+  case "$out" in *"could not be tried"*) bad "why through a pair, a team its owner now" "$out";;
+    *"would be granted by:"*"set ownerType, ownerId of Desk 1 to user 4"*) ok "why: a desk a team owns, given to user 4 by its pair of columns";;
+    *) bad "why through a pair, a team its owner now" "$out";; esac
+  # desk 2 sits on desk 1 by one row of DeskIn, and on nothing by another: why follows the first only
+  run --db "dbname=$DB4" why --as user:4 Desk 2 use
+  case "$out" in *None*) bad "why through a link with no other end" "$out";;
+    *"would be granted by:"*"set ownerType, ownerId of Desk 1 to user 4"*) ok "why: through the desk below, a row of DeskIn with no other end followed nowhere";;
+    *) bad "why through a link with no other end" "$out";; esac
   # a partition made since, of a table with rules named with a capital: apply finds it without row-level security
   R -c 'CREATE TABLE "LogNew" PARTITION OF "Log" FOR VALUES FROM (100) TO (200)' -c 'GRANT SELECT ON "LogNew" TO app_user' >/dev/null
   run --db "dbname=$DB4" apply "$T/more.authz"

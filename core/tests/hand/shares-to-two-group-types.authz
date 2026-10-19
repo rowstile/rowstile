@@ -1,0 +1,28 @@
+-- answer: subjects, runtime-share
+-- A folder shared with the members of a team and with those of a squad, two types whose relation has the same name
+-- and whose keys differ (one column, two): authz.who lists the folder's owner and the members of each.
+app role app_user
+
+type user = app.users
+type team = app.teams
+  member : user = parent_id   -- (here a team's one member is in its parent_id)
+type squad = app.org_folders (org_id, id)
+  member : user = owner_id
+type folder = app.folders
+  owner  : user = owner_id
+  viewer : team#member, squad#member shared
+  can share = owner
+  can view  = owner or viewer
+
+test "who: the members of a team and of a squad"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given cy  = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given {INSERT INTO app.teams (id, parent_id) VALUES (7, $bo)}
+  given {INSERT INTO app.org_folders (org_id, id, owner_id) VALUES (1, 1, $cy)}
+  given f   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'team', 7, 'member')}
+  as user $ann allowed {SELECT authz.share('folder', $f, 'viewer', 'squad', '(1,1)', 'member')}
+  user $bo can view folder $f
+  user $cy can view folder $f
+  as user $ann sees 3 {SELECT FROM authz.who('folder', $f, 'view')}
