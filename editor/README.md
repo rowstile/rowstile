@@ -26,8 +26,8 @@ VSCodium, Cursor and the other editors that install from there:
 
 From this repository instead:
 
-    cd editor && npm install && npx vsce package      # makes rowstile-0.1.0.vsix
-    code --install-extension rowstile-0.1.0.vsix
+    cd editor && npm ci --omit=dev && npm run package      # makes rowstile-<version>.vsix
+    code --install-extension rowstile-*.vsix
 
 The extension runs `rowstile lsp` with the `rowstile` on your PATH (installed with npm, pip or uv:
 [Installing](../docs/installing.md)), or whatever `rowstile.command` says, e.g.

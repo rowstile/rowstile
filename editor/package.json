@@ -40,7 +40,7 @@
       }
     }
   },
-  "scripts": { "package": "vsce package" },
+  "scripts": { "package": "npx --yes @vscode/vsce@3.9.2 package" },
   "dependencies": { "vscode-languageclient": "^9.0.1" },
-  "devDependencies": { "@types/vscode": "~1.75.0", "@vscode/vsce": "^3.2.1" }
+  "devDependencies": { "@types/vscode": "~1.75.0" }
 }
