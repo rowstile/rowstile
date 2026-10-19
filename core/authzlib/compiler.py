@@ -1963,7 +1963,7 @@ class Core:
     def definer_cond(self, t: Type, sql: str, alias: str) -> str:
         """A condition that reads more than its row's columns, where the app role checks it: a call of a function
         that runs it as the owner on the row, as the views and authz.can do, so it sees what the policy sees."""
-        name = f"{t.name}__check_{hashlib.sha1(sql.encode()).hexdigest()[:10]}"
+        name = f"{t.name}__check_{hashlib.sha1(sql.encode(), usedforsecurity=False).hexdigest()[:10]}"
         fn = f"authz_gen.{q(name)}"
         if self.first_time(name, sql):
             bare = q(t.table.split(".")[1])

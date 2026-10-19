@@ -112,7 +112,8 @@ def ident(name: str) -> str:
     if len(name.encode()) > 63:
         import hashlib  # here: a command that only asks the database doesn't load it
 
-        digest = hashlib.sha1(name.encode()).hexdigest()[:8]
+        # a short, stable tag for the name, nothing secret: changing it would rename what databases hold
+        digest = hashlib.sha1(name.encode(), usedforsecurity=False).hexdigest()[:8]
         name = name.encode()[:54].decode(errors="ignore") + "_" + digest
     return name
 
