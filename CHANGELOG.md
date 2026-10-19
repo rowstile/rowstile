@@ -175,6 +175,7 @@ What changed since 0.1.0-alpha.7 (0.1.0-alpha.8 was tagged, and never published:
   itself. `this.` now names the condition's row wherever it is placed. Names that start with `authz__` are
   rowstile's own, and a condition that writes one is refused (AZ113). Only such conditions are written anew:
   where a policy has one, apply it again (or make the next migration) to take it.
+  Security advisory [GHSA-mqw9-fq8w-8q36](https://github.com/rowstile/rowstile/security/advisories/GHSA-mqw9-fq8w-8q36).
 - `rowstile fmt` left a line that starts with `or` (or `and`, `where`, `if`, `grant`) at the start of its line,
   after a blank line it added, when it wasn't indented. The policy reads it as the line before it continued, and
   fmt now lays it out so: under the expression it continues, as it does an indented one.
@@ -222,12 +223,14 @@ What changed since 0.1.0-alpha.7 (0.1.0-alpha.8 was tagged, and never published:
   on it kept that share even in READ COMMITTED; it now locks the row and the user as `authz.share` does, and
   waits for the delete. A share now takes a short lock of its own on the object and the subject, so two shares
   of one object at once wait for each other, and in REPEATABLE READ the second fails with 40001.
+  Security advisory [GHSA-9fwf-x6rq-83xv](https://github.com/rowstile/rowstile/security/advisories/GHSA-9fwf-x6rq-83xv).
 - `authz.explain` (and what calls it: refused writes' reasons, `authz.explain_rule`, `rowstile why`, Studio and
   the SDKs' explain helpers) said a user held a relation by a share, then described the oldest share of that
   relation on the object: often another user's, or another link than the one presented. Anyone a share was given
   to saw who had made someone else's share there, until when, and its caveat, and might read another person's end
   date as their own. It now describes the share that gives them the relation: their own, the link they presented,
   or the one to every signed-in user. Apply the policy again (or the next migration) to take it.
+  Security advisory [GHSA-g38c-rqc3-g883](https://github.com/rowstile/rowstile/security/advisories/GHSA-g38c-rqc3-g883).
 - A principal's API keys outlived its row: a user or a service deleted, or given a new id, kept its keys, and a
   row that later had that id signed in with them. It affected apps that delete users or services with keys, or
   change their ids, and reuse ids. The keys now go with the row, with a line each in the audit trail (deleted,
@@ -239,10 +242,12 @@ What changed since 0.1.0-alpha.7 (0.1.0-alpha.8 was tagged, and never published:
   object, or a later object with that id, with them. A pending request is now cancelled with its requester's or
   its object's row, and applying the policy cancels those of requesters deleted before; decided requests stay as
   they were.
+  Security advisory [GHSA-cc4f-phxv-p7wc](https://github.com/rowstile/rowstile/security/advisories/GHSA-cc4f-phxv-p7wc).
 - A URL's `ssl=true` now requires TLS, as `psql` reads it (`sslmode=require`). The command left it out as an
   option meant for another tool, so the connection used `sslmode=prefer`, which goes on without TLS when the
   server, or anything between, says it has none. Any other value of `ssl` (`ssl=false`, `ssl=1`) is refused, as
   libpq refuses it.
+  Security advisory [GHSA-4cg7-xmjm-6f2m](https://github.com/rowstile/rowstile/security/advisories/GHSA-4cg7-xmjm-6f2m).
 - `rowstile prove` and the review read a decimal in a condition (`{price >= 1.5}`) as a float, so
   `1.00000000000000001` was 1: prove gave counterexamples a `numeric` column can't have, and the review said
   "Meaning unchanged" when `{price >= 1}` became `{price >= 1.00000000000000001}`. They now read numbers exactly,
