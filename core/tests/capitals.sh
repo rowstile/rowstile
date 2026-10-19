@@ -59,6 +59,8 @@ PSQL -c 'ALTER TABLE "Folder" ENABLE ROW LEVEL SECURITY'
 run indexes; [ "$out" = "every lookup the policy makes into the app's tables has an index" ] && ok "indexes: Prisma's indexes are found" || bad "indexes" "$out"
 PSQL -c 'DROP INDEX "Note_folderId_idx"'
 run indexes --check; case "$out" in *'public.Note'*'folderId'*) [ $rc -eq 1 ] && ok "... and one that is missing is named" || bad "indexes --check exit" "$rc";; *) bad "a missing index" "$out";; esac
+[ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'performance' AND object = 'public.\"Note\".folderId'")" = 1 ] &&
+  ok "... and lint names it too, its table found by its quoted name" || bad "lint, a missing index" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE severity = 'performance'")"
 PSQL -c 'CREATE INDEX "Note_folderId_idx" ON "Note" ("folderId")'
 
 echo "-- conditions on a table named with a word SQL reserves (User)"
