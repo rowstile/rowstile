@@ -28,7 +28,7 @@ jobs:
           python-version: "3.13"
       - run: python3 core/tests/unit_test.py
       # the Python is strongly typed, linted and laid out one way (ty.toml, ruff.toml)
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7   # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
       - run: uvx ty@0.0.56 check && uvx ruff@0.15.12 check && uvx ruff@0.15.12 format --check
       # the Python SDK, in its conformance app's environment (the SDK with every extra), that app, and the examples
@@ -68,14 +68,14 @@ jobs:
       - if: always()
         run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
       - if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: logs-pg${{ matrix.pg }}-${{ matrix.part }}
           path: ${{ runner.temp }}/rowstile-ci-${{ matrix.pg }}.log
       # what it measured: the lines, combined in one file (ci.sh's report made it, its name starts with a dot), and
       # the calls of rowstile's functions
       - if: success() && matrix.pg == '16'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: coverage-pg${{ matrix.pg }}-${{ matrix.part }}
           path: |
@@ -119,7 +119,7 @@ jobs:
           -c "python3 tests/coverage_report.py --out /src/.ci/coverage $DIFF /src/.ci/parts/coverage-pg*/.coverage"
         env: {DIFF: "${{ github.event_name == 'pull_request' && '--diff origin/main' || '' }}"}
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: coverage
           path: .ci/coverage/report.txt
@@ -143,12 +143,12 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7   # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
       - run: flock /tmp/rowstile-ci-conformance-python.lock bash integrations/fastapi/test.sh
         env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-python"}
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: sdk-coverage-python
           path: ${{ runner.temp }}/sdk-coverage-python/report.txt
@@ -161,14 +161,14 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
       - run: npm ci --no-audit --no-fund
       - run: flock /tmp/rowstile-ci-conformance-typescript.lock bash integrations/nextjs/test.sh
         env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-typescript"}
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: sdk-coverage-typescript
           path: |
@@ -185,7 +185,7 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
       - run: cd playground && npm ci --no-audit --no-fund && node test.mjs
@@ -198,7 +198,7 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
       # the blog's checks first (a post's file, the feed), on made-up posts: the build has them only once there is a post;
@@ -210,7 +210,7 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
       # the root: TypeScript and @types/node; the folders: what their scripts use (types only: no install scripts)
@@ -247,9 +247,9 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7   # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
       - run: cd examples/filemanager/frontend && npm ci && npm run build
@@ -260,9 +260,9 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7   # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
       - run: cd examples/messenger/frontend && npm ci && npm run build

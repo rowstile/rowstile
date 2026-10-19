@@ -97,7 +97,7 @@ jobs:
           [ ! -f .mutants/carried/results.jsonl ] || args+=(--carried .mutants/carried)
           [ ! -f .mutants/prepared/calls.json ] || args+=(--calls .mutants/prepared/calls.json)
           python3 core/mutants/sweep.py prepare "${args[@]}"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: mutants-prepared
           path: .mutants/prepared
@@ -132,7 +132,7 @@ jobs:
       - if: always()
         run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: mutants-shard-${{ matrix.shard }}
           path: .mutants/shard
@@ -157,7 +157,7 @@ jobs:
           --out .mutants/results --summary "$GITHUB_STEP_SUMMARY"
       # what the next run resumes from: every result (results.jsonl, results.txt), the stats, the report
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: mutants-results
           path: .mutants/results
