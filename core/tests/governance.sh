@@ -121,6 +121,11 @@ admin "reading from a position gives what came after it, not the entry at it" "0
   "SELECT (SELECT count(*) FROM authz.changes_since(m)) || '|' || (SELECT count(*) FROM authz.changes_since(m - 1))
    FROM (SELECT max(pos) AS m FROM authz.changes) x"
 PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" >/dev/null
+# a file added and taken away: both announced, each with what happened to it
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+PSQL -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (98, 2, 5, 'for the feed')" -c "DELETE FROM app.files WHERE id = 98" >/dev/null
+admin "a file added, then deleted: the feed has both" "insert,delete" \
+  "SELECT string_agg(cause, ',' ORDER BY pos) FROM authz.changes_since($POS) WHERE object_type = 'file' AND '98' = ANY (object_ids)"
 got=$(psql -X -q -At -d "$DB" -c "LISTEN authz_changes" -c "SET ROLE app_user" -c "SET authz.user_id = 5" \
        -c "SELECT authz.share('file', 11, 'viewer', 'user', 4)" -c "SELECT 1" 2>&1)
 case "$got" in *'notification "authz_changes"'*) echo "FAIL  the feed notified without notify_changes: $got"; fails=$((fails + 1));;
@@ -238,6 +243,16 @@ got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', NULL, now() + interva
   "SELECT string_agg(relation || '|' || (expires_at - now()), ', ' ORDER BY relation) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
 [ "$got" = "editor|00:10:00, viewer|01:00:00" ] && echo "ok    one ending sooner is made to last the hour, and her shares of other relations are left as they are" ||
   { echo "FAIL  break glass over shares ending sooner: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', now() + interval '1 day', NULL), ('folder', '6', 'viewer', 'org', '3', now() + interval '1 day', NULL)" \
+  "SELECT string_agg(subject_type || '|' || coalesce((starts_at > now())::text, 'now') || '|' || (expires_at IS NOT NULL), ', ' ORDER BY subject_type) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
+[ "$got" = "org|true|false, user|now|true" ] && echo "ok    one of hers that starts tomorrow lets her in now, for the hour; another kind of subject's share, with her id, is left" ||
+  { echo "FAIL  break glass over a share starting later: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('file', '6', 'viewer', 'user', '3', now() + interval '1 day', NULL)" \
+  "SELECT count(*) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3' AND starts_at IS NULL")
+[ "$got" = 1 ] && echo "ok    a share of hers on another type's object with the same id is not the folder's: she gets the folder's" ||
+  { echo "FAIL  break glass beside a share of another type: $got"; fails=$((fails + 1)); }
+expect_code "one day exactly is allowed" ok -c "SET authz.user_id = 3" -c "BEGIN" \
+  -c "SELECT authz.break_glass('folder', '6', 'viewer', 'outage', '1 day')" -c "ROLLBACK"
 
 echo "-- access requests"
 REQ=$(as 3 -c "SELECT authz.request_access('folder', 5, 'viewer', 'need the offer letter template', '7 days')")
@@ -343,11 +358,14 @@ admin "... and keeps the pending requests of requesters who are there" "pending|
 echo "-- access reviews"
 as 5 -c "SELECT authz.share('folder', 5, 'viewer', 'user', 4)" >/dev/null
 expect_code "carol cannot review Secrets" "42501: you cannot review folder 5" -c "SET authz.user_id = 3" -c "SELECT authz.start_review('folder', '5')"
+# another review, of Company, left open beside it (and opened first): closing one closes that one only
+as 5 -c "SELECT authz.share('folder', 1, 'viewer', 'user', 4)" >/dev/null
+OTHER=$(as 5 -c "SELECT authz.start_review('folder', '1')")
 REV=$(as 5 -c "SELECT authz.start_review('folder', '5')")
 check "erin's review lists every share on Secrets" "2" "SET authz.user_id = 5; SELECT count(*) FROM authz.review_items($REV)"
 ITEM=$(as 5 -c "SELECT item FROM authz.review_items($REV) WHERE subject_id = '3'")
 as 5 -c "SELECT authz.review_decide($REV, $ITEM, false)" >/dev/null
-expect_code "carol cannot decide in it" "42501: you cannot decide in review 2" -c "SET authz.user_id = 3" -c "SELECT authz.review_decide($REV, $ITEM, true)"
+expect_code "carol cannot decide in it" "42501: you cannot decide in review $REV" -c "SET authz.user_id = 3" -c "SELECT authz.review_decide($REV, $ITEM, true)"
 expect_code "... nor read its items" "42501: you cannot see review $REV" -c "SET authz.user_id = 3" -c "SELECT * FROM authz.review_items($REV)"
 expect_code "... nor close it" "42501: you cannot close review $REV" -c "SET authz.user_id = 3" -c "SELECT authz.close_review($REV)"
 expect_code "erin decides on the items it has" "P0001: no item 999 in review $REV" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV, 999, false)"
@@ -359,7 +377,15 @@ admin "... on the folder only: a file's share like it stays" "1" \
 PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '5' AND subject_id = '3'" >/dev/null
 check "... carol lost the offer letter" "f" "SET authz.user_id = 3; SELECT authz.can('file', 13, 'view')"
 check "... dave (not decided) kept it" "t" "SET authz.user_id = 4; SELECT authz.can('file', 13, 'view')"
-expect_code "a closed review cannot be changed" "42501: you cannot decide in review 2" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV, 1, false)"
+expect_code "... and the other review is still open: erin decides in it" ok -c "SET authz.user_id = 5" -c "BEGIN" \
+  -c "SELECT authz.review_decide($OTHER, (SELECT min(item) FROM authz.review_items($OTHER)), true)" -c "ROLLBACK"
+expect_code "... but not while viewing as someone: read-only" "42501: this session is read-only (viewing as someone else, or a read-only token)" \
+  -c "SET authz.user_id = 5" -c "SET authz.acting_user = '1'" -c "SELECT authz.review_decide($OTHER, (SELECT min(item) FROM authz.review_items($OTHER)), true)"
+check "closing it gives its reason to that transaction only: a share after it has none" "none" \
+  "SET authz.user_id = 5; BEGIN; SELECT authz.close_review($OTHER); COMMIT; SELECT authz.share('folder', 3, 'viewer', 'user', 2);
+   RESET ROLE; SELECT coalesce(reason, 'none') FROM authz.audit WHERE action = 'share' ORDER BY id DESC LIMIT 1"
+as 5 -c "SELECT authz.unshare('folder', 3, 'viewer', 'user', 2)" -c "SELECT authz.unshare('folder', 1, 'viewer', 'user', 4)" >/dev/null
+expect_code "a closed review cannot be changed" "42501: you cannot decide in review $REV" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV, 1, false)"
 admin "the audit trail has the requests, their answers and the reviews" "approve_request|close_review|deny_request|request_access|start_review" \
   "SELECT string_agg(DISTINCT action, '|' ORDER BY action) FROM authz.audit
    WHERE action IN ('request_access', 'approve_request', 'deny_request', 'start_review', 'close_review')"
@@ -378,7 +404,7 @@ expect_code "erin (share, but not manage_editors) cannot unshare dave's editor s
   -c "SELECT authz.unshare('folder', 3, 'editor', 'user', 4)"
 REV2=$(as 5 -c "SELECT authz.start_review('folder', '3')")
 ITEM2=$(as 5 -c "SELECT item FROM authz.review_items($REV2) WHERE subject_id = '4' AND relation = 'editor'")
-expect_code "... nor revoke it in a review" "42501: you cannot decide on editor in review 3 (you could not unshare it)" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV2, $ITEM2, false)"
+expect_code "... nor revoke it in a review" "42501: you cannot decide on editor in review $REV2 (you could not unshare it)" -c "SET authz.user_id = 5" -c "SELECT authz.review_decide($REV2, $ITEM2, false)"
 check "... nor by closing the review with undecided items revoked" "0" "SET authz.user_id = 5; SELECT authz.close_review($REV2, true)"
 check "dave is still an editor" "t" "SET authz.user_id = 4; SELECT authz.can('folder', 3, 'edit')"
 # a share with every user is shared by manage_editors, though a share with one user is shared by share
@@ -725,6 +751,9 @@ N=$(PSQL -c "SELECT count(*) FROM authz.audit")
 admin "... older ones go" "$N" "SELECT authz.trim_audit(interval '0')"
 admin "... and the trim is recorded" "trim_audit|$N" \
   "SELECT action || '|' || (detail ->> 'rows') FROM authz.audit ORDER BY id DESC LIMIT 1"
+admin "... but not one exactly as old as the period: only older ones" "1" \
+  "BEGIN; INSERT INTO authz.audit (db_role, action, at) VALUES (current_user, 'just kept', now() - interval '1 hour');
+   SELECT authz.trim_audit(interval '1 hour'); SELECT count(*) FROM authz.audit WHERE action = 'just kept'; ROLLBACK"
 expect_code "the trail still cannot be edited otherwise" "42501: the audit trail cannot be changed" -c "RESET ROLE" -c "DELETE FROM authz.audit"
 expect_code "... whatever the session sets" "42501: the audit trail cannot be changed" -c "RESET ROLE" -c "SET authz_int.trim_before = '2999-01-01'" \
   -c "DELETE FROM authz.audit"

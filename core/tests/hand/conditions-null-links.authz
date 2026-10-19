@@ -1,0 +1,30 @@
+-- answer: conditions-null, relation-sources
+-- A link table's where that is NULL links no one: the link's user holds nothing through it, neither directly nor
+-- through the permission the link leads to, and authz.who doesn't list them.
+app role app_user
+
+type user = app.users
+  member_of : project = app.memberships(user_id -> project_id) where {nullif(not revoked, false)}
+  can peek = member_of.view
+type project = app.projects
+  owner  : user = owner_id
+  member : user = app.memberships(project_id -> user_id) where {nullif(not revoked, false)}
+  can share = owner
+  can view  = owner or member
+
+test "a link whose where is NULL links no one"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given cy  = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given p   = {INSERT INTO app.projects (id, owner_id) VALUES (1, $ann) RETURNING id}
+  given {INSERT INTO app.memberships (id, project_id, user_id, revoked) VALUES (1, $p, $bo, true), (2, $p, $cy, false)}
+  user $cy can view project $p
+  user $bo cannot view project $p
+  as user $bo sees 0 {SELECT FROM authz.list('project', 'view')}
+  as user $cy sees 1 {SELECT FROM authz.list('project', 'view')}
+  as user $ann sees 0 {SELECT FROM authz.who('project', $p, 'view') w WHERE w = $bo::text}
+  as user $ann sees 1 {SELECT FROM authz.who('project', $p, 'view') w WHERE w = $cy::text}
+  user $ann can peek user $cy
+  user $ann cannot peek user $bo
+  as user $ann sees 0 {SELECT FROM authz.list('user', 'peek') x WHERE x = $bo::text}
+  as user $ann sees 1 {SELECT FROM authz.list('user', 'peek') x WHERE x = $cy::text}

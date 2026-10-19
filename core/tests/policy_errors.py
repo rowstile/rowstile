@@ -1234,7 +1234,7 @@ def main() -> None:
     v1 = compile_policy(BASE + "  shortcut : doc shared\n  can view = owner or shortcut.owner\n")
     v2 = compile_policy(BASE + "  shortcut : doc shared\n  can view = owner or shortcut.view\n")
     # beside a share that never ends nor starts later (which may become a link), one that expires, or one that starts
-    # later: only that one is counted
+    # later: only that one is counted (not one of another relation, reader, which no inheritance uses)
     for what, when in (
         ("expiring", "now() + interval '1 day', NULL"),
         ("starting later", "NULL, now() + interval '1 day'"),
@@ -1244,7 +1244,8 @@ def main() -> None:
             "INSERT INTO alt.users VALUES (1); INSERT INTO alt.docs (doc_no, owner_id) VALUES (1, 1), (2, 1), (3, 1);"
             "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation,"
             f" expires_at, starts_at) VALUES ('doc', 1, 'shortcut', 'doc', 2, '', {when}),"
-            " ('doc', 3, 'shortcut', 'doc', 2, '', NULL, NULL);"
+            " ('doc', 3, 'shortcut', 'doc', 2, '', NULL, NULL),"
+            f" ('doc', 1, 'reader', 'user', 1, '', {when});"
         )
         subprocess.run(
             ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db],

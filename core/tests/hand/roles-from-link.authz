@@ -1,0 +1,32 @@
+-- answer: roles-create, conditions-null
+-- Custom roles count through the link the policy names (`roles : user from org`): an org linked by a row whose
+-- where is NULL isn't linked, so its roles give nothing on the project, while another org's, linked, do.
+app role app_user
+
+type user = app.users
+type org = app.orgs
+  admin : user = app.org_admins(org_id -> user_id)
+  can manage_roles = admin
+type project = app.projects
+  org   : org = app.memberships(project_id -> user_id) where {nullif(not revoked, false)}
+  roles : user from org
+  can share = org.admin
+  can view  = roles
+
+test "the roles of an org whose link's where is NULL give nothing"
+  given erin = {INSERT INTO app.users (id) VALUES (5) RETURNING id}
+  given bo   = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given cy   = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given {INSERT INTO app.orgs VALUES (1), (2)}
+  given {INSERT INTO app.org_admins VALUES (1, $erin), (2, $erin)}
+  given p    = {INSERT INTO app.projects (id) VALUES (1) RETURNING id}
+  given {INSERT INTO app.memberships (id, project_id, user_id, revoked) VALUES (1, $p, 1, true), (2, $p, 2, false)}
+  as user $erin allowed {SELECT authz.create_role('org', 1, 'project', 'one', ARRAY['view'])}
+  as user $erin allowed {SELECT authz.create_role('org', 2, 'project', 'two', ARRAY['view'])}
+  given one = {SELECT id FROM authz.roles WHERE name = 'one'}
+  given two = {SELECT id FROM authz.roles WHERE name = 'two'}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES ('project', $p::text, 'role:' || $one, 'user', $bo::text, ''), ('project', $p::text, 'role:' || $two, 'user', $cy::text, '')}
+  user $cy can view project $p
+  user $bo cannot view project $p
+  as user $bo sees 0 {SELECT FROM authz.list('project', 'view')}
+  as user $cy sees 1 {SELECT FROM authz.list('project', 'view')}

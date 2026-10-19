@@ -212,6 +212,11 @@ L -c 'INSERT INTO "FolderInNote" ("folderId", "noteId") VALUES (2, 1)'
   bad "lint, the two-type tree" "$(L -c "SELECT * FROM authz.lint() WHERE severity IN ('error', 'warning')")"
 L -c 'DELETE FROM "FolderInNote"'
 [ "$(can_1)" = f ] && [ "$(L -c "SELECT authz.verify()")" = t ] && ok "... and the link row deleted, the access is gone" || bad "a link row deleted" "$(can_1)"
+# a note moved by its column ("folderId"): the trigger that sees the move names the column quoted
+L -c 'UPDATE "Note" SET "folderId" = 1 WHERE id = 2' >/dev/null
+[ "$(can_1)" = t ] && [ "$(L -c "SELECT authz.verify()")" = t ] && ok "... and bo's note moved into her folder by its column: hers to view" ||
+  bad "a note moved by its column" "$(can_1)"
+L -c 'UPDATE "Note" SET "folderId" = 2 WHERE id = 2' >/dev/null
 # a condition on the tree's links that reads another table (User): what watches that table is found by its quoted name
 sed 's/^  can view = owner or in.view$/  can view = owner or (in.view and {exists (select 1 from public."User" u where u.id = this."ownerId")})/' \
   "$T/link.authz" > "$T/link_reads.authz"
@@ -219,6 +224,11 @@ run --db "dbname=$DB3" apply "$T/link_reads.authz"
 case "$out" in *"link_reads.authz: applied") [ "$(L -c "SELECT authz.verify()")" = t ] &&
   ok "a condition on the links that reads another table: applied, the tree right" || bad "verify, a condition that reads User";;
   *) bad "apply, a condition on the links that reads User" "$out";; esac
+# what those conditions gave is kept beside the tree, and verify() compares it too: a row of it missing is found
+cache=$(L -c "SELECT relname FROM pg_class WHERE relnamespace = 'authz_int'::regnamespace AND relname LIKE '%\_cond\_cache'")
+[ "$(L -c "BEGIN" -c "DELETE FROM authz_int.\"$cache\" WHERE ctid = (SELECT ctid FROM authz_int.\"$cache\" LIMIT 1)" \
+  -c "SELECT authz.verify()" -c "ROLLBACK")" = f ] && ok "... and verify() finds a condition's kept answer missing ($cache)" ||
+  bad "verify, the kept conditions" "$cache"
 
 echo "-- types named with capitals: explain finds their views by their quoted names"
 cat > "$T/types.authz" <<'EOF'
@@ -357,6 +367,32 @@ case "$out" in *"cases.authz: applied")
   [ "$a" = 2 ] && [ "$(echo "$out" | sort | tr '\n' ' ')" = "1 2 4 " ] && ok "folder and Folder, each its own tree: who asks each" ||
     bad "who on folder and Folder" "$a / $out";;
   *) bad "apply, folder and Folder" "$out";; esac
+# invariants, a principal type and a team linked through a table, each named with a capital: who, explain, the
+# invariants' list of everyone, the principal signed in and the benchmark's people find them by their quoted names
+R >/dev/null <<'SQL' || bad "the bots and the folders' teams"
+CREATE TABLE "Bot" (id serial PRIMARY KEY);
+CREATE TABLE "FolderTeam" ("folderId" integer REFERENCES "Folder", "teamId" integer REFERENCES "Team");
+GRANT SELECT ON "Bot", "FolderTeam" TO app_user;
+INSERT INTO "Bot" (id) VALUES (1);
+INSERT INTO "FolderTeam" VALUES (3, 1);
+SQL
+{ sed 's/^  backer : user, Team .*$/&\n  crew   : Team#member  = public.FolderTeam(folderId -> teamId)\n  can muster = crew/' "$T/teams.authz"
+  printf '\ntype Bot = public.Bot (id int) principal\n\ninvariants\n  never Folder: look and not share\n'
+} > "$T/more.authz"
+run --db "dbname=$DB4" apply "$T/more.authz"
+case "$out" in *"more.authz: applied")
+  run --db "dbname=$DB4" who Folder 3 muster
+  [ "$out" = 2 ] && ok "who: through a team a link table names, and the teams in it" || bad "who through FolderTeam" "$out"
+  got=$(R -c "SELECT string_agg(btrim(e), '|') FROM authz.explain('Folder', '3', 'muster', '2') e WHERE e LIKE '%through Team%'")
+  [ "$got" = "yes  through Team 2, whose member count here too" ] && ok "explain: through the team the link table names, and the team in it" ||
+    bad "explain through FolderTeam" "$got"
+  [ "$(R -c "SELECT count(*) FROM authz.check_invariants()")" = 0 ] && ok "the invariants, asked as every user and bot: kept" ||
+    bad "check_invariants" "$(R -c "SELECT * FROM authz.check_invariants()" 2>&1)"
+  got=$(R -c "SELECT authz.act_as('Bot', '1'); SELECT principal_type || ':' || principal_id FROM authz.principal()" 2>&1 | tail -n 1)
+  [ "$got" = "Bot:1" ] && ok "a Bot signed in is who authz.principal() says" || bad "authz.principal(), a Bot" "$got"
+  run --db "dbname=$DB4" bench --people 1 --rounds 1
+  [ $rc -eq 0 ] && ok "bench: its people read from tables named with capitals" || bad "bench" "$out";;
+  *) bad "apply, the policy with invariants and bots" "$out";; esac
 [ -z "${KEEP:-}" ] && dropdb "$DB4"
 
 rm -rf "$T"
