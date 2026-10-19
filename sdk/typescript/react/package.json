@@ -1,6 +1,6 @@
 {
   "name": "@rowstile/react",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-dev",
   "description": "rowstile for React: usePerms, <Can>, a headless share dialog, access requests, live updates",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
@@ -20,7 +20,7 @@
   ],
   "sideEffects": false,
   "dependencies": {
-    "@rowstile/client": "0.1.0-alpha.9"
+    "@rowstile/client": "0.1.0-dev"
   },
   "peerDependencies": {
     "react": ">=18"

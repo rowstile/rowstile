@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     BUILD: str
 
 # set with packaging/version.py (the packages copy it); authz.policy_versions records it on each apply
-__version__ = "0.1.0-alpha.9"
+__version__ = "0.1.0-dev"
 
 
 def _build() -> str:
