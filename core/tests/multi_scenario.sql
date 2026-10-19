@@ -156,6 +156,9 @@ SELECT test.ok('alice shares folder 2 with every signed-in user',
   test.try($$SELECT authz.share('folder', '2', 'viewer', 'user', '*')$$) = 'ok');
 SELECT test.as(4);
 SELECT test.ok('dave (signed in) sees folder 2''s documents', test.docs() = '01, 02');
+SELECT test.ok('... and explain says why: viewer, shared with every signed-in user, and by whom',
+  EXISTS (SELECT 1 FROM authz.explain('folder', 2, 'view') l
+          WHERE ltrim(l) = 'yes  viewer: shared with every signed-in user (by 00000000-0000-4000-8000-000000000001)'));
 SELECT test.as(NULL);
 SELECT test.ok('nobody signed in: nothing', test.docs() = '-');
 SELECT test.as(2);

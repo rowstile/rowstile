@@ -385,9 +385,19 @@ INSERT INTO "FolderTeam" VALUES (3, 1);
 CREATE TABLE "Log" (id integer PRIMARY KEY, "ownerId" integer REFERENCES "User") PARTITION BY RANGE (id);
 CREATE TABLE "LogOld" PARTITION OF "Log" FOR VALUES FROM (0) TO (100);
 GRANT SELECT ON "Log", "LogOld" TO app_user;
+CREATE TABLE "Squad" ("orgId" integer, slug text, PRIMARY KEY ("orgId", slug));
+CREATE TABLE "SquadMember" ("orgId" integer, "squadSlug" text, "userId" integer REFERENCES "User",
+  PRIMARY KEY ("orgId", "squadSlug", "userId"));
+GRANT SELECT ON "Squad", "SquadMember" TO app_user;
+INSERT INTO "Squad" VALUES (1, 'red');
+CREATE TABLE "Watch" ("orgId" integer, "squadSlug" text, "userId" integer, "isActive" boolean, "isBanned" boolean);
+GRANT SELECT ON "Watch" TO app_user;
+INSERT INTO "Watch" VALUES (1, 'red', 4, true, true);
 SQL
 { sed 's/^  backer : user, Team .*$/&\n  crew   : Team#member  = public.FolderTeam(folderId -> teamId)\n  can muster = crew/' "$T/teams.authz"
   printf '\ntype Bot = public.Bot (id int) principal\n\ntype Log = public.Log (id int)\n  owner : user = ownerId\n  can view = owner\n'
+  printf '\ntype Squad = public.Squad (orgId int, slug text)\n  member : user = public.SquadMember([orgId, squadSlug] -> userId)\n  can gather = member\n'
+  printf '  watcher : user = public.Watch([orgId, squadSlug] -> userId) where {"isActive" and not "isBanned"}\n  can see = watcher\n'
   printf '\nrules public.Log\n  select : view\n\ninvariants\n  never Folder: look and not share\n'
 } > "$T/more.authz"
 run --db "dbname=$DB4" apply "$T/more.authz"
@@ -403,6 +413,16 @@ case "$out" in *"more.authz: applied")
   [ "$got" = "Bot:1" ] && ok "a Bot signed in is who authz.principal() says" || bad "authz.principal(), a Bot" "$got"
   run --db "dbname=$DB4" bench --people 1 --rounds 1
   [ $rc -eq 0 ] && ok "bench: its people read from tables named with capitals" || bad "bench" "$out"
+  got=$(R -c "SELECT added || '|' || removed FROM authz.sync_members('Squad', '(1,red)', 'member', ARRAY['2', '3'])" \
+         -c "SELECT string_agg(\"userId\"::text, ' ' ORDER BY \"userId\") FROM \"SquadMember\"" | paste -sd' ')
+  [ "$got" = "2|0 2 3" ] && ok "sync a squad keyed by two columns named with capitals: its members are the list" || bad "sync_members, Squad" "$got"
+  run --db "dbname=$DB4" why --as user:4 Squad '(1,red)' gather
+  case "$out" in *"would be granted by:"*"add user 4 to public.SquadMember for Squad (1,red)"*) ok "why: a row of SquadMember, the squad's key by its columns";;
+    *) bad "why on a squad keyed by two columns" "$out";; esac
+  # user 4's row of Watch is active but banned: the where asks both, so both are set, on the row that is there
+  run --db "dbname=$DB4" why --as user:4 Squad '(1,red)' see
+  case "$out" in *"would be granted by:"*"set isActive = true, isBanned = false on user 4's row of public.Watch for Squad (1,red)"*)
+    ok "why: a row of a link table that its where leaves out, its columns set as the where asks";; *) bad "why through Watch" "$out";; esac
   # a partition made since, of a table with rules named with a capital: apply finds it without row-level security
   R -c 'CREATE TABLE "LogNew" PARTITION OF "Log" FOR VALUES FROM (100) TO (200)' -c 'GRANT SELECT ON "LogNew" TO app_user' >/dev/null
   run --db "dbname=$DB4" apply "$T/more.authz"
