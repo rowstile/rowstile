@@ -34,3 +34,5 @@ test "making a role and giving it"
   as user $alice refused {SELECT authz.share('folder', $f, 'role:' || $archivist, 'user', $bo)}
   as user $erin allowed {SELECT authz.share('folder', $f, 'role:' || $archivist, 'user', $bo)}
   user $bo can archive folder $f
+  as user $erin sees 1 {SELECT FROM authz.roles_of('org', 1) WHERE name = 'reviewer' AND permissions = ARRAY['view']}
+  as user $erin sees 1 {SELECT FROM authz.roles_of('org', 1) WHERE name = 'archivist' AND permissions = ARRAY['archive']}

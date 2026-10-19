@@ -29,6 +29,12 @@ case "$out" in *"could still read masked columns of mt.docs"*) ok "a mask PUBLIC
   *) bad "apply with PUBLIC access" "$out";; esac
 PSQL -c "REVOKE SELECT ON mt.docs FROM PUBLIC" >/dev/null
 out=$(apply /tmp/authz_masks.sql); [ -z "$out" ] && ok "... and applies once that is revoked" || bad "apply" "$out"
+# a view of the app's own, with a comment of its own: applying again leaves it (only the masked views it made are made again)
+PSQL -c "CREATE VIEW mt.org_ids AS SELECT id FROM mt.orgs" -c "COMMENT ON VIEW mt.org_ids IS 'the app''s own view'" >/dev/null
+out=$(apply /tmp/authz_masks.sql)
+[ -z "$out" ] && [ "$(PSQL -c "SELECT count(*) FROM mt.org_ids")" = 1 ] && ok "... and applied again, it leaves the app's own commented view as it was" ||
+  bad "the app's own view after apply" "$out"
+PSQL -c "DROP VIEW mt.org_ids" >/dev/null
 got=$(PSQL -c "SELECT string_agg(attname, ',' ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'mt.docs_visible'::regclass")
 [ "$got" = "id,container_type,container_id,author_id,body" ] && ok "the masked view has the table's columns, in their order, and no others" ||
   bad "the masked view's columns" "$got"

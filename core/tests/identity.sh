@@ -61,6 +61,8 @@ expect_code "a scope the policy doesn't have is a mistake, not a key" "P0001: no
 expect_code "a key for another user: users' keys are their own (the policy gives user no manage_keys)" \
   "P0001: the policy gives user no manage_keys permission, so nobody manages its keys" \
   -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('k', 'read', NULL, 'user', '3')"
+check "blank pieces of a list of scopes are left out" "read" \
+  "SET authz.user_id = 1; BEGIN; SELECT authz.create_api_key('blank', 'read, ,'); SELECT scopes FROM authz.list_api_keys() WHERE name = 'blank'; ROLLBACK;"
 expect_code "nobody signed in makes no key" "42501: sign in to create an API key" -c "SELECT authz.create_api_key('k', 'read')"
 said=$(psql -X -q -At -d "$DB" -c "SET ROLE app_user;" -c "SELECT authz.create_api_key('k', 'read')" 2>&1 | grep '^HINT:  ')
 [ "$said" = "HINT:  rowstile help AZ714" ] && echo "ok    ... and its code is sign in first (AZ714, a 401), not a refusal" ||
@@ -86,6 +88,7 @@ KEYID=$(state -c "SET authz.user_id = 1" -c "SELECT id FROM authz.list_api_keys(
 expect_code "bob cannot revoke alice's key" "P0001: no API key $KEYID of yours" -c "SET authz.user_id = 2" -c "SELECT authz.revoke_api_key($KEYID)"
 PSQL -c "SET ROLE app_user; SET authz.user_id = 1; SELECT authz.revoke_api_key($KEYID)" >/dev/null
 expect_code "a revoked key no longer signs in" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$READ')"
+expect_code "... nor is revoked again" "P0001: no API key $KEYID of yours" -c "SET authz.user_id = 1" -c "SELECT authz.revoke_api_key($KEYID)"
 check "the audit trail has the keys made and the one revoked, with whose they are" \
   "create_api_key 1 laptop|create_api_key 1 script|revoke_api_key 1 $KEYID" \
   "RESET ROLE; SELECT string_agg(action || ' ' || object_id || ' ' || coalesce(detail ->> 'name', detail ->> 'key'), '|'
