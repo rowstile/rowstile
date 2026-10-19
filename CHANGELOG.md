@@ -19,6 +19,13 @@ Each release upgrades from the one before it. How releases are numbered and made
   (AZ101), `everyone` an ordinary name (write `anyone`), and `roles : ... grant` a list of subjects it refuses
   (AZ103). `everyone` and `grant` may be names now.
 
+### Added
+
+- The files on a GitHub release come with their provenance, `rowstile-<version>.intoto.jsonl`: where and how
+  the release workflow built them, signed through Sigstore. `gh attestation verify FILE --repo rowstile/rowstile`
+  checks a file against it ([Installing](docs/installing.md#checking-a-download)). The packages on npm and PyPI
+  had theirs already.
+
 ### Changed
 
 - The language server underlines the words a mistake is about (`nosuch` in `can view = owner or nosuch`, the
