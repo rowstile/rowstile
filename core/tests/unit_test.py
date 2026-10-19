@@ -5232,6 +5232,19 @@ class Readers(unittest.TestCase):
 
 
 class Fmt(unittest.TestCase):
+    def test_a_line_continued_after_a_comment_hangs_under_its_expression(self) -> None:
+        # an invariant's `and` on the line after a comment: under the expression, as it would be without the comment
+        from authzlib.fmt import format
+
+        head = (
+            "app role app_user\n\ntype user = app.users\n\ntype org = app.orgs\n"
+            "  member : user = app.org_members(org_id -> user_id)\n\ntype folder = app.folders\n"
+            "  org   : org  = org_id\n  owner : user = owner_id\n  can share = owner\n\ninvariants\n"
+        )
+        src = head + "  never folder: share\n  -- whoever may share is in its org\n    and not org.member\n"
+        want = head + "  never folder: share\n  -- whoever may share is in its org\n            and not org.member\n"
+        self.assertEqual(format(src), want)
+
     def test_an_odd_layout(self) -> None:
         # blank lines first, a comment before a type, a condition and an expression continued on the next line
         from authzlib.fmt import format
@@ -6920,6 +6933,15 @@ class HandAnswers(unittest.TestCase):
         ):
             self.assertIsNone(simple(sql), sql[:20])
         self.assertIsNotNone(simple("size > " + "9" * 7))
+
+    @worked_from("conditions-sql")
+    def test_not_in_a_list_is_read_as_a_fact_about_the_row(self) -> None:
+        # `kind not in ('a', 'b')`: true for another kind, false for one listed, NULL for no kind, as SQL says
+        from authzlib.conditions import simple, truth
+
+        node = simple("kind not in ('a', 'b')")
+        assert node is not None
+        self.assertEqual([truth(node, {"kind": k}, None) for k in ("c", "a", None)], [True, False, None])
 
     @worked_from("rows-hold-nothing")
     def test_a_disbanded_team_passes_its_members_on_to_no_team(self) -> None:

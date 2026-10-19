@@ -38,6 +38,24 @@ type doc = alt.docs (doc_no)
 # (what, policy text appended to BASE, expected piece of the message, expected line or None)
 COMPILE = [
     (
+        "custom roles held by a group through a relation named shared: read as the relation, which isn't there",
+        "  roles : grp#shared\n  can edit = roles\n",
+        "doc.roles:edit: grp has no relation or permission 'shared'",
+        10,
+    ),
+    (
+        "custom roles with `from` written against a comma: no from, a subject that isn't one",
+        "  roles : user,from grp\n  can edit = roles\n",
+        "bad subject 'from grp'",
+        10,
+    ),
+    (
+        "a relation shared by no subjects, two spaces after its colon",
+        "  watcher :  shared\n  can edit = watcher\n",
+        "bad subject ''",
+        10,
+    ),
+    (
         "a dollar-quote tag in a condition",
         "  can see = owner and {up <> 0 or '$f$' = ''}\n",
         "contains $f$, which ends the generated function it goes in",
