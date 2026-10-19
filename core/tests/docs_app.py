@@ -2,7 +2,8 @@
 """docs_app: each release's own docs app, for tests/upgrade.sh to upgrade it with.
 
     python3 tests/docs_app.py VERSION     # the files (from core/) of the docs app VERSION was released with
-    python3 tests/docs_app.py --sync      # from the tags (git tag v*): record each release's, copy those that differ
+    python3 tests/docs_app.py --sync      # from the tags (git tag v*): record each release's, copy those that differ;
+                                          # and the release being made (this checkout's version, not a -dev one)
 
 The docs app is core/example's docs.authz, docs.test.authz and app_schema.sql (FILES). upgrade.sh makes databases
 with an older release and upgrades them with this checkout's command: the policy has to be one the older release can
@@ -13,13 +14,16 @@ tests/docs_apps/releases.txt records each release's (its SHA-256, digest()), fro
 PyPI: nothing upgrades from one before it). tests/unit_test.py holds the copies to it (one for each release whose
 docs app differs from this checkout's, none for the others), and it to the tags where the checkout has them. CI's
 checkouts may have no tags: the copies are committed. When core/example changes, or after a release, --sync writes
-them again from the tags. A version not recorded is upgraded with core/example's (and upgrade.sh says so).
+them again from the tags. A release's own commit records itself (its version isn't a -dev one: --sync records it
+from this checkout, as no tag has it yet), so that the release run, on its tag, finds its tag recorded. A version not
+recorded is upgraded with core/example's (and upgrade.sh says so).
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -103,6 +107,23 @@ def tags() -> list[str]:
     return [v for _, v in sorted(out)]
 
 
+def releasing() -> str | None:
+    """The version this checkout is the release of (core/authzlib's, when it isn't a -dev one), or None."""
+    with open(os.path.join(CORE, "authzlib", "__init__.py"), encoding="utf-8") as fh:
+        m = re.search(r'^__version__ = "([^"]+)"', fh.read(), re.M)
+    version = m.group(1) if m else ""
+    return version if version and not version.endswith("-dev") else None
+
+
+def expected() -> list[str]:
+    """What releases.txt must record where the checkout has the tags: the tagged releases, and the release this
+    checkout is, when its tag isn't there yet."""
+    out = tags()
+    if out and (version := releasing()) and version not in out:
+        out.append(version)
+    return out
+
+
 def tagged(version: str) -> Callable[[str], bytes]:
     """A release's docs app's files, as its tag has them."""
 
@@ -115,6 +136,11 @@ def tagged(version: str) -> Callable[[str], bytes]:
     return read
 
 
+def _read_main(name: str) -> bytes:
+    with open(os.path.join(CORE, MAIN, name), "rb") as fh:
+        return fh.read()
+
+
 def sync() -> list[str]:
     """releases.txt and the copies, written again from the tags: what changed."""
     versions = tags()
@@ -123,8 +149,9 @@ def sync() -> list[str]:
     main = digest_of(files())
     said: list[str] = []
     lines = [HEADER]
-    for version in versions:
-        read = tagged(version)
+    this = releasing()
+    for version in versions + ([this] if this and this not in versions else []):
+        read = tagged(version) if version in versions else _read_main
         sha = digest(read)
         lines.append(f"{version} {sha}\n")
         folder = os.path.join(CORE, COPIES, version)

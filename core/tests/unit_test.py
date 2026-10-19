@@ -11671,13 +11671,31 @@ class DocsApps(unittest.TestCase):
                 self.assertEqual(sorted(os.listdir(os.path.join(copies, name))), sorted(f"{f}.txt" for f in d.FILES))
 
     def test_as_the_tags_have_them(self) -> None:
-        # where the checkout has the tags (here; CI's suites' checkouts haven't): every release from the first on
-        # PyPI is recorded, as its tag has its docs app
+        # where the checkout has the tags (here, and the release run's; CI's suites' checkouts haven't): every
+        # release from the first on PyPI is recorded, as its tag has its docs app, and the release this checkout is
+        # (its own commit records it, before its tag is made)
         tags = self.d.tags()
         if tags:
-            self.assertEqual(list(self.d.recorded()), tags, "a release not recorded: python3 tests/docs_app.py --sync")
+            self.assertEqual(
+                list(self.d.recorded()), self.d.expected(), "a release not recorded: python3 tests/docs_app.py --sync"
+            )
             for version in tags:
                 self.assertEqual(self.d.digest(self.d.tagged(version)), self.d.recorded()[version], version)
+
+    def test_the_release_being_made_records_itself(self) -> None:
+        # a release's commit (its version not a -dev one) records its own docs app, which no tag has yet; a -dev
+        # checkout records only what is tagged
+        d = self.d
+        with tempfile.TemporaryDirectory() as core:
+            os.makedirs(os.path.join(core, "authzlib"))
+            for version, want in (("0.2.0-alpha.1", ["0.1.0", "0.2.0-alpha.1"]), ("0.2.0-dev", ["0.1.0"])):
+                with open(os.path.join(core, "authzlib", "__init__.py"), "w", encoding="utf-8") as fh:
+                    fh.write(f'__version__ = "{version}"\n')
+                with mock.patch.object(d, "CORE", core), mock.patch.object(d, "tags", return_value=["0.1.0"]):
+                    self.assertEqual(d.expected(), want, version)
+                    self.assertEqual(d.releasing(), None if version.endswith("-dev") else version)
+            with mock.patch.object(d, "CORE", core), mock.patch.object(d, "tags", return_value=[]):
+                self.assertEqual(d.expected(), [])
 
     def test_a_release_whose_docs_app_differs(self) -> None:
         # the docs app changed after 1.0.0: 1.0.0 is upgraded with its copy, 1.1.0 with this checkout's

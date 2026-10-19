@@ -75,6 +75,9 @@ A build from `main` records its version with a hash of the compiler's sources (`
         `examples/messenger`, `integrations/fastapi` and `integrations/nextjs`, run
         `python3 ../../core/cli/rowstile_cli.py migrate --name rowstile_X_Y_Z`. This is the upgrade users
         will make, run by CI on each app
+      - `python3 core/tests/docs_app.py --sync`: the release records its own docs app
+        (`core/tests/docs_apps/releases.txt`), which `tests/upgrade.sh` upgrades it with later; without it the
+        release run's unit tests, which have the tags, fail on the release's own tag (as 0.1.0-alpha.8's did)
    2. `main`'s next version: `python3 packaging/version.py X.(Y+1).0-dev` after a final release,
       `X.Y.Z-dev` after an alpha or a candidate, with the subject line that version.
 2. **Merge it** with a rebase once CI is green, so both commits land on `main` as they are.
