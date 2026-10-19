@@ -4,8 +4,27 @@
   "description": "rowstile with Vitest (and Jest): asUser, toBeRefused, a database per worker",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
-  "keywords": ["rowstile", "postgres", "postgresql", "authorization", "row-level-security", "rls", "permissions", "access-control", "rbac", "rebac", "multi-tenant", "vitest", "jest", "testing"],
-  "repository": { "type": "git", "url": "git+https://github.com/rowstile/rowstile.git", "directory": "sdk/typescript/vitest" },
+  "keywords": [
+    "rowstile",
+    "postgres",
+    "postgresql",
+    "authorization",
+    "row-level-security",
+    "rls",
+    "permissions",
+    "access-control",
+    "rbac",
+    "rebac",
+    "multi-tenant",
+    "vitest",
+    "jest",
+    "testing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rowstile/rowstile.git",
+    "directory": "sdk/typescript/vitest"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,8 +42,8 @@
     "@rowstile/client": "0.1.0-dev"
   },
   "peerDependencies": {
-    "vitest": "^4.0.0 || ^5.0.0",
-    "pg": ">=8"
+    "pg": "^8.23.1",
+    "vitest": "^4.0.0 || ^5.0.0"
   },
   "peerDependenciesMeta": {
     "pg": {
