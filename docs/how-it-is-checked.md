@@ -216,6 +216,9 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   second. <!-- checked: tests/unit_test.py "test_starting_points_are_read_in_from"; tests/confidence_test.py "its starting points run once where they are read" -->
 - **The parser**: [`tests/fuzz_parser.py`](../core/tests/fuzz_parser.py) feeds it thousands of broken
   policies; each is accepted, or refused with a line number, never a crash. <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
+  Every night [`tests/fuzz_coverage.py`](../core/tests/fuzz_coverage.py) gives the parser and the compiler
+  twenty minutes more under Atheris, a fuzzer that watches which branches each input reaches and works from the
+  ones that reach new ground, held to the same rule.
 - **The docs**: the getting-started guide runs as written, every line the cookbook shows is in a policy that
   is applied and tested, and every line of code on the stack pages is in an app whose tests pass. <!-- checked: tests/docs_test.sh "every block of the guide runs"; tests/cookbook.sh "every line its page shows is in its tested policy or tests"; tests/unit_test.py "test_every_line_is_in_a_tested_app" -->
   Every block of code in the reference runs too, or says why it can't, and each promise these pages make, and

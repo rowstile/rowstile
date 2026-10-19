@@ -115,6 +115,25 @@ def within(span: Span, lines: list[str], line: int) -> bool:
     )
 
 
+def check(text: str) -> tuple[str, bool]:
+    """Parse and compile a policy: what is wrong with how it went ("" when nothing), and whether it was refused.
+    fuzz_coverage.py holds its inputs to this rule too."""
+    try:
+        Compiler(parse_policy(text, files={})).compile("fuzz")
+        return "", False
+    except PolicyError as e:
+        if not re.match(r"(line )?\d+|[^:]+:\d+", str(e)):
+            return f"refused without a line number: {e}", True
+        line = re.match(r"line (\d+):", str(e))
+        if line and not 0 < int(line.group(1)) <= len(text.split("\n")):  # rowstile dev shows that line
+            return f"refused at a line the policy doesn't have: {e}", True
+        if e.span and not within(e.span, text.removeprefix("\ufeff").split("\n"), int(line.group(1)) if line else 1):
+            return f"refused about words that aren't in its text, {e.span}: {e}", True
+        return "", True
+    except Exception:
+        return traceback.format_exc(limit=3), False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", type=int, default=3000)
@@ -135,22 +154,11 @@ def main() -> int:
             if text:
                 text = mutate(rnd, text)
         started = time.perf_counter()
-        try:
-            Compiler(parse_policy(text, files={})).compile("fuzz")
-            accepted += 1
-        except PolicyError as e:
-            refused += 1
-            if not re.match(r"(line )?\d+|[^:]+:\d+", str(e)):
-                problems.append((n, f"refused without a line number: {e}", text))
-            line = re.match(r"line (\d+):", str(e))
-            if line and not 0 < int(line.group(1)) <= len(text.split("\n")):  # rowstile dev shows that line
-                problems.append((n, f"refused at a line the policy doesn't have: {e}", text))
-            if e.span and not within(
-                e.span, text.removeprefix("\ufeff").split("\n"), int(line.group(1)) if line else 1
-            ):
-                problems.append((n, f"refused about words that aren't in its text, {e.span}: {e}", text))
-        except Exception:
-            problems.append((n, traceback.format_exc(limit=3), text))
+        what, was_refused = check(text)
+        refused += was_refused
+        accepted += not was_refused and not what
+        if what:
+            problems.append((n, what, text))
         took = time.perf_counter() - started
         slowest = max(slowest, took)
         if took > 5:
