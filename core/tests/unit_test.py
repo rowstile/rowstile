@@ -5792,6 +5792,66 @@ class Confidence(unittest.TestCase):
                 self.assertTrue(all(s in data.ids[st] for _, s in pairs), (seed, st, pairs))
             self.assertFalse({o for o, _ in links["folder"]} & {o for o, _ in links["project"]}, seed)
 
+    def test_a_drawn_role_belongs_to_an_object_of_its_owner_type(self) -> None:
+        # `roles : user from org`: each role given in a drawn world is an org's, one that is there, so roles reach
+        from authzlib.evaluate import World
+
+        pol = parse_policy(
+            self.HEAD + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
+            "type folder = app.folders\n  org : org = org_id\n  roles : user from org\n  can view = roles\n"
+        )
+        given = 0
+        for seed in range(20):
+            data = World(str(seed), 4).data(pol)
+            for o, s, w in data.rolepairs[("folder", "view", "user", "")]:
+                self.assertIn(w, data.ids["org"], (seed, o, s, w))
+                given += 1
+        self.assertGreater(given, 0)
+
+    def test_a_column_naming_a_group_is_no_link_of_one_object(self) -> None:
+        # `owner : user = owner_id` names one user: its links are the column's values. `keeper : folder#owner =
+        # folder_id` names a group (the folder's owners): the column holds the folder, which conditions read as drawn
+        from authzlib.evaluate import linked_column
+
+        pol = parse_policy(
+            self.HEAD + "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\n"
+            "type note = app.notes\n  keeper : folder#owner = folder_id\n  can keep = keeper\n"
+        )
+        self.assertEqual(linked_column(pol.types["folder"].relations["owner"].sources[0]), "owner_id")
+        self.assertIsNone(linked_column(pol.types["note"].relations["keeper"].sources[0]))
+
+    def test_two_policies_whose_types_differ_are_told_apart(self) -> None:
+        # the same permissions and rules over a type whose where, or whose relation's column, differs: the worlds
+        # aren't narrowed to where the permissions differ (there is no such place), and one tells them apart
+        folder = (
+            "type folder = app.folders{}\n  owner : user = {}\n  can view = owner\nrules app.folders\n  select : view\n"
+        )
+        plain = folder.format("", "owner_id")
+        self.assertFalse(self.same(plain, folder.format(" where {not archived}", "owner_id")))
+        self.assertFalse(self.same(plain, folder.format("", "creator_id")))
+        self.assertTrue(self.same(plain, plain))
+
+    def test_a_change_seen_only_through_the_permission_that_reads_it_is_found(self) -> None:
+        # a deny inside inheritance is split into a hidden view__base and `view__base and not hidden` (compiling
+        # does it, and the review compares compiled policies): widening the inheritance changes only the hidden
+        # one, which isn't compared itself; view, which reads it, is
+        from authzlib import Compiler, evaluate
+
+        folder = (
+            "type folder = app.folders\n  owner : user = owner_id\n  editor : user = editor_id\n"
+            "  parent : folder = parent_id\n  blocked : user = blocked_id\n"
+            "  can edit = editor\n  can hidden = blocked or parent.hidden\n  can view = ({} or parent.view) and not hidden\n"
+        )
+
+        def split(text: str) -> authzlib.parse.Policy:
+            c = Compiler(parse_policy(self.HEAD + text, "p.authz"))
+            c.compile("p.authz")
+            return c.pol
+
+        a, b = split(folder.format("owner")), split(folder.format("owner or editor"))
+        self.assertTrue(a.types["folder"].perms["view__base"].hidden)
+        self.assertIsNotNone(evaluate.compare(a, b))
+
     def test_a_rule_gives_no_row_the_type_leaves_out(self) -> None:
         head = "type folder = app.folders where {not archived}\n  owner : user = owner_id\n  can view = owner\nrules app.folders\n"
         self.assertTrue(

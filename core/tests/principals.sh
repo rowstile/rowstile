@@ -255,12 +255,15 @@ PSQL -c "SET ROLE app_user; $AS_USER SELECT authz.revoke_api_key($KID)" >/dev/nu
 expect_code "the owner revoked it" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$KEY')"
 
 echo "-- a principal's keys go with its row"
-PSQL -c "INSERT INTO ps.users VALUES (98), (94)" -c "INSERT INTO ps.services VALUES (97, 1, true), (96, 1, true), (93, 1, true)" >/dev/null
+PSQL -c "INSERT INTO ps.users VALUES (98), (94), (97)" -c "INSERT INTO ps.services VALUES (97, 1, true), (96, 1, true), (93, 1, true)" >/dev/null
 K98=$(state -c "SET authz.user_id = '98'" -c "SELECT authz.create_api_key('mine')")
+state -c "SET authz.user_id = '97'" -c "SELECT authz.create_api_key('mine')" >/dev/null   # user 97, beside service 97
 K97=$(state -c "$AS_USER" -c "SELECT authz.create_api_key('deploy', '', NULL, 'service', '97')")
 K96=$(state -c "$AS_USER" -c "SELECT authz.create_api_key('deploy', '', NULL, 'service', '96')")
 keys() { echo "RESET ROLE; SELECT count(*) FROM authz.api_keys WHERE principal_type = '$1' AND user_id = '$2';"; }
+check "user 97 lists its own keys, not service 97's" "mine" "SET authz.user_id = '97'; SELECT string_agg(name, ',') FROM authz.list_api_keys();"
 PSQL -c "DELETE FROM ps.users WHERE id = 98" -c "DELETE FROM ps.services WHERE id = 97" -c "UPDATE ps.services SET id = 95 WHERE id = 96" >/dev/null
+check "... and user 97 keeps its key when service 97 goes" "1" "$(keys user 97)"
 check "deleting a user deletes their keys" "0" "$(keys user 98)"
 check "... and deleting a service, its keys" "0" "$(keys service 97)"
 check "a service given a new id loses its keys, as its shares" "0|0" \
