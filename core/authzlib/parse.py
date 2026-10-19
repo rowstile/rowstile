@@ -883,6 +883,34 @@ def piece_at(text: str, i: int) -> Piece:
 # a line's pieces, as Words lexes them: the place read from -> where the next piece starts, and the piece
 Pieces: TypeAlias = "dict[int, tuple[int, Piece | None]]"
 
+# a piece after spaces, as piece_at reads it: a name or a number, ->, a quote closed on the line (a doubled quote
+# inside it; possessive, so that an unclosed one is a mark as there), a { (piece_at reads the condition), a mark
+LINE_PIECE = re.compile(r"""\s*(?:([A-Za-z0-9_]+)|(->)|('(?:[^']|'')*+'|"(?:[^"]|"")*+")|(\{)|(\S))""")
+
+
+def lex_line(text: str, pieces: Pieces) -> None:
+    """Each piece of a line, read once from its start (what Words would lex at each piece's end, in one pass)."""
+    pos, n = 0, len(text)
+    while True:
+        m = LINE_PIECE.match(text, pos)
+        if m is None:
+            pieces[pos] = (n, None)
+            return
+        run, arrow, quote, brace, _ = m.groups()
+        i = m.start(m.lastindex or 0)
+        if run is not None:
+            piece = Piece("number" if run[0].isdigit() else "name", run, i, m.end())
+        elif arrow is not None:
+            piece = Piece("mark", "->", i, i + 2)
+        elif quote is not None:
+            piece = Piece("quote", quote, i, m.end())
+        elif brace is not None:
+            piece = piece_at(text, i)
+        else:
+            piece = Piece("mark", text[i], i, i + 1)
+        pieces[pos] = (i, piece)
+        pos = piece.end
+
 
 class Unread(Exception):
     """A line isn't the form being read: where reading stopped, (start, end) in its text."""
@@ -905,23 +933,29 @@ class Words:
         # the piece after each place read from, and where it starts: each is lexed once, however many forms are
         # tried on the line (pass the same dict to each)
         self.pieces = {} if pieces is None else pieces
+        if not self.pieces:
+            lex_line(text, self.pieces)
 
     def copy(self) -> Words:
         return Words(self.text, self.pos, self.pieces)
 
     def after(self) -> tuple[int, Piece | None]:
-        got = self.pieces.get(self.pos)
-        if got is None:
-            m = NOT_SPACE.search(self.text, self.pos)
-            i = m.start() if m else len(self.text)
-            got = self.pieces[self.pos] = (i, piece_at(self.text, i) if i < len(self.text) else None)
+        # (the readers call this hundreds of times a policy: the lexed piece is looked up first, inline where it is
+        # called most, take)
+        return self.pieces.get(self.pos) or self.lex()
+
+    def lex(self) -> tuple[int, Piece | None]:
+        """The next piece, lexed and kept for the forms tried next on the line."""
+        m = NOT_SPACE.search(self.text, self.pos)
+        i = m.start() if m else len(self.text)
+        got = self.pieces[self.pos] = (i, piece_at(self.text, i) if i < len(self.text) else None)
         return got
 
     def next_start(self) -> int:
         return self.after()[0]
 
     def peek(self) -> Piece | None:
-        return self.after()[1]
+        return (self.pieces.get(self.pos) or self.lex())[1]
 
     def spaced(self) -> bool:
         """Whether a space comes before the next piece."""
@@ -930,16 +964,22 @@ class Words:
     def take(self, kind: str, *texts: str, spaced: bool = False, glued: bool = False) -> Piece | None:
         """The next piece if it is of that kind (and one of those texts), after a space if spaced, right after the
         last if glued; None, and nothing taken, if not."""
-        p = self.peek()
+        start, p = self.pieces.get(self.pos) or self.lex()
         if p is None or p.kind != kind or (texts and p.text not in texts):
             return None
-        if (spaced and not self.spaced()) or (glued and self.spaced()):
+        if (spaced and start == self.pos) or (glued and start > self.pos):
             return None
         self.pos = p.end
         return p
 
     def name(self, *texts: str, spaced: bool = False, glued: bool = False) -> Piece | None:
-        return self.take("name", *texts, spaced=spaced, glued=glued)
+        start, p = self.pieces.get(self.pos) or self.lex()
+        if p is None or p.kind != "name" or (texts and p.text not in texts):
+            return None
+        if (spaced and start == self.pos) or (glued and start > self.pos):
+            return None
+        self.pos = p.end
+        return p
 
     def mark(self, text: str, glued: bool = False) -> Piece | None:
         return self.take("mark", text, glued=glued)
