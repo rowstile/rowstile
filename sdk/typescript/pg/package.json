@@ -4,14 +4,43 @@
   "description": "rowstile with node-postgres (pg): transactions signed in as the request's user",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
-  "keywords": ["rowstile", "postgres", "postgresql", "authorization", "row-level-security", "rls", "permissions", "access-control", "rbac", "rebac", "multi-tenant", "pg", "node-postgres"],
-  "repository": { "type": "git", "url": "git+https://github.com/rowstile/rowstile.git", "directory": "sdk/typescript/pg" },
+  "keywords": [
+    "rowstile",
+    "postgres",
+    "postgresql",
+    "authorization",
+    "row-level-security",
+    "rls",
+    "permissions",
+    "access-control",
+    "rbac",
+    "rebac",
+    "multi-tenant",
+    "pg",
+    "node-postgres"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rowstile/rowstile.git",
+    "directory": "sdk/typescript/pg"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "sideEffects": false,
-  "dependencies": { "@rowstile/client": "0.1.0-dev" },
-  "peerDependencies": { "pg": ">=8" }
+  "dependencies": {
+    "@rowstile/client": "0.1.0-dev"
+  },
+  "peerDependencies": {
+    "pg": "^8.23.1"
+  }
 }
