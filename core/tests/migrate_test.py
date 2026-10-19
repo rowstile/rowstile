@@ -403,9 +403,11 @@ SELECT format('SELECT %L || E''\n'' || coalesce(string_agg(x, E''\n'' ORDER BY x
               'rows ' || c.oid::regclass::text,
               CASE WHEN c.relname = 'trees' THEN 't.name || '' '' || t.hash' ELSE 't::text' END, c.oid::regclass)
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'authz_int' AND c.relkind = 'r' AND c.relname NOT IN ('locks', 'session_key')
+WHERE n.nspname = 'authz_int' AND c.relkind = 'r' AND c.relname NOT IN ('locks', 'session_key', 'row_marks')
 ORDER BY 1;
 """
+# (row_marks holds a row for each row shared on or to, written as shares, keys and requests are made: a migration keeps
+# it, applying whole starts it empty, and either way the marks only serve to conflict, whatever rows are there)
 
 
 def snapshot(db: str) -> str:
