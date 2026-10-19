@@ -732,6 +732,11 @@ class LanguageForms(unittest.TestCase):
         )
         self.assertEqual(pieces, [piece_at(text, p.start) for p in pieces])
         self.assertEqual(Words("ab cd", 1).peek(), Piece("name", "b", 1, 2))
+        # a mark that must be glued to the piece before isn't taken after a space, and stays to be read
+        spaced = Words("a -b")
+        spaced.name("a")
+        self.assertIsNone(spaced.mark("-", glued=True))
+        self.assertEqual(spaced.mark("-"), Piece("mark", "-", 2, 3))
 
     def test_named_columns_mean_the_arrow(self) -> None:
         text = read(POLICIES["docs"])
