@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "devDependencies": {"vitest": "^5", "typescript": "6.0.3", "@types/node": "*"}
+}

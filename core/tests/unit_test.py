@@ -11548,6 +11548,28 @@ class Delivery(unittest.TestCase):
                     loose.append(f"{path}:{n}: {m.group(1)}")
         self.assertEqual(loose, [], "an action by tag or branch: name its commit, the tag in a comment")
 
+    def test_images_are_pinned_by_digest(self) -> None:
+        # a tag can be pushed again with other contents; Dependabot moves the digests (its docker folders).
+        # core/Dockerfile follows the newest patch release of each Postgres on purpose, and says so
+        listed = subprocess.run(
+            ["git", "ls-files", "*Dockerfile"], cwd=self.REPO, capture_output=True, text=True, check=True
+        ).stdout.split()
+        dependabot = read("../.github/dependabot.yml")
+        folders = search(r"package-ecosystem: docker\n    directories: \[([^\]]*)\]", dependabot).group(1)
+        loose = []
+        for path in listed:
+            with open(os.path.join(self.REPO, path), encoding="utf-8") as fh:
+                text = fh.read()
+            if path == "core/Dockerfile":
+                self.assertIn("The one image not pinned by digest", text)
+                continue
+            images = re.findall(r"(?m)^FROM (\S+)|^COPY --from=(\S+)", text)
+            for image in [a or b for a, b in images]:
+                if not re.search(r"@sha256:[0-9a-f]{64}$", image) and image not in re.findall(r" AS (\S+)", text):
+                    loose.append(f"{path}: {image}")
+            self.assertIn(f'"/{os.path.dirname(path)}"', folders, f"{path}: Dependabot's docker folders")
+        self.assertEqual(loose, [], "an image by tag alone: add its digest (tag@sha256:...)")
+
     def test_uv_and_vsce_have_a_version(self) -> None:
         # setup-uv without one asks GitHub for uv's latest release on each run; npx takes the newest in a range
         for path, lines in self.workflows().items():
@@ -12112,16 +12134,24 @@ class Version(unittest.TestCase):
         self.assertEqual(len(names), 1 + len(platforms) + len(sdk))
         self.assertEqual(len(set(names)), len(names))
         self.assertIn("@rowstile/prisma", names)
-        # moving a tag by trusted publishing takes a newer npm than Node brings: both jobs install one, by version
+        # moving a tag by trusted publishing takes a newer npm than Node brings: both jobs install one, by version,
+        # its tarball checked by its hash
         for npm, enough in (("11.19.0", False), ("11.21.0", True), ("11.30.1", True), ("12.0.0", False)):
             self.assertEqual(npm_latest.new_enough(npm), enough, npm)
         self.assertTrue(npm_latest.new_enough("12.2.0") and npm_latest.new_enough("13.0.0"))
         release = read("../.github/workflows/release.yml")
-        installed = re.findall(r"^      - run: npm install --global npm@(\S+)$", release, re.M)
-        self.assertEqual(len(installed), 2, "the npm job and the latest job")
-        for npm in installed:
-            self.assertRegex(npm, r"^\d+\.\d+\.\d+$")
-            self.assertTrue(npm_latest.new_enough(npm), npm)
+        self.assertEqual(
+            len(re.findall(r"^      - run: bash packaging/npm/install_npm.sh$", release, re.M)),
+            2,
+            "the npm job and the latest job",
+        )
+        self.assertNotIn("npm install --global", release)
+        script = read("../packaging/npm/install_npm.sh")
+        npm = search(r"^VERSION=(\d+\.\d+\.\d+)$", script, re.M).group(1)
+        self.assertTrue(npm_latest.new_enough(npm), npm)
+        self.assertRegex(script, r"(?m)^SHA256=[0-9a-f]{64}$")
+        self.assertIn(f"npm view npm@{npm} dist.integrity", script)
+        self.assertIn("sha256sum -c --quiet -\n", script)
         # the release's own run says which version it published and waits for the registry to show it; by hand,
         # later, the registry is read as it is
         self.assertEqual(release.count("        run: python3 packaging/npm_latest.py --move\n"), 1)

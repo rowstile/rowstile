@@ -10,6 +10,8 @@
 # imported otherwise (a tenth of a second a process); and plpgsql_check (PGDG's package), whose profiler counts the
 # statements of the PL/pgSQL functions the suites run (ci.sh --statements preloads it; tests/coverage_plpgsql.py).
 # rowstile itself still needs no extension: it is made only for the moment the counts are read, then rolled back.
+# The one image not pinned by digest (the others are, and Dependabot moves them): the suites run on the newest patch
+# release of each major (16, 17, 18, a beta), as users get it, so this follows the tag on purpose.
 ARG PG_MAJOR=16
 FROM postgres:${PG_MAJOR}
 ARG COVERAGE=
