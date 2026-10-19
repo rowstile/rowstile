@@ -1,6 +1,6 @@
 {
   "name": "@rowstile/prisma",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-dev",
   "description": "rowstile with Prisma: a client extension that signs every query in, and turns refusals into errors",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
@@ -12,6 +12,6 @@
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "files": ["dist"],
   "sideEffects": false,
-  "dependencies": { "@rowstile/client": "0.1.0-alpha.9" },
+  "dependencies": { "@rowstile/client": "0.1.0-dev" },
   "peerDependencies": { "@prisma/client": ">=7" }
 }
