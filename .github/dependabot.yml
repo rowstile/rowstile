@@ -14,12 +14,25 @@ updates:
 
   - package-ecosystem: npm
     directories: ["/", "/playground", "/site", "/examples/filemanager/frontend", "/examples/messenger/frontend",
-                  "/editor", "/editor/tree-sitter-authz"]
+                  "/editor", "/editor/tree-sitter-authz",
+                  "/sdk/typescript/vitest/types-test/vitest-4", "/sdk/typescript/vitest/types-test/vitest-5"]
     schedule: {interval: monthly}
     cooldown: {default-days: 7}
     versioning-strategy: lockfile-only
     groups:
       npm: {patterns: ["*"]}
+
+  # the base images, pinned by digest (tag@sha256): a new digest of the same tag, or a patch release (uv, VHS). A new
+  # minor or major (Python 3.14, Node 26) is a change made on purpose. core/Dockerfile follows its tag (it says why)
+  - package-ecosystem: docker
+    directories: ["/demo", "/examples/filemanager/backend", "/examples/messenger/backend", "/packaging/docker"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      docker: {patterns: ["*"]}
 
   - package-ecosystem: uv
     directories: ["/examples/filemanager/backend", "/examples/messenger/backend", "/integrations/fastapi"]

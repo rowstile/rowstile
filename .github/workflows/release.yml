@@ -91,8 +91,8 @@ jobs:
           node-version: "24"
           registry-url: ${{ needs.check.outputs.publish == 'public' && 'https://registry.npmjs.org' || 'https://npm.pkg.github.com' }}
           scope: "@rowstile"
-      # moving a tag by trusted publishing needs a newer npm than Node 24 brings (11.21.0 or newer)
-      - run: npm install --global npm@11.21.0
+      # moving a tag by trusted publishing needs a newer npm than Node 24 brings (11.21.0 or newer), checked by its hash
+      - run: bash packaging/npm/install_npm.sh
       - run: node packaging/npm/build.mjs --all
       - run: npm ci --no-audit --no-fund && npx tsc -b sdk/typescript
       # each SDK package ships its own README (in its folder: its page on npm) and the licence
@@ -147,7 +147,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v7.0.0
         with: {node-version: "24", registry-url: "https://registry.npmjs.org"}
-      - run: npm install --global npm@11.21.0
+      - run: bash packaging/npm/install_npm.sh
       - env: {NODE_AUTH_TOKEN: ""}
         run: python3 packaging/npm_latest.py --move
 
