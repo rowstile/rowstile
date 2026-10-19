@@ -2750,6 +2750,39 @@ rules app.folders
             flags = [f["flag"] for f in self.small(old, "")["risk"] if f["why"] == "a type's where loosened"]
             self.assertEqual([f.split(" allows")[0] for f in flags], [shown], old)
 
+    def test_a_where_loosened_on_a_type_with_rules_only_is_flagged(self) -> None:
+        # a type with no permissions: its where removed shows in its rule alone, which is said
+        base = (
+            "app role app_user\ntype user = app.users\ntype box = app.boxes where {not archived}\n"
+            "  owner : user = owner_id\nrules app.boxes\n  select : owner or {shown}\n"
+        )
+        head = base.replace(" where {not archived}", "")
+        flags = [f["flag"] for f in self.review.review((base, {}, {}), (head, {}, {}), worlds=40)["risk"]
+                 if f["why"] == "a type's where loosened"]  # fmt: skip
+        self.assertEqual(
+            [f.split(" allows")[0] for f in flags],
+            ["`type box`: its where changed, and more rows count: `app.boxes select`"],
+        )
+
+    def test_a_warning_of_something_removed_names_the_file_only(self) -> None:
+        # an invariant removed has no line in the head: its annotation names the file, without a line
+        base = self.SMALL + "invariants\n  never folder: remove and not edit\n"
+        r = self.review.review((base, {}, {}), (self.SMALL, {}, {}), worlds=40)
+        [gone] = [f for f in r["risk"] if f["why"] == "an invariant removed"]
+        self.assertIsNone(gone["line"])
+        self.assertIn(
+            "::warning file=db/policy.authz,title=rowstile review::", self.review.annotations(r, "db/policy.authz")
+        )
+
+    def test_a_relation_to_a_type_already_reached_is_no_new_way(self) -> None:
+        # folders reach users already (owner): an editor column is another relation, not a new way to reach a type
+        head = self.SMALL.replace(
+            "  owner  : user = owner_id\n", "  owner  : user = owner_id\n  editor : user = editor_id\n"
+        )
+        head = head.replace("can edit = owner or org.admin", "can edit = owner or org.admin or editor")
+        whys = {f["why"] for f in self.review.review((self.SMALL, {}, {}), (head, {}, {}), worlds=40)["risk"]}
+        self.assertNotIn("a new way to reach a type", whys)
+
     def test_each_change_the_review_warns_of(self) -> None:
         def risk(base: str, head: str) -> set[str]:
             return {f["why"] for f in self.review.review((base, {}, {}), (head, {}, {}), worlds=40)["risk"]}

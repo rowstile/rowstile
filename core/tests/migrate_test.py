@@ -118,6 +118,17 @@ CASES: list[tuple[str, str, str, str]] = [
         edit(DOCS, ("  delete                            : edit", "  delete                            : share")),
     ),
     ("a rule that goes", "docs", DOCS, edit(DOCS, ("  delete                            : edit\n", ""))),
+    # the rule's refusal functions (BEGIN ATOMIC) read the relation's view: they go first, then the view
+    (
+        "a relation and the rule that reads it go",
+        "docs",
+        edit(
+            DOCS,
+            ("  viewer : user, team#member shared\n", "  viewer : user, team#member shared\n  purger : user shared\n"),
+            ("  delete                            : edit\n", "  delete                            : purger\n"),
+        ),
+        edit(DOCS, ("  delete                            : edit\n", "")),
+    ),
     ("a column rule that goes", "docs", DOCS, edit(DOCS, ("  update id, owner_id, confidential : share\n", ""))),
     # a rule on columns, its functions and its trigger are named after its head: another column is another name
     # (the old trigger goes), and the rules in another order are the same triggers
