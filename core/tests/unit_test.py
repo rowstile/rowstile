@@ -11550,7 +11550,7 @@ class Delivery(unittest.TestCase):
 
     def test_images_are_pinned_by_digest(self) -> None:
         # a tag can be pushed again with other contents; Dependabot moves the digests (its docker folders).
-        # core/Dockerfile follows the newest patch release of each Postgres on purpose, and says so
+        # core/Dockerfile has a stage per Postgres major, and builds the one PG_MAJOR names
         # walked, not asked of git: the suites' containers may not trust the mounted checkout
         listed = []
         for root, dirs, files in os.walk(self.REPO):
@@ -11564,15 +11564,16 @@ class Delivery(unittest.TestCase):
         for path in listed:
             with open(os.path.join(self.REPO, path), encoding="utf-8") as fh:
                 text = fh.read()
-            if path == "core/Dockerfile":
-                self.assertIn("The one image not pinned by digest", text)
-                continue
+            stages = re.findall(r" AS (\S+)", text)
             images = re.findall(r"(?m)^FROM (\S+)|^COPY --from=(\S+)", text)
             for image in [a or b for a, b in images]:
-                if not re.search(r"@sha256:[0-9a-f]{64}$", image) and image not in re.findall(r" AS (\S+)", text):
+                # pg${PG_MAJOR}: a stage for each version the suites and the apps build
+                names = [image.replace("${PG_MAJOR}", v) for v in ("16", "17", "18")] if "${" in image else [image]
+                if not re.search(r"@sha256:[0-9a-f]{64}$", image) and not set(names) <= set(stages):
                     loose.append(f"{path}: {image}")
             self.assertIn(f'"/{os.path.dirname(path)}"', folders, f"{path}: Dependabot's docker folders")
         self.assertEqual(loose, [], "an image by tag alone: add its digest (tag@sha256:...)")
+        self.assertIn("FROM pg${PG_MAJOR}\n", read("Dockerfile"))
 
     def test_uv_and_vsce_have_a_version(self) -> None:
         # setup-uv without one asks GitHub for uv's latest release on each run; npx takes the newest in a range

@@ -42,7 +42,9 @@ trap 'exit 130' INT TERM
 for v in $VERSIONS; do
   echo "=== PostgreSQL $v"
   image="rowstile:$v${COVERAGE:+-coverage}"
-  if ! docker build -q -t "$image" --build-arg "PG_MAJOR=$v" ${COVERAGE:+--build-arg COVERAGE=1} -f core/Dockerfile . >/dev/null; then
+  # 16, 17 and 18 are core/Dockerfile's stages, pinned by digest; another version (19beta4) is its image by tag
+  base=(); case "$v" in 16|17|18) ;; *) base=(--build-context "pg$v=docker-image://postgres:$v") ;; esac
+  if ! docker build -q -t "$image" --build-arg "PG_MAJOR=$v" "${base[@]}" ${COVERAGE:+--build-arg COVERAGE=1} -f core/Dockerfile . >/dev/null; then
     echo "--- FAILED: building the image"; failed+=("$v (build)"); continue
   fi
   name="rowstile-ci-$v-$$"

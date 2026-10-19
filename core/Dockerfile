@@ -10,10 +10,14 @@
 # imported otherwise (a tenth of a second a process); and plpgsql_check (PGDG's package), whose profiler counts the
 # statements of the PL/pgSQL functions the suites run (ci.sh --statements preloads it; tests/coverage_plpgsql.py).
 # rowstile itself still needs no extension: it is made only for the moment the counts are read, then rolled back.
-# The one image not pinned by digest (the others are, and Dependabot moves them): the suites run on the newest patch
-# release of each major (16, 17, 18, a beta), as users get it, so this follows the tag on purpose.
+# Each Postgres by digest, a stage per major (Dependabot moves the digests, monthly: the newest patch release of
+# each); PG_MAJOR picks one, and BuildKit builds only that one. Another version (a beta) has no stage here: ci.sh
+# names its image for it (--build-context pg19beta4=docker-image://postgres:19beta4).
 ARG PG_MAJOR=16
-FROM postgres:${PG_MAJOR}
+FROM postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d AS pg16
+FROM postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3 AS pg17
+FROM postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336 AS pg18
+FROM pg${PG_MAJOR}
 ARG COVERAGE=
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 git ca-certificates \
