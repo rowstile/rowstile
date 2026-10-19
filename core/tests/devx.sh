@@ -373,14 +373,23 @@ CREATE TABLE pr.teams (id serial PRIMARY KEY, slug text UNIQUE);
 CREATE TABLE pr.team_members (team_slug text REFERENCES pr.teams (slug), user_id int REFERENCES pr."User", PRIMARY KEY (team_slug, user_id));
 CREATE TABLE pr."_prisma_migrations" (id varchar(36) PRIMARY KEY);
 CREATE TABLE pr."owner list" (id serial PRIMARY KEY, "owner id" int REFERENCES pr."User");
+CREATE UNIQUE INDEX ON pr."User" (lower(email));          -- unique on an expression: no columns of its own
+CREATE TABLE pr.events (id int PRIMARY KEY, "userId" int REFERENCES pr."User") PARTITION BY RANGE (id);
+CREATE TABLE pr.events_low PARTITION OF pr.events FOR VALUES FROM (0) TO (1000);
 SQL
 mkdir -p "$T/n"
 out=$(cd "$T/n" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_names" init --schema pr 2>&1)
 draft=$(cat "$T/n/db/policy.authz" 2>/dev/null)
 case "$draft" in *'type user = pr.User'*'author : user = authorId'*'viewer : user = pr.post_views(post_id -> user_id)'*'insert : author'*'pr._prisma_migrations: the migration tool'*'pr.owner list: a name the policy language'*)
   ok "a draft of a schema with capitals and awkward names: quoted where SQL reads it, the rest left out and said";; *) bad "draft names" "$out $draft";; esac
+case "$draft" in *events_low*) bad "the draft names a partition" "$draft";; *'= pr.events'*) ok "... a partitioned table its type, its partitions none";;
+  *) bad "the draft of a partitioned table" "$draft";; esac
 out=$(cd "$T/n" && python3 "$OLDPWD/cli/rowstile_cli.py" check 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "... which compiles" || bad "draft names compile" "$out"
+# no --schema: every schema of the app's (here pr alone), the same draft
+out=$(mkdir -p "$T/n2" && cd "$T/n2" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_names" init 2>&1)
+cmp -s "$T/n/db/policy.authz" "$T/n2/db/policy.authz" && ok "init without --schema drafts from every schema of the app's" ||
+  bad "init without --schema" "$out $(diff "$T/n/db/policy.authz" "$T/n2/db/policy.authz" 2>&1 | head -n 5)"
 out=$(cd "$T/n" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_names" apply 2>&1); rc=$?
 case "$out" in *": applied") ok "... and applies";; *) bad "draft names apply" "$out";; esac
 dropdb --if-exists "${DB}_names" 2>/dev/null

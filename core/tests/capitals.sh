@@ -112,6 +112,11 @@ sed -i 's/^  can view = folder.view$/  can view = folder.view\n  can comment = v
 run diff; case "$out" in *"note  permission comment  gains"*) ok "diff: who gains the new permission";; *) bad "diff" "$out";; esac
 run push; is pushed && [ "$(as 2 "SELECT authz.can('note', 3, 'comment')")" = t ] && ok "a new permission: pushed, and held" || bad "push a permission" "$out"
 run apply; is unchanged && ok "apply after it: unchanged" || bad "apply after push" "$out"
+# a table made since that inherits from a table with rules (named with capitals): apply sees it, so applies again
+PSQL -c 'CREATE TABLE "FolderArchive" () INHERITS ("Folder")'
+run apply; is applied && [ "$(PSQL -c "SELECT relrowsecurity FROM pg_class WHERE oid = '\"FolderArchive\"'::regclass")" = t ] &&
+  ok "... until a table inherits from Folder: applied again, its rows under row-level security" || bad "apply after a child table" "$out"
+PSQL -c 'DROP TABLE "FolderArchive"'
 
 echo "-- migrations: a second database takes them, and holds what this one holds"
 cp tests/prisma.authz "$T/db/policy.authz"
@@ -375,9 +380,13 @@ CREATE TABLE "FolderTeam" ("folderId" integer REFERENCES "Folder", "teamId" inte
 GRANT SELECT ON "Bot", "FolderTeam" TO app_user;
 INSERT INTO "Bot" (id) VALUES (1);
 INSERT INTO "FolderTeam" VALUES (3, 1);
+CREATE TABLE "Log" (id integer PRIMARY KEY, "ownerId" integer REFERENCES "User") PARTITION BY RANGE (id);
+CREATE TABLE "LogOld" PARTITION OF "Log" FOR VALUES FROM (0) TO (100);
+GRANT SELECT ON "Log", "LogOld" TO app_user;
 SQL
 { sed 's/^  backer : user, Team .*$/&\n  crew   : Team#member  = public.FolderTeam(folderId -> teamId)\n  can muster = crew/' "$T/teams.authz"
-  printf '\ntype Bot = public.Bot (id int) principal\n\ninvariants\n  never Folder: look and not share\n'
+  printf '\ntype Bot = public.Bot (id int) principal\n\ntype Log = public.Log (id int)\n  owner : user = ownerId\n  can view = owner\n'
+  printf '\nrules public.Log\n  select : view\n\ninvariants\n  never Folder: look and not share\n'
 } > "$T/more.authz"
 run --db "dbname=$DB4" apply "$T/more.authz"
 case "$out" in *"more.authz: applied")
@@ -391,7 +400,13 @@ case "$out" in *"more.authz: applied")
   got=$(R -c "SELECT authz.act_as('Bot', '1'); SELECT principal_type || ':' || principal_id FROM authz.principal()" 2>&1 | tail -n 1)
   [ "$got" = "Bot:1" ] && ok "a Bot signed in is who authz.principal() says" || bad "authz.principal(), a Bot" "$got"
   run --db "dbname=$DB4" bench --people 1 --rounds 1
-  [ $rc -eq 0 ] && ok "bench: its people read from tables named with capitals" || bad "bench" "$out";;
+  [ $rc -eq 0 ] && ok "bench: its people read from tables named with capitals" || bad "bench" "$out"
+  # a partition made since, of a table with rules named with a capital: apply finds it without row-level security
+  R -c 'CREATE TABLE "LogNew" PARTITION OF "Log" FOR VALUES FROM (100) TO (200)' -c 'GRANT SELECT ON "LogNew" TO app_user' >/dev/null
+  run --db "dbname=$DB4" apply "$T/more.authz"
+  case "$out" in *"more.authz: applied") [ "$(R -c "SELECT relrowsecurity FROM pg_class WHERE oid = '\"LogNew\"'::regclass")" = t ] &&
+    ok "a partition of Log made since: applied again, its rows under row-level security" || bad "the new partition's row-level security";;
+    *) bad "apply after a partition of Log was made" "$out";; esac;;
   *) bad "apply, the policy with invariants and bots" "$out";; esac
 [ -z "${KEEP:-}" ] && dropdb "$DB4"
 

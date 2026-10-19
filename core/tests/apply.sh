@@ -711,6 +711,8 @@ CREATE TABLE authz.policy_versions (
   action text NOT NULL CHECK (action IN ('apply', 'remove')), policy text, files jsonb NOT NULL DEFAULT '{}',
   extension_version text NOT NULL);
 INSERT INTO authz.policy_versions (action, policy, extension_version) VALUES ('apply', 'an early policy', '0.0.9');
+-- a table of the app's with columns named as the history's were and are: what looks for them names its table
+CREATE TABLE app.history (extension_version text, lock text);
 SQL
 # (as plain SQL, the compiled policy as the first migration holds it: the command reads the history's version first)
 out=$(python3 compile_policy.py example/docs.authz | quiet -d "$EDB" 2>&1); rc=$?
@@ -722,6 +724,13 @@ E() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$EDB" "$@"; }
 [ "$(E -c "SELECT string_agg(policy || ' ' || version, '; ' ORDER BY id) FROM authz.policy_versions")" = "an early policy 0.0.9" ] &&
   ok "... and the history's extension_version is its version column, the early row kept" || bad "the early history" "$(E -c "SELECT * FROM authz.policy_versions ORDER BY id" 2>&1)"
 [ "$(E -c "SET authz.user_id = 3" -c "SELECT authz.can('file', 11, 'view')")" = t ] && ok "... and the early share is in force (user 3 views file 11)" || bad "the early share in force"
+out=$(python3 compile_policy.py example/docs.authz | quiet -d "$EDB" 2>&1); rc=$?
+[ $rc -eq 0 ] && ok "... and applied again: the history's column renamed once, the app's own extension_version left" || bad "applying again" "$out"
+# a history from before its lock column (as releases before migrations left it), the app's table with one: push
+# reads the history's own
+E -c "ALTER TABLE authz.policy_versions DROP COLUMN lock" >/dev/null
+out=$(python3 cli/rowstile_cli.py --db "dbname=$EDB" push example/docs.authz --development 2>&1); rc=$?
+[ $rc -eq 0 ] && ok "... and pushed to, its history without a lock column beside an app table with one" || bad "push, no lock column" "$out"
 dropdb "$EDB"
 
 rm -rf "$T"
