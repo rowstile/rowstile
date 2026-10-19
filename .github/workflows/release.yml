@@ -5,8 +5,8 @@
 #   - private: the @rowstile/* packages on GitHub Packages' npm registry, a private image; the public steps as
 #     dry runs. PyPI and npm have no private side, so the wheel, the sdist and the unscoped launcher (a
 #     tarball) are on the GitHub release
-# Either way the GitHub release holds the wheel, the sdist, the launcher and the editor extension (.vsix); the
-# docs site is site.yml's (GitHub Pages). An alpha or a release candidate is npm's `next` and a pre-release on
+# Either way the GitHub release holds the wheel, the sdist, the launcher and the editor extension (.vsix), and once
+# public their provenance (.intoto.jsonl); the docs site is site.yml's (GitHub Pages). An alpha or a release candidate is npm's `next` and a pre-release on
 # GitHub, and never the image's `latest`. While no final release exists it becomes npm's `latest` too, so a plain
 # install gets the newest (packaging/npm_latest.py); once one exists, only a release is `latest`. A patch to an
 # older line (release-X.Y) moves no `latest`. A release that stopped half-way is finished by running its jobs
@@ -169,11 +169,12 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/rowstile:${{ needs.check.outputs.version }}
             ${{ needs.check.outputs.npm-tag == 'latest' && format('ghcr.io/{0}/rowstile:latest', github.repository_owner) || '' }}
 
-  # the files a user can download: the wheel and sdist (PyPI's dry run: twine check), the launcher, the extension
-  github-release:
+  # the files a user can download: the wheel and sdist (PyPI's dry run: twine check), the launcher, the extension.
+  # Built here, with no right to write or sign anything; github-release signs and publishes them
+  release-files:
     needs: check
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    permissions: {contents: write}
+    permissions: {contents: read}
     env:
       VERSION: ${{ needs.check.outputs.version }}
     steps:
@@ -190,14 +191,39 @@ jobs:
       # the extension starts the language server with vscode-languageclient: the .vsix carries it (package.json's
       # files lists node_modules; vsce keeps the production dependencies only)
       - run: cp LICENSE editor/ && cd editor && npm ci --omit=dev --no-audit --no-fund && npx --yes @vscode/vsce@3.9.2 package --out ../dist/
-      - if: needs.check.outputs.publish == 'none'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
         with: {name: release-files, path: dist/}
+      # the notes github-release takes, written in a dry run too
+      - run: python3 packaging/changelog.py "$VERSION" > /dev/null
+
+  # the GitHub release: the files above, their provenance, the notes. It runs none of the packages' code
+  github-release:
+    needs: [check, release-files]
+    if: needs.check.outputs.publish != 'none'
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    # id-token and attestations: the files' provenance (below)
+    permissions: {contents: write, id-token: write, attestations: write}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with: {name: release-files, path: dist/}
+      # the files' provenance: where and how they were built (SLSA, signed through Sigstore as this workflow), kept
+      # by GitHub and attached beside them as rowstile-<version>.intoto.jsonl. `gh attestation verify FILE --repo
+      # rowstile/rowstile` checks a file against it (docs/installing.md). GitHub keeps attestations for public
+      # repositories only
+      - if: needs.check.outputs.publish == 'public'
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6   # v4.2.2
+        with: {subject-path: "dist/*"}
+      - if: needs.check.outputs.publish == 'public'
+        env: {BUNDLE: "${{ steps.attest.outputs.bundle-path }}"}
+        run: cp "$BUNDLE" "dist/rowstile-$VERSION.intoto.jsonl"
       # the notes are the release's section of CHANGELOG.md
       - run: python3 packaging/changelog.py "$VERSION" > release-notes.md
       # an action, not the GitHub CLI: a self-hosted runner may not have it
-      - if: needs.check.outputs.publish != 'none'
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64   # v3.0.3
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64   # v3.0.3
         with:
           tag_name: v${{ env.VERSION }}
           name: rowstile ${{ env.VERSION }}

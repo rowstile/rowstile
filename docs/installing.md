@@ -40,6 +40,16 @@ early: anything in it may still change. A release candidate is meant to become t
 [The changelog](../CHANGELOG.md) says what each version changed, and under **Upgrading** what to do when
 moving to it.
 
+## Checking a download
+
+Each package says where it was built, signed through Sigstore by the release workflow that built it: npm shows
+its provenance on the package's page (`npm audit signatures` checks it), and PyPI its attestations. The files
+on a [GitHub release](https://github.com/rowstile/rowstile/releases) (the wheel, the sdist, the launcher, the
+editor extension) come with `rowstile-<version>.intoto.jsonl`, from the release after 0.1.0-alpha.7 on.
+The GitHub CLI checks a file against it:
+
+    gh attestation verify rowstile-<version>-py3-none-any.whl --repo rowstile/rowstile
+
 ## From the repository
 
     git clone https://github.com/rowstile/rowstile
