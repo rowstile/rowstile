@@ -49,6 +49,11 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   signature is bound to its backend, which a parallel worker isn't. So Postgres never splits a read through
   the rules between workers: counting 200,000 files took 28 ms through them, 5.5 ms as the owner with two
   workers. <!-- checked: tests/adversarial.sh "none parallel safe" -->
+  Marking them would not be enough. A rule's lookups sit under an `or`, where Postgres plans each one to run row
+  by row for a few rows and hashed for many, and a lookup that may run row by row holds the whole query to one
+  CPU, on 16, 17 and 18 alike. Written as `IN`, which is only ever hashed, counting 400,000 files on 17 took
+  2 workers and 87 to 197 ms instead of 149 to 324, but opening one file took 8 to 73 ms instead of 1.5 to 4.4,
+  so the rules keep the lookups that serve opening a file. <!-- unchecked: how Postgres plans, and times measured by hand on 2026-10-19 -->
 - **A big policy needs room in Postgres's lock table.** Applying it whole (or a first migration) takes a lock
   on each object it makes, in one transaction, and the table holds `max_locks_per_transaction` for each
   connection: 6,400 by default. GitLab's thousand tables, drafted by `rowstile init`, make about 45,000; applying
