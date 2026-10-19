@@ -42,7 +42,7 @@ The first release, as an alpha: for trying rowstile early. Anything in it may st
 PostgreSQL 16, 17 and 18. Installed with npm (the command with its own Python), pip or the Docker image:
 [Installing](docs/installing.md).
 
-What changed since 0.1.0-alpha.7:
+What changed since 0.1.0-alpha.7 (0.1.0-alpha.8 was tagged, and never published: its release run stopped before publishing):
 
 ### Upgrading
 
