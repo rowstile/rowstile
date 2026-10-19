@@ -23,9 +23,10 @@ updates:
       npm: {patterns: ["*"]}
 
   # the base images, pinned by digest (tag@sha256): a new digest of the same tag, or a patch release (uv, VHS). A new
-  # minor or major (Python 3.14, Node 26) is a change made on purpose. core/Dockerfile follows its tag (it says why)
+  # minor or major (Python 3.14, Node 26, Postgres 19) is a change made on purpose. In core/Dockerfile, a new digest
+  # is the newest patch release of that Postgres major: the suites run on what users get
   - package-ecosystem: docker
-    directories: ["/demo", "/examples/filemanager/backend", "/examples/messenger/backend", "/packaging/docker"]
+    directories: ["/core", "/demo", "/examples/filemanager/backend", "/examples/messenger/backend", "/packaging/docker"]
     schedule: {interval: monthly}
     cooldown: {default-days: 7}
     ignore:
