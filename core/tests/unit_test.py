@@ -719,6 +719,20 @@ class SlowPlans(unittest.TestCase):
 
 
 class LanguageForms(unittest.TestCase):
+    def test_a_line_is_lexed_once_and_read_from_anywhere(self) -> None:
+        # a line's pieces are lexed in one pass, as piece_at reads each one: a doubled quote inside a quote, -> as
+        # one mark, a quote left open a mark; a reader placed where no piece ends lexes from there
+        from authzlib.parse import Piece, Words, piece_at
+
+        text = "x 'it''s' -> ''' {a}"
+        pieces = Words(text).all()
+        self.assertEqual(
+            [(p.kind, p.text) for p in pieces],
+            [("name", "x"), ("quote", "'it''s'"), ("mark", "->"), ("mark", "'"), ("quote", "''"), ("cond", "a")],
+        )
+        self.assertEqual(pieces, [piece_at(text, p.start) for p in pieces])
+        self.assertEqual(Words("ab cd", 1).peek(), Piece("name", "b", 1, 2))
+
     def test_named_columns_mean_the_arrow(self) -> None:
         text = read(POLICIES["docs"])
         named = text.replace("app.teams(parent_id -> id)", "app.teams(subject: id, object: parent_id)")
