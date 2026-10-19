@@ -2748,6 +2748,27 @@ rules app.folders
             (self.SMALL, files or {}, {}), (self.SMALL.replace(old, new), files or {}, {}), worlds=120
         )
 
+    def test_risks_example_overrules_a_comparison_that_found_nothing(self) -> None:
+        # where the comparison's worlds miss a widening (made to here) that Risk shows by an example, the review
+        # doesn't call the change equivalent: a select rule loosened, break_glass given to more people
+        glass = self.SMALL.replace("  can remove = owner", "  can break_glass = owner\n  can remove = owner")
+        cases = {
+            "a select rule loosened": (
+                self.SMALL,
+                self.SMALL.replace("  select : view\n", "  select : view or signed_in\n"),
+            ),
+            "break_glass given to more people": (
+                glass,
+                glass.replace("can break_glass = owner", "can break_glass = edit"),
+            ),
+        }
+        for why, (base, head) in cases.items():
+            self.assertNotEqual(base, head, why)
+            with mock.patch.object(self.review, "compare", return_value=None):
+                r = self.review.review((base, {}, {}), (head, {}, {}), worlds=40)
+            self.assertIn(why, {f["why"] for f in r["risk"]}, why)
+            self.assertIsNone(r["meaning"]["equivalent"], why)
+
     def test_a_widening_is_flagged_however_it_is_made(self) -> None:
         cases = {
             "a select rule loosened": ("  select : view\n", "  select : view or signed_in\n"),
@@ -5942,6 +5963,35 @@ class Confidence(unittest.TestCase):
             + lines
             + "  can edit = owner or editor\n"
         )
+
+    def test_a_condition_on_who_is_signed_in_is_listed_with_the_where_that_says_it_too(self) -> None:
+        # a type's where on authz.uid() and a permission that asks it again: the where adds nothing, and the
+        # listed worlds (alone here) say the two policies are the same
+        from authzlib import evaluate
+
+        doc = "type doc = app.docs{}\n  owner : user = owner_id\n  can view = owner and {{editor_id = authz.uid()}}\n"
+        a = parse_policy(self.HEAD + doc.format(" where {editor_id = authz.uid()}"), "a.authz")
+        b = parse_policy(self.HEAD + doc.format(""), "b.authz")
+        self.assertIsNone(evaluate.compare(a, b, worlds=0))
+
+    def test_the_listing_stops_where_its_steps_are_spent(self) -> None:
+        # past its budget of steps (made small here), the listing stops once every world of one link is listed,
+        # not before, and says how far it got
+        from authzlib import evaluate
+
+        policy = self.approve()
+        a = parse_policy(self.HEAD + policy + "  can approve = owner and legal and finance and security and privacy\n")
+        b = parse_policy(
+            self.HEAD + policy + "  can approve = (owner or editor) and legal and finance and security and privacy\n"
+        )
+        for steps, listed in ((10, 7), (17, 12), (200, 64)):  # (17: the one step past 16 lists five more)
+            with mock.patch.object(evaluate, "STEPS", steps):
+                listing = evaluate.Listing((a, b))
+                self.assertEqual(sum(1 for _ in listing.worlds()), listed, steps)
+            self.assertEqual((listing.whole, listing.complete), (1, False), steps)
+            self.assertEqual(
+                listing.said(), f"{listed} listed: every one of up to 3 rows of each type with at most 1 link"
+            )
 
     def test_a_long_and_of_links_widened_is_found(self) -> None:
         from authzlib import evaluate

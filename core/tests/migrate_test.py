@@ -215,6 +215,23 @@ CASES: list[tuple[str, str, str, str]] = [
         MULTI,
         edit(MULTI, ("type project = mt.projects\n", "type project = mt.projects where {id > 0}\n")),
     ),
+    # the masked view's own type: the view changes (its where) and keeps its columns, so it is replaced in place,
+    # the app's view on it kept; the generated views on the type's key are made again
+    (
+        "the masked type's line changes, under a view of the app's",
+        "multi",
+        MULTI,
+        edit(
+            MULTI, ("type doc = mt.docs (id uuid)\n", "type doc = mt.docs (id uuid) where {container_id is not null}\n")
+        ),
+    ),
+    # a type moved to a table whose key is of another type: the views on its key can't be replaced in place
+    (
+        "a type moved to a table keyed by a uuid",
+        "multi",
+        MULTI + "\ntype tally = mt.orgs\n  can count = nobody\n",
+        MULTI + "\ntype tally = mt.users (id uuid)\n  can count = nobody\n",
+    ),
     (
         "a new permission on composite keys",
         "composite",

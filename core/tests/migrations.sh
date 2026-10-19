@@ -103,7 +103,9 @@ out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -At -1 -v ON_ERROR_STO
 [ "$(echo "$out" | tail -n 1)" = 3s ] && ok "a migration run with a lock_timeout of its tool's keeps it" || bad "lock_timeout in a migration" "$(echo "$out" | tail -n 3)"
 echo "$first" >> "$T/applied_${DB}_2"
 # a database whose history has no lock column (made before migrations recorded it) holds no lock: refused, saying none
-out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_2" -c "ALTER TABLE authz.policy_versions DROP COLUMN lock" -f "$second" 2>&1)
+# (beside an app table with a column named lock: the guard looks for the history's own)
+out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_2" -c "ALTER TABLE authz.policy_versions DROP COLUMN lock" \
+  -c "CREATE TABLE app.door_locks (lock text)" -f "$second" 2>&1)
 case "$out" in *"this migration changes the policy the migration before it left ("*"), but the database has none [AZ607]"*)
   [ "$(psql -X -At -d "${DB}_2" -c "SELECT count(*) FROM pg_attribute WHERE attrelid = 'authz.policy_versions'::regclass AND attname = 'lock'")" = 1 ] &&
   ok "... and so is one on a database whose history has no lock column: it has none, and nothing changes" || bad "guard without a lock column: the column after";;
@@ -247,6 +249,10 @@ PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${
   bad "the build, on the copy"
 x=$(PSQL -d "${DB}_5" -c "BEGIN" -c "INSERT INTO app.folder_links VALUES (6, 20)" -c "SELECT pg_current_xact_id()" -c "COMMIT")
 PSQL -d "${DB}_5" -c "UPDATE authz_int.next_trees SET snap = '$x:$((x + 1)):$x'" >/dev/null
+# (before its row, another tree's, whose snapshot came after that link: the swap reads its own row, by its name)
+PSQL -d "${DB}_5" -c "CREATE TEMP TABLE mine AS SELECT * FROM authz_int.next_trees" -c "DELETE FROM authz_int.next_trees" \
+  -c "INSERT INTO authz_int.next_trees SELECT * FROM mine" -c "UPDATE authz_int.next_trees SET name = 'another__tree', snap = '$((x + 1)):$((x + 1)):'" \
+  -c "INSERT INTO authz_int.next_trees SELECT * FROM mine" >/dev/null
 out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_5" -f "$swap" 2>&1) &&
   [ "$(PSQL -d "${DB}_5" -c "SELECT authz.verify()")" = t ] &&
   [ "$(PSQL -d "${DB}_5" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 6 AND ancestor = 20")" = 1 ] &&
