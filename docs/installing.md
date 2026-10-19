@@ -6,11 +6,11 @@ the command writes migrations, and your migration tool runs them as the owner of
 
 ## The command
 
-Only an alpha is published so far, 0.1.0-alpha.7. Ask for it by name:
+Only an alpha is published so far, 0.1.0-alpha.8. Ask for it by name:
 
     npm i -D rowstile@next         # the command with its own Python: a TypeScript app needs none
     pip install --pre rowstile     # the command and the Python SDK: rowstile[fastapi], [sqlalchemy], ...
-    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-alpha.7 migrate
+    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-alpha.8 migrate
 
 Once 0.1.0 is out, the plain `npm i -D rowstile`, `pip install rowstile` and `ghcr.io/rowstile/rowstile` get
 it. Until then the two registries differ: a plain `pip install rowstile` takes the newest alpha (pip takes a
@@ -45,7 +45,7 @@ moving to it.
 Each package says where it was built, signed through Sigstore by the release workflow that built it: npm shows
 its provenance on the package's page (`npm audit signatures` checks it), and PyPI its attestations. The files
 on a [GitHub release](https://github.com/rowstile/rowstile/releases) (the wheel, the sdist, the launcher, the
-editor extension) come with `rowstile-<version>.intoto.jsonl`, from the release after 0.1.0-alpha.7 on.
+editor extension) come with `rowstile-<version>.intoto.jsonl`, from 0.1.0-alpha.8 on.
 The GitHub CLI checks a file against it:
 
     gh attestation verify rowstile-<version>-py3-none-any.whl --repo rowstile/rowstile

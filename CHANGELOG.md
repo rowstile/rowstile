@@ -7,6 +7,43 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ## Unreleased
 
+## 0.1.0 (alpha)
+
+**rowfence is now rowstile**, and 0.1.0-alpha.2 is its first release under the new name (0.1.0-alpha.1 was
+published as rowfence, and those packages stay at that version). Another product, a proxy for DuckDB, was
+already called Rowfence, so the project takes a name of its own. The command is `rowstile`, the packages are
+`rowstile` on PyPI and npm and `@rowstile/*`, the image is `ghcr.io/rowstile/rowstile`, the docs are at
+https://rowstile.dev, and the repository is github.com/rowstile/rowstile. The policy language, the `authz`
+schema, the `authz.*` functions, `.authz` files and the AZ error codes keep their names; **Upgrading** below
+says what to change.
+
+The first release, as an alpha: for trying rowstile early. Anything in it may still change before 0.1.0
+([what a 0.x release promises](docs/reference/limits.md#what-a-0x-release-promises)). It holds:
+
+- **The policy language** (`.authz`): types read from the app's tables, relations from their columns and link
+  tables, permissions built with `and`, `or` and `not` and inherited down trees, rules for each table and
+  command, column rules and masked columns, conditions in SQL, custom roles, shares that expire or carry
+  conditions, scopes, invariants and tests.
+- **The `rowstile` command**: compiles a policy into views, trigger-maintained inheritance tables, row-level
+  security policies and `authz.*` functions, applied as the tables' owner, with no extension and no superuser.
+  Each change to the policy is a migration for Alembic, Prisma, Drizzle Kit, plain SQL, goose, dbmate or
+  Flyway. Beside it: `init`, `dev`, `test` (with coverage), `prove`, `review`, `diff`, `why`, `fmt`, `lint`,
+  `indexes`, `plans`, `bench`, `graph`, the generated clients, Studio, the language server and an MCP server
+  for coding agents.
+- **What apps call** (`authz.*`): signing in (`act_as`, API keys, JWTs), checks and lists (`can`, `list`,
+  `perms_of`), sharing, who has access and why, the audit trail and change feed, access requests, break-glass,
+  access reviews and view-as.
+- **The SDKs**: Python (FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic, pytest) and TypeScript (pg,
+  postgres.js, Prisma, Drizzle, Next.js, React, Vitest).
+- **The review for pull requests**: a GitHub action and a GitLab CI template that comment what a policy change
+  does to access.
+- **Editors**: VS Code, Zed, and a Tree-sitter grammar for Helix and Neovim.
+
+PostgreSQL 16, 17 and 18. Installed with npm (the command with its own Python), pip or the Docker image:
+[Installing](docs/installing.md).
+
+What changed since 0.1.0-alpha.7:
+
 ### Upgrading
 
 - Apply the policy again (or the next migration) to take the faster lookups below. A closure table built through a
@@ -267,41 +304,6 @@ Each release upgrades from the one before it. How releases are numbered and made
 - `rowstile lsp` never tried again a database it couldn't reach at the first completion that needed it (not
   started yet, say): no table or column names until the editor restarted the server. It tries again some seconds
   later (5, then 10, 20, up to a minute between tries), and at once when `rowstile.toml` changes.
-
-## 0.1.0 (alpha)
-
-**rowfence is now rowstile**, and 0.1.0-alpha.2 is its first release under the new name (0.1.0-alpha.1 was
-published as rowfence, and those packages stay at that version). Another product, a proxy for DuckDB, was
-already called Rowfence, so the project takes a name of its own. The command is `rowstile`, the packages are
-`rowstile` on PyPI and npm and `@rowstile/*`, the image is `ghcr.io/rowstile/rowstile`, the docs are at
-https://rowstile.dev, and the repository is github.com/rowstile/rowstile. The policy language, the `authz`
-schema, the `authz.*` functions, `.authz` files and the AZ error codes keep their names; **Upgrading** below
-says what to change.
-
-The first release, as an alpha: for trying rowstile early. Anything in it may still change before 0.1.0
-([what a 0.x release promises](docs/reference/limits.md#what-a-0x-release-promises)). It holds:
-
-- **The policy language** (`.authz`): types read from the app's tables, relations from their columns and link
-  tables, permissions built with `and`, `or` and `not` and inherited down trees, rules for each table and
-  command, column rules and masked columns, conditions in SQL, custom roles, shares that expire or carry
-  conditions, scopes, invariants and tests.
-- **The `rowstile` command**: compiles a policy into views, trigger-maintained inheritance tables, row-level
-  security policies and `authz.*` functions, applied as the tables' owner, with no extension and no superuser.
-  Each change to the policy is a migration for Alembic, Prisma, Drizzle Kit, plain SQL, goose, dbmate or
-  Flyway. Beside it: `init`, `dev`, `test` (with coverage), `prove`, `review`, `diff`, `why`, `fmt`, `lint`,
-  `indexes`, `plans`, `bench`, `graph`, the generated clients, Studio, the language server and an MCP server
-  for coding agents.
-- **What apps call** (`authz.*`): signing in (`act_as`, API keys, JWTs), checks and lists (`can`, `list`,
-  `perms_of`), sharing, who has access and why, the audit trail and change feed, access requests, break-glass,
-  access reviews and view-as.
-- **The SDKs**: Python (FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic, pytest) and TypeScript (pg,
-  postgres.js, Prisma, Drizzle, Next.js, React, Vitest).
-- **The review for pull requests**: a GitHub action and a GitLab CI template that comment what a policy change
-  does to access.
-- **Editors**: VS Code, Zed, and a Tree-sitter grammar for Helix and Neovim.
-
-PostgreSQL 16, 17 and 18. Installed with npm (the command with its own Python), pip or the Docker image:
-[Installing](docs/installing.md).
 
 What changed since 0.1.0-alpha.6:
 
