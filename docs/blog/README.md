@@ -10,4 +10,5 @@ The feed: <https://rowstile.dev/blog/feed.xml>.
      which is its summary. The site's build fails on a post that isn't listed here. The blog is on the site
      from its first post. -->
 
+- 2026-10-20: [Why a query through row-level security runs on one CPU](2026-10-20-row-level-security-on-one-cpu.md)
 - 2026-10-07: [Why a recursive row-level security policy is slow, and what fixes it](2026-10-07-recursive-row-level-security.md)
