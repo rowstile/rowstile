@@ -86,7 +86,7 @@ def refusals_of(pol: Policy) -> re.Pattern[str]:
     return re.compile("|".join([REFUSE.pattern, *(re.escape(n) + r"\(" for n in names)]))
 
 
-# a share's end in the past, far enough that a clock set back (Docker Desktop's VM resyncing its clock, seconds at a
+# a share's end in the past, far enough that a clock set back (a machine's clock resyncing, seconds at a
 # time) doesn't make it live again half way through a check, which reads the data and the answers at different times
 EXPIRED = "now() - interval '1 hour'"
 # a share's start ahead, far enough that it doesn't come during a run (a soak's takes hours): not started throughout.

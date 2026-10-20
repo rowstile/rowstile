@@ -7,10 +7,9 @@
 # the policy's tests, then Alembic's own diff, which must show no change. Then the other checks (pytest).
 set -u
 cd "$(dirname "$0")"
-export MSYS_NO_PATHCONV=1
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-py
-PORT=${CONFORMANCE_PORT:-25440}      # below 49152: above it Windows reserves ranges for itself, and Docker can't publish there
+PORT=${CONFORMANCE_PORT:-25440}
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker rm -f "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
@@ -33,10 +32,9 @@ export ROWSTILE_APP_URL="postgresql+asyncpg://conf_app:app@localhost:$APP_PORT/c
 # What the checks run of the SDK (sdk/python/rowstile), lines and branches (pyproject.toml's [tool.coverage]): every
 # Python process from here on, the tests' own subprocesses too, measures itself into CONFORMANCE_COVERAGE (a folder
 # of its own if not given), where the report is kept; it is printed at the end
-native() { if command -v cygpath >/dev/null; then cygpath -m "$1"; else echo "$1"; fi; }   # Windows' Python: C:/...
 COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
 mkdir -p "$COVERAGE" && rm -f "$COVERAGE"/.coverage* "$COVERAGE/report.txt"
-export COVERAGE_PROCESS_START="$(native "$PWD/pyproject.toml")" COVERAGE_FILE="$(native "$COVERAGE")/.coverage"
+export COVERAGE_PROCESS_START="$PWD/pyproject.toml" COVERAGE_FILE="$COVERAGE/.coverage"
 rc=0
 uv run --quiet alembic upgrade head || { echo "FAIL  11: alembic upgrade head"; rc=1; }
 uv run --quiet rowstile test >/tmp/conformance-policy-tests.log 2>&1 &&

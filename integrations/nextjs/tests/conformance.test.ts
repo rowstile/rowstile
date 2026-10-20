@@ -34,7 +34,7 @@ import { APP, EXPECTED, FEED, OWNER, SERVER, SERVER_ONE, as, seed } from "./data
 const HERE = dirname(dirname(fileURLToPath(import.meta.url)));
 const ROOT = join(HERE, "..", "..");
 const CLI = join(ROOT, "core", "cli", "rowstile_cli.py");
-const PYTHON = process.env.PYTHON ?? (process.platform === "win32" ? "python" : "python3");
+const PYTHON = process.env.PYTHON ?? "python3";
 // the tools' own scripts, run with this Node
 const TOOL: Record<string, string> = {
   tsc: join(ROOT, "node_modules", "typescript", "bin", "tsc"),

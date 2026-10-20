@@ -9938,7 +9938,8 @@ class StudioPort(unittest.TestCase):
     """Studio's port on 127.0.0.1 is held by Studio alone: a port another program holds is refused, and no other
     program may bind it while Studio runs. On Windows SO_REUSEADDR lets a socket bind an address and port another
     one listens on, so Studio's server leaves it off there and asks for SO_EXCLUSIVEADDRUSE (studio_test.py starts
-    the command on a port that is taken, on Linux)."""
+    the command on a port that is taken, on Linux). The checks of that branch run on Windows alone, and no CI runner
+    or machine here runs Windows: nothing runs them."""
 
     def held(self, reuse: bool) -> int:
         """A port another program listens on, with SO_REUSEADDR (as python -m http.server sets it) or without."""
@@ -11606,7 +11607,6 @@ class CheckCounts(unittest.TestCase):
         self.assertNotIn(0, written.values())
 
 
-@unittest.skipIf(sys.platform == "win32", "run_tests.sh runs on Linux")
 class Lanes(unittest.TestCase):
     """tests/lanes.sh, which run_tests.sh's steps run in: a part's units side by side, each step's output printed
     whole in the order written, every result taken (a unit that stops before its end, a failure); with one lane,
@@ -12433,8 +12433,8 @@ class Layout(unittest.TestCase):
 
 
 class Executable(unittest.TestCase):
-    """A script that starts with #! is executable in git: on Windows (core.fileMode off) nothing shows it
-    isn't, and on Linux the suite that runs it directly fails (`git update-index --chmod=+x`)."""
+    """A script that starts with #! is executable in git, or the suite that runs it directly fails (`chmod +x`, or
+    `git update-index --chmod=+x`)."""
 
     REPO = os.path.dirname(ROOT)
 

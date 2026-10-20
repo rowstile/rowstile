@@ -179,9 +179,7 @@ function platform(key) {
   const dir = join(OUT, `cli-${key}`);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  // Windows's own tar (bsdtar) takes C:\ paths; the tar of Git Bash would take C: for a host
-  const tar = process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
-  execFileSync(tar, ["-xzf", tarball, "-C", dir], { stdio: "inherit" });   // makes python/
+  execFileSync("tar", ["-xzf", tarball, "-C", dir], { stdio: "inherit" });   // makes python/
   trim(join(dir, "python"), target);
   let exe = "python/python.exe";
   if (target.os !== "win32") {
