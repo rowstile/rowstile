@@ -168,7 +168,7 @@ CLI migrate >/dev/null
 out=$(CLI --db "dbname=$DB" review --base main --markdown 2>&1)
 case "$out" in *"**Access**: 1 bot gains \`view\` on 1 file; 1 bot gains \`view\` on 1 folder. Nobody loses access."*)
   ok "Access says who gains: a bot, not a user";; *) bad "Access of a service" "$out";; esac
-case "$out" in *"| gains | \`folder\` view | 1 bot | 1 | bot 7, folder 2: bot_viewer, bot_viewer: a row in app.folder_bots names |"*)
+case "$out" in *"| gains | \`folder\` view | 1 bot | 1 | bot 7, folder 2: bot_viewer, bot_viewer: a row in app.folder_bots names you |"*)
   ok "... and how it gains, asked as the bot, from what grants it alone";; *) bad "how a service gains" "$out";; esac
 G checkout -q -- db && G clean -q -fd db
 PSQL -c "DROP TABLE app.folder_bots, app.bots"
