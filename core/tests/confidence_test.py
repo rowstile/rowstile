@@ -64,11 +64,14 @@ CREATE TABLE app.tags (id bigint PRIMARY KEY, owner_id bigint NOT NULL REFERENCE
 CREATE INDEX ON app.tags (owner_id);
 CREATE TABLE app."Notes" (slug text PRIMARY KEY, "Title" text NOT NULL, owner_id bigint NOT NULL REFERENCES app.users);
 CREATE INDEX ON app."Notes" (owner_id);
+CREATE TABLE app.labels (id bigint PRIMARY KEY, owner_id bigint NOT NULL REFERENCES app.users);
+CREATE INDEX ON app.labels (owner_id);
 GRANT USAGE ON SCHEMA app TO app_user;
 GRANT SELECT, UPDATE ON ALL TABLES IN SCHEMA app TO app_user;
 INSERT INTO app.users VALUES (1), (2);
 INSERT INTO app.tags VALUES (1, 1), (2, 2);
 INSERT INTO app."Notes" VALUES ('intro', 'Intro', 1);
+INSERT INTO app.labels VALUES (1, 1);
 """
 TAGS_POLICY = """app role app_user
 type user = app.users
@@ -85,6 +88,11 @@ type note = app.Notes (slug text)
 rules app.Notes
   select : edit
   update : edit
+type label = app.labels
+  owner : user = owner_id
+  can view = owner
+rules app.labels
+  select : view
 """
 # tests/composite_schema.sql's tables, a few thousand rows: users in teams, teams in teams, folders in folders and
 # in projects, files in folders (each row in the org of what it points at)
@@ -446,6 +454,20 @@ def main() -> None:
     sql(
         "DROP INDEX app.team_members_user_id_idx",
         "DELETE FROM app.team_members WHERE (team_id, user_id) = (11, 1)",
+        "CREATE INDEX team_members_user_id_idx ON app.team_members (team_id)",
+    )
+    # a valid index of the app's that holds the name the advice gives, on other columns: no failed build, nothing
+    # to drop first
+    check(
+        "... and a valid index that holds that name, on other columns, is none to drop",
+        [
+            (m[0], m[1], m[5])
+            for m in work(lambda d: perf.missing_indexes(d, database.policy_compiler(*database.applied(d))))
+        ]
+        == [("app.team_members", ("user_id",), ())],
+    )
+    sql(
+        "DROP INDEX app.team_members_user_id_idx",
         "CREATE INDEX team_members_user_id_idx ON app.team_members (user_id)",
     )
 
@@ -729,6 +751,11 @@ def main() -> None:
         check(
             "bench: no update timed on a table with no column to write back unchanged",
             rc == 0 and "  read app.tags " in out and "  authz.can tag edit " in out and "update app.tags" not in out,
+            out,
+        )
+        check(
+            "bench: a table whose only rule is select is read, and nothing else is timed of it",
+            rc == 0 and "  read app.labels " in out and "update app.labels" not in out,
             out,
         )
         check(

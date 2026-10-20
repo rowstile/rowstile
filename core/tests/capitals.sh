@@ -49,7 +49,25 @@ PSQL -c 'CREATE TABLE "Lookup" (id int)' -c 'CREATE VIEW "FolderView" AS SELECT 
 got=$(PSQL -c "SELECT string_agg(object || ' ' || severity, ', ' ORDER BY object) FROM authz.lint() WHERE object LIKE '%Lookup%' OR object LIKE '%FolderView%'")
 [ "$got" = 'public."FolderView" error, public."Lookup" info' ] &&
   ok "lint: a table beside Folder that no rule names, and a view of Folder that skips its rules" || bad "lint, beside and views" "$got"
-PSQL -c 'DROP VIEW "FolderView"' -c 'DROP TABLE "Lookup"'
+PSQL -c 'DROP VIEW "FolderView"'
+# a view that reads no governed table, whose rule's oid a dependency of another catalog has as its objid, and one
+# that is a rule's on an object of another catalog with Folder's oid: oids repeat across catalogs (after the counter
+# wraps around), so lint goes by the catalogs too. Made by hand (a superuser may write pg_depend), as a server whose
+# counter wrapped would have them
+if [ -n "${PGSUPERUSER:-}" ]; then
+  PSQL -c 'CREATE VIEW "LookupView" AS SELECT id FROM "Lookup"' -c 'GRANT SELECT ON "LookupView" TO app_user'
+  RULE="(SELECT oid FROM pg_rewrite WHERE ev_class = 'public.\"LookupView\"'::regclass)"
+  psql -X -q -At -U "$PGSUPERUSER" -d "$DB" -v ON_ERROR_STOP=1 \
+    -c "INSERT INTO pg_depend VALUES ('pg_constraint'::regclass, $RULE, 0, 'pg_class'::regclass, 'public.\"Folder\"'::regclass, 0, 'n')" \
+    -c "INSERT INTO pg_depend VALUES ('pg_rewrite'::regclass, $RULE, 0, 'pg_proc'::regclass, 'public.\"Folder\"'::regclass, 0, 'n')"
+  got=$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object LIKE '%LookupView%'")
+  psql -X -q -At -U "$PGSUPERUSER" -d "$DB" -c "DELETE FROM pg_depend WHERE refobjid = 'public.\"Folder\"'::regclass AND deptype = 'n'
+    AND (classid = 'pg_constraint'::regclass OR refclassid = 'pg_proc'::regclass)"
+  [ "$got" = 0 ] && ok "lint: an oid another catalog's dependency shares with a view's rule, or with Folder, names no view" ||
+    bad "lint, oids of other catalogs" "$got"
+  PSQL -c 'DROP VIEW "LookupView"'
+fi
+PSQL -c 'DROP TABLE "Lookup"'
 # the app's own check of its connection finds the tables by their quoted names too
 PSQL -c 'ALTER TABLE "Folder" DISABLE ROW LEVEL SECURITY'
 got=$(PSQL -c "SET ROLE app_user" -c "SELECT problem FROM authz.connection_check() WHERE problem LIKE 'row-level security%'")
@@ -392,7 +410,7 @@ GRANT SELECT ON "Squad", "SquadMember" TO app_user;
 INSERT INTO "Squad" VALUES (1, 'red');
 CREATE TABLE "Watch" ("orgId" integer, "squadSlug" text, "userId" integer, "isActive" boolean, "isBanned" boolean);
 GRANT SELECT ON "Watch" TO app_user;
-INSERT INTO "Watch" VALUES (1, 'red', 4, true, true);
+INSERT INTO "Watch" VALUES (1, 'red', 4, true, true), (1, 'red', 1, true, false);
 CREATE TABLE "Desk" (id integer PRIMARY KEY, "ownerType" text, "ownerId" integer);
 GRANT SELECT ON "Desk" TO app_user;
 INSERT INTO "Desk" VALUES (1, 'Team', 1), (2, 'Team', 1);
@@ -403,7 +421,7 @@ SQL
 { sed 's/^  backer : user, Team .*$/&\n  crew   : Team#member  = public.FolderTeam(folderId -> teamId)\n  can muster = crew/' "$T/teams.authz"
   printf '\ntype Bot = public.Bot (id int) principal\n\ntype Log = public.Log (id int)\n  owner : user = ownerId\n  can view = owner\n'
   printf '\ntype Squad = public.Squad (orgId int, slug text)\n  member : user = public.SquadMember([orgId, squadSlug] -> userId)\n  can gather = member\n'
-  printf '  watcher : user = public.Watch([orgId, squadSlug] -> userId) where {"isActive" and not "isBanned"}\n  can see = watcher\n'
+  printf '  watcher : user = public.Watch([orgId, squadSlug] -> userId) where {"isActive" and not "isBanned"}\n  can see = watcher\n  can peek = watcher and member\n'
   printf '\ntype Desk = public.Desk (id int)\n  owner  : user, Team = (ownerType, ownerId)\n  parent : Desk = public.DeskIn(deskId -> parentId)\n'
   printf '  can use = owner or parent.use\n'
   printf '\nrules public.Log\n  select : view\n\ninvariants\n  never Folder: look and not share\n'
@@ -431,6 +449,12 @@ case "$out" in *"more.authz: applied")
   run --db "dbname=$DB4" why --as user:4 Squad '(1,red)' see
   case "$out" in *"would be granted by:"*"set isActive = true, isBanned = false on user 4's row of public.Watch for Squad (1,red)"*)
     ok "why: a row of a link table that its where leaves out, its columns set as the where asks";; *) bad "why through Watch" "$out";; esac
+  # user 1's row of Watch holds what the where asks already: peek needs the squad's row alone, and Watch is left as it is
+  run --db "dbname=$DB4" why --as user:1 Squad '(1,red)' peek
+  case "$out" in *Watch*) bad "why through Watch, a row that holds what the where asks" "$out";;
+    *"would be granted by:"*"add user 1 to public.SquadMember for Squad (1,red)"*)
+      ok "why: a link table's row that holds what its where asks already is no change to make";;
+    *) bad "why through Watch, a row that holds what the where asks" "$out";; esac
   # a desk owned by a team (the pair names users or teams): making user 4 its owner sets both columns, and takes the
   # desk from no person (a team is no one who signs in)
   run --db "dbname=$DB4" why --as user:4 Desk 1 use

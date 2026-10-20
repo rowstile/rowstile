@@ -1677,6 +1677,7 @@ CREATE TABLE cn.org_members (org_id bigint REFERENCES cn.orgs, user_id bigint RE
   PRIMARY KEY (org_id, user_id));
 CREATE TABLE cn.desks (id bigint PRIMARY KEY, org_id bigint REFERENCES cn.orgs);
 CREATE TABLE cn.chairs (id bigint PRIMARY KEY, desk_id bigint REFERENCES cn.desks);
+CREATE TABLE cn.halls (id bigint PRIMARY KEY, owner_id bigint REFERENCES cn.users);
 GRANT USAGE ON SCHEMA cn TO app_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA cn TO app_user;
 -- ann (1) owns docs 1 to 5, each inside the one before, and doc 6, archived; bo (2) is in group 2, which is in
@@ -1710,6 +1711,8 @@ INSERT INTO cn.orgs VALUES (1), (2);
 INSERT INTO cn.org_members VALUES (1, 1, 'admin'), (1, 5, 'member'), (2, 2, 'admin');
 INSERT INTO cn.desks VALUES (1, 1);
 INSERT INTO cn.chairs VALUES (1, 1), (2, 1);
+-- hall 1 is ann's; its ushers are shared with a team's members or a person, the team first
+INSERT INTO cn.halls VALUES (1, 1);
 """
 WHY_POLICY = """app role app_user
 
@@ -1791,6 +1794,12 @@ type chair = cn.chairs
   desk : desk = desk_id
   can use = desk.sit
   can rest = desk.keep
+
+type hall = cn.halls
+  owner : user = owner_id
+  usher : team#member, user shared
+  can share = owner
+  can enter = owner or usher
 """
 
 
@@ -2038,6 +2047,18 @@ def corners(db: str) -> None:
             "share host on room 2 with user 2 (also gives speak on it)  [line 53]",
             "share host on room 2 with team#member 7 (also gives speak on it, and enter on it to 1 more person)  "
             "[line 53]",
+        ],
+        said,
+    )
+    # the same, where the relation names the team first: the order the ways were found in is not the answer
+    rc, said, ways, _ = why("--as", "user:2", "hall", "1", "enter")
+    check(
+        "two ways alike but for whom else they reach: the one that reaches nobody else first, whatever the order found",
+        rc == 0
+        and ways[:2]
+        == [
+            "share usher on hall 1 with user 2  [line 84]",
+            "share usher on hall 1 with team#member 7 (also gives enter on it to 1 more person)  [line 84]",
         ],
         said,
     )
