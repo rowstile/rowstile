@@ -410,6 +410,11 @@ class Mark(NamedTuple):
 DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 # what may start a quote, open or close a brace, or start a comment: the text between is read in one step
 SPECIAL = re.compile(r"""['"{}$]|--""")
+# what may start a quote or a brace: a line with none, outside braces, ends its code where -- starts
+QUOTE_OR_BRACE = re.compile(r"""['"{}$]""")
+# what may start a quote or a comment: braces in a line with none of these pair up as they come
+QUOTE_OR_COMMENT = re.compile(r"""['"$]|--""")
+BRACE = re.compile(r"[{}]")
 
 
 def quote_end(line: str, i: int, quote: str) -> int:
@@ -442,6 +447,14 @@ class Scanner:
 
     depth: int = 0
     quote: str = ""  # a quote inside braces the last line left open: ', ", E' or a dollar quote's tag
+
+    def code_end(self, line: str) -> int:
+        """Where the line's code ends (where its comment starts, else its length), read as marks() reads it: the
+        lines of a policy, most of them without a quote or a brace, in one step each."""
+        if not self.quote and not self.depth and QUOTE_OR_BRACE.search(line) is None:
+            c = line.find("--")
+            return len(line) if c < 0 else c
+        return comment_at(line, self.marks(line))
 
     def marks(self, line: str) -> list[Mark]:
         out: list[Mark] = []
@@ -517,6 +530,19 @@ def braced_at(text: str) -> list[tuple[int, int]]:
     if "{" not in text:
         return out
     start = -1
+    if QUOTE_OR_COMMENT.search(text) is None:  # no quote or comment hides a brace: they pair up as they come
+        depth = 0
+        for b in BRACE.finditer(text):
+            if b.group() == "{":
+                if not depth:
+                    start = b.start()
+                depth += 1
+            elif depth:
+                depth -= 1
+                if not depth:
+                    out.append((start, b.end()))
+                    start = -1
+        return out + ([(start, -1)] if start >= 0 else [])
     for i, m in enumerate(Scanner().marks(text)):
         if m.quoted or m.comment or m.depth:
             continue
@@ -771,7 +797,7 @@ def file_lines(name: str | None, text: str) -> list[Line]:
     out: list[Line] = []
     for n, raw in enumerate(text.removeprefix(BOM).split("\n"), 1):
         open_before = scan.depth > 0
-        code = raw[: comment_at(raw, scan.marks(raw))].rstrip()
+        code = raw[: scan.code_end(raw)].rstrip()
         s = code.strip()
         if not s:
             continue
