@@ -70,6 +70,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `no   you have no access to folder 6`, as for a missing one. Explaining another user's access with a scoped
   key now needs a scope that names the permission, as `authz.who` does, and reads that user's access with
   their full rights, not the key's scopes. Applying the policy again (or the next migration) brings it in.
+- A statement on a partition, or on a table that inherits, runs the triggers of the table above. Moving a
+  folder through a partition of the folders' table (a tree's table without rules), adding a link row to a
+  partition of a link table, or changing a row a condition reads there left the inheritance tables and shares as
+  they were, so users kept seeing what the move took away. Applying the policy again (or the next migration)
+  gives each partition and table that inherits the triggers; `authz.lint()` names one made since, and the app
+  role's TRUNCATE on a partition of any table rowstile watches.
 
 ## 0.1.0 (alpha)
 

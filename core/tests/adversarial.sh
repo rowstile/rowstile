@@ -270,7 +270,7 @@ expect "approving her own request" "42501: you cannot decide your own request" -
 echo "-- partitions and inheritance children, which row-level security on the table above doesn't cover"
 PSQL -c "CREATE TABLE app.files_old () INHERITS (app.files)" -c "GRANT SELECT, INSERT, UPDATE, DELETE ON app.files_old TO app_user" \
      -c "INSERT INTO app.files_old (id, folder_id, owner_id, name) VALUES (9001, 5, 1, 'old-secret.txt')" >/dev/null
-# (two errors: the app role may use it directly, and it lacks its table's row triggers; tests/children.sh)
+# (two errors: the app role may use it directly, and it lacks its table's row and statement triggers; tests/children.sh)
 [ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'app.files_old'")" = 2 ] &&
   echo "ok    lint reports a table made after apply that inherits from a governed one" ||
   { echo "FAIL  lint misses app.files_old"; fails=$((fails + 1)); }

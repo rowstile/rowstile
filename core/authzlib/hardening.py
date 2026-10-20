@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .compiler import MANY_EXPANSIONS, Core
 from .parse import KEYWORDS, Cond, Loc, Ref, cols
-from .sqlutil import POLICY_MARKS, VIEW_MARKS, lit, q, qt
+from .sqlutil import CHILD_TRIGGER_MARK, POLICY_MARKS, VIEW_MARKS, lit, q, qt
 
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
 
@@ -430,13 +430,19 @@ BEGIN
     problem := format('%s may read every row, and the policy doesn''t name this table: fine for a lookup table, otherwise give it a type and rules', {lit(role)});
     RETURN NEXT;
   END LOOP;
-  -- partitions and inheritance children: used directly, they skip the rules and the triggers of the table above
-  -- (apply turns row-level security on for the ones there are then; later ones are found here)
-  FOR r IN WITH RECURSIVE d(oid, top, governed) AS (
-             SELECT i.inhrelid, i.inhparent, x.governed FROM pg_inherits i
-             JOIN (SELECT to_regclass(t) AS tbl, true AS governed FROM unnest({arr([qt(t) for t in governed])}) t
-                   UNION ALL SELECT to_regclass(t), false FROM unnest({arr([qt(t) for t in link_only])}) t) x
-               ON i.inhparent = x.tbl
+  -- partitions and inheritance children: used directly, they skip the rules of the table above (apply turns
+  -- row-level security on for the ones there are then; later ones are found here), and TRUNCATE skips its
+  -- triggers. The tables above: those with rules, and those rowstile watches (a trigger of its own on them)
+  FOR r IN WITH RECURSIVE x(tbl, governed) AS (
+             SELECT to_regclass(t), true FROM unnest({arr([qt(t) for t in governed])}) t
+             UNION SELECT DISTINCT g.tgrelid::regclass, false FROM pg_trigger g
+             JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
+             WHERE NOT g.tgisinternal AND g.tgrelid NOT IN (SELECT to_regclass(t) FROM unnest({arr([qt(t) for t in governed])}) t
+                                                           WHERE to_regclass(t) IS NOT NULL)
+               AND NOT EXISTS (SELECT 1 FROM pg_description c WHERE c.objoid = g.oid AND c.classoid = 'pg_trigger'::regclass
+                               AND c.description = '{CHILD_TRIGGER_MARK}')),
+           d(oid, top, governed) AS (
+             SELECT i.inhrelid, i.inhparent, x.governed FROM pg_inherits i JOIN x ON i.inhparent = x.tbl
              UNION SELECT i.inhrelid, d.top, d.governed FROM pg_inherits i JOIN d ON i.inhparent = d.oid)
            SELECT d.oid::regclass AS part, d.top::regclass AS tbl, d.governed, k.relrowsecurity
            FROM d JOIN pg_class k ON k.oid = d.oid LOOP
@@ -445,21 +451,28 @@ BEGIN
       problem := format('is a partition of %s (or inherits from it), and %s may TRUNCATE it, which skips row-level security and %s''s triggers: REVOKE TRUNCATE ON %s FROM %s', r.tbl, {lit(role)}, r.tbl, r.part, {lit(role)});
       RETURN NEXT;
     END IF;
-    IF NOT r.relrowsecurity AND (has_table_privilege(v_role, r.part, 'INSERT') OR has_table_privilege(v_role, r.part, 'UPDATE')
-                                 OR has_table_privilege(v_role, r.part, 'DELETE')
-                                 OR (r.governed AND has_table_privilege(v_role, r.part, 'SELECT'))) THEN
+    -- (on a table without rules, statements on it run the triggers of the table above as their own: the next loop
+    -- finds one made since that lacks them)
+    IF r.governed AND NOT r.relrowsecurity AND (has_table_privilege(v_role, r.part, 'INSERT') OR has_table_privilege(v_role, r.part, 'UPDATE')
+                                 OR has_table_privilege(v_role, r.part, 'DELETE') OR has_table_privilege(v_role, r.part, 'SELECT')) THEN
       severity := 'error'; object := r.part::text;
       problem := format('is a partition of %s (or inherits from it), and %s may use it directly, without %s''s rules or the triggers that keep inheritance and the audit current: apply the policy again (it turns row-level security on for it), or ALTER TABLE %s ENABLE ROW LEVEL SECURITY', r.tbl, {lit(role)}, r.tbl, r.part);
       RETURN NEXT;
     END IF;
   END LOOP;
-  -- tables that inherit (not partitions), made since the last apply: Postgres runs a table's row triggers for
-  -- its own rows only, and applying gives them to each table under it (whatever the app role may do there:
-  -- written through the table above, their rows need no privilege of their own)
-  FOR r IN SELECT c.child, string_agg(c.name::text, ', ' ORDER BY c.name) AS names
-           FROM authz_int.child_triggers() c GROUP BY c.child LOOP
+  -- partitions and tables that inherit, made since the last apply: Postgres runs a table's row triggers for its
+  -- own rows and its partitions' only, and its statement triggers for statements on it only; applying gives
+  -- them to each table under it (whatever the app role may do there: the owner's statements count too, and
+  -- rows written through the table above need no privilege of their own)
+  FOR r IN SELECT c.child, k.relispartition AS part, (SELECT i.inhparent::regclass FROM pg_inherits i WHERE i.inhrelid = c.child LIMIT 1) AS above,
+                  string_agg(c.name::text, ', ' ORDER BY c.name) AS names
+           FROM authz_int.child_triggers() c JOIN pg_class k ON k.oid = c.child GROUP BY c.child, k.relispartition LOOP
     severity := 'error'; object := r.child::text;
-    problem := format('inherits from a table the policy has rules or a type for, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, so a rule on a column is not checked on the rows stored here, and their shares stay when their key changes (missing here: %s). Apply the policy again (it makes them)', r.names);
+    IF r.part THEN
+      problem := format('is a partition of %s, and was made since the policy was last applied: Postgres runs a table''s statement triggers for statements on it only, so a statement on this partition doesn''t keep inheritance, shares and the audit current (missing here: %s). Apply the policy again (it makes them)', r.above, r.names);
+    ELSE
+      problem := format('inherits from %s, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, and its statement triggers for statements on it only, so a rule on a column is not checked on the rows stored here, their shares stay when their key changes, and a statement on this table doesn''t keep inheritance, shares and the audit current (missing here: %s). Apply the policy again (it makes them)', r.above, r.names);
+    END IF;
     RETURN NEXT;
   END LOOP;
   -- unique constraints on governed tables tell people that rows they cannot see exist

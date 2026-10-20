@@ -5573,18 +5573,21 @@ BEGIN
   RETURN n;
 END $f$;
 
--- The row triggers above that a table inheriting from their table lacks, and the statement that makes each
+-- The triggers above that a table under their table lacks, and the statement that makes each
 CREATE FUNCTION authz_int.child_triggers() RETURNS TABLE (child regclass, name name, stmt text)
 LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
   WITH RECURSIVE below(top, oid) AS (
-    SELECT i.inhparent, i.inhrelid FROM pg_inherits i JOIN pg_class k ON k.oid = i.inhrelid WHERE NOT k.relispartition
+    SELECT i.inhparent, i.inhrelid FROM pg_inherits i
     UNION SELECT b.top, i.inhrelid FROM pg_inherits i JOIN below b ON i.inhparent = b.oid
   )
   SELECT b.oid::regclass, g.tgname,
          overlay(d.def PLACING ' ON ' || c.name || ' ' FROM strpos(d.def, ' ON ' || p.name || ' ')
                  FOR length(' ON ' || p.name || ' '))
   FROM below b
-  JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal AND g.tgtype & 1 = 1
+  JOIN pg_class u ON u.oid = b.oid
+  JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal
+   AND CASE WHEN g.tgtype & 1 = 1 THEN NOT u.relispartition         -- a row trigger: Postgres copies it to partitions
+            ELSE g.tgtype & 28 <> 0 AND u.relkind IN ('r', 'p') END -- a statement trigger: not for TRUNCATE alone
   JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
   CROSS JOIN LATERAL (SELECT pg_get_triggerdef(g.oid) AS def) d
   CROSS JOIN LATERAL (SELECT format('%I.%I', n.nspname, k.relname) AS name
@@ -5742,13 +5745,19 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     problem := format('%s may read every row, and the policy doesn''t name this table: fine for a lookup table, otherwise give it a type and rules', 'app_user');
     RETURN NEXT;
   END LOOP;
-  -- partitions and inheritance children: used directly, they skip the rules and the triggers of the table above
-  -- (apply turns row-level security on for the ones there are then; later ones are found here)
-  FOR r IN WITH RECURSIVE d(oid, top, governed) AS (
-             SELECT i.inhrelid, i.inhparent, x.governed FROM pg_inherits i
-             JOIN (SELECT to_regclass(t) AS tbl, true AS governed FROM unnest(ARRAY['"app"."files"', '"app"."folders"']::text[]) t
-                   UNION ALL SELECT to_regclass(t), false FROM unnest(ARRAY['"app"."folder_links"', '"app"."folder_team_access"', '"app"."org_members"', '"app"."team_members"', '"app"."teams"']::text[]) t) x
-               ON i.inhparent = x.tbl
+  -- partitions and inheritance children: used directly, they skip the rules of the table above (apply turns
+  -- row-level security on for the ones there are then; later ones are found here), and TRUNCATE skips its
+  -- triggers. The tables above: those with rules, and those rowstile watches (a trigger of its own on them)
+  FOR r IN WITH RECURSIVE x(tbl, governed) AS (
+             SELECT to_regclass(t), true FROM unnest(ARRAY['"app"."files"', '"app"."folders"']::text[]) t
+             UNION SELECT DISTINCT g.tgrelid::regclass, false FROM pg_trigger g
+             JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
+             WHERE NOT g.tgisinternal AND g.tgrelid NOT IN (SELECT to_regclass(t) FROM unnest(ARRAY['"app"."files"', '"app"."folders"']::text[]) t
+                                                           WHERE to_regclass(t) IS NOT NULL)
+               AND NOT EXISTS (SELECT 1 FROM pg_description c WHERE c.objoid = g.oid AND c.classoid = 'pg_trigger'::regclass
+                               AND c.description = 'rowstile: the trigger of the table above, for the rows stored here')),
+           d(oid, top, governed) AS (
+             SELECT i.inhrelid, i.inhparent, x.governed FROM pg_inherits i JOIN x ON i.inhparent = x.tbl
              UNION SELECT i.inhrelid, d.top, d.governed FROM pg_inherits i JOIN d ON i.inhparent = d.oid)
            SELECT d.oid::regclass AS part, d.top::regclass AS tbl, d.governed, k.relrowsecurity
            FROM d JOIN pg_class k ON k.oid = d.oid LOOP
@@ -5757,21 +5766,28 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
       problem := format('is a partition of %s (or inherits from it), and %s may TRUNCATE it, which skips row-level security and %s''s triggers: REVOKE TRUNCATE ON %s FROM %s', r.tbl, 'app_user', r.tbl, r.part, 'app_user');
       RETURN NEXT;
     END IF;
-    IF NOT r.relrowsecurity AND (has_table_privilege(v_role, r.part, 'INSERT') OR has_table_privilege(v_role, r.part, 'UPDATE')
-                                 OR has_table_privilege(v_role, r.part, 'DELETE')
-                                 OR (r.governed AND has_table_privilege(v_role, r.part, 'SELECT'))) THEN
+    -- (on a table without rules, statements on it run the triggers of the table above as their own: the next loop
+    -- finds one made since that lacks them)
+    IF r.governed AND NOT r.relrowsecurity AND (has_table_privilege(v_role, r.part, 'INSERT') OR has_table_privilege(v_role, r.part, 'UPDATE')
+                                 OR has_table_privilege(v_role, r.part, 'DELETE') OR has_table_privilege(v_role, r.part, 'SELECT')) THEN
       severity := 'error'; object := r.part::text;
       problem := format('is a partition of %s (or inherits from it), and %s may use it directly, without %s''s rules or the triggers that keep inheritance and the audit current: apply the policy again (it turns row-level security on for it), or ALTER TABLE %s ENABLE ROW LEVEL SECURITY', r.tbl, 'app_user', r.tbl, r.part);
       RETURN NEXT;
     END IF;
   END LOOP;
-  -- tables that inherit (not partitions), made since the last apply: Postgres runs a table's row triggers for
-  -- its own rows only, and applying gives them to each table under it (whatever the app role may do there:
-  -- written through the table above, their rows need no privilege of their own)
-  FOR r IN SELECT c.child, string_agg(c.name::text, ', ' ORDER BY c.name) AS names
-           FROM authz_int.child_triggers() c GROUP BY c.child LOOP
+  -- partitions and tables that inherit, made since the last apply: Postgres runs a table's row triggers for its
+  -- own rows and its partitions' only, and its statement triggers for statements on it only; applying gives
+  -- them to each table under it (whatever the app role may do there: the owner's statements count too, and
+  -- rows written through the table above need no privilege of their own)
+  FOR r IN SELECT c.child, k.relispartition AS part, (SELECT i.inhparent::regclass FROM pg_inherits i WHERE i.inhrelid = c.child LIMIT 1) AS above,
+                  string_agg(c.name::text, ', ' ORDER BY c.name) AS names
+           FROM authz_int.child_triggers() c JOIN pg_class k ON k.oid = c.child GROUP BY c.child, k.relispartition LOOP
     severity := 'error'; object := r.child::text;
-    problem := format('inherits from a table the policy has rules or a type for, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, so a rule on a column is not checked on the rows stored here, and their shares stay when their key changes (missing here: %s). Apply the policy again (it makes them)', r.names);
+    IF r.part THEN
+      problem := format('is a partition of %s, and was made since the policy was last applied: Postgres runs a table''s statement triggers for statements on it only, so a statement on this partition doesn''t keep inheritance, shares and the audit current (missing here: %s). Apply the policy again (it makes them)', r.above, r.names);
+    ELSE
+      problem := format('inherits from %s, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, and its statement triggers for statements on it only, so a rule on a column is not checked on the rows stored here, their shares stay when their key changes, and a statement on this table doesn''t keep inheritance, shares and the audit current (missing here: %s). Apply the policy again (it makes them)', r.above, r.names);
+    END IF;
     RETURN NEXT;
   END LOOP;
   -- unique constraints on governed tables tell people that rows they cannot see exist
@@ -6036,8 +6052,8 @@ BEGIN
   END LOOP;
 END $l$;
 
--- Tables that inherit from a table with rules or a type (not partitions: Postgres gives those their table's row
--- triggers itself): the row triggers made above, on each, for the rows stored there
+-- The partitions of a table rowstile watches and the tables that inherit from it: the triggers made above, on
+-- each, for the rows stored there and the statements on it
 DO $ch$
 DECLARE r record;
 BEGIN
