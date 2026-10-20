@@ -349,10 +349,10 @@ test("Next.js with pg: reads filtered, and sharing as the database allows", asyn
   const stranger = await change("POST", "2", 2);       // bo can't see project 1
   expect([stranger.status, (await stranger.json()).detail]).toEqual([403, "you cannot share project 1"]);
   expect((await change("POST", "3", 2)).status).toBe(204);
-  expect(await shares("3")).toEqual([{ relation: "viewer", user: "2" }]);
+  expect(await shares("1")).toEqual([{ relation: "viewer", user: "2" }]);   // its owner, who holds share
   expect((await fetch(`${SERVER}/api/pg/projects/1/shares`, as("2"))).status).toBe(403);   // bo views, may not share
   expect((await change("DELETE", "3", 2)).status).toBe(204);
-  expect(await shares("3")).toEqual([]);
+  expect(await shares("1")).toEqual([]);
 });
 
 // 16: a folder moved inside one of its own subfolders, by the app's own route: 409, in the database's words
