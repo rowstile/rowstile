@@ -218,7 +218,7 @@ case "$out" in *"beside the ones in use"*"two migrations"*) [ "$(ls "$P"/db/migr
   case "$build" in *_authz_build_*) true;; *) false;; esac && ok "migrate writes two: build beside, then swap in" || bad "two files" "$(ls "$P/db/migrations")";;
   *) bad "two-phase migrate" "$out";; esac
 dropdb --if-exists "${DB}_5" 2>/dev/null; createdb --template "${DB}_2" "${DB}_5"   # (before the build: the oldest writer, below)
-for n in 6 7 8; do dropdb --if-exists "${DB}_$n" 2>/dev/null; createdb --template "${DB}_2" "${DB}_$n"; done   # (and three more)
+for n in 6 7 8 9; do dropdb --if-exists "${DB}_$n" 2>/dev/null; createdb --template "${DB}_2" "${DB}_$n"; done   # (and four more)
 said=$(sed -n 3p "$build")
 [ "$said" = "-- builds folder__linked_into_parent__tree beside the ones in use; the next migration swaps it in" ] &&
   ok "... the first says which tree it builds beside, and that the next swaps it in" || bad "the first's summary" "$said"
@@ -269,6 +269,20 @@ out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 
   [ "$(PSQL -d "${DB}_8" -c "SELECT authz.verify()")" = t ] &&
   [ "$(PSQL -d "${DB}_8" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 90")" = 1 ] &&
   ok "... and a folder made in the swap's own transaction, beside another type's change keyed by text" || bad "swap with a folder of its own transaction" "$out"
+# ... and one no trigger saw, so the feed doesn't name it (session_replication_role = replica turns the triggers
+# off), made in the swap's own transaction: the swap finds it by its row's xmin, the swap's own id, which is newer
+# than the build's snapshot (in this epoch, not the one before)
+if [ -n "${PGSUPERUSER:-}" ]; then
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_9" -f "$build" >/dev/null 2>&1 ||
+    bad "the build, on another copy"
+  out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -U "$PGSUPERUSER" -d "${DB}_9" \
+          -c "SET LOCAL session_replication_role = replica" \
+          -c "INSERT INTO app.folders (id, org_id, owner_id, name) VALUES (91, 1, 5, 'Copied in the swap')" \
+          -c "SET LOCAL session_replication_role = origin" -c "SET LOCAL ROLE $PGUSER" -f "$swap" 2>&1) &&
+    [ "$(PSQL -d "${DB}_9" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 91")" = 1 ] &&
+    ok "... and a folder no trigger saw, made in the swap's own transaction: in the tree, found by its row's xmin" ||
+    bad "swap with a folder no trigger saw" "$out"
+fi
 # the link table emptied between the two: the swap builds the tree again from what is there (the emptying says
 # nothing of which rows went)
 PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_7" -f "$build" >/dev/null 2>&1 ||
@@ -449,5 +463,5 @@ case "$moves" in *"cannot be moved inside itself"*) [ "$loop" = f ] && [ "$(psql
 dropdb --if-exists "$L" 2>/dev/null
 
 rm -rf "$T"
-for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8"; do dropdb --if-exists "$db" 2>/dev/null; done
+for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8" "${DB}_9"; do dropdb --if-exists "$db" 2>/dev/null; done
 [ $fails -eq 0 ] && echo "migrations: all passed" || { echo "migrations: $fails failed"; exit 1; }

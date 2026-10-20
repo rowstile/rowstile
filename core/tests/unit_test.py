@@ -317,6 +317,24 @@ class Compiling(unittest.TestCase):
         body = sql.split('CREATE FUNCTION authz_int."doc__see__who"(p_id bigint)', 1)[1].split("$f$")[1]
         self.assertEqual(body.strip(), 'SELECT x FROM authz_int."doc__owner__who"(p_id) x')
 
+    def test_the_condition_an_error_points_just_after(self) -> None:
+        """Postgres may point a little past a condition it refused (a syntax error at what follows it): up to two
+        characters past its end, that condition is the one named, among several in the statement."""
+
+        class Refused(Exception):
+            def __init__(self, fields: dict[str, str]) -> None:
+                super().__init__("refused")
+                self.fields = fields
+
+        policy = "app role app_user\ntype user = app.users\ntype doc = app.docs\n  can a = {x > 1}\n  can b = {y < 2}\n"
+        sql = "SELECT 1;\nSELECT (x > 1) OR (y < 2) FROM t;\n"
+        for past, line in ((2, 4), (3, None)):
+            at = sql.index("x > 1") + len("x > 1") + past
+            got = database.condition_error(Refused({"M": "syntax error", "P": str(at + 1)}), sql, policy, {})
+            self.assertEqual(
+                None if got is None else str(got).split(":")[0], None if line is None else f"policy line {line}"
+            )
+
     def test_the_conditions_on_rows(self) -> None:
         """What an apply that fails asks Postgres about one at a time (AZ613), and the captured names' warning: a
         type's where, a link table's, a permission's and a rule's, each on its table, the keywords left out."""
@@ -12022,12 +12040,25 @@ class Mutants(unittest.TestCase):
         '    return f"SELECT 1 FROM {t} WHERE a = {x == 2} AND b IS NULL -- c = d AND e"\n'
     )
 
-    def made(self, text: str) -> list[mutants.Mutant]:
+    def made(self, text: str, name: str = "view.py") -> list[mutants.Mutant]:
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, "authzlib"))
-            with open(os.path.join(d, "authzlib", "view.py"), "w", encoding="utf-8") as fh:
+            with open(os.path.join(d, "authzlib", name), "w", encoding="utf-8") as fh:
                 fh.write(text)
             return mutants.generate(d)
+
+    def test_a_clients_comments_are_not_sql(self) -> None:
+        # the clients' TypeScript names SQL words in its // comments: no WHERE there to drop a term of (the line
+        # after it would go), while the SQL it sends is mutated as any
+        text = (
+            "def client(t: str) -> str:\n"
+            '    return f"""  // nothing for another reason, such as a WHERE with more than the key\n'
+            "  if (why === null) throw new NotFound({t});\n"
+            '  db.query("SELECT 1 FROM x WHERE a = 1 AND b = 2");\n"""\n'
+        )
+        dropped = [m.old for m in self.made(text, "devtools.py") if m.op == "sql WHERE term dropped"]
+        self.assertEqual(len(dropped), 2, dropped)
+        self.assertTrue(all("NotFound" not in old for old in dropped), dropped)
 
     def test_an_id_is_the_one_results_were_kept_by(self) -> None:
         # results carry over between runs by id, and survivors.txt names them: made another way, every one is lost

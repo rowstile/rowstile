@@ -196,6 +196,41 @@ else echo "FAIL  a folder moved while a region's link is written: $got"; fails=$
   { echo "FAIL  the trees after the two writes"; fails=$((fails + 1)); }
 dropdb "$X"; rm -f "/tmp/${DB}_cross.sql"
 
+echo "-- a statement that changes no row of a tree of several types takes no lock of it"
+# folders in folders or in projects, projects in folders: one tree of two types, and no other tree on them. A
+# project updated by a statement that matches none doesn't wait for a folder's move held open
+X="${DB}_two"
+dropdb --if-exists "$X" 2>/dev/null; createdb "$X" || exit 1
+cat > "/tmp/${DB}_two.authz" <<'POLICY'
+app role app_user
+type user = ms.users
+type project = ms.projects
+  parent : folder = folder_id
+  owner  : user   = owner_id
+  can view = owner or parent.view
+type folder = ms.folders
+  parent : folder, project = (parent_type, parent_id)
+  owner  : user = owner_id
+  can view = owner or parent.view
+rules ms.folders
+  select : view
+POLICY
+python3 compile_policy.py "/tmp/${DB}_two.authz" > "/tmp/${DB}_two.sql" &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -c "CREATE SCHEMA ms" \
+    -c "CREATE TABLE ms.users (id bigint PRIMARY KEY)" \
+    -c "CREATE TABLE ms.folders (id bigint PRIMARY KEY, parent_type text, parent_id bigint, owner_id bigint)" \
+    -c "CREATE TABLE ms.projects (id bigint PRIMARY KEY, folder_id bigint, owner_id bigint)" \
+    -c "INSERT INTO ms.users VALUES (1)" -c "INSERT INTO ms.folders (id, owner_id) VALUES (1, 1), (2, 1)" \
+    -c "INSERT INTO ms.projects VALUES (1, NULL, 1)" -f "/tmp/${DB}_two.sql" >/dev/null || { echo "setup failed (two)"; exit 1; }
+psql -X -q -d "$X" -c "BEGIN" -c "UPDATE ms.folders SET parent_type = 'folder', parent_id = 1 WHERE id = 2" -c "SELECT pg_sleep(3)" \
+  -c "COMMIT" > "$out" 2>&1 &
+sleep 1
+got=$(psql -X -q -At -d "$X" -c "SET lock_timeout = '1s'" -c "UPDATE ms.projects SET owner_id = owner_id WHERE id = 99" 2>&1)
+wait
+if [ -z "$got" ]; then echo "ok    a project update that changes none doesn't wait for a folder's move"
+else echo "FAIL  a project update that changes none, while a folder is moved: $got"; fails=$((fails + 1)); fi
+dropdb "$X"; rm -f "/tmp/${DB}_two.authz" "/tmp/${DB}_two.sql"
+
 rm -f "$out" "$out.b"
 dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "concurrency: all passed"; else echo "concurrency: $fails failed"; exit 1; fi

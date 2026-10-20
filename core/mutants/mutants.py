@@ -323,9 +323,11 @@ def where_terms(body: str) -> list[tuple[int, int]]:
     return out
 
 
-def in_comment(body: str, at: int) -> bool:
-    """After `--` on its line of SQL: a comment (what it says changes nothing; the comparison skips them)."""
-    return "--" in body[body.rfind("\n", 0, at) + 1 : at]
+def in_comment(body: str, at: int, client: bool = False) -> bool:
+    """After `--` on its line of SQL: a comment (what it says changes nothing; the comparison skips them). In the
+    clients' code (CLIENT_FILES), after `//` too: their TypeScript's comments, which name SQL words in prose."""
+    before = body[body.rfind("\n", 0, at) + 1 : at]
+    return "--" in before or (client and "//" in before)
 
 
 def sql_edits(src: Source) -> list[Edit]:
@@ -339,23 +341,24 @@ def sql_edits(src: Source) -> list[Edit]:
         if not (SQL_WORD.search(body) or (fstring and src.fname not in PROSE_FILES)):
             continue
         base = a + ba
+        client = src.fname in CLIENT_FILES
         for op, rx, rep in SQL_OPS:
             if src.fname in CLIENT_FILES and op in SYMBOL_OPS:
                 continue
             for m in rx.finditer(body):
-                if "\0" in m.group(0) or in_comment(body, m.start()):
+                if "\0" in m.group(0) or in_comment(body, m.start(), client):
                     continue
                 if op == "sql =-><>" and SETTING.search(body[: m.start()].split("\n")[-1]):
                     continue
                 out.append((base + m.start(), base + m.end(), rep, op))
         if "coalesce(" in text.lower():
             for m in COALESCE_BOOL.finditer(body):
-                if in_comment(body, m.start()):
+                if in_comment(body, m.start(), client):
                     continue
                 flip = "false" if m.group(1) == "true" else "true"
                 out.append((base + m.start(1), base + m.end(1), flip, f"sql coalesce {m.group(1)}->{flip}"))
         for x, y in where_terms(body):
-            if in_comment(body, x):
+            if in_comment(body, x, client):
                 continue
             out.append((base + x, base + y, "true", "sql WHERE term dropped"))
     return out
