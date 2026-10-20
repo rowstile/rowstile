@@ -12,6 +12,8 @@
 #   core/mutants/survivors.txt doesn't list fails the job.
 # By hand: `gh workflow run mutants.yml -f since=<commit>` (the mutants in lines changed since), `-f limit=40` (a
 # sample spread over operators and files), `-f only=g...,g...`, `-f shards=N`, `-f resume=none|latest|<run id>`.
+# Such a run with `resume` other than `latest` keeps its results as mutants-results-partial: the weekly run doesn't
+# start from it.
 name: mutants
 on:
   schedule:
@@ -155,11 +157,13 @@ jobs:
       - run: >-
           python3 core/mutants/sweep.py collect --prepared .mutants/prepared --shards .mutants/shards
           --out .mutants/results --summary "$GITHUB_STEP_SUMMARY"
-      # what the next run resumes from: every result (results.jsonl, results.txt), the stats, the report
+      # what the next run resumes from: every result (results.jsonl, results.txt), the stats, the report. A run of
+      # some mutants only (only, since, limit) that didn't carry the latest results holds only its own: it keeps
+      # them under another name, so `resume: latest` never starts from it
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
-          name: mutants-results
+          name: ${{ (inputs.only || inputs.since || inputs.limit) && (inputs.resume || 'latest') != 'latest' && 'mutants-results-partial' || 'mutants-results' }}
           path: .mutants/results
           if-no-files-found: ignore
           retention-days: 90

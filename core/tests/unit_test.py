@@ -12250,9 +12250,15 @@ class Mutants(unittest.TestCase):
         self.assertLess(timeout, 360)  # GitHub's runners stop a job at six hours
         self.assertLessEqual(budget + 60, timeout)  # the mutant in flight when the budget is used up still ends
         self.assertEqual(set(re.findall(r"sweep\.py (\w+)", text)), {"calls", "prepare", "run", "collect"})
-        # the next run resumes from what collect keeps
-        self.assertIn("name: mutants-results", text)
-        self.assertIn("-n mutants-results", text)
+        # the next run resumes from what collect keeps: every run's results, but a run of some mutants only that
+        # didn't carry the latest ones (it holds only its own) keeps them under another name
+        self.assertIn("-n mutants-results ", text)
+        name = search(r"^          name: (.*mutants-results.*)$", text, re.M).group(1)
+        self.assertEqual(
+            name,
+            "${{ (inputs.only || inputs.since || inputs.limit) && (inputs.resume || 'latest') != 'latest'"
+            " && 'mutants-results-partial' || 'mutants-results' }}",
+        )
 
 
 class Editors(unittest.TestCase):

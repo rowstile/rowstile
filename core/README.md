@@ -152,7 +152,9 @@ carries over the results of the last one whose mutants' lines are unchanged, and
 order spread over operators and files. A mutant no suite catches (a survivor) is listed in
 `mutants/survivors.txt`, as `equivalent` (it can't change an answer) or `lead` (the check that would catch it): a
 survivor not listed fails the run. The run's summary has the score, what caught what and each survivor's edit;
-the artifact `mutants-results` has every result.
+the artifact `mutants-results` has every result. A run of some mutants only (`only`, `since`, `limit`) with
+`resume` other than `latest` holds only its own results: it keeps them as `mutants-results-partial`, which the
+next run doesn't start from.
 
     gh workflow run mutants.yml -f since=<commit>    # the mutants in lines changed since that commit
     gh workflow run mutants.yml -f limit=40          # 40 that need suites, spread over operators and files
