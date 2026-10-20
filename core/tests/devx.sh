@@ -322,14 +322,22 @@ printf '{\n    "name": "shop",\n    "dependencies": {"next": "16", "@prisma/clie
 printf 'datasource db {\n  provider = "postgresql"\n}\n' > "$T/k/prisma/schema.prisma"
 printf 'export const db = new PrismaClient({ adapter });\n' > "$T/k/src/db.ts"
 out=$(cd "$T/k" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
-case "$out" in *"found   Next.js, Prisma (prisma/schema.prisma)"*"added   @rowstile/prisma, @rowstile/next, @rowstile/react, rowstile"*"in src/db.ts"*"signedIn("*)
-  ok "init finds Next.js and Prisma, adds the SDK, says which line to change";; *) bad "init stack" "$out";; esac
+case "$out" in *"found   Next.js, Prisma (prisma/schema.prisma)"*"added   to package.json (then: npm install):"*"@rowstile/prisma: signs each transaction in"*"@rowstile/next: keeps signed-in reads out of Next.js's caches"*"rowstile: the command, a dev dependency"*"maybe   @rowstile/react (hooks for a sharing dialog): not added"*"in src/db.ts"*"signedIn("*)
+  ok "init finds Next.js and Prisma, adds the SDK saying why, names what it leaves out, says which line to change";; *) bad "init stack" "$out";; esac
+grep -q '@rowstile/react' "$T/k/package.json" && bad "init added @rowstile/react" "$(cat "$T/k/package.json")"
 grep -q 'tool = "prisma"' "$T/k/rowstile.toml" && grep -q 'dir  = "prisma/migrations"' "$T/k/rowstile.toml" && grep -q 'ts = "src/authz.gen.ts"' "$T/k/rowstile.toml" &&
   grep -q '"@rowstile/prisma": "^' "$T/k/package.json" && grep -q '^    "name": "shop"' "$T/k/package.json" && grep -q 'linguist-generated' "$T/k/.gitattributes" &&
   ok "... in rowstile.toml, package.json (its layout kept) and .gitattributes" || bad "init stack files" "$(cat "$T/k/rowstile.toml" "$T/k/package.json")"
 # ...and that the app's client takes a URL of its own, not Prisma's, which is the owner's
 case "$out" in *"process.env.ROWSTILE_APP_URL"*"never the one this command uses"*) ok "... and that the app connects with its own URL, as the app role";;
   *) bad "init: the app's connection" "$out";; esac
+# --db the owner's, and DATABASE_URL another (the app's): rowstile.toml doesn't read DATABASE_URL, and says which
+mkdir -p "$T/dburl"
+out=$(cd "$T/dburl" && DATABASE_URL="postgresql://app_user@localhost/$DB" python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
+case "$out" in *"DATABASE_URL is another connection than --db's"*"ROWSTILE_DATABASE_URL"*)
+  grep -q '^database = "env:ROWSTILE_DATABASE_URL"     # the tables'"'"' owner'"'"'s connection: DATABASE_URL is another$' "$T/dburl/rowstile.toml" &&
+  ok "init with --db and another DATABASE_URL: rowstile.toml reads the owner's from ROWSTILE_DATABASE_URL, and says so" ||
+  bad "init's database line" "$(cat "$T/dburl/rowstile.toml")";; *) bad "init with another DATABASE_URL" "$out";; esac
 # init again there: rowstile.toml is kept, and package.json, which has the packages now, is left as it is
 before=$(cksum < "$T/k/package.json")
 out=$(cd "$T/k" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)

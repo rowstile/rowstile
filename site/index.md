@@ -70,3 +70,6 @@ outside audit or a vendor behind it today: rowstile is a 0.x preview with one ma
 
 Next: [Getting started](../docs/getting-started.md) goes from a schema to a policy, its tests, the edit loop and
 the first migration. [Pick your stack](../docs/stacks/README.md) for the SDK that does the signing in for you.
+
+For coding agents: each page here is also Markdown, at its address with `.md` (<https://rowstile.dev/getting-started.md>),
+and <https://rowstile.dev/llms.txt> lists them with what to know first.

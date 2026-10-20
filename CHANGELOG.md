@@ -7,9 +7,25 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ## Unreleased
 
+### Changed
+
+- `rowstile init` drafts a team inside a team as nested membership: the members of the teams inside count as
+  members of the team above (`member : team#member = app.teams(parent_id -> id)`), where the draft passed the
+  team above's view down. A comment says the other reading. For teams, groups, orgs, departments and the like;
+  folders still pass their view down.
+- `rowstile init` adds to `package.json` only what the app needs to run, and says why each: `@rowstile/react`
+  and `@rowstile/vitest` are named, not added.
+- `rowstile init --db URL` in an app whose `DATABASE_URL` is another connection (often the app's, as its role)
+  writes `database = "env:ROWSTILE_DATABASE_URL"` in `rowstile.toml`, and says to set it to the owner's: it
+  wrote `env:DATABASE_URL`, which the command would then use.
+- TypeScript: `Problem`, what `problemOf(e)` returns, types its fields (`table`, `command`, `why`, `code`
+  besides `status`, `type`, `title`, `detail`), so a field it hasn't, such as `p.body`, is a type error.
+
 ### Fixed
 
-- `authz.explain` says "you" to a service signed in as itself, as it does to a user: a relation from a column read `bot: bot_id is` and stopped there, and a share `viewer: shared with`. It now says `bot: bot_id is you`. Applying the policy again (or the next migration) brings it in.
+- `authz.explain` says "you" to a service signed in as itself, as it does to a user: a relation from a column
+  read `bot: bot_id is` and stopped there, and a share `viewer: shared with`. It now says `bot: bot_id is you`.
+  Applying the policy again (or the next migration) brings it in.
 
 ## 0.1.0 (alpha)
 

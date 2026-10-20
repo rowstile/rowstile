@@ -22,6 +22,7 @@ class Stack:
     migrations_dir: str = ""
     clients: dict[str, str] = field(default_factory=dict)  # {"ts": "src/authz.gen.ts"} or {"py": "app/authz_types.py"}
     npm: list[str] = field(default_factory=list)  # @rowstile/* packages to add
+    npm_maybe: list[str] = field(default_factory=list)  # ... and those the app may want, named, not added
     pip: str = ""  # the pip requirement to add: rowstile[fastapi]
     pip_there: bool = False  # the project depends on rowstile already: nothing to add
     setup: list[str] = field(default_factory=list)  # the change to make, in lines to print
@@ -188,10 +189,10 @@ def detect(root: str = ".") -> Stack:
                 'import { authz } from "@rowstile/pg";',
                 f"export const db = authz(pool, {{ user: {user_ts} }});",
             ]
-        if "react" in js:
-            s.npm.append("@rowstile/react")
-        if "vitest" in js:
-            s.npm.append("@rowstile/vitest")
+        if "react" in js and "@rowstile/react" not in js:
+            s.npm_maybe.append("@rowstile/react")
+        if "vitest" in js and "@rowstile/vitest" not in js:
+            s.npm_maybe.append("@rowstile/vitest")
         if s.npm:
             s.clients["ts"] = f"{ts_dir}/authz.gen.ts".lstrip("./")
             if "next" in js and s.setup:
@@ -255,6 +256,19 @@ def pip_requirement(name: str, version: str) -> str:
         return name
     pypi = m.group(1) + (f"a{m.group(2)}" if m.group(2) else f"rc{m.group(3)}" if m.group(3) else ".dev0")
     return f"{name}>={pypi}"
+
+
+# why init adds each package (or names it): what it says, so that nothing lands in package.json unexplained
+NPM_WHY = {
+    "@rowstile/prisma": "signs each transaction in, through Prisma's adapter",
+    "@rowstile/drizzle": "signs each transaction in",
+    "@rowstile/postgres": "signs each transaction in",
+    "@rowstile/pg": "signs each transaction in",
+    "@rowstile/next": "keeps signed-in reads out of Next.js's caches",
+    "@rowstile/react": "hooks for a sharing dialog",
+    "@rowstile/vitest": "test matchers for refusals",
+    "rowstile": "the command, a dev dependency",
+}
 
 
 def add_npm(root: str, names: list[str], version: str) -> list[str]:

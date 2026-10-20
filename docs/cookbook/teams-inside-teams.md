@@ -18,6 +18,10 @@ type document = app.documents
   `parent_id` is this team are members of this team too.
 - `reader : team#member` gives a document to a team's members, whoever they are that day. Nobody is copied
   into a list per document: joining Web is enough to read what Engineering reads.
+- Who is in a team, and which team is inside which, decide what people read: the app role reads `app.team_members`
+  and `app.teams` and writes neither (`schema.sql` grants it SELECT on them). If it could insert there, anyone
+  could join any team. `authz.lint()` says so of a table like that; where the app changes them, give them a type
+  and rules of their own.
 
 ## Tested
 

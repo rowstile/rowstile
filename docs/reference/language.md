@@ -77,7 +77,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   (`app.team_members(team_id -> user_id)`, or with the columns named:
   `app.team_members(object: team_id, subject: user_id)`; optionally `where {...}`), from a polymorphic pair of columns `(type_col, id_col)`,
   in the type's table or in a link table (`app.backings(project_id -> (backer_type, backer_id))`),
-  or from shares people make (`shared`). <!-- answer: relation-sources --> Declare a relation again to add a source. <!-- answer: relation-again --> The type column of a
+  or from shares people make (`shared`). <!-- answer: relation-sources --> In `table(this_col -> subject_col)`, the left column names this row and the right one what it links to: on a team, `app.team_members(team_id -> user_id)` reads the rows whose `team_id` is this team's id, each linking it to a `user_id`; and `app.teams(parent_id -> id)`, a table that links to itself, reads the teams whose `parent_id` is this team's id, the teams inside it. Declare a relation again to add a source. <!-- answer: relation-again --> The type column of a
   polymorphic pair holds the policy's type names (`'folder'`, `'project'`): renaming a type changes what the
   rows link to, and a row naming a type the relation doesn't list links to nothing. <!-- answer: polymorphic-type-names -->
 - **Shares**: a `shared` relation is given with `authz.share()` by whoever holds `share` on the object, so the

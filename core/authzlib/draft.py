@@ -129,6 +129,9 @@ USER_TABLES = ("users", "user", "accounts", "account", "people", "persons", "pro
 # a link table with an id of its own and no unique pair is a membership when it says who does what (one of these),
 # and holds nothing else than that and when (LINK_EXTRAS)
 ROLE_COLUMNS = ("role", "kind", "level", "access", "permission", "permissions")
+# types whose rows hold people, and whose rows inside other rows usually mean nested membership: the members of a
+# team inside count as members of the team above (the cookbook's nested teams), not the team above's view passed down
+GROUP_WORDS = re.compile(r"(?:^|_)(?:team|group|org|organization|organisation|department|division|unit|squad|circle)$")
 LINK_EXTRAS = re.compile(
     r"(role|kind|level|access|permission|permissions|(created|updated|inserted|joined|added)(_at|At|_on|On)?|"
     r"\w+(_at|At)|created_by|invited_by|added_by)"
@@ -473,10 +476,31 @@ def draft(
         out.append(f"type {tname} = {n}{key_spec(t)}")
         for rel, target, source, _ in rels[n]:
             out.append(f"  {rel} : {target} = {source}")
-        out += notes[n]
         users_edit = [r for r, _, _, k in rels[n] if k == "user"]
         linked = [r for r, _, _, k in rels[n] if k == "link"]
         parents = [r for r, _, _, k in rels[n] if k == "parent"]
+        # a group of people inside another of its type (a team's parent team): its members are members above too
+        nested = [
+            (r, source)
+            for r, _, source, k in rels[n]
+            if k == "parent" and parent_of[n][r] == n and "," not in source and len(t["pk"]) == 1
+        ]
+        not_down: set[str] = set()  # parents whose view isn't passed down
+        if nested and linked and GROUP_WORDS.search(tname):
+            p, column = nested[0]
+            member = linked[0]
+            out.append(
+                f"  {member} : {tname}#{member} = {n}({column} -> {cols_text(t['pk'])})"
+                f"   -- the {member}s of the {tname}s inside count here too"
+            )
+            out.append(
+                f"  -- decide: {member}s of a {tname} inside are {member}s of this one. For this {tname}'s view to pass"
+            )
+            out.append(
+                f"  --   down to those inside instead: remove that line, and write can view = {member} or {p}.view"
+            )
+            not_down.add(p)
+        out += notes[n]
         if tname == "user":
             # your own row, as a relation from the key: what the reference says to write, where a condition on
             # authz.uid() would be a fact about the row to prove and the review
@@ -490,7 +514,11 @@ def draft(
             # each parent named once: a drafted type's view holds its edit, so parent.view holds parent.edit, and
             # `edit or parent.view` would name the parent twice at each level (lint warns of what that costs)
             view = (
-                (users_edit + linked + [f"{p}.view" for p in parents if view_base[parent_of[n][p]]])
+                (
+                    users_edit
+                    + linked
+                    + [f"{p}.view" for p in parents if view_base[parent_of[n][p]] and p not in not_down]
+                )
                 if parents
                 else ["edit"] + linked
             )

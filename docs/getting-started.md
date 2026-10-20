@@ -71,7 +71,8 @@ is `project : project = project_id`, and a note inherits view and edit from its 
 `app.team_members` became `member : user = app.team_members(team_id -> user_id)` on teams. Every line
 marked `-- decide:` is a choice only you can make.
 
-Here, projects are shared: people give others access with `authz.share()`. And only the tables the app
+Here, projects are shared: people give others access with `authz.share()`, if they hold `share` on the project
+(`shared` is short for `shared by share`, which the cookbook writes out). And only the tables the app
 writes need rules, where the draft has a type and rules for every table, the link table
 `app.team_members` too. Replace the draft with this:
 

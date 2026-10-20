@@ -232,6 +232,65 @@ export const POST = route(async (req: Request, { params }: Params) => {
 });
 ```
 
+## Next.js with pg, without Prisma
+
+An app on plain `pg` (node-postgres) takes `@rowstile/pg` where this page has `@rowstile/prisma`; the rest
+holds: `route()`, `action()`, `checkAtStart`, the React kit. Install `@rowstile/pg@next` instead of
+`@rowstile/prisma@next`. The pool connects as the app role, with a URL of its own, and `authz(pool, { user })`
+signs each transaction in as the request's user (`requestUser`: your session's user id, as above):
+
+```ts
+import pg from "pg";
+import { authz } from "@rowstile/pg";
+import "@rowstile/next";                              // signed-in reads never land in a cache
+
+const url = process.env.ROWSTILE_APP_URL;
+export const pool = new pg.Pool({ connectionString: url, max: Number(process.env.PG_POOL_MAX ?? 5) });
+export const sql = authz(pool, { user: requestUser });
+```
+
+A plain query reads what the user may see. `sql.transaction(async (client) => ...)` runs several statements
+signed in once, and `sql.expect(...)` says why an UPDATE or DELETE changed nothing ([Node apps](node.md#pg)):
+
+```ts
+import { route } from "@rowstile/next";
+import { sql } from "@/pg";
+
+export const GET = route(async () => {
+  const { rows } = await sql.query("SELECT id FROM app.notes ORDER BY id");
+  return Response.json(rows.map((r) => r.id));
+});
+```
+
+A sharing dialog lists the shares, makes them and takes them back; the database decides who may (the
+relation's `shared by`), and `route()` answers its refusal with 403 ("you cannot share project 1"). A share's
+columns are in [the reference](../reference/app-code.md):
+
+```ts
+type Params = { params: Promise<{ id: string }> };
+
+export const GET = route(async (_req: Request, { params }: Params) => {
+  const shares = await sql.listShares("project", Number((await params).id));
+  return Response.json(shares.map((s) => ({ relation: s.relation, user: s.subject_id })));
+});
+
+export const POST = route(async (req: Request, { params }: Params) => {
+  const { user } = (await req.json()) as { user: number };
+  await sql.share("project", Number((await params).id), "viewer", "user", user);
+  return new Response(null, { status: 204 });
+});
+```
+
+`sql.unshare(...)` takes the same arguments. At start-up, `checkAtStart` in `instrumentation.ts` stops the
+server if the pool's connection skips row-level security (a superuser, BYPASSRLS, the tables' owner); calling
+`sql.check()` there yourself only throws, which Next.js logs before it goes on serving:
+
+```ts
+export async function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs") await checkAtStart((await import("./src/pg.ts")).sql);
+}
+```
+
 ## Background jobs
 
 A job acts for a principal of its own (`type service = app.services principal` in the policy), whatever

@@ -340,6 +340,21 @@ test("a share made in the app's own code", async () => {
   }]);
 });
 
+// the same on pg, without Prisma (docs/stacks/nextjs.md, "Next.js with pg"): a read, and the sharing dialog
+test("Next.js with pg: reads filtered, and sharing as the database allows", async () => {
+  expect(await (await fetch(`${SERVER}/api/pg/notes`, as("2"))).json()).toEqual(EXPECTED["2"]);
+  const shares = async (as_: string) => (await fetch(`${SERVER}/api/pg/projects/1/shares`, as(as_))).json();
+  const change = (method: string, as_: string, user: number) =>
+    fetch(`${SERVER}/api/pg/projects/1/shares`, as(as_, { method, body: JSON.stringify({ user }) }));
+  const stranger = await change("POST", "2", 2);       // bo can't see project 1
+  expect([stranger.status, (await stranger.json()).detail]).toEqual([403, "you cannot share project 1"]);
+  expect((await change("POST", "3", 2)).status).toBe(204);
+  expect(await shares("3")).toEqual([{ relation: "viewer", user: "2" }]);
+  expect((await fetch(`${SERVER}/api/pg/projects/1/shares`, as("2"))).status).toBe(403);   // bo views, may not share
+  expect((await change("DELETE", "3", 2)).status).toBe(204);
+  expect(await shares("3")).toEqual([]);
+});
+
 // 16: a folder moved inside one of its own subfolders, by the app's own route: 409, in the database's words
 // (rowstile help AZ713)
 test("a folder moved inside itself is a conflict", async () => {
