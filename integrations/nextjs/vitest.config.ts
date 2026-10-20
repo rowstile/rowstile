@@ -3,7 +3,7 @@ import { defineConfig } from "vitest/config";
 
 // The SDK's packages, as the app imports them (their built files): test.sh builds them with source maps (tsc -b
 // --sourceMap), so what the checks run of them is reported on sdk/typescript/*/src
-const sdk = fileURLToPath(new URL("../../sdk/typescript/", import.meta.url)).replace(/\\/g, "/");
+const sdk = fileURLToPath(new URL("../../sdk/typescript/", import.meta.url));
 
 export default defineConfig({
   test: {

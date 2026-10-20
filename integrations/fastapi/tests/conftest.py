@@ -1,6 +1,4 @@
-import asyncio
 import os
-import sys
 from collections.abc import Iterator
 
 import psycopg
@@ -17,9 +15,6 @@ def libpq(url: str) -> str:
 
 @pytest.fixture(scope="session")
 def anyio_backend() -> tuple[str, dict[str, object]]:
-    # psycopg's async connections need a selector loop, which asyncio on Windows doesn't make by default
-    if sys.platform == "win32":
-        return "asyncio", {"loop_factory": asyncio.SelectorEventLoop}
     return "asyncio", {}
 
 

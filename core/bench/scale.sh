@@ -7,11 +7,10 @@
 # (--large, --medium and --full have 25 folders for each user and for each team, so one user holds the same at each)
 # Environment: KEEP=1 leaves the container running; PG (default 16), SHARED_BUFFERS, FILES FOLDERS LEVELS USERS TEAMS
 # DURATION GATE_DURATION (seconds per step, default 20 and 30), OUT. Results go to
-# core/bench/results/. Needs Docker and bash (Git Bash works on Windows).
+# core/bench/results/. Needs Docker and bash.
 set -u
 cd "$(dirname "$0")/../.."
-export MSYS_NO_PATHCONV=1
-REPO=$(pwd -W 2>/dev/null || pwd)
+REPO=$(pwd)
 PG=${PG:-16}
 case "${1:-}" in
   --full)   FILES=${FILES:-20000000} FOLDERS=${FOLDERS:-1000000} USERS=${USERS:-40000} TEAMS=${TEAMS:-4000}

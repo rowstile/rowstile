@@ -8,12 +8,10 @@
 # Each compiles a policy, writes its migration and its generated names, with no database.
 set -u
 cd "$(dirname "$0")/.."
-export MSYS_NO_PATHCONV=1
-REPO=$(pwd -W 2>/dev/null || pwd)
+REPO=$(pwd)
 OUT=packaging/out
 rm -rf "$OUT" && mkdir -p "$OUT"
 rc=0
-PY=python3; $PY -c pass 2>/dev/null || PY=python
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; rc=1; }
 
@@ -30,9 +28,9 @@ PGA client ts db/policy.authz | grep -q "export const permissions"
 echo done'
 
 echo "-- npm"
-# on Linux, as the caller, not root: it writes into the checkout (packaging/npm/out, .cache), and a
-# root-owned folder there can't be removed afterwards. (Docker Desktop on Windows needs root to write there)
-as_me=(); [ "$(uname -s)" = Linux ] && as_me=(-u "$(id -u):$(id -g)" -e HOME=/tmp)
+# as the caller, not root: it writes into the checkout (packaging/npm/out, .cache), and a root-owned folder
+# there can't be removed afterwards
+as_me=(-u "$(id -u):$(id -g)" -e HOME=/tmp)
 docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo node:24 bash -c \
   "node packaging/npm/build.mjs --platform linux-x64 --platform linux-x64-musl >/dev/null && cd $OUT && npm pack -s /repo/packaging/npm/out/rowstile /repo/packaging/npm/out/cli-linux-x64 /repo/packaging/npm/out/cli-linux-x64-musl >/dev/null" \
   || bad "the npm packages build"
@@ -95,7 +93,7 @@ docker run --rm -v "$REPO:/repo" python:3.13-slim bash -c "
   || { cat "$OUT/pypi-extras.log"; bad "PyPI: an extra doesn't bring what its module imports"; }
 
 # every module of the command is in every package (a new one needs no list kept up to date)
-$PY - "$OUT" <<'EOF' && ok "every module of core/cli, and Studio's page, is in the npm package and the wheel" || bad "a module is missing"
+python3 - "$OUT" <<'EOF' && ok "every module of core/cli, and Studio's page, is in the npm package and the wheel" || bad "a module is missing"
 import glob, os, sys, tarfile, zipfile
 want = {os.path.relpath(f, "core/cli").replace(os.sep, "/") for f in glob.glob("core/cli/*.py") + glob.glob("core/cli/studio/*")}
 npm = {n.split("/command/cli/", 1)[1] for n in tarfile.open(glob.glob(sys.argv[1] + "/rowstile-[0-9]*.tgz")[0]).getnames() if "/command/cli/" in n}
@@ -106,7 +104,7 @@ sys.exit(1 if any(missing.values()) else 0)
 EOF
 
 # each package carries the licence it names
-$PY - "$OUT" <<'EOF' && ok "the licence is in each npm package, the wheel and the sdist" || bad "a package without its licence"
+python3 - "$OUT" <<'EOF' && ok "the licence is in each npm package, the wheel and the sdist" || bad "a package without its licence"
 import glob, sys, tarfile, zipfile
 out, bare = sys.argv[1], []
 for f in glob.glob(out + "/rowstile-*.tgz") + glob.glob(out + "/rowstile-*.tar.gz"):
@@ -119,7 +117,7 @@ print(bare) if bare else None
 sys.exit(1 if bare else 0)
 EOF
 # ... and a platform package those of the libraries built into its Python (python-build-standalone's)
-$PY - "$OUT" <<'EOF' && ok "each platform package holds the licences of the libraries built into its Python" || bad "a platform package without python/licenses"
+python3 - "$OUT" <<'EOF' && ok "each platform package holds the licences of the libraries built into its Python" || bad "a platform package without python/licenses"
 import glob, sys, tarfile
 packages = glob.glob(sys.argv[1] + "/rowstile-cli-*.tgz")
 bare = [f for f in packages if not {"LICENSE.openssl-3.txt", "LICENSE.sqlite.txt", "LICENSE.zlib.txt", "LICENSE.cpython.txt"}

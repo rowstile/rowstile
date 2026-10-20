@@ -5,7 +5,7 @@
 #     them, 200 random policies and core/tests/small.py's set up to size 4 (each written two ways), as
 #     core/authzlib/parse.py does (core/tests/parse_agreement.py)
 #   - the Zed extension builds (WebAssembly, as Zed builds it)
-# Needs Docker and bash (Git Bash works on Windows).
+# Needs Docker and bash.
 #   editor/test.sh                  all of it (each push)
 #   editor/test.sh --agree "ARGS"   the grammar and the parser only, on small.py's set as parse_agreement.py's
 #                                   ARGS choose it (nightly: all of it, --small 6 --slice K/4)
@@ -13,13 +13,12 @@ set -u
 AGREE=""
 [ "${1:-}" = "--agree" ] && AGREE="${2:?--agree ARGS}"
 cd "$(dirname "$0")/.."
-export MSYS_NO_PATHCONV=1
-REPO=$(pwd -W 2>/dev/null || pwd)
+REPO=$(pwd)
 rc=0
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; rc=1; }
-# on Linux, as the caller: what the containers write in the checkout stays removable
-as_me=(); [ "$(uname -s)" = Linux ] && as_me=(-u "$(id -u):$(id -g)" -e HOME=/tmp)
+# as the caller: what the containers write in the checkout stays removable
+as_me=(-u "$(id -u):$(id -g)" -e HOME=/tmp)
 
 if [ -n "$AGREE" ]; then
   echo "-- the grammar and the parser: $AGREE"

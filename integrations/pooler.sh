@@ -30,10 +30,9 @@ max_client_conn = 200
 max_prepared_statements = 200
 ignore_startup_parameters = extra_float_digits,options
 EOF
-  # PgBouncer runs as its image's own user (postgres, uid 70): mktemp's folder is the caller's alone on Linux
+  # PgBouncer runs as its image's own user (postgres, uid 70): mktemp's folder is the caller's alone
   chmod 755 "$dir" && chmod 644 "$dir"/*
-  local mount="$dir"; command -v cygpath >/dev/null && mount=$(cygpath -w "$dir")
-  docker run -d --name "$name" --network "$pg-net" -p "$port:6432" -v "$mount:/etc/pgbouncer:ro" "$POOLER_IMAGE" >/dev/null || return 1
+  docker run -d --name "$name" --network "$pg-net" -p "$port:6432" -v "$dir:/etc/pgbouncer:ro" "$POOLER_IMAGE" >/dev/null || return 1
   # ready when PgBouncer itself answers (from the database's container, on their network): Docker's published
   # port accepts a connection even when nothing listens behind it
   for _ in $(seq 30); do

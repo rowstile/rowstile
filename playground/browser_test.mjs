@@ -13,8 +13,7 @@ import { deflateRawSync } from "node:zlib";
 
 const DIST = fileURLToPath(new URL("./dist/", import.meta.url));
 /** @typedef {any} Answer  the browser's answer (the DevTools protocol's JSON): its shape is what the checks check */
-const BROWSERS = /** @type {string[]} */ ([process.argv[2], process.env.CHROME, "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "/usr/bin/google-chrome", "/usr/bin/chromium",
+const BROWSERS = /** @type {string[]} */ ([process.argv[2], process.env.CHROME, "/usr/bin/google-chrome", "/usr/bin/chromium",
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].filter(Boolean));
 // the design's limit for a cached load, on the dev laptop; CI's smaller machines pass their own (ci.yml)
 const LIMIT_MS = Number(process.env.PLAYGROUND_LIMIT_MS || 5000);

@@ -6,7 +6,6 @@
 # rowstile's public surface (check_public_surface.py).
 set -u
 cd "$(dirname "$0")"
-export MSYS_NO_PATHCONV=1
 export FM_ADMIN_URL=postgresql://postgres:postgres@localhost:25432/filemanager FM_APP_PASSWORD=fm_app
 export FM_DATABASE_URL=postgresql://fm_app:fm_app@localhost:25432/filemanager
 export FM_S3_ENDPOINT=http://localhost:29000

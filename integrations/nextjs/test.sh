@@ -8,16 +8,13 @@
 # twice (a pool of five connections, and a pool of one), and the other checks run (Vitest).
 set -u
 cd "$(dirname "$0")"
-export MSYS_NO_PATHCONV=1
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-ts
-PORT=${CONFORMANCE_PORT:-25441}      # below 49152: above it Windows reserves ranges for itself, and Docker can't publish there
+PORT=${CONFORMANCE_PORT:-25441}
 WEB=${CONFORMANCE_WEB_PORT:-3401}
 ROOT=$(cd ../.. && pwd)
 BIN=$ROOT/node_modules/.bin
-PYTHON=${PYTHON:-python3}
-$PYTHON -c 'pass' 2>/dev/null || PYTHON=python
-export PYTHON
+export PYTHON=${PYTHON:-python3}
 [ -d "$ROOT/node_modules" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker rm -f "$NAME" >/dev/null 2>&1
@@ -73,9 +70,7 @@ else cat "$LOG/server-owner.log"; echo "FAIL  13: the app started on the owner's
 for _ in $(seq 60); do curl -sf "$CONFORMANCE_SERVER/api/projects" >/dev/null && curl -sf "$CONFORMANCE_SERVER_ONE/api/projects" >/dev/null && break; sleep 1; done
 # What the checks run of the SDK (sdk/typescript/*/src), lines, branches and functions: the report is printed, and
 # kept in CONFORMANCE_COVERAGE (a folder of its own if not given) with the details of each file
-native() { if command -v cygpath >/dev/null; then cygpath -m "$1"; else echo "$1"; fi; }   # Windows' Node: C:/...
-COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
-export CONFORMANCE_COVERAGE=$(native "$COVERAGE")
+export CONFORMANCE_COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
 $BIN/vitest run --coverage "$@" || { rc=1; echo "(server logs: $LOG)"; }
 if [ $# -gt 0 ]; then
   echo "(some of the checks ran: the SDK's coverage isn't judged)"
@@ -84,7 +79,7 @@ elif node -e 'const t = require(process.argv[1]).total;
   "$CONFORMANCE_COVERAGE/coverage-summary.json"; then
   echo "ok    the checks run every line, branch and function of the TypeScript SDK"
 else
-  echo "FAIL  lines, branches or functions of the TypeScript SDK no check runs (the report above: $COVERAGE/report.txt)"; rc=1
+  echo "FAIL  lines, branches or functions of the TypeScript SDK no check runs (the report above: $CONFORMANCE_COVERAGE/report.txt)"; rc=1
 fi
 stop
 [ -n "${KEEP:-}" ] || { [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"; docker rm -f "$NAME" >/dev/null; }

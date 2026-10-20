@@ -183,7 +183,7 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
 Tests need Postgres, python3 and a role with CREATEDB and CREATEROLE; they create/drop databases named `authz_*`.
 Every suite runs as a non-superuser owner: `run_tests.sh`, started as a superuser, makes `authz_owner` and runs
 as it (`PGSUPERUSER` names the superuser, for the few checks that a superuser's connection is refused). The
-simplest is Docker, from the repo root (Git Bash works on Windows):
+simplest is Docker, from the repo root:
 
     core/ci.sh                   # run_tests.sh --quick on 16, 17 and 18, each in a fresh container
     core/ci.sh --full 16         # the full run (~15 minutes) on one version
@@ -197,9 +197,9 @@ simplest is Docker, from the repo root (Git Bash works on Windows):
 For one suite, start a container and run it inside:
 
     docker build -t rowstile:16 --build-arg PG_MAJOR=16 -f core/Dockerfile .
-    MSYS_NO_PATHCONV=1 docker run -d --name pga16 -e POSTGRES_HOST_AUTH_METHOD=trust -v "$(pwd -W):/src" rowstile:16
-    MSYS_NO_PATHCONV=1 docker exec -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core pga16 bash tests/make_owner.sh
-    MSYS_NO_PATHCONV=1 docker exec -e PGHOST=/var/run/postgresql -e PGUSER=authz_owner -e PGSUPERUSER=postgres -w /src/core pga16 bash tests/cli.sh
+    docker run -d --name pga16 -e POSTGRES_HOST_AUTH_METHOD=trust -v "$(pwd):/src" rowstile:16
+    docker exec -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core pga16 bash tests/make_owner.sh
+    docker exec -e PGHOST=/var/run/postgresql -e PGUSER=authz_owner -e PGSUPERUSER=postgres -w /src/core pga16 bash tests/cli.sh
 
 - The suites run the mounted repository's code; the image only holds a copy of the command for `docker exec`.
 - A part's steps run in lanes side by side, on one server (`tests/lanes.sh`): a suite's databases, roles and
@@ -208,8 +208,8 @@ For one suite, start a container and run it inside:
   long as the container. Its `wal_level` is `logical`: `governance.sh` copies the audit trail to another database
   by a subscription (skipped, saying why, on a server without it). `difftest.py` asks a snapshot's questions in up to four sessions side by side
   (`DIFFTEST_SESSIONS=1`: one), each user's in one session, two users or more to a session.
-- Everything is LF (`.gitattributes`); the repo is mounted into Linux. `core.fileMode` is off on Windows, so mark
-  new scripts executable with `git update-index --chmod=+x`.
+- Everything is LF (`.gitattributes`). New scripts are executable in git (`chmod +x`; `Executable` in
+  `unit_test.py` checks).
 - `tests/client_types.py` type-checks the generated TS client (CI's `javascript` job; needs `tsc`, no database);
   `tests/tools_test.py` runs the same check if `tsc` is there (skipped otherwise).
 - Benchmark: `createdb b && psql -d b -f example/app_schema.sql && python3 compile_policy.py example/docs.authz > /tmp/docs.sql && psql -d b -v docs_sql=/tmp/docs.sql -f bench/benchmark.sql`
