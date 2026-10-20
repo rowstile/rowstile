@@ -632,6 +632,10 @@ class Planner:
                 for k in changed:
                     sel.update(suites_of_output(k))
                 return Plan("other", sorted(sel), changed)
+        if m.func == "<module>" and ran:
+            # its lines run on import, which any compile does: an unchanged output says nothing of the code that
+            # reads the name later (database.py's REMOVE_SQL, run by `rowstile remove`)
+            return Plan("python", sorted(ran), [], "no output of any policy changed; run on import")
         return Plan("same", sorted(ran), [], "no output of any policy changed")
 
 

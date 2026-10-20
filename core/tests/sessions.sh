@@ -307,6 +307,12 @@ got=$(PSQL -c "$BOT" -c "BEGIN" -c "SET LOCAL authz.user_id = '1'; SET LOCAL aut
   current_setting('authz.acting_user', true))" -c "COMMIT" 2>&1 | tail -n 1)
 [ "$got" = "1|bot|files|8" ] && ok "check_invariants, signed in as a service: the transaction goes on as that service" ||
   bad "check_invariants: within" "$got"
+got=$(PSQL -c "$BOT" -c "BEGIN" -c "$AS_ERIN" -c "SELECT count(*) > 0 FROM authz.explain('folder', '1', 'view', '3')" \
+  -c "SELECT format('%s|%s', current_setting('authz.user_id', true), current_setting('authz.principal_type', true))" \
+  -c "SELECT count(*) FROM authz.who('folder', '1', 'view') WHERE false" \
+  -c "SELECT format('%s|%s', current_setting('authz.user_id', true), current_setting('authz.principal_type', true))" -c "COMMIT" 2>&1 |
+  paste -sd' ')
+[ "$got" = "t 5| 0 5|" ] && ok "explain for another user, then who: the transaction goes on as its own user" || bad "explain and who: within" "$got"
 got=$(after "SET authz_debug.log_decisions = on" "SELECT authz.can('file', '11', 'view')")
 [ "${got##*|}" != on ] && ok "the decision log: the next transaction's decisions are logged too" || bad "decision log after" "$got"
 # a session that never set any: nobody acted, and a refused write says so

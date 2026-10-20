@@ -417,6 +417,12 @@ cols="FROM pg_attribute WHERE attrelid = 'mt.docs'::regclass AND attnum > 0 AND 
 [ "$(PSQL -c "SELECT count(*) $cols")" = 0 ] && ok "... and takes back the SELECT on its other columns the mask gave instead" ||
   bad "column privileges after remove" "$(PSQL -c "SELECT string_agg(attname || ' ' || attacl::text, ', ') $cols")"
 out=$(PSQL -c "GRANT SELECT ON mt.docs TO app_user" 2>&1); [ -z "$out" ] && ok "... and later grants aren't refused any more" || bad "mask guard left" "$out"
+# the app dropped a masked table since: remove has no SELECT to give back on it, and forgets the mask
+CLI apply tests/multi.authz >/dev/null 2>&1
+PSQL -c "DROP TABLE mt.docs CASCADE" >/dev/null 2>&1
+run remove --yes
+[ $rc -eq 0 ] && [ "$(PSQL -c "SELECT count(*) FROM authz.masked_tables")" = 0 ] &&
+  ok "remove after the app dropped a masked table: nothing to give back on it, the mask forgotten" || bad "remove without the masked table" "$rc $out"
 
 echo "-- a condition Postgres refuses"
 # rowstile check can't see these (they need the tables): applying names the condition's line

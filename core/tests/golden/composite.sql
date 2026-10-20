@@ -5012,7 +5012,7 @@ BEGIN
     END IF;
   END LOOP;
   IF p_id IN (SELECT (CASE WHEN (s."org_id", s."team_slug") IS NOT NULL THEN ROW(s."org_id"::bigint, s."team_slug"::text)::text END) AS id FROM "cx"."team_bots" s WHERE s."bot_id" = (SELECT authz_int."bot__me"())) THEN
-    RETURN NEXT pad || 'yes  ' || 'member: a row in cx.team_bots names' || '';
+    RETURN NEXT pad || 'yes  ' || 'member: a row in cx.team_bots names you' || '';
     RETURN;
   END IF;
   RETURN NEXT pad || 'no   you do not hold team.member';
@@ -5180,7 +5180,7 @@ BEGIN
     RETURN;
   END IF;
   IF p_id IN (SELECT g.object_id::text AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'bot' AND g.subject_relation = '' AND g.subject_id = (SELECT authz_int."bot__me"()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
-    RETURN NEXT pad || 'yes  ' || 'viewer: shared with' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'bot' AND g.subject_relation = '' AND g.subject_id = (SELECT authz_int."bot__me"()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
+    RETURN NEXT pad || 'yes  ' || 'viewer: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'bot' AND g.subject_relation = '' AND g.subject_id = (SELECT authz_int."bot__me"()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
   IF p_id IN (SELECT g.object_id::text AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'bot' AND g.subject_relation = '' AND g.subject_id = '*' AND (SELECT authz_int."bot__me"()) IS NOT NULL AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
@@ -5373,7 +5373,7 @@ RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
   IF p_id IN (SELECT ROW(r."org_id"::bigint, r."id"::bigint)::text AS id FROM "cx"."files" r WHERE r."uploaded_by" = (SELECT authz_int."bot__me"())) THEN
-    RETURN NEXT pad || 'yes  ' || 'uploader: uploaded_by is' || '';
+    RETURN NEXT pad || 'yes  ' || 'uploader: uploaded_by is you' || '';
     RETURN;
   END IF;
   RETURN NEXT pad || 'no   you do not hold file.uploader';

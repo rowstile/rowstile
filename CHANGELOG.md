@@ -7,6 +7,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ## Unreleased
 
+### Fixed
+
+- `authz.explain` says "you" to a service signed in as itself, as it does to a user: a relation from a column read `bot: bot_id is` and stopped there, and a share `viewer: shared with`. It now says `bot: bot_id is you`. Applying the policy again (or the next migration) brings it in.
+
 ## 0.1.0 (alpha)
 
 **rowfence is now rowstile**, and 0.1.0-alpha.2 is its first release under the new name (0.1.0-alpha.1 was

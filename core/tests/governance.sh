@@ -575,8 +575,9 @@ PGOPTIONS="-c client_min_messages=error" PSQL -c "DROP ROLE IF EXISTS authz_gov_
      -c "CREATE POLICY narrower ON app.folders AS RESTRICTIVE TO app_user USING (name <> 'x')" \
      -c "CREATE POLICY theirs ON app.files TO authz_gov_other USING (true)" >/dev/null
 check "... and every file through a policy of the owner's making" "$ALL" "SET authz.user_id = 4; SELECT count(*) FROM app.files"
-admin "lint finds it: an error, with the policy's name and how to drop it" "error" \
-  "SELECT severity FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'the policy mine (select)%DROP POLICY mine ON app.files%'"
+admin "lint finds it: an error, with the policy's name, why it widens the rules and how to drop it" \
+  "error|the policy mine (select) on it is not rowstile's: Postgres joins a table's policies with OR, so it lets app_user through whatever the rules say. DROP POLICY mine ON app.files, and say what it allowed in the policy file" \
+  "SELECT severity || '|' || problem FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'the policy mine %'"
 admin "... one for PUBLIC and every command too" "error" \
   "SELECT severity FROM authz.lint() WHERE object = 'app.folders' AND problem LIKE 'the policy everyone (every command)%'"
 admin "... a restrictive one is a note" "info" \

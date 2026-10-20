@@ -169,3 +169,8 @@ gd5dbe48fee equivalent parse.py Words.until: it is called after a type's name an
 g4f376b0bbf equivalent parse.py no_dollar_tags: braced_at's end is -1 for a condition left open, else past its opening {: never 0.
 g1c88c63bf7 equivalent migrate.py attached_to: INSERT INTO and COMMENT ON come right after the statement that makes what they name, which is then the last object made (objs holds those made before): found by name among other kinds, or not found and given to the object before, they go with the same object.
 g6b2a6e660b equivalent perf.py missing_indexes: forced true, a table's kind, indexes and unfinished indexes are read again for each lookup into it, in the same transaction: the same rows, only more queries.
+geeeadd036d equivalent compiler.py Core.subject_id: a column or table source names a declared type (AZ201 refuses another), so st is never None there and the branch that quotes the column alone never runs.
+g2296015df4 equivalent evaluate.py World.links: rng.random() equals the fill rate exactly with chance 2^-53 a draw: no world a run draws differs.
+g8f7fa45452 equivalent governance.py GovernanceMixin.diff_parts: rowstile's authz_select is always made with a USING (output.py), and a policy's name is unique on its table, so the authz_select it finds never has a NULL polqual.
+g7298be767b equivalent output.py shared_if_rows: the condition sits in a `PERFORM 1 FROM ... LIMIT 0` that is there for Postgres to read the query now (read_now): no row is read, so its value is never computed.
+g9452c5749e equivalent parse.py piece_at: text[i] is `{`, so braced_at's end is -1 for a condition left open, else past its closing }: at least 2, never 0.

@@ -170,7 +170,7 @@ function authz_int."project__member__why"(p_id bigint, p_depth int, p_seen text[
 function authz_int."project__owner__who"(p_id bigint) | 5eca7ef74790 shape=16f94a5f
 function authz_int."project__owner__why"(p_id bigint, p_depth int, p_seen text[]) | f8b404653805 shape=471933f6
 function authz_int."project__service__who"(p_id bigint) | ca5194de4724 shape=c3c880e4
-function authz_int."project__service__why"(p_id bigint, p_depth int, p_seen text[]) | 0f14c6a13fdd shape=e2675999
+function authz_int."project__service__why"(p_id bigint, p_depth int, p_seen text[]) | 63764755aeff shape=e2675999
 function authz_int."project__view__who"(p_id bigint) | fd0daaa974ab shape=ff7d6b22
 function authz_int."project__view__why"(p_id bigint, p_depth int, p_seen text[]) | 79d68c19bfc9 shape=555a2494
 function authz_int."rel_audit_1_del"() | 91f6820103b9 shape=ca2c96f6

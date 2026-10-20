@@ -196,7 +196,7 @@ function authz_int."project__member__why"(p_id integer, p_depth int, p_seen text
 function authz_int."project__owner__who"(p_id integer) | 9876b28a8602 shape=6feb20cc
 function authz_int."project__owner__why"(p_id integer, p_depth int, p_seen text[]) | 2da285abdc2b shape=e369361c
 function authz_int."project__service__who"(p_id integer) | ea1fceae2a0b shape=7dd35e37
-function authz_int."project__service__why"(p_id integer, p_depth int, p_seen text[]) | 1b7136c3bd05 shape=b7e4aa32
+function authz_int."project__service__why"(p_id integer, p_depth int, p_seen text[]) | dfb3b99ad261 shape=b7e4aa32
 function authz_int."project__share__who"(p_id integer) | 5040c7c2a945 shape=b447932a
 function authz_int."project__share__why"(p_id integer, p_depth int, p_seen text[]) | d525c8e6d42e shape=f294dc3e
 function authz_int."project__view__who"(p_id integer) | f9dc731c471c shape=531c7bc0

@@ -1705,11 +1705,11 @@ INSERT INTO cn.groups VALUES (4, NULL), (5, 4), (6, 5), (7, 6);
 INSERT INTO cn.docs VALUES (7, NULL, 1, false);
 INSERT INTO cn."Stage" VALUES (1, 1);
 INSERT INTO cn."StageMic" VALUES (1, 2, false);
--- ann is org 1's admin and eve one of its members; bo is org 2's admin; desk 1 is org 1's, chair 1 at it
+-- ann is org 1's admin and eve one of its members; bo is org 2's admin; desk 1 is org 1's, chairs 1 and 2 at it
 INSERT INTO cn.orgs VALUES (1), (2);
 INSERT INTO cn.org_members VALUES (1, 1, 'admin'), (1, 5, 'member'), (2, 2, 'admin');
 INSERT INTO cn.desks VALUES (1, 1);
-INSERT INTO cn.chairs VALUES (1, 1);
+INSERT INTO cn.chairs VALUES (1, 1), (2, 1);
 """
 WHY_POLICY = """app role app_user
 
@@ -1790,6 +1790,7 @@ type desk = cn.desks
 type chair = cn.chairs
   desk : desk = desk_id
   can use = desk.sit
+  can rest = desk.keep
 """
 
 
@@ -2013,8 +2014,18 @@ def corners(db: str) -> None:
     check(
         "a column naming a group a where narrows: what it takes from others is from the group's people only",
         rc == 0
-        and "set org_id of desk 1 to 2 (also gives sit on it, and use on 1 more chair for user:2) (takes keep, sit on "
-        "it from 1 person, and use on 1 other chair from 1 person)  [line 73]"
+        and "set org_id of desk 1 to 2 (also gives sit on it, and rest, use on 2 more chairs for user:2) (takes keep, "
+        "sit on it from 1 person, and rest, use on 2 other chairs from 1 person)  [line 73]"
+        in ways,
+        said,
+    )
+    rc, said, ways, _ = why("--as", "user:2", "chair", "1", "rest")
+    check(
+        "what a way takes from others on other objects: the type asked about first, then the policy's order",
+        rc == 0
+        and "set org_id of desk 1 to 2 (also gives use on it, and rest, use on 1 more chair, and keep, sit on 1 more desk "
+        "for user:2) (takes rest, use on it from 1 person, and rest, use on 1 other chair from 1 person, and keep, sit "
+        "on 1 other desk from 1 person)  [line 73]"
         in ways,
         said,
     )
