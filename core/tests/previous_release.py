@@ -7,8 +7,9 @@ environment of its own, for tests/upgrade.sh to make a database with.
     python3 tests/previous_release.py --list         # every release older than this version, oldest first
 
 The release before is the newest version PyPI has that is older than this checkout's (authzlib.__version__). A
-version's alphas come before its candidates, and those before the version itself; a build of main (X.Y.Z-dev) is on
-its way to X.Y.Z, after each alpha and candidate of it that is out. Its wheel is checked against the SHA-256 PyPI's
+version's alphas come before its betas, its betas before its candidates, and those before the version itself
+(authzlib/versions.py); a build of main (X.Y.Z-dev) is on its way to X.Y.Z, after each alpha, beta and candidate of
+it that is out. Its wheel is checked against the SHA-256 PyPI's
 index gives, and its files are put in DIR, a virtual environment made without pip: a wheel of pure Python is its
 files, and the image the suites run in has no pip. `DIR/bin/python -m rowstile` is then that release's command.
 
@@ -35,15 +36,14 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from authzlib import __version__
+from authzlib.versions import PYPI, STAGES, VERSION, stage
+from authzlib.versions import spelled as ours
 
 # PyPI's index of the package, as JSON (PEP 691): each file with its hashes
 INDEX = "https://pypi.org/simple/rowstile/"
 INDEX_JSON = "application/vnd.pypi.simple.v1+json"
-# a version as the command writes it (0.1.0-alpha.6, 0.1.0-dev) and as PyPI does (0.1.0a6)
-OURS = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-(alpha|rc)\.(\d+)|-(dev))?")
-PYPI = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:(a|rc)(\d+))?")
-# where in a version's life: its alphas, its candidates, a build of main on its way to it, the version itself
-STAGES = {"alpha": 0, "a": 0, "rc": 1, "dev": 2, "": 3}
+# where in a version's life: its stages (alphas, betas, candidates), a build of main on its way to it, the version
+DEV, RELEASED = len(STAGES), len(STAGES) + 1
 Answer = Any  # the index's JSON
 Key = tuple[int, int, int, int, int]
 
@@ -59,23 +59,21 @@ class Wrong(Exception):
 
 def key(version: str) -> Key | None:
     """Where a version comes, written either way; None for one that is neither (a post-release, a dev build)."""
-    m = OURS.fullmatch(version)
+    m = VERSION.fullmatch(version)
     if m:
-        stage = "dev" if m.group(6) else m.group(4) or ""
+        at = DEV if m.group(6) else stage(m.group(4)) if m.group(4) else RELEASED
     else:
         m = PYPI.fullmatch(version)
         if not m:
             return None
-        stage = m.group(4) or ""
-    return int(m.group(1)), int(m.group(2)), int(m.group(3)), STAGES[stage], int(m.group(5) or 0)
+        at = stage(m.group(4)) if m.group(4) else RELEASED
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), at, int(m.group(5) or 0)
 
 
 def spelled(version: str) -> str:
-    """A version PyPI writes, as the command writes it: 0.1.0a6 is 0.1.0-alpha.6, 0.1.0rc1 is 0.1.0-rc.1."""
-    m = PYPI.fullmatch(version)
-    if not m or not m.group(4):
-        return version
-    return f"{m.group(1)}.{m.group(2)}.{m.group(3)}-{'alpha' if m.group(4) == 'a' else 'rc'}.{m.group(5)}"
+    """A version PyPI writes, as the command writes it: 0.1.0a6 is 0.1.0-alpha.6, 0.1.0b1 0.1.0-beta.1, 0.1.0rc1
+    0.1.0-rc.1."""
+    return ours(version) or version
 
 
 def before(mine: str, released: Iterable[str]) -> str | None:

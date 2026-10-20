@@ -37,6 +37,7 @@ from .sqlutil import (
     this_spans,
     with_uid,
 )
+from .versions import STAGES, VERSION, stage
 
 # The compiler, migrate.py and statements.py are imported in the functions that use them, and so is BUILD
 # (authzlib.__getattr__): a command that only asks the database (can, lint) or only reads the policy doesn't load them.
@@ -84,16 +85,12 @@ class Error(Exception):
         self.sqlstate, self.hint = sqlstate, hint
 
 
-VERSION = re.compile(r"(\d+)[.](\d+)[.](\d+)(?:-(alpha|rc)[.](\d+)|-(dev))?(?:[+].*)?$")
-STAGES = {"alpha": 0, "rc": 1}  # then the release itself
-
-
 def older_than(mine: str, theirs: str | None) -> bool:
     """Whether the build `mine` is surely older than `theirs`: an earlier X.Y.Z, or the same one at an earlier
-    stage (its alphas, then its release candidates, then the release). A -dev build is somewhere before its
-    X.Y.Z and can't be placed among that version's alphas and candidates, so it is never called older than one
-    of them."""
-    a, b = VERSION.match(mine), VERSION.match(theirs or "")
+    stage (its alphas, then its betas, then its release candidates, then the release; versions.STAGES). A -dev
+    build is somewhere before its X.Y.Z and can't be placed among that version's stages, so it is never called
+    older than one of them."""
+    a, b = VERSION.fullmatch(mine.split("+", 1)[0]), VERSION.fullmatch((theirs or "").split("+", 1)[0])
     if not a or not b:
         return False
     core_a, core_b = [int(x) for x in a.group(1, 2, 3)], [int(x) for x in b.group(1, 2, 3)]
@@ -101,8 +98,8 @@ def older_than(mine: str, theirs: str | None) -> bool:
         return core_a < core_b
     if a.group(6) or b.group(6):
         return False
-    stage_a = (STAGES[a.group(4)], int(a.group(5))) if a.group(4) else (len(STAGES), 0)
-    stage_b = (STAGES[b.group(4)], int(b.group(5))) if b.group(4) else (len(STAGES), 0)
+    stage_a = (stage(a.group(4)), int(a.group(5))) if a.group(4) else (len(STAGES), 0)
+    stage_b = (stage(b.group(4)), int(b.group(5))) if b.group(4) else (len(STAGES), 0)
     return stage_a < stage_b
 
 

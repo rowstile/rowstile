@@ -48,6 +48,7 @@ from authzlib.compiler import strongly_connected  # noqa: E402
 from authzlib.conditions import Scalar  # noqa: E402
 from authzlib.connection import Row, Value  # noqa: E402
 from authzlib.review import Group, Review  # noqa: E402
+from authzlib.versions import STAGES, VERSION, pypi, spelled, stage  # noqa: E402
 
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 import around  # noqa: E402
@@ -1610,10 +1611,11 @@ class Command(unittest.TestCase):
         )
         self.assertEqual((s.found, s.pip_there), (["FastAPI", "SQLAlchemy", "Alembic"], True))
         self.assertEqual(s.setup[0], "from rowstile.fastapi import Rowstile")
-        # a release's name is bare; an alpha, a candidate or main's build asks for at least itself, which lets pip
-        # take a pre-release (a bare name got the 0.0.0 placeholder while only an alpha was published)
+        # a release's name is bare; an alpha, a beta, a candidate or main's build asks for at least itself, which
+        # lets pip take a pre-release (a bare name got the 0.0.0 placeholder while only an alpha was published)
         self.assertEqual(stack.pip_requirement("rowstile[fastapi]", "0.2.0"), "rowstile[fastapi]")
         self.assertEqual(stack.pip_requirement("rowstile[fastapi]", "0.1.0-alpha.1"), "rowstile[fastapi]>=0.1.0a1")
+        self.assertEqual(stack.pip_requirement("rowstile[fastapi]", "0.1.0-beta.1"), "rowstile[fastapi]>=0.1.0b1")
         self.assertEqual(stack.pip_requirement("rowstile", "0.2.0-rc.12"), "rowstile>=0.2.0rc12")
         self.assertEqual(stack.pip_requirement("rowstile", "0.2.0-dev"), "rowstile>=0.2.0.dev0")
         s = stack.detect(at({"migrations/0001.sql": "CREATE TABLE t ();"}))
@@ -2223,6 +2225,14 @@ class Migrations(unittest.TestCase):
             ("0.1.0-alpha.2", "0.1.0"),
             ("0.1.0", "0.2.0-alpha.1"),
             ("0.1.0-alpha.2", "0.1.0-alpha.10"),
+            # a beta after its version's alphas, before its candidates
+            ("0.1.0-alpha.9", "0.1.0-beta.1"),
+            ("0.1.0-beta.1", "0.1.0-beta.2"),
+            ("0.1.0-beta.9", "0.1.0-beta.10"),
+            ("0.1.0-beta.12", "0.1.0-rc.1"),
+            ("0.1.0-beta.1", "0.1.0"),
+            ("0.1.0", "0.2.0-beta.1"),
+            ("0.1.0-beta.1+abc", "0.1.0-rc.1"),
         ):
             self.assertTrue(older(mine, theirs), (mine, theirs))
             self.assertFalse(older(theirs, mine), (theirs, mine))
@@ -2233,12 +2243,27 @@ class Migrations(unittest.TestCase):
             ("0.1.0-dev+a", "0.1.0-dev+b"),
             ("0.1.0-dev+abc", "0.1.0-alpha.1"),
             ("0.1.0-alpha.1", "0.1.0-dev+abc"),
-            ("0.1.0-beta.1", "0.1.0"),
+            ("0.1.0-dev+abc", "0.1.0-beta.1"),
+            ("0.1.0-beta.1", "0.1.0-dev+abc"),
             ("0.1.0", "0.1.0"),
             ("0.1.0", None),
             ("0.1.0", "what"),
+            ("0.1.0-gamma.1", "0.2.0"),
+            ("0.1.0-beta.1-dev", "0.2.0"),
         ):
             self.assertFalse(older(mine, theirs), (mine, theirs))
+        # the guard on the lock file (and on the database, the same function): a beta's command is refused over what
+        # a candidate wrote, an alpha's over what a beta wrote; a candidate's goes on over what a beta wrote
+        beta = self.migrate.lock_of(database.migratable(self.text, {})[1]).replace(
+            f"# rowstile {authzlib.__version__}:", "# rowstile 0.1.0-beta.1:", 1
+        )
+        for build, lock in (("0.1.0-beta.1", beta.replace("0.1.0-beta.1:", "0.1.0-rc.1:", 1)), ("0.1.0-alpha.9", beta)):
+            with mock.patch.object(authzlib, "BUILD", build):
+                newer = lock.split(":", 1)[0].removeprefix("# rowstile ")
+                with self.assertRaisesRegex(database.Error, rf"the lock file was last written by rowstile {newer},"):
+                    database.migrations(self.text, {}, lock)
+        with mock.patch.object(authzlib, "BUILD", "0.1.0-rc.1"):
+            self.assertTrue(all(m.empty for m in database.migrations(self.text, {}, beta)))
         lock = self.migrate.lock_of(database.migratable(self.text, {})[1]).replace(
             f"# rowstile {authzlib.__version__}:", "# rowstile 99.0.0:", 1
         )
@@ -9345,8 +9370,8 @@ class DocPages(unittest.TestCase):
         wrong: list[str] = []
         for rel in pages:
             text = self.page(rel)
-            if rel == "docs/installing.md":  # its section on alphas and candidates shows how to ask for one
-                text = re.sub(r"\n## Alphas and release candidates\n.*?(?=\n## )", "\n", text, flags=re.S)
+            if rel == "docs/installing.md":  # its section on alphas, betas and candidates shows how to ask for one
+                text = re.sub(r"\n## Alphas, betas and release candidates\n.*?(?=\n## )", "\n", text, flags=re.S)
             fenced = False
             for line in text.split("\n"):
                 if line.startswith("```"):
@@ -9380,7 +9405,10 @@ class DocPages(unittest.TestCase):
                         (npm and npm.group(1) == "@next")
                         or any(tag == "@next" for tag in sdk)
                         or (pip and "--pre" in line)
-                        or (uv and ("--prerelease" in line or re.search(r">=[\d.]+(a|rc)\d", line)))
+                        or (
+                            uv
+                            and ("--prerelease" in line or re.search(rf">=[\d.]+({'|'.join(STAGES.values())})\d", line))
+                        )
                         or (image and "-" in (image.group(1) or ""))
                     )
                 if bad:
@@ -11704,8 +11732,8 @@ echo "failed: ${failed[*]}"
 
 class PreviousRelease(unittest.TestCase):
     """tests/previous_release.py, which tests/upgrade.sh starts from: the release before a version is the newest
-    PyPI has that is older, in the order RELEASING.md gives (a version's alphas, its candidates, then it), with a
-    build of main after each alpha and candidate of the version it is on its way to."""
+    PyPI has that is older, in the order RELEASING.md gives (a version's alphas, its betas, its candidates, then
+    it), with a build of main after each alpha, beta and candidate of the version it is on its way to."""
 
     def setUp(self) -> None:
         sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -11728,26 +11756,34 @@ class PreviousRelease(unittest.TestCase):
         self.assertEqual(before("0.2.0-dev", ["0.1.0", "0.2.0", "0.1.1"]), "0.1.1")
         self.assertEqual(before("0.1.2", ["0.1.0", "0.1.1", "0.2.0"]), "0.1.1")
         self.assertIsNone(before("0.1.0-alpha.2", ["0.1.0a2", "0.1.0a3"]))
-        # what the command never makes is left out: a beta, a post-release, a dev build published
-        self.assertEqual(before("0.2.0", ["0.1.0", "0.1.1b1", "0.1.1.post1", "0.1.1.dev0"]), "0.1.0")
+        # a beta comes after its version's alphas and before its candidates
+        betas = [*alphas, "0.1.0b1", "0.1.0b2"]
+        self.assertEqual(before("0.1.0-beta.1", betas), "0.1.0a6")
+        self.assertEqual(before("0.1.0-beta.2", betas), "0.1.0b1")
+        self.assertEqual(before("0.1.0-rc.1", betas), "0.1.0b2")
+        self.assertEqual(before("0.1.0-dev", betas), "0.1.0b2")
+        # what the command never makes is left out: a post-release, a dev build published, a stage it doesn't have
+        self.assertEqual(before("0.2.0", ["0.1.0", "0.1.1c1", "0.1.1.post1", "0.1.1.dev0"]), "0.1.0")
         with self.assertRaises(ValueError):
-            before("0.1.0-beta.1", alphas)
+            before("0.1.0-gamma.1", alphas)
 
     def test_every_release_before_and_one_by_name(self) -> None:
         # tests/upgrade.sh --every: each release older than this version, oldest first, in the same order
-        released = ["0.1.0a7", "0.1.0a2", "0.1.0a10", "0.1.0", "0.1.1.post1", "0.1.0rc1"]
-        self.assertEqual(self.p.older("0.1.0-dev", released), ["0.1.0a2", "0.1.0a7", "0.1.0a10", "0.1.0rc1"])
+        released = ["0.1.0a7", "0.1.0a2", "0.1.0b1", "0.1.0a10", "0.1.0", "0.1.1.post1", "0.1.0rc1"]
+        self.assertEqual(self.p.older("0.1.0-dev", released), ["0.1.0a2", "0.1.0a7", "0.1.0a10", "0.1.0b1", "0.1.0rc1"])
         self.assertEqual(self.p.older("0.1.0-alpha.2", released), [])
         self.assertEqual(self.p.older("0.2.0-dev", released)[-1], "0.1.0")
         # --from: a release by either spelling, and none that PyPI hasn't
         self.assertEqual(self.p.named("0.1.0-alpha.10", released), "0.1.0a10")
         self.assertEqual(self.p.named("0.1.0rc1", released), "0.1.0rc1")
+        self.assertEqual(self.p.named("0.1.0-beta.1", released), "0.1.0b1")
         with self.assertRaises(self.p.Wrong):
             self.p.named("0.1.0-alpha.3", released)
 
     def test_spelled_as_the_command_writes_it(self) -> None:
         self.assertEqual(
-            [self.p.spelled(v) for v in ("0.1.0a6", "0.1.0rc1", "0.2.0")], ["0.1.0-alpha.6", "0.1.0-rc.1", "0.2.0"]
+            [self.p.spelled(v) for v in ("0.1.0a6", "0.1.0b2", "0.1.0rc1", "0.2.0")],
+            ["0.1.0-alpha.6", "0.1.0-beta.2", "0.1.0-rc.1", "0.2.0"],
         )
 
     def test_the_wheels_an_index_lists(self) -> None:
@@ -12024,10 +12060,37 @@ class Delivery(unittest.TestCase):
         # an alpha is published like a candidate: never what `npm i rowstile` installs, also when it is the first
         self.assertEqual(version.dist_tag("0.1.0-alpha.1", []), "next")
         self.assertEqual(version.dist_tag("0.11.0-alpha.2", tags), "next")
-        for good in ("0.1.0", "0.1.0-alpha.1", "0.1.0-alpha.12", "0.1.0-rc.2", "0.2.0-dev"):
-            self.assertTrue(version.VERSION.match(good), good)
-        for bad in ("0.1.0-alpha", "0.1.0-alpha1", "0.1.0a1", "0.1.0-beta.1", "0.1.0-alpha.1-dev", "v0.1.0-alpha.1"):
-            self.assertFalse(version.VERSION.match(bad), bad)
+        # and a beta (npm's `next`, PyPI's 0.1.0b1)
+        self.assertEqual(version.dist_tag("0.1.0-beta.1", ["v0.1.0-alpha.9"]), "next")
+        self.assertEqual(version.dist_tag("0.11.0-beta.3", tags), "next")
+        # the one grammar (authzlib/versions.py), which the site's rule for a release's tag (site/source.mjs) agrees with
+        release = search(r"^const RELEASE = /(.*)/;$", read("../site/source.mjs"), re.M).group(1)
+        goods = ("0.1.0", "0.1.0-alpha.1", "0.1.0-alpha.12", "0.1.0-beta.1", "0.1.0-beta.10", "0.1.0-rc.2", "0.2.0-dev")
+        for good in goods:
+            self.assertTrue(version.VERSION.fullmatch(good), good)
+            self.assertEqual(bool(re.fullmatch(release, "v" + good)), not good.endswith("-dev"), good)
+        bads = ("0.1.0-alpha", "0.1.0-alpha1", "0.1.0a1", "0.1.0b1", "0.1.0-beta", "0.1.0-gamma.1", "0.1.0-alpha.1-dev")
+        for bad in (*bads, "v0.1.0-alpha.1"):
+            self.assertFalse(version.VERSION.fullmatch(bad), bad)
+            self.assertFalse(re.fullmatch(release, "v" + bad), bad)
+        # its helpers, also on what isn't a version or a stage
+        self.assertEqual(
+            [pypi(v) for v in ("0.1.0-beta.1", "0.1.0-rc.2", "0.1.0-dev", "0.1.0", "0.1.0b1")],
+            ["0.1.0b1", "0.1.0rc2", "0.1.0.dev0", "0.1.0", None],
+        )
+        self.assertEqual(
+            [spelled(v) for v in ("0.1.0a3", "0.1.0b1", "0.1.0", "0.1.0-beta.1")],
+            ["0.1.0-alpha.3", "0.1.0-beta.1", "0.1.0", None],
+        )
+        with self.assertRaisesRegex(ValueError, r"^gamma is not a stage of a version \(alpha, beta, rc\)$"):
+            stage("gamma")
+        with (
+            mock.patch.object(version, "places", return_value=iter([])),  # writes nothing if it goes on
+            self.assertRaisesRegex(
+                SystemExit, r"0\.1\.0-gamma\.1 is not X\.Y\.Z, X\.Y\.Z-alpha\.N, X\.Y\.Z-beta\.N, X"
+            ),
+        ):
+            version.set_version("0.1.0-gamma.1")
         # a patch to an older line doesn't become what `npm i rowstile` installs
         self.assertEqual(version.dist_tag("0.1.1", [*tags, "v0.1.1"]), "release-0.1")
         self.assertEqual(version.dist_tag("0.9.3", [*tags, "v0.10.0"]), "release-0.9")
@@ -12047,6 +12110,10 @@ class Delivery(unittest.TestCase):
         self.assertEqual(changelog.heading("0.2.0-alpha.1", alpha), "## 0.2.0 (alpha)")
         self.assertEqual(changelog.section("0.2.0-alpha.1", alpha), "- older\n")
         self.assertEqual(changelog.section("0.3.0-alpha.1", alpha), "")
+        # and a beta's
+        beta = text.replace("(release candidate)", "(beta)")
+        self.assertEqual(changelog.heading("0.2.0-beta.1", beta), "## 0.2.0 (beta)")
+        self.assertEqual(changelog.section("0.2.0-beta.2", beta), "- older\n")
 
 
 class Mutants(unittest.TestCase):
@@ -12424,7 +12491,7 @@ class Version(unittest.TestCase):
     REPO = os.path.dirname(ROOT)
 
     def test_semver(self) -> None:
-        self.assertRegex(authzlib.__version__, r"^\d+\.\d+\.\d+(-(alpha|rc)\.\d+|-dev)?$")
+        self.assertTrue(VERSION.fullmatch(authzlib.__version__), authzlib.__version__)
 
     def test_changelog_has_the_version(self) -> None:
         # a release's notes are its changelog section (packaging/changelog.py); main, at X.Y.Z-dev, needs none yet

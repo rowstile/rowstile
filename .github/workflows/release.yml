@@ -1,12 +1,12 @@
 # Publishes a version (RELEASING.md): set it with `python3 packaging/version.py X.Y.Z` (or X.Y.Z-alpha.N,
-# X.Y.Z-rc.N), commit,
+# X.Y.Z-beta.N, X.Y.Z-rc.N), commit,
 # push the tag vX.Y.Z. A -dev version (main between releases) is refused. Where it goes follows the repository:
 #   - public: PyPI and npm (trusted publishing: no token; npm with provenance), the image on ghcr.io
 #   - private: the @rowstile/* packages on GitHub Packages' npm registry, a private image; the public steps as
 #     dry runs. PyPI and npm have no private side, so the wheel, the sdist and the unscoped launcher (a
 #     tarball) are on the GitHub release
 # Either way the GitHub release holds the wheel, the sdist, the launcher and the editor extension (.vsix), and once
-# public their provenance (.intoto.jsonl); the docs site is site.yml's (GitHub Pages). An alpha or a release candidate is npm's `next` and a pre-release on
+# public their provenance (.intoto.jsonl); the docs site is site.yml's (GitHub Pages). An alpha, a beta or a release candidate is npm's `next` and a pre-release on
 # GitHub, and never the image's `latest`. While no final release exists it becomes npm's `latest` too, so a plain
 # install gets the newest (packaging/npm_latest.py); once one exists, only a release is `latest`. A patch to an
 # older line (release-X.Y) moves no `latest`. A release that stopped half-way is finished by running its jobs
@@ -50,7 +50,7 @@ jobs:
           else
             publish=none
           fi
-          # next for an alpha or a candidate, latest for the highest release, release-X.Y for a patch to an older line
+          # next for an alpha, a beta or a candidate, latest for the highest release, release-X.Y for a patch to an older line
           tag=$(python3 packaging/version.py --dist-tag)
           echo "version $version: publish $publish, npm tag $tag"
           { echo "version=$version"; echo "publish=$publish"; echo "npm-tag=$tag"; } >> "$GITHUB_OUTPUT"
@@ -127,7 +127,7 @@ jobs:
           # GitHub Packages takes scoped names only: while private, the launcher is on the GitHub release
           if [ "$PUBLISH" = public ]; then publish packaging/npm/out/rowstile; fi
           for d in sdk/typescript/*/; do publish "$d"; done
-      # while no final release exists, a plain install gets the newest alpha: npm's latest goes where next is, once
+      # while no final release exists, a plain install gets the newest pre-release: npm's latest goes where next is, once
       # the registry shows this version there (minutes after the publish: read sooner, nothing looks left to
       # move). Each package's trusted publisher must allow it (Allow npm dist-tag); where one doesn't, or the
       # registry is too late, this says which and the release stands. The `latest` job does it again by hand

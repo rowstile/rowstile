@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""npm's `latest` while only alphas and candidates are published: it follows `next`.
+"""npm's `latest` while no final release is published: it follows `next`.
 
     python3 packaging/npm_latest.py          # says what it would move, package by package
     python3 packaging/npm_latest.py --move   # moves it (the release workflow, by npm's trusted publishing)
     python3 packaging/npm_latest.py --move --published 0.1.0-alpha.7   # a release's own run: once the registry
                                                                        # shows that version under next
 
-A release publishes an alpha or a candidate under `next`. `latest` is what a plain `npm i rowstile` gets and what
+A release publishes an alpha, a beta or a candidate under `next`. `latest` is what a plain `npm i rowstile` gets and what
 a package's page on npmjs.com shows, and npm gave it to the first version ever published: left alone it stays
 there. So, until a final release exists, each release moves `latest` to where `next` is, on every package. From
 the first final release on, this moves nothing: that release is published as `latest`, and later alphas stay

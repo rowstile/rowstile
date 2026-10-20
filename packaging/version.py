@@ -5,12 +5,14 @@
     python3 packaging/version.py 0.2.0-rc.1   # sets it everywhere
     python3 packaging/version.py --dist-tag   # the tag its release is published under: latest, next, release-X.Y
 
-A version is X.Y.Z, X.Y.Z-alpha.N for an alpha and X.Y.Z-rc.N for a release candidate (npm's form; PyPI reads
-0.2.0-alpha.1 as 0.2.0a1 and 0.2.0-rc.1 as 0.2.0rc1), or
-X.Y.Z-dev: main between releases, on its way to X.Y.Z, never published (PyPI: 0.2.0.dev0). The compiler's (core/authzlib/__init__.py) is the one the command and the Python package read. The others
+A version is X.Y.Z; X.Y.Z-alpha.N, X.Y.Z-beta.N or X.Y.Z-rc.N before it (npm's form; PyPI reads 0.2.0-alpha.1 as
+0.2.0a1, 0.2.0-beta.1 as 0.2.0b1 and 0.2.0-rc.1 as 0.2.0rc1); or X.Y.Z-dev: main between releases, on its way to
+X.Y.Z, never published (PyPI: 0.2.0.dev0). The grammar is the compiler's (core/authzlib/versions.py), the one the
+command orders versions by: a version's alphas, then its betas, its candidates, then the version itself.
+The compiler's version (core/authzlib/__init__.py) is the one the command and the Python package read. The others
 copy it: the TypeScript SDK's packages and their dependencies on each other, the workspace's lock file, and
 the review for CI, which installs the release its tag names. The editor extension keeps its own version (the
-Marketplace takes no alphas or release candidates). Standard library only.
+Marketplace takes no versions that aren't final). Standard library only.
 """
 
 from __future__ import annotations
@@ -23,7 +25,8 @@ import sys
 from collections.abc import Iterator
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-VERSION = re.compile(r"^\d+\.\d+\.\d+(-(alpha|rc)\.\d+|-dev)?$")
+sys.path.insert(0, os.path.join(ROOT, "core"))
+from authzlib.versions import STAGES, VERSION  # noqa: E402
 
 # (files, pattern): each pattern's one group is the version. Each must match in each file, but for the
 # packages' dependencies on each other (@rowstile/client has none)
@@ -69,8 +72,9 @@ def found() -> dict[str, list[str]]:
 
 
 def set_version(new: str) -> None:
-    if not VERSION.match(new):
-        raise SystemExit(f"version.py: {new} is not X.Y.Z, X.Y.Z-alpha.N, X.Y.Z-rc.N or X.Y.Z-dev")
+    if not VERSION.fullmatch(new):
+        forms = ", ".join(f"X.Y.Z-{stage}.N" for stage in STAGES)
+        raise SystemExit(f"version.py: {new} is not X.Y.Z, {forms} or X.Y.Z-dev")
     texts: dict[str, str] = {}
     for path, rx in places():
         text = texts.get(path, read(path))
@@ -82,8 +86,8 @@ def set_version(new: str) -> None:
 
 def dist_tag(version: str, tags: list[str]) -> str:
     """The tag a release is published under (npm's dist-tag; the image is `latest` when this is): `next` for an
-    alpha or a candidate, `latest` for the highest release, and `release-X.Y` for a patch to an older line once a higher
-    release is out (a patch from `release/0.1` after 0.2.0 must not become what `npm i rowstile` installs).
+    alpha, a beta or a candidate, `latest` for the highest release, and `release-X.Y` for a patch to an older line
+    once a higher release is out (a patch from `release/0.1` after 0.2.0 must not become what `npm i rowstile` installs).
     `tags` are the repository's (`v0.2.0`, `v0.2.0-rc.1`, ...)."""
     if "-" in version:
         return "next"

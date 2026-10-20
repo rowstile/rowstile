@@ -1,6 +1,6 @@
 # The docs site on GitHub Pages (rowstile.dev), built from a release tag so it shows what was released. A release's
 # tag deploys it when that release becomes what a plain install gets (npm's `latest`), or while no final release
-# exists yet; an alpha or a candidate after one doesn't.
+# exists yet; an alpha, a beta or a candidate after one doesn't.
 # A site tag (site-v1, site-v2, ...) publishes the blog and the comparison pages between releases: the site is built
 # from the release it shows, with docs/blog/ and docs/compare/ as they are at the site tag (site/source.mjs).
 # Run by hand, it deploys the tag it is given:

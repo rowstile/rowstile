@@ -79,7 +79,7 @@ Only an alpha is published so far, 0.1.0-alpha.9: ask for it.
 
 `npm` brings the Python for Linux (glibc and musl, x64 and arm64), macOS (x64 and arm64) and Windows x64. The
 image runs as root unless told otherwise: `-u` makes the files it writes yours. [Installing](docs/installing.md)
-has the rest: alphas and release candidates, the extras, the repository.
+has the rest: alphas, betas and release candidates, the extras, the repository.
 
 From this repository, put `core/cli` on `PATH`. `rowstile init` then finds the stack (Next.js, Prisma,
 Drizzle, FastAPI, SQLAlchemy, Alembic), writes `rowstile.toml` for its migration tool, adds the SDK's

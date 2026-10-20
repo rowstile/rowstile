@@ -34,6 +34,9 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
       the row, for the reference evaluator; only what means the same whatever the column's type and collation
       (`tests/conditions_test.py` asks Postgres the same questions)
     - `connection.py` — the `Db` authzlib works over, and typed readers for the values its rows hold
+    - `versions.py` — how a version is written (X.Y.Z, -alpha.N, -beta.N, -rc.N, -dev), its stages' order and
+      PyPI's spelling: the one grammar `packaging/version.py`, the downgrade guard, `cli/stack.py` and
+      `tests/previous_release.py` read
     - `database.py` — what the command does to a database: apply (only if changed), push, reapply, check, diff,
       test, draft, graph, client, remove, and the migrations; over a `db` with `rows`/`script`/`warn`/`errors`, in
       the caller's transaction (compiles with `transaction=False`: no BEGIN/COMMIT)
@@ -100,7 +103,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   `integrations/fastapi/test.sh` (uv, Docker), `integrations/nextjs/test.sh` (Next.js, Prisma 7, Vitest, Docker)
 - `packaging/` — how rowstile is installed: `npm/build.mjs` (the `rowstile` npm package and one
   `@rowstile/cli-<platform>` per platform with a standalone Python), `docker/Dockerfile` (the command's image);
-  `test.sh` installs each on a clean machine; `version.py` sets the version (X.Y.Z, X.Y.Z-alpha.N or X.Y.Z-rc.N);
+  `test.sh` installs each on a clean machine; `version.py` sets the version (X.Y.Z, X.Y.Z-alpha.N,
+  X.Y.Z-beta.N, X.Y.Z-rc.N or X.Y.Z-dev: the grammar of `core/authzlib/versions.py`);
   `npm_latest.py` moves npm's `latest` to where `next` is while no final release exists (the release's npm
   job, and by hand `gh workflow run release.yml -f latest=true`).
   `server.json` (the repository's root) is the MCP server's entry in the official registry: it names the npm
@@ -356,8 +360,9 @@ For one suite, start a container and run it inside:
   `editor` change (label `no changelog` otherwise).
 - Merging: the maintainer's pull requests rebased, outside ones squashed, a merge commit only when a commit
   must stay reachable.
-- The version: `packaging/version.py` sets it everywhere (X.Y.Z, X.Y.Z-alpha.N, X.Y.Z-rc.N, or X.Y.Z-dev on `main`
-  between releases). Apply, push and migrations record `authzlib.BUILD` (a `-dev` version plus a hash of
+- The version: `packaging/version.py` sets it everywhere (X.Y.Z, X.Y.Z-alpha.N, X.Y.Z-beta.N, X.Y.Z-rc.N, or
+  X.Y.Z-dev on `main` between releases), in the one grammar `authzlib/versions.py` holds (a version's alphas,
+  then its betas, its candidates, the version: the downgrade guard, AZ616, orders them so). Apply, push and migrations record `authzlib.BUILD` (a `-dev` version plus a hash of
   `authzlib/`; a release's own version otherwise), and apply and push compare it, so two builds of `main`
   don't trust each other's databases. The lock file's header names `__version__`, and a new version alone
   is no migration (`always` in the lock hashes the steps every migration runs).
