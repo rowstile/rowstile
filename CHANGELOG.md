@@ -76,6 +76,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   they were, so users kept seeing what the move took away. Applying the policy again (or the next migration)
   gives each partition and table that inherits the triggers; `authz.lint()` names one made since, and the app
   role's TRUNCATE on a partition of any table rowstile watches.
+- The app role reads only the `authz_gen` views its rules look up. It could read every view the policy made, and
+  some list rows the rules hide: with `can view = folder.view and not {confidential}` on files, the view of
+  `folder.view` on files listed the confidential files in the folders a user may view. Code that read such a view
+  now gets `permission denied`: `authz.list` answers what it asked. Applying the policy again (or the next
+  migration) brings it in.
 
 ## 0.1.0 (alpha)
 

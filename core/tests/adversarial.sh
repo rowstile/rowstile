@@ -82,19 +82,29 @@ expect "the change feed" "42501: permission denied for table changes" -c "SELECT
 expect "the lock rows" "42501: permission denied for schema authz_int" -c "UPDATE authz_int.locks SET n = 0"
 expect "a closure's refresh function" "42501: permission denied for schema authz_int" -c "SELECT authz_int.\"folder__parent__tree_rebuild\"()"
 expect "announcing fake changes" "42501: permission denied for schema authz_int" -c "SELECT authz_int.changed('folder', ARRAY['1'], 'x')"
-expect "the public views return only carol's own ids" "0" \
+expect "the views the rules read return only carol's own ids" "0" \
   -c "SELECT count(*) FROM authz_gen.\"folder__view\" WHERE id IN (5, 6)"
+# file.view is `... or (folder.view and not {confidential})`: the view of folder.view on files lists the confidential
+# file in a folder carol may view. No rule reads it (files' rules look up folder.view on the folder), so it is closed
+expect "a view no rule reads, which lists a file the rules hide" "42501: permission denied for view file__folder__view" \
+  -c "SELECT count(*) FROM authz_gen.\"file__folder__view\" WHERE id = 14"
+readable="SELECT string_agg(c.relname, ' ' ORDER BY c.relname) FROM pg_class c
+  WHERE c.relnamespace = 'authz_gen'::regnamespace AND c.relkind IN ('r', 'v') AND has_table_privilege(c.oid, 'SELECT')"
+expect "the app role reads only the views its rules look up" "file__viewer folder__edit folder__editor folder__linked_into__view folder__share__direct folder__view folder__viewer org__admin policy_lines" \
+  -c "$readable"
 
 echo "-- the catalog: every function, table and schema rowstile made, against the rules (tests/catalog.sql)"
 # $1 database, $2 compiled policy, $3 app role: prints what breaks a rule
 catalog() {
   local api; api=$(awk '/^GRANT EXECUTE ON FUNCTION$/{f=1; next} f && /^  TO /{f=0} f' "$2" | sed 's/^ *//; s/,$//' | paste -sd'|')
   [ -n "$api" ] || { echo "no GRANT EXECUTE list in $2"; return; }
-  psql -X -q -At -d "$1" -v role="$3" -v api="$api" -f tests/catalog.sql 2>&1
+  local views; views=$(sed -n 's/^GRANT SELECT ON \(authz_gen\.policy_lines.*\) TO [^ ]*;$/\1/p' "$2" | sed 's/, /|/g')
+  [ -n "$views" ] || { echo "no GRANT SELECT list in $2"; return; }
+  psql -X -q -At -d "$1" -v role="$3" -v api="$api" -v views="$views" -f tests/catalog.sql 2>&1
 }
 got=$(catalog "$DB" /tmp/authz_adversarial.sql app_user)
 [ -z "$got" ] &&
-  echo "ok    docs: definer functions set their search_path; the app role executes the API and nothing else; no grants to PUBLIC or others; none parallel safe" ||
+  echo "ok    docs: definer functions set their search_path; the app role executes the API and reads the views its rules look up, nothing else; no grants to PUBLIC or others; none parallel safe" ||
   { echo "FAIL  the catalog: $got"; fails=$((fails + 1)); }
 for p in "multi tests/multi_schema.sql tests/multi.authz app_user" "alt tests/alt_schema.sql tests/alt.authz app_user"          "composite tests/composite_schema.sql tests/composite.authz app_user"          "patterns tests/patterns_schema.sql tests/patterns.authz cb_app"          "cross tests/cross_schema.sql tests/cross.authz app_user"; do
   set -- $p; C="${DB}_catalog"
@@ -144,6 +154,56 @@ agrees "alt" "42501: you cannot grant doc.reader on doc 1: you do not hold view"
   { echo "FAIL  a banned owner sharing reader: $got"; fails=$((fails + 1)); }
 dropdb "$C"
 
+echo "-- the views the rules read: a deny, a permission made of a condition, a condition that reads another table"
+C="${DB}_views"
+dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
+cat > /tmp/authz_adversarial_views.authz <<'POLICY'
+app role app_user
+type user = av.users
+type folder = av.folders
+  parent : folder = parent_id
+  owner  : user   = owner_id
+  can hidden = {secret} or parent.hidden
+  can view   = (owner or parent.view) and not hidden
+  can tagged = {secret}
+type file = av.files
+  folder : folder = folder_id
+  can view    = folder.view and not {confidential}
+  can blocked = {exists (select 1 from av.blocklist b where b.word = this.name)}
+rules av.folders
+  select : view
+rules av.files
+  select : view and not blocked
+POLICY
+python3 compile_policy.py /tmp/authz_adversarial_views.authz > /tmp/authz_adversarial_views.sql &&
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" \
+  -c "CREATE SCHEMA av" -c "CREATE TABLE av.users (id bigint PRIMARY KEY)" \
+  -c "CREATE TABLE av.folders (id bigint PRIMARY KEY, parent_id bigint, owner_id bigint, secret boolean NOT NULL DEFAULT false)" \
+  -c "CREATE TABLE av.files (id bigint PRIMARY KEY, folder_id bigint, name text, confidential boolean NOT NULL DEFAULT false)" \
+  -c "CREATE TABLE av.blocklist (word text PRIMARY KEY)" \
+  -c "GRANT USAGE ON SCHEMA av TO app_user" -c "GRANT SELECT ON av.users, av.folders, av.files TO app_user" \
+  -f /tmp/authz_adversarial_views.sql -c "INSERT INTO av.users VALUES (1), (2)" \
+  -c "INSERT INTO av.folders VALUES (1, NULL, 1, false), (2, 1, NULL, true), (3, NULL, 2, true), (4, 2, NULL, false)" \
+  -c "INSERT INTO av.files VALUES (10, 1, 'a', true), (11, 1, 'b', false)" -c "INSERT INTO av.blocklist VALUES ('zebra')" >/dev/null || exit 1
+# user 1 owns folder 1; 2 is inside it and secret, 4 inside 2; 3 is secret and user 2's. She sees folder 1 and file 11
+views_as_1() { error_of "$(psql -X -q -At -1 -U "$ATTACKER" -d "$C" -v VERBOSITY=verbose -c "$(sign 1)" "$@" 2>&1)"; }
+check_views() {   # $1 label, $2 expected, rest: psql arguments
+  local label=$1 want=$2; shift 2
+  local got; got=$(views_as_1 "$@")
+  agrees "$label" "$want" "$got" && echo "ok    $label" || { echo "FAIL  $label: expected '$want', got '$got'"; fails=$((fails + 1)); }
+}
+check_views "the rules show her folder 1 and file 11" "1 11" \
+  -c "SELECT (SELECT string_agg(id::text, ' ') FROM av.folders) || ' ' || (SELECT string_agg(id::text, ' ') FROM av.files)"
+check_views "with a deny and conditions too, the app role reads only the views its rules look up" \
+  "folder__hidden folder__hidden__direct folder__view folder__view__base folder__view__base__direct policy_lines" -c "$readable"
+check_views "a permission made of a condition alone, which no rule reads" "42501: permission denied for view folder__tagged" \
+  -c "SELECT count(*) FROM authz_gen.\"folder__tagged\""
+check_views "the inheritance before the deny, on the folders below" "42501: permission denied for view folder__parent__view__base" \
+  -c "SELECT count(*) FROM authz_gen.\"folder__parent__view__base\""
+check_views "folder.view on files, which lists the confidential file" "42501: permission denied for view file__folder__view" \
+  -c "SELECT count(*) FROM authz_gen.\"file__folder__view\""
+dropdb "$C"
+
 echo "-- grants the policy doesn't give, and schemas on the search path others may create in"
 C="${DB}_grants"
 CP() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$C" "$@"; }
@@ -163,6 +223,10 @@ CP -c "ALTER DEFAULT PRIVILEGES REVOKE ALL ON TABLES FROM app_user" -c "ALTER DE
 CP -c "GRANT SELECT ON authz.shares TO app_user" -c "GRANT EXECUTE ON FUNCTION authz.trim_audit(interval) TO app_user" >/dev/null
 [ "$(lint_c authz.shares)" = 1 ] && [ "$(lint_c 'authz.trim_audit(interval)')" = 1 ] &&
   echo "ok    lint reports a grant on rowstile's objects made after apply" || { echo "FAIL  lint misses later grants"; fails=$((fails + 1)); }
+CP -c "GRANT SELECT ON authz_gen.file__folder__view, authz_gen.folder__view TO app_user" >/dev/null
+got="$(lint_c authz_gen.file__folder__view) $(lint_c authz_gen.folder__view)"
+[ "$got" = "1 0" ] && echo "ok    lint reports SELECT on a view no rule reads, not on one the rules read" ||
+  { echo "FAIL  lint on SELECT granted on two views: $got (expected '1 0')"; fails=$((fails + 1)); }
 out=$(apply_c); got=$(catalog "$C" /tmp/authz_adversarial.sql app_user)
 [ -z "$got" ] && echo "ok    ... and the next apply takes it back" || { echo "FAIL  a later grant survives apply: $got $out"; fails=$((fails + 1)); }
 # a schema on the search path the app role may create in: a function there could take the place of a built-in

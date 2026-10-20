@@ -533,6 +533,9 @@ def main() -> None:
                 diffs.append(
                     f"  the migration doesn't warn that app.files keeps row-level security on: {said[-300:]!r}"
                 )
+            # what it takes back with a warning is a grant made since: never one the old policy gave
+            if "took back" in said:
+                diffs.append(f"  the migration takes back privileges: {said[-300:]!r}")
             if app and not diffs:
                 # the app's view is still there, and reads the view as it is now (not the emptied one)
                 for db in (db_m, db_w):

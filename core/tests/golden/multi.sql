@@ -5852,7 +5852,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT')
+    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
+             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"doc__roles:edit"', '"folder__edit"', '"folder__view"', '"project__edit"', '"project__view"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -6280,6 +6281,9 @@ BEGIN
   END LOOP;
 END $ch$;
 
+REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen FROM app_user;
+GRANT SELECT ON authz_gen.policy_lines, authz_gen."doc__roles:edit", authz_gen."folder__edit", authz_gen."folder__view", authz_gen."project__edit", authz_gen."project__view" TO app_user;
+
 -- Privileges the policy doesn't give on rowstile's schemas and what is in them are taken back
 DO $r$
 DECLARE g record; v_taken int := 0;
@@ -6295,7 +6299,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT')
+    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
+             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"doc__roles:edit"', '"folder__edit"', '"folder__view"', '"project__edit"', '"project__view"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -6320,8 +6325,6 @@ END $r$;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA authz, authz_gen TO app_user;
-
-GRANT SELECT ON ALL TABLES IN SCHEMA authz_gen TO app_user;
 
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz_gen FROM PUBLIC;
 

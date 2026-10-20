@@ -270,6 +270,8 @@ class Core:
         self.made_from: dict[str, str] = {}
         self.making: set[str] = set()  # views begun and not yet added: one asked for again depends on itself
         self.view_sql: list[str] = []  # CREATE VIEW / FUNCTION statements, dependency order
+        self.public_views: list[str] = []  # the views made in authz_gen too (add_view)
+        self.app_views: list[str] = []  # those the app role's rules read: all it may read (output.compile)
         self.trees: dict[TreeKey, str] = {}  # tree key -> tree name
         # tree name -> (hash of its definition, tables it reads): kept across applies
         self.tree_keep: dict[str, tuple[str, list[str]]] = {}
@@ -1126,13 +1128,15 @@ class Core:
 
     # Every relation and permission becomes a plain view in authz_int, which the
     # planner can flatten and push lookups into, plus a security-barrier view in
-    # authz_gen with the same name: the only thing app roles can read, and it
-    # only returns ids the current user holds.
+    # authz_gen with the same name, which only returns ids the current user holds:
+    # the app role may read those its rules look up (app_views), and no other.
     def add_view(self, name: str, sql: str, header: str, t: Type, public: bool = True) -> None:
         sql = self.where_kept(t, sql)
         assert name not in self.made_from, f"the view {name} is made twice"
         self.making.discard(name)
         self.made_from[name] = sql
+        if public:
+            self.public_views.append(name)
         self.view_sql.append(
             f"{header}CREATE VIEW authz_int.{q(name)} AS\n  {sql};"
             + (

@@ -1331,6 +1331,12 @@ END $w$;"""
         )
         catalog.insert(at + 1, shares_warning)
         uid_check, uid_fn = self.uid_sql().split("CREATE OR REPLACE FUNCTION authz.uid()")
+        # what the app role reads in authz_gen: the views its rules look up (row-level security, the refusals' and
+        # column rules' functions run as the app role), not every view made. The others list what parts of a rule
+        # hold (folder.view, before `and not {confidential}`), which the app role has no need to read
+        read = {n for sql in policies + column_rules for n in re.findall(r'\bauthz_gen\.("(?:[^"]|"")+")', sql)}
+        self.app_views = sorted(v for v in self.public_views if q(v) in read)
+        grant_views = ", ".join(["authz_gen.policy_lines", *(f"authz_gen.{q(v)}" for v in self.app_views)])
         # What the migrations (migrate.py) do with each part: 'full', only in the whole script (it recreates
         # everything); 'always', in every migration; 'changed', when its SQL changed; 'created', also when
         # anything was made; 'objects', what changed of its functions, views, tables, triggers and policies;
@@ -1419,10 +1425,17 @@ END $w$;"""
             ("full", "lost_rules", LOST_RULES),
             # after every trigger is made
             ("always", "children", CHILD_TRIGGERS),
+            # before the step that takes back what the policy doesn't give: a view the rules no longer read is
+            # no grant made since, and a migration says nothing of it
+            (
+                "created",
+                "grant_views",
+                f"REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen FROM {self.role};\n"
+                f"GRANT SELECT ON {grant_views} TO {self.role};",
+            ),
             ("always", "revoke", self.revoke_sql()),
             ("always", "revoke", "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;"),
             ("always", "grant_usage", f"GRANT USAGE ON SCHEMA authz, authz_gen TO {self.role};"),
-            ("created", "grant_views", f"GRANT SELECT ON ALL TABLES IN SCHEMA authz_gen TO {self.role};"),
             ("always", "revoke", "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz_gen FROM PUBLIC;"),
             ("created", "grant_functions", f"GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz_gen TO {self.role};"),
             ("created", "grant_api", "GRANT EXECUTE ON FUNCTION\n  " + ",\n  ".join(executes) + f"\n  TO {self.role};"),
