@@ -15,6 +15,7 @@ import io
 import itertools
 import json
 import os
+import random
 import re
 import socket
 import subprocess
@@ -39,6 +40,7 @@ from authzlib import (  # noqa: E402
     database,
     draft,
     evaluate,
+    parse,
     parse_policy,
     statements,
 )
@@ -10721,6 +10723,41 @@ class Features(unittest.TestCase):
         self.assertEqual(features.owner("sdk.py.fastapi.Rowstile"), ["sdk.python.stacks"])
         self.assertEqual(features.owner("sdk.py.Refused"), ["sdk.python"])
         self.assertEqual(features.owner("cli.migrate --check"), ["cli.migrate"])
+
+
+class ScannerSteps(unittest.TestCase):
+    """The scanner's short ways (parse.py): where a line's code ends, and where its {conditions} are, read in one
+    step when no quote, $ or comment can be in play, give what reading it character by character gives."""
+
+    ALPHABET = ("a", "b", " ", "{", "}", "'", '"', "$", "$x$", "-", "--", "E'", "\\", "x--y")
+
+    @staticmethod
+    def braced_by_marks(text: str) -> list[tuple[int, int]]:
+        # the long way: each character's mark
+        out: list[tuple[int, int]] = []
+        start = -1
+        for i, m in enumerate(parse.Scanner().marks(text)):
+            if m.quoted or m.comment or m.depth:
+                continue
+            if text[i] == "{":
+                start = i
+            elif text[i] == "}" and start >= 0:
+                out.append((start, i + 1))
+                start = -1
+        return out + ([(start, -1)] if start >= 0 else [])
+
+    def test_the_short_ways_read_as_the_long_one(self) -> None:
+        rng = random.Random(283)
+        for _ in range(3000):
+            lines = ["".join(rng.choice(self.ALPHABET) for _ in range(rng.randint(0, 12))) for _ in range(4)]
+            short, long_ = parse.Scanner(), parse.Scanner()
+            for line in lines:
+                self.assertEqual(short.code_end(line), parse.comment_at(line, long_.marks(line)), lines)
+                self.assertEqual((short.depth, short.quote), (long_.depth, long_.quote), lines)
+                self.assertEqual(parse.braced_at(line), self.braced_by_marks(line), line)
+        # the lines the short ways take: no quote or $ in them
+        self.assertEqual(parse.braced_at("a {b {c}} d {e} {f"), [(2, 9), (12, 15), (16, -1)])
+        self.assertEqual(parse.Scanner().code_end("can view = owner  -- the owner"), 18)
 
 
 class ParseAgreement(unittest.TestCase):
