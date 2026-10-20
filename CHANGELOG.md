@@ -41,6 +41,12 @@ Each release upgrades from the one before it. How releases are numbered and made
 - `authz.explain` says "you" to a service signed in as itself, as it does to a user: a relation from a column
   read `bot: bot_id is` and stopped there, and a share `viewer: shared with`. It now says `bot: bot_id is you`.
   Applying the policy again (or the next migration) brings it in.
+- A rule condition with a quote that Postgres reads as part of a string or a name (`E'it\'s'`, `$$it's$$`,
+  `"o'neil"`) before a subquery now runs with the policy's rights, as any condition that reads another table
+  does. The quote was read as the string's end, the subquery was missed, and the condition ran as the app role:
+  through the other table's row-level security, a `not exists` there could show rows `authz.can` refused. The
+  check that inheritance doesn't depend on the time missed `now()` after such a quote too. Applying the policy
+  again (or the next migration) brings it in.
 
 ## 0.1.0 (alpha)
 

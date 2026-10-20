@@ -297,6 +297,18 @@ qual=$(PSQL -c "SELECT qual FROM pg_policies WHERE schemaname = 'app' AND tablen
 case "$out $qual" in *"row-level security"*) bad "a rule condition that reads a governed table is warned about" "$out";;
   *"authz_gen.team__check_"*) ok "a rule condition that reads a governed table runs with the policy's rights, as a function";;
   *) bad "the rule condition" "$qual";; esac
+# the same when a quote Postgres reads as part of a string (E'it\'s', $$it's$$) comes before the subquery: user 6
+# may not view file 12, so the app role can't see it, but the policy's rights can, and no team may be seen
+for s in "E'it\\'s'" "\$\$it's\$\$"; do
+  L="  can see = {name <> $s and not exists (select 1 from app.files f where f.name = 'prod-keys.txt')}" \
+    awk '{print} /^  member : team#member = app\.teams\(parent_id -> id\)/ {print ENVIRON["L"]}' example/docs.authz > "$T/quote.authz"
+  printf '%s\n' 'rules app.teams' '  select : see' >> "$T/quote.authz"
+  grep -qF "  can see = {name <> $s and not exists" "$T/quote.authz" || bad "could not write the policy with $s"
+  run apply "$T/quote.authz"; case "$out" in *": applied") ;; *) bad "the policy with $s applies" "$out";; esac
+  out=$(as 6 "SELECT authz.can('file', 12, 'view') || ' ' || (SELECT count(*) FROM app.teams) || ' ' || authz.can('team', 10, 'see')")
+  [ "$out" = "false 0 false" ] &&
+    ok "... and after a string holding a quote, $s: the app role sees no team, as authz.can says" || bad "a rule condition after $s" "$out"
+done
 CLI apply example/docs.authz >/dev/null 2>&1
 
 echo "-- drafting a policy (rowstile init)"

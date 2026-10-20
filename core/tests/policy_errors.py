@@ -227,6 +227,24 @@ COMPILE = [
         10,
     ),
     (
+        "inheritance that depends on the time, after a $$ string holding an apostrophe",
+        "  can view = owner or (parent.view and {title <> $$it's$$ and created_at > now() and title <> 'x'})\n",
+        "can't limit inheritance: it depends on now",
+        10,
+    ),
+    (
+        "inheritance that depends on the time, after an E'' string holding an escaped quote",
+        "  can view = owner or (parent.view and {title <> E'it\\'s' and created_at > now() and title <> 'x'})\n",
+        "can't limit inheritance: it depends on now",
+        10,
+    ),
+    (
+        "inheritance that depends on the time, written as a $$ string",
+        "  can view = owner or (parent.view and {created_at > $$ today $$::date})\n",
+        "can't limit inheritance: 'today' means the current time",
+        10,
+    ),
+    (
         "inheritance that depends on the user",
         "  can view = owner or (parent.view and {owner_id <> authz.uid()})\n",
         "can't limit inheritance: it depends on authz.uid",

@@ -141,14 +141,21 @@ def or_join(parts: list[str]) -> str:
     return parts[0] if len(parts) == 1 else "(" + "\n    OR ".join(parts) + ")"
 
 
-def strip_literals(sql: str) -> str:
-    """SQL with string literals and quoted names blanked out, for keyword checks."""
-    sql = re.sub(r"'(?:[^']|'')*'", "''", sql)
-    return re.sub(r'"(?:[^"]|"")*"', '""', sql)
+def strip_literals(sql: str, name: str = '""') -> str:
+    """SQL as only its code reads, for keyword checks: a string literal ('...', E'...', $$...$$) as '', a quoted
+    name as `name`, a comment as a space. The quotes are read as Postgres reads them (sql_code)."""
+    return "".join(
+        text if code else name if text.startswith('"') else " " if text.startswith(("/*", "--")) else "''"
+        for code, text in sql_code(sql)
+    )
+
+
+# a word that makes a condition read a table: a subquery (select ...) or one written as `table t`
+READS_TABLE = re.compile(r"\b(select|table)\b", re.IGNORECASE)
 
 
 def reads_tables(sql: str) -> bool:
-    return bool(re.search(r"\b(select|table)\b", strip_literals(sql), re.IGNORECASE))
+    return bool(READS_TABLE.search(strip_literals(sql)))
 
 
 # built-in functions that read nothing but their arguments (and the clock or the session): a condition calling only
@@ -349,14 +356,11 @@ def reads_more(sql: str) -> bool:
     """Whether a condition reads more than its row's own columns: a subquery, or a function other than a
     built-in that reads nothing, called by name or as an operator. Then who runs it decides what it sees, so the
     policy runs it as its owner."""
-    if reads_tables(sql):
-        return True
     # a quoted name stands as one no built-in has (app."f"(x) and "app".f(x) are calls of a function of the
     # app's), a comment as a space (f /* c */ (x) is a call), a string literal as an empty one
-    shown = "".join(
-        text if code else "_quoted_" if text.startswith('"') else " " if text.startswith("/*") else "''"
-        for code, text in sql_code(sql)
-    )
+    shown = strip_literals(sql, "_quoted_")
+    if READS_TABLE.search(shown):
+        return True
     for m in CALL.finditer(shown):
         name = re.sub(r"\s+", "", m.group(1)).lower()
         if name not in PURE_FUNCTIONS and name not in CALL_WORDS:
@@ -381,39 +385,77 @@ def with_uid(sql: str) -> str:
     return re.sub(r"\bauthz\s*\.\s*uid\s*\(\s*\)", "(SELECT authz.uid())", sql)
 
 
+def name_start(c: str) -> bool:
+    """Whether a name in SQL may start with c (Postgres takes any character past ASCII as a letter)."""
+    return c.isalpha() or c == "_" or c >= "\x80"
+
+
+def name_part(c: str) -> bool:
+    """Whether a name in SQL may go on with c."""
+    return c.isalnum() or c in "_$" or c >= "\x80"
+
+
+# a dollar quote's opening tag, where a token starts: $$, or $tag$
+DOLLAR_OPEN = re.compile(r"\$(?:[A-Za-z_\x80-\U0010ffff][A-Za-z0-9_\x80-\U0010ffff]*)?\$")
+
+
+def literal_end(sql: str, i: int, escapes: bool) -> int:
+    """Where the string literal opened by the quote at sql[i] ends (the index after its closing quote, or the
+    text's length if it doesn't close). A quote doubled is part of it; in an E'' string a backslash escapes the
+    next character (E'don\\'t')."""
+    j, n = i + 1, len(sql)
+    while j < n:
+        if escapes and sql[j] == "\\":
+            j += 2
+        elif sql[j] != "'":
+            j += 1
+        elif sql[j + 1 : j + 2] == "'":
+            j += 2
+        else:
+            return j + 1
+    return n
+
+
 def sql_code(sql: str) -> list[tuple[bool, str]]:
-    """sql in pieces, (is it code, text): string literals ('...', E'...'), quoted names ("..."), $$...$$ and
-    /* comments */ are not code."""
+    """sql in pieces, (is it code, text), read token by token as Postgres reads it: string literals ('...',
+    E'...' with its backslashes, $$...$$ and $tag$...$tag$), quoted names ("...") and comments (/* ... */, which
+    nest, and -- to the line's end) are not code. Each piece of every other kind is read whole, so nothing
+    inside one starts a quote: e'...' is an E'' string but name'...' isn't, and a$$b is a name. Every reading
+    of a condition's code (reads_tables, reads_more, the stability check, this.) goes through this one."""
     out: list[tuple[bool, str]] = []
     i, start, n = 0, 0, len(sql)
     while i < n:
         c = sql[i]
         end = -1
-        if c == "'":
-            escapes = i > 0 and sql[i - 1] in "eE" and (i < 2 or not (sql[i - 2].isalnum() or sql[i - 2] == "_"))
+        if c.isdigit() or name_start(c):  # a number (1e5, 0x1f) or a name: code, read whole
             j = i + 1
-            while j < n:
-                if escapes and sql[j] == "\\":
-                    j += 2
-                    continue
-                if sql[j] == "'":
-                    if j + 1 < n and sql[j + 1] == "'":
-                        j += 2
-                        continue
-                    break
+            while j < n and (name_part(sql[j]) if name_start(c) else sql[j].isalnum() or sql[j] == "_"):
                 j += 1
-            end = j + 1
+            if j - i == 1 and c in "eE" and sql[j : j + 1] == "'":
+                i, end = j, literal_end(sql, j, True)  # the E stays with the code before
+            else:
+                i = j
+                continue
+        elif c == "'":
+            end = literal_end(sql, i, False)
         elif c == '"':
             j = sql.find('"', i + 1)
             while j != -1 and sql[j + 1 : j + 2] == '"':
                 j = sql.find('"', j + 2)
             end = n if j == -1 else j + 1
-        elif sql.startswith("$$", i):
-            j = sql.find("$$", i + 2)
-            end = n if j == -1 else j + 2
+        elif c == "$" and (tag := DOLLAR_OPEN.match(sql, i)):
+            j = sql.find(tag.group(0), tag.end())
+            end = n if j == -1 else j + len(tag.group(0))
         elif sql.startswith("/*", i):
-            j = sql.find("*/", i + 2)
-            end = n if j == -1 else j + 2
+            depth, j = 1, i + 2
+            while j < n and depth:
+                step = sql[j : j + 2]
+                depth += 1 if step == "/*" else -1 if step == "*/" else 0
+                j += 2 if step in ("/*", "*/") else 1
+            end = j
+        elif sql.startswith("--", i):
+            j = sql.find("\n", i)
+            end = n if j == -1 else j
         if end == -1:
             i += 1
             continue
@@ -525,8 +567,25 @@ UNSTABLE = re.compile(
 )
 
 
+# the text of a date or time literal that means the current time ('now', 'today', ...)
+TIME_WORDS = re.compile(r"\s*(now|today|tomorrow|yesterday)\s*", re.IGNORECASE)
+
+
+def literal_text(text: str) -> str:
+    """What a string literal sql_code gives holds between its quotes ('...', $$...$$, $tag$...$tag$)."""
+    close = text[: text.index("$", 1) + 1] if text.startswith("$") else "'"
+    return text[len(close) :].removesuffix(close)
+
+
 def check_stable_condition(cond: str, loc: Loc, what: str = "limit inheritance") -> None:
-    lit_m = re.search(r"'\s*(now|today|tomorrow|yesterday)\s*'", cond, re.IGNORECASE)
+    lit_m = next(
+        (
+            m
+            for code, text in sql_code(cond)
+            if not code and text[0] in "'$" and (m := TIME_WORDS.fullmatch(literal_text(text)))
+        ),
+        None,
+    )
     if lit_m:
         fail(
             loc,

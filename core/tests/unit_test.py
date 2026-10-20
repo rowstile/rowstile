@@ -240,6 +240,49 @@ class ThisRow(unittest.TestCase):
             self.assertFalse(reads_more(sql), sql)
         self.assertEqual(operators("a=-1 and b<=+-2 and c@-3"), ["=", "-", "<=", "+", "-", "@-"])
 
+    def test_a_condition_is_read_as_postgres_reads_its_quotes(self) -> None:
+        """An apostrophe inside E'...', $$...$$, a quoted name or a comment ends nothing: the subquery after it is
+        code. Read as a quote's end, it would pair with the next quote and hide the subquery, and a rule would then
+        run the condition with the app role's rights."""
+        from authzlib.parse import Loc, PolicyError
+        from authzlib.sqlutil import check_stable_condition, on_row, reads_more, reads_tables, sql_code
+
+        sub = "not exists (select 1 from app.blocks b where b.kind = 'mute')"
+        for before in (
+            "title <> E'don\\'t'",
+            "title <> e'\\\\' and x <> 'y'",
+            "title <> $$it's$$",
+            "title <> $q$it's$q$",
+            '"o\'neil"',
+            "x /* it's /* nested */ ' */ = 1",
+            "x = 1 -- it's\n",
+            "x <> name'a\\'",
+        ):
+            sql = f"{before} and {sub}"
+            self.assertEqual((reads_tables(sql), reads_more(sql)), (True, True), sql)
+        # $ goes on a name: a$$x and b$$y are columns, not a dollar quote around the subquery
+        self.assertTrue(reads_tables(f"a$$x = 1 and {sub} and b$$y = 2"))
+        self.assertEqual(
+            on_row("title <> E'don\\'t' and exists (select 1 from app.d d where d.p = this.id)", "d"),
+            "(SELECT (title <> E'don\\'t' and exists (select 1 from app.d d where d.p = authz__this.id)) "
+            "FROM (SELECT d.id) AS authz__this)",
+        )
+        # a name or a number is read whole: the'x' is a name then a literal, 1$$y$$ a number then a $$ string
+        self.assertEqual(
+            sql_code('the\'x\' = 1$$y$$ and "a""b"'),
+            [(True, "the"), (False, "'x'"), (True, " = 1"), (False, "$$y$$"), (True, " and "), (False, '"a""b"')],
+        )
+        for cond in (
+            "x = $$'$$ and y = 'a' and created < now() and z = 'b'",
+            "x = E'\\'' and created < now() and z = 'b'",
+            "\"o'neil\" and created < now() and z = 'b'",
+            "created < $$ Today $$::date",
+        ):
+            with self.assertRaisesRegex(PolicyError, "can't limit inheritance: .* the same answer", msg=cond):
+                check_stable_condition(cond, Loc(None, 1))
+        for cond in ("x = $$now()$$", "x = 'nowhere' and \"now\" = 1"):
+            check_stable_condition(cond, Loc(None, 1))
+
 
 class Golden(unittest.TestCase):
     """The generated SQL is what it was; after an intended change, run with --update and read the diff."""
