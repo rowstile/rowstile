@@ -556,7 +556,8 @@ class Checker:
                     f"FROM authz.perms_of({lit(t.name)}, {ids}) x",
                 )
             if kind == "user" and pid:
-                # authz.explain asked by the user themselves: about a row they can't see, nothing
+                # authz.explain asked by the user themselves: about a row they can't see, nothing (and the same
+                # when they name their own id; one whose row isn't there signs in as nobody, and names another's)
                 for t in self.types.values():
                     ids = "ARRAY[" + ", ".join(lit(i) for i in sample[t.name]) + "]::text[]"
                     for p in t.perms:
@@ -564,6 +565,11 @@ class Checker:
                             [u, "explain self", t.name, p],
                             f"SELECT coalesce(json_agg(json_build_array(i, (SELECT e FROM authz.explain("
                             f"{lit(t.name)}, i, {lit(p)}, NULL) e LIMIT 1))), '[]') FROM unnest({ids}) i",
+                        )
+                        emit(
+                            [u, "explain self by id", t.name, p],
+                            f"SELECT coalesce(json_agg(json_build_array(i, difftest_app.try_explain("
+                            f"{lit(t.name)}, i, {lit(p)}, {lit(pid)}))), '[]') FROM unnest({ids}) i",
                         )
                 # authz.explain_rule's verdict on an update and on a delete, as the app asks it (without the changes)
                 for table in dict.fromkeys(r.table for r in self.rules):
@@ -855,6 +861,12 @@ class Checker:
             "s.relation, s.subject_type, s.subject_id, s.subject_relation)), '[]') FROM authz.list_shares(t, i) s)); "
             "EXCEPTION WHEN OTHERS THEN RETURN json_build_object('refused', SQLSTATE || ': ' || SQLERRM); END $f$;"
         )
+        lines.append(  # and authz.explain's first line for a user, or the refusal
+            "CREATE OR REPLACE FUNCTION difftest_app.try_explain(t text, i text, p text, u text) RETURNS text "
+            "LANGUAGE plpgsql AS $f$ DECLARE v text; BEGIN "
+            "SELECT e INTO v FROM authz.explain(t, i, p, u) e LIMIT 1; RETURN v; "
+            "EXCEPTION WHEN OTHERS THEN RETURN SQLSTATE || ': ' || SQLERRM; END $f$;"
+        )
         lines.append(  # and the links on an object: 'ok' and each one's relation:id, or the refusal
             "CREATE OR REPLACE FUNCTION difftest_app.try_list_links(t text, i text) RETURNS text "
             "LANGUAGE plpgsql AS $f$ BEGIN "
@@ -1099,14 +1111,36 @@ class Checker:
                             )
                     # asked by the user themselves: the same, but nothing about a row they can't see (unless they
                     # may share it, and so inspect it)
-                    for i, line in snap.get((u, "explain self", t.name, p), []):
-                        inspects = "share" in t.perms and i in state[(t.name, "share")] & self.ref.ids(t)
-                        want = i in state[(t.name, p)] & self.ref.ids(t) and (self.visible(state, t, i) or inspects)
-                        if not line or line.startswith("yes") != want:
-                            problems.append(
-                                f"user {u}: authz.explain('{t.name}', {i}, '{p}') asked by themselves says "
-                                f"{line!r}, expected {'yes' if want else 'no'}"
-                            )
+                    for key in ("explain self", "explain self by id"):
+                        for i, line in snap.get((u, key, t.name, p), []):
+                            inspects = "share" in t.perms and i in state[(t.name, "share")] & self.ref.ids(t)
+                            if key == "explain self by id" and self.ref.principal is None:
+                                # signed in as nobody (their row isn't there): the id is another user's, explained
+                                # only to one who may inspect the object
+                                if not inspects and line != f"42501: you cannot inspect access to {t.name} {i}":
+                                    problems.append(
+                                        f"user {u}: authz.explain('{t.name}', {i}, '{p}') by an id that signs in as "
+                                        f"nobody says {line!r}, expected the refusal to inspect another's access"
+                                    )
+                                holds = i in state[(t.name, p)] & self.ref.ids(t)
+                                if inspects and (not line or line.startswith("yes") != holds):
+                                    problems.append(
+                                        f"user {u}: authz.explain('{t.name}', {i}, '{p}') by an id that signs in as "
+                                        f"nobody says {line!r}, expected {'yes' if holds else 'no'}"
+                                    )
+                                continue
+                            seen = self.visible(state, t, i) or inspects
+                            want = i in state[(t.name, p)] & self.ref.ids(t) and seen
+                            if not line or line.startswith("yes") != want:
+                                problems.append(
+                                    f"user {u}: authz.explain('{t.name}', {i}, '{p}') {key} says "
+                                    f"{line!r}, expected {'yes' if want else 'no'}"
+                                )
+                            elif not seen and line != f"no   you have no access to {t.name} {i}":
+                                problems.append(
+                                    f"user {u}: authz.explain('{t.name}', {i}, '{p}') {key} says {line!r} of a "
+                                    "row they can't see, not what it says of a missing one"
+                                )
             # authz.share as the user: through exactly where the reference says they hold what sharing it needs,
             # refused otherwise, in the order the guards go (nobody signed in or nothing to share there, no such
             # user, the permission sharing needs, one it gives). An id the user table doesn't have signs in as

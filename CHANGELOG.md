@@ -51,6 +51,12 @@ Each release upgrades from the one before it. How releases are numbered and made
   `parsePrincipal(describe(p))` in TypeScript. The user whose id is `service:1` was written `service:1` and read
   back as service 1; a user whose id is `nobody` came back as nobody. A user whose id holds `:` or is `nobody` is
   now written `user:<id>` (`user:service:1`), and reads back as that user.
+- `authz.explain` with the signed-in user's own id answers as without one. For a folder user 3 can't see,
+  `authz.explain('folder', 6, 'edit', '3')` as user 3 showed its rule and the parts it reads (`parent is a
+  folder you can't see`, `yes  {inherit}`), where a missing folder showed none of that; it now says
+  `no   you have no access to folder 6`, as for a missing one. Explaining another user's access with a scoped
+  key now needs a scope that names the permission, as `authz.who` does, and reads that user's access with
+  their full rights, not the key's scopes. Applying the policy again (or the next migration) brings it in.
 
 ## 0.1.0 (alpha)
 

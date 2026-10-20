@@ -71,6 +71,14 @@ check "files key: may edit files, and update them" "updated" \
   "BEGIN; SELECT authz.login_key('$FILES'); SELECT authz.can('file', 11, 'edit'); UPDATE app.files SET body = 'y' WHERE id = 11 RETURNING 'updated'; ROLLBACK;"
 check "files key: sees no folders (not in its scope)" "0|false" \
   "BEGIN; SELECT authz.login_key('$FILES'); SELECT (SELECT count(*) FROM app.folders) || '|' || authz.can('folder', 3, 'view'); COMMIT;"
+# explaining someone else's access answers about them as authz.who does: with their full rights, for what the
+# caller's scopes name (asked here in the owner's session, which may inspect anything)
+check "explaining bob's access from a scoped session walks with his full rights, as who does" "yes  folder is folder 4, which has edit" \
+  "RESET ROLE; SET authz.user_id = 1; SET authz.scopes = 'files'; SELECT btrim(e) FROM authz.explain('file', 11, 'edit', '2') e WHERE e LIKE '%folder is%' LIMIT 1;"
+expect_code "... and refuses a permission the scopes don't name, as who does" "42501: you cannot inspect access to file 11" \
+  -c "RESET ROLE" -c "SET authz.user_id = 1" -c "SET authz.scopes = 'read'" -c "SELECT authz.explain('file', 11, 'edit', '2')"
+check "... and leaves the session's scopes as they were" "files|1" \
+  "RESET ROLE; SET authz.user_id = 1; SET authz.scopes = 'files'; SELECT count(*) FROM authz.explain('file', 11, 'edit', '2'); SELECT current_setting('authz.scopes') || '|' || current_setting('authz.user_id');"
 check "alice lists her keys" "2" "SET authz.user_id = 1; SELECT count(*) FROM authz.list_api_keys();"
 check "a key signs in to a read-only transaction (a replica, a GET)" "1"   "BEGIN READ ONLY; SELECT authz.login_key('$FILES'); SELECT authz.uid(); COMMIT;"
 PSQL -c "UPDATE authz.api_keys SET last_used_at = NULL" >/dev/null

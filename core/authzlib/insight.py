@@ -553,11 +553,14 @@ CREATE FUNCTION authz.explain(p_type text, p_id text, p_perm text, p_user text D
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_ok boolean;{self.id_vars()}
         v_pt text := coalesce(current_setting('authz.principal_type', true), '');
+        v_scopes text := coalesce(current_setting('authz.scopes', true), '');
 BEGIN
-  -- another user's access: only for people who may inspect the object (the signed-in user may explain their own;
-  -- a service whose id is a user's may not)
-  IF p_user IS NOT NULL AND authz_int.canon('user', p_user) IS DISTINCT FROM authz.uid()::text
-     AND NOT authz_int.may_inspect(p_type, p_id) THEN
+  -- the signed-in user's own id is the signed-in user: asked as without it (a service whose id is a user's is not)
+  IF p_user IS NOT NULL AND authz_int.canon('user', p_user) IS NOT DISTINCT FROM authz.uid()::text THEN
+    p_user := NULL;
+  END IF;
+  -- another user's access: only for people who may inspect the object, within their scopes (as authz.who)
+  IF p_user IS NOT NULL AND (NOT authz_int.may_inspect(p_type, p_id) OR NOT authz_int.scope_perm(p_type, p_perm)) THEN
     RAISE EXCEPTION 'you cannot inspect access to % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   -- people who can't see the object learn nothing about it, whatever else they hold on it (as for a missing one)
@@ -569,6 +572,7 @@ BEGIN
     IF p_user IS NOT NULL THEN
       PERFORM set_config('authz.user_id', p_user, true);
       PERFORM set_config('authz.principal_type', '', true);
+      PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
       PERFORM authz_int.sign();
     END IF;
     v_ok := authz.can(p_type, p_id, p_perm);
@@ -578,11 +582,13 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     PERFORM set_config('authz.user_id', v_me, true);
     PERFORM set_config('authz.principal_type', v_pt, true);
+    PERFORM set_config('authz.scopes', v_scopes, true);
     PERFORM authz_int.sign();
     RAISE;
   END;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
+  PERFORM set_config('authz.scopes', v_scopes, true);
   PERFORM authz_int.sign();
 END $f$;
 

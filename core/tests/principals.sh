@@ -111,8 +111,10 @@ check "it edits what it may edit" "1" "$AS_SVC WITH u AS (UPDATE ps.docs SET bod
 check "explain names it" "yes  service 7 holds edit on doc 1" "$AS_SVC SELECT e FROM authz.explain('doc', 1, 'edit') e LIMIT 1;"
 expect_code "it can't have user 7's access explained on what it can't share (the same id, another type)" "42501: you cannot inspect access to doc 5" \
   -c "$AS_SVC" -c "SELECT authz.explain('doc', 5, 'view', '7')"
-check "a user may have their own explained, by id" "no   user 1 does not hold view on doc 5" \
-  "$AS_USER SELECT e FROM authz.explain('doc', 5, 'view', '1') e LIMIT 1;"
+check "a user may have their own explained, by id" "yes  user 1 holds view on doc 1" \
+  "$AS_USER SELECT e FROM authz.explain('doc', 1, 'view', '1') e LIMIT 1;"
+check "... and by id, a doc they can't see reads as a missing one" "no   you have no access to doc 5" \
+  "$AS_USER SELECT string_agg(e, ' / ') FROM authz.explain('doc', 5, 'view', '1') e;"
 # a relation held by a pair of columns: explain names both, the type's column first
 check "explain names both columns of a pair that holds a service, as you" "yes  keeper: (keeper_type, keeper_id) is you" \
   "$AS_SVC SELECT btrim(e) FROM authz.explain('album', 1, 'view') e WHERE e LIKE '%keeper:%';"

@@ -196,7 +196,8 @@ AS_SQL="SET authz.scopes = 'read'" nope "with scopes, explain says a permission 
   "SELECT * FROM authz.explain('file', '11', 'fly')" "no permission file.fly in the policy" "authz.explain(text,text,text,text)"
 AS_SQL="SET authz.scopes = 'read'" nope "... on a type that has no permissions" \
   "SELECT * FROM authz.explain('team', '10', 'fly', '1')" "no permission team.fly in the policy" "authz.explain(text,text,text,text)"
-AS_SQL="SET authz.scopes = 'read'" nope "... and on a type the policy doesn't have" \
+# (asked by one who may inspect it: to anyone else, explain answers as for a missing object before it reads the type)
+AS_SQL="RESET ROLE; SET authz.scopes = 'read'" nope "... and on a type the policy doesn't have" \
   "SELECT * FROM authz.explain('boat', '1', 'fly', '1')" "no type boat in the policy" "authz.explain(text,text,text,text)"
 out=$(as 6 "SELECT authz.explain_rule('app.files', 'update', '11') IS NULL")
 [ "$out" = t ] && ok "... and one the user can't see: NULL too" || bad "explain invisible" "$out"
