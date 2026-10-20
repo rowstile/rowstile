@@ -795,11 +795,12 @@ def main() -> None:
     kconn = pgwire.connect(**pgwire.parse_dsn(f"dbname={keys}"))
 
     def scans(view: str) -> list[tuple[str, str]]:
-        """(node, table or index) of each scan in the plan of a read of view, as the app role signed in as user 7."""
+        """(node, table or index) of each scan in the plan of a read of view, signed in as user 7 (as the owner:
+        the views run as their owner whoever reads them, and the app role may read only those its rules look up)."""
 
         def plan(d: Db) -> Value:
             d.rows("SELECT authz.act_as('user', '7')")
-            d.script("SET LOCAL ROLE app_user; SET LOCAL enable_seqscan = off")
+            d.script("SET LOCAL enable_seqscan = off")
             return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_gen."{view}"')[0].values()))
 
         return plan_scans(rowstile_cli.transaction(kconn, plan, keep=False))
@@ -852,7 +853,7 @@ def main() -> None:
             "UPDATE cx.teams SET parent_slug = 't1' WHERE slug = 't6'; UPDATE cx.teams SET parent_slug = 't6' WHERE slug = 't11'"
         )
         d.rows("SELECT authz.act_as('user', '34')")
-        d.script("SET LOCAL ROLE app_user; SET LOCAL enable_seqscan = off")
+        d.script("SET LOCAL enable_seqscan = off")
         ids = sorted(str(r["id"]) for r in d.rows('SELECT id FROM authz_gen."team__member"'))
         return ids, plan_scans(
             next(iter(d.rows('EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_gen."team__member"')[0].values()))
@@ -887,11 +888,12 @@ def main() -> None:
     pconn = pgwire.connect(**pgwire.parse_dsn(f"dbname={pairs}"))
 
     def conds(view: str) -> list[tuple[str, str]]:
-        """(index, its condition) of each index scan in the plan of a read of view, as the app role, user 7."""
+        """(index, its condition) of each index scan in the plan of a read of view, signed in as user 7 (as the owner, as
+        scans says)."""
 
         def plan(d: Db) -> Value:
             d.rows("SELECT authz.act_as('user', '7')")
-            d.script("SET LOCAL ROLE app_user; SET LOCAL enable_seqscan = off")
+            d.script("SET LOCAL enable_seqscan = off")
             return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_gen."{view}"')[0].values()))
 
         return index_conds(rowstile_cli.transaction(pconn, plan, keep=False))

@@ -3,7 +3,7 @@
 ## What it compiles to
 
 - Each relation and permission becomes a view of the ids the current user holds it
-  on. The app role reads only these (`authz_gen`), never raw shares or internals. <!-- checked: tests/adversarial.sh "the shares table"; tests/adversarial.sh "internal views"; tests/adversarial.sh "the public views return only carol's own ids" -->
+  on. The app role reads only those its rules look up (`authz_gen`), never raw shares or internals. <!-- checked: tests/adversarial.sh "the shares table"; tests/adversarial.sh "internal views"; tests/adversarial.sh "the app role reads only the views its rules look up"; tests/adversarial.sh "the views the rules read return only carol's own ids" -->
 - Inheritance becomes a closure table per set of links, kept current by triggers on
   the object table, every link table, the shares table, and any table an inheritance
   condition reads. <!-- checked: tests/difftest.py "CrossGen"; tests/scenario.sql "TRUNCATE of the link table: carol loses the Joint project at once" -->

@@ -73,10 +73,10 @@ SELECT test.ok('gina (only in Platform, inside Backend, inside Engineering): bot
   test.files() = 'architecture.md, offer-letter.pdf, prod-keys.txt');
 SET authz.user_id = 1;
 SELECT test.ok('alice is a member of Engineering only (membership flows up, not down)',
-  (SELECT array_agg(id ORDER BY id) FROM authz_gen.team__member) = '{10}');
+  (SELECT array_agg(x ORDER BY x) FROM unnest(authz_gen.team__member__ids()) x) = '{10}');
 SET authz.user_id = 7;
 SELECT test.ok('gina counts as a member of Platform, Backend and Engineering',
-  (SELECT array_agg(id ORDER BY id) FROM authz_gen.team__member) = '{10,11,12}');
+  (SELECT array_agg(x ORDER BY x) FROM unnest(authz_gen.team__member__ids()) x) = '{10,11,12}');
 -- who has access, and why
 SET authz.user_id = 1;
 SELECT test.ok('alice (can share architecture.md) sees who can view it: alice, bob, carol, erin, gina',
@@ -191,12 +191,12 @@ UPDATE app.teams SET parent_id = 12 WHERE id = 10;
 SET ROLE app_user;
 SET authz.user_id = 1;
 SELECT test.ok('a loop in team nesting does not hang: the three teams now share members',
-  (SELECT array_agg(id ORDER BY id) FROM authz_gen.team__member) = '{10,11,12}');
+  (SELECT array_agg(x ORDER BY x) FROM unnest(authz_gen.team__member__ids()) x) = '{10,11,12}');
 RESET ROLE;
 UPDATE app.teams SET parent_id = NULL WHERE id = 10;
 SET ROLE app_user;
 SELECT test.ok('loop removed: alice is back to Engineering only',
-  (SELECT array_agg(id ORDER BY id) FROM authz_gen.team__member) = '{10}');
+  (SELECT array_agg(x ORDER BY x) FROM unnest(authz_gen.team__member__ids()) x) = '{10}');
 RESET ROLE;
 
 DELETE FROM app.folder_links WHERE folder_id = 21;

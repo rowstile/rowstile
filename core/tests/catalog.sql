@@ -1,5 +1,6 @@
 -- catalog.sql: what rowstile made in authz, authz_gen and authz_int, against the rules (tests/adversarial.sh).
---   psql -At -v role=<app role> -v api='<the GRANT EXECUTE list, one signature per |>' -f tests/catalog.sql
+--   psql -At -v role=<app role> -v api='<the GRANT EXECUTE list, one signature per |>' \
+--     -v views='<the authz_gen relations GRANT SELECT names, one per |>' -f tests/catalog.sql
 -- Prints one line per object that breaks a rule, nothing when all hold.
 WITH o AS (SELECT nspowner AS owner FROM pg_namespace WHERE nspname = 'authz_int'),
 fns AS (SELECT p.oid, p.oid::regprocedure::text AS name, n.nspname AS nsp, p.proowner, p.prosecdef, p.proconfig,
@@ -8,7 +9,9 @@ fns AS (SELECT p.oid, p.oid::regprocedure::text AS name, n.nspname AS nsp, p.pro
 rels AS (SELECT c.oid, c.oid::regclass::text AS name, n.nspname AS nsp, c.relowner, c.relacl
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname IN ('authz', 'authz_gen', 'authz_int') AND c.relkind IN ('r', 'v', 'm', 'S', 'p', 'f')),
-api AS (SELECT x::regprocedure AS oid FROM unnest(string_to_array(:'api', '|')) x)
+api AS (SELECT x::regprocedure AS oid FROM unnest(string_to_array(:'api', '|')) x),
+-- what the app role may read in authz_gen: the views its rules look up, and policy_lines
+views AS (SELECT x::regclass AS oid FROM unnest(string_to_array(:'views', '|')) x)
 SELECT problem || ': ' || name FROM (
   SELECT 'a definer function without its own search_path' AS problem, name FROM fns
     WHERE prosecdef AND NOT EXISTS (SELECT 1 FROM unnest(proconfig) c WHERE c LIKE 'search_path=%')
@@ -33,7 +36,10 @@ SELECT problem || ': ' || name FROM (
   UNION ALL SELECT 'owned by ' || relowner::regrole, name FROM rels WHERE relowner <> (SELECT owner FROM o)
   UNION ALL SELECT a.privilege_type || ' to ' || CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END, name
     FROM rels, aclexplode(relacl) a
-    WHERE a.grantee <> relowner AND NOT (nsp = 'authz_gen' AND a.grantee = :'role'::regrole AND a.privilege_type = 'SELECT')
+    WHERE a.grantee <> relowner AND NOT (nsp = 'authz_gen' AND a.grantee = :'role'::regrole AND a.privilege_type = 'SELECT'
+                                         AND oid IN (SELECT oid FROM views))
+  UNION ALL SELECT 'its rules read it, but the app role may not', v.oid::regclass::text FROM views v
+    WHERE NOT has_table_privilege(:'role', v.oid, 'SELECT')
   UNION ALL SELECT 'column ' || att.attname || ': ' || a.privilege_type || ' to ' || a.grantee::regrole, r.name
     FROM rels r JOIN pg_attribute att ON att.attrelid = r.oid, aclexplode(att.attacl) a
   UNION ALL SELECT a.privilege_type || ' to ' || CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END, n.nspname

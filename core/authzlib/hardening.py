@@ -32,13 +32,16 @@ class LintMixin(Core):
     def extra_grants_sql(self) -> str:
         """(object, who, privilege, stmt) for each privilege on authz, authz_gen, authz_int and what is in them
         that the policy doesn't give, with the REVOKE that takes it back. The policy gives the app role USAGE on
-        authz and authz_gen, SELECT on authz_gen's views, EXECUTE on authz_gen's functions and on the API; authz_int's
+        authz and authz_gen, SELECT on the authz_gen views its rules read (app_views) and on policy_lines, EXECUTE on
+        authz_gen's functions and on the API; authz_int's
         functions keep PUBLIC's EXECUTE (the views call them as the app role; nobody else may use the schema).
         Anything else comes from the owner's default privileges or a grant made since."""
         app = f"{lit(self.role)}::regrole"
         api = "ARRAY[" + ", ".join(lit(f) for f in self.api_signatures()) + "]::regprocedure[]"
         who = "LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw"
         ours = "(SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int'))"
+        # the views by their quoted names, as the GRANT names them
+        readable = "ARRAY[" + ", ".join(lit(q(v)) for v in ["policy_lines", *self.app_views]) + "]::text[]"
         return f"""SELECT n.nspname::text AS object, gw.who, a.privilege_type AS privilege,
        format('REVOKE %s ON SCHEMA %I FROM %s CASCADE', a.privilege_type, n.nspname, gw.who) AS stmt
   FROM pg_namespace n, aclexplode(n.nspacl) a, {who}
@@ -50,7 +53,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, {who}
   WHERE c.relnamespace IN {ours} AND a.grantee <> c.relowner
-    AND NOT (a.grantee = {app} AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT')
+    AND NOT (a.grantee = {app} AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
+             AND '"' || replace(c.relname, '"', '""') || '"' = ANY ({readable}))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
