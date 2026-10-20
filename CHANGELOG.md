@@ -23,6 +23,9 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- `rowstile check` (the MCP server's `check` too) and the editor report a mistake in the policy's own test
+  lines, as `rowstile test` does: a test naming a type, a permission or a scope the policy doesn't have read as
+  `ok` there.
 - `authz.explain` says "you" to a service signed in as itself, as it does to a user: a relation from a column
   read `bot: bot_id is` and stopped there, and a share `viewer: shared with`. It now says `bot: bot_id is you`.
   Applying the policy again (or the next migration) brings it in.

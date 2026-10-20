@@ -1180,6 +1180,16 @@ class CommandMode(unittest.TestCase):
             database.check("app role app_user\ntype x = app.x") or "", r"^policy line 1: declare the user type"
         )
 
+    def test_check_reads_the_policys_own_tests(self) -> None:
+        # a test line of the policy is part of it: check (and the editor) say what rowstile test would refuse
+        docs = read(POLICIES["docs"])
+        for line, said in (
+            ("test\n  user 1 can view widget 1\n", r"unknown type 'widget' \[AZ201\]"),
+            ("test\n  user 1 with scope nope cannot edit file 1\n", r"no scope 'nope' in the policy .*\[AZ503\]"),
+            ('test "t"\n  user $ann can view file 1\n', r"\$ann is not named yet.*\[AZ501\]"),
+        ):
+            self.assertRegex(database.check(docs + "\n" + line) or "", r"^policy line \d+: " + said)
+
     def test_remove_drops_what_apply_makes(self) -> None:
         for text in (
             "DROP SCHEMA IF EXISTS authz_gen, authz_int CASCADE",
