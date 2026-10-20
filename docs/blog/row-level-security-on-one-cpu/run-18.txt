@@ -1,0 +1,1194 @@
+Timing is off.
+SET
+DROP SCHEMA
+DROP ROLE
+CREATE ROLE
+CREATE SCHEMA
+GRANT
+CREATE TABLE
+CREATE TABLE
+INSERT 0 2000000
+INSERT 0 940000
+CREATE INDEX
+CREATE INDEX
+VACUUM
+VACUUM
+GRANT
+ALTER TABLE
+                                                      version                                                       
+--------------------------------------------------------------------------------------------------------------------
+ PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+(1 row)
+
+  files  | shares | files_size | max_parallel_workers_per_gather | work_mem | hash_mem_multiplier 
+---------+--------+------------+---------------------------------+----------+---------------------
+ 2000000 | 940000 | 161 MB     | 2                               | 4MB      | 2
+(1 row)
+
+
+=== 0. no policy: the table's owner counts every file ===
+SET
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Index Only Scan using files_owner_id_idx on files (actual rows=666666.67 loops=3)
+                     Heap Fetches: 0
+                     Index Searches: 1
+ Planning Time: 0.077 ms
+ Execution Time: 35.616 ms
+(10 rows)
+
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Index Only Scan using files_owner_id_idx on files (actual rows=666666.67 loops=3)
+                     Heap Fetches: 0
+                     Index Searches: 1
+ Planning Time: 0.074 ms
+ Execution Time: 34.956 ms
+(10 rows)
+
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Index Only Scan using files_owner_id_idx on files (actual rows=666666.67 loops=3)
+                     Heap Fetches: 0
+                     Index Searches: 1
+ Planning Time: 0.060 ms
+ Execution Time: 35.688 ms
+(10 rows)
+
+
+=== 1. IN, the user from a setting ===
+CREATE POLICY
+SET
+SET
+SET
+ files_user_7_sees 
+-------------------
+              2501
+(1 row)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.156 ms
+ Execution Time: 123.578 ms
+(14 rows)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.180 ms
+ Execution Time: 125.312 ms
+(14 rows)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.148 ms
+ Execution Time: 124.698 ms
+(14 rows)
+
+SET
+SET
+SET
+ files_user_1000_sees 
+----------------------
+                42000
+(1 row)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.144 ms
+ Execution Time: 144.045 ms
+(14 rows)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.149 ms
+ Execution Time: 144.170 ms
+(14 rows)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.162 ms
+ Execution Time: 142.177 ms
+(14 rows)
+
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.161 ms
+ Execution Time: 4.742 ms
+(10 rows)
+
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.099 ms
+ Execution Time: 4.605 ms
+(10 rows)
+
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.081 ms
+ Execution Time: 4.580 ms
+(10 rows)
+
+RESET
+DROP POLICY
+
+=== 2. IN, the user from a function ===
+CREATE FUNCTION
+CREATE POLICY
+SET
+SET
+SET
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=2501.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+         Rows Removed by Filter: 1997499
+         SubPlan 1
+           ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=1)
+                 Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Index Searches: 1
+ Planning Time: 0.144 ms
+ Execution Time: 254.053 ms
+(10 rows)
+
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=2501.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+         Rows Removed by Filter: 1997499
+         SubPlan 1
+           ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=1)
+                 Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Index Searches: 1
+ Planning Time: 0.154 ms
+ Execution Time: 242.876 ms
+(10 rows)
+
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=2501.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+         Rows Removed by Filter: 1997499
+         SubPlan 1
+           ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=1)
+                 Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Index Searches: 1
+ Planning Time: 0.158 ms
+ Execution Time: 240.879 ms
+(10 rows)
+
+SET
+SET
+SET
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=42000.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+         Rows Removed by Filter: 1958000
+         SubPlan 1
+           ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+                 Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Index Searches: 1
+ Planning Time: 0.150 ms
+ Execution Time: 273.830 ms
+(10 rows)
+
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=42000.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+         Rows Removed by Filter: 1958000
+         SubPlan 1
+           ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+                 Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Index Searches: 1
+ Planning Time: 0.179 ms
+ Execution Time: 282.459 ms
+(10 rows)
+
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=42000.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+         Rows Removed by Filter: 1958000
+         SubPlan 1
+           ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+                 Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Index Searches: 1
+ Planning Time: 0.169 ms
+ Execution Time: 280.240 ms
+(10 rows)
+
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.309 ms
+ Execution Time: 4.904 ms
+(10 rows)
+
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.109 ms
+ Execution Time: 5.910 ms
+(10 rows)
+
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.152 ms
+ Execution Time: 5.952 ms
+(10 rows)
+
+RESET
+DROP POLICY
+
+=== 3. IN, the function marked parallel safe ===
+ALTER FUNCTION
+CREATE POLICY
+SET
+SET
+SET
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.123 ms
+ Execution Time: 144.917 ms
+(14 rows)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.181 ms
+ Execution Time: 124.357 ms
+(14 rows)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.158 ms
+ Execution Time: 123.803 ms
+(14 rows)
+
+SET
+SET
+SET
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.155 ms
+ Execution Time: 140.429 ms
+(14 rows)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.163 ms
+ Execution Time: 140.635 ms
+(14 rows)
+
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 1
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.166 ms
+ Execution Time: 169.206 ms
+(14 rows)
+
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.180 ms
+ Execution Time: 4.918 ms
+(10 rows)
+
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.091 ms
+ Execution Time: 4.681 ms
+(10 rows)
+
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 1).col1)))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.075 ms
+ Execution Time: 4.575 ms
+(10 rows)
+
+RESET
+DROP POLICY
+
+=== 4. EXISTS, the function marked parallel safe ===
+CREATE POLICY
+SET
+SET
+SET
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=2501.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 2).col1)))
+         Rows Removed by Filter: 1997499
+         SubPlan 2
+           ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=1)
+                 Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Index Searches: 1
+ Planning Time: 0.150 ms
+ Execution Time: 246.250 ms
+(10 rows)
+
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=2501.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 2).col1)))
+         Rows Removed by Filter: 1997499
+         SubPlan 2
+           ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=1)
+                 Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Index Searches: 1
+ Planning Time: 0.186 ms
+ Execution Time: 249.659 ms
+(10 rows)
+
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=2501.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 2).col1)))
+         Rows Removed by Filter: 1997499
+         SubPlan 2
+           ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=1)
+                 Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Index Searches: 1
+ Planning Time: 0.183 ms
+ Execution Time: 246.850 ms
+(10 rows)
+
+SET
+SET
+SET
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=42000.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 2).col1)))
+         Rows Removed by Filter: 1958000
+         SubPlan 2
+           ->  Bitmap Heap Scan on shares s (actual rows=40000.00 loops=1)
+                 Recheck Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Heap Blocks: exact=217
+                 ->  Bitmap Index Scan on shares_user_id_idx (actual rows=40000.00 loops=1)
+                       Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                       Index Searches: 1
+ Planning Time: 0.179 ms
+ Execution Time: 283.866 ms
+(13 rows)
+
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=42000.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 2).col1)))
+         Rows Removed by Filter: 1958000
+         SubPlan 2
+           ->  Bitmap Heap Scan on shares s (actual rows=40000.00 loops=1)
+                 Recheck Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Heap Blocks: exact=217
+                 ->  Bitmap Index Scan on shares_user_id_idx (actual rows=40000.00 loops=1)
+                       Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                       Index Searches: 1
+ Planning Time: 0.181 ms
+ Execution Time: 276.628 ms
+(13 rows)
+
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=42000.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (hashed SubPlan 2).col1)))
+         Rows Removed by Filter: 1958000
+         SubPlan 2
+           ->  Bitmap Heap Scan on shares s (actual rows=40000.00 loops=1)
+                 Recheck Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                 Heap Blocks: exact=217
+                 ->  Bitmap Index Scan on shares_user_id_idx (actual rows=40000.00 loops=1)
+                       Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                       Index Searches: 1
+ Planning Time: 0.181 ms
+ Execution Time: 316.282 ms
+(13 rows)
+
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR EXISTS(SubPlan 1))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Only Scan using shares_pkey on shares s (actual rows=1.00 loops=1)
+           Index Cond: ((file_id = files.id) AND (user_id = (current_setting('demo.user_id'::text))::bigint))
+           Heap Fetches: 0
+           Index Searches: 1
+ Planning Time: 0.196 ms
+ Execution Time: 0.107 ms
+(11 rows)
+
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR EXISTS(SubPlan 1))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Only Scan using shares_pkey on shares s (actual rows=1.00 loops=1)
+           Index Cond: ((file_id = files.id) AND (user_id = (current_setting('demo.user_id'::text))::bigint))
+           Heap Fetches: 0
+           Index Searches: 1
+ Planning Time: 0.088 ms
+ Execution Time: 0.018 ms
+(11 rows)
+
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR EXISTS(SubPlan 1))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Only Scan using shares_pkey on shares s (actual rows=1.00 loops=1)
+           Index Cond: ((file_id = files.id) AND (user_id = (current_setting('demo.user_id'::text))::bigint))
+           Heap Fetches: 0
+           Index Searches: 1
+ Planning Time: 0.090 ms
+ Execution Time: 0.015 ms
+(11 rows)
+
+RESET
+DROP POLICY
+
+=== 5. IN, the user read once: (SELECT demo.uid()) ===
+CREATE POLICY
+SET
+SET
+SET
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 3).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 3
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (InitPlan 2).col1)
+                             Index Searches: 3
+                             InitPlan 2
+                               ->  Result (actual rows=1.00 loops=3)
+ Planning Time: 0.109 ms
+ Execution Time: 66.107 ms
+(18 rows)
+
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 3).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 3
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (InitPlan 2).col1)
+                             Index Searches: 3
+                             InitPlan 2
+                               ->  Result (actual rows=1.00 loops=3)
+ Planning Time: 0.189 ms
+ Execution Time: 66.015 ms
+(18 rows)
+
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 3).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 3
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (InitPlan 2).col1)
+                             Index Searches: 3
+                             InitPlan 2
+                               ->  Result (actual rows=1.00 loops=3)
+ Planning Time: 0.170 ms
+ Execution Time: 65.744 ms
+(18 rows)
+
+SET
+SET
+SET
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 3).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 3
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (InitPlan 2).col1)
+                             Index Searches: 3
+                             InitPlan 2
+                               ->  Result (actual rows=1.00 loops=3)
+ Planning Time: 0.158 ms
+ Execution Time: 87.785 ms
+(18 rows)
+
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 3).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 3
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (InitPlan 2).col1)
+                             Index Searches: 3
+                             InitPlan 2
+                               ->  Result (actual rows=1.00 loops=3)
+ Planning Time: 0.162 ms
+ Execution Time: 92.992 ms
+(18 rows)
+
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 3).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 3
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (InitPlan 2).col1)
+                             Index Searches: 3
+                             InitPlan 2
+                               ->  Result (actual rows=1.00 loops=3)
+ Planning Time: 0.160 ms
+ Execution Time: 88.258 ms
+(18 rows)
+
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 3).col1)))
+   Index Searches: 1
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   SubPlan 3
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (InitPlan 2).col1)
+           Index Searches: 1
+           InitPlan 2
+             ->  Result (actual rows=1.00 loops=1)
+ Planning Time: 0.157 ms
+ Execution Time: 5.439 ms
+(14 rows)
+
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 3).col1)))
+   Index Searches: 1
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   SubPlan 3
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (InitPlan 2).col1)
+           Index Searches: 1
+           InitPlan 2
+             ->  Result (actual rows=1.00 loops=1)
+ Planning Time: 0.083 ms
+ Execution Time: 5.431 ms
+(14 rows)
+
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 3).col1)))
+   Index Searches: 1
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   SubPlan 3
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (InitPlan 2).col1)
+           Index Searches: 1
+           InitPlan 2
+             ->  Result (actual rows=1.00 loops=1)
+ Planning Time: 0.086 ms
+ Execution Time: 5.273 ms
+(14 rows)
+
+RESET
+DROP POLICY
+
+=== 6. IN, the user read once outside the subquery only ===
+CREATE POLICY
+SET
+SET
+SET
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 2).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 2
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.152 ms
+ Execution Time: 72.955 ms
+(16 rows)
+
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 2).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 2
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.171 ms
+ Execution Time: 71.480 ms
+(16 rows)
+
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=833.67 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 2).col1)))
+                     Rows Removed by Filter: 665833
+                     SubPlan 2
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=501.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.175 ms
+ Execution Time: 71.919 ms
+(16 rows)
+
+SET
+SET
+SET
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 2).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 2
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.169 ms
+ Execution Time: 90.531 ms
+(16 rows)
+
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 2).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 2
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.175 ms
+ Execution Time: 88.454 ms
+(16 rows)
+
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Finalize Aggregate (actual rows=1.00 loops=1)
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   ->  Gather (actual rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate (actual rows=1.00 loops=3)
+               ->  Parallel Seq Scan on files (actual rows=14000.00 loops=3)
+                     Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 2).col1)))
+                     Rows Removed by Filter: 652667
+                     SubPlan 2
+                       ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=3)
+                             Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+                             Index Searches: 3
+ Planning Time: 0.178 ms
+ Execution Time: 87.624 ms
+(16 rows)
+
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 2).col1)))
+   Index Searches: 1
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   SubPlan 2
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.173 ms
+ Execution Time: 4.730 ms
+(12 rows)
+
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 2).col1)))
+   Index Searches: 1
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   SubPlan 2
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.153 ms
+ Execution Time: 4.640 ms
+(12 rows)
+
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (InitPlan 1).col1) OR (ANY (id = (hashed SubPlan 2).col1)))
+   Index Searches: 1
+   InitPlan 1
+     ->  Result (actual rows=1.00 loops=1)
+   SubPlan 2
+     ->  Index Scan using shares_user_id_idx on shares s (actual rows=40000.00 loops=1)
+           Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+           Index Searches: 1
+ Planning Time: 0.094 ms
+ Execution Time: 4.536 ms
+(12 rows)
+
+RESET
+DROP POLICY
+
+=== 7. user 1001, the auditor: IN, then EXISTS ===
+CREATE POLICY
+SET
+SET
+SET
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate
+   ->  Gather
+         Workers Planned: 2
+         ->  Partial Aggregate
+               ->  Parallel Seq Scan on files
+                     Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR (ANY (id = (SubPlan 1).col1)))
+                     SubPlan 1
+                       ->  Materialize
+                             ->  Index Scan using shares_user_id_idx on shares s
+                                   Index Cond: (user_id = (current_setting('demo.user_id'::text))::bigint)
+(10 rows)
+
+SET
+psql:<stdin>:204: ERROR:  canceling statement due to statement timeout
+RESET
+RESET
+DROP POLICY
+CREATE POLICY
+SET
+SET
+SET
+ files_user_1001_sees 
+----------------------
+               400000
+(1 row)
+
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=400000.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR EXISTS(SubPlan 1))
+         Rows Removed by Filter: 1600000
+         SubPlan 1
+           ->  Index Only Scan using shares_pkey on shares s (actual rows=0.20 loops=2000000)
+                 Index Cond: ((file_id = files.id) AND (user_id = (current_setting('demo.user_id'::text))::bigint))
+                 Heap Fetches: 0
+                 Index Searches: 2000000
+ Planning Time: 0.210 ms
+ Execution Time: 1688.133 ms
+(11 rows)
+
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=400000.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR EXISTS(SubPlan 1))
+         Rows Removed by Filter: 1600000
+         SubPlan 1
+           ->  Index Only Scan using shares_pkey on shares s (actual rows=0.20 loops=2000000)
+                 Index Cond: ((file_id = files.id) AND (user_id = (current_setting('demo.user_id'::text))::bigint))
+                 Heap Fetches: 0
+                 Index Searches: 2000000
+ Planning Time: 0.183 ms
+ Execution Time: 1674.123 ms
+(11 rows)
+
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Seq Scan on files (actual rows=400000.00 loops=1)
+         Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR EXISTS(SubPlan 1))
+         Rows Removed by Filter: 1600000
+         SubPlan 1
+           ->  Index Only Scan using shares_pkey on shares s (actual rows=0.20 loops=2000000)
+                 Index Cond: ((file_id = files.id) AND (user_id = (current_setting('demo.user_id'::text))::bigint))
+                 Heap Fetches: 0
+                 Index Searches: 2000000
+ Planning Time: 0.193 ms
+ Execution Time: 1682.964 ms
+(11 rows)
+
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR EXISTS(SubPlan 1))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Only Scan using shares_pkey on shares s (actual rows=1.00 loops=1)
+           Index Cond: ((file_id = files.id) AND (user_id = (current_setting('demo.user_id'::text))::bigint))
+           Heap Fetches: 0
+           Index Searches: 1
+ Planning Time: 0.186 ms
+ Execution Time: 0.041 ms
+(11 rows)
+
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR EXISTS(SubPlan 1))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Only Scan using shares_pkey on shares s (actual rows=1.00 loops=1)
+           Index Cond: ((file_id = files.id) AND (user_id = (current_setting('demo.user_id'::text))::bigint))
+           Heap Fetches: 0
+           Index Searches: 1
+ Planning Time: 0.065 ms
+ Execution Time: 0.013 ms
+(11 rows)
+
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Index Scan using files_pkey on files (actual rows=1.00 loops=1)
+   Index Cond: (id = 100)
+   Filter: ((owner_id = (current_setting('demo.user_id'::text))::bigint) OR EXISTS(SubPlan 1))
+   Index Searches: 1
+   SubPlan 1
+     ->  Index Only Scan using shares_pkey on shares s (actual rows=1.00 loops=1)
+           Index Cond: ((file_id = files.id) AND (user_id = (current_setting('demo.user_id'::text))::bigint))
+           Heap Fetches: 0
+           Index Searches: 1
+ Planning Time: 0.110 ms
+ Execution Time: 0.021 ms
+(11 rows)
+
+RESET
+DROP POLICY
