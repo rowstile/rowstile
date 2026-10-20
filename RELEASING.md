@@ -143,11 +143,11 @@ the site's own code. An article and a comparison page describe no version, and d
 - The release workflow doesn't run on a site tag, which publishes no package (`Delivery` in
   `core/tests/unit_test.py` checks that no pattern of its own matches one).
 
-## Going public
+## The repository's settings
 
 Dependabot is on: its monthly, grouped updates (`.github/dependabot.yml`) and its security updates (the
-repository's settings, Code security). With the first public release, turn on **private vulnerability
-reporting** there too: [SECURITY.md](SECURITY.md) sends reports there, and it is off until someone turns it on.
+repository's settings, Code security). **Private vulnerability reporting** is on there too, since the repository
+went public: [SECURITY.md](SECURITY.md) sends reports there.
 
 ## Security releases
 

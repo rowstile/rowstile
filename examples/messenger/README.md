@@ -45,7 +45,7 @@ database once first: `rowstile push --development`.
 
 Each row of this table is a test in [`db/tests/rules.authz`](db/tests/rules.authz): it makes the people and
 chats it needs, checks who may do what (as the app, through row-level security), and rolls back. `rowstile
-test` runs them: 45 checks, in about a second.
+test` runs them: 49 checks, in about a second.
 
 ## What the backend doesn't have to do
 

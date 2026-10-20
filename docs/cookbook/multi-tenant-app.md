@@ -55,9 +55,10 @@ invariants
     line 45: never workspace: view and not org.view
       ok   holds in every world tried (528 worlds, up to 4 of each type)
 
-The prover reads the policy, not the tables: to it `admin` and `member` are two relations, and it doesn't know
-that every admin row is a member row. With `can view = member` on the organisation it finds an admin who
-isn't a member, and says so. `can view = manage or member` writes the fact into the policy.
+The prover reads the policy, and where each relation comes from: `admin` is the rows of `app.org_members`
+whose role is `admin`, so every admin is a member, and `can view = member` on the organisation would hold too.
+Had admins a table of their own, an admin could be no member: with `can view = member` the prover then finds
+one, and says so. `can view = manage or member` says it in the policy, whatever the tables.
 
 ## Tested
 

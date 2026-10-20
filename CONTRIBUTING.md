@@ -72,8 +72,8 @@ The project's conventions (how the SQL is generated, locking, sessions, what mus
 - CI must be green: the unit tests and the type checks, every suite on PostgreSQL 16 and what depends on the
   version on 17 and 18, the SDKs' conformance suites, the example apps, the editors, the packaging, the
   playground and the site. The rest runs each night on `main`: every suite on 17 and 18, the proofs, the
-  soak and the benchmark check. A pull request that changes a policy gets a
-  comment from `rowstile review` saying what the change does to access.
+  soak and the benchmark check. A pull request that changes the file manager's
+  policy (`examples/filemanager`) gets a comment from `rowstile review` saying what the change does to access.
 - **Review**: a maintainer reviews each outside pull request, and may push small fixes to your branch.
   Expect questions about the tests more than about the code.
 - **Merging**: a maintainer merges. An outside pull request is squashed into one commit, and the maintainer

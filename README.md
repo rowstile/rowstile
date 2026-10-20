@@ -83,7 +83,7 @@ has the rest: alphas and release candidates, the extras, the repository.
 
 From this repository, put `core/cli` on `PATH`. `rowstile init` then finds the stack (Next.js, Prisma,
 Drizzle, FastAPI, SQLAlchemy, Alembic), writes `rowstile.toml` for its migration tool, adds the SDK's
-packages and says which line to change.
+packages to `package.json` (for Python, names the one to add) and says which line to change.
 
 ## Docs
 

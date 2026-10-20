@@ -29,6 +29,6 @@ node build.mjs && node browser_test.mjs  # the page (SCREENSHOT=page.png to see 
 npx serve dist                         # or any static host
 ```
 
-Pyodide, PGlite and mermaid (the graph) load from jsDelivr, at the versions `package.json` pins (`test.mjs`
-checks the page asks for the same ones). Loading takes about 3.5 s once they are cached, measured in headless
+Pyodide and PGlite load from jsDelivr, at the versions `package.json` pins (`test.mjs` checks the page asks for
+the same ones), and mermaid (the graph) at the one `playground.mjs` names. Loading takes about 3.5 s once they are cached, measured in headless
 Chrome on the development laptop (the design's limit is 5 s); the first time also downloads about 12 MB.
