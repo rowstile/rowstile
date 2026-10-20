@@ -5566,6 +5566,21 @@ class Confidence(unittest.TestCase):
             ("1", ["user: 1", "org: 1", "doc: 1", "doc.org: doc 1 -> org 1"]),
         )
 
+    def test_prove_on_the_multi_tenant_recipe_is_as_its_page_says(self) -> None:
+        # docs/cookbook/multi-tenant-app.md: admins read from the members' table with a where are members, so
+        # `can view = member` holds too; admins from a table of their own may be no member, and prove finds one
+        from authzlib import prove
+
+        text = read("../docs/cookbook/multi-tenant-app/policy.authz")
+        member = text.replace("can view   = manage or member", "can view   = member")
+        own = member.replace(
+            "app.org_members(org_id -> user_id) where {role = 'admin'}", "app.org_admins(org_id -> user_id)"
+        )
+        self.assertNotEqual(member, text)
+        self.assertNotEqual(own, member)
+        held = [prove.prove(parse_policy(t, "policy.authz"))[0]["holds"] for t in (text, member, own)]
+        self.assertEqual(held, [True, True, False])
+
     def test_prove_says_when_none_is_found(self) -> None:
         from authzlib import evaluate, prove
 

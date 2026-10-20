@@ -17,8 +17,13 @@ uv run python ../db/migrate.py --client || exit 1
 if ! git diff --quiet -- app/authz_client.py; then
   echo "app/authz_client.py was out of date with db/policy.authz (now rewritten: commit it)"; rc=1
 fi
-# the policy's own tests (db/tests/*.authz, named in rowstile.toml), then the API
-uv run python ../../../core/cli/rowstile_cli.py test || rc=1
+# the policy's own tests (db/tests/*.authz, named in rowstile.toml), as many as the README says, then the API
+out=$(uv run python ../../../core/cli/rowstile_cli.py test) || rc=1
+echo "$out"
+n=$(echo "$out" | sed -n 's/^policy tests passed (\([0-9]*\) checks)$/\1/p')
+if ! grep -q "runs them: $n checks" ../README.md; then
+  echo "README.md says another number of checks than rowstile test ran ($n)"; rc=1
+fi
 uv run pytest -q "$@" || rc=1
 cd ..
 [ -n "${KEEP:-}" ] || docker compose down

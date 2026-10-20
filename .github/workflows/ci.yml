@@ -1,4 +1,4 @@
-# Every test on every supported PostgreSQL version, the same way core/ci.sh runs them locally.
+# Every suite on PostgreSQL 16 and what depends on the version on 17 and 18, the way core/ci.sh runs them locally.
 # Each job runs on GitHub's ubuntu-latest, or on the runner labelled by the repository variable RUNNER when it
 # is set (the laptop's self-hosted runners were, until 2026-10-03). Never set it on a public repository: its
 # pull requests would run on that machine.

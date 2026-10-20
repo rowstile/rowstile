@@ -46,7 +46,8 @@ Each package says where it was built, signed through Sigstore by the release wor
 its provenance on the package's page (`npm audit signatures` checks it), and PyPI its attestations. The files
 on a [GitHub release](https://github.com/rowstile/rowstile/releases) (the wheel, the sdist, the launcher, the
 editor extension) come with `rowstile-<version>.intoto.jsonl`, from 0.1.0-alpha.9 on.
-The GitHub CLI checks a file against it:
+The GitHub CLI checks a file against it (the wheel's name writes the version as Python does: `0.1.0a9` for
+`0.1.0-alpha.9`):
 
     gh attestation verify rowstile-<version>-py3-none-any.whl --repo rowstile/rowstile
 
@@ -60,7 +61,8 @@ The command is Python 3.11 or newer and its standard library: there is nothing e
 ## Then
 
 `rowstile init` finds the stack (Next.js, Prisma, Drizzle, FastAPI, SQLAlchemy, Alembic), writes
-`rowstile.toml` for its migration tool, adds the SDK's packages and says which line to change.
+`rowstile.toml` for its migration tool, adds the SDK's packages to `package.json` (for Python, names the one
+to add) and says which line to change.
 
 - [Getting started](getting-started.md): from a schema to a policy, its tests, the edit loop and the first
   migration.
