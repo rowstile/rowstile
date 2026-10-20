@@ -156,9 +156,13 @@ export function actAs(p: Principal): { text: string; values: (string | null)[] }
   return { text: "SELECT authz.act_as($1, $2)", values: p.id === null ? [null, null] : [p.type, p.id] };
 }
 
-/** A SQL string literal (standard_conforming_strings, as every supported Postgres has it). */
+/** A SQL string literal that means the same whatever standard_conforming_strings says (a role, a database or a
+ *  session may turn it off): quotes doubled, and a value holding a backslash written E'...' with its backslashes
+ *  doubled, so that no backslash can end the string early. */
 export function literal(value: string | null): string {
-  return value === null ? "NULL" : "'" + value.replace(/'/g, "''") + "'";
+  if (value === null) return "NULL";
+  const text = value.replace(/'/g, "''");
+  return text.includes("\\") ? "E'" + text.replace(/\\/g, "\\\\") + "'" : "'" + text + "'";
 }
 
 /** The same statement with its values written in, for APIs that take no parameters. */

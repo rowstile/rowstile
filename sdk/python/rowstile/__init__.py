@@ -132,8 +132,13 @@ def job(who: Who) -> Callable[[Callable[P, R]], Callable[P, R]]:
 
 
 def literal(value: object) -> str:
-    """A SQL string literal (standard_conforming_strings, as every supported Postgres has it)."""
-    return "NULL" if value is None else "'" + str(value).replace("'", "''") + "'"
+    """A SQL string literal that means the same whatever standard_conforming_strings says (a role, a database or
+    a session may turn it off): quotes doubled, and a value holding a backslash written E'...' with its
+    backslashes doubled, so that no backslash can end the string early."""
+    if value is None:
+        return "NULL"
+    text = str(value).replace("'", "''")
+    return "E'" + text.replace("\\", "\\\\") + "'" if "\\" in text else "'" + text + "'"
 
 
 def act_as_args(who: Who | _Unset = _UNSET) -> tuple[str | None, str | None]:

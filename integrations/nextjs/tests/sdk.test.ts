@@ -142,6 +142,25 @@ describe("the runtime's functions over pg", () => {
     }
   });
 
+  // ids holding a backslash, a quote, both, and more: each must stay one string whatever standard_conforming_strings
+  // says; the first one, if its backslash ended the string, would go on to sign in as user 1
+  const AWKWARD_IDS = ["x\\'); SELECT authz.act_as($$user$$, $$1$$); --", "\\'", "\\", "'", "o''k\\\\", "ünï 字 \\n ☃"];
+  test.each(["off", "on"])("an id written into the sign-in is that id, standard_conforming_strings %s", async (conforming) => {
+    const c = new pg.Client({ connectionString: APP, options: `-c standard_conforming_strings=${conforming}` });
+    await c.connect();
+    try {
+      expect((await c.query("SHOW standard_conforming_strings")).rows[0].standard_conforming_strings).toBe(conforming);
+      for (const awkward of AWKWARD_IDS) {
+        await c.query("BEGIN");
+        await c.query(actAsSql(principal(awkward)));   // one simple statement, as pg sends a query without values
+        expect((await c.query("SELECT current_setting('authz.user_id') AS id")).rows[0].id).toBe(awkward);
+        await c.query("ROLLBACK");
+      }
+    } finally {
+      await c.end();
+    }
+  });
+
   test("an insert the user may not read back, over pg: the select rule's doing", async () => {
     const p = new pg.Pool({ connectionString: APP });
     try {
