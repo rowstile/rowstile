@@ -144,10 +144,15 @@ def compiled(policy: str, files: Mapping[str, object] | str | None, make: Callab
 
 
 def check(policy: str, files: Mapping[str, object] | str | None = None) -> str | None:
-    """The first mistake in the policy (None if none). Only what can be checked without a database:
-    tables and columns that don't exist are reported by apply() and diff()."""
+    """The first mistake in the policy (None if none), its own tests included. Only what can be checked without a
+    database: tables and columns that don't exist are reported by apply() and diff()."""
+
+    def make(c: Compiler) -> None:
+        c.compile("the policy", transaction=False)
+        c.tests_function_sql()
+
     try:
-        build(policy, files, lambda c: c.compile("the policy", transaction=False))
+        build(policy, files, make)
     except PolicyError as e:
         return f"policy {e}"
     return None

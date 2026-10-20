@@ -307,7 +307,9 @@ class Server:
                 files = self.includes(path, text)
                 pol = parse_policy(text, None, files=files)
                 self.models[uri] = (pol, files, path)
-                Compiler(pol).compile("the policy", transaction=False)
+                c = Compiler(pol)
+                c.compile("the policy", transaction=False)
+                c.tests_function_sql()  # the policy's own test lines, as rowstile test reads them
         except PolicyError as e:
             for mistake in e.errors:  # (every one the parser found; the compiler stops at its first)
                 m = ERROR.match(split_code(str(mistake))[0])

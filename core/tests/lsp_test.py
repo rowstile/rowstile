@@ -197,6 +197,18 @@ with tempfile.TemporaryDirectory() as d:
     )
     c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 3}, "contentChanges": [{"text": policy}]})
     ok("... and goes away when fixed", c.diagnostics(u) == [])
+    tested = policy + "\ntest\n  user 1 can view widget 1\n"
+    c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 4}, "contentChanges": [{"text": tested}]})
+    d3 = c.diagnostics(u)
+    ok(
+        "a mistake in the policy's own test lines shows on its line",
+        d3
+        and d3[0]["range"]["start"]["line"] == pos(tested, "user 1 can view widget")["line"]
+        and d3[0].get("code") == "AZ201",
+        d3,
+    )
+    c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 5}, "contentChanges": [{"text": policy}]})
+    ok("... and goes away when fixed", c.diagnostics(u) == [])
 
     def at(needle: str, offset: int = 1, nth: int = 0) -> dict[str, object]:
         return {"textDocument": {"uri": u}, "position": pos(policy, needle, offset, nth)}
