@@ -501,6 +501,38 @@ async def test_asyncpg_blocks_inside_a_block_and_expect() -> None:
         await conn.close()
 
 
+# ids holding a backslash, a quote, both, and more: where the sign-in is written into the statement (asyncpg's one
+# simple statement, a driver of another parameter style), each must stay one string whatever standard_conforming_strings
+# says; the first one, if its backslash ended the string, would go on to sign in as user 1
+AWKWARD_IDS = ["x\\'); SELECT authz.act_as($$user$$, $$1$$); --", "\\'", "\\", "'", "o''k\\\\", "ünï 字 \\n ☃"]
+SIGNED_IN_AS = "SELECT current_setting('authz.user_id')"
+
+
+@pytest.mark.parametrize("conforming", ["off", "on"])
+async def test_an_id_written_into_the_sign_in_is_that_id_whatever_standard_conforming_strings_says(
+    conforming: str,
+) -> None:
+    conn = await asyncpg.connect(libpq(APP), server_settings={"standard_conforming_strings": conforming})
+    try:
+        assert await conn.fetchval("SHOW standard_conforming_strings") == conforming
+        for awkward in AWKWARD_IDS:
+            async with pga.transaction(conn, awkward):
+                async with pga.transaction(conn, 2):
+                    assert await conn.fetchval(SIGNED_IN_AS) == "2"
+                assert await conn.fetchval(SIGNED_IN_AS) == awkward  # back to the block around, its id written in
+    finally:
+        await conn.close()
+    options = {"options": f"-c standard_conforming_strings={conforming}"}
+    engine = authz_sa.install(create_engine(SYNC, paramstyle="named", connect_args=options))  # act_as_sql()
+    try:
+        for awkward in AWKWARD_IDS:
+            with rowstile.acting_as(awkward), engine.connect() as sync:
+                assert sync.scalar(text("SHOW standard_conforming_strings")) == conforming
+                assert sync.scalar(text(SIGNED_IN_AS)) == awkward
+    finally:
+        engine.dispose()
+
+
 # --- the keys and answers as the database writes them ------------------------------------------------------------
 def test_a_key_with_an_empty_field_and_no_answer() -> None:
     assert rowstile.key_text((1, None)) == '("1",)'

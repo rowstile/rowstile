@@ -23,6 +23,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Fixed
 
+- Where the SDKs write the sign-in into the statement (Python: the asyncpg adapter, SQLAlchemy with a driver of
+  another parameter style, `act_as_sql()`; TypeScript: `actAsSql()`), an id holding a backslash stays one
+  string when `standard_conforming_strings` is off. An id such as `x\'); SELECT ...` ended the string early, and
+  the rest ran as SQL. `literal()` now writes such a value `E'...'`, its backslashes doubled.
 - `rowstile check` (the MCP server's `check` too) and the editor report a mistake in the policy's own test
   lines, as `rowstile test` does: a test naming a type, a permission or a scope the policy doesn't have read as
   `ok` there.
