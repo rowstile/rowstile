@@ -169,6 +169,8 @@ class ThisRow(unittest.TestCase):
             '"files"."Name" = $$this.x$$ /* this.y */ and E\'a\\\'s this.z\' = "files".w',
         )
         self.assertEqual(on_row("t.this.x = xthis.y", "r"), "t.this.x = xthis.y")
+        # inside $$...$$, past its first word: text, not the row (right after $$, the pattern's own look-behind skips it)
+        self.assertEqual(on_row("this.a = $$see this.x$$", "r"), "r.a = $$see this.x$$")
         # a doubled quote doesn't end the text it is in (before an escaped one, in an E'' string; in a quoted name),
         # and a quote never closed runs to the end
         self.assertEqual(on_row("x = E'it''s \\' this.y' and this.z", "r"), "x = E'it''s \\' this.y' and r.z")
@@ -5843,8 +5845,9 @@ class Confidence(unittest.TestCase):
         self.assertEqual(self.proofs(text), [True, False])
 
     def test_what_worlds_compare_beyond_permissions_and_rules(self) -> None:
-        # a type moved to another table, or roles no longer limited by `from`: more than permissions and rules
-        # changed, so no narrower comparison is made (None); and a policy without conditions has no corners
+        # a type moved to another table, roles no longer limited by `from`, or a type that signs in now: more than
+        # permissions and rules changed, so no narrower comparison is made (None); and a policy without conditions
+        # has no corners
         from authzlib import evaluate
 
         base = (
@@ -5855,7 +5858,8 @@ class Confidence(unittest.TestCase):
         moved = base.replace("type doc = app.docs\n", "type doc = app.docs2\n").replace(
             "rules app.docs\n", "rules app.docs2\n"
         )
-        for head in (moved, base.replace("  roles : user from org\n", "  roles : user\n")):
+        signs_in = base.replace("type org = app.orgs\n", "type org = app.orgs principal\n")
+        for head in (moved, base.replace("  roles : user from org\n", "  roles : user\n"), signs_in):
             a, b = parse_policy(base), parse_policy(head)
             self.assertIsNone(evaluate.apart(a, b), head)
             self.assertIsNone(evaluate.cone([a, b]), head)
@@ -12045,6 +12049,21 @@ class Mutants(unittest.TestCase):
         self.assertEqual(new, ["gc"])
         self.assertIn("**Score: 1 of 3 caught", text)
         self.assertIn("| `gc` | **new** |", text)
+
+    def test_lines_run_on_import_are_not_judged_by_the_outputs(self) -> None:
+        # a module's constant runs on any import: an output unchanged says nothing of the command that reads it
+        # later (REMOVE_SQL), so its mutants go to the suites that ran its line; a function's are `same`
+        text = "REMOVE = 'DROP x WHERE a AND b'\n\n\ndef view(t: str) -> str:\n    return f'SELECT 1 WHERE {t} AND b'\n"
+        made = {m.func: m for m in self.made(text) if m.op == "sql AND->OR"}
+        group = sweep_plan.Group("spec.json", {"migration 0 (x)": "SQL"}, {"view.py": {1, 5}})
+        base = sweep_plan.Base(self.REPO, sweep_plan.Group("", {}, {}), [group])
+        calls = sweep_plan.Calls({}, {"authzlib/view.py": {"cli": [[1, 1]], "apply": [[5, 5]]}}, "test")
+        planner = sweep_plan.Planner(base, calls)
+        with mock.patch.object(sweep_plan, "compile_outputs", return_value={"migration 0 (x)": "SQL"}):
+            on_import = planner.classify(made["<module>"], text, "core")
+            in_function = planner.classify(made["view"], text, "core")
+        self.assertEqual((on_import.kind, on_import.selected), ("python", ["cli"]))
+        self.assertEqual((in_function.kind, in_function.selected), ("same", ["apply"]))
 
     def test_the_suites_and_steps_are_there(self) -> None:
         names = [s for s, _ in sweep_plan.SUITES]

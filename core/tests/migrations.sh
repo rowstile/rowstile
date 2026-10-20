@@ -258,14 +258,17 @@ out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 
   [ "$(PSQL -d "${DB}_5" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 6 AND ancestor = 20")" = 1 ] &&
   ok "... also a link from the transaction the build's snapshot was oldest of" || bad "swap, the oldest writer's link" "$out"
 # a folder made in the swap's own transaction, before it (its row's xmin is the swap's own; a row with no links
-# is in no feed): it is in the tree too
+# is in no feed): it is in the tree too. Beside it, the feed names a row of another type, keyed by text (as a type
+# whose links changed writes it): the swap reads only its own type's, which are folders' keys
 PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_8" -f "$build" >/dev/null 2>&1 ||
   bad "the build, on another copy"
 out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_8" \
-        -c "INSERT INTO app.folders (id, org_id, owner_id, name) VALUES (90, 1, 5, 'Made in the swap')" -f "$swap" 2>&1) &&
+        -c "INSERT INTO app.folders (id, org_id, owner_id, name) VALUES (90, 1, 5, 'Made in the swap')" \
+        -c "INSERT INTO authz.changes (object_type, object_ids, cause) VALUES ('tag', ARRAY['red'], 'links changed')" \
+        -f "$swap" 2>&1) &&
   [ "$(PSQL -d "${DB}_8" -c "SELECT authz.verify()")" = t ] &&
   [ "$(PSQL -d "${DB}_8" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 90")" = 1 ] &&
-  ok "... and a folder made in the swap's own transaction" || bad "swap with a folder of its own transaction" "$out"
+  ok "... and a folder made in the swap's own transaction, beside another type's change keyed by text" || bad "swap with a folder of its own transaction" "$out"
 # the link table emptied between the two: the swap builds the tree again from what is there (the emptying says
 # nothing of which rows went)
 PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_7" -f "$build" >/dev/null 2>&1 ||

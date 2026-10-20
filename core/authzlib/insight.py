@@ -429,23 +429,25 @@ END $f$;"""
 
     def source_text(self, t: Type, r: Relation, src: Source, st: str, sr: str | None) -> str:
         name = r.name if not r.synthetic else "a custom role"
+        # the subject is whoever signed in: a user, or a service signed in as itself
+        you = sr is None and (st == "user" or self.is_principal(st))
         if src.kind == "column":
             column = self.source_columns(src)
             shown = column if isinstance(column, str) else "[" + ", ".join(column) + "]"
             col = f"({src.type_col}, {shown})" if src.type_col else shown
-            return f"{name}: {col} is " + ("you" if (st, sr) == ("user", None) else "")
+            return f"{name}: {col} is " + ("you" if you else "")
         if src.kind == "table":
             base = f"{name}: a row in {src.table}"
-            return base + (" names you" if (st, sr) == ("user", None) else " names")
+            return base + (" names you" if you else " names")
         if src.kind == "roles":
-            return f"{name} given to " + ("you" if (st, sr) == ("user", None) else "")
+            return f"{name} given to " + ("you" if you else "")
         if sr == "*":
             return f"{name}: shared with every signed-in {st}"
         if st == "anyone":
             return f"{name}: shared with anyone"
         if st == "link":
             return f"{name}: shared by a link you presented"
-        return f"{name}: shared with " + ("you" if (st, sr) == ("user", None) else "")
+        return f"{name}: shared with " + ("you" if you else "")
 
     def share_detail_sql(self, t: Type, r: Relation, src: Source, st: str, sr: str | None) -> str:
         """' (by X, until Y, caveat Z)' for the share that gives the signed-in principal the relation: theirs (or the

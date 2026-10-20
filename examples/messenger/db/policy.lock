@@ -269,7 +269,7 @@ function authz_int."chat__admin__why"(p_id bigint, p_depth int, p_seen text[]) |
 function authz_int."chat__blocked__who"(p_id bigint) | 9d2f39c5fdd5 shape=a94bf917
 function authz_int."chat__blocked__why"(p_id bigint, p_depth int, p_seen text[]) | 9df565e82745 shape=058b60da
 function authz_int."chat__bot__who"(p_id bigint) | 66e9687cdf28 shape=271ed628
-function authz_int."chat__bot__why"(p_id bigint, p_depth int, p_seen text[]) | fdbfc14bc620 shape=155b0601
+function authz_int."chat__bot__why"(p_id bigint, p_depth int, p_seen text[]) | 575fb454fc20 shape=155b0601
 function authz_int."chat__col_audit_del"() | e57dc3aa8487 shape=451b1208
 function authz_int."chat__col_audit_ins"() | e2dede5fa7d6 shape=cf94f51c
 function authz_int."chat__col_audit_row"() | 018b87753e87 shape=6e5ff9db
@@ -299,7 +299,7 @@ function authz_int."chat__read__why"(p_id bigint, p_depth int, p_seen text[]) | 
 function authz_int."chat__setup__who"(p_id bigint) | 8cffce05f779 shape=46c3fbeb
 function authz_int."chat__setup__why"(p_id bigint, p_depth int, p_seen text[]) | 3bd1e084e062 shape=90f1e145
 function authz_int."chat_bot__bot__who"(p_id text) | 337a953d2dd7 shape=c7346980
-function authz_int."chat_bot__bot__why"(p_id text, p_depth int, p_seen text[]) | 49f2bfbf002b shape=90a38174
+function authz_int."chat_bot__bot__why"(p_id text, p_depth int, p_seen text[]) | d71e7253b776 shape=90a38174
 function authz_int."chat_bot__chat__why"(p_id text, p_depth int, p_seen text[]) | 8ff7f2116643 shape=6dba5e71
 function authz_int."chat_bot__col_audit_del"() | e5a1788a53de shape=bf1bbcb5
 function authz_int."chat_bot__col_audit_ins"() | b52a179dc06c shape=c280b451
@@ -323,7 +323,7 @@ function authz_int."message__col_audit_upd"() | 8cafd8798b7c shape=fe9f650c
 function authz_int."message__edit__who"(p_id text) | e4d804bda5c4 shape=8a0ef2e0
 function authz_int."message__edit__why"(p_id text, p_depth int, p_seen text[]) | 3b06bf99f941 shape=95dfde41
 function authz_int."message__from_bot__who"(p_id text) | 5ba5d3bc4e76 shape=1c5e66df
-function authz_int."message__from_bot__why"(p_id text, p_depth int, p_seen text[]) | 11f79576aab5 shape=fcd84d16
+function authz_int."message__from_bot__why"(p_id text, p_depth int, p_seen text[]) | 73afbd41c45b shape=fcd84d16
 function authz_int."message__read__who"(p_id text) | e8e9de5f1b50 shape=b15ae63c
 function authz_int."message__read__why"(p_id text, p_depth int, p_seen text[]) | 366bf0668b7e shape=2b0551a6
 function authz_int."message__remove__who"(p_id text) | 91312376e2b2 shape=aee1769f

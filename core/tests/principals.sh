@@ -39,13 +39,14 @@ CREATE TABLE ps.team_members (team_id bigint REFERENCES ps.teams, user_id bigint
 CREATE TABLE ps.team_services (team_id bigint REFERENCES ps.teams, service_id bigint REFERENCES ps.services,
   PRIMARY KEY (team_id, service_id));
 CREATE TABLE ps.docs (id bigint PRIMARY KEY, owner_id bigint, bot_id bigint, body text);
-CREATE TABLE ps.albums (id bigint PRIMARY KEY, owner_id bigint);
+CREATE TABLE ps.albums (id bigint PRIMARY KEY, owner_id bigint, keeper_type text, keeper_id bigint);
 INSERT INTO ps.users VALUES (1), (2), (3);
 INSERT INTO ps.services VALUES (7, 1, true), (8, 2, true), (9, 1, false);
 INSERT INTO ps.teams VALUES (1);
 INSERT INTO ps.team_services VALUES (1, 8);
 INSERT INTO ps.docs VALUES (1, 1, 7, 'bot 7 keeps this'), (2, 2, NULL, 'shared with team 1'),
   (3, 2, NULL, 'shared with every service'), (4, 2, NULL, 'shared with every user'), (5, 3, NULL, 'nobody else');
+INSERT INTO ps.albums VALUES (1, 2, 'service', 7), (2, 2, 'user', 3);
 GRANT USAGE ON SCHEMA ps TO app_user, other_app;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA ps TO app_user;
 SQL
@@ -74,8 +75,10 @@ type doc = ps.docs
   can assist = owner or helper
 type album = ps.albums                   -- custom roles, and no share permission: nobody may give them but an admin
   owner : user = owner_id
+  keeper : user, service = (keeper_type, keeper_id)   -- a user or a service, by a pair of columns
+  fan    : user  shared by view          -- shared by whoever views it: it has no share permission still
   roles : user
-  can view = owner or roles
+  can view = owner or roles or keeper
 rules ps.docs
   select : view
   update : edit
@@ -110,6 +113,11 @@ expect_code "it can't have user 7's access explained on what it can't share (the
   -c "$AS_SVC" -c "SELECT authz.explain('doc', 5, 'view', '7')"
 check "a user may have their own explained, by id" "no   user 1 does not hold view on doc 5" \
   "$AS_USER SELECT e FROM authz.explain('doc', 5, 'view', '1') e LIMIT 1;"
+# a relation held by a pair of columns: explain names both, the type's column first
+check "explain names both columns of a pair that holds a service, as you" "yes  keeper: (keeper_type, keeper_id) is you" \
+  "$AS_SVC SELECT btrim(e) FROM authz.explain('album', 1, 'view') e WHERE e LIKE '%keeper:%';"
+check "... and of one that holds a user" "yes  keeper: (keeper_type, keeper_id) is you" \
+  "SET authz.user_id = '3'; SET authz.principal_type = ''; SELECT btrim(e) FROM authz.explain('album', 2, 'view') e WHERE e LIKE '%keeper:%';"
 check "it shares as itself: created_by says so" "service:7" \
   "$AS_SVC SELECT authz.share('doc', 1, 'reader', 'user', 3); SELECT created_by FROM authz.list_shares('doc', 1) WHERE subject_id = '3';"
 check "the audit trail says so too" "service:7" \
@@ -216,6 +224,8 @@ AROLE=$(state -c "SET authz.user_id = '2'" -c "SELECT authz.create_role('team', 
 expect_code "a role on a type with no share permission can't be asked for" \
   "P0001: the policy does not allow sharing album.role:$AROLE with a user" \
   -c "SET authz.user_id = '3'" -c "SELECT authz.request_access('album', 1, 'role:$AROLE', 'to look')"
+expect_code "... nor given, even by the album's owner, who may share its fans: nobody holds a share permission the type hasn't" \
+  "42501: you cannot share album 1" -c "SET authz.user_id = '2'" -c "SELECT authz.share('album', 1, 'role:$AROLE', 'user', 3)"
 
 echo "-- whoever signs in is a row of their type"
 PSQL -c "INSERT INTO ps.docs VALUES (20, 99, 77, 'its owner and its bot are gone')" >/dev/null

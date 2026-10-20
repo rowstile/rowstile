@@ -32,6 +32,8 @@ def migration(core: str, what: str) -> str:
     name, _schema, old, new = migrate_test.CASES[int(i)]
     a, b = (old, new) if way == "0" else (new, old)
     lock = migrate.lock_of(database.migratable(a, {})[1])
+    # (the build a migration records hashes authzlib's files, so it differs for every mutant these cases run: each
+    # is `other` and goes to the suites, kept so on purpose, as the suites' own policies may show what these don't)
     return "\n-- next\n".join(m.sql for m in database.migrations(b, {}, lock, name))
 
 
