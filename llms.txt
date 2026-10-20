@@ -61,7 +61,7 @@ rules app.folders
 - [Reviewing a change](docs/reference/review.md): what `rowstile review` says on a pull request
 - [How it works](docs/reference/guarantees.md): what it compiles to, what it guarantees, security
 - [Speed and limits](docs/reference/limits.md): measured speed, and what it doesn't do
-- [Installing](docs/installing.md): npm, pip or the image; alphas and release candidates; from the repository
+- [Installing](docs/installing.md): npm, pip or the image; alphas, betas and release candidates; from the repository
 - [rowstile and the alternatives](docs/comparison.md): authorization services, policy engines, rules in the ORM, row-level security by hand; when each is the better choice
 - [How rowstile is checked](docs/how-it-is-checked.md): what tests it, and what has not been done (no outside audit)
 - [Getting started](docs/getting-started.md): from a schema to a policy, tests, the dev loop and migrations (run as written by the tests)

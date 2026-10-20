@@ -28,7 +28,7 @@ version that isn't final when no final one exists), and a plain `npm i rowstile`
 
 `rowstile --version` says which version runs, and on which Python.
 
-## Alphas and release candidates
+## Alphas, betas and release candidates
 
 Once a final release exists, a plain install gets it, never a version that isn't final. Ask for one:
 
@@ -36,7 +36,9 @@ Once a final release exists, a plain install gets it, never a version that isn't
     pip install --pre rowstile
 
 and the image by its version (`ghcr.io/rowstile/rowstile:0.2.0-rc.1`). An alpha is for trying a version
-early: anything in it may still change. A release candidate is meant to become the release as it is.
+early: anything in it may still change. A beta (`0.2.0-beta.1`, on PyPI `0.2.0b1`) is the version complete
+enough to use before it is released: it may still change where using it shows a need. A release candidate is
+meant to become the release as it is.
 [The changelog](../CHANGELOG.md) says what each version changed, and under **Upgrading** what to do when
 moving to it.
 

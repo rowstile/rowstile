@@ -40,13 +40,15 @@ const from = (given, at) => {
   return `${code} + ${content || "its own"}`;
 };
 
-// as it is: the first candidate was tagged before the alphas, in a history main doesn't hold. The last one on
-// main is shown, not the highest version
-const alphas = { "v0.1.0-rc.1": ["before-main"], "v0.1.0-alpha.4": main(5), "v0.1.0-alpha.5": main(6) };
-check("with no final release, the site shows the last alpha or candidate on main", shown(...repository(alphas)) === "v0.1.0-alpha.5");
-check("... a candidate on main after the alphas too", shown(...repository({ ...alphas, "v0.1.0-rc.2": main(7) })) === "v0.1.0-rc.2");
-check("refused: no release on main", refused(() => shown(...repository({ "v0.1.0-rc.1": ["before-main"] }))).includes("no alpha or candidate on main yet"));
+// a tag that isn't main's doesn't count, whatever its version: the last one on main is shown, not the highest
+const alphas = { "v0.1.0-rc.1": ["off-main"], "v0.1.0-alpha.4": main(5), "v0.1.0-alpha.5": main(6) };
+check("with no final release, the site shows the last alpha, beta or candidate on main", shown(...repository(alphas)) === "v0.1.0-alpha.5");
+const betas = { ...alphas, "v0.1.0-beta.1": main(7) };
+check("... a beta on main after the alphas", shown(...repository(betas)) === "v0.1.0-beta.1");
+check("... a candidate on main after the beta", shown(...repository({ ...betas, "v0.1.0-rc.2": main(8) })) === "v0.1.0-rc.2");
+check("refused: no release on main", refused(() => shown(...repository({ "v0.1.0-rc.1": ["off-main"] }))).includes("no alpha, beta or candidate on main yet"));
 check("a release's tag: its own files", from("v0.1.0-alpha.5", alphas) === "v0.1.0-alpha.5 + its own");
+check("... a beta's too", from("v0.1.0-beta.1", betas) === "v0.1.0-beta.1 + its own");
 const first = { ...alphas, "site-v1": main(8) };
 check("a site tag: the release the site shows, with its two folders", from("site-v1", first) === "v0.1.0-alpha.5 + site-v1");
 check("... and that release again, by hand, keeps them", from("v0.1.0-alpha.5", first) === "v0.1.0-alpha.5 + site-v1");

@@ -4,9 +4,9 @@
     python3 packaging/changelog.py 0.2.0-rc.1   # prints the section of 0.2.0; fails if there is none
     python3 packaging/changelog.py --tagged 0.2.0-rc.1   # ... and fails if Unreleased still has lines (a tag's check)
 
-Each release has a section, `## X.Y.Z (YYYY-MM-DD)`; while its alphas or its release candidates are out,
-`## X.Y.Z (alpha)` or `## X.Y.Z (release candidate)`, and the notes of each of them are that section as it
-stands. A final release's heading must have its date. Standard library only.
+Each release has a section, `## X.Y.Z (YYYY-MM-DD)`; while its alphas, its betas or its release candidates are
+out, `## X.Y.Z (alpha)`, `## X.Y.Z (beta)` or `## X.Y.Z (release candidate)`, and the notes of each of them are
+that section as it stands. A final release's heading must have its date. Standard library only.
 """
 
 from __future__ import annotations
@@ -24,7 +24,8 @@ def read() -> str:
 
 
 def heading(version: str, text: str) -> str | None:
-    """The heading line of the release a version belongs to (0.2.0-alpha.1 and 0.2.0-rc.1 belong to 0.2.0), or None."""
+    """The heading line of the release a version belongs to (0.2.0-alpha.1, 0.2.0-beta.1 and 0.2.0-rc.1 belong to
+    0.2.0), or None."""
     base = version.split("-", 1)[0]
     m = re.search(rf"^## {re.escape(base)}(?: \([^)\n]*\))?$", text, re.M)
     return m.group(0) if m else None

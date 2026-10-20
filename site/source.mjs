@@ -14,7 +14,9 @@ import { fileURLToPath } from "node:url";
 /** The folders a site tag publishes. */
 export const FOLDERS = ["docs/blog", "docs/compare"];
 
-const RELEASE = /^v\d+\.\d+\.\d+(?:-(?:alpha|rc)\.\d+)?$/;
+// a release's tag: the version as packaging/version.py writes it, its stages those of core/authzlib/versions.py
+// (Delivery in core/tests/unit_test.py holds the two together)
+const RELEASE = /^v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/;
 const SITE = /^site-v([1-9]\d*)$/;
 /** The branch releases and site tags are made on, as a clone names it. */
 export const MAIN = "refs/remotes/origin/main";
@@ -24,8 +26,8 @@ export const MAIN = "refs/remotes/origin/main";
  *  release holds them already). @typedef {{code: string, content: string}} Source */
 
 /** The release the site shows: the highest final one (what a plain install gets), or while there is none the last
- *  alpha or candidate on main, the one every other there is before (a tag that isn't main's doesn't count: the
- *  first candidate was tagged in a history main doesn't hold).
+ *  alpha, beta or candidate on main, the one every other there is before. Their order on main is their versions'
+ *  (alphas, betas, candidates), so this needs no order of stages of its own; a tag that isn't main's doesn't count.
  *  @param {string[]} tags the repository's @param {Before} before */
 export function shown(tags, before) {
   const releases = tags.filter((t) => RELEASE.test(t));
@@ -41,7 +43,7 @@ export function shown(tags, before) {
   }
   const mains = releases.filter((t) => before(t, MAIN));
   const last = mains.filter((t) => mains.every((u) => before(u, t)));
-  if (last.length !== 1) throw new Error("no alpha or candidate on main yet: the site is built from one");
+  if (last.length !== 1) throw new Error("no alpha, beta or candidate on main yet: the site is built from one");
   return last[0];
 }
 

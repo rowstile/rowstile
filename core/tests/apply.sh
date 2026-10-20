@@ -117,6 +117,11 @@ case "$out" in *"last written by rowstile 99.0.0, which is newer than this comma
   ok "a policy a newer version applied is refused, naming both versions" || bad "apply over a newer version: rc" "$rc";;
   *) bad "apply over a newer version" "$out";; esac
 [ "$(PSQL -c "SELECT version FROM authz.policy_versions ORDER BY id DESC LIMIT 1")" = 99.0.0 ] && ok "... and nothing is changed" || bad "the refused apply changed the history"
+PSQL -c "UPDATE authz.policy_versions SET version = '99.0.0-beta.1' WHERE id = (SELECT max(id) FROM authz.policy_versions)" >/dev/null
+run apply "$T/docs.authz"
+case "$out" in *"last written by rowstile 99.0.0-beta.1, which is newer than this command"*"[AZ616]"*) [ $rc -ne 0 ] &&
+  ok "... and so is one a newer beta applied" || bad "apply over a newer beta: rc" "$rc";;
+  *) bad "apply over a newer beta" "$out";; esac
 run apply "$T/docs.authz" --downgrade; [ "$out" = "$T/docs.authz: applied" ] && ok "... unless asked: --downgrade" || bad "apply --downgrade" "$out"
 scenario > /tmp/authz_apply_scenario.log 2>&1
 rc=$?; n=$(grep -c 'ok  ' /tmp/authz_apply_scenario.log)

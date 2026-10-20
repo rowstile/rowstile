@@ -1,11 +1,19 @@
 # Changelog
 
 What changed in each release, newest first. An alpha (`0.1.0-alpha.1`) is for trying a version early: it may
-still change before that version is released. Before 1.0, a minor release (0.2.0) may change the policy
+still change before that version is released. A beta (`0.1.0-beta.1`) is the version complete enough to use
+before it is released: it may still change where using it shows a need. Before 1.0, a minor release (0.2.0) may change the policy
 language, the `authz.*` functions, the SDKs and the file formats: what to do about it is under **Upgrading**.
 Each release upgrades from the one before it. How releases are numbered and made: [RELEASING.md](RELEASING.md).
 
 ## Unreleased
+
+### Added
+
+- Versions have a beta stage, `X.Y.Z-beta.N` (on PyPI `X.Y.ZbN`), after the version's alphas and before its
+  release candidates. The command orders versions so when it refuses to apply, push or migrate over what a
+  newer version wrote (AZ616), and `rowstile init` asks a Python app for at least the beta it runs
+  (`rowstile>=0.1.0b1`).
 
 ### Changed
 
