@@ -75,7 +75,8 @@ PSQL -c "ALTER TABLE mt.docs RENAME COLUMN body2 TO body" >/dev/null
 echo "-- previewing mask changes"
 out=$(python3 compile_policy.py /tmp/authz_nomask.authz --diff | PGOPTIONS="-c client_min_messages=error" psql -X -q -d "$DB" 2>&1)
 case "$out" in *"gains  | 00000000-0000-4000-8000-000000000001 | mt.docs | column body readable"*) bad "the lead could already read the body" "$out";;
-  *) ok "the project lead (who could read the text) gains nothing";; esac
+  *"== Details (first "*) ok "the project lead (who could read the text) gains nothing";;
+  *) bad "the preview without the mask" "$out";; esac
 PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('project', '1', 'viewer', 'user', '00000000-0000-4000-8000-000000000002')" >/dev/null
 out=$(python3 compile_policy.py /tmp/authz_nomask.authz --diff | PGOPTIONS="-c client_min_messages=error" psql -X -q -d "$DB" 2>&1)
 case "$out" in *"gains  | 00000000-0000-4000-8000-000000000002 | mt.docs | column body readable"*) ok "removing the mask: a viewer gains the text";;

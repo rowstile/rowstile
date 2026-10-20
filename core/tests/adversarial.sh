@@ -236,14 +236,18 @@ expect "... while a page of none is no mistake: no row" "0" -c "SELECT count(*) 
 expect "who may see a hidden object" "42501: you cannot see who has access to folder 5" -c "SELECT count(*) FROM authz.who('folder', '5', 'view')"
 expect "...is refused as for a missing one" "42501: you cannot see who has access to folder 999999" -c "SELECT count(*) FROM authz.who('folder', '999999', 'view')"
 expect "asking why for someone else" "42501: you cannot inspect access to file 11" -c "SELECT authz.explain('file', '11', 'view', '2')"
-# explaining never walks into what carol can't see, whatever else she holds there (break_glass on every Acme folder)
-hidden=$(said "SELECT authz.explain('folder', '6', 'edit')" "folder 6"); missing=$(said "SELECT authz.explain('folder', '999999', 'edit')" "folder 999999")
-[ "$hidden" = "$missing" ] && echo "ok    explaining a folder she can't see (but may break the glass on) reads as a missing one" ||
-  { echo "FAIL  explain tells hidden folder 6 from a missing one: '$hidden'"; fails=$((fails + 1)); }
-got=$(said "SELECT authz.explain('folder', '21', 'edit')" "@")
-case "$got" in *"parent is a folder you can't see"*) case "$got" in *"folder 20"*|*"folder 5"*) ;; *)
-  echo "ok    ... and the walk up from one she sees stops at a parent she can't see";; esac;; *) false;; esac ||
-  { echo "FAIL  explain walks past a hidden parent: $got"; fails=$((fails + 1)); }
+# explaining never walks into what carol can't see, whatever else she holds there (break_glass on every Acme folder),
+# whether she asks for herself or names her own id (as written, or as another text of it)
+for call in "explain('folder', 'ID', 'edit')" "explain('folder', 'ID', 'edit', '3')" "explain('folder', 'ID', 'edit', '03')"; do
+  hidden=$(said "SELECT authz.${call/ID/6}" "folder 6"); missing=$(said "SELECT authz.${call/ID/999999}" "folder 999999")
+  [ "$hidden" = "$missing" ] && [ "$hidden" = "no   you have no access to <id>" ] &&
+    echo "ok    authz.${call/ID/6}: explaining a folder she can't see (but may break the glass on) reads as a missing one" ||
+    { echo "FAIL  authz.$call tells hidden folder 6 from a missing one: '$hidden' / '$missing'"; fails=$((fails + 1)); }
+  got=$(said "SELECT authz.${call/ID/21}" "@")
+  case "$got" in *"folder 20"*|*"folder 5"*) false;; *"parent is a folder you can't see"*) ;; *) false;; esac &&
+    echo "ok    ... and the walk up from one she sees stops at a parent she can't see" ||
+    { echo "FAIL  authz.${call/ID/21} walks past a hidden parent: $got"; fails=$((fails + 1)); }
+done
 # why she may view a file shared with her: her own share, never another user's (who made it, until when). Bob's,
 # made by alice an hour before hers and ending tomorrow, is the older
 PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at, created_by, created_at)
@@ -254,7 +258,9 @@ expect "explaining her share on a file shows hers, not another user's" "yes  vie
 PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '13'" >/dev/null
 hidden=$(said "INSERT INTO app.files (folder_id, owner_id, name) VALUES (6, 3, 'x')" "folder 6")
 missing=$(said "INSERT INTO app.files (folder_id, owner_id, name) VALUES (999999, 3, 'x')" "folder 999999")
-[ "$hidden" = "$missing" ] && echo "ok    a write refused in a hidden folder explains as for a missing one" ||
+[ "$hidden" = "$missing" ] && case "$hidden" in *"permission denied: user 3 may not insert this row into app.files"*) true;; *) false;; esac &&
+  case "$hidden" in *"no   you have no access to <id>"*) true;; *) false;; esac &&
+  echo "ok    a write refused in a hidden folder explains as for a missing one" ||
   { echo "FAIL  the refusal tells hidden folder 6 from a missing one: '$hidden' / '$missing'"; fails=$((fails + 1)); }
 expect "a hidden file and a missing one look the same to can()" "false|false" \
   -c "SELECT authz.can('file', 12, 'view') || '|' || authz.can('file', 999999, 'view')"

@@ -22,7 +22,7 @@ column that needs quoting), and the generated clients take a tuple or array.
 | check, list, all permissions | `authz.can('file', 11, 'edit')`, `authz.list('folder', 'edit')`, `authz.perms('file', 11)` |
 | list in pages, in key order | `authz.list('file', 'view', NULL, 1000)`, then `authz.list('file', 'view', '<last id>', 1000)` (a NULL size: no limit; a cursor that isn't an id, or a negative size: AZ710) |
 | who has access (for people who may share it) | `authz.who('folder', 3, 'view')` |
-| why, or what is missing | `authz.explain('file', 11, 'edit')`; for someone else: `..., 'edit', '7')` |
+| why, or what is missing | `authz.explain('file', 11, 'edit')`; for someone else (people who may share it, as for `who`): `..., 'edit', '7')` |
 | why a write is or would be refused | `authz.explain_rule('app.files', 'update', '11', '{"name": "x"}')`: NULL if the row isn't there or you can't see it (404); an insert: `authz.explain_rule('app.files', 'insert', NULL, '{"folder_id": 6}')` <!-- checked: tests/devx.sh "a row that isn't there: NULL (404, not 403)"; tests/devx.sh "and one the user can't see: NULL too"; tests/devx.sh "an update that would be allowed: yes" --> |
 | which of these people may see it (live updates) | `authz.who_among('file', 11, 'view', ARRAY['1', '2'])`: it signs each one in with `authz.act_as`, so it is for whoever may call that (the app role, a backend trusted to sign people in) |
 | the sharing dialog | `authz.list_shares('folder', 3)`, for people who may share it: a row a share, with `relation`, `role` (a custom role's name), `subject_type`, `subject_id` (`(link)` for a share link), `subject_relation` (`member` for `team#member`, else empty), `expires_at`, `starts_at`, `caveat`, `created_by` and `created_at` |
