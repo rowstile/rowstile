@@ -1671,11 +1671,19 @@ class Command(unittest.TestCase):
             (s.npm, s.setup[:1], s.clients),
             (["@rowstile/postgres"], ['import { authz } from "@rowstile/postgres";'], {"ts": "authz.gen.ts"}),
         )
+        # ... and React's and Vitest's are named, not added: what the app needs to run is all init adds
         s = detect({"package.json": '{"dependencies": {"pg": "8", "react": "19"}, "devDependencies": {"vitest": "3"}}'})
         self.assertEqual(
-            (s.npm, s.setup[:1]),
-            (["@rowstile/pg", "@rowstile/react", "@rowstile/vitest"], ['import { authz } from "@rowstile/pg";']),
+            (s.npm, s.npm_maybe, s.setup[:1]),
+            (["@rowstile/pg"], ["@rowstile/react", "@rowstile/vitest"], ['import { authz } from "@rowstile/pg";']),
         )
+        self.assertEqual(
+            detect({"package.json": '{"dependencies": {"react": "19", "@rowstile/react": "0"}}'}).npm_maybe, []
+        )
+        # each package init adds or names has its reason
+        sdks = os.path.join(os.path.dirname(ROOT), "sdk", "typescript")
+        packages = {"@rowstile/" + d for d in os.listdir(sdks) if os.path.isfile(os.path.join(sdks, d, "package.json"))}
+        self.assertLessEqual(packages - {"@rowstile/client"} | {"rowstile"}, set(stack.NPM_WHY))
         # Drizzle without its config file: its default folder; and a migrations folder with no SQL in it is no tool
         s = detect({"package.json": '{"dependencies": {"drizzle-orm": "0.40"}}'})
         self.assertEqual((s.found, s.tool, s.migrations_dir, s.setup_file), (["Drizzle"], "drizzle", "drizzle", ""))
@@ -3806,6 +3814,40 @@ class Draft(unittest.TestCase):
             ]
         )
         self.assertIn("\ntype team = app.teams\n  team_ : user = app.team_(team_id -> user_id)\n", text)
+
+    def test_teams_inside_teams(self) -> None:
+        # a team with members and a parent team: the members of the teams inside count as members above (what the
+        # cookbook's nested teams do, and what an app usually means), and the draft says the other reading. A folder
+        # with members and a parent folder still passes its view down
+        to = lambda col, table: ([col], table, ["id"])
+        tables = [self.table("app.users", {"id": "bigint"}, ["id"])]
+        for kind in ("teams", "folders"):
+            tables += [
+                self.table(
+                    f"app.{kind}", {"id": "bigint", "parent_id": "bigint"}, ["id"], (to("parent_id", f"app.{kind}"),)
+                ),
+                self.table(
+                    f"app.{kind[:-1]}_members",
+                    {f"{kind[:-1]}_id": "bigint", "user_id": "bigint"},
+                    [f"{kind[:-1]}_id", "user_id"],
+                    (to(f"{kind[:-1]}_id", f"app.{kind}"), to("user_id", "app.users")),
+                ),
+            ]
+        text = self.compiled(tables)
+        self.assertIn(
+            "\ntype team = app.teams\n"
+            "  parent : team = parent_id\n"
+            "  member : user = app.team_members(team_id -> user_id)\n"
+            "  member : team#member = app.teams(parent_id -> id)   -- the members of the teams inside count here too\n"
+            "  -- decide: members of a team inside are members of this one. For this team's view to pass\n"
+            "  --   down to those inside instead: remove that line, and write can view = member or parent.view\n"
+            "  can edit = nobody   -- decide: nobody edits what it is in; who edits these?\n"
+            "  can view = member\n",
+            text,
+        )
+        self.assertIn("  member : user = app.folder_members(folder_id -> user_id)\n", text)
+        self.assertIn("  can view = member or parent.view\n", text)
+        self.assertNotIn("folder#member", text)
 
     def test_a_loop_of_foreign_keys_with_an_owner_compiles(self) -> None:
         """Documenso, Cal.com, Mastodon and GitLab: org -> settings -> email -> domain -> org; only orgs have owners."""

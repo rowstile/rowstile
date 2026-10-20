@@ -167,13 +167,21 @@ export function actAsSql(p: Principal): string {
 }
 
 // --- errors ---------------------------------------------------------------------------------------------
-/** An RFC 9457 problem body. */
+/** An RFC 9457 problem body: problemOf(e)'s fields, and what route() answers with. */
 export interface Problem {
+  /** https://rowstile.dev/problems/refused, /not-found, /not-signed-in, /bad-argument or /conflict */
   type: string;
   title: string;
   status: number;
+  /** the database's words: for a refusal, who may not do what, where */
   detail: string;
-  [field: string]: unknown;
+  /** a refusal's table (schema.table) and command (insert, update, delete, select), when the error names them */
+  table?: string | null;
+  command?: string | null;
+  /** a refusal's reason, a line each: the rule, then what holds and what is missing */
+  why?: string[];
+  /** rowstile's code: AZ709 for a rule's refusal (rowstile help AZ709) */
+  code?: string;
 }
 
 /** The database refused a write, and said why: the rule (table and command), and the explanation. */

@@ -71,9 +71,9 @@ def write_agents_note(note: str, folder: str = ".") -> str | None:
     return "added"
 
 
-def init(policy: str, opts: dict[str, str], cfg: Config, where: str = "") -> None:
+def init(policy: str, opts: dict[str, str], cfg: Config, where: str = "", given: str | None = None) -> None:
     """Writes the drafted policy, a first test file, rowstile.toml and the note for coding agents, keeping any
-    that exist. where: the .env file that named the database, if one did."""
+    that exist. where: the .env file that named the database, if one did; given: --db, if it named it."""
     out = opts.get("--out", "db")
     written: list[str] = []
     policy_path = os.path.join(out, "policy.authz")
@@ -103,7 +103,17 @@ test "nobody signed in sees a {example}"
         via = (" from DATABASE_URL" + (f" in {where}" if where else "")) if os.environ.get("DATABASE_URL") else ""
         print(f"found   {', '.join(found.found)}, Postgres{via}")
     if cfg.path is None:
-        database = "env:DATABASE_URL"
+        database, why = "env:DATABASE_URL", "a DSN or URL, or env:NAME for an environment variable holding one"
+        app_url = os.environ.get("DATABASE_URL")
+        if given and app_url and app_url != given:
+            # DATABASE_URL is another connection than the one --db named (often the app's, as its role): rowstile
+            # applies as the tables' owner, so it reads the owner's from a name of its own
+            database, why = "env:ROWSTILE_DATABASE_URL", "the tables' owner's connection: DATABASE_URL is another"
+            print(
+                "note    DATABASE_URL is another connection than --db's (the app's, as its role?): rowstile.toml reads\n"
+                "        the tables' owner's from ROWSTILE_DATABASE_URL. Set it, in the environment or .env.local, to what\n"
+                "        --db named"
+            )
         extra = stack.config_lines(found) or [
             "# [clients]                    # generated on each change by rowstile dev",
             '# py = "app/authz_client.py"',
@@ -113,7 +123,7 @@ test "nobody signed in sees a {example}"
             CONFIG,
             f'''policy   = "{policy_path.replace(os.sep, "/")}"
 tests    = ["{os.path.join(out, "tests").replace(os.sep, "/")}/*.authz"]
-database = "{database}"     # a DSN or URL, or env:NAME for an environment variable holding one
+database = "{database}"     # {why}
 '''
             + "\n".join(extra)
             + "\n",
@@ -145,7 +155,11 @@ database = "{database}"     # a DSN or URL, or env:NAME for an environment varia
     if found.npm:
         added = stack.add_npm(os.getcwd(), found.npm, __version__)
         if added:
-            print(f"added   {', '.join(added)} to package.json (then: npm install)")
+            print("added   to package.json (then: npm install):")
+            for name in added:
+                print(f"          {name}: {stack.NPM_WHY[name]}")
+    if found.npm_maybe:
+        print("maybe   " + ", ".join(f"{n} ({stack.NPM_WHY[n]})" for n in found.npm_maybe) + ": not added")
     if found.pip and not found.pip_there:
         req = stack.pip_requirement(found.pip, __version__)
         print(f"add     {req} to your Python dependencies (pip install '{req}', or uv add '{req}')")

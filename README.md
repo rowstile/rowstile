@@ -102,6 +102,8 @@ packages and says which line to change.
   [reviewing a change](docs/reference/review.md), [how it works](docs/reference/guarantees.md),
   [speed and limits](docs/reference/limits.md).
 - [The playground](playground/README.md): the compiler and a real Postgres in the browser, nothing installed.
+- For coding agents: [llms.txt](llms.txt), and each page of rowstile.dev as Markdown, at its address with `.md`
+  (<https://rowstile.dev/getting-started.md>).
 
 ## This repository
 

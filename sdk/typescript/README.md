@@ -31,7 +31,7 @@ export const PATCH = route(async (req: Request, { params }: { params: Promise<{ 
 
 | package | what |
 |---|---|
-| `@rowstile/client` | `actingAs(who, fn)`, `job(who, fn)`, `current()`, `Refused`, `NotFound`, `NotSignedIn`, `translate(e)` and `problemResponse(e)` for any driver's error, `errorCode(e)` (rowstile's code: `AZ709`), `calls(queryable)` (the runtime's functions), the `Register` the generated names fill in |
+| `@rowstile/client` | `actingAs(who, fn)`, `job(who, fn)`, `current()`, `Refused`, `NotFound`, `NotSignedIn`, `translate(e)`, `problemOf(e)` and `problemResponse(e)` for any driver's error (a problem's fields: `status`, `type`, `title`, `detail`, and a refusal's `table`, `command`, `why` and `code`), `errorCode(e)` (rowstile's code: `AZ709`), `calls(queryable)` (the runtime's functions), the `Register` the generated names fill in |
 | `@rowstile/prisma` | `signedIn(adapter, { user })`: every transaction Prisma begins signs in; `authz()`: P2025 as `NotFound` or `Refused` with the reason, refused creates naming the rule, `db.$authz` (`can`, `ids`, `permsOf`, `share`, `check`, ...) |
 | `@rowstile/pg` | `authz(pool, { user })`: `transaction(fn)`, `query()`, the runtime's functions; `changes(pool)` for live updates |
 | `@rowstile/postgres` | `authz(sql, { user })`: `begin(fn)`, the runtime's functions |

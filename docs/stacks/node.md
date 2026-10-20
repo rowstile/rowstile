@@ -5,7 +5,7 @@
 Any Node app (Express, Fastify, Hono, a worker) on `pg`, postgres.js or Drizzle. Each transaction signs in as
 whoever the code acts for, the database filters what it reads and refuses what it may not write, and the
 SDK turns a refusal into `Refused` (403) and a hidden row into `NotFound` (404). Next.js with Prisma:
-[Next.js](nextjs.md), which also covers the React kit.
+[Next.js](nextjs.md), which also covers the React kit, and Next.js with pg in a section of its own.
 
 These come from the conformance suite's checks without Prisma (`integrations/nextjs/tests/conformance.test.ts`).
 
@@ -96,7 +96,7 @@ In your framework's error handler, `problemOf(e)` (in `@rowstile/client`) gives 
 for any driver's error that is a refusal (403, with the rule and the reason) or a hidden row (404), a call the
 database says names something that isn't there (404, AZ708) or lacks an argument or has a wrong one (400,
 AZ710), a call that needs someone signed in or a login refused (401, AZ714 and AZ703), a move inside itself
-(409, AZ713), and `null` for anything else. `problemResponse(e)` is the same as a Fetch `Response`, for Hono and other frameworks built
+(409, AZ713), and `null` for anything else. A problem's fields are its own, not under a `body`: `status`, `type`, `title` and `detail` (the database's words), and a refusal's `table`, `command`, `why` (the reason, a line each) and `code`. `problemResponse(e)` is the same as a Fetch `Response`, for Hono and other frameworks built
 on it.
 
 ## Migrations

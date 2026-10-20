@@ -1385,7 +1385,7 @@ def main(argv: list[str]) -> None:
                 lambda db: database.draft(db, schemas, opts.get("--users"), opts.get("--role", "app_user")),
                 keep=False,
             )
-            init(policy, opts, cfg, ENV.where)
+            init(policy, opts, cfg, ENV.where, dsn)
         elif cmd == "reapply":
             transaction(conn, lambda db: database.reapply(db, rebuild="--force" in flags))
             print("applied again")
