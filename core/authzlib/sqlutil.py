@@ -11,7 +11,7 @@ from .parse import Loc, fail
 # rowfence, and authzc before that
 POLICY_MARKS = "('rowstile', 'rowfence', 'authzc')"
 VIEW_MARKS = "('rowstile masked view', 'rowfence masked view', 'authzc masked view')"
-# ... and the row triggers given to a table that inherits from a governed one (CHILD_TRIGGERS below)
+# ... and the triggers given to the tables under a table rowstile watches (CHILD_TRIGGERS below)
 CHILD_TRIGGER_MARK = "rowstile: the trigger of the table above, for the rows stored here"
 # In a comment before a DO block that makes a trigger (-- @object trigger ...): the trigger is there only where
 # the table is partitioned (database.unchanged looks for it there alone)
@@ -19,21 +19,28 @@ IF_PARTITIONED = "@if partitioned"
 
 # Postgres runs a table's row triggers for its own rows and for its partitions' (it copies them there), not for
 # rows stored in a table that inherits from it (CREATE TABLE ... INHERITS): read and written through the table
-# above, those rows would skip a rule on a column and keep their shares when their key changes. So each such
-# table is given the row triggers rowstile made on the tables above it. This lists the ones missing, each with
-# the statement that makes it; applying runs them (CHILD_TRIGGERS), lint reports them (a table made since).
-CHILD_TRIGGERS_FN = f"""-- The row triggers above that a table inheriting from their table lacks, and the statement that makes each
+# above, those rows would skip a rule on a column and keep their shares when their key changes. And it runs a
+# table's statement triggers only for statements on that table, not for one on a partition or on a table that
+# inherits: written there directly, rows would leave inheritance, shares, API keys and the audit behind. So each
+# table that inherits is given the row triggers rowstile made on the tables above it, and each partition and
+# table that inherits their statement triggers (but those for TRUNCATE alone: emptying one partition is not
+# emptying the table, which is what they do). This lists the ones missing, each with the statement that makes
+# it; applying runs them (CHILD_TRIGGERS), lint reports them (a table made since).
+CHILD_TRIGGERS_FN = f"""-- The triggers above that a table under their table lacks, and the statement that makes each
 CREATE FUNCTION authz_int.child_triggers() RETURNS TABLE (child regclass, name name, stmt text)
 LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
   WITH RECURSIVE below(top, oid) AS (
-    SELECT i.inhparent, i.inhrelid FROM pg_inherits i JOIN pg_class k ON k.oid = i.inhrelid WHERE NOT k.relispartition
+    SELECT i.inhparent, i.inhrelid FROM pg_inherits i
     UNION SELECT b.top, i.inhrelid FROM pg_inherits i JOIN below b ON i.inhparent = b.oid
   )
   SELECT b.oid::regclass, g.tgname,
          overlay(d.def PLACING ' ON ' || c.name || ' ' FROM strpos(d.def, ' ON ' || p.name || ' ')
                  FOR length(' ON ' || p.name || ' '))
   FROM below b
-  JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal AND g.tgtype & 1 = 1
+  JOIN pg_class u ON u.oid = b.oid
+  JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal
+   AND CASE WHEN g.tgtype & 1 = 1 THEN NOT u.relispartition         -- a row trigger: Postgres copies it to partitions
+            ELSE g.tgtype & 28 <> 0 AND u.relkind IN ('r', 'p') END -- a statement trigger: not for TRUNCATE alone
   JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
   CROSS JOIN LATERAL (SELECT pg_get_triggerdef(g.oid) AS def) d
   CROSS JOIN LATERAL (SELECT format('%I.%I', n.nspname, k.relname) AS name
@@ -44,8 +51,8 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
                     AND x.description = '{CHILD_TRIGGER_MARK}')
     AND NOT EXISTS (SELECT 1 FROM pg_trigger h WHERE h.tgrelid = b.oid AND h.tgname = g.tgname)
 $f$;"""
-CHILD_TRIGGERS = f"""-- Tables that inherit from a table with rules or a type (not partitions: Postgres gives those their table's row
--- triggers itself): the row triggers made above, on each, for the rows stored there
+CHILD_TRIGGERS = f"""-- The partitions of a table rowstile watches and the tables that inherit from it: the triggers made above, on
+-- each, for the rows stored there and the statements on it
 DO $ch$
 DECLARE r record;
 BEGIN
@@ -55,7 +62,7 @@ BEGIN
   END LOOP;
 END $ch$;"""
 # ... and before a migration drops what they call (they are made again by CHILD_TRIGGERS, which every one runs)
-DROP_CHILD_TRIGGERS = f"""-- the row triggers given to tables that inherit: made again below, on what this migration makes
+DROP_CHILD_TRIGGERS = f"""-- the triggers given to the tables under others: made again below, on what this migration makes
 DO $authz_ch$
 DECLARE r record;
 BEGIN

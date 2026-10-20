@@ -89,15 +89,22 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   of their own, for the partitions of a governed table and the tables that inherit from it,
   so the app role reads and writes them only through the table (whose rules and triggers
   are on it). <!-- checked: tests/children.sh "and the partition is closed: the app role reads it through its table"; tests/adversarial.sh "reading it directly, once applied again"; tests/adversarial.sh "adding to it directly" -->
-  Postgres copies a table's row triggers to its partitions, not to a table that
-  inherits from it (`CREATE TABLE ... INHERITS`): apply gives those the row triggers too, so
-  a rule on a column is checked on the rows stored there. A partition made after apply has
-  its table's rules and triggers from the start, for what is read and written through the
-  table; read directly, it is open until the next apply if the app role was given it. A table
-  that inherits, made after apply, has neither until the next apply. `authz.lint()` reports
-  both, and `rowstile apply` then applies (it does not answer `unchanged`). The owner writing to a
-  partition directly skips the triggers; so does dropping, detaching or truncating one, which
-  leaves its rows' shares until the next apply.
+  Postgres runs a table's statement triggers only for statements on that table, and it copies the
+  table's row triggers to its partitions, not to a table that inherits from it (`CREATE TABLE ...
+  INHERITS`). <!-- checked: tests/children.sh "the app role moves a $kind under another through $where of its table"; tests/children.sh "the table that inherits has its table's row and statement triggers" -->
+  So apply gives the partitions and the inheriting tables of each table it keeps triggers on (one
+  with rules, a tree's table, a link table, a table a condition reads) the triggers of the table
+  above: a statement on one of them, the owner's too, keeps inheritance, shares and the audit
+  current, and a rule on a column is checked on the rows stored there. <!-- checked: tests/children.sh "the partitions have their table's statement triggers (Postgres gave them the row triggers)"; tests/children.sh "... user 1 sees the posts in the ones moved under theirs and linked in"; tests/children.sh "the tables' owner moving them out again, through the partition and the table that inherits" -->
+  A partition made after apply has its table's rules and row triggers from the start, for what is
+  read and written through the table; read directly, it is open until the next apply if the app
+  role was given it, and a statement on it runs none of the table's statement triggers until then.
+  A table that inherits, made after apply, has neither until the next apply. `authz.lint()` reports
+  both, and `rowstile apply` then applies (it does not answer `unchanged`). Truncating a partition
+  skips the triggers (emptying one partition is not emptying the table), and `authz.lint()` reports
+  an app role that may do it. <!-- checked: tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips its triggers" -->
+  Dropping or detaching a partition skips them too, which leaves its rows' shares until the next
+  apply.
 - **A key handed over inside one update of a partitioned table**: a row's shares are forgotten when
   its key changes, so a row that has the key later starts with none. Where the update also puts the
   row in another partition, rowstile forgets the shares of every key the update left without a row;

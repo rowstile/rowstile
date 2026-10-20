@@ -642,8 +642,9 @@ def unchanged(db: Db, policy: str, files: Files) -> bool:
         "there",
     )
     # ... and nothing was made or given since that applying again puts right: a partition of a table with rules,
-    # or a table that inherits from it, has row-level security on, one that inherits has the table's row
-    # triggers, and nobody holds a privilege on rowstile's own schemas that the policy doesn't give
+    # or a table that inherits from it, has row-level security on, each table under one rowstile watches has
+    # the triggers of the table above (its statement triggers; the row triggers too, where it inherits), and
+    # nobody holds a privilege on rowstile's own schemas that the policy doesn't give
     return kept and flag(
         db.rows(
             "WITH RECURSIVE below(oid) AS ("

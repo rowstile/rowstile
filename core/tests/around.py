@@ -21,7 +21,8 @@ policy for that seed and draws a world for it:
   the catalog   each object table is plain, partitioned by its key (hash or range: a key that changes puts the
                 row in another partition), or has a table that inherits from it, where half its rows are stored;
                 so are the users' table, the services' and each link table (by the object it names; a table
-                that inherits from a link table has its foreign keys too, Postgres doesn't hand them down);
+                that inherits from a link table has its foreign keys too, Postgres doesn't hand them down),
+                and half the random changes to such a table are written straight into the tables under it;
                 the owner's default privileges give new tables, functions and schemas to the app role, to PUBLIC
                 or to a role the policy doesn't name; conditions name the app's table and function without their
                 schema, which the database's search path supplies; a schema on that path that others may create in
@@ -618,8 +619,8 @@ def path_sql(db: DB, spec: Spec, w: World, open_too: bool) -> str:
 
 def initial(gen: genpolicy.GenPolicyGen, w: World) -> str:
     """genpolicy's first rows; for a table with one that inherits from it, half are stored there: an object
-    type's rows with an even id, every other row of a link table, the users and services with an even id (before
-    the policy is applied: written there directly later, they would skip the table's triggers)."""
+    type's rows with an even id, every other row of a link table, the users and services with an even id. (The
+    random changes later write there directly too: routed().)"""
     n = gen.spec.spelling
     stored = {t for t, how in w.layout.items() if how == "inherits"}
     first = [n.sql("org_id"), n.sql("id")] if n.composite else [n.sql("id")]  # (a row's first columns: its key)
@@ -644,6 +645,47 @@ def initial(gen: genpolicy.GenPolicyGen, w: World) -> str:
         for t in ("users", "bots")
         if t in stored
     ]
+    return "\n".join(out)
+
+
+def routed(db: DB, spec: Spec, w: World, sql: str, rnd: random.Random) -> str:
+    """A random change, with half its statements on a table that has tables under it sent to those directly, as
+    an app's own statements or a script may be: an update or a delete to each table that stores the rows (the
+    table itself with ONLY), an insert to a table that inherits from it. Statements on the tables under one run
+    its triggers as their own (apply gave them), so the answers stay what they would be through the table.
+    Through the table still: TRUNCATE (emptying one partition is not emptying the table), and on a partitioned
+    table an insert or a change of the key (a partition takes only its own keys)."""
+    n = spec.spelling
+    stored: dict[str, list[str]] = {}  # each table (as genpolicy writes it): the tables that store its rows
+    below: dict[str, list[str]] = {}  # ... those under it
+    partitioned: set[str] = set()
+    for top, child, kind, itself in db.rows(
+        "WITH RECURSIVE d(top, oid) AS ("
+        f"  SELECT t, t::regclass FROM unnest(ARRAY[{', '.join(lit(n.table(t)) for t in w.layout)}]::text[]) t"
+        "  UNION SELECT d.top, i.inhrelid FROM pg_inherits i JOIN d ON i.inhparent = d.oid) "
+        "SELECT d.top, d.oid::regclass, c.relkind, d.oid = d.top::regclass FROM d JOIN pg_class c ON c.oid = d.oid "
+        "ORDER BY 1, 2"
+    ):
+        partitioned |= {top} if kind == "p" else set()
+        stored.setdefault(top, []).extend([child] if kind == "r" else [])
+        below.setdefault(top, []).extend([child] if kind == "r" and itself != "t" else [])
+    under = {top: rows for top, rows in stored.items() if len(rows) > 1 or top in partitioned}
+    i, out, inside = n.sql("id"), [], False
+    for line in sql.splitlines():
+        inside = (inside or line == "BEGIN;") and line != "COMMIT;"
+        tbl = next((t for t in under if line.startswith((f"UPDATE {t} SET ", f"DELETE FROM {t} WHERE "))), "")
+        into = next((t for t in under if line.startswith(f"INSERT INTO {t} ")), "")
+        if tbl and rnd.random() < 0.5 and not (tbl in partitioned and line.startswith(f"UPDATE {tbl} SET {i} = ")):
+            verb, rest = (
+                ("UPDATE", line[len(f"UPDATE {tbl}") :])
+                if line.startswith("UPDATE")
+                else ("DELETE FROM", line[len(f"DELETE FROM {tbl}") :])
+            )
+            each = [f"{verb} ONLY {x}{rest}" for x in under[tbl]]
+            line = "\n".join(each if inside else ["BEGIN;", *each, "COMMIT;"])
+        elif into and into not in partitioned and below[into] and rnd.random() < 0.5:
+            line = f"INSERT INTO {rnd.choice(below[into])}{line[len(f'INSERT INTO {into}') :]}"
+        out.append(line)
     return "\n".join(out)
 
 
@@ -1437,6 +1479,7 @@ def run(
         raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
     rnd = random.Random(f"around/run/{w.seed}")
+    route = random.Random(f"around/route/{w.seed}")  # (drawn apart: rnd's draws stay the same)
     gen = genpolicy.gen_class(spec, policy_path, schema_path)(random.Random(spec.seed))
     data = initial(gen, w)
     problems: list[str] = []
@@ -1489,7 +1532,7 @@ def run(
             t.name: [x[0] for x in db.rows(f"SELECT {idsql(t)} FROM {qt(t.table)} ORDER BY 1")]
             for t in checker.types.values()
         }
-        sql = gen.change(ids)
+        sql = routed(db, spec, w, gen.change(ids), route)
         checker.since = int(db.rows("SELECT txid_current()")[0][0])
         code, _, err = db.run(sql, check=False)
         if code != 0 and not any(e in err for e in gen.expected_errors):

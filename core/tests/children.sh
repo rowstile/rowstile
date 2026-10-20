@@ -42,9 +42,11 @@ run apply; [ $rc -eq 0 ] && is applied && ok "apply" || bad "apply" "$out"
 run apply; is unchanged && ok "... again: unchanged (a trigger made for partitioned tables alone is looked for there alone)" || bad "apply again" "$out"
 same "the inheritance tables are right" "$(PSQL -c "SELECT authz.verify()")" t
 same "the partitioned tables have the trigger that forgets a row gone to another partition, the others don't" \
-  "$(PSQL -c "SELECT string_agg(tgrelid::regclass::text, ' ' ORDER BY tgrelid::regclass::text) FROM pg_trigger WHERE tgname LIKE 'authz\_%\_forget\_moved'")" "ch.notes ch.tasks"
+  "$(PSQL -c "SELECT string_agg(tgrelid::regclass::text, ' ' ORDER BY tgrelid::regclass::text) FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid WHERE tgname LIKE 'authz\_%\_forget\_moved' AND NOT c.relispartition")" "ch.notes ch.tasks ch.topics"
 rowtriggers=$(triggers ch.docs_old)
-same "the table that inherits has its table's row triggers" "$rowtriggers" "authz_doc_col_audit_row authz_doc_forget_id authz_update owner_id"
+# (not the ones for TRUNCATE alone: emptying the table that inherits is not emptying the table)
+same "the table that inherits has its table's row and statement triggers" "$rowtriggers" \
+  "authz_doc_col_audit_del authz_doc_col_audit_ins authz_doc_col_audit_row authz_doc_col_audit_upd authz_doc_forget_del authz_doc_forget_id authz_update owner_id"
 
 echo "-- a table that inherits: its rows, read and written through the table above"
 as 1 -c "SELECT authz.share('doc', 1, 'editor', 'user', 2)" -c "SELECT authz.share('doc', 11, 'editor', 'user', 2)" >/dev/null
@@ -75,8 +77,8 @@ echo "-- a table that inherits, made after the policy was applied"
 PSQL -c "CREATE TABLE ch.docs_older () INHERITS (ch.docs)" -c "CREATE TABLE ch.docs_oldest () INHERITS (ch.docs_old)" \
      -c "INSERT INTO ch.docs_older VALUES (21, 1, 'ancient')"
 same "lint names each, and the triggers it lacks" \
-  "$(PSQL -c "SELECT string_agg(object, ' ' ORDER BY object) FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'inherits from a table the policy has rules or a type for, and was made since the policy was last applied:%(missing here: authz_doc_col_audit_row, authz_doc_forget_id, authz_update owner_id). Apply the policy again (it makes them)'")" \
-  "ch.docs_older ch.docs_oldest"
+  "$(PSQL -c "SELECT string_agg(object || ': ' || split_part(problem, ',', 1), '; ' ORDER BY object) FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'inherits from %, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, and its statement triggers for statements on it only, so a rule on a column is not checked on the rows stored here, their shares stay when their key changes, and a statement on this table doesn''t keep inheritance, shares and the audit current (missing here: authz_doc_col_audit_del, authz_doc_col_audit_ins, authz_doc_col_audit_row, authz_doc_col_audit_upd, authz_doc_forget_del, authz_doc_forget_id, authz_update owner_id). Apply the policy again (it makes them)'")" \
+  "ch.docs_older: inherits from ch.docs; ch.docs_oldest: inherits from ch.docs_old"
 run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "apply after a table was made" "$out"
 same "... and lint has nothing more to say of them" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object LIKE 'ch.docs_old%'")" 0
 same "... each has the row triggers, once (the one that inherits from a table that inherits too)" "$(triggers ch.docs_older)|$(triggers ch.docs_oldest)" "$rowtriggers|$rowtriggers"
@@ -100,7 +102,7 @@ PSQL -c "CREATE TABLE ch.docs_older_still () INHERITS (ch.docs)"
 same "a table made since lacks its copies, whatever the search path says first" \
   "$(PSQL -c "CREATE SCHEMA shadow" -c "CREATE TABLE shadow.pg_inherits (LIKE pg_catalog.pg_inherits)" -c "SET client_min_messages = warning" -c "SET search_path = shadow, pg_catalog" \
      -c "SELECT string_agg(child::text || ' ' || name, ', ' ORDER BY name) FROM authz_int.child_triggers()" -c "RESET search_path" -c "DROP SCHEMA shadow CASCADE")" \
-  "ch.docs_older_still authz_doc_col_audit_row, ch.docs_older_still authz_doc_forget_id, ch.docs_older_still authz_update owner_id"
+  "ch.docs_older_still authz_doc_col_audit_del, ch.docs_older_still authz_doc_col_audit_ins, ch.docs_older_still authz_doc_col_audit_row, ch.docs_older_still authz_doc_col_audit_upd, ch.docs_older_still authz_doc_forget_del, ch.docs_older_still authz_doc_forget_id, ch.docs_older_still authz_update owner_id"
 PSQL -c "DROP TABLE ch.docs_older_still"
 
 echo "-- a partitioned table: a row that stays in its partition, and one an update puts in another"
@@ -140,14 +142,50 @@ same "the table that inherits from the people's has the row trigger that deletes
 PSQL -c "UPDATE ch.people SET id = 111 WHERE id = 11" -c "DELETE FROM ch.people WHERE id = 12"
 same "... so a person stored there loses their keys with a new id, and one above with their row" "$(keys person)" ""
 
+echo "-- trees whose tables have no rules, written directly through what is under them (posts read them)"
+# Postgres runs a table's statement triggers only for statements on it, and those keep the trees, the shares and
+# the audit current: each partition, and each table that inherits, has them too. The app role is given these tables
+# as an app gives them (GRANT ... ON ALL TABLES IN SCHEMA): they have no rules, so they are not closed to it
+seen() { as "$1" -c "SELECT coalesce(string_agg(id::text, ' ' ORDER BY id), '') FROM ch.posts"; }
+same "user 1 sees the posts in the topics and shelves under theirs" "$(seen 1)" "5 6 7 8"
+same "the app role reads a partition of a table without rules directly, as it reads the table" \
+  "$(as 1 -c "SELECT count(*) FROM ch.topics_high")|$(as 1 -c "SELECT count(*) FROM ch.shelves_old")" "3|3"
+same "the partitions have their table's statement triggers (Postgres gave them the row triggers)" "$(triggers ch.topics_high)|$(triggers ch.topic_links_see)|$(triggers ch.frozen_hold)" \
+  "authz_topic__linked_parent__tree_del authz_topic__linked_parent__tree_ins authz_topic__linked_parent__tree_upd authz_topic_col_audit_del authz_topic_col_audit_ins authz_topic_col_audit_row authz_topic_col_audit_upd authz_topic_forget_del authz_topic_forget_id authz_topic_forget_moved|authz_rel_audit_2_del authz_rel_audit_2_ins authz_rel_audit_2_upd authz_topic__linked_parent__tree_on_links1_del authz_topic__linked_parent__tree_on_links1_ins authz_topic__linked_parent__tree_on_links1_upd|authz_topic__linked_parent__tree_dep"
+same "... and so have the tables that inherit" "$(triggers ch.shelves_old)|$(triggers ch.shelf_links_old)|$(triggers ch.holds_old)" \
+  "authz_shelf__linked_parent__tree_del authz_shelf__linked_parent__tree_ins authz_shelf__linked_parent__tree_upd authz_shelf_col_audit_del authz_shelf_col_audit_ins authz_shelf_col_audit_row authz_shelf_col_audit_upd authz_shelf_forget_del authz_shelf_forget_id|authz_rel_audit_1_del authz_rel_audit_1_ins authz_rel_audit_1_upd authz_shelf__linked_parent__tree_on_links1_del authz_shelf__linked_parent__tree_on_links1_ins authz_shelf__linked_parent__tree_on_links1_upd|authz_shelf__linked_parent__tree_dep"
+as 2 -c "SELECT authz.share('topic', 152, 'viewer', 'user', 3)" -c "SELECT authz.share('shelf', 52, 'viewer', 'user', 3)" >/dev/null
+for kind in topic shelf; do
+  if [ $kind = topic ]; then
+    rows=ch.topics_high links=ch.topic_links_see held=ch.frozen_hold lone=150 other=151 under=3 gone=152
+  else
+    rows=ch.shelves_old links=ch.shelf_links_old held=ch.holds_old lone=50 other=51 under=3 gone=52
+  fi
+  where=$([ $kind = topic ] && echo "a partition" || echo "a table that inherits")
+  same "the app role moves a $kind under another through $where of its table" "$(as 1 -c "$(changed "UPDATE $rows SET parent_id = 2 WHERE id = $lone")")" 1
+  same "... and links one in through $where of the link table" "$(as 1 -c "$(changed "INSERT INTO $links VALUES ($other, 1)")")" 1
+  same "... and holds one through $where of the table the condition reads" "$(as 1 -c "$(changed "INSERT INTO $held VALUES ($under)")")" 1
+  same "... so user 1 sees the posts in the one moved and the one linked, not in the one held" \
+    "$(as 1 -c "SELECT string_agg(id::text, ' ' ORDER BY id) FROM ch.posts WHERE ${kind}_id IN ($lone, $other, $under)")" \
+    "$([ $kind = topic ] && echo "1 2" || echo "3 4")"
+  same "the app role deletes a $kind through $where of its table" "$(as 1 -c "$(changed "DELETE FROM $rows WHERE id = $gone")")" 1
+  same "... and its shares go" "$(shares $kind $gone)" 0
+done
+same "the inheritance tables are right" "$(PSQL -c "SELECT authz.verify()")" t
+same "... user 1 sees the posts in the ones moved under theirs and linked in" "$(seen 1)" "1 2 3 4 7 8"
+same "the tables' owner moving them out again, through the partition and the table that inherits: user 1 no longer sees their posts" \
+  "$(owner 1 -c "UPDATE ch.topics_high SET parent_id = NULL WHERE id = 150" -c "UPDATE ch.shelves_old SET parent_id = NULL WHERE id = 50" -c "SELECT authz.verify()")|$(seen 1)" \
+  "t|2 4 7 8"
+
 echo "-- a partition made after the policy was applied"
 PSQL -c "CREATE TABLE ch.notes_top PARTITION OF ch.notes FOR VALUES FROM (1000) TO (2000)" \
      -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ch.notes_top TO app_user" -c "INSERT INTO ch.notes VALUES (1001, 3, NULL, 'carol''s')"
-same "lint says the app role may use it directly" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.notes_top'")" 1
+directly="SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.notes_top' AND problem LIKE '%may use it directly%'"
+same "lint says the app role may use it directly" "$(PSQL -c "$directly")" 1
 # ... with any one of those privileges (reading too: its table has rules)
 for p in SELECT INSERT UPDATE DELETE; do
   PSQL -c "REVOKE ALL ON ch.notes_top FROM app_user" -c "GRANT $p ON ch.notes_top TO app_user" >/dev/null
-  same "... with $p alone on it too" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.notes_top'")" 1
+  same "... with $p alone on it too" "$(PSQL -c "$directly")" 1
 done
 PSQL -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ch.notes_top TO app_user" >/dev/null
 # its rows are written through the table from the day it is made (a job that makes next month's partition
@@ -158,7 +196,25 @@ same "... and their owner still writes them" "$(as 3 -c "$(changed "UPDATE ch.no
 run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "apply after a partition was made" "$out"
 same "... and the partition is closed: the app role reads it through its table" "$(as 2 -c "SELECT count(*) FROM ch.notes_top")|$(as 3 -c "SELECT count(*) FROM ch.notes WHERE id = 1001")" "0|1"
 same "... lint has nothing more to say of it" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object = 'ch.notes_top'")" 0
-same "... Postgres gave it the row triggers itself" "$(triggers ch.notes_top)" "authz_note_col_audit_row authz_note_forget_id authz_update owner_id"
+same "... Postgres gave it the row triggers itself, and apply the statement triggers" "$(triggers ch.notes_top)" \
+  "authz_note__parent__tree_del authz_note__parent__tree_ins authz_note__parent__tree_upd authz_note_col_audit_del authz_note_col_audit_ins authz_note_col_audit_row authz_note_col_audit_upd authz_note_forget_del authz_note_forget_id authz_note_forget_moved authz_update owner_id"
+run apply; is unchanged && ok "apply again: unchanged" || bad "apply once more after a partition was made" "$out"
+# a partition of a table without rules, made since: given nothing, its rows are written through its table; but a
+# statement on it alone (the owner's, or the app role's once given it) runs none of the table's statement triggers
+PSQL -c "CREATE TABLE ch.topics_top PARTITION OF ch.topics FOR VALUES FROM (1000) TO (2000)"
+same "lint names a partition made since of a table without rules, and the statement triggers it lacks" \
+  "$(PSQL -c "SELECT severity || ': ' || problem FROM authz.lint() WHERE object = 'ch.topics_top'")" \
+  "error: is a partition of ch.topics, and was made since the policy was last applied: Postgres runs a table's statement triggers for statements on it only, so a statement on this partition doesn't keep inheritance, shares and the audit current (missing here: authz_topic__linked_parent__tree_del, authz_topic__linked_parent__tree_ins, authz_topic__linked_parent__tree_upd, authz_topic_col_audit_del, authz_topic_col_audit_ins, authz_topic_col_audit_upd, authz_topic_forget_del, authz_topic_forget_moved). Apply the policy again (it makes them)"
+PSQL -c "GRANT TRUNCATE ON ch.frozen_hold TO app_user"
+same "lint says the app role may empty a partition of the table a condition reads, which skips its triggers" \
+  "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.frozen_hold' AND problem LIKE 'is a partition of ch.frozen (or inherits from it), and app_user may TRUNCATE it, %'")" 1
+PSQL -c "REVOKE TRUNCATE ON ch.frozen_hold FROM app_user"
+run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "apply after a partition of a table without rules was made" "$out"
+same "... lint has nothing more to say of them" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object IN ('ch.topics_top', 'ch.frozen_hold')")" 0
+# (not the triggers for TRUNCATE alone: emptying a partition is not emptying its table, which is what they do)
+as 1 -c "SELECT authz.share('topic', 1, 'viewer', 'user', 3)" >/dev/null
+PSQL -c "TRUNCATE ch.topics_top"
+same "... and emptying the partition keeps the shares of the rows stored in the others" "$(shares topic 1)" 1
 
 echo "-- migrations: a rule on a column changes, where a table that inherits has its trigger"
 cp tests/children.authz "$T/db/policy.authz"
@@ -174,6 +230,8 @@ same "both migration files apply in order (the second drops a function the copie
 # (the rule's trigger is named after its head: the old one goes, on the tables that inherit too)
 retitled=${rowtriggers/authz_update owner_id/authz_update owner_id, title}
 same "the table that inherits has the row triggers after them" "$(D=$DB2 triggers ch.docs_old)" "$retitled"
+same "... and the partitions of a link table their table's statement triggers" "$(D=$DB2 triggers ch.topic_links_see)" \
+  "authz_rel_audit_2_del authz_rel_audit_2_ins authz_rel_audit_2_upd authz_topic__linked_parent__tree_on_links1_del authz_topic__linked_parent__tree_on_links1_ins authz_topic__linked_parent__tree_on_links1_upd"
 D=$DB2 as 1 -c "SELECT authz.share('doc', 12, 'editor', 'user', 2)" >/dev/null
 same "... and the changed rule holds on its rows" "$(D=$DB2 as 2 -c "UPDATE ch.docs SET title = 'mine' WHERE id = 12")" "ERROR:  changing owner_id, title of ch.docs 12 needs: own"
 run push --development; is pushed && ok "push: the same change on the first database" || bad "push" "$out"
