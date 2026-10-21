@@ -119,8 +119,32 @@ case "$out" in *"isn't marked as a development database"*"[AZ610]"*) [ $rc -ne 0
 out=$(CLI push --development 2>&1); case "$out" in *"policy.authz: pushed") ok "push --development marks it, and brings it along with the migration it would write";; *) bad "push" "$out";; esac
 [ "$(PSQL -c "SET authz.user_id = 1" -c "SELECT authz.can('file', 11, 'print')")" = t ] && ok "... the new permission is there" || bad "pushed permission"
 out=$(CLI push 2>&1); case "$out" in *"policy.authz: unchanged") ok "push again: unchanged";; *) bad "push again" "$out";; esac
+# rowstile push (rowstile dev, on each save), counting the policies it compiles and parses: the one in force once,
+# and the new one once, only when its text changed
+counted() { ( cd "$P" && python3 - "$OLDPWD" 2>&1 <<'PY'
+import sys
+sys.path[:0] = [sys.argv[1], sys.argv[1] + "/cli"]
+import rowstile_cli
+from authzlib import assembled, database
+n = {"compiled": 0, "parsed": 0}
+compile_, parse_ = assembled.Compiler.compile, database.parse_policy
+def compile(self, *a, **k):
+    n["compiled"] += 1
+    return compile_(self, *a, **k)
+def parse(*a, **k):
+    n["parsed"] += 1
+    return parse_(*a, **k)
+assembled.Compiler.compile, database.parse_policy = compile, parse
+try:
+    rowstile_cli.main(["push"])
+except SystemExit:
+    pass
+print(f"compiled {n['compiled']}, parsed {n['parsed']}")
+PY
+) | tail -n 2 | paste -sd ' '; }
+out=$(counted); case "$out" in *"policy.authz: unchanged compiled 1, parsed 1") ok "... which compiles the policy in force once";; *) bad "push again, compiling" "$out";; esac
 sed -i 's/^  can print = view$/  can print = edit/' "$P/db/policy.authz"
-out=$(CLI push 2>&1); case "$out" in *"policy.authz: pushed") ok "a second change is pushed too";; *) bad "second push" "$out";; esac
+out=$(counted); case "$out" in *"policy.authz: pushed compiled 2, parsed 2") ok "a second change is pushed too, compiling the policy in force once and the new one once";; *) bad "second push" "$out";; esac
 PSQL -c "UPDATE authz.policy_versions SET version = '0.0.1' WHERE id = (SELECT max(id) FROM authz.policy_versions)" >/dev/null
 out=$(CLI push 2>&1); case "$out" in *"policy.authz: applied (the whole policy)") ok "a policy another version applied: the whole policy";; *) bad "push after upgrade" "$out";; esac
 CLI migrate >/dev/null 2>&1
