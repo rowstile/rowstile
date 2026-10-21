@@ -56,6 +56,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Removed
 
+- A test's name is written in double quotes only, as the docs show it: `test "owners see their folders"`.
+  `test owners see their folders` and `test 'owners'` are refused, with the line to write instead (AZ101), and
+  VS Code no longer colours them as a test's name.
 - The parser no longer knows `update cols check :`, the old way to write `update cols after :`. A column named
   `check` is now a column like any other: `update check : seal` is a rule on it (it was refused, with advice to
   write `update after :`). The review and the error pages no longer speak of `role x`, `roles : ... grant` or
@@ -152,6 +155,26 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   {inherit})` is taken. Where its conditions differ otherwise (`{INHERIT}` for `{inherit}`), the message shows
   both: it said the deny must inherit through `parent`, which it did.
 
+- A mistake after the first word of a line at the left margin says how that line is written:
+  `type folder app.folders` gets "write types as: type name = schema.table [(key)] [principal] [where {sql}]", and
+  `include roles.authz` is told to put the file's name in double quotes. Each such line was told it didn't start
+  with `app role`, `type`, `rules`, ... although it did.
+- A condition may hold `/* ... */` comments, as Postgres reads them (nested, over several lines): an apostrophe
+  or a brace in one was read as a quote or the condition's end, and the policy refused with "a { condition is
+  missing its closing }". A `$` inside a name (`total$$`) no longer opens a dollar quote either.
+- A permission line takes a tab after `can`, as every other line takes one between its words. It was read as a
+  relation and refused ("write relations as ..."), and `rowstile fmt` refused the file.
+- A test line names a scope as the `scope` line declares it: `with scope files:write` and `with scope read-only`
+  were refused ("a test's lines are ..."). The editors read such names too.
+- A test with an empty name (`test ""`) is refused, and words after a test's closing quote are said to be the
+  mistake (it said the quote wasn't closed).
+- `as ... sees N {...}` refuses a statement that writes after a comment or in its `WITH`
+  (`WITH gone AS (DELETE ...) SELECT ...`), as it refuses one that starts with `DELETE`. `rowstile test` failed it
+  with Postgres's error.
+- A block ends at an include line and at the end of its file. An included file's first lines, indented, went on
+  with the block before the `include` line, and indented lines after it with the included file's last type: they
+  are now refused as outside a block. An indented `include` line says it must start at the left margin (it was
+  refused as a relation).
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed

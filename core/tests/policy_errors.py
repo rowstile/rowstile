@@ -621,16 +621,16 @@ COMPILE = [
     ("a test's given without a statement", 'test "t"\n  given x = { }\n', "given {...} needs a statement", 11),
     ("a test's as without a statement", 'test "t"\n  as user 1 allowed { }\n', "as ... {...} needs a statement", 11),
     (
-        "a test named twice, once in single quotes and once in double",
-        "test 'a'\n  user 1 can share doc 1\ntest \"a\"\n  user 1 can share doc 1\n",
-        "there is already a test named 'a'",
-        12,
+        "a test named in single quotes",
+        "test 'sharers'\n  user 1 can share doc 1\n",
+        'line 10: write a test\'s name in double quotes: test "sharers" [AZ101]',
+        10,
     ),
     (
-        "a test named without quotes is the same test as one in quotes",
-        'test "sharers see docs"\n  user 1 can share doc 1\ntest sharers see docs\n  user 1 can share doc 1\n',
-        "there is already a test named 'sharers see docs'",
-        12,
+        "a test named without quotes",
+        "test sharers see docs\n  user 1 can share doc 1\n",
+        'line 10: write a test\'s name in double quotes: test "sharers see docs" [AZ101]',
+        10,
     ),
     ("a scope's command without its table", "scope s = docs.select\n", "commands are qualified by a table", 10),
     ("a scope's permission under a schema", "scope s = alt.doc.share\n", "permissions are qualified by a type", 10),
@@ -730,6 +730,20 @@ COMPILE = [
         10,
     ),
     (
+        "a word after a rules line's table",
+        "rules alt.docs extra\n",
+        "write rules as: rules schema.table [view schema.view]",
+        10,
+    ),
+    ("a caveat without braces", "caveat c = x\n", "write caveats as: caveat name = {sql}", 10),
+    ("a scope without =", "scope s doc.share\n", "write scopes as: scope name = select, view", 10),
+    (
+        "a word after invariants",
+        "invariants now\n",
+        "invariants is alone on its line; each invariant goes below it, indented: never folder: share",
+        10,
+    ),
+    (
         "a scope's command on a table no type maps",
         "scope s = alt.things.select\n",
         "scope s: no type maps to alt.things",
@@ -747,6 +761,25 @@ COMPILE = [
 # whole policies, without BASE: (what, policy, expected piece of the message, expected line)
 WHOLE = [
     ("no app role", "type user = alt.users\n", "name the app role, the Postgres role your app connects as", 1),
+    (
+        "a type line without its =: says how a type is written",
+        "app role app_user\ntype user alt.users\n",
+        "line 2: write types as: type name = schema.table [(key)] [principal] [where {sql}] [AZ101]",
+        2,
+    ),
+    (
+        "principal after where: the order a type line takes",
+        "app role app_user\ntype user = alt.users where {true} principal\n",
+        "write types as: type name = schema.table [(key)] [principal] [where {sql}]",
+        2,
+    ),
+    ("the app role in two words", "app role app user\n", "line 1: write the app role as: app role name [AZ101]", 1),
+    (
+        "an include without quotes",
+        "include roles.authz\napp role app_user\n",
+        'line 1: write includes as: include "file.authz" (the file\'s name in double quotes) [AZ101]',
+        1,
+    ),
     ("PUBLIC as the app role", "app role public\ntype user = alt.users\n", "not PUBLIC", 1),
     (
         "the app role named without app",
@@ -864,6 +897,19 @@ APPLY_OK = [
         "  can hidden = reader or parent.hidden\n"
         "  can view = (owner or (parent.view and {locked}) or (parent.view and {not locked})) and not hidden\n",
         {},
+    ),
+    (
+        "a condition with /* comments */ holding an apostrophe and braces, and a name ending in $$: read as Postgres "
+        "reads them",
+        "  can see = owner and {/* the owner's, /* nested } */ unless { */ up is null"
+        " and 1 = (select one$$ from (select 1 as one$$) s)}\nrules alt.docs\n  select : see\n",
+        {},
+        "INSERT INTO alt.users VALUES (1); INSERT INTO alt.docs (doc_no, owner_id) VALUES (1, 1), (2, 1);"
+        "UPDATE alt.docs SET up = 1 WHERE doc_no = 2; SET authz.user_id = 1;"
+        "DO $$ BEGIN IF NOT authz.can('doc', '1', 'see') OR authz.can('doc', '2', 'see') THEN"
+        " RAISE EXCEPTION 'the condition misread'; END IF; END $$;"
+        "SET ROLE app_user; DO $$ BEGIN IF (SELECT array_agg(doc_no) FROM alt.docs) IS DISTINCT FROM '{1}' THEN"
+        " RAISE EXCEPTION 'the rule misread'; END IF; END $$;",
     ),
     (
         "a column named check, in a rule on it: an editor may change the body, not check",
@@ -1118,6 +1164,26 @@ INCLUDES = [
         {"a.authz": BASE},
         "line 2: a.authz is included twice",
     ),
+    (
+        "an included file that starts indented: its lines don't go on with the block above the include",
+        BASE + 'include "more.authz"\n',
+        {"more.authz": "  can view = owner\n"},
+        "more.authz line 1: indented line outside a type, rules, invariants or test block: a block ends at an "
+        "include line, and an included file starts blocks of its own [AZ101]",
+    ),
+    (
+        "indented lines after an include: they don't go on with the included file's last block",
+        'app role app_user\ntype user = alt.users\ninclude "doc.authz"\n  can view = owner\n',
+        {"doc.authz": "type doc = alt.docs (doc_no)\n  owner : user = owner_id\n"},
+        "line 4: indented line outside a type, rules, invariants or test block: a block ends at an include line",
+    ),
+    (
+        "an include line indented",
+        BASE + '  include "more.authz"\n',
+        {"more.authz": "type more = alt.projects\n"},
+        "line 10: an include line starts at the left margin: it includes a whole file, not lines of the block above "
+        "[AZ101]",
+    ),
 ]
 
 
@@ -1164,6 +1230,36 @@ TESTS = [
     ("with scope and no scope", 'test "t"\n  user 1 with scope can share doc 1\n', "a test's lines are", 11),
     ("a test with no lines", 'test "t"\n', "test 't' has no lines", 10),
     (
+        "a test with an empty name",
+        'test ""\n  user 1 can share doc 1\n',
+        'the test\'s name is empty: say what it checks, test "owners see their folders" [AZ106]',
+        10,
+    ),
+    (
+        "words after a test's closing quote",
+        'test "owners" see\n  user 1 can share doc 1\n',
+        "the test's name ends at its closing \": nothing goes after it on the line [AZ106]",
+        10,
+    ),
+    (
+        "a test written glued to its name",
+        'test"t"\n  user 1 can share doc 1\n',
+        'write tests as: test "name" (or test alone, for checks on the data already there) [AZ101]',
+        10,
+    ),
+    (
+        "a scope named with - in a test: read whole, as where it is declared",
+        'test "t"\n  user 1 with scope read-only can share doc 1\n',
+        "no scope 'read-only' in the policy (it has: read)",
+        11,
+    ),
+    (
+        "... and with :, on a statement",
+        'test "t"\n  as user 1 with scope read, files:write sees 0 {SELECT 1}\n',
+        "no scope 'files:write' in the policy (it has: read)",
+        11,
+    ),
+    (
         "two tests with one name",
         'test "a"\n  user 1 can share doc 1\ntest "a"\n  user 1 can share doc 1\n',
         "already a test named 'a'",
@@ -1197,6 +1293,18 @@ TESTS = [
     (
         "sees N on a statement that writes",
         'test "t"\n  as user 1 sees 0 {UPDATE alt.docs SET up = NULL RETURNING doc_no}\n',
+        "`sees N` counts the rows of a SELECT, and this statement writes",
+        11,
+    ),
+    (
+        "sees N on a statement that writes in its WITH",
+        'test "t"\n  as user 1 sees 0 {WITH gone AS (DELETE FROM alt.docs RETURNING doc_no) SELECT * FROM gone}\n',
+        "`sees N` counts the rows of a SELECT, and this statement writes",
+        11,
+    ),
+    (
+        "sees N on a statement that writes after a comment",
+        'test "t"\n  as user 1 sees 0 {/* none of them */ DELETE FROM alt.docs WHERE false}\n',
         "`sees N` counts the rows of a SELECT, and this statement writes",
         11,
     ),

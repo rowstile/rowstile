@@ -390,7 +390,7 @@
         "required": true,
         "types": [
           {
-            "type": "identifier",
+            "type": "scope_name",
             "named": true
           }
         ]

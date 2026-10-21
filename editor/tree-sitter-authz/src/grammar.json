@@ -1691,7 +1691,7 @@
               "name": "scope",
               "content": {
                 "type": "SYMBOL",
-                "name": "identifier"
+                "name": "scope_name"
               }
             },
             {
@@ -1708,7 +1708,7 @@
                     "name": "scope",
                     "content": {
                       "type": "SYMBOL",
-                      "name": "identifier"
+                      "name": "scope_name"
                     }
                   }
                 ]

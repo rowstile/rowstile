@@ -167,8 +167,8 @@ module.exports = grammar({
     given: ($) => seq("given", optional(seq(field("name", $.identifier), "=")), $.sql),
     as: ($) => seq("as", $._who, choice("allowed", "refused", seq("sees", $.number)), $.sql),
     _who: ($) => choice($.anyone, seq(field("principal", $.identifier), field("who", $._value), optional($.limited))),
-    // signed in limited to scopes, as a key that has them: `with scope read, files`
-    limited: ($) => seq("with", "scope", commaSep1(field("scope", $.identifier))),
+    // signed in limited to scopes, as a key that has them: `with scope read, files:write`
+    limited: ($) => seq("with", "scope", commaSep1(field("scope", $.scope_name))),
     _value: ($) => choice($.variable, $.literal, $.value),
     variable: (_) => /\$[A-Za-z_][A-Za-z0-9_]*/,
     literal: (_) => /'([^']|'')*'/,

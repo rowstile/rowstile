@@ -159,7 +159,7 @@
     "test": {
       "patterns": [
         {
-          "match": "^(test)\\s+(\\\"[^\\\"]*\\\"|'[^']*'|.+)$",
+          "match": "^(test)\\s+(\\\".*?\\\")(?=\\s*(?:--.*)?$)",
           "captures": {
             "1": {
               "name": "keyword.declaration.section.authz"
@@ -184,7 +184,7 @@
           }
         },
         {
-          "match": "^\\s+(as)\\s+(anyone|[A-Za-z_][A-Za-z0-9_]*\\s+\\S+?)(?:\\s+(with\\s+scope)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*))?\\s+(allowed|refused|sees\\s+\\d+)\\b",
+          "match": "^\\s+(as)\\s+(anyone|[A-Za-z_][A-Za-z0-9_]*\\s+\\S+?)(?:\\s+(with\\s+scope)\\s+([A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*)*))?\\s+(allowed|refused|sees\\s+\\d+)\\b",
           "captures": {
             "1": {
               "name": "keyword.control.authz"
@@ -204,7 +204,7 @@
           }
         },
         {
-          "match": "^\\s+(anyone|[A-Za-z_][A-Za-z0-9_]*\\s+\\S+?)(?:\\s+(with\\s+scope)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*))?\\s+(can|cannot)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+(\\S+)",
+          "match": "^\\s+(anyone|[A-Za-z_][A-Za-z0-9_]*\\s+\\S+?)(?:\\s+(with\\s+scope)\\s+([A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*)*))?\\s+(can|cannot)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+(\\S+)",
           "captures": {
             "1": {
               "name": "variable.other.authz"

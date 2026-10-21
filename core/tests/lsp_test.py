@@ -243,6 +243,27 @@ with tempfile.TemporaryDirectory() as d:
         dfn,
     )
 
+    # a test line limited to a scope named with : (files:write): its permission and type still go to their lines
+    scoped = policy.replace("scope files = ", "scope files:write = ")
+    scoped += "  user 3 with scope files:write\tcannot view file 11\n"
+    c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 6}, "contentChanges": [{"text": scoped}]})
+    d4 = c.diagnostics(u)
+    ok("a test line limited to a scope named with : has no errors", d4 == [], d4)
+    dfn = c.request(
+        "textDocument/definition",
+        {
+            "textDocument": {"uri": u},
+            "position": pos(scoped, "files:write\tcannot view", len("files:write\tcannot ") + 1),
+        },
+    )
+    ok(
+        "definition of a permission in a test line limited to a scope named with : is the type's",
+        dfn and dfn["range"]["start"]["line"] == pos(scoped, "  can view  = edit or viewer\n")["line"],
+        dfn,
+    )
+    c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 7}, "contentChanges": [{"text": policy}]})
+    c.diagnostics(u)
+
     refs = c.request("textDocument/references", at("can share = owner or org.admin", 5))
     lines = sorted({r["range"]["start"]["line"] for r in refs or []})
     ok("references of folder.share include parent.share and the rules", len(lines) >= 4, refs)

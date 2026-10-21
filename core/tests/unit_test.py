@@ -894,8 +894,28 @@ class LanguageForms(unittest.TestCase):
         self.assertEqual(
             condition("  can view = owner and {note = 'a\n  -- b}'}\n"), authzlib.parse.Cond("note = 'a -- b}'")
         )
-        pol = parse_policy(base + "  can view = owner\ntest Bob's test -- the comment\n  user 1 can view doc 1\n")
+        pol = parse_policy(base + '  can view = owner\ntest "Bob\'s test" -- the comment\n  user 1 can view doc 1\n')
         self.assertEqual(pol.scenarios[0].name, "Bob's test")
+        # a quoted name runs to the quote that ends the line, and may hold it (Studio names tests after a check)
+        pol = parse_policy(
+            base + '  can view = owner\ntest "user 2 cannot view doc \'(1,"a b")\'"\n  user 1 can view doc 1\n'
+        )
+        self.assertEqual(pol.scenarios[0].name, "user 2 cannot view doc '(1,\"a b\")'")
+        # a /* comment */ hides what it holds, nested and over lines; a $ that goes on a name opens no dollar quote
+        for cond in (
+            "/* don't } */ true",
+            "/* a /* nested } */ ' { */ true",
+            "price$$ > 0",
+            "a$ = $1",
+            "$$ $$$$}$$ <> ''",
+        ):
+            self.assertEqual(condition("  can view = owner and {" + cond + "}\n"), authzlib.parse.Cond(cond))
+        self.assertEqual(
+            condition("  can view = owner and {/* it's\n  } */ true}\n"), authzlib.parse.Cond("/* it's } */ true")
+        )
+        # outside braces, /* is no comment: a policy's comments start with --
+        with self.assertRaisesRegex(PolicyError, "unexpected '/' in expression"):
+            parse_policy(base + "  can view = owner /* the owner */\n")
 
     def test_a_mistake_says_which_words_it_is_about(self) -> None:
         # (line, column, end line, end column): what an editor underlines; a line that goes on is followed there
@@ -925,22 +945,50 @@ class LanguageForms(unittest.TestCase):
             ("  can view owner\n", (5, 11, 5, 16)),
             ("type folder app.folders\n", (5, 12, 5, 15)),
             ("  r : user = app.links(doc_id => user_id)\n", (5, 30, 5, 31)),
-            ("  can view = owner\ntest t\n  as user 1 alowed {SELECT 1}\n", (7, 12, 7, 18)),
+            ('  can view = owner\ntest "t"\n  as user 1 alowed {SELECT 1}\n', (7, 12, 7, 18)),
             ("  can view = owner\ninvariants\n  never doc view\n", (7, 12, 7, 16)),
-            ("  can view = owner\ntest t\n  as user 1 sees 3x {SELECT 1}\n", (7, 17, 7, 19)),
+            ('  can view = owner\ntest "t"\n  as user 1 sees 3x {SELECT 1}\n', (7, 17, 7, 19)),
             ("  can view = owner\nscope files-:read = doc.view\n", (6, 12, 6, 13)),
         ):
             with self.subTest(tail), self.assertRaises(PolicyError) as e:
                 Compiler(parse_policy(base + tail)).compile("x")
             self.assertEqual(e.exception.span, words, str(e.exception))
-        # a scope's name may go on with - and :, written without spaces
-        pol = parse_policy(base + "  can view = owner\nscope files:read-only = doc.view\n")
+        # a scope's name may go on with - and :, written without spaces; a test names it the same way
+        pol = parse_policy(
+            base + '  can view = owner\nscope files:read-only = doc.view\ntest "t"\n'
+            "  user 1 with scope files:read-only, files:read-only can view doc 1\n"
+            "  as user 1 with scope files:read-only sees 1 {SELECT 1}\n"
+        )
         self.assertEqual(list(pol.scopes), ["files:read-only"])
+        steps = pol.scenarios[0].steps
+        self.assertEqual(
+            [st.scopes for st in steps if isinstance(st, (authzlib.parse.CheckStep, authzlib.parse.AsStep))],
+            [("files:read-only",) * 2, ("files:read-only",)],
+        )
         # a line the parser didn't read has no words to point at
         with self.assertRaises(PolicyError) as e:
             Compiler(parse_policy("app role app_user\n")).compile("x")
         self.assertIsNone(e.exception.span)
         self.assertIsNone(authzlib.parse.Loc(None, 3).span(0, 2))
+
+    def test_a_permission_line_takes_a_tab_after_can(self) -> None:
+        # as any line does: `can` is a word, followed by a space or a tab
+        base = "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+        pol = parse_policy(base + "  can\tview = owner\n")
+        self.assertEqual(list(pol.types["doc"].perms), ["view"])
+        self.assertEqual(list(pol.types["doc"].relations), ["owner"])
+
+    def test_sees_n_takes_queries_that_only_read(self) -> None:
+        # a WITH whose queries read, or one whose words say delete in a string or a comment, and a row lock: counted
+        base = "app role app_user\ntype user = app.users\ntype doc = app.docs\n  owner : user = owner_id\n"
+        for sql in (
+            "WITH x AS (SELECT 1 AS n) SELECT * FROM x",
+            "WITH x AS (SELECT 'as (delete' AS n) SELECT * FROM x",
+            "WITH x AS (/* as (delete */ SELECT 1) SELECT * FROM x",
+            "SELECT * FROM app.docs FOR UPDATE",
+        ):
+            pol = parse_policy(base + f'  can view = owner\ntest "t"\n  as user 1 sees 1 {{{sql}}}\n')
+            self.assertEqual([st.sql for st in pol.scenarios[0].steps if isinstance(st, authzlib.parse.AsStep)], [sql])
 
     def test_a_condition_ends_at_its_closing_brace(self) -> None:
         # not at the line's last }: `if {a} and {b}` was read as the one condition `a} and {b`, which only Postgres
@@ -951,8 +999,8 @@ class LanguageForms(unittest.TestCase):
             ("  r : user = app.links(doc_id -> user_id) where {a} and {b}\n", "and {b}"),
             ("  can view = owner\ntype note = app.notes where {a} and {b}\n", "and {b}"),
             ("  can view = owner\ncaveat c = {a} caveat d = {b}\n", "caveat d"),
-            ("  can view = owner\ntest t\n  given a = {SELECT 1} given b = {SELECT 2}\n", "given b"),
-            ("  can view = owner\ntest t\n  as user 1 allowed {SELECT 1}} as user 2 allowed {SELECT 2}\n", "}"),
+            ('  can view = owner\ntest "t"\n  given a = {SELECT 1} given b = {SELECT 2}\n', "given b"),
+            ('  can view = owner\ntest "t"\n  as user 1 allowed {SELECT 1}} as user 2 allowed {SELECT 2}\n', "}"),
         ):
             text = base + tail
             with self.subTest(tail), self.assertRaises(PolicyError) as e:
@@ -5916,6 +5964,9 @@ class Fmt(unittest.TestCase):
         for word in ("role", "type", "scope", "test"):  # relations may have these names
             text = self.BASE.replace("owner", word)
             self.assertEqual(format(text), text, word)
+        self.assertEqual(format(self.BASE.replace("can view", "can\tview")), self.BASE)  # (a tab after can)
+        commented = self.BASE.replace("can view = owner", "can view = owner and {/* the owner's } */ true}")
+        self.assertEqual(format(commented), commented)
         with_include = 'include "roles.authz"\n\n' + self.BASE
         self.assertEqual(format(with_include, {"roles.authz": "-- nothing here\n"}), with_include)
         with self.assertRaisesRegex(FormatError, "AZ104"):  # a mistake: its message, not an assertion
@@ -11440,7 +11491,27 @@ class ScannerSteps(unittest.TestCase):
     """The scanner's short ways (parse.py): where a line's code ends, and where its {conditions} are, read in one
     step when no quote, $ or comment can be in play, give what reading it character by character gives."""
 
-    ALPHABET = ("a", "b", " ", "{", "}", "'", '"', "$", "$x$", "-", "--", "E'", "\\", "x--y")
+    ALPHABET = (
+        "a",
+        "b",
+        " ",
+        "{",
+        "}",
+        "'",
+        '"',
+        "$",
+        "$x$",
+        "-",
+        "--",
+        "E'",
+        "\\",
+        "x--y",
+        "/*",
+        "*/",
+        "/",
+        "*",
+        "a$",
+    )
 
     @staticmethod
     def braced_by_marks(text: str) -> list[tuple[int, int]]:
@@ -13483,6 +13554,33 @@ class Editors(unittest.TestCase):
                 self.assertEqual(
                     a.read(), b.read(), f"editor/zed/languages/authz/{name}: copy it from the grammar's queries"
                 )
+
+    def test_the_textmate_grammar_reads_a_test_lines_scopes_whole(self) -> None:
+        # a scope's name may go on with - and : (files:write, read-only), in a test's `with scope` as where it is
+        # declared
+        with open(os.path.join(self.REPO, "editor", "syntaxes", "authz.tmLanguage.json"), encoding="utf-8") as fh:
+            patterns = [p["match"] for p in json.load(fh)["repository"]["test"]["patterns"] if "scope" in p["match"]]
+        for line, group in (
+            ("  as user $ann with scope read, files:write refused {DELETE FROM app.files}", 4),
+            ("  user 3 with scope read-only, files:write cannot edit file 11", 3),
+        ):
+            got = [m.group(group) for p in patterns if (m := re.match(p, line))]
+            self.assertEqual(got, [line.split("with scope ")[1].split(" refused")[0].split(" cannot")[0]], line)
+
+    def test_the_textmate_grammar_colours_a_test_name_in_double_quotes_only(self) -> None:
+        with open(os.path.join(self.REPO, "editor", "syntaxes", "authz.tmLanguage.json"), encoding="utf-8") as fh:
+            [header] = [
+                p["match"] for p in json.load(fh)["repository"]["test"]["patterns"] if p["match"].startswith("^(test)")
+            ]
+        for line, name in (
+            ('test "owners see their folders"', '"owners see their folders"'),
+            ('test "a -- b"  -- the comment', '"a -- b"'),
+            ('test "user 2 cannot share team \'(1,"a b")\'"', '"user 2 cannot share team \'(1,"a b")\'"'),
+            ("test owners see", None),
+            ("test 'owners'", None),
+        ):
+            m = re.match(header, line)
+            self.assertEqual(m.group(2) if m else None, name, line)
 
     def test_zed_builds_this_grammar(self) -> None:
         # extension.toml names the commit Zed fetches the grammar from: its grammar must be this one

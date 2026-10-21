@@ -21,14 +21,14 @@ interleavings 324
 interleavings (read committed) 36
 invariance of the fixed policies 27
 keep unchanged trees 9
-language server 105
+language server 107
 masks 32
 mcp 70
 migrate vs apply 77
 migrations 71
 moves 23
 multi scenario 93
-policy errors 201
+policy errors 220
 principals 125
 reference 17
 review 58
@@ -37,5 +37,5 @@ signed sessions 65
 small policies 3
 studio 201
 tools 38
-unit 556
+unit 560
 upgrade 71
