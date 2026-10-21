@@ -793,6 +793,7 @@ with tempfile.TemporaryDirectory() as d:
         "select" in got and "owner" not in got and "impersonate" not in got,
         got,
     )
+    ok("... and `cascade` and `from`, for a foreign key whose action is meant", {"cascade", "from"} <= set(got), got)
     # cut short and not parsing: the policy that last parsed still says what a name is, though its line is gone
     short = policy.split("type folder = app.folders")[0] + "type file = app.files\n  can view = viewer or\n"
     h = e.ask("textDocument/hover", short, "can view = viewer", len("can view = v"))
@@ -975,9 +976,12 @@ else:
         named = sorted(["app." + t for t in app] + ["public.Folder"])
         listed = [sorted(e.offered(typed, "type extra = app.", len("type extra = ")))]
         listed.append(sorted(e.offered(typed + "rules \n", "rules \n", len("rules "))))
+        meant = known.replace("rules app.files\n", "rules app.files\n  cascade from \n")
+        listed.append(sorted(e.offered(meant, "  cascade from ", len("  cascade from "))))
         ok(
-            "after `type x =` and `rules`: every table a policy can name, with its schema (none of rowstile's own)",
-            listed == [named, named],
+            "after `type x =`, `rules` and `cascade from`: every table a policy can name, with its schema (none of "
+            "rowstile's own)",
+            listed == [named, named, named],
             listed,
         )
         inside = known.replace("type folder = app.folders\n", "type folder = app.folders\n  can zz = {\n")

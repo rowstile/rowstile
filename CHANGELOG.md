@@ -11,6 +11,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Added
 
+- `cascade from schema.table` under a table's rules says that its foreign key to that table deletes or changes its
+  rows as meant (`ON DELETE CASCADE`, `SET NULL`, ...), and applying no longer warns of it. Where several keys
+  to that table act, the line names the key's columns: `cascade from app.users (owner_id)`. Applying refuses a
+  line that names no such key, or several (AZ625). The review flags a line added, and `rowstile fmt` lays it out.
 - Versions have a beta stage, `X.Y.Z-beta.N` (on PyPI `X.Y.ZbN`), after the version's alphas and before its
   release candidates. The command orders versions so when it refuses to apply, push or migrate over what a
   newer version wrote (AZ616), and `rowstile init` asks a Python app for at least the beta it runs
@@ -100,8 +104,8 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - Applying warned only of foreign keys `ON DELETE CASCADE` on a table with rules. It now also warns of `ON DELETE
   SET NULL` and `SET DEFAULT`, and `ON UPDATE SET NULL` and `SET DEFAULT`: Postgres runs these without row-level
   security too, so deleting a row (or changing its key) can change rows the user may not change. The warning says
-  which action and what it does, and asks for `RESTRICT` (where it said `ON DELETE RESTRICT`). `ON UPDATE CASCADE`
-  stays quiet: the row still names the same row.
+  which action and what it does, and asks for `RESTRICT` (where it said `ON DELETE RESTRICT`) or a `cascade from`
+  line. `ON UPDATE CASCADE` stays quiet: the row still names the same row.
 - `rowstile init` stopped with a Python traceback (`KeyError`) when the table the columns naming users point to
   wasn't among the drafted ones: in another schema (as Supabase's `auth.users`, with `--schema public`), or left
   out for its name. It now says which table, which columns point to it, and what to do: draft its schema too,

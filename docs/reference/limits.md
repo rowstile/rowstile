@@ -114,13 +114,14 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
 - **A foreign key's action skips the rules**: Postgres runs `ON DELETE CASCADE`, `ON DELETE SET NULL`
   or `SET DEFAULT`, and `ON UPDATE SET NULL` or `SET DEFAULT` without row-level security, so deleting a
   row (or changing its key) can delete or change rows of a governed table that the user may not. Apply
-  warns of each such foreign key on a table with rules: use `RESTRICT` unless that is intended. <!-- checked: tests/apply.sh "deletes a governed table's rows by cascade"; tests/apply.sh "(ON DELETE SET NULL)"; tests/apply.sh "(ON UPDATE SET DEFAULT)" -->
+  warns of each such foreign key on a table with rules: use `RESTRICT`, or say that it is meant with
+  `cascade from` under the table's rules ([the language](language.md)). <!-- checked: tests/apply.sh "deletes a governed table's rows by cascade"; tests/apply.sh "(ON DELETE SET NULL)"; tests/apply.sh "(ON UPDATE SET DEFAULT)" -->
   `ON UPDATE CASCADE` is no warning: the row still names the same row, by its new key.
 - **Link rows are trusted as they are**: a row in a link table (`team_members`,
   `folder_teams`) grants what it says even when the object it names was deleted. Give link
   tables foreign keys to their objects with `ON DELETE CASCADE` (and `ON UPDATE CASCADE` for
   keys that change), as you would anyway; on a link table with rules of its own, apply warns of the
-  cascade (above). Shares are removed with their objects by rowstile. <!-- checked: tests/scenario.sql "so it goes with its row"; tests/principals.sh "deleting a user deletes the shares to them" -->
+  cascade (above) until a `cascade from` line says it is meant. Shares are removed with their objects by rowstile. <!-- checked: tests/scenario.sql "so it goes with its row"; tests/principals.sh "deleting a user deletes the shares to them" -->
   (A type with a `where` looks its rows up, so a leftover row naming one of its objects counts
   for nothing; don't rely on it.)
 - **A permission named many times over is slow to plan.** Each permission is a view, and Postgres

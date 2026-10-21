@@ -3160,6 +3160,7 @@ rules app.folders
             "a mask changed": (base, base.replace(mask, "  mask status : view\n")),
             "a scope changed": (base, base.replace(scope, scope + ", edit")),
             "an invariant removed": (base, base.replace(f"invariants\n{never}\n", "")),
+            "a cascade marked as meant": (base, base.replace(mask, mask + "  cascade from app.orgs\n")),
         }
         for why, (b, h) in cases.items():
             self.assertNotEqual(b, h, why)
@@ -3172,6 +3173,21 @@ rules app.folders
         ):
             flags = [f["flag"] for f in self.review.review((b, {}, {}), (h, {}, {}), worlds=40)["risk"]]
             self.assertIn(said, flags)
+
+    def test_a_cascade_line_added_and_removed(self) -> None:
+        """`cascade from` makes nothing a permission or rule grants: the review shows the line, and flags it added."""
+        meant = self.SMALL.replace("  update : edit\n", "  update : edit\n  cascade from app.orgs (org_id)\n")
+        for b, h, kind, whys in (
+            (self.SMALL, meant, "added", ["a cascade marked as meant"]),
+            (meant, self.SMALL, "removed", []),
+        ):
+            r = self.review.review((b, {}, {}), (h, {}, {}), worlds=40)
+            self.assertEqual(
+                [(c["what"], c["kind"], c["entity"]) for c in r["meaning"]["changed"]],
+                [("cascade app.folders from app.orgs (org_id)", kind, "cascade")],
+            )
+            self.assertEqual([f["why"] for f in r["risk"]], whys)
+            self.assertEqual(self.review.summary(r)["Meaning"], f"1 cascade {kind}")
 
     def test_a_tightening_is_not_flagged(self) -> None:
         for old, new in (
@@ -5929,6 +5945,23 @@ class Fmt(unittest.TestCase):
         src = head + "  never folder: share\n  -- whoever may share is in its org\n    and not org.member\n"
         want = head + "  never folder: share\n  -- whoever may share is in its org\n            and not org.member\n"
         self.assertEqual(format(src), want)
+
+    def test_a_cascade_line(self) -> None:
+        # one space between its words, before the key's columns and after each comma; a rule's ':' doesn't line up
+        # with it
+        from authzlib.fmt import format
+
+        head = "app role app_user\n\ntype user = app.users\n\ntype doc = app.docs\n  owner : user = owner_id\n\n"
+        src = (
+            head
+            + "rules app.docs\n  select : owner\n   cascade  from app.users(owner_id ,editor_id)\n  cascade from app.orgs\n"
+        )
+        want = (
+            head
+            + "rules app.docs\n  select : owner\n  cascade from app.users (owner_id, editor_id)\n  cascade from app.orgs\n"
+        )
+        self.assertEqual(format(src), want)
+        self.assertEqual(format(want), want)
 
     def test_an_odd_layout(self) -> None:
         # blank lines first, a comment before a type, a condition and an expression continued on the next line

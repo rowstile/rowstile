@@ -725,6 +725,9 @@ class Core:
                 )
             for c in rule.columns:
                 self.columns.append((rule.table, c, rule.loc))
+        for cascade in self.pol.cascades:  # (the key itself is found when applying: AZ625)
+            for c in cascade.columns:
+                self.columns.append((cascade.table, c, cascade.loc))
         masked: dict[tuple[str, str], Loc] = {}
         for rule in self.rules:
             if rule.command != "mask":

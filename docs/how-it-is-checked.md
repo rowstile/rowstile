@@ -306,6 +306,7 @@ each feature against each suite.
 | Custom roles in the policy: `roles : ... from ...`, `roles` in a permission | 1 | [language](reference/language.md) | `multi_scenario.sql`, `unit_test.py` | `difftest.py`, `genpolicy.py`, hand answers |
 | Rules: `select`, `insert`, `update` (before, after, on columns), `delete` | 1 | [language](reference/language.md) | `devx.sh`, `adversarial.sh`, `unit_test.py`, `children.sh`, `integrations/fastapi` | `difftest.py`, `around.py`, `genpolicy.py`, hand answers |
 | Masked columns: `mask`, the view | 1 | [language](reference/language.md) | `masks.sh`, `multi_scenario.sql`, `apply.sh` | `difftest.py`, `genpolicy.py`, hand answers |
+| Foreign keys whose action is meant: `cascade from`, and the warning of the others | 2 | [language](reference/language.md) | `apply.sh`, `policy_errors.py`, `unit_test.py` |  |
 | Scopes: what a key or a token may do | 1 | [identity](reference/identity.md) | `identity.sh`, `sessions.sh` | `difftest.py`, `genpolicy.py` |
 | Caveats: conditions a share carries | 1 | [language](reference/language.md) | `multi_scenario.sql` | `difftest.py`, `genpolicy.py`, hand answers |
 | Invariants: `never` | 2 | [language](reference/language.md) | `governance.sh`, `principals.sh`, `unit_test.py` | `genpolicy.py`, hand answers |

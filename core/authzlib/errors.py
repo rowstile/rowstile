@@ -86,7 +86,8 @@ CODES = {
         "checked: `update owner_id : share` (who may change that column), `update after : edit` (checked on the "
         "row after the change). A plain `update` rule is checked on the row before and "
         "after the change, so `update before :` is refused. A column named `before` or `after` says when it is "
-        "checked: `update after after : edit`. Masks are `mask col1, col2 : expression`.",
+        "checked: `update after after : edit`. Masks are `mask col1, col2 : expression`. A foreign key whose "
+        "action is meant is `cascade from schema.table`, or `cascade from schema.table (column, ...)`.",
         "type folder = app.folders\n  owner : user = owner_id\n  can edit = owner\nrules app.folders\n"
         "  select owner_id : edit\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can edit = owner\nrules app.folders\n"
@@ -138,7 +139,8 @@ CODES = {
     "AZ109": Code(
         "Declared twice",
         "Each type, relation, permission, caveat, named test, view and custom roles line is declared once, and a "
-        "table has one rule of each kind (one `select`, one `update`, ...) and masks each column once. A "
+        "table has one rule of each kind (one `select`, one `update`, ...), masks each column once and says a "
+        "cascade is meant once. A "
         "relation and a permission can't share a name. Join the two into one: `can view = owner or editor`.",
         "type folder = app.folders\n  owner  : user = owner_id\n  editor : user = editor_id\n"
         "  can view = owner\n  can view = editor\n",
@@ -715,6 +717,21 @@ CODES = {
         "",
         "",
         when="command",
+    ),
+    "AZ625": Code(
+        "A cascade line that names no foreign key",
+        "`cascade from schema.table`, under `rules`, says that a foreign key of the rules' table to that table "
+        "deletes or changes its rows as meant (`ON DELETE CASCADE`, `SET NULL` or `SET DEFAULT`, `ON UPDATE SET "
+        "NULL` or `SET DEFAULT`), so applying doesn't warn of it. Applying refuses the line when it names no such "
+        "key: there is none to that table, or its action is `RESTRICT` or `NO ACTION` (nothing to say). Remove the "
+        "line, or fix the table's name. When several keys of the table to that table act, the line says which by "
+        "its columns. Here `app.files` has two keys to `app.users`, `owner_id` and `editor_id`, both `ON DELETE "
+        "SET NULL`.",
+        "type file = app.files\n  owner : user = owner_id\n  can view = owner\nrules app.files\n  select : view\n"
+        "  cascade from app.users\n",
+        "type file = app.files\n  owner : user = owner_id\n  can view = owner\nrules app.files\n  select : view\n"
+        "  cascade from app.users (owner_id)\n",
+        when="apply",
     ),
     "AZ701": Code(
         "Nobody signed in",

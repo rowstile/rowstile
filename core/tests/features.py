@@ -868,6 +868,23 @@ FEATURES: list[Feature] = [
         grammar=("Rules, masks, scopes, caveats, invariants",),
     ),
     Feature(
+        "lang.cascades",
+        2,
+        "Foreign keys whose action is meant: `cascade from`, and the warning of the others",
+        ("err.AZ625",),
+        Doc(LANG, "Rules"),
+        (
+            T("apply.sh", "re-applying warns of a foreign key that deletes a governed table's rows by cascade"),
+            T("apply.sh", "(ON DELETE SET NULL)"),
+            T("apply.sh", "a cascade marked as meant (cascade from) is no warning"),
+            T("apply.sh", "a cascade line that two keys answer to is refused"),
+            T("apply.sh", "a cascade line that names no foreign key that acts is refused (AZ625)"),
+            T("policy_errors.py", "a cascade line written twice"),
+            T("unit_test.py", "test_a_cascade_line_added_and_removed"),
+            T("unit_test.py", "test_a_cascade_line(self)"),
+        ),
+    ),
+    Feature(
         "lang.scopes",
         1,
         "Scopes: what a key or a token may do",

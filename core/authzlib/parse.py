@@ -299,6 +299,18 @@ class Rule:
     columns: tuple[str, ...] = ()  # update rules on changed columns; mask rules: the masked columns
 
 
+@dataclass(frozen=True)
+class Cascade:
+    """`cascade from app.folders` under `rules app.files`: a foreign key of the table to another that deletes or
+    changes its rows (ON DELETE CASCADE, SET NULL or SET DEFAULT, ON UPDATE SET NULL or SET DEFAULT) does so as
+    meant, so applying doesn't warn of it. columns: the key's own, when several keys of the table point there."""
+
+    table: str
+    parent: str
+    columns: tuple[str, ...]
+    loc: Loc
+
+
 # the lines of a test: each kind its own class, told apart by kind (`step.kind == "check"` narrows a Step)
 @dataclass(frozen=True)
 class GivenStep:
@@ -386,6 +398,7 @@ class Policy:
     role: str | None = None  # the app role (`app role app_user`): the Postgres role the rules apply to
     types: dict[str, Type] = field(default_factory=dict)
     rules: list[Rule] = field(default_factory=list)
+    cascades: list[Cascade] = field(default_factory=list)  # foreign keys whose actions are meant, `cascade from`
     tests: list[CheckStep] = field(default_factory=list)  # the unnamed test section: checks of the data there
     scenarios: list[Scenario] = field(default_factory=list)
     scopes: dict[str, Scope] = field(default_factory=dict)
@@ -1877,7 +1890,39 @@ def parse_relation_line(t: Type, s: str, loc: Loc, pieces: Pieces) -> None:
     t.relations.setdefault(name, Relation(name, loc)).sources.append(src)
 
 
+def parse_cascade(pol: Policy, table: str, w: Words, loc: Loc) -> None:
+    """cascade from schema.table [(column, ...)]: the rest of the line, after `cascade`."""
+
+    def read() -> tuple[str, tuple[str, ...]]:
+        w.need(w.name("from", spaced=True))
+        parent = qname(w).text
+        columns: list[str] = []
+        if w.mark("("):
+            columns.append(w.need(w.name()).text)
+            while w.mark(","):
+                columns.append(w.need(w.name()).text)
+            w.need(w.mark(")"))
+        w.end()
+        return parent, tuple(columns)
+
+    parent, columns = reading(
+        loc,
+        "write a cascade as: cascade from schema.table   (or, to say which of several keys: cascade from "
+        "schema.table (column, ...))",
+        "AZ105",
+        read,
+    )
+    if len(set(columns)) < len(columns):
+        fail(loc, f"cascade from {parent}: a column is named twice", "AZ105")
+    if any(c.table == table and c.parent == parent and set(c.columns) == set(columns) for c in pol.cascades):
+        fail(loc, f"cascade from {parent} is written twice under rules {table}", "AZ109")
+    pol.cascades.append(Cascade(table, parent, columns, loc))
+
+
 def parse_rule_line(pol: Policy, table: str, s: str, loc: Loc) -> None:
+    w = Words(s)
+    if w.name("cascade"):
+        return parse_cascade(pol, table, w, loc)
     head, sep, expr = s.partition(":")
     words = head.split(None, 1)
     if not sep or not words or words[0] not in COMMANDS + ("mask",) or not expr.strip():
