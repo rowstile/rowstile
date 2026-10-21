@@ -945,6 +945,22 @@ RETURNS TABLE (id bigint, object_type text, name text, permissions text[]) LANGU
         return catalog, share_if + "\n\n" + role_relations + "\n\n" + ROW_MARKS, api
 
     # --- output ---------------------------------------------------------
+    def app_role_sql(self) -> str:
+        """Refused: an app role that is the role applying the policy, or a member of it. The policy's owner skips
+        row-level security and may turn it off, and its sessions are believed without a signature (and applying
+        would take back its own privileges on rowstile's tables, which the policy gives the app role only)."""
+        return f"""-- The app role must not be the policy's owner, nor a member of it: the rules would not hold for it
+DO $ar$
+DECLARE v_app name;
+BEGIN
+  SELECT a.rolname INTO v_app FROM pg_catalog.pg_roles a
+  WHERE a.rolname = {lit(self.role)} AND NOT a.rolsuper AND pg_catalog.pg_has_role(a.oid, CURRENT_USER, 'MEMBER');
+  IF v_app IS NOT NULL THEN
+    RAISE EXCEPTION 'the app role % is the role that applies the policy (%), or a member of it: the rules would not hold for it [AZ624]', v_app, CURRENT_USER
+      USING HINT = 'the policy''s owner skips row-level security, may turn it off, and is believed without a signature: the app connects as a role of its own, which owns nothing of the database';
+  END IF;
+END $ar$;"""
+
     def search_path_sql(self) -> str:
         """The functions made below that evaluate the policy's own SQL keep the search path in effect now (SET
         search_path FROM CURRENT) and run as the owner: only the schemas that exist ("$user" is resolved, so a schema
@@ -1447,6 +1463,7 @@ END $w$;"""
                 "SELECT pg_catalog.set_config('lock_timeout', '10s', true) "
                 "WHERE pg_catalog.current_setting('lock_timeout') IN ('0', '0ms');",
             ),
+            ("always", "app_role", self.app_role_sql()),
             ("always", "search_path", self.search_path_sql()),
             # applying twice in one transaction: the first apply's table is still there
             ("full", "reset", "DROP TABLE IF EXISTS pg_temp.authz_old_tables;"),

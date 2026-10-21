@@ -346,7 +346,7 @@ case "$out" in *"gains|service:7|doc|permission assist|1"*) echo "ok    the prev
   *) echo "FAIL  the preview of a change for a service: $out"; fails=$((fails + 1));; esac
 out=$(python3 compile_policy.py /tmp/authz_principals_bot.authz --diff --users 1,2 | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$DB" 2>&1)
 case "$out" in *service:*) echo "FAIL  --users 1,2 shows a service: $out"; fails=$((fails + 1));; *) echo "ok    ... and --users leaves it out when it names users only";; esac
-check "lint notes a principal type nobody can make keys for" "0" \
+check "lint has no note on a principal type someone can make keys for" "0" \
   "RESET ROLE; SELECT count(*) FROM authz.lint() WHERE object = 'service' AND problem LIKE '%manage_keys%';"
 
 # the keys of a user deleted while no trigger watched (after rowstile remove, before the next apply): applying
@@ -517,6 +517,10 @@ POLICY
 python3 compile_policy.py /tmp/authz_principals_ids.authz > /tmp/authz_principals_ids.sql || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$IDB" -f /tmp/authz_principals_ids.sql >/dev/null || exit 1
 IPSQL -c "SET ROLE app_user; $AS_42 SELECT authz.share('doc', 3, 'reader', 'service', '1')" >/dev/null
+L=$(grep -n '^type service = pi.services principal$' /tmp/authz_principals_ids.authz | cut -d: -f1)
+icheck "lint notes a principal type nobody can make keys for, with its line" \
+  "info|service|signs in, but has no manage_keys permission, so nobody can make API keys for it: add can manage_keys = ... (line $L)" \
+  "RESET ROLE; SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE problem LIKE '%manage_keys%';"
 icheck "the user whose id is service:1 shares: created_by says user:service:1" "user:service:1" \
   "$AS_COLON SELECT authz.share('doc', 1, 'reader', 'user', '42'); SELECT created_by FROM authz.list_shares('doc', 1) WHERE subject_id = '42';"
 icheck "... and the user whose id is nobody: user:nobody" "user:nobody" \

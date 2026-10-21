@@ -232,8 +232,10 @@ got=$(psql -X -q -At -U "$APP" -d "$H" -v VERBOSITY=sqlstate -c "BEGIN" -c "SELE
 echo "-- what is wrong with a connection (authz.connection_check)"
 expect "the app's role: nothing to report" "0" -c "SELECT count(*) FROM authz.connection_check()"
 got=$(PSQL -c "SELECT string_agg(severity || ': ' || problem, '; ') FROM authz.connection_check()")
-case "$got" in *"error: $(PSQL -c "SELECT current_user") owns app."*" owners skip row-level security"*|"error: "*" is a superuser"*)
+case "$got" in *"error: $(PSQL -c "SELECT current_user") owns app."*" an owner skips row-level security, and may turn it off"*|"error: "*" is a superuser"*)
   ok "the owner's connection: an error";; *) bad "owner connection" "$got";; esac
+case "$got" in *"error: $(PSQL -c "SELECT current_user") is the policy's owner, or a member of it: who is signed in is believed without a signature, and it may turn row-level security off. Log in as an app role of its own"*|"error: "*" is a superuser"*)
+  ok "... that says it is the policy's owner, whose sessions are believed unsigned";; *) bad "owner connection, the policy's owner" "$got";; esac
 if [ -n "${PGSUPERUSER:-}" ]; then
   got=$(PSQL -U "$PGSUPERUSER" -c "SELECT string_agg(severity || ': ' || problem, '; ') FROM authz.connection_check()")
   case "$got" in "error: $PGSUPERUSER is a superuser"*) ok "a superuser's connection: an error";; *) bad "superuser connection" "$got";; esac
@@ -259,6 +261,14 @@ if [ -n "${PGSUPERUSER:-}" ]; then
 fi
 expect "a login in the app role: no errors" "0" -c "SELECT count(*) FROM authz.connection_check() WHERE severity = 'error'"
 expect "... nor after SET ROLE app_user" "0" -c "SET ROLE app_user" -c "SELECT count(*) FROM authz.connection_check() WHERE severity = 'error'"
+# a login in the app role that owns a governed table: FORCE ROW LEVEL SECURITY or not, it may turn it off
+PSQL -c "GRANT CREATE ON SCHEMA app TO app_user" -c "ALTER TABLE app.files OWNER TO app_user" -c "ALTER TABLE app.files FORCE ROW LEVEL SECURITY" >/dev/null
+expect "a login in the app role that owns a table with rules: an error, FORCE ROW LEVEL SECURITY or not" \
+  "$APP owns app.files (or has its owner's rights): an owner skips row-level security, and may turn it off" \
+  -c "SELECT string_agg(problem, '; ') FROM authz.connection_check() WHERE severity = 'error'"
+# (the owner's privileges go with the table, the app role's own grants with them: given back as app_schema.sql gives them)
+PSQL -c "ALTER TABLE app.files NO FORCE ROW LEVEL SECURITY" -c "ALTER TABLE app.files OWNER TO CURRENT_USER" -c "REVOKE CREATE ON SCHEMA app FROM app_user" \
+     -c "GRANT SELECT, INSERT, UPDATE, DELETE ON app.files TO app_user" >/dev/null
 PSQL -c "ALTER TABLE app.files DISABLE ROW LEVEL SECURITY"
 expect "row-level security off on a table with rules: an error" "row-level security is off on app.files: the policy's rules don't apply to it"   -c "SELECT problem FROM authz.connection_check() WHERE severity = 'error'"
 PSQL -c "ALTER TABLE app.files ENABLE ROW LEVEL SECURITY"

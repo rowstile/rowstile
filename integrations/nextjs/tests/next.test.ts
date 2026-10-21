@@ -60,7 +60,7 @@ test("checkAtStart: the server stops on a connection that skips row-level securi
   try {
     await checkAtStart(rowstile(owner));
     expect(exit).toHaveBeenCalledWith(1);
-    expect(said.mock.calls[0][0]).toMatch(/^rowstile: the app's database connection can't be used with rowstile: .*owners skip row-level security/);
+    expect(said.mock.calls[0][0]).toMatch(/^rowstile: the app's database connection can't be used with rowstile: .*an owner skips row-level security/);
     await checkAtStart({ check: async () => { throw "the database is down"; } });   // not an Error: said as it is
     expect(said.mock.calls[1][0]).toBe("rowstile: the database is down");
     exit.mockClear();

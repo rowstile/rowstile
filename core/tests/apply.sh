@@ -210,6 +210,7 @@ run apply "$T/web.authz"
   bad "the app role the policy no longer names" "$out"
 # lint looks at the app role itself and at the roles it is a member of: row-level security doesn't hold for a role
 # with BYPASSRLS, nor for one that inherits it (only a superuser may give BYPASSRLS; the role is this suite's own)
+APPLIER=$(PSQL -c "SELECT current_user")
 if [ -n "${PGSUPERUSER:-}" ]; then
   SU() { psql -X -q -U "$PGSUPERUSER" -d postgres "$@" >/dev/null 2>&1; }
   applint() { PSQL -c "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE object = 'authz_apply_web' ORDER BY problem"; }
@@ -222,9 +223,34 @@ if [ -n "${PGSUPERUSER:-}" ]; then
   [ "$(applint)" = "error|authz_apply_web|is a superuser or has BYPASSRLS: row-level security does not apply to it at all" ] &&
     ok "... and one that has BYPASSRLS itself" || bad "lint, an app role with BYPASSRLS" "$(applint)"
   SU -c "ALTER ROLE authz_apply_web NOBYPASSRLS"
+  # ...nor for one that is a member of the policy's owner: its sessions are believed unsigned, and it may turn
+  # row-level security off. (Only a superuser may give the owner's role to another, and to a role the owner didn't
+  # make: one it made is its member, since PostgreSQL 16, and the grant would go round in a circle)
+  SU -c "DROP ROLE IF EXISTS authz_apply_mine" -c "CREATE ROLE authz_apply_mine"
+  sed 's/^app role app_user$/app role authz_apply_mine/' "$T/docs.authz" > "$T/mine.authz"
+  run apply "$T/mine.authz"; [ $rc -eq 0 ] || bad "applying for authz_apply_mine" "$out"
+  SU -c "GRANT \"$APPLIER\" TO authz_apply_mine"
+  [ "$(PSQL -c "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE object = 'authz_apply_mine'")" = "error|authz_apply_mine|is the policy's owner $APPLIER, or a member of it: who is signed in is believed without a signature, and it may read rowstile's tables and turn row-level security off. The app role must be a role of its own: not the tables' owner or the policy's, nor a member of either" ] &&
+    ok "lint reports an app role that is a member of the policy's owner: an error" || bad "lint, a member of the owner" "$(PSQL -c "SELECT * FROM authz.lint()")"
+  run apply "$T/mine.authz" --force
+  [ $rc -ne 0 ] && case "$out" in *"the app role authz_apply_mine is the role that applies the policy ($APPLIER), or a member of it: the rules would not hold for it [AZ624]"*) true;; *) false;; esac &&
+    ok "... and applying refuses it, saying why" || bad "apply for a member of the owner" "$rc $out"
+  run apply "$T/web.authz"; [ $rc -eq 0 ] || bad "applying for authz_apply_web again" "$out"
+  SU -c "REVOKE \"$APPLIER\" FROM authz_apply_mine" -c "DROP ROLE authz_apply_mine"
 else
   echo "skip  lint on an app role with BYPASSRLS: only a superuser may give it (PGSUPERUSER)"
 fi
+# the policy's owner as the app role: applying refuses it, before it changes anything
+sed "s/^app role app_user\$/app role $APPLIER/" "$T/docs.authz" > "$T/self.authz"
+run apply "$T/self.authz"
+[ $rc -ne 0 ] && case "$out" in *"the app role $APPLIER is the role that applies the policy ($APPLIER), or a member of it: the rules would not hold for it [AZ624]"*) true;; *) false;; esac &&
+  [ "$(PSQL -c "SELECT count(*) FROM pg_policy p JOIN pg_roles r ON r.oid = ANY (p.polroles) WHERE r.rolname = 'authz_apply_web'")" != 0 ] &&
+  ok "applying refuses the policy's owner as the app role, and leaves the policy in force as it was" || bad "apply for the owner itself" "$rc $out"
+# a policy whose app role is gone (renamed here, so it can come back): lint says so, and nothing more
+psql -X -q -d postgres -c "ALTER ROLE authz_apply_web RENAME TO authz_apply_was" >/dev/null
+[ "$(PSQL -c "SELECT severity || '|' || object || '|' || problem FROM authz.lint()")" = "error|authz_apply_web|the app role does not exist" ] &&
+  ok "lint reports an app role that does not exist, and nothing more" || bad "lint, the app role gone" "$(PSQL -c "SELECT * FROM authz.lint()")"
+psql -X -q -d postgres -c "ALTER ROLE authz_apply_was RENAME TO authz_apply_web" >/dev/null
 run apply "$T/docs.authz"; [ $rc -eq 0 ] || bad "applying for app_user again" "$out"
 psql -X -q -d postgres -c "DROP ROLE authz_apply_web" >/dev/null || bad "dropping the role the policy named for a while"
 psql -X -q -d "$DB" -c "BEGIN" -c "LOCK app.files IN ACCESS SHARE MODE" -c "SELECT pg_sleep(20)" -c "COMMIT" >/dev/null 2>&1 &

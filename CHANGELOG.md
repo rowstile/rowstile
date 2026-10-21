@@ -113,6 +113,14 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `rowstile remove` ran over a policy a newer version of rowstile applied, though an older command doesn't
   know everything a newer one makes and would leave some of it behind. It is refused now (AZ616), as `apply`,
   `push` and `migrate` are, unless told `--downgrade`.
+- An app role that is the policy's owner, or a member of it, was not reported: its sessions are believed without
+  a signature, and it may read rowstile's tables and turn row-level security off. Applying now refuses an app
+  role that is the role applying the policy, or a member of it (AZ624), where applying as that role stopped on
+  `permission denied for table masked_columns`. `authz.lint()` and `authz.connection_check()` report one that
+  became a member since.
+- `authz.lint()` and `authz.connection_check()` said nothing of an app role that owns a governed table once the
+  table had `FORCE ROW LEVEL SECURITY`, which lint's own message advised. An owner may turn row-level security
+  off again: both now report it either way, and lint says the app role must not own the tables.
 - `rowstile init` stopped with a Python traceback (`KeyError`) when the table the columns naming users point to
   wasn't among the drafted ones: in another schema (as Supabase's `auth.users`, with `--schema public`), or left
   out for its name. It now says which table, which columns point to it, and what to do: draft its schema too,
