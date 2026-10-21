@@ -19,11 +19,20 @@ docker compose up -d --build          # the app on http://localhost:8001 (Postgr
 (cd frontend && npm ci && npm test)   # the web app's tests
 ```
 
-For development: `docker compose up -d db`, then `uv run python ../db/migrate.py` and
-`uv run uvicorn app.main:app --port 8001` in `backend/`, and `npm run dev` in `frontend/`. While changing
-the policy, `rowstile dev` (with `MS_ADMIN_URL` set; `rowstile.toml` says the rest) applies it on every save,
-runs its tests and rewrites the client. The migrations set that database up, so mark it as a development
-database once first: `rowstile push --development`.
+For development, the database in Docker and the rest on the host:
+
+```
+docker compose up -d --wait db                # the database alone, on port 25433
+export MS_ADMIN_URL=postgresql://postgres:postgres@localhost:25433/messenger MS_APP_PASSWORD=ms_app
+cd backend
+uv run python ../db/migrate.py                # the migrations, as the tables' owner
+uv run uvicorn app.main:app --port 8001       # the API, as ms_app (MS_DATABASE_URL defaults to this database)
+```
+
+and in another terminal, `cd frontend && npm ci && npm run dev`: the web app on `http://localhost:5173`, which
+sends `/api` to the backend. While changing the policy, `rowstile dev` (with `MS_ADMIN_URL` set as above;
+`rowstile.toml` says the rest) applies it on every save, runs its tests and rewrites the client. The migrations
+set that database up, so mark it as a development database once first: `rowstile push --development`.
 
 ## The rules, and where they are
 
@@ -94,8 +103,9 @@ test` runs them: 49 checks, in about a second.
 
 ## Layout
 
-- `db/migrations/` the tables (plain data integrity), `db/policy.authz` the rules, `db/migrate.py` applies
-  both and writes the generated client (`backend/app/authz_client.py`, from `rowstile client py`)
+- `db/policy.authz` the rules; `db/migrations/` the tables (plain data integrity) and the policy's migrations,
+  which `rowstile migrate` writes from it; `db/migrate.py` applies the migrations not applied yet, and with
+  `--client` rewrites the generated client (`backend/app/authz_client.py`, from `rowstile client py`)
 - `backend/` FastAPI: `main.py` the API, `db.py` transactions signed in as a person or a bot, `auth.py`
   passwords and sessions, `events.py` live updates, `tests/test_api.py`
 - `frontend/` React: the chat list, conversations, group info, settings (profile, bots, blocked people)

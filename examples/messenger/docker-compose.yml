@@ -1,5 +1,4 @@
-# The messenger and what it needs: Postgres with the rowstile command (built from this repository, like
-# the rowstile command in the app's image, so both are of the same commit) and the app.
+# The messenger and what it needs: Postgres with the rowstile command (built from this repository) and the app.
 #   docker compose up -d --build            # everything; the app on http://localhost:8001
 #   docker compose up -d db                 # just the database, for running the backend on the host
 services:

@@ -22,13 +22,14 @@ from psycopg import sql
 
 HERE = Path(__file__).resolve().parent
 CLIENT = HERE.parent / "backend" / "app" / "authz_client.py"
-# the rowstile command, from this repository (at /core in the app's image): the nearest folder above with core/cli
-ROWSTILE = next(p for p in HERE.parents if (p / "core" / "cli").is_dir()) / "core" / "cli" / "rowstile_cli.py"
 
 
 def rowstile(*args: str) -> str:
-    """Runs the rowstile command; its output, or exits with its status."""
-    p = subprocess.run([sys.executable, str(ROWSTILE), *args], capture_output=True, text=True)
+    """Runs the rowstile command; its output, or exits with its status. In this repository the command is its own
+    (the nearest folder above with core/cli), so the client is of the same commit; elsewhere, the one installed."""
+    repo = next((p for p in HERE.parents if (p / "core" / "cli").is_dir()), None)
+    command = [sys.executable, str(repo / "core" / "cli" / "rowstile_cli.py")] if repo else ["rowstile"]
+    p = subprocess.run([*command, *args], capture_output=True, text=True)
     sys.stderr.write(p.stderr)
     if p.returncode:
         sys.exit(p.returncode)

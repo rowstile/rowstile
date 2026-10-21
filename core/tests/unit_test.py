@@ -11854,6 +11854,45 @@ echo "failed: ${failed[*]}"
         self.assertNotIn('step "', outside)
 
 
+class MessengerTestScript(unittest.TestCase):
+    """examples/messenger/test.sh takes its database down however the run ends, a step that stops it early too
+    (KEEP=1 leaves it running). Run here with docker, uv and python3 that only say what was asked of them."""
+
+    UP = ("<app> docker compose down -v", "<app> docker compose up -d --build --wait db")  # a new database, started
+
+    def run_script(self, uv: int, keep: str = "") -> tuple[int, list[str], str]:
+        app = os.path.join(os.path.dirname(ROOT), "examples", "messenger")
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "log")
+            for name, body in (
+                ("docker", f'echo "$(pwd) docker $*" >> "{log}"'),
+                ("uv", f"exit {uv}"),
+                ("python3", ""),
+            ):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                    fh.write(f"#!/bin/sh\n{body}\n")
+                os.chmod(os.path.join(d, name), 0o755)
+            env = {**os.environ, "PATH": d + os.pathsep + os.environ["PATH"], "KEEP": keep}
+            p = subprocess.run(
+                ["bash", os.path.join(app, "test.sh")], env=env, capture_output=True, text=True, timeout=60
+            )
+            with open(log, encoding="utf-8") as fh:
+                calls = [line.replace(app, "<app>") for line in fh.read().splitlines()]
+        return p.returncode, calls, p.stdout + p.stderr
+
+    def test_a_run_that_stops_early_takes_the_database_down(self) -> None:
+        rc, calls, out = self.run_script(uv=1)  # migrate.py fails: the script exits right after starting the database
+        self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down"]), out)
+        self.assertNotIn("README.md says", out)  # it stopped before the checks
+
+    def test_a_run_to_its_end_takes_it_down_and_keep_leaves_it(self) -> None:
+        # uv says nothing: the policy's tests ran none, which the README's number doesn't match
+        rc, calls, out = self.run_script(uv=0)
+        self.assertIn("README.md says another number of checks than rowstile test ran ()", out)
+        self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down"]), out)
+        self.assertEqual(self.run_script(uv=1, keep="1")[:2], (1, [*self.UP]))
+
+
 class PreviousRelease(unittest.TestCase):
     """tests/previous_release.py, which tests/upgrade.sh starts from: the release before a version is the newest
     PyPI has that is older, in the order RELEASING.md gives (a version's alphas, its betas, its candidates, then
