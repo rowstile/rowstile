@@ -420,7 +420,8 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
                 )
         return "\n".join(cases)
 
-    def api_sql(self) -> str:
+    def api_sql(self, list_cases: str) -> str:
+        """authz.can, authz.list (its branches, list_cases_sql) and authz.perms."""
         perms_of = {t.name: self.public_perms(t) for t in self.types.values()}
         no_perm = (
             "RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';"
@@ -440,9 +441,7 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
             )
             return f"      CASE p_perm\n{cases}\n        ELSE {no_perm}\n      END CASE;"
 
-        self._invalid = "false"
-        can_body = self.dispatch_type(can_branch)
-        list_cases = self._list_cases
+        can_body = self.dispatch_type(can_branch, "RETURN false;")
         perms_cases = "\n".join(  # every type: one without permissions has an empty list of them
             f"    WHEN {lit(t.name)} THEN names := ARRAY[{', '.join(lit(p) for p in ps)}]::text[];"
             for t in self.types.values()
@@ -1360,7 +1359,7 @@ END $gi$;"""
             "SET LOCAL check_function_bodies = on;",
         ]
         masked_views = self.masked_view_sql()
-        self._list_cases = self.list_cases_sql()
+        list_cases = self.list_cases_sql()
         perms = [(t, p) for t in self.types.values() for p in self.public_perms(t)]
         catalog = [
             "-- per type: its table, key, how to find a row x by an id ($1, text), and a row's id (columns unqualified)\n"
@@ -1536,7 +1535,7 @@ END $w$;"""
             *[("objects", "masks", x) for x in masked_views[:-2]],
             ("changed", "mask_privileges", masked_views[-2]),
             ("objects", "masks", masked_views[-1]),
-            ("objects", "api", self.api_sql()),
+            ("objects", "api", self.api_sql(list_cases)),
             ("objects", "share_api", share_api),
             ("objects", "explain_rule", self.explain_rule_sql(list(by_table))),
             ("objects", "who_among", self.who_among_sql()),

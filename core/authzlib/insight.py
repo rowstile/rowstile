@@ -499,9 +499,8 @@ END $f$;"""
             )
             return f"      CASE p_perm\n{cases}\n        ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';\n      END CASE;"
 
-        self._invalid = "NULL"
-        who_body = self.dispatch_type(who_branch).replace("RETURN NULL;", "RETURN;")
-        why_body = self.dispatch_type(why_branch).replace("RETURN NULL;", "RETURN;")
+        who_body = self.dispatch_type(who_branch, "RETURN;")
+        why_body = self.dispatch_type(why_branch, "RETURN;")
         return f"""{self.visible_sql()}
 
 -- May the current user look at who has access to this object? (they can share it, or the caller is an
