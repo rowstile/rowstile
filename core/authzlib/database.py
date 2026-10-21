@@ -464,6 +464,14 @@ def applied(db: Db) -> tuple[str, Files]:
     return text(rows[0], "policy"), files_map(text_or_none(rows[0], "files") or "{}")
 
 
+def refuse_newer_database(db: Db) -> None:
+    """Refused when a newer version of rowstile last changed the database's policy (apply, and remove: an older
+    command doesn't know everything a newer one makes, so it would leave some of it behind)."""
+    if there(db, "authz.policy_versions"):
+        last = db.rows("SELECT version FROM authz.policy_versions ORDER BY id DESC LIMIT 1")
+        refuse_older(text_or_none(last[0], "version") if last else None, "this database's policy")
+
+
 def one_at_a_time(db: Db) -> None:
     """Two commands changing the policy at once: the second waits for the first, where they would meet in the
     middle and one stop with Postgres's "deadlock detected". The lock goes with the transaction."""
@@ -487,9 +495,8 @@ def apply(
     one_at_a_time(db)
     if only_if_changed and unchanged(db, policy, files):
         return "unchanged"
-    if not downgrade and there(db, "authz.policy_versions"):
-        last = db.rows("SELECT version FROM authz.policy_versions ORDER BY id DESC LIMIT 1")
-        refuse_older(text_or_none(last[0], "version") if last else None, "this database's policy")
+    if not downgrade:
+        refuse_newer_database(db)
     sql, comp, c = migratable(policy, files)
     run_policy(db, sql, policy, files)
     if rebuild:
@@ -1147,7 +1154,7 @@ def review_run(
 
 # Everything apply() made, in an order that works: policies and masked views, then the schemas (their
 # CASCADE takes the triggers on app tables and the event triggers along), then the table-wide SELECT
-# that masks replaced, then the functions and indexes it put into authz.
+# that masks replaced, then the functions and indexes it put into authz, and the privileges it gave there.
 REMOVE_SQL = "\n\n".join(
     [
         "DROP TABLE IF EXISTS pg_temp.authz_old_tables;",
@@ -1178,13 +1185,43 @@ BEGIN
     EXECUTE format('DROP INDEX %s', i);
   END LOOP;
 END $rf$;""",
+        # what is left in authz (the schema, its tables and the base functions) is the owner's alone again: the
+        # policy gave the app role USAGE and EXECUTE there, and applying took back anything else
+        """DO $rp$
+DECLARE g record;
+BEGIN
+  FOR g IN
+    WITH acl AS (
+      SELECT 'SCHEMA authz' AS what, a.grantee FROM pg_namespace n, aclexplode(n.nspacl) a
+       WHERE n.nspname = 'authz' AND a.grantee <> n.nspowner
+      UNION
+      SELECT CASE c.relkind WHEN 'S' THEN 'SEQUENCE ' ELSE 'TABLE ' END || c.oid::regclass, a.grantee
+        FROM pg_class c, aclexplode(c.relacl) a
+       WHERE c.relnamespace = 'authz'::regnamespace AND a.grantee <> c.relowner
+      UNION     -- (taking back a table's privileges takes back its columns' too)
+      SELECT 'TABLE ' || c.oid::regclass, a.grantee
+        FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid, aclexplode(att.attacl) a
+       WHERE c.relnamespace = 'authz'::regnamespace AND a.grantee <> c.relowner
+      UNION
+      SELECT 'ROUTINE ' || p.oid::regprocedure, a.grantee FROM pg_proc p, aclexplode(p.proacl) a
+       WHERE p.pronamespace = 'authz'::regnamespace AND a.grantee <> p.proowner)
+    SELECT format('REVOKE ALL ON %s FROM %s CASCADE', what,
+                  CASE grantee WHEN 0 THEN 'PUBLIC' ELSE grantee::regrole::text END) AS stmt FROM acl
+  LOOP
+    EXECUTE g.stmt;
+  END LOOP;
+END $rp$;""",
         LOST_RULES.replace("has no rules any more", "was governed by the removed policy"),
     ]
 )
 
 
-def remove(db: Db) -> None:
+def remove(db: Db, downgrade: bool = False) -> None:
+    """Everything the policy in force made, taken out. Refused when a newer version of rowstile applied it, unless
+    downgrade."""
     one_at_a_time(db)
     applied(db)
+    if not downgrade:
+        refuse_newer_database(db)
     run(db, REMOVE_SQL)
     record(db, "remove")

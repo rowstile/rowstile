@@ -631,8 +631,8 @@ CODES = {
         "on would put this older version's functions back, with everything fixed since undone, and a migration "
         "written now would be that step back, though it would read like an upgrade. An old global install, a CI "
         "image pinned to an older version or one machine that wasn't upgraded are the usual causes: upgrade the "
-        "command there. To go back to the older version on purpose, add `--downgrade` (`rowstile apply`, `push` "
-        "and `migrate` take it). Development builds of the same version can't be told apart, and are never refused.",
+        "command there. To go back to the older version on purpose, add `--downgrade` (`rowstile apply`, `push`, "
+        "`migrate` and `remove` take it). Development builds of the same version can't be told apart, and are never refused.",
         "",
         "",
         when="command",

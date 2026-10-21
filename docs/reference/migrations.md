@@ -57,7 +57,7 @@ enough. <!-- checked: tests/apply.sh "rowstile apply, on a database with no exte
   A new version that makes the same
   needs no migration. <!-- checked: tests/migrations.sh "exit 0 after an upgrade that makes the same"; tests/unit_test.py "test_a_new_version_alone_needs_no_migration" -->
   The other way round is refused: a command older than the version that last wrote the
-  lock file or the database stops (`AZ616`), unless told `--downgrade`. <!-- checked: tests/migrations.sh "a lock a newer version wrote is refused"; tests/apply.sh "a policy a newer version applied is refused, naming both versions" -->
+  lock file or the database stops (`AZ616`), unless told `--downgrade`. <!-- checked: tests/migrations.sh "a lock a newer version wrote is refused"; tests/apply.sh "a policy a newer version applied is refused, naming both versions"; tests/apply.sh "remove refuses a policy a newer version applied, as apply does, and removes nothing" -->
 - **Development**: `rowstile push` (and `rowstile dev`, on every save) runs the migration from the policy
   in force to this one, directly; `rowstile apply` applies the whole policy again. Neither is for
   production, which takes migrations. Push only changes a development database: the first push to a
@@ -80,5 +80,6 @@ The version (semantic versioning; 1.0 will freeze the public surface) is the com
 - **Removing**: `rowstile remove --yes` drops everything the policy made and gives back the
   table-wide SELECT that masks replaced; shares and history stay, and row-level security stays on
   (with a warning), so nothing becomes readable by accident. <!-- checked: tests/apply.sh "its schemas are gone"; tests/apply.sh "remove gives back the table-wide SELECT the mask replaced"; tests/apply.sh "shares are kept"; tests/apply.sh "remove warns that row-level security stays on" -->
+  The privileges applying gave are taken back: every privilege is as it was before the first apply. <!-- checked: tests/apply.sh "after remove, every privilege is as it was before the first apply" -->
 - **Nothing needs a superuser**: later grants on masked columns are reported by `authz.lint()`, not
   refused. <!-- checked: tests/apply.sh "the owner applies the policy, with no superuser"; tests/masks.sh "and applying again takes it back"; tests/apply.sh "and later grants aren't refused any more" -->

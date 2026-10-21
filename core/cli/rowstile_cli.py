@@ -28,8 +28,8 @@
     rowstile apply   [POLICY.authz] [--force]      apply it whole (and the files it includes), unless it is in force;
                                                    --force: in any case, and every inheritance table computed again
                                                    (after authz.verify() said false)
-                                                   (apply, push and migrate refuse a database or lock file a newer
-                                                   rowstile wrote; --downgrade goes back on purpose)
+                                                   (apply, push, migrate and remove refuse a database or lock file
+                                                   a newer rowstile wrote; --downgrade goes back on purpose)
     rowstile check   [POLICY.authz]                report its first mistake, as 'file: line N: message'
     rowstile prove   [POLICY.authz] [--worlds N]   every invariant in many small worlds (no database): the
                                                    smallest counterexample, or that none was found
@@ -990,7 +990,7 @@ ARGUMENTS: dict[str, Takes] = {
     "explain-rule": Takes(2, 3, "--db --as --row"),
     "sql": Takes(1, 1, "--db --as"),
     "reapply": Takes(0, 0, "--db --force"),
-    "remove": Takes(0, 0, "--db --yes"),
+    "remove": Takes(0, 0, "--db --yes --downgrade"),
 }
 # the options that take a value (the others are flags)
 VALUED = (
@@ -1429,7 +1429,7 @@ def main(argv: list[str]) -> None:
                     "(shares and history stay). Run it again with --yes.",
                     2,
                 )
-            transaction(conn, database.remove)
+            transaction(conn, lambda db: database.remove(db, downgrade="--downgrade" in flags))
             print("removed")
     except database.Error as e:
         fail(str(e) + (f"\nHINT: {e.hint}" if e.hint else ""))

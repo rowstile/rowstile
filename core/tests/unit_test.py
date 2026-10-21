@@ -2064,14 +2064,14 @@ class Command(unittest.TestCase):
 
     def test_each_command_takes_the_options_its_usage_names(self) -> None:
         # the options the command takes (it refuses the others) are those its usage names, and --db where it reads a
-        # database; --downgrade on push and migrate is named once, under apply
+        # database; --downgrade on push, migrate and remove is named once, under apply
         import features
         import mcp
 
         listed = features.usage()
         for cmd, takes in rowstile_cli.ARGUMENTS.items():
             options = set(takes.options.split())
-            named = listed[cmd] | ({"--downgrade"} if cmd in ("push", "migrate") else set())
+            named = listed[cmd] | ({"--downgrade"} if cmd in ("push", "migrate", "remove") else set())
             self.assertEqual(options - {"--db"}, named - {"--db"}, cmd)  # (review names --db: its access part)
         # the MCP server passes its --db to the commands that read a database, and to no other
         for tool in features.mcp_tools():
