@@ -33,6 +33,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   wrote `env:DATABASE_URL`, which the command would then use.
 - TypeScript: `Problem`, what `problemOf(e)` returns, types its fields (`table`, `command`, `why`, `code`
   besides `status`, `type`, `title`, `detail`), so a field it hasn't, such as `p.body`, is a type error.
+- rowstile's objects on `authz.shares` say share, not grant: the trigger that writes the audit trail is
+  `authz_share_audit` (it runs `authz_int.on_share()`), and the inheritance trees' triggers there run
+  `..._on_shares` functions. Applying the policy again (or the next migration) renames them.
 
 ### Removed
 

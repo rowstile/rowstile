@@ -1183,7 +1183,7 @@ END $fk$;"""
 
         typed = [t for t in self.types.values() if t.pktype != "text"]
         index_names = [ident(f"shares_obj_{t.name}_{t.pktype}") for t in typed]
-        grant_indexes = [
+        share_indexes = [
             f"""-- per-type indexes on share ids, for lookups by object
 DO $gi$
 DECLARE i record;
@@ -1376,7 +1376,7 @@ END $w$;"""
             ("objects", "keys", self.keys_sql()),
             ("objects", "principals", self.principals_sql()),
             *[("objects", "catalog", c) for c in catalog if c],
-            ("changed", "share_indexes", "\n".join(grant_indexes)),
+            ("changed", "share_indexes", "\n".join(share_indexes)),
             ("objects", "scopes", self.scope_sql()),
             ("objects", "feed", self.feed_sql()),
             (
@@ -1503,9 +1503,6 @@ BEGIN
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', t.name)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name);
-    IF to_regclass(format('authz_int.%I', r.name || '_cond_cache')) IS NOT NULL THEN
-      EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name || '_cond_cache');
-    END IF;
   END LOOP;
 END $keep$;"""
 

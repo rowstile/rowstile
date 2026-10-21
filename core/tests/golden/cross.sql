@@ -90,13 +90,10 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT t.name FROM authz_int.trees t
-           JOIN (VALUES ('folder_project__host_inside_parent__tree2', '4d60e17f6dc1085aa22fb9d3ed0defe1', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]), ('folder__parent__tree', '181698d3213f487749ca17ca87133c33', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[]), ('folder_project__backer_parent__tree', 'b66f8269810dd94b292ac1db4d42ec2a', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])) n(name, hash, oids)
+           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'cb4c0dddb8cb9ad7f47ce50fc425aab0', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]), ('folder__parent__tree', '181698d3213f487749ca17ca87133c33', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[]), ('folder_project__backer_parent__tree', 'b66f8269810dd94b292ac1db4d42ec2a', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])) n(name, hash, oids)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', t.name)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name);
-    IF to_regclass(format('authz_int.%I', r.name || '_cond_cache')) IS NOT NULL THEN
-      EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name || '_cond_cache');
-    END IF;
   END LOOP;
 END $keep$;
 
@@ -108,7 +105,7 @@ DO $g$
 DECLARE f record; kept text := '';
 BEGIN
   FOR f IN SELECT p.oid, p.ctid, p.oid::regprocedure AS name FROM pg_proc p WHERE p.pronamespace = to_regnamespace('authz')
-           AND p.proname = ANY (ARRAY['act_as', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'list_links', 'revoke_link']) LOOP
+           AND p.proname = ANY (ARRAY['act_as', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'list_links', 'revoke_link']) LOOP
     BEGIN
       EXECUTE format('DROP FUNCTION %s', f.name);
     EXCEPTION WHEN dependent_objects_still_exist THEN
@@ -599,7 +596,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder_project__host_inside_parent__tree2', '4d60e17f6dc1085aa22fb9d3ed0defe1', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
+  ('folder_project__host_inside_parent__tree2', 'cb4c0dddb8cb9ad7f47ce50fc425aab0', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
   ('folder__parent__tree', '181698d3213f487749ca17ca87133c33', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[]),
   ('folder_project__backer_parent__tree', 'b66f8269810dd94b292ac1db4d42ec2a', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]);
 
@@ -812,7 +809,7 @@ CREATE TRIGGER authz_audit_no_truncate BEFORE TRUNCATE ON authz.audit
 ALTER TABLE authz.audit ENABLE ALWAYS TRIGGER authz_audit_no_truncate;
 
 -- shares and role assignments
-CREATE FUNCTION authz_int.on_grant() RETURNS trigger
+CREATE FUNCTION authz_int.on_share() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE r authz.shares;
 BEGIN
@@ -828,8 +825,8 @@ BEGIN
   END IF;
   RETURN NULL;
 END $f$;
-CREATE TRIGGER authz_grant_audit AFTER INSERT OR UPDATE OR DELETE ON authz.shares
-  FOR EACH ROW EXECUTE FUNCTION authz_int.on_grant();
+CREATE TRIGGER authz_share_audit AFTER INSERT OR UPDATE OR DELETE ON authz.shares
+  FOR EACH ROW EXECUTE FUNCTION authz_int.on_share();
 CREATE FUNCTION authz_int.on_role() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
@@ -1037,14 +1034,6 @@ BEGIN
 END $imm$;
 
 CREATE TABLE authz_int."folder_project__host_inside_parent__tree_cond_cache" (t text, id text, v boolean[] NOT NULL, PRIMARY KEY (t, id));
--- kept from the last apply if its definition is the same: its rows are current
-DO $k$ BEGIN
-  IF to_regclass('authz_keep."folder_project__host_inside_parent__tree_cond_cache"') IS NOT NULL THEN
-    DROP TABLE authz_int."folder_project__host_inside_parent__tree_cond_cache";
-    ALTER TABLE authz_keep."folder_project__host_inside_parent__tree_cond_cache" SET SCHEMA authz_int;
-    INSERT INTO pg_temp.authz_kept VALUES ('folder_project__host_inside_parent__tree_cond_cache') ON CONFLICT DO NOTHING;
-  END IF;
-END $k$;
 
 -- recompute the given nodes and everything linked below them
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_refresh"(p_types text[], p_ids text[]) RETURNS void
@@ -1255,7 +1244,7 @@ CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_on_links1_trunc" 
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_truncate"();
 
 -- links people make with authz.share(); they can't expire, since the closure is stored
-CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_grants"() RETURNS trigger
+CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_shares"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -1288,11 +1277,11 @@ BEGIN
     NEW.object_type, NEW.relation USING ERRCODE = 'check_violation', HINT = 'rowstile help AZ605';
 END $f$;
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_shares_ins" AFTER INSERT ON authz.shares
-  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_grants"();
+  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_shares"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_shares_upd" AFTER UPDATE ON authz.shares
-  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_grants"();
+  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_shares"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_shares_del" AFTER DELETE ON authz.shares
-  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_grants"();
+  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_shares"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_shares_trunc" AFTER TRUNCATE ON authz.shares
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_truncate"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_shares_expiry" BEFORE INSERT OR UPDATE ON authz.shares FOR EACH ROW
@@ -1536,7 +1525,7 @@ CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_on_links1_trunc"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_truncate"();
 
 -- links people make with authz.share(); they can't expire, since the closure is stored
-CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_grants"() RETURNS trigger
+CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_shares"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -1569,11 +1558,11 @@ BEGIN
     NEW.object_type, NEW.relation USING ERRCODE = 'check_violation', HINT = 'rowstile help AZ605';
 END $f$;
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_shares_ins" AFTER INSERT ON authz.shares
-  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_grants"();
+  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_shares"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_shares_upd" AFTER UPDATE ON authz.shares
-  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_grants"();
+  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_shares"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_shares_del" AFTER DELETE ON authz.shares
-  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_grants"();
+  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_shares"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_shares_trunc" AFTER TRUNCATE ON authz.shares
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_truncate"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_shares_expiry" BEFORE INSERT OR UPDATE ON authz.shares FOR EACH ROW
@@ -2071,14 +2060,6 @@ BEGIN
 END $imm$;
 
 CREATE TABLE authz_int."region_site__over__tree_cond_cache" (t text, id text, v boolean[] NOT NULL, PRIMARY KEY (t, id));
--- kept from the last apply if its definition is the same: its rows are current
-DO $k$ BEGIN
-  IF to_regclass('authz_keep."region_site__over__tree_cond_cache"') IS NOT NULL THEN
-    DROP TABLE authz_int."region_site__over__tree_cond_cache";
-    ALTER TABLE authz_keep."region_site__over__tree_cond_cache" SET SCHEMA authz_int;
-    INSERT INTO pg_temp.authz_kept VALUES ('region_site__over__tree_cond_cache') ON CONFLICT DO NOTHING;
-  END IF;
-END $k$;
 
 -- recompute the given nodes and everything linked below them
 CREATE FUNCTION authz_int."region_site__over__tree_refresh"(p_types text[], p_ids text[]) RETURNS void

@@ -143,7 +143,7 @@ CREATE TRIGGER authz_audit_no_truncate BEFORE TRUNCATE ON authz.audit
 ALTER TABLE authz.audit ENABLE ALWAYS TRIGGER authz_audit_no_truncate;
 
 -- shares and role assignments
-CREATE FUNCTION authz_int.on_grant() RETURNS trigger
+CREATE FUNCTION authz_int.on_share() RETURNS trigger
 LANGUAGE plpgsql {DEF} AS $f$
 DECLARE r authz.shares;
 BEGIN
@@ -159,8 +159,8 @@ BEGIN
   END IF;
   RETURN NULL;
 END $f$;
-CREATE TRIGGER authz_grant_audit AFTER INSERT OR UPDATE OR DELETE ON authz.shares
-  FOR EACH ROW EXECUTE FUNCTION authz_int.on_grant();
+CREATE TRIGGER authz_share_audit AFTER INSERT OR UPDATE OR DELETE ON authz.shares
+  FOR EACH ROW EXECUTE FUNCTION authz_int.on_share();
 CREATE FUNCTION authz_int.on_role() RETURNS trigger
 LANGUAGE plpgsql {DEF} AS $f$
 BEGIN

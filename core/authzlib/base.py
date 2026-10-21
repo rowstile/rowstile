@@ -164,7 +164,6 @@ GENERATED_FUNCTIONS = (
     "who",
     "explain",
     "list_shares",
-    "shares",
     "create_api_key",
     "list_api_keys",
     "revoke_api_key",

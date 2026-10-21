@@ -173,7 +173,7 @@ FEATURES: list[Feature] = [
         1,
         "Shares: `shared`, `shared by`, `shared if`, their start and end; `authz.share`, `authz.unshare`, "
         "`authz.list_shares`",
-        ("api.share", "api.unshare", "api.list_shares", "api.shares", "lang.shared", "err.AZ207", "err.AZ706"),
+        ("api.share", "api.unshare", "api.list_shares", "lang.shared", "err.AZ207", "err.AZ706"),
         Doc(LANG, "Shares"),
         (
             T("multi_scenario.sql", "shared if: no sharing with inactive users"),

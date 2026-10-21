@@ -285,7 +285,7 @@ def plans(db: Db, c: Compiler, who: tuple[str, str] | None = None) -> Plans:
 
     role = app_role(db)
     if role is None:
-        raise Error("no policy with rules is applied, so there is no app role to read as", "55000")
+        raise Error("no policy with rules is applied, so there is no app role to read as")
     may_take(db, role)
     ptype, pid = who or sample_principal(db, c)
     out: list[TablePlan] = []
