@@ -127,6 +127,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   ending in `out` (`layout:`) as `out`.
 - A migrations folder that is `rowstile.toml`'s own folder was marked `./*_authz_*` in `.gitattributes`, which
   git matches to nothing: it is `/*_authz_*`.
+- Studio's grid showed a table's rows in the order of their ids as text: with numbered rows, 1, 10, 100, 101,
+  ... 11, page after page. They now come in the key's own order, 1, 2, 3.
+- Studio listed the tables, so two types over one table (a table with no rules may be read as several) showed
+  as one, with one type's permissions under the other's name. It now lists the types, each with its table.
+- In a Studio that can write (`--write`, `rowstile dev`), why and the access diff ran in a transaction that was
+  committed, though each change they try is undone. They are now rolled back whole: nothing they try stays.
 - `rowstile why` and Studio listed a change both as the best way to grant a permission and as "could not be
   tried", when the change grants it but counting what else it gives failed (a condition that fails on another
   row, say). It is now listed only as not tried, with the database's reason: what else it gives was never counted.

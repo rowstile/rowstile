@@ -7,9 +7,10 @@
 /** @typedef {{name: string, src: string, line: string}} Perm */
 /** @typedef {{name: string, line: string, subjects: string[], shared: boolean}} Relation */
 /** @typedef {{name: string, table: string, principal: boolean, perms: Perm[], relations: Relation[], line: string}} Type */
-/** @typedef {{database: string, as: string, writable: boolean, types: Type[], tables: string[], principals: string[], policy_file: string | null}} Overview */
-/** @typedef {{id: string | null, visible: boolean, values: Record<string, unknown>, masked: string[], perms: string[]}} Row */
-/** @typedef {{table: string, type: string | null, columns: string[], rows: Row[], offset: number, more: boolean, total: number, visible_total: number}} Rows */
+/** @typedef {{database: string, as: string, writable: boolean, types: Type[], principals: string[], policy_file: string | null}} Overview */
+/** @typedef {{id: string, visible: boolean, values: Record<string, unknown>, masked: string[], perms: string[]}} Row */
+// a page of a type's rows, in its key's order: offset where it starts, limit the most a page holds
+/** @typedef {{table: string, type: string, columns: string[], rows: Row[], offset: number, limit: number, more: boolean, total: number, visible_total: number}} Rows */
 // fewer_people (who loses it on this object) is also takes' first entry, the one with n 0: the page says it from there
 /** @typedef {{text: string, grants: boolean, more_objects: number, more_people: number, also: string[], elsewhere: {type: string, perm: string, n: number}[], fewer_people: number, takes: {type: string, perm: string, n: number, people: number}[], lines: string[], kinds: string[]}} Way */
 /** @typedef {{text: string, error: string, lines: string[], kinds: string[]}} Untried */
@@ -40,8 +41,8 @@ const token = new URLSearchParams(location.search).get("token") || sessionStorag
 sessionStorage.setItem("rowstile-token", token);
 if (location.search) history.replaceState(null, "", location.pathname);
 
-/** @type {{overview: Overview | null, as: string, table: string | null, offset: number, rows: Rows | null, selected: Row | null}} */
-const state = { overview: null, as: localStorage.getItem("rowstile-as") || "", table: null, offset: 0, rows: null, selected: null };
+/** @type {{overview: Overview | null, as: string, type: string | null, offset: number, rows: Rows | null, selected: Row | null}} */
+const state = { overview: null, as: localStorage.getItem("rowstile-as") || "", type: null, offset: 0, rows: null, selected: null };
 
 // --- small helpers --------------------------------------------------------------------------------------
 /** @typedef {string | number | boolean | null | undefined | ((ev: Event) => unknown)} AttrValue */
@@ -102,7 +103,7 @@ async function api(path, params = {}, body) {
   return out;
 }
 const who = () => state.as || "anyone";
-/** The policy's types, permissions and tables, as last asked (start() asks before anything else runs). */
+/** The policy's types (each with its table) and permissions, as last asked (start() asks before anything else runs). */
 function overview() {
   if (!state.overview) throw new Error("Studio hasn't loaded yet");
   return state.overview;
@@ -122,7 +123,7 @@ $("as-form").addEventListener("submit", (e) => {
   e.preventDefault();
   state.as = input("as").value.trim();
   localStorage.setItem("rowstile-as", state.as);
-  if (state.table) loadRows(state.table, state.offset);
+  if (state.type) loadRows(state.type, state.offset);
 });
 
 async function start() {
@@ -138,8 +139,8 @@ async function start() {
   }
   input("as").value = state.as;
 }
-/** The policy's types, permissions and tables, asked again: under rowstile dev the policy changes while the page is
- *  open. Asked when a tab or a table is opened; if it can't be had, the page goes on with the one it has. */
+/** The policy's types and permissions, asked again: under rowstile dev the policy changes while the page is
+ *  open. Asked when a tab or a type's rows are opened; if it can't be had, the page goes on with the one it has. */
 async function refresh() {
   try {
     show(await api("overview"));
@@ -154,48 +155,48 @@ function show(o) {
   $("mode").textContent = o.writable ? "can write" : "read-only";
   $("mode").classList.toggle("write", o.writable);
   $("as-list").replaceChildren(el("option", { value: "anyone" }), ...o.principals.map((p) => el("option", { value: `${p}:` })));
-  const types = new Map(o.types.map((t) => [t.table, t.name]));
-  $("table-list").replaceChildren(...o.tables.map((t) => el("button", { "data-table": t, class: t === state.table ? "on" : "", onclick: () => loadRows(t, 0) },
-    t, types.get(t) ? el("small", {}, `type ${types.get(t)}`) : null)));
+  // a button a type: two types over one table (a table with no rules) are two buttons, each its own permissions
+  $("table-list").replaceChildren(...o.types.map((t) => el("button", { "data-type": t.name, class: t.name === state.type ? "on" : "", onclick: () => loadRows(t.name, 0) },
+    t.table, el("small", {}, `type ${t.name}`))));
   const shared = input("shares-type").value;
   $("shares-type").replaceChildren(...o.types.filter((t) => t.relations.some((r) => r.shared))
     .map((t) => el("option", { selected: t.name === shared }, t.name)));
 }
 
-// --- tables, as someone -----------------------------------------------------------------------------------
-/** @param {string} table @param {number} offset */
-async function loadRows(table, offset) {
-  state.table = table;
+// --- a type's rows, as someone ------------------------------------------------------------------------------
+/** @param {string} type @param {number} offset */
+async function loadRows(type, offset) {
+  state.type = type;
   state.offset = offset;
-  document.querySelectorAll("#table-list button").forEach((b) => b.classList.toggle("on", /** @type {HTMLElement} */ (b).dataset.table === table));
+  document.querySelectorAll("#table-list button").forEach((b) => b.classList.toggle("on", /** @type {HTMLElement} */ (b).dataset.type === type));
   $("grid-head").textContent = "Loading…";
   let data;
   try {
     // the policy asked again beside the rows: the panel offers the permissions it has now
-    [data] = await Promise.all([api("rows", { table, as: who(), offset }), refresh()]);
+    [data] = await Promise.all([api("rows", { type, as: who(), offset }), refresh()]);
   } catch (e) {
     $("grid-head").textContent = message(e);
     $("grid").replaceChildren();
     return;
   }
   state.rows = data;
-  $("grid-head").replaceChildren(el("strong", {}, who()), ` sees ${data.visible_total} of ${data.total} rows of ${table}`,
-    data.type ? ` (type ${data.type}; click a row for why)` : "");
+  $("grid-head").replaceChildren(el("strong", {}, who()), ` sees ${data.visible_total} of ${data.total} rows of ${data.table}`,
+    ` (type ${data.type}; click a row for why)`);
   const cols = data.columns.slice(0, 8);
-  const head = el("tr", {}, el("th", {}, ""), ...cols.map((c) => el("th", {}, c)), data.type ? el("th", {}, "permissions") : null);
+  const head = el("tr", {}, el("th", {}, ""), ...cols.map((c) => el("th", {}, c)), el("th", {}, "permissions"));
   const body = data.rows.map((r) => el("tr", {
     class: `row${r.visible ? "" : " gone"}`, "data-id": r.id,
-    onclick: data.type ? (/** @type {Event} */ ev) => select(r, /** @type {HTMLElement} */ (ev.currentTarget)) : null,
+    onclick: (/** @type {Event} */ ev) => select(r, /** @type {HTMLElement} */ (ev.currentTarget)),
   },
     el("td", { title: r.visible ? "visible" : "hidden from them" }, r.visible ? "" : "hidden"),
     // a masked column they may not read: what they get is empty, and the grid says why
     ...cols.map((c) => (r.masked.includes(c) ? el("td", { class: "masked", title: "masked: they get it empty" }, "masked")
       : el("td", { title: fmt(r.values[c]) }, fmt(r.values[c])))),
-    data.type ? el("td", {}, r.perms.length ? r.perms.map((p) => el("span", { class: "chip" }, p)) : el("span", { class: "muted" }, "none")) : null));
+    el("td", {}, r.perms.length ? r.perms.map((p) => el("span", { class: "chip" }, p)) : el("span", { class: "muted" }, "none"))));
   $("grid").replaceChildren(el("table", {}, el("thead", {}, head), el("tbody", {}, body)));
   $("pager").replaceChildren(
-    offset > 0 ? el("button", { onclick: () => loadRows(table, Math.max(0, offset - 50)) }, "Previous") : "",
-    " ", data.more ? el("button", { onclick: () => loadRows(table, offset + 50) }, "Next") : "");
+    offset > 0 ? el("button", { onclick: () => loadRows(type, Math.max(0, offset - data.limit)) }, "Previous") : "",
+    " ", data.more ? el("button", { onclick: () => loadRows(type, offset + data.limit) }, "Next") : "");
   $("panel").hidden = true;
 }
 /** @param {unknown} v */
@@ -205,8 +206,9 @@ const fmt = (v) => (v === null || v === undefined ? "" : typeof v === "object" ?
 function select(row, tr) {
   document.querySelectorAll("tr.row").forEach((x) => x.classList.toggle("sel", x === tr));
   state.selected = row;
+  // the type as the policy has it now (rowstile dev applies each save): one taken out since shows nothing
   const type = overview().types.find((t) => t.name === state.rows?.type);
-  if (!type || row.id === null) return;
+  if (!type) return;
   const id = row.id;
   const panel = $("panel");
   panel.hidden = false;
