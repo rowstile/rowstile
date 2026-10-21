@@ -10,8 +10,10 @@ from __future__ import annotations
 import re
 from functools import cache
 
-WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
-DOLLAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
+# What a name may start with: Postgres takes any character past ASCII as a letter (archivé, année, ñ)
+LETTER = r"A-Za-z_\x80-\U0010ffff"
+WORD = re.compile(rf"[{LETTER}][{LETTER}0-9$]*")
+DOLLAR = re.compile(rf"\$([{LETTER}][{LETTER}0-9]*)?\$")
 
 
 def split(sql: str) -> list[tuple[str, str]]:
@@ -24,6 +26,7 @@ def split(sql: str) -> list[tuple[str, str]]:
     atomic, depth = False, 0  # inside a BEGIN ATOMIC body, and how many BEGIN/CASE are open in it
     first: str | None = None  # the statement's first word, and the last one (to spot CREATE ... BEGIN ATOMIC)
     prev: str | None = None
+    word = (-1, -1)  # where the last word starts and ends
     while i < n:
         c = sql[i]
         if c in " \t\r\n":
@@ -52,7 +55,8 @@ def split(sql: str) -> list[tuple[str, str]]:
         if start is None:
             start = i
         if c == "'":
-            escapes = i > 0 and sql[i - 1] in "eE" and (i < 2 or not (sql[i - 2].isalnum() or sql[i - 2] == "_"))
+            # E'...': the word just before is E alone (not a name that ends in E, →E'...', nor a number's, 1E'...')
+            escapes = word == (i - 1, i) and sql[i - 1] in "eE" and not (i > 1 and sql[i - 2].isdigit())
             j = i + 1
             while j < n:
                 if escapes and sql[j] == "\\":
@@ -87,9 +91,9 @@ def split(sql: str) -> list[tuple[str, str]]:
                 continue
             i += 1
             continue
-        if c.isalpha() or c == "_":
+        if c.isalpha() or c == "_" or c >= "\x80":
             m = WORD.match(sql, i)
-            assert m is not None  # a letter or _ starts a word
+            assert m is not None  # a letter, _ or any character past ASCII starts a word
             w = m.group(0).upper()
             if first is None:
                 first = w
@@ -101,6 +105,7 @@ def split(sql: str) -> list[tuple[str, str]]:
             elif w == "ATOMIC" and prev == "BEGIN" and first == "CREATE":
                 atomic, depth = True, 1
             prev = w
+            word = m.span()
             i = m.end()
             continue
         if c == ";" and not (atomic and depth > 0):
@@ -116,7 +121,7 @@ def split(sql: str) -> list[tuple[str, str]]:
 
 
 # --- what a statement makes --------------------------------------------------------------------------
-NAME = r'(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)'
+NAME = rf'(?:"(?:[^"]|"")*"|[{LETTER}][{LETTER}0-9$]*)'
 QNAME = rf"{NAME}(?:\s*\.\s*{NAME})?"
 
 

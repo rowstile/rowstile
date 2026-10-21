@@ -1,7 +1,8 @@
 #!/bin/bash
 # capitals.sh: the command over tables named as Prisma names them (tests/prisma_schema.sql, tests/prisma.authz):
 # capital letters in the tables' names and the columns', in public. Wherever a table is looked up by its name,
-# the name has to be quoted, or Postgres reads "Folder" as folder and finds nothing.
+# the name has to be quoted, or Postgres reads "Folder" as folder and finds nothing. Last, names past ASCII that
+# Postgres reads unquoted (archivé).
 #   PGHOST=... PGUSER=postgres tests/capitals.sh
 set -u
 cd "$(dirname "$0")/.."
@@ -474,6 +475,32 @@ case "$out" in *"more.authz: applied")
     *) bad "apply after a partition of Log was made" "$out";; esac;;
   *) bad "apply, the policy with invariants and bots" "$out";; esac
 [ -z "${KEEP:-}" ] && dropdb "$DB4"
+
+echo "-- names past ASCII, unquoted (Postgres reads é as a letter): in a condition and in a named test's SQL"
+DB5=authz_capitals_accents
+A() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB5" "$@"; }
+dropdb --if-exists "$DB5" 2>/dev/null; createdb "$DB5" || exit 1
+A >/dev/null <<'SQL'
+CREATE TABLE person (id bigint PRIMARY KEY);
+CREATE TABLE doc (id bigint PRIMARY KEY, owner_id bigint REFERENCES person, archivé boolean NOT NULL DEFAULT false,
+                  année int);
+GRANT SELECT, UPDATE ON person, doc TO app_user;
+INSERT INTO person VALUES (1);
+INSERT INTO doc VALUES (1, 1, false, 2025), (2, 1, true, 2024);
+SQL
+mkdir -p "$T/accents/db"
+printf 'policy   = "db/policy.authz"\ndatabase = "dbname=%s"\ntests    = ["db/tests.authz"]\n[migrations]\ntool = "sql"\ndir  = "db/migrations"\n' "$DB5" > "$T/accents/rowstile.toml"
+printf 'app role app_user\n\ntype user = public.person\n\ntype doc = public.doc\n  owner : user = owner_id\n\n  can view = owner and {not archivé}\n\nrules public.doc\n  select : view\n  update : owner and {année > 2000}\n' > "$T/accents/db/policy.authz"
+printf 'test "an archived doc is hidden"\n  as user 1 sees 1 {SELECT année FROM doc WHERE année > 2000}\n' > "$T/accents/db/tests.authz"
+in_accents() { out=$(cd "$T/accents" && python3 "$ROOT/cli/rowstile_cli.py" "$@" 2>&1); rc=$?; }
+in_accents apply
+[ $rc -eq 0 ] && is applied && ok "apply: a condition on archivé" || bad "apply, a condition on archivé" "$out"
+in_accents apply; is unchanged && ok "... again: unchanged" || bad "apply again, archivé" "$out"
+[ "$(A -c "SET authz.user_id = 1" -c "SET ROLE app_user" -c "SELECT string_agg(id::text, ' ') FROM doc")" = 1 ] &&
+  ok "the archived doc is hidden from its owner" || bad "the rows as user 1" "$(A -c "SET authz.user_id = 1" -c "SET ROLE app_user" -c "SELECT * FROM doc" 2>&1)"
+in_accents test; case "$out" in *"policy tests passed (1 checks)") ok "test: a named test whose SQL reads année";; *) bad "test, année" "$out";; esac
+in_accents migrate; case "$out" in *"the whole policy"*"wrote db/migrations/"*) ok "migrate: the policy, read back statement by statement";; *) bad "migrate, archivé" "$out";; esac
+[ -z "${KEEP:-}" ] && dropdb "$DB5"
 
 rm -rf "$T"
 [ -z "${KEEP:-}" ] && dropdb "$DB" && dropdb "$DB2"

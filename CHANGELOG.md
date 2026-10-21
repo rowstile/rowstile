@@ -250,6 +250,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   gives it. A share link has no Unshare button: it removed nothing and said "Done". The page says
   `authz.revoke_link` turns a link off, and Studio refuses to unshare a link.
 - Studio's graph uses the playground's Mermaid (12.0.0), from jsDelivr, checked against its hash.
+- `rowstile apply`, `migrate`, `push` and `test` take a condition or a test's SQL that names a column with a
+  letter past ASCII, unquoted, as Postgres does (`{not archivé}`, `SELECT année FROM ...`). They stopped with a
+  Python traceback (`AssertionError`), and nothing was applied.
 
 ## 0.1.0 (alpha)
 

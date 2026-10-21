@@ -2195,6 +2195,27 @@ class Statements(unittest.TestCase):
         self.assertEqual(split("'a\\'; SELECT 1 e"), [("", "'a\\'"), ("", "SELECT 1 e")])
         self.assertEqual(split("$a$ x; $a$; SELECT 1"), [("", "$a$ x; $a$"), ("", "SELECT 1")])
 
+    def test_names_past_ascii(self) -> None:
+        # Postgres reads any character past ASCII as a letter, unquoted (archivé, ², →): psql splits these so
+        from authzlib.statements import made, split
+
+        self.assertEqual(split("SELECT café FROM t; SELECT 1"), [("", "SELECT café FROM t"), ("", "SELECT 1")])
+        self.assertEqual(split("SELECT année, ñ, ²x FROM t"), [("", "SELECT année, ñ, ²x FROM t")])
+        # a name that ends in E is no E'' string, nor is a number's: its backslash escapes nothing
+        self.assertEqual(split("SELECT x →E'a\\'; SELECT 2"), [("", "SELECT x →E'a\\'"), ("", "SELECT 2")])
+        self.assertEqual(split("SELECT 1E'a\\'; SELECT 2"), [("", "SELECT 1E'a\\'"), ("", "SELECT 2")])
+        self.assertEqual(split("SELECT x E'a\\'; b'; SELECT 3"), [("", "SELECT x E'a\\'; b'"), ("", "SELECT 3")])
+        # a dollar quote's tag, and a $ inside a name
+        self.assertEqual(
+            split("DO $é$ BEGIN NULL; END $é$; SELECT 4"), [("", "DO $é$ BEGIN NULL; END $é$"), ("", "SELECT 4")]
+        )
+        self.assertEqual(split("SELECT 1 AS é$a$; SELECT 5"), [("", "SELECT 1 AS é$a$"), ("", "SELECT 5")])
+        self.assertEqual(
+            made("CREATE TRIGGER déclencheur AFTER INSERT ON app.dossiés FOR EACH ROW EXECUTE FUNCTION f()"),
+            ("trigger", "déclencheur ON app.dossiés"),
+        )
+        self.assertEqual(made("CREATE FUNCTION app.fé(a int) RETURNS int AS $$ $$"), ("function", "app.fé(a int)"))
+
     def test_what_each_makes(self) -> None:
         from authzlib.statements import made
 
