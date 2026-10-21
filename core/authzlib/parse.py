@@ -618,7 +618,10 @@ def written(node: Expr, top: bool = True) -> str:
 
 class ExprParser:
     """or  <  and  <  not  <  ( ) / name / rel.perm / {sql}. Where `and` and `or` meet, parentheses say which
-    goes first: `a or b and c` is refused, `a or (b and c)` is not. base: where text starts in the line's."""
+    goes first: `a or b and c` is refused, `a or (b and c)` is not. Parentheses that change nothing are read as
+    if they weren't there: `a or (b or c)` is `a or b or c`, and `(a and b) and c` is `a and b and c`, so what
+    reads a permission's top `or` and its `and`s (inheritance, denies) sees the same items either way.
+    base: where text starts in the line's."""
 
     def __init__(self, text: str, loc: Loc, base: int = 0) -> None:
         self.toks, self.i, self.loc = tokenize(text, loc, base), 0, loc
@@ -653,7 +656,7 @@ class ExprParser:
             mixed = mixed or self.joined
         if len(items) == 1:
             return items[0]
-        node = Or(items)
+        node = Or([x for item in items for x in (item.items if isinstance(item, Or) else [item])])
         if mixed:
             fail(
                 self.loc,
@@ -669,7 +672,9 @@ class ExprParser:
             self.take()
             items.append(self.unary())
         self.joined = len(items) > 1
-        return items[0] if len(items) == 1 else And(items)
+        if len(items) == 1:
+            return items[0]
+        return And([x for item in items for x in (item.items if isinstance(item, And) else [item])])
 
     def unary(self) -> Expr:
         kind = self.peek()

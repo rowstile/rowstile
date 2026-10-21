@@ -7457,6 +7457,35 @@ class HandAnswers(unittest.TestCase):
             },
         )
 
+    @worked_from("permission-operators", "deny-below")
+    def test_parentheses_that_change_nothing_and_a_denys_conditions_in_another_order(self) -> None:
+        # folders 1 > 2 > 3 > 4 and 1 > 5; ann owns 1, bo owns 4; folder 3 is secret, 4 is open but not deep.
+        # see: an `or` inside an `or`. view: an `and` inside an `and`; hidden inherits on the same conditions,
+        # written in another order. edit: its inheritance and a condition, in parentheses, then the deny; blocked
+        # inherits on fewer conditions (open alone), so it reaches 4, which bo owns, and takes edit away there
+        self.check(
+            "type user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
+            "  owner : user = owner_id\n  can see = owner or (parent.see or owner)\n"
+            "  can hidden = {secret} or (parent.hidden and {deep} and {open})\n"
+            "  can view = (owner or (parent.view and ({open} and {deep}))) and not hidden\n"
+            "  can blocked = {secret} or (parent.blocked and {open})\n"
+            "  can edit = ((owner or (parent.edit and {deep} and {open})) and {open}) and not blocked\n",
+            "user: ann, bo\nfolder: 1, 2, 3, 4, 5\nfolder 2 parent folder 1\nfolder 3 parent folder 2\n"
+            "folder 4 parent folder 3\nfolder 5 parent folder 1\nfolder 1 owner user ann\nfolder 4 owner user bo\n"
+            "{secret} on folder 3\n{open} on folder 1, 2, 3, 4, 5\n{deep} on folder 2, 3, 5\n",
+            {
+                "ann": {
+                    "folder.see": "1, 2, 3, 4, 5",
+                    "folder.hidden": "3",
+                    "folder.view": "1, 2, 5",
+                    "folder.blocked": "3, 4",
+                    "folder.edit": "1, 2, 5",
+                },
+                "bo": {"folder.see": "4", "folder.view": "4", "folder.edit": ""},
+                "": {"folder.see": "", "folder.view": "", "folder.edit": ""},
+            },
+        )
+
     @worked_from("inheritance")
     def test_folders_and_projects_inside_each_other(self) -> None:
         self.check(

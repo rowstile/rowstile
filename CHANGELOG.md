@@ -144,6 +144,14 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   functions (a message, an error code), is the next migration. Before, `rowstile migrate --check` said there was
   nothing to do, and a database set up by its migrations kept the old grants or messages. A tree's functions are
   replaced in place: the tree keeps its rows.
+- Parentheses that change nothing no longer get an inheritance refused. `can view = owner or (parent.view or
+  owner)`, or `((owner or parent.view) and {inherit}) and not hidden`, was refused as depending on itself (AZ302)
+  or as narrowed with more than conditions (AZ304). They are now read as if the parentheses weren't there.
+- A deny may inherit on the same conditions as the permission it takes away, written in another order, or on
+  fewer of them: `can hidden = ... or (parent.hidden and {inherit})` beside `(parent.view and {not archived} and
+  {inherit})` is taken. Where its conditions differ otherwise (`{INHERIT}` for `{inherit}`), the message shows
+  both: it said the deny must inherit through `parent`, which it did.
+
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed

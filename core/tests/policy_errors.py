@@ -407,6 +407,21 @@ COMPILE = [
         11,
     ),
     (
+        "a deny that inherits through the same relation on another condition",
+        "  can denied = owner or (parent.denied and {INHERIT})\n"
+        "  can view = (reader or (parent.view and {inherit})) and not denied\n",
+        "so denied must inherit through parent wherever view does, and its conditions there are not view's: "
+        "view inherits with {inherit}, denied with {INHERIT}. Write them as view's are written, or leave them out",
+        11,
+    ),
+    (
+        "a deny that inherits through the same relation on more conditions",
+        "  can denied = owner or (parent.denied and {inherit} and {up > 0})\n"
+        "  can view = (reader or (parent.view and {inherit})) and not denied\n",
+        "view inherits with {inherit}, denied with {inherit} and {up > 0}",
+        11,
+    ),
+    (
         "a deny by a relation",
         "  blocked : user = owner_id\n  can view = (reader or parent.view) and not blocked\n",
         "blocked is a relation: make a permission that inherits",
@@ -842,6 +857,12 @@ APPLY_OK = [
     (
         "a deny and a condition both joining the inheritance with and",
         "  can hidden = reader or parent.hidden\n  can view = (owner or parent.view) and {not locked} and not hidden\n",
+        {},
+    ),
+    (
+        "a deny without conditions, where the permission inherits through one relation in two ways, each on its own",
+        "  can hidden = reader or parent.hidden\n"
+        "  can view = (owner or (parent.view and {locked}) or (parent.view and {not locked})) and not hidden\n",
         {},
     ),
     (
