@@ -1,6 +1,6 @@
 # rowstile for Python
 
-`pip install --pre rowstile` (`--pre` while only an alpha is published) installs the `rowstile` command (`rowstile init`, `dev`, `migrate`, `review`; also
+`pip install --pre rowstile` (`--pre`: the newest pre-release) installs the `rowstile` command (`rowstile init`, `dev`, `migrate`, `review`; also
 `python -m rowstile`) and the SDK for Python apps. Extras bring the integrations' dependencies:
 `rowstile[fastapi]`, `[sqlalchemy]`, `[psycopg]`, `[asyncpg]`. Python 3.11 or newer.
 

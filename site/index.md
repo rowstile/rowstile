@@ -65,7 +65,7 @@ change.
 
 It doesn't fit when what decides access is in several databases or outside Postgres, when a browser reads the
 tables through Supabase's Data API, or when one tree takes many moves and links a second. And if you need an
-outside audit or a vendor behind it today: rowstile is a 0.x preview with one maintainer, and
+outside audit or a vendor behind it today: rowstile is in beta, with one maintainer, and
 [nobody outside has audited it](../docs/reference/guarantees.md#security).
 
 Next: [Getting started](../docs/getting-started.md) goes from a schema to a policy, its tests, the edit loop and

@@ -1,8 +1,7 @@
 # File manager
 
-The first adopter of rowstile: a product for storing and sharing files. FastAPI backend, React
-frontend, Postgres governed by rowstile, and RustFS (S3-compatible) for the file contents.
-The name is a placeholder.
+A file-sharing app built on rowstile: folders, files, and sharing them with people, groups and links. FastAPI
+backend, React frontend, Postgres governed by rowstile, and RustFS (S3-compatible) for the file contents.
 
 It uses rowstile like any outside adopter:
 its own policy (`db/policy.authz`), applied from its own migrations, and only the public surface

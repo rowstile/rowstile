@@ -10,7 +10,7 @@ the runtime's calls (`can`, `perms`, `list`, `share`, ...). The driver packages 
 functions the policy made, and translates their answers.
 
 ```sh
-# @next while only an alpha is published: a plain install gets an older one
+# @next: the newest pre-release (until 0.1.0 a plain install gets it too)
 npm install @rowstile/client@next
 npm install --save-dev rowstile@next      # the command: rowstile dev, rowstile migrate
 ```
@@ -59,4 +59,4 @@ The other packages:
 | [`@rowstile/react`](https://www.npmjs.com/package/@rowstile/react) | React: hooks and a share dialog |
 | [`@rowstile/vitest`](https://www.npmjs.com/package/@rowstile/vitest) | Vitest: matchers, a database per worker |
 
-rowstile is a 0.x preview: names may still change before 1.0. Apache-2.0.
+rowstile is in beta: names may still change before 1.0. Apache-2.0.

@@ -78,5 +78,5 @@ To filter a query to the objects the user holds a permission on, join `authz.lis
 Policy changes ship as migrations for your tool: `tool = "goose"`, `"dbmate"`, `"flyway"` or `"sql"`
 (numbered or timestamped files) in `rowstile.toml`. `rowstile migrate` writes the next one, and your tool
 applies it with the others; `rowstile migrate --check` in CI fails if a policy change has none. The command
-installs with `pip install --pre rowstile`, `npm install rowstile@next` (while only an alpha is published), or
+installs with `pip install --pre rowstile`, `npm install rowstile@next` (the newest pre-release), or
 as a Docker image: [Installing](../installing.md).

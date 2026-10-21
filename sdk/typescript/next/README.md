@@ -12,7 +12,7 @@ refusal back as a value. `authzRoutes()` is what the React kit calls, and `check
 whose connection skips row-level security. It goes with a driver package, most often `@rowstile/prisma`.
 
 ```sh
-# @next on each while only an alpha is published: a plain install gets an older one
+# @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
 npm install @rowstile/next@next @rowstile/prisma@next
 npm install --save-dev rowstile@next      # the command: rowstile dev, rowstile migrate
 ```
@@ -83,4 +83,4 @@ The other packages:
 | [`@rowstile/react`](https://www.npmjs.com/package/@rowstile/react) | React: hooks and a share dialog |
 | [`@rowstile/vitest`](https://www.npmjs.com/package/@rowstile/vitest) | Vitest: matchers, a database per worker |
 
-rowstile is a 0.x preview: names may still change before 1.0. Apache-2.0.
+rowstile is in beta: names may still change before 1.0. Apache-2.0.

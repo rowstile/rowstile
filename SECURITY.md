@@ -35,4 +35,6 @@ doesn't describe is still worth a report.
 
 ## Supported versions
 
-Before 1.0, fixes go into the latest release only.
+Before 1.0, fixes go into the newest version only. While no final release exists, a fix comes out as the next
+pre-release (`0.1.0-beta.2` after `0.1.0-beta.1`); after that, as a patch of the newest minor release
+(`0.1.1`). Older versions, older pre-releases among them, get none: move to the one with the fix.

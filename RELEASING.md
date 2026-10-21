@@ -20,9 +20,9 @@ to the release's commit and sets the same version in `extensions.toml`.
 |---|---|---|
 | `0.2.0` | a minor release. Before 1.0 it may change the language, the `authz.*` functions, the SDKs and the file formats, and the changelog's **Upgrading** says what to do | `latest` |
 | `0.2.1` | a patch: fixes only, nothing to do when upgrading | `latest` |
-| `0.2.0-alpha.1` | an alpha of 0.2.0 (PyPI: `0.2.0a1`): for trying it early. It may have known gaps, and anything in it may still change before 0.2.0 | npm's `next`, a GitHub pre-release; never `latest` |
-| `0.2.0-beta.1` | a beta of 0.2.0 (PyPI: `0.2.0b1`): the version complete enough to use before it is released. It may still change where using it shows a need | npm's `next`, a GitHub pre-release; never `latest` |
-| `0.2.0-rc.1` | a release candidate for 0.2.0 (PyPI: `0.2.0rc1`): meant to become 0.2.0 as it is | npm's `next`, a GitHub pre-release; never `latest` |
+| `0.2.0-alpha.1` | an alpha of 0.2.0 (PyPI: `0.2.0a1`): for trying it early. It may have known gaps, and anything in it may still change before 0.2.0 | npm's `next` (and `latest` while no final release exists), a GitHub pre-release; never the image's `latest` |
+| `0.2.0-beta.1` | a beta of 0.2.0 (PyPI: `0.2.0b1`): the version complete enough to use before it is released. It may still change where using it shows a need | npm's `next` (and `latest` while no final release exists), a GitHub pre-release; never the image's `latest` |
+| `0.2.0-rc.1` | a release candidate for 0.2.0 (PyPI: `0.2.0rc1`): meant to become 0.2.0 as it is | npm's `next` (and `latest` while no final release exists), a GitHub pre-release; never the image's `latest` |
 | `0.2.0-dev` | `main` between releases, on its way to 0.2.0 (PyPI: `0.2.0.dev0`) | never: the release workflow refuses it |
 
 An alpha, a beta or a candidate is installed by asking for it: `npm i rowstile@next`, `pip install --pre
@@ -157,5 +157,6 @@ went public: [SECURITY.md](SECURITY.md) sends reports there.
 ## Security releases
 
 A vulnerability reported privately ([SECURITY.md](SECURITY.md)) is fixed in the GitHub security advisory's
-private fork, released as a patch, and the advisory is published with the release, crediting the reporter if
+private fork, released as a patch (while no final release exists, as the next pre-release: there is no
+release to patch), and the advisory is published with the release, crediting the reporter if
 they want it.

@@ -3,14 +3,14 @@
 <!-- tested: every line of code below is in integrations/fastapi (tests/unit_test.py checks it) -->
 
 Any Python app (Flask, Litestar, a worker, a script) on SQLAlchemy's sync engine, SQLModel, psycopg or
-asyncpg. (Django's ORM comes later.) Each transaction signs in as whoever the code acts for, the database filters what it
+asyncpg. (The SDK has no adapter for Django's ORM.) Each transaction signs in as whoever the code acts for, the database filters what it
 reads and refuses what it may not write, and the SDK raises `Refused` (403) or `NotFound` (404). FastAPI:
 [FastAPI](fastapi.md).
 
 These come from the conformance suite (`integrations/fastapi/tests/test_conformance.py`).
 
 ```sh
-pip install --pre "rowstile[sqlalchemy,psycopg]"   # or [asyncpg]; the command comes with it (--pre: an alpha)
+pip install --pre "rowstile[sqlalchemy,psycopg]"   # or [asyncpg]; the command comes with it (--pre: the newest pre-release)
 ```
 
 ## Who a transaction acts for

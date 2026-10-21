@@ -16,7 +16,7 @@ documents are shared with people and teams, with the policy, its tests and the r
 ## Install
 
 ```sh
-# while only an alpha is published: `>=0.1.0a0` lets uv take rowstile's, and no other package's pre-release
+# while only pre-releases are published: `>=0.1.0a0` lets uv take rowstile's, and no other package's pre-release
 uv add "rowstile[fastapi,sqlalchemy,asyncpg,psycopg]>=0.1.0a0"
 uv run rowstile init        # a first policy from your tables, a test file, rowstile.toml
 ```

@@ -143,8 +143,8 @@ database and runs nothing beside it.
 - **One type takes many structural writes a second.** In rowstile, moves and links in a tree wait for each
   other ([Speed and limits](../reference/limits.md)).
 - **You need a company behind it.** "AuthZed offers both self-hosted and managed SpiceDB services and
-  support" ([its products](https://authzed.com/docs/authzed/guides/picking-a-product)). rowstile is a 0.x
-  preview with one maintainer, and nobody outside has audited it
+  support" ([its products](https://authzed.com/docs/authzed/guides/picking-a-product)). rowstile is in
+  beta, with one maintainer, and nobody outside has audited it
   ([how it is checked](../how-it-is-checked.md)).
 
 ## Try the same model

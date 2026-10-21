@@ -9388,9 +9388,10 @@ class DocPages(unittest.TestCase):
         )
 
     def test_the_install_lines_ask_for_what_is_published(self) -> None:
-        # While the version is an alpha or a candidate, a plain install gets an older release (before 0.1.0: an
-        # older alpha from npm, whose `latest` doesn't move with pre-releases; pip takes the newest pre-release
-        # then): each install line asks for the pre-release, and the image names its version.
+        # While the version is an alpha, a beta or a candidate, a plain install gets the last final release once
+        # one exists (before 0.1.0 a plain install gets the newest pre-release too: pip takes one when no final
+        # one exists, and the release moves npm's `latest` to `next`; the image never has a pre-release as
+        # `latest`): each install line asks for the pre-release, and the image names its version.
         # On a final release, none still does. A build of main (-dev) is left to the release pull request.
         version = authzlib.__version__
         if version.endswith("-dev"):
@@ -9426,8 +9427,8 @@ class DocPages(unittest.TestCase):
                 pip = re.search(r"\bpip install\b.*\browstile\b", line)
                 uv = re.search(r"\buv add\b.*\browstile\b", line)
                 image = re.search(r"ghcr\.io/rowstile/rowstile(:[\w.-]+)?", line)
-                # the SDK's packages, each with its own tag: npm's `latest` doesn't move with pre-releases, so a
-                # plain `npm install @rowstile/prisma` gets the first alpha ever published
+                # the SDK's packages, each with its own tag: once a final release exists, a plain
+                # `npm install @rowstile/prisma` gets it, not the pre-release
                 sdk = (
                     re.findall(r"@rowstile/[\w-]+(@\w+)?", line.split("#")[0])
                     if re.search(r"\bnpm (?:i|install)\b", line)
@@ -9461,6 +9462,30 @@ class DocPages(unittest.TestCase):
             [],
             f"install lines that don't get {version} ({'ask for the pre-release' if pre else 'plain installs, no pre-release'})",
         )
+
+    def test_a_release_is_never_called_a_preview(self) -> None:
+        # core/CONTEXT.md: a preview is a feature outside the public surface, never a release; and what is published
+        # so far is said without naming one stage (an alpha), which the next release would make untrue
+        pages = [
+            "README.md",
+            "llms.txt",
+            "context7.json",
+            "site/index.md",
+            "sdk/python/README.md",
+            "playground/README.md",
+            *glob.glob("examples/*/README.md", root_dir=self.REPO),
+            *glob.glob("sdk/typescript/*/README.md", root_dir=self.REPO),
+            *glob.glob("docs/**/*.md", root_dir=self.REPO, recursive=True),
+        ]
+        pages = [p.replace(os.sep, "/") for p in pages]
+        pages = [p for p in pages if not p.startswith("docs/blog/")]  # a post is of its day
+        stale = re.compile(
+            r"\b0\.x preview\b|\browstile is (?:a )?preview\b|\bonly an alpha\b|\ban alpha so far\b", re.I
+        )
+        wrong = [
+            f"{rel}: {m.group(0)}" for rel in sorted(pages) for m in stale.finditer(" ".join(self.page(rel).split()))
+        ]
+        self.assertEqual(wrong, [], "a release's stage in a preview's words, or what is published named as an alpha")
 
     def test_each_call_a_page_writes_is_one_the_functions_take(self) -> None:
         sql = Compiler(parse_policy(read("example/docs.authz"))).compile("x")

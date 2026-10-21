@@ -15,7 +15,7 @@ const DIST = fileURLToPath(new URL("./dist/", import.meta.url));
 /** @typedef {any} Answer  the browser's answer (the DevTools protocol's JSON): its shape is what the checks check */
 const BROWSERS = /** @type {string[]} */ ([process.argv[2], process.env.CHROME, "/usr/bin/google-chrome", "/usr/bin/chromium",
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].filter(Boolean));
-// the design's limit for a cached load, on the dev laptop; CI's smaller machines pass their own (ci.yml)
+// the design's limit for a cached load; CI's slower runners pass their own (ci.yml)
 const LIMIT_MS = Number(process.env.PLAYGROUND_LIMIT_MS || 5000);
 let fails = 0;
 /** @param {string} what @param {unknown} ok @param {unknown} [got] */

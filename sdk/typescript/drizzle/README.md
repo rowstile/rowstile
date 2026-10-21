@@ -9,7 +9,7 @@ transactions a sign-in. `inIds(column, type, perm)` filters a query to the objec
 on. `expect` turns an UPDATE or DELETE that changed nothing into `NotFound` or `Refused` with the reason.
 
 ```sh
-# @next on each while only an alpha is published: a plain install gets an older one
+# @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
 npm install @rowstile/client@next @rowstile/drizzle@next
 npm install --save-dev rowstile@next      # the command: rowstile dev, rowstile migrate
 ```
@@ -55,4 +55,4 @@ The other packages:
 | [`@rowstile/react`](https://www.npmjs.com/package/@rowstile/react) | React: hooks and a share dialog |
 | [`@rowstile/vitest`](https://www.npmjs.com/package/@rowstile/vitest) | Vitest: matchers, a database per worker |
 
-rowstile is a 0.x preview: names may still change before 1.0. Apache-2.0.
+rowstile is in beta: names may still change before 1.0. Apache-2.0.

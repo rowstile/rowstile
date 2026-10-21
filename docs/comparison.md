@@ -106,5 +106,5 @@ What changes in a handler, and what it costs: [rowstile and checks in app code](
 - A browser reads your tables through Supabase's Data API.
 - One tree takes many moves and links a second: they wait for each other
   ([Speed and limits](reference/limits.md)).
-- You need an outside audit or a vendor behind it today. rowstile is a 0.x preview with one maintainer, and
+- You need an outside audit or a vendor behind it today. rowstile is in beta, with one maintainer, and
   nobody outside has audited it. [How rowstile is checked](how-it-is-checked.md) says what does check it.
