@@ -32,6 +32,7 @@ COMMAND = os.path.join(HERE, "rowstile_cli.py")
 VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]  # newest first
 TIMEOUT = 600  # seconds, for one call
 GRACE = 10  # seconds a stopped command has to end on its own (a push rolls back) before it is killed
+NO_DATABASE = ("check", "prove")  # the commands of its tools that read no database
 ERROR = re.compile(r"^(?P<file>.+?): (?:(?P<inc>\S+) )?line (?P<line>\d+): (?P<message>.*)$", re.S)
 
 INSTRUCTIONS = """rowstile compiles an access policy (.authz) into row-level security for Postgres.
@@ -247,7 +248,8 @@ def stop(p: subprocess.Popen[bytes]) -> None:
 
 def run(dsn: str | None, args: list[str], running: Running | None = None) -> tuple[int, str]:
     """The command, once: (exit code, what it printed). Cancelled: stopped, and Cancelled raised."""
-    argv = [sys.executable, COMMAND, *(["--db", dsn] if dsn else []), *args]
+    # the server's --db goes to the commands that read a database: the others refuse it
+    argv = [sys.executable, COMMAND, *(["--db", dsn] if dsn and args[0] not in NO_DATABASE else []), *args]
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     running = running or Running()
     p = running.start(argv, env)

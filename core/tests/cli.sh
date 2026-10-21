@@ -9,7 +9,14 @@ fails=0
 PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
-CLI() { python3 cli/rowstile_cli.py --db "dbname=$DB" "$@"; }
+# (with --db, except where the command reads no database and refuses it: check, prove, fmt, migrate, and a graph
+# or a client of a file)
+CLI() {
+  case "$1:$#" in
+    check:* | prove:* | fmt:* | migrate:* | graph:2 | client:3) python3 cli/rowstile_cli.py "$@" ;;
+    *) python3 cli/rowstile_cli.py --db "dbname=$DB" "$@" ;;
+  esac
+}
 # runs the command; sets $out (stdout and stderr) and $rc
 run() { out=$(CLI "$@" 2>&1); rc=$?; }
 
@@ -97,6 +104,26 @@ dropdb --if-exists "${DB}_other" 2>/dev/null
 run check "$T/bad.authz" "$T/main.authz"; [ $rc -eq 2 ] && case "$out" in *"takes 1 argument"*) true;; *) false;; esac && ok "an argument too many is refused, exit 2" || bad "extra argument" "$rc $out"
 run diff "$T/main.authz" --limit 5 --limit 7; [ $rc -eq 2 ] && case "$out" in *"--limit is given twice"*) true;; *) false;; esac && ok "an option given twice is refused" || bad "option twice" "$rc $out"
 run lint --colour; [ $rc -eq 2 ] && case "$out" in *"--colour is not an option"*) true;; *) false;; esac && ok "an unknown option is refused" || bad "unknown option" "$rc $out"
+# another command's option is refused too, where it would do nothing and say nothing (a CI step that doesn't do what
+# its author meant), and so is a single dash: not taken for the policy file
+run check --force "$T/main.authz"
+[ "$rc $out" = "2 rowstile check: --force is not an option it has (rowstile check --help)" ] && ok "an option of another command is refused, exit 2" || bad "check --force" "$rc $out"
+run apply --check "$T/main.authz"; [ "$rc $out" = "2 rowstile apply: --check is not an option it has (rowstile apply --help)" ] && ok "... apply --check too" || bad "apply --check" "$rc $out"
+run migrate --development "$T/main.authz"; [ "$rc $out" = "2 rowstile migrate: --development is not an option it has (rowstile migrate --help)" ] && ok "... and migrate --development" || bad "migrate --development" "$rc $out"
+run check -x "$T/main.authz"; [ "$rc $out" = "2 rowstile check: -x is not an option it has (rowstile check --help)" ] && ok "... and -x is named as an option, not blamed on the policy file" || bad "check -x" "$rc $out"
+run lint -d "dbname=$DB"; [ "$rc $out" = "2 rowstile lint: -d is not an option it has (rowstile lint --help)" ] && ok "... and -d: --db only" || bad "lint -d" "$rc $out"
+run perms --as user:5 folder -1; [ "$rc $out" = "0 (none)" ] && ok "a negative number is an argument, not an option" || bad "an id of -1" "$rc $out"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$DB" check "$T/main.authz" 2>&1); rc=$?
+[ "$rc $out" = "2 rowstile check: --db is not an option it has: it reads no database" ] && ok "--db on a command that reads no database is refused, saying so" || bad "check --db" "$rc $out"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$DB" graph "$T/main.authz" 2>&1); rc=$?
+[ "$rc $out" = "2 rowstile graph: --db or a policy file, not both: a file is read without a database" ] && ok "... and on a graph of a file" || bad "graph --db FILE" "$rc $out"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$DB" client py "$T/main.authz" 2>&1); rc=$?
+[ "$rc $out" = "2 rowstile client: --db or a policy file, not both: a file is read without a database" ] && ok "... and a client of a file" || bad "client --db FILE" "$rc $out"
+# a script's --db "$DATABASE_URL" with the variable unset: said, not a traceback
+out=$(python3 cli/rowstile_cli.py --db "" lint 2>&1); rc=$?
+[ "$rc $out" = "2 --db is empty" ] && ok "an empty --db is refused, exit 2" || bad "--db ''" "$rc $out"
+run perms --as "" folder 1; [ "$rc $out" = "2 --as is empty" ] && ok "... and an empty --as" || bad "--as ''" "$rc $out"
+run perms --as nobody folder 1; [ "$rc $out" = "2 --as nobody: write it as user:42, bot:7 or anyone" ] && ok "--as nobody is refused: anyone" || bad "--as nobody" "$rc $out"
 out=$(python3 cli/rowstile_cli.py --db "dbname=authz_no_such_db" bogus 2>&1); rc=$?
 case "$out" in "unknown command 'bogus'"*) [ $rc -eq 2 ] && ok "an unknown command is said before connecting" || bad "unknown command exit" "$rc";; *) bad "unknown command" "${out:0:120}";; esac
 run sql --as user:5 "SELECT count(*) FROM app.files -- --limit 3"; [ $rc -eq 0 ] && ok "sql's statement is left as it is" || bad "sql" "$rc $out"
@@ -167,9 +194,18 @@ CLI apply "$T/main.authz" >/dev/null 2>&1
 echo "-- the command's own pages: help, version, an error code's page"
 out=$(python3 cli/rowstile_cli.py --version 2>&1); rc=$?
 case "$out" in "rowstile "*" (Python "*")") [ $rc -eq 0 ] && ok "--version says the version, and the Python it runs on" || bad "--version exit" "$rc";; *) bad "--version" "$out";; esac
-[ "$(python3 cli/rowstile_cli.py version 2>&1)" = "$out" ] && ok "... and so does version" || bad "version"
-out=$(python3 cli/rowstile_cli.py --help 2>&1); rc=$?
-[ $rc -eq 0 ] && case "$out" in "rowstile: compile policies"*"rowstile dev"*) true;; *) false;; esac && ok "--help prints the usage, exit 0" || bad "--help" "$rc ${out:0:80}"
+out=$(python3 cli/rowstile_cli.py version 2>&1); rc=$?
+[ $rc -eq 2 ] && case "$out" in "unknown command 'version'"*) true;; *) false;; esac && ok "... and version is no command: --version" || bad "version" "$rc ${out:0:80}"
+for asked in --help -h help; do
+  out=$(python3 cli/rowstile_cli.py $asked 2>"$T/help.err"); rc=$?
+  [ $rc -eq 0 ] && [ ! -s "$T/help.err" ] && case "$out" in "rowstile: compile policies"*"rowstile dev"*) true;; *) false;; esac &&
+    ok "$asked prints the usage on stdout (for a pager or grep), exit 0" || bad "$asked" "$rc ${out:0:80} $(cat "$T/help.err")"
+done
+out=$(python3 cli/rowstile_cli.py check --help 2>"$T/help.err"); rc=$?
+[ $rc -eq 0 ] && [ ! -s "$T/help.err" ] && case "$out" in "rowstile check   [POLICY.authz]"*) true;; *) false;; esac &&
+  ok "... and a command's --help, its own lines" || bad "check --help" "$rc ${out:0:80}"
+out=$(python3 cli/rowstile_cli.py bogus --help 2>&1); rc=$?
+[ $rc -eq 2 ] && case "$out" in "unknown command 'bogus'"*) true;; *) false;; esac && ok "--help of a command that doesn't exist: unknown command, exit 2" || bad "bogus --help" "$rc ${out:0:80}"
 out=$(python3 cli/rowstile_cli.py 2>&1); rc=$?
 [ $rc -eq 2 ] && case "$out" in "rowstile: compile policies"*) true;; *) false;; esac && ok "no command at all: the usage, exit 2" || bad "no command" "$rc ${out:0:80}"
 out=$(python3 cli/rowstile_cli.py help az201 2>&1); rc=$?
@@ -178,6 +214,10 @@ out=$(python3 cli/rowstile_cli.py help errors 2>&1); rc=$?
 [ $rc -eq 0 ] && case "$out" in *AZ201*AZ709*) true;; *) false;; esac && ok "help errors lists the codes" || bad "help errors" "$rc ${out:0:80}"
 out=$(python3 cli/rowstile_cli.py help AZ999 2>&1); rc=$?
 [ $rc -eq 2 ] && [ "$out" = "rowstile help: no code AZ999 (rowstile help errors lists them)" ] && ok "help with a code that doesn't exist says so, exit 2" || bad "help AZ999" "$rc $out"
+out=$(python3 cli/rowstile_cli.py help codes 2>&1); rc=$?
+[ "$rc $out" = "2 rowstile help: no code codes (rowstile help errors lists them)" ] && ok "... help codes too: help errors" || bad "help codes" "$rc $out"
+out=$(python3 cli/rowstile_cli.py help AZ201 AZ202 2>&1); rc=$?
+[ "$rc $out" = "2 rowstile help takes one code: rowstile help AZ201 (rowstile help errors lists them)" ] && ok "... and help with two codes" || bad "help with two codes" "$rc $out"
 # with its output closed (started by a service, or by pythonw on Windows, where there is no console): it answers by
 # its exit code all the same, and its errors still go to stderr
 python3 cli/rowstile_cli.py check example/docs.authz >&-; rc=$?
@@ -193,8 +233,12 @@ want=$(PSQL -c "SELECT array_to_string(authz.perms('folder', 1), E'\n')")  # nob
 run perms --as anyone folder 1; [ $rc -eq 0 ] && [ "$out" = "${want:-(none)}" ] && ok "--as anyone asks as nobody signed in" || bad "--as anyone" "$rc $out (wanted $want)"
 run perms --as 5 folder 1; [ $rc -eq 2 ] && [ "$out" = "--as 5: write it as user:42, bot:7 or anyone" ] && ok "--as without a type is refused, with how to write it" || bad "--as 5" "$rc $out"
 run can folder 1 view; [ $rc -eq 2 ] && [ "$out" = "rowstile can: as whom? --as user:42 (or bot:7, or anyone)" ] && ok "a question without --as asks as whom" || bad "can without --as" "$rc $out"
-run can --as user:5 folder 1; [ $rc -eq 2 ] && [ "$out" = "rowstile can: see rowstile --help" ] && ok "a question an argument short is refused" || bad "can short" "$rc $out"
-run explain-rule --as user:3 app.files; [ $rc -eq 2 ] && case "$out" in "rowstile explain-rule --as WHO TABLE"*) true;; *) false;; esac && ok "explain-rule without a command shows how to ask" || bad "explain-rule short" "$rc $out"
+run can --as user:5 folder 1
+[ "$rc $out" = "2 rowstile can takes 3 arguments, not 2:
+rowstile can     --as WHO TYPE ID PERM         yes or no" ] && ok "a question an argument short is refused, with its usage" || bad "can short" "$rc $out"
+run explain-rule --as user:3 app.files
+[ $rc -eq 2 ] && case "$out" in "rowstile explain-rule takes 2 or 3 arguments, not 1:
+rowstile explain-rule --as WHO TABLE"*) true;; *) false;; esac && ok "explain-rule without a command shows how to ask" || bad "explain-rule short" "$rc $out"
 run why folder 1 view; [ $rc -eq 2 ] && [ "$out" = "rowstile why --as user:42 TYPE ID PERM" ] && ok "why without --as shows how to ask" || bad "why without --as" "$rc $out"
 run why --as anyone folder 1 view
 [ $rc -eq 2 ] && [ "$out" = "rowstile why: as whom? someone signed in (user:42, bot:7): nobody can be given access" ] &&
@@ -220,7 +264,12 @@ run apply "$T/deep.authz"
 
 echo "-- rowstile.toml"
 P="$T/proj"; mkdir -p "$P/db/tests" "$P/out"; cp example/docs.authz "$P/db/policy.authz"
-TOML() { ( cd "$P" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" "$@" ); }
+TOML() {
+  case "$1" in
+    check | prove | fmt | migrate) ( cd "$P" && python3 "$OLDPWD/cli/rowstile_cli.py" "$@" ) ;;
+    *) ( cd "$P" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" "$@" ) ;;
+  esac
+}
 toml() { printf "$1" > "$P/rowstile.toml"; out=$(TOML "${@:2}" 2>&1); rc=$?; }
 toml 'policy = "db/policy.authz"\ntests = "db/tests/*.authz"\n' test
 [ $rc -eq 2 ] && case "$out" in *"tests is a list of patterns"*) true;; *) false;; esac && ok "tests = \"...\" (not a list) is refused: it ran no named test" || bad "tests as text" "$rc ${out:0:200}"
@@ -287,21 +336,33 @@ envrun sql --as user:1 "SELECT 1"
   ok "a .env that is a link out of the folder isn't read, and the failure says so" || bad "a link out" "$rc $out"
 
 echo "-- the clients rowstile.toml names"
-toml 'policy = "db/policy.authz"\n[clients]\npy = "out/c.py"\n' client
+# (from its policy file: without --db, which would name the database's policy)
+OWN() { ( cd "$P" && python3 "$OLDPWD/cli/rowstile_cli.py" "$@" ); }
+printf 'policy = "db/policy.authz"\n[clients]\npy = "out/c.py"\n' > "$P/rowstile.toml"
+out=$(OWN client 2>&1); rc=$?
 [ $rc -eq 0 ] && [ -s "$P/out/c.py" ] && ok "rowstile client writes them" || bad "client files" "$rc $out"
 size=$(wc -c < "$P/out/c.py")
 printf 'type zz = app.nothere\n  can nosuch = bogus\n' >> "$P/db/policy.authz"
-out=$(TOML client 2>&1); rc=$?
+out=$(OWN client 2>&1); rc=$?
 [ $rc -eq 1 ] && [ "$(wc -c < "$P/out/c.py")" = "$size" ] && ok "a mistake in the policy leaves the client file as it was" || bad "client file emptied" "$rc $(wc -c < "$P/out/c.py") $out"
 cp example/docs.authz "$P/db/policy.authz"
 cp "$P/out/c.py" "$T/c.before"
 sed -i 's/^  can share = owner or folder.share$/&\n  can comment = view/' "$P/db/policy.authz"
-out=$(TOML client 2>&1); rc=$?
+out=$(OWN client 2>&1); rc=$?
 [ $rc -eq 0 ] && ! cmp -s "$P/out/c.py" "$T/c.before" && grep -q "comment" "$P/out/c.py" && ok "... and a change to the policy writes it again" || bad "client file not written again" "$rc $out"
 cp example/docs.authz "$P/db/policy.authz"
 toml '[clients]\npy = "out/db.py"\n' client
 [ $rc -eq 0 ] && [ "$out" = "wrote out/db.py" ] && [ "$(cat "$P/out/db.py")" = "$(CLI client py)" ] &&
   ok "... and without a policy in rowstile.toml, the policy in force's" || bad "clients from the database" "$rc $out"
+# with --db, graph and client read the database's policy, not the file rowstile.toml names (here one that differs)
+sed -i 's/^  can share = owner or folder.share$/&\n  can comment = view/' "$P/db/policy.authz"
+toml 'policy = "db/policy.authz"\n' graph
+[ $rc -eq 0 ] && [ "$out" = "$(CLI graph)" ] && ! grep -q comment <<< "$out" &&
+  ok "graph --db reads the policy in force, though rowstile.toml names a file" || bad "graph --db with rowstile.toml" "$rc ${out:0:200}"
+toml 'policy = "db/policy.authz"\n[clients]\npy = "out/db.py"\n' client
+[ $rc -eq 0 ] && [ "$out" = "wrote out/db.py" ] && [ "$(cat "$P/out/db.py")" = "$(CLI client py)" ] &&
+  ok "... and client --db" || bad "client --db with rowstile.toml" "$rc $out"
+cp example/docs.authz "$P/db/policy.authz"
 
 echo "-- snapshot: where it writes"
 toml 'policy = "db/policy.authz"\n' snapshot
@@ -358,7 +419,7 @@ run dev --once --no-studio "$T/main.authz"
 case "$out" in *$'\n  ok   compiles\n  !    '"${starting#WARNING: }"$'\n'*) ok "... and by dev";; *) bad "dev, a warning as the session starts" "$out";; esac
 PSQL -c "ALTER DATABASE $DB RESET default_text_search_config" 2>/dev/null
 CLI remove --yes >/dev/null 2>&1  # what dev applied: none again, as before
-out=$(python3 cli/rowstile_cli.py --db "dbname=authz_no_such_db" graph "$T/main.authz" 2>&1); case "$out" in "%% Generated"*) ok "check, graph and client of a file need no database";; *) bad "no database" "${out:0:200}";; esac
+out=$(PGHOST=/nowhere python3 cli/rowstile_cli.py graph "$T/main.authz" 2>&1); case "$out" in "%% Generated"*) ok "check, graph and client of a file need no database";; *) bad "no database" "${out:0:200}";; esac
 
 # a named database that doesn't answer is said as that, with where it tried (unit_test.py has the case where nothing
 # names one)

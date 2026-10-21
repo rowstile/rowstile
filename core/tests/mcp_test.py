@@ -484,6 +484,15 @@ def with_db(folder: str, db: str) -> None:
         env=dict(os.environ, PGOPTIONS="-c client_min_messages=error"),
     )
     c = Client(folder, "--db", f"dbname={db}", log=True)
+    # the server's --db goes only to the commands that read a database: check and prove refuse it
+    r = c.tool("check")
+    check(
+        "check on a server given --db: the policy compiles",
+        r["structuredContent"]["ok"] and r["content"][0]["text"].strip().endswith(": ok"),
+        r,
+    )
+    r = c.tool("prove", worlds=40)
+    check("... and prove", "never folder: share and not org.member" in r["structuredContent"]["output"], r)
     r = c.tool("test")
     check(
         "test before a policy is applied: says so",

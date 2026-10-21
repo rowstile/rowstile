@@ -40,6 +40,14 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - rowstile's objects on `authz.shares` say share, not grant: the trigger that writes the audit trail is
   `authz_share_audit` (it runs `authz_int.on_share()`), and the inheritance trees' triggers there run
   `..._on_shares` functions. Applying the policy again (or the next migration) renames them.
+- The command refuses an option the command doesn't take, naming it, exit 2: another command's (`check --force`,
+  `apply --check`, `migrate --development`), `--db` on `check`, `prove`, `fmt` and `migrate`, which read no
+  database, and one written with a single dash (`check -x p.authz` blamed the policy file). Each was ignored
+  without a word. `rowstile graph` and `rowstile client` with `--db` read the policy in force on that database,
+  not the file `rowstile.toml` names, and refuse `--db` beside a policy file.
+- `rowstile --help`, `-h` and `help` print the usage on stdout, for a pager or `grep`; `--help` after a command
+  that doesn't exist says so, exit 2. A command short of an argument says how many it takes, and shows its
+  usage.
 
 ### Removed
 
@@ -59,6 +67,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - The SDKs read an error's code from `rowstile help AZnnn` alone (`error_code()`, `errorCode()`): no longer from
   `rowfence help AZnnn`, nor from `[AZnnn]` at the end of a message, which only errors from applying a policy
   carry.
+- The command no longer takes names no doc gave: `-d` for `--db`, `rowstile version` (`--version`),
+  `rowstile help codes` (`help errors`), `--as nobody` and `--as ""` (`--as anyone`), and `python`, `typescript`
+  and `ts-sdk` in `[clients]` in `rowstile.toml` (`py` and `ts`).
 
 ### Fixed
 
@@ -78,6 +89,8 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `rowstile init --help` says it drafts from every schema of the app's when `--schema` names none. It said
   `public` only.
 
+- An empty `--db` (a script's `--db "$DATABASE_URL"` with the variable unset) stopped with a Python traceback.
+  It now says `--db is empty`, exit 2, as an empty value of any option does.
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed

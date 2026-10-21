@@ -5,7 +5,7 @@ adversarial 112
 apply 137
 capitals 81
 children 92
-cli 131
+cli 151
 concurrency 28
 confidence 62
 cookbook 79
@@ -23,7 +23,7 @@ invariance of the fixed policies 27
 keep unchanged trees 8
 language server 105
 masks 32
-mcp 68
+mcp 70
 migrate vs apply 54
 migrations 71
 moves 23
