@@ -56,6 +56,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Removed
 
+- A test's name is written in double quotes only, as the docs show it: `test "owners see their folders"`.
+  `test owners see their folders` and `test 'owners'` are refused, with the line to write instead (AZ101), and
+  VS Code no longer colours them as a test's name.
 - The parser no longer knows `update cols check :`, the old way to write `update cols after :`. A column named
   `check` is now a column like any other: `update check : seal` is a rule on it (it was refused, with advice to
   write `update after :`). The review and the error pages no longer speak of `role x`, `roles : ... grant` or

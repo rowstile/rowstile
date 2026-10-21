@@ -894,7 +894,7 @@ class LanguageForms(unittest.TestCase):
         self.assertEqual(
             condition("  can view = owner and {note = 'a\n  -- b}'}\n"), authzlib.parse.Cond("note = 'a -- b}'")
         )
-        pol = parse_policy(base + "  can view = owner\ntest Bob's test -- the comment\n  user 1 can view doc 1\n")
+        pol = parse_policy(base + '  can view = owner\ntest "Bob\'s test" -- the comment\n  user 1 can view doc 1\n')
         self.assertEqual(pol.scenarios[0].name, "Bob's test")
         # a quoted name runs to the quote that ends the line, and may hold it (Studio names tests after a check)
         pol = parse_policy(
@@ -945,9 +945,9 @@ class LanguageForms(unittest.TestCase):
             ("  can view owner\n", (5, 11, 5, 16)),
             ("type folder app.folders\n", (5, 12, 5, 15)),
             ("  r : user = app.links(doc_id => user_id)\n", (5, 30, 5, 31)),
-            ("  can view = owner\ntest t\n  as user 1 alowed {SELECT 1}\n", (7, 12, 7, 18)),
+            ('  can view = owner\ntest "t"\n  as user 1 alowed {SELECT 1}\n', (7, 12, 7, 18)),
             ("  can view = owner\ninvariants\n  never doc view\n", (7, 12, 7, 16)),
-            ("  can view = owner\ntest t\n  as user 1 sees 3x {SELECT 1}\n", (7, 17, 7, 19)),
+            ('  can view = owner\ntest "t"\n  as user 1 sees 3x {SELECT 1}\n', (7, 17, 7, 19)),
             ("  can view = owner\nscope files-:read = doc.view\n", (6, 12, 6, 13)),
         ):
             with self.subTest(tail), self.assertRaises(PolicyError) as e:
@@ -955,7 +955,7 @@ class LanguageForms(unittest.TestCase):
             self.assertEqual(e.exception.span, words, str(e.exception))
         # a scope's name may go on with - and :, written without spaces; a test names it the same way
         pol = parse_policy(
-            base + "  can view = owner\nscope files:read-only = doc.view\ntest t\n"
+            base + '  can view = owner\nscope files:read-only = doc.view\ntest "t"\n'
             "  user 1 with scope files:read-only, files:read-only can view doc 1\n"
             "  as user 1 with scope files:read-only sees 1 {SELECT 1}\n"
         )
@@ -999,8 +999,8 @@ class LanguageForms(unittest.TestCase):
             ("  r : user = app.links(doc_id -> user_id) where {a} and {b}\n", "and {b}"),
             ("  can view = owner\ntype note = app.notes where {a} and {b}\n", "and {b}"),
             ("  can view = owner\ncaveat c = {a} caveat d = {b}\n", "caveat d"),
-            ("  can view = owner\ntest t\n  given a = {SELECT 1} given b = {SELECT 2}\n", "given b"),
-            ("  can view = owner\ntest t\n  as user 1 allowed {SELECT 1}} as user 2 allowed {SELECT 2}\n", "}"),
+            ('  can view = owner\ntest "t"\n  given a = {SELECT 1} given b = {SELECT 2}\n', "given b"),
+            ('  can view = owner\ntest "t"\n  as user 1 allowed {SELECT 1}} as user 2 allowed {SELECT 2}\n', "}"),
         ):
             text = base + tail
             with self.subTest(tail), self.assertRaises(PolicyError) as e:
@@ -13566,6 +13566,21 @@ class Editors(unittest.TestCase):
         ):
             got = [m.group(group) for p in patterns if (m := re.match(p, line))]
             self.assertEqual(got, [line.split("with scope ")[1].split(" refused")[0].split(" cannot")[0]], line)
+
+    def test_the_textmate_grammar_colours_a_test_name_in_double_quotes_only(self) -> None:
+        with open(os.path.join(self.REPO, "editor", "syntaxes", "authz.tmLanguage.json"), encoding="utf-8") as fh:
+            [header] = [
+                p["match"] for p in json.load(fh)["repository"]["test"]["patterns"] if p["match"].startswith("^(test)")
+            ]
+        for line, name in (
+            ('test "owners see their folders"', '"owners see their folders"'),
+            ('test "a -- b"  -- the comment', '"a -- b"'),
+            ('test "user 2 cannot share team \'(1,"a b")\'"', '"user 2 cannot share team \'(1,"a b")\'"'),
+            ("test owners see", None),
+            ("test 'owners'", None),
+        ):
+            m = re.match(header, line)
+            self.assertEqual(m.group(2) if m else None, name, line)
 
     def test_zed_builds_this_grammar(self) -> None:
         # extension.toml names the commit Zed fetches the grammar from: its grammar must be this one

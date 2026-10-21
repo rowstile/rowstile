@@ -441,8 +441,8 @@ class Scanner:
     """How the lines of a policy read, one after another: which characters are quoted, inside how many {braces},
     in a comment. The one reading the parser, rowstile fmt and the editors' helpers share.
 
-    Outside braces, the policy's own text: '...' and "..." are quotes when they close on the same line (an
-    apostrophe in a test's name opens none), and -- starts a comment. Inside braces, SQL: '...' (E'...' with its
+    Outside braces, the policy's own text: '...' and "..." are quotes when they close on the same line (a lone
+    apostrophe opens none), and -- starts a comment. Inside braces, SQL: '...' (E'...' with its
     backslashes), "names", $$...$$ and $tag$...$tag$ are quotes, which may go on to the next line, and -- starts an
     SQL comment, which also runs to the end of the line (the lines of a condition are joined into one). A /* ... */
     comment, which nests and may go on to the next line, is read as a quote: what it holds opens or closes nothing,
@@ -1470,21 +1470,23 @@ class Reader:
         self.pol.tests.append(step)
 
     def test(self, name: str, start: int, loc: Loc) -> Block:
-        """test name, or test "name" (start: where the name is in the line)"""
+        """test "name" (start: where the name is in the line)"""
         at = (start, start + len(name))
-        if name[0] in "\"'":
-            # the name runs to the quote that ends the line (it may hold that quote: Studio writes such names)
-            if len(name) < 2 or name[-1] != name[0]:
-                close = name.find(name[0], 1)
-                if close > 0:
-                    fail(
-                        loc,
-                        f"the test's name ends at its closing {name[0]}: nothing goes after it on the line",
-                        "AZ106",
-                        at=(start + close + 1, at[1]),
-                    )
-                fail(loc, f"the test's name has no closing {name[0]}: test {name}{name[0]}", "AZ106", at=at)
-            name = name[1:-1]
+        if name[0] != '"':
+            bare = name[1 : -1 if len(name) > 1 and name[-1] == "'" else None] if name[0] == "'" else name
+            fail(loc, f'write a test\'s name in double quotes: test "{bare}"', "AZ101", at=at)
+        # the name runs to the quote that ends the line (it may hold that quote: Studio writes such names)
+        if len(name) < 2 or name[-1] != '"':
+            close = name.find('"', 1)
+            if close > 0:
+                fail(
+                    loc,
+                    "the test's name ends at its closing \": nothing goes after it on the line",
+                    "AZ106",
+                    at=(start + close + 1, at[1]),
+                )
+            fail(loc, f'the test\'s name has no closing ": test {name}"', "AZ106", at=at)
+        name = name[1:-1]
         if not name.strip():
             fail(loc, 'the test\'s name is empty: say what it checks, test "owners see their folders"', "AZ106", at=at)
         if any(sc.name == name for sc in self.pol.scenarios):

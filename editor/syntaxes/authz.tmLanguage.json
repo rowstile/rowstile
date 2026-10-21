@@ -159,7 +159,7 @@
     "test": {
       "patterns": [
         {
-          "match": "^(test)\\s+(\\\"[^\\\"]*\\\"|'[^']*'|.+)$",
+          "match": "^(test)\\s+(\\\".*?\\\")(?=\\s*(?:--.*)?$)",
           "captures": {
             "1": {
               "name": "keyword.declaration.section.authz"
