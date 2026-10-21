@@ -109,6 +109,8 @@ def init(
     write_new(policy_path, policy, written)
     m = re.search(r"^app role (\S+)", policy, re.M)
     role = m.group(1) if m else "app_user"  # a draft always has one
+    # in SQL: quoted when it has capitals, as the policy names the role as written
+    role_sql = role if re.fullmatch(r"[a-z_][a-z0-9_]*", role) else '"' + role + '"'
     first = re.search(r"^type (?!user\b)(\w+) = (\S+)", policy, re.M)
     example = first.group(1) if first else "user"
     write_new(
@@ -202,13 +204,13 @@ database = "{database}"     # {why}
   2. Sign every transaction in, {where}:
 {lines}
      The role your app connects as ({role}) must not bypass row-level security:
-       CREATE ROLE {role} LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
+       CREATE ROLE {role_sql} LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
      The app connects as {role}, with a URL of its own: never the one this command uses, the
      tables' owner's, which row-level security doesn't apply to."""
     else:
         setup = f"""
   2. The role your app connects as ({role}) must not bypass row-level security:
-       CREATE ROLE {role} LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
+       CREATE ROLE {role_sql} LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
      It says who is signed in first in each transaction: SELECT authz.act_as('user', '42')
      (the generated clients' sign_in does it)."""
     print(f"""

@@ -282,6 +282,42 @@ got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1',
   ok "... and a column naming the group of one" || bad "explain through Folder#owner" "$got"
 [ -z "${KEEP:-}" ] && dropdb "$DB3"
 
+echo "-- an app role named with capitals"
+# app role AppUser names the role as written, "AppUser", as a table's name is: every GRANT, policy, SET ROLE and
+# lookup of the role quotes it, or Postgres reads AppUser as appuser
+DB5=authz_capitals_approle
+A() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB5" "$@"; }
+psql -X -q -d postgres -c 'DO $o$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = $$AppUser$$) THEN CREATE ROLE "AppUser" NOLOGIN; END IF;
+  END $o$' >/dev/null
+dropdb --if-exists "$DB5" 2>/dev/null; createdb "$DB5" || exit 1
+sed '/^DO \$r\$/,/^END \$r\$;/d; s/app_user/"AppUser"/g' tests/prisma_schema.sql |
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB5" >/dev/null || exit 1
+sed 's/^app role app_user$/app role AppUser/' tests/prisma.authz > "$T/approle.authz"
+run --db "dbname=$DB5" apply "$T/approle.authz"
+case "$out" in *"approle.authz: applied")
+  [ "$(A -c "SELECT string_agg(DISTINCT r.rolname, ' ') FROM pg_policy p CROSS JOIN unnest(p.polroles) o JOIN pg_roles r ON r.oid = o")" = AppUser ] &&
+    ok "apply: the rules apply to the role AppUser, as written" || bad "the rules' role" "$(A -c "SELECT polroles::regrole[] FROM pg_policy")";;
+  *) bad "apply with app role AppUser" "$out";; esac
+run --db "dbname=$DB5" test
+case "$out" in *"policy tests passed (12 checks)") ok "... its named tests run as AppUser";; *) bad "test with app role AppUser" "$out";; esac
+run --db "dbname=$DB5" sql --as user:1 'SELECT count(body) AS bodies FROM "NoteShown"'
+case "$out" in "bodies"$'\n'"------"$'\n'"2"$'\n'"(1 row, as user:1; rolled back)") ok "... a statement as AppUser reads the masked view";; *) bad "sql as AppUser" "$out";; esac
+[ "$(A -c "SELECT has_column_privilege('AppUser', 'public.\"Note\"', 'body', 'SELECT'), has_column_privilege('AppUser', 'public.\"Note\"', 'title', 'SELECT')")" = "f|t" ] &&
+  ok "... and the table doesn't give AppUser the masked column" || bad "AppUser's column privileges"
+[ "$(A -c "SELECT count(*) FROM authz.lint() WHERE severity IN ('error', 'warning')")" = 0 ] &&
+  ok "lint: AppUser is found, and the policy's own grants to it are no extra privilege" || bad "lint with app role AppUser" "$(A -c "SELECT * FROM authz.lint()")"
+[ "$(A -c "SELECT problem FROM authz.lint() WHERE object = 'public.\"User\"'")" = "AppUser may read every row (the policy has no rules for this table): fine for a directory, otherwise add rules" ] &&
+  ok "... and names it as written" || bad "lint's words for AppUser" "$(A -c "SELECT object, problem FROM authz.lint()")"
+got=$(A -c 'SET ROLE "AppUser"' -c "SELECT problem FROM authz.connection_check()")
+[ "$got" = "this connection logs in as authz_owner, a superuser, BYPASSRLS or the policy's owner, and switched to \"AppUser\": RESET ROLE leaves row-level security, and who is signed in is believed without a signature. Log in as the app role" ] &&
+  ok "connection_check finds AppUser, switched to from the owner's login, and says only that" || bad "connection_check as AppUser" "$got"
+run --db "dbname=$DB5" plans --as user:1
+case "$out" in *failed*) bad "plans as AppUser" "$out";; "as user:1:"$'\n'"  public.Folder: "[0-9]*" ms"*) ok "plans: read as AppUser";; *) bad "plans as AppUser" "$out";; esac
+run --db "dbname=$DB5" bench --people 1 --rounds 1
+case "$rc $out" in *failed*|*"does not exist"*) bad "bench as AppUser" "$out";; "0 "*"read public.Folder"*) ok "bench: reads as AppUser";; *) bad "bench as AppUser" "$out";; esac
+[ -z "${KEEP:-}" ] && dropdb "$DB5"
+
 echo "-- custom roles of the org a folder is in, by a column or a link table; a type named with a capital"
 # whose roles count on a folder is read from the folder's table and from the link table, by their quoted names; a
 # folder filed inside another through a link table checks the one above with the type's own function, by its name

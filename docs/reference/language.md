@@ -59,6 +59,9 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   as user 7 sees 0 {SELECT FROM app.files WHERE id = $f}
 ```
 
+- **The app role** is the Postgres role the rules apply to, the one your app connects as. Its name is read
+  as written, like a table's: `app role AppUser` is the role `CREATE ROLE "AppUser"` makes, while
+  `CREATE ROLE AppUser` makes `appuser`. <!-- checked: tests/capitals.sh "apply: the rules apply to the role AppUser, as written" -->
 - **Keys**: a type's key is `id bigint` unless the type line says otherwise: `(gid)`,
   `(id uuid)`, or several columns for a composite key: `type folder = app.folders (org_id, id)`.
   The type is the column's own: a 32-bit key, as Prisma's `Int` or a `serial` makes, is `(id int)`.

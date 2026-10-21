@@ -293,7 +293,7 @@ def plans(db: Db, c: Compiler, who: tuple[str, str] | None = None) -> Plans:
         db.rows("SELECT authz.act_as($1, $2)", [ptype, pid])
         try:
             with savepoint(db, "authz_plan"):
-                db.rows(f'SET LOCAL ROLE "{role}"')
+                db.rows(f"SET LOCAL ROLE {q(role)}")
                 db.rows("SET LOCAL statement_timeout = '10s'")
                 # VERBOSE: each scan's table with its schema
                 raw = next(
@@ -359,7 +359,7 @@ def bench(db: Db, c: Compiler, people: int = 10, rounds: int = 20, seed: int = 0
         try:
             with savepoint(db, "authz_bench"):
                 if as_app and role:
-                    db.rows(f'SET LOCAL ROLE "{role}"')
+                    db.rows(f"SET LOCAL ROLE {q(role)}")
                 start = time.perf_counter()  # the statement alone: one round trip, and the server's work
                 db.rows(sql, list(args))
                 took = (time.perf_counter() - start) * 1000

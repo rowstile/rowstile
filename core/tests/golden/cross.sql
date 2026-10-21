@@ -3890,7 +3890,7 @@ BEGIN
 END $f$;
 
 -- cx.notes insert (line 62): write
-CREATE POLICY "authz_insert" ON "cx"."notes" FOR INSERT TO app_user
+CREATE POLICY "authz_insert" ON "cx"."notes" FOR INSERT TO "app_user"
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.notes', 'insert')) AND coalesce("notes"."author_id" = (SELECT authz.uid()), false))
     OR authz_gen."cx.notes:insert:refuse"(("notes".*)::"cx"."notes"));
 
@@ -4030,7 +4030,7 @@ BEGIN
 END $f$;
 
 -- cx.folders select (line 65): view
-CREATE POLICY "authz_select" ON "cx"."folders" FOR SELECT TO app_user
+CREATE POLICY "authz_select" ON "cx"."folders" FOR SELECT TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.folders', 'select')) AND ((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = "folders"."id")
     OR (authz_int."folder__check_383ac878f2"(("folders".*)::"cx"."folders")
@@ -4043,7 +4043,7 @@ CREATE POLICY "authz_select" ON "cx"."folders" FOR SELECT TO app_user
 COMMENT ON POLICY "authz_select" ON "cx"."folders" IS 'rowstile';
 
 -- cx.folders update (line 66): edit
-CREATE POLICY "authz_update" ON "cx"."folders" FOR UPDATE TO app_user
+CREATE POLICY "authz_update" ON "cx"."folders" FOR UPDATE TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.folders', 'update')) AND ((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR (authz_int."folder__check_383ac878f2"(("folders".*)::"cx"."folders")
     AND (("folders"."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
@@ -4059,7 +4059,7 @@ CREATE POLICY "authz_update" ON "cx"."folders" FOR UPDATE TO app_user
 COMMENT ON POLICY "authz_update" ON "cx"."folders" IS 'rowstile';
 
 -- cx.folders delete (line 67): file
-CREATE POLICY "authz_delete" ON "cx"."folders" FOR DELETE TO app_user
+CREATE POLICY "authz_delete" ON "cx"."folders" FOR DELETE TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.folders', 'delete')) AND ((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR (coalesce((owner_id is null /* this.owner_id: nobody's */ and parent_type <> $$this.id$$ and parent_type <> e'it\'s' and parent_type <> 'this.id''s' and id <>-1), false)
     AND (("folders"."parent_type" = 'folder' AND authz_int."folder__file__has"((CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
@@ -4158,7 +4158,7 @@ BEGIN
 END $f$;
 
 -- cx.regions select (line 70): run
-CREATE POLICY "authz_select" ON "cx"."regions" FOR SELECT TO app_user
+CREATE POLICY "authz_select" ON "cx"."regions" FOR SELECT TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.regions', 'select')) AND ((coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = "regions"."id"))));
@@ -4166,7 +4166,7 @@ CREATE POLICY "authz_select" ON "cx"."regions" FOR SELECT TO app_user
 COMMENT ON POLICY "authz_select" ON "cx"."regions" IS 'rowstile';
 
 -- cx.regions update (line 71): rename
-CREATE POLICY "authz_update" ON "cx"."regions" FOR UPDATE TO app_user
+CREATE POLICY "authz_update" ON "cx"."regions" FOR UPDATE TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.regions', 'update')) AND (coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id"))))
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.regions', 'update')) AND (coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
@@ -4266,14 +4266,14 @@ BEGIN
 END $f$;
 
 -- cx.sites select (line 74): run
-CREATE POLICY "authz_select" ON "cx"."sites" FOR SELECT TO app_user
+CREATE POLICY "authz_select" ON "cx"."sites" FOR SELECT TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.sites', 'select')) AND (EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = "sites"."id")
     AND authz_int."site__check_77cc73ddd9"(("sites".*)::"cx"."sites"))));
 
 COMMENT ON POLICY "authz_select" ON "cx"."sites" IS 'rowstile';
 
 -- cx.sites update (line 75): guard
-CREATE POLICY "authz_update" ON "cx"."sites" FOR UPDATE TO app_user
+CREATE POLICY "authz_update" ON "cx"."sites" FOR UPDATE TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.sites', 'update')) AND ((EXISTS (SELECT 1 FROM authz_int."region__chief" v WHERE v.id = "sites"."region_id")
     OR EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = "sites"."id"))
     AND authz_int."site__check_77cc73ddd9"(("sites".*)::"cx"."sites"))))
@@ -4444,7 +4444,7 @@ BEGIN
 END $f$;
 
 -- cx.projects select (line 78): view
-CREATE POLICY "authz_select" ON "cx"."projects" FOR SELECT TO app_user
+CREATE POLICY "authz_select" ON "cx"."projects" FOR SELECT TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.projects', 'select')) AND (coalesce("projects"."lead_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."project__inside__view" v WHERE v.id = "projects"."id")
     OR EXISTS (SELECT 1 FROM authz_int."project__host__view" v WHERE v.id = "projects"."id"))));
@@ -4453,7 +4453,7 @@ COMMENT ON POLICY "authz_select" ON "cx"."projects" IS 'rowstile';
 
 -- cx.projects update (line 79): edit
 -- cx.projects update after (line 80): edit
-CREATE POLICY "authz_update" ON "cx"."projects" FOR UPDATE TO app_user
+CREATE POLICY "authz_update" ON "cx"."projects" FOR UPDATE TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.projects', 'update')) AND (coalesce("projects"."lead_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."project__inside__edit" v WHERE v.id = "projects"."id")
     OR EXISTS (SELECT 1 FROM authz_int."project__host__edit" v WHERE v.id = "projects"."id"))))
@@ -4465,7 +4465,7 @@ CREATE POLICY "authz_update" ON "cx"."projects" FOR UPDATE TO app_user
 COMMENT ON POLICY "authz_update" ON "cx"."projects" IS 'rowstile';
 
 -- cx.projects delete (line 81): fund
-CREATE POLICY "authz_delete" ON "cx"."projects" FOR DELETE TO app_user
+CREATE POLICY "authz_delete" ON "cx"."projects" FOR DELETE TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.projects', 'delete')) AND (coalesce("projects"."lead_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."project__backer__fund" v WHERE v.id = "projects"."id"))));
 
@@ -4511,7 +4511,7 @@ BEGIN
 END $mv$;
 COMMENT ON VIEW "cx"."sites_seen" IS 'rowstile masked view';
 REVOKE ALL ON "cx"."sites_seen" FROM PUBLIC;
-GRANT SELECT ON "cx"."sites_seen" TO app_user;
+GRANT SELECT ON "cx"."sites_seen" TO "app_user";
 
 -- Column privileges: masked columns are read through the masked view only
 DO $mc$
@@ -7411,7 +7411,7 @@ LANGUAGE sql STABLE SET search_path FROM CURRENT AS $f$ SELECT pg_catalog.curren
 -- Leaks: SELECT * FROM authz.lint()  (administrators; run after schema changes)
 CREATE OR REPLACE FUNCTION authz.lint() RETURNS TABLE (severity text, object text, problem text)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE r record; v_role oid := to_regrole('app_user');
+DECLARE r record; v_role oid := to_regrole('"app_user"');
 BEGIN
   IF v_role IS NULL THEN
     severity := 'error'; object := 'app_user'; problem := 'the app role does not exist'; RETURN NEXT; RETURN;
@@ -7431,14 +7431,14 @@ BEGIN
        format('REVOKE %s ON SCHEMA %I FROM %s CASCADE', a.privilege_type, n.nspname, gw.who) AS stmt
   FROM pg_namespace n, aclexplode(n.nspacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE n.nspname IN ('authz', 'authz_gen', 'authz_int') AND a.grantee <> n.nspowner
-    AND NOT (a.grantee = 'app_user'::regrole AND n.nspname <> 'authz_int' AND a.privilege_type = 'USAGE')
+    AND NOT (a.grantee = '"app_user"'::regrole AND n.nspname <> 'authz_int' AND a.privilege_type = 'USAGE')
 UNION ALL
 SELECT c.oid::regclass::text, gw.who, a.privilege_type,
        format('REVOKE %s ON %s %s FROM %s CASCADE', a.privilege_type, CASE c.relkind WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+    AND NOT (a.grantee = '"app_user"'::regrole AND a.privilege_type = 'SELECT'
              AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."folder__edit"', 'authz_int."folder__view"', 'authz_int."folder__viewer"', 'authz_int."project__backer__fund"', 'authz_int."project__edit"', 'authz_int."project__file"', 'authz_int."project__host__edit"', 'authz_int."project__host__view"', 'authz_int."project__inside__edit"', 'authz_int."project__inside__view"', 'authz_int."project__view"', 'authz_int."region__chief"', 'authz_int."region__chief__ext"', 'authz_int."region__over__run"', 'authz_int."site__over__run"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
@@ -7450,10 +7450,10 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
        format('REVOKE %s ON ROUTINE %s FROM %s CASCADE', a.privilege_type, p.oid::regprocedure, gw.who)
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
-    AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+    AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, '"app_user"'::regrole))
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = '"app_user"'::regrole
              AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"cx.folders:delete:items"', '"cx.folders:delete:why"', '"cx.folders:rules:explain"', '"cx.folders:update:items"', '"cx.folders:update:refuse"', '"cx.folders:update:why"', '"cx.notes:insert:items"', '"cx.notes:insert:refuse"', '"cx.notes:insert:why"', '"cx.notes:rules:explain"', '"cx.projects:delete:items"', '"cx.projects:delete:why"', '"cx.projects:rules:explain"', '"cx.projects:update:items"', '"cx.projects:update:refuse"', '"cx.projects:update:why"', '"cx.projects:update_after:items"', '"cx.projects:update_after:refuse"', '"cx.projects:update_after:why"', '"cx.regions:rules:explain"', '"cx.regions:update:items"', '"cx.regions:update:refuse"', '"cx.regions:update:why"', '"cx.sites:rules:explain"', '"cx.sites:update:items"', '"cx.sites:update:refuse"', '"cx.sites:update:why"']::text[]))
-    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
+    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
     severity := 'error'; object := r.object;
     problem := format('%s holds %s on it, which the policy doesn''t give (a default privilege of the owner, or a grant made since the last apply): the next apply takes it back, or %s', r.who, r.privilege, r.stmt);
     RETURN NEXT;
@@ -7750,7 +7750,7 @@ END $f$;
 -- 'error': the rules don't apply to the role this connection runs as. No rows: all is well.
 CREATE OR REPLACE FUNCTION authz.connection_check() RETURNS TABLE (severity text, problem text)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE v_me oid := to_regrole(authz_int.caller_role()); v_app oid := to_regrole('app_user'); r record;
+DECLARE v_me oid := (SELECT oid FROM pg_roles WHERE rolname = authz_int.caller_role()); v_app oid := to_regrole('"app_user"'); r record;
 BEGIN
   IF (SELECT rolsuper FROM pg_roles WHERE oid = v_me) THEN
     severity := 'error'; problem := format('%s is a superuser: row-level security does not apply to it', v_me::regrole);
@@ -7871,8 +7871,8 @@ BEGIN
   END LOOP;
 END $ch$;
 
-REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM app_user;
-GRANT SELECT ON authz_gen.policy_lines, authz_int."folder__edit", authz_int."folder__view", authz_int."folder__viewer", authz_int."project__backer__fund", authz_int."project__edit", authz_int."project__file", authz_int."project__host__edit", authz_int."project__host__view", authz_int."project__inside__edit", authz_int."project__inside__view", authz_int."project__view", authz_int."region__chief", authz_int."region__chief__ext", authz_int."region__over__run", authz_int."site__over__run" TO app_user;
+REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM "app_user";
+GRANT SELECT ON authz_gen.policy_lines, authz_int."folder__edit", authz_int."folder__view", authz_int."folder__viewer", authz_int."project__backer__fund", authz_int."project__edit", authz_int."project__file", authz_int."project__host__edit", authz_int."project__host__view", authz_int."project__inside__edit", authz_int."project__inside__view", authz_int."project__view", authz_int."region__chief", authz_int."region__chief__ext", authz_int."region__over__run", authz_int."site__over__run" TO "app_user";
 
 -- Privileges the policy doesn't give on rowstile's schemas and what is in them are taken back
 DO $r$
@@ -7882,14 +7882,14 @@ BEGIN
        format('REVOKE %s ON SCHEMA %I FROM %s CASCADE', a.privilege_type, n.nspname, gw.who) AS stmt
   FROM pg_namespace n, aclexplode(n.nspacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE n.nspname IN ('authz', 'authz_gen', 'authz_int') AND a.grantee <> n.nspowner
-    AND NOT (a.grantee = 'app_user'::regrole AND n.nspname <> 'authz_int' AND a.privilege_type = 'USAGE')
+    AND NOT (a.grantee = '"app_user"'::regrole AND n.nspname <> 'authz_int' AND a.privilege_type = 'USAGE')
 UNION ALL
 SELECT c.oid::regclass::text, gw.who, a.privilege_type,
        format('REVOKE %s ON %s %s FROM %s CASCADE', a.privilege_type, CASE c.relkind WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+    AND NOT (a.grantee = '"app_user"'::regrole AND a.privilege_type = 'SELECT'
              AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."folder__edit"', 'authz_int."folder__view"', 'authz_int."folder__viewer"', 'authz_int."project__backer__fund"', 'authz_int."project__edit"', 'authz_int."project__file"', 'authz_int."project__host__edit"', 'authz_int."project__host__view"', 'authz_int."project__inside__edit"', 'authz_int."project__inside__view"', 'authz_int."project__view"', 'authz_int."region__chief"', 'authz_int."region__chief__ext"', 'authz_int."region__over__run"', 'authz_int."site__over__run"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
@@ -7901,10 +7901,10 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
        format('REVOKE %s ON ROUTINE %s FROM %s CASCADE', a.privilege_type, p.oid::regprocedure, gw.who)
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
-    AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+    AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, '"app_user"'::regrole))
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = '"app_user"'::regrole
              AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"cx.folders:delete:items"', '"cx.folders:delete:why"', '"cx.folders:rules:explain"', '"cx.folders:update:items"', '"cx.folders:update:refuse"', '"cx.folders:update:why"', '"cx.notes:insert:items"', '"cx.notes:insert:refuse"', '"cx.notes:insert:why"', '"cx.notes:rules:explain"', '"cx.projects:delete:items"', '"cx.projects:delete:why"', '"cx.projects:rules:explain"', '"cx.projects:update:items"', '"cx.projects:update:refuse"', '"cx.projects:update:why"', '"cx.projects:update_after:items"', '"cx.projects:update_after:refuse"', '"cx.projects:update_after:why"', '"cx.regions:rules:explain"', '"cx.regions:update:items"', '"cx.regions:update:refuse"', '"cx.regions:update:why"', '"cx.sites:rules:explain"', '"cx.sites:update:items"', '"cx.sites:update:refuse"', '"cx.sites:update:why"']::text[]))
-    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
+    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
     EXECUTE g.stmt;
     v_taken := v_taken + 1;
   END LOOP;
@@ -7915,7 +7915,7 @@ END $r$;
 
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;
 
-GRANT USAGE ON SCHEMA authz, authz_gen TO app_user;
+GRANT USAGE ON SCHEMA authz, authz_gen TO "app_user";
 
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz_gen FROM PUBLIC;
 
@@ -7986,7 +7986,7 @@ GRANT EXECUTE ON FUNCTION
   authz.can(text, bigint, text),
   authz.who_among(text, bigint, text, text[], text),
   authz.perms(text, bigint)
-  TO app_user;
+  TO "app_user";
 
 -- Tables never analyzed (made just now, or too small for autovacuum to have reached them) are planned
 -- as ten pages of rows: a table of 6 rows as thousands. Through the rules' lookups that becomes an estimate of

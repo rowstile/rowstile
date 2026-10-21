@@ -1013,7 +1013,7 @@ BEGIN
 END $mv$;
 COMMENT ON VIEW {qt(view)} IS 'rowstile masked view';
 REVOKE ALL ON {qt(view)} FROM PUBLIC;
-GRANT SELECT ON {qt(view)} TO {self.role};""")
+GRANT SELECT ON {qt(view)} TO {q(self.role)};""")
         masked: dict[str, list[str]] = {}
         for r in self.rules:
             if r.command == "mask":
@@ -1023,14 +1023,14 @@ GRANT SELECT ON {qt(view)} TO {self.role};""")
             f"""  -- {tb}: {", ".join(cols)} only through {self.pol.views[tb]}
   IF has_table_privilege({lit(self.role)}, {lit(qt(tb))}, 'SELECT')
      OR EXISTS (SELECT 1 FROM authz.masked_tables WHERE tbl = {lit(qt(tb))} AND role = {lit(self.role)}) THEN
-    REVOKE SELECT ON {qt(tb)} FROM {self.role};
+    REVOKE SELECT ON {qt(tb)} FROM {q(self.role)};
     SELECT string_agg(format('%I', attname), ', ') INTO cols FROM pg_attribute
     WHERE attrelid = {lit(qt(tb))}::regclass AND attnum > 0 AND NOT attisdropped
       AND attname <> ALL (ARRAY[{", ".join(lit(c) for c in cols)}]);
-    IF cols IS NOT NULL THEN EXECUTE format('GRANT SELECT (%s) ON {qt(tb)} TO {self.role}', cols); END IF;
+    IF cols IS NOT NULL THEN EXECUTE format('GRANT SELECT (%s) ON {qt(tb)} TO {q(self.role)}', cols); END IF;
     INSERT INTO authz.masked_tables VALUES ({lit(qt(tb))}, {lit(self.role)}) ON CONFLICT DO NOTHING;
   END IF;
-  REVOKE SELECT ({", ".join(q(c) for c in cols)}) ON {qt(tb)} FROM {self.role};
+  REVOKE SELECT ({", ".join(q(c) for c in cols)}) ON {qt(tb)} FROM {q(self.role)};
   IF {" OR ".join(f"has_column_privilege({lit(self.role)}, {lit(qt(tb))}, {lit(c)}, 'SELECT')" for c in cols)} THEN
     RAISE EXCEPTION '{self.role} could still read masked columns of {tb} directly [AZ611]'
       USING HINT = 'SELECT on the table or these columns is granted to PUBLIC or to a role {self.role} belongs to; revoke it, then apply again';
@@ -1122,7 +1122,7 @@ END $kv$;"""
                 name = q("authz_" + r.command)
                 if r.command == "insert":
                     policies.append(
-                        f"{head}CREATE POLICY {name} ON {qt(table)} FOR INSERT TO {self.role}\n"
+                        f"{head}CREATE POLICY {name} ON {qt(table)} FOR INSERT TO {q(self.role)}\n"
                         f"  WITH CHECK ({sql}\n    OR {refuse['insert']});"
                     )
                 elif r.command == "update" and "update after" in cmds:
@@ -1134,18 +1134,18 @@ END $kv$;"""
                     )
                     head += f"-- {table} update after ({c.loc}): {c.src}\n"
                     policies.append(
-                        f"{head}CREATE POLICY {name} ON {qt(table)} FOR UPDATE TO {self.role}\n"
+                        f"{head}CREATE POLICY {name} ON {qt(table)} FOR UPDATE TO {q(self.role)}\n"
                         f"  USING ({sql})\n  WITH CHECK ({check}\n    OR {refuse['update after']});"
                     )
                 elif r.command == "update":
                     # the new row is checked as Postgres would anyway (with USING), then refused with the reason
                     policies.append(
-                        f"{head}CREATE POLICY {name} ON {qt(table)} FOR UPDATE TO {self.role}\n"
+                        f"{head}CREATE POLICY {name} ON {qt(table)} FOR UPDATE TO {q(self.role)}\n"
                         f"  USING ({sql})\n  WITH CHECK ({sql}\n    OR {refuse['update']});"
                     )
                 else:
                     policies.append(
-                        f"{head}CREATE POLICY {name} ON {qt(table)} FOR {r.command.upper()} TO {self.role}\n"
+                        f"{head}CREATE POLICY {name} ON {qt(table)} FOR {r.command.upper()} TO {q(self.role)}\n"
                         f"  USING ({sql});"
                     )
                 policies.append(f"COMMENT ON POLICY {name} ON {qt(table)} IS 'rowstile';")
@@ -1468,15 +1468,19 @@ END $w$;"""
             (
                 "created",
                 "grant_views",
-                f"REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM {self.role};\n"
-                f"GRANT SELECT ON {grant_views} TO {self.role};",
+                f"REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM {q(self.role)};\n"
+                f"GRANT SELECT ON {grant_views} TO {q(self.role)};",
             ),
             ("always", "revoke", self.revoke_sql()),
             ("always", "revoke", "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;"),
-            ("always", "grant_usage", f"GRANT USAGE ON SCHEMA authz, authz_gen TO {self.role};"),
+            ("always", "grant_usage", f"GRANT USAGE ON SCHEMA authz, authz_gen TO {q(self.role)};"),
             ("always", "revoke", "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz_gen FROM PUBLIC;"),
             ("created", "grant_functions", grant_functions),
-            ("created", "grant_api", "GRANT EXECUTE ON FUNCTION\n  " + ",\n  ".join(executes) + f"\n  TO {self.role};"),
+            (
+                "created",
+                "grant_api",
+                "GRANT EXECUTE ON FUNCTION\n  " + ",\n  ".join(executes) + f"\n  TO {q(self.role)};",
+            ),
             ("always", "analyze", self.analyze_sql()),
             ("full", "commit", "COMMIT;" if transaction else ""),
         ]
