@@ -76,6 +76,10 @@ Every mistake rowstile reports ends with its code: `line 4: folder.owner: unknow
 - [AZ617](AZ617.md): Something is built on a masked view that can't be replaced in place
 - [AZ618](AZ618.md): The owner may not switch to the app role
 - [AZ619](AZ619.md): A lock file rowstile can't read
+- [AZ620](AZ620.md): No tables to draft a policy from
+- [AZ621](AZ621.md): Which table holds the users?
+- [AZ622](AZ622.md): A user table the draft can't use
+- [AZ623](AZ623.md): Too many people for a snapshot
 
 ## What apps see
 

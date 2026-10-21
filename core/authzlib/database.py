@@ -856,7 +856,7 @@ def draft(db: Db, schemas: Sequence[str] | None = None, users: str | None = None
     rows = db.rows(CATALOG_SQL, [text_array(schemas) if schemas else None])
     tables = [table_of(r) for r in rows]
     if not tables:
-        raise Error("no tables to draft a policy from" + (f" in {', '.join(schemas)}" if schemas else ""))
+        raise Error("no tables to draft a policy from" + (f" in {', '.join(schemas)}" if schemas else "") + " [AZ620]")
     try:
         return make_draft(
             tables, users, role or "app_user", schemas or sorted({t["name"].split(".")[0] for t in tables})
@@ -1037,7 +1037,9 @@ def snapshot(db: Db, limit: int = 500) -> list[str]:
             ]
             principals += [(t.name, i) for i in ids]
     if len(principals) > limit:
-        raise Error(f"{len(principals)} people and principals: a snapshot is for small review data (at most {limit})")
+        raise Error(
+            f"{len(principals)} people and principals: a snapshot is for small review data (at most {limit}) [AZ623]"
+        )
     held: dict[tuple[str, str, str], list[str]] = {}
     perms = [(t.name, p) for t in c.types.values() for p in c.public_perms(t)]
     for ptype, pid in principals + [(None, None)]:

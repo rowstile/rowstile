@@ -1903,7 +1903,8 @@ class Command(unittest.TestCase):
             self.assertTrue(text.startswith(f"rowstile {cmd}"), cmd)
             self.assertEqual(len(re.findall(r"^rowstile \S", text, re.M)), 2, text)  # its own, and the last line
         # init says which schema it reads when none is named: the question a first run asked of --help
-        self.assertIn("those in public", rowstile_cli.command_help("init"))
+        self.assertIn("(every schema of\n", rowstile_cli.command_help("init"))
+        self.assertIn("the app's, or those --schema names)", rowstile_cli.command_help("init"))
         # each of a command's lines, to the last; and where the database comes from, .env files too
         review = rowstile_cli.command_help("review")
         self.assertRegex(review, r"\n +\(exit 0 whatever it finds: test and migrate --check gate\)\n\n")
@@ -3879,12 +3880,39 @@ class Draft(unittest.TestCase):
         )
         self.assertIn("\ntype user = app.accounts\n", draft.draft([accounts, posts], schemas=("app",)))
         wide = self.table("app.users", {"org": "bigint", "id": "bigint"}, ["org", "id"])
-        with self.assertRaisesRegex(draft.DraftError, r"^app\.users: the user table needs a key of one column"):
+        with self.assertRaisesRegex(
+            draft.DraftError, r"^app\.users: the user table needs a key of one column.* \[AZ622\]$"
+        ):
             draft.draft([wide], schemas=("app",))
-        with self.assertRaisesRegex(draft.DraftError, r"^which table holds your users\?"):
+        with self.assertRaisesRegex(draft.DraftError, r"^which table holds your users\?.* \[AZ621\]$"):
             draft.draft([self.table("app.things", {"id": "bigint"}, ["id"])], schemas=("app",))
-        with self.assertRaisesRegex(draft.DraftError, r"^app\.nosuch: no such table with a primary key in app$"):
+        with self.assertRaisesRegex(
+            draft.DraftError, r"^app\.nosuch: no such table with a primary key in app \[AZ621\]$"
+        ):
             draft.draft([accounts, posts], users="app.nosuch", schemas=("app",))
+
+    def test_a_user_table_the_draft_leaves_out_is_said(self) -> None:
+        """The keys that name users point to a table outside the draft (Supabase's auth.users, with --schema public),
+        or to one it leaves out: the command said KeyError."""
+        posts = lambda ref: self.table(
+            "public.posts", {"id": "bigint", "user_id": "uuid"}, ["id"], ((["user_id"], ref, ["id"]),)
+        )
+        with self.assertRaises(draft.DraftError) as e:
+            draft.draft([posts("auth.users")], schemas=("public",))
+        self.assertEqual(
+            str(e.exception),
+            "auth.users: public.posts.user_id points to it, and it isn't in public: draft its schema too (--schema "
+            "public,auth), or name the table that holds your users: rowstile init --users schema.table [AZ621]",
+        )
+        odd = self.table("public.Benutzer-2", {"id": "uuid"}, ["id"])
+        with self.assertRaises(draft.DraftError) as e:
+            draft.draft([odd, posts("public.Benutzer-2")], schemas=("public",))
+        self.assertEqual(
+            str(e.exception),
+            "public.Benutzer-2: public.posts.user_id points to it, and the draft leaves it out: a name the policy "
+            "language can't write (letters, digits and _ only): give it a view with a plain name, and name the "
+            "view. Name the table that holds your users with rowstile init --users schema.table [AZ621]",
+        )
 
     def test_the_first_row_of_a_tree_can_be_made(self) -> None:
         # folders inside folders: "inside one you edit" alone lets nobody make the first folder through the app, so
@@ -4222,6 +4250,15 @@ class Draft(unittest.TestCase):
         # something else about a user and a site is not a membership: a note and no unique pair, or no role
         for extra in ({"note": "text"}, {}, {"inserted_at": "timestamp"}):
             self.assertNotIn(link, self.compiled([users, sites, member(extra, [])]))
+        # each column that makes it a membership may say who does more, and the draft says so (`permission` too)
+        for col in draft.ROLE_COLUMNS:
+            text = self.compiled([users, sites, member({col: "text"}, [])])
+            self.assertIn(link, text)
+            self.assertIn(
+                f"  -- decide: app.site_memberships.{col} may say who does more, e.g.\n  --   admin : user = "
+                f"app.site_memberships(site_id -> user_id) where {{{col} = 'admin'}}\n",
+                text,
+            )
 
     def test_view_names_each_parent_once(self) -> None:
         """`view = edit or parent.view` with `edit = ... or parent.edit` named each parent twice per level: lint's
@@ -4259,10 +4296,14 @@ class Draft(unittest.TestCase):
             "\ntype user = app.staff\n", draft.draft([customers, staff, notes], "app.staff", schemas=("app",))
         )
         wide = self.table("app.accounts", {"org": "bigint", "id": "bigint"}, ["org", "id"])
-        with self.assertRaisesRegex(draft.DraftError, r"^app\.accounts: the user table needs a key of one column$"):
+        with self.assertRaisesRegex(
+            draft.DraftError, r"^app\.accounts: the user table needs a key of one column \[AZ622\]$"
+        ):
             draft.draft([wide, customers], "app.accounts", schemas=("app",))
         refs = self.table("app.docs", {"id": "bigint", "owner_id": "bigint"}, ["id"], (to("owner_id", "app.accounts"),))
-        with self.assertRaisesRegex(draft.DraftError, r"^app\.accounts: the user table needs a key of one column$"):
+        with self.assertRaisesRegex(
+            draft.DraftError, r"^app\.accounts: the user table needs a key of one column \[AZ622\]$"
+        ):
             draft.draft([wide, refs], schemas=("app",))
 
     def test_names_a_type_cannot_have_and_a_key_it_cannot_write(self) -> None:
@@ -4326,7 +4367,7 @@ class Draft(unittest.TestCase):
         )
 
     def test_a_user_table_whose_key_it_cannot_use_is_said(self) -> None:
-        with self.assertRaisesRegex(draft.DraftError, "its key is character\\(8\\).*--users"):
+        with self.assertRaisesRegex(draft.DraftError, "its key is character\\(8\\).*--users.* \\[AZ622\\]$"):
             draft.draft(
                 [
                     self.table("app.users", {"id": "character(8)"}, ["id"]),
@@ -8995,6 +9036,18 @@ class ErrorCodes(unittest.TestCase):
                 if not isinstance(node, ast.Call):
                     continue
                 kind = node.func.id if isinstance(node.func, ast.Name) else None
+                if kind == "DraftError" or (kind == "Error" and name == "database.py"):
+                    # the command's own mistakes (rowstile init, snapshot, ...): a message of their own, ending
+                    # with its code; one that passes another's on (Error(str(e)), with its code) has none of its own
+                    segment = ast.get_source_segment(src, node) or ""
+                    if re.search(r"\{e\}|str\(e\)", segment):
+                        continue
+                    said = re.findall(r"\[(AZ\d{3})\]", segment)
+                    self.assertTrue(
+                        len(said) == 1 and said[0] in CODES,
+                        f"authzlib/{name} line {node.lineno}: a mistake of the command's without a known code",
+                    )
+                    continue
                 if kind not in ("fail", "PolicyError", "reading") or (kind == "PolicyError" and name == "parse.py"):
                     continue  # fail() itself raises the PolicyError, and reading() (a line form read, or its mistake)
                 code = (

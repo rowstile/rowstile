@@ -324,10 +324,23 @@ out=$(mkdir -p "$T/o" && cd "$T/o" && python3 "$OLDPWD/cli/rowstile_cli.py" --db
 [ -f "$T/o/auth/policy/policy.authz" ] && [ -f "$T/o/auth/policy/tests/first.authz" ] && [ ! -e "$T/o/db" ] &&
   grep -q '^policy   = "auth/policy/policy.authz"$' "$T/o/rowstile.toml" && grep -q '^tests    = \["auth/policy/tests/\*.authz"\]$' "$T/o/rowstile.toml" &&
   ok "init --out writes the draft and its first test there, and rowstile.toml names them" || bad "init --out" "$out $(ls -R "$T/o")"
+# an --out outside the folder: rowstile.toml, written here, could name nothing there; refused before connecting
+for o in ../elsewhere "$T/o2/db"; do
+  k=relative; [ "${o:0:1}" = / ] && k=absolute
+  out=$(mkdir -p "$T/o2" && cd "$T/o2" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --out "$o" 2>&1); rc=$?
+  [ $rc -eq 2 ] && [ -z "$(ls -A "$T/o2")" ] && [ ! -e "$T/elsewhere" ] &&
+    [ "$out" = "rowstile init: --out $o: rowstile.toml, written here, names files inside its folder only, by paths relative to it: name a folder below this one (--out db)" ] &&
+    ok "init --out outside the folder, by a $k path: refused, exit 2, nothing written" || bad "init --out $o" "$rc $out $(ls -A "$T/o2")"
+done
+# a folder whose name holds a quote and a backslash: rowstile.toml still reads, and names it
+out=$(mkdir -p "$T/o3" && cd "$T/o3" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --out 'a"b\c' 2>&1)
+check=$(cd "$T/o3" && python3 "$OLDPWD/cli/rowstile_cli.py" check 2>&1); rc=$?
+[ $rc -eq 0 ] && grep -qF 'policy   = "a\"b\\c/policy.authz"' "$T/o3/rowstile.toml" &&
+  ok "... and an --out holding a quote and a backslash: rowstile.toml escapes them, and check reads it" || bad "init --out with a quote" "$out $check $(cat "$T/o3/rowstile.toml")"
 out=$(mkdir -p "$T/j" && cd "$T/j" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema nosuch 2>&1)
-case "$out" in *"no tables to draft a policy from in nosuch"*) ok "a schema with no tables is named";; *) bad "draft empty" "$out";; esac
+case "$out" in *"no tables to draft a policy from in nosuch [AZ620]"*) ok "a schema with no tables is named";; *) bad "draft empty" "$out";; esac
 out=$(mkdir -p "$T/u" && cd "$T/u" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --users app.nosuch 2>&1)
-[ "$out" = "app.nosuch: no such table with a primary key in app" ] && [ -z "$(ls -A "$T/u")" ] &&
+[ "$out" = "app.nosuch: no such table with a primary key in app [AZ621]" ] && [ -z "$(ls -A "$T/u")" ] &&
   ok "... and a --users table that isn't there, with nothing written" || bad "init --users of a table that isn't there" "$out $(ls -A "$T/u")"
 # in a Next.js app on Prisma: the tool, the generated names, the SDK packages and the setup line
 mkdir -p "$T/k/prisma" "$T/k/src"
@@ -351,6 +364,21 @@ case "$out" in *"DATABASE_URL is another connection than --db's"*"ROWSTILE_DATAB
   grep -q '^database = "env:ROWSTILE_DATABASE_URL"     # the tables'"'"' owner'"'"'s connection: DATABASE_URL is another$' "$T/dburl/rowstile.toml" &&
   ok "init with --db and another DATABASE_URL: rowstile.toml reads the owner's from ROWSTILE_DATABASE_URL, and says so" ||
   bad "init's database line" "$(cat "$T/dburl/rowstile.toml")";; *) bad "init with another DATABASE_URL" "$out";; esac
+# ...the same when DATABASE_URL is in .env, which the next command reads too: the note says so
+mkdir -p "$T/dburl2" && printf 'DATABASE_URL=postgresql://app_user@localhost/%s\n' "$DB" > "$T/dburl2/.env"
+out=$(cd "$T/dburl2" && env -u DATABASE_URL python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
+case "$out" in *"note    DATABASE_URL (in .env) is another connection than --db's (the app's, as its role?):"*)
+  grep -q '^database = "env:ROWSTILE_DATABASE_URL"' "$T/dburl2/rowstile.toml" &&
+  ok "... and with DATABASE_URL in .env: the same line, and the note says it is in .env" ||
+  bad "init's database line, DATABASE_URL in .env" "$(cat "$T/dburl2/rowstile.toml")";; *) bad "init with DATABASE_URL in .env" "$out";; esac
+# ...and neither --db nor DATABASE_URL (the PG settings name the database): no note, and rowstile.toml reads DATABASE_URL
+mkdir -p "$T/dburl3"
+out=$(cd "$T/dburl3" && env -u DATABASE_URL PGDATABASE="$DB" python3 "$OLDPWD/cli/rowstile_cli.py" init --schema app 2>&1)
+case "$out" in *"note    DATABASE_URL"*|*"from DATABASE_URL"*) bad "init with no DATABASE_URL speaks of it" "$out";;
+  *"wrote db/policy.authz"*)
+  grep -q '^database = "env:DATABASE_URL"' "$T/dburl3/rowstile.toml" && [ -f "$T/dburl3/db/policy.authz" ] &&
+  ok "... and with neither --db nor DATABASE_URL: no note, and rowstile.toml reads DATABASE_URL" ||
+  bad "init's database line, no DATABASE_URL" "$(cat "$T/dburl3/rowstile.toml")";; *) bad "init with no DATABASE_URL" "$out";; esac
 # init again there: rowstile.toml is kept, and package.json, which has the packages now, is left as it is
 before=$(cksum < "$T/k/package.json")
 out=$(cd "$T/k" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
@@ -381,6 +409,10 @@ printf 'fastapi>=0.110\nsqlalchemy\n' > "$T/fa/requirements.txt"
 out=$(cd "$T/fa" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
 case "$out" in *"found   FastAPI, SQLAlchemy, Postgres"*"add     rowstile[fastapi,sqlalchemy]"*" to your Python dependencies (pip install 'rowstile[fastapi,sqlalchemy]"*"', or uv add 'rowstile[fastapi,sqlalchemy]"*)
   ok "init in a FastAPI app without rowstile says what to add to its dependencies";; *) bad "init: what to add to a Python app" "$out";; esac
+# DATABASE_URL set, and --db naming the database: the found line doesn't say the connection came from DATABASE_URL
+out=$(cd "$T/fa" && rm -f rowstile.toml && DATABASE_URL="postgresql://app_user@localhost/$DB" python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
+grep -qx 'found   FastAPI, SQLAlchemy, Postgres' <<<"$out" &&
+  ok "... with --db and DATABASE_URL set: found names no DATABASE_URL, which --db's connection didn't come from" || bad "init: where the connection came from" "$out"
 # a schema as Prisma names it (capitals), a column named like an SQL word, a link table named like a permission,
 # one through a unique column, a name with a space, and the migration tool's own table: the draft compiles and applies
 dropdb --if-exists "${DB}_names" 2>/dev/null; createdb "${DB}_names"
@@ -414,6 +446,30 @@ cmp -s "$T/n/db/policy.authz" "$T/n2/db/policy.authz" && ok "init without --sche
 out=$(cd "$T/n" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_names" apply 2>&1); rc=$?
 case "$out" in *": applied") ok "... and applies";; *) bad "draft names apply" "$out";; esac
 dropdb --if-exists "${DB}_names" 2>/dev/null
+# the columns that name users point to a schema not drafted (as Supabase's auth.users), or to a table the draft
+# leaves out: init says which table, why, and what to do
+dropdb --if-exists "${DB}_ext" 2>/dev/null; createdb "${DB}_ext"
+psql -X -q -v ON_ERROR_STOP=1 -d "${DB}_ext" >/dev/null <<'SQL'
+CREATE SCHEMA ext; CREATE SCHEMA blog; CREATE SCHEMA odd;
+CREATE TABLE ext.accounts (id bigint PRIMARY KEY);
+CREATE TABLE blog.posts (id bigint PRIMARY KEY, user_id bigint REFERENCES ext.accounts, author_id bigint REFERENCES ext.accounts);
+CREATE TABLE odd."my people" (id bigint PRIMARY KEY);
+CREATE TABLE odd.notes (id bigint PRIMARY KEY, owner_id bigint REFERENCES odd."my people");
+CREATE SCHEMA two; CREATE TABLE two.users (tenant_id bigint, id bigint, PRIMARY KEY (tenant_id, id));
+SQL
+mkdir -p "$T/x1" "$T/x2"
+out=$(cd "$T/x1" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_ext" init --schema blog 2>&1); rc=$?
+[ $rc -eq 1 ] && [ -z "$(ls -A "$T/x1")" ] &&
+  [ "$out" = "ext.accounts: blog.posts.author_id, blog.posts.user_id point to it, and it isn't in blog: draft its schema too (--schema blog,ext), or name the table that holds your users: rowstile init --users schema.table [AZ621]" ] &&
+  ok "init where the users are in a schema not drafted: says which, and what to do" || bad "init, users in another schema" "$rc $out"
+out=$(cd "$T/x2" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_ext" init --schema odd 2>&1); rc=$?
+[ $rc -eq 1 ] && [ -z "$(ls -A "$T/x2")" ] &&
+  [ "$out" = "odd.my people: odd.notes.owner_id points to it, and the draft leaves it out: a name the policy language can't write (letters, digits and _ only): give it a view with a plain name, and name the view. Name the table that holds your users with rowstile init --users schema.table [AZ621]" ] &&
+  ok "... and where they are in a table the draft leaves out: says why" || bad "init, users left out" "$rc $out"
+out=$(mkdir -p "$T/x3" && cd "$T/x3" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_ext" init --schema two 2>&1); rc=$?
+[ $rc -eq 1 ] && [ "$out" = "two.users: the user table needs a key of one column (or name another: rowstile init --users schema.table) [AZ622]" ] &&
+  ok "... and a users table keyed by two columns: says what it lacks" || bad "init, users keyed by two columns" "$rc $out"
+dropdb --if-exists "${DB}_ext" 2>/dev/null
 # shapes real apps have (Chatwoot, GitLab, Documenso, Plausible): accounts beside users, a foreign key declared
 # twice, a loop of foreign keys where only orgs have owners, a membership with an id of its own: the draft takes
 # users, one relation, a loop that compiles, a link; it applies, and lint finds no view written out too often

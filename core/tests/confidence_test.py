@@ -343,7 +343,9 @@ def main() -> None:
         refused = str(e)
     check(
         "more people in the data than a snapshot is for: refused, saying how many",
-        re.fullmatch(r"\d+ people and principals: a snapshot is for small review data \(at most 3\)", refused),
+        re.fullmatch(
+            r"\d+ people and principals: a snapshot is for small review data \(at most 3\) \[AZ623\]", refused
+        ),
         refused,
     )
     many = int(refused.split(" ", 1)[0]) if refused[:1].isdigit() else 0

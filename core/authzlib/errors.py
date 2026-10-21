@@ -656,6 +656,50 @@ CODES = {
         "",
         when="command",
     ),
+    "AZ620": Code(
+        "No tables to draft a policy from",
+        "`rowstile init` drafts a first policy from the database's tables: those in the schemas `--schema` names, "
+        "or, without it, those in every schema but Postgres's own and rowstile's. It found none there. Views "
+        "aren't read, only tables. A schema's name may be wrong (`--schema` takes them as the catalog has them, "
+        "`--schema app,billing`), the app's migrations may not have run yet, or the command is connected to "
+        "another database than the app's (`--db`, `DATABASE_URL`).",
+        "",
+        "",
+        when="command",
+    ),
+    "AZ621": Code(
+        "Which table holds the users?",
+        "The draft's `user` type is the table that holds your users. `rowstile init` takes the first table named "
+        "like one (`users`, `user`, `accounts`, `account`, `people`, `persons`, `profiles`), else the table that "
+        "most columns named like `user_id`, `owner_id`, `author_id` or `creator_id` point to. Here it found none, "
+        "or the table those columns point to can't be drafted: it is in a schema the draft doesn't read (as "
+        "Supabase's `auth.users`, with `--schema public`), or the draft leaves it out (a name the policy language "
+        "can't write, no primary key; the message says which). Draft that schema too (`--schema public,auth`), or "
+        "name the table: `rowstile init --users public.profiles`. `--users` takes a table with a primary key, in a "
+        "schema the draft reads.",
+        "",
+        "",
+        when="command",
+    ),
+    "AZ622": Code(
+        "A user table the draft can't use",
+        "The `user` type's key says who is signed in (`authz.act_as('user', '42')`), so it is one column, of a "
+        "type rowstile can use as a key: bigint, integer, smallint, text, uuid or varchar. The table that holds "
+        "the users here has a key of several columns (a tenant's and its own, often), or of another type. Name "
+        "another table with `rowstile init --users schema.table`, or change the key.",
+        "",
+        "",
+        when="command",
+    ),
+    "AZ623": Code(
+        "Too many people for a snapshot",
+        "`rowstile snapshot` asks what each person and principal in the data holds, as them, and writes it to a "
+        "file to commit: it is for small review data (a seed, a fixture), not a copy of production. This database "
+        "holds more people than it takes (500): make the snapshot on a database with that small data.",
+        "",
+        "",
+        when="command",
+    ),
     "AZ701": Code(
         "Nobody signed in",
         "A query needed to know who is asking, and nobody signed in in this transaction. Every transaction starts "

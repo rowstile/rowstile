@@ -258,31 +258,32 @@ def draft(
 ) -> str:
     """The policy's text, from the tables (table_of gives them from the catalog)."""
     skipped: list[str] = []
+    left_out: dict[str, str] = {}  # the tables left out here: why
     kept: list[Table] = []
     for t in tables:
         schema, _, name = t["name"].partition(".")
         if name in TOOL_TABLES:
-            skipped.append(f"-- {t['name']}: the migration tool's own table")
+            left_out[t["name"]] = "the migration tool's own table"
         elif not (writable(schema) and writable(name)):
-            skipped.append(
-                f"-- {t['name']}: a name the policy language can't write (letters, digits and _ only): "
-                f"give it a view with a plain name, and name the view"
+            left_out[t["name"]] = (
+                "a name the policy language can't write (letters, digits and _ only): "
+                "give it a view with a plain name, and name the view"
             )
         elif not all(writable(c) for c in t["pk"]):
-            skipped.append(
-                f"-- {t['name']}: its key has a column name the policy language can't write ({', '.join(t['pk'])})"
-            )
+            left_out[t["name"]] = f"its key has a column name the policy language can't write ({', '.join(t['pk'])})"
         else:
             # the same foreign key declared twice (added again under another name): one relation
             fks = list({(tuple(fk["cols"]), fk["ref"], tuple(fk["ref_cols"])): fk for fk in t["fks"]}.values())
             kept.append({**t, "fks": fks})
+            continue
+        skipped.append(f"-- {t['name']}: {left_out[t['name']]}")
     tables = kept
     by_name = {t["name"]: t for t in tables}
     keyed = {n: t for n, t in by_name.items() if t["pk"]}
     # --- the user table -------------------------------------------------------------------------
     if users:
         if users not in keyed:
-            raise DraftError(f"{users}: no such table with a primary key in {', '.join(schemas)}")
+            raise DraftError(f"{users}: no such table with a primary key in {', '.join(schemas)} [AZ621]")
     else:
         named = sorted(
             (n for n in keyed if n.split(".")[1].lower() in USER_TABLES and len(keyed[n]["pk"]) == 1),
@@ -291,30 +292,47 @@ def draft(
         if named:
             users = named[0]
         else:
-            refs: dict[str, int] = {}
+            refs: dict[str, list[str]] = {}  # the table they point to: the columns that name users
             for t in tables:
                 for fk in t["fks"]:
                     if len(fk["cols"]) == 1 and re.search(
                         r"(user|owner|author|creator|created_by|sender)", fk["cols"][0]
                     ):
-                        refs[fk["ref"]] = refs.get(fk["ref"], 0) + 1
+                        refs.setdefault(fk["ref"], []).append(f"{t['name']}.{fk['cols'][0]}")
             if not refs:
                 # a users table keyed by two columns (a tenant's and its own): say what it lacks, not "which table"
                 wide = sorted(n for n in keyed if n.split(".")[1].lower() in USER_TABLES)
                 if wide:
                     raise DraftError(
                         f"{wide[0]}: the user table needs a key of one column (or name another: rowstile init "
-                        "--users schema.table)"
+                        "--users schema.table) [AZ622]"
                     )
-                raise DraftError("which table holds your users? name it: rowstile init --users schema.table")
-            users = max(refs, key=lambda n: refs[n])
+                raise DraftError("which table holds your users? name it: rowstile init --users schema.table [AZ621]")
+            users = max(refs, key=lambda n: len(refs[n]))
+            if users not in keyed:
+                # the keys that name users point to a table the draft can't have as a type: another schema's (as
+                # Supabase's auth.users), or one left out above
+                cols = refs[users]
+                said = f"{users}: {', '.join(cols[:3])}{' and more' if len(cols) > 3 else ''} "
+                said += f"point{'' if len(cols) > 1 else 's'} to it, "
+                why = left_out.get(users) or ("no primary key" if users in by_name else None)
+                if why:
+                    raise DraftError(
+                        f"{said}and the draft leaves it out: {why}. Name the table that holds your users with "
+                        "rowstile init --users schema.table [AZ621]"
+                    )
+                raise DraftError(
+                    f"{said}and it isn't in {', '.join(schemas)}: draft its schema too (--schema "
+                    f"{','.join([*schemas, users.split('.')[0]])}), or name the table that holds your users: "
+                    "rowstile init --users schema.table [AZ621]"
+                )
     if len(keyed[users]["pk"]) != 1:
-        raise DraftError(f"{users}: the user table needs a key of one column")
+        raise DraftError(f"{users}: the user table needs a key of one column [AZ622]")
     user_key = dict(keyed[users]["columns"])[keyed[users]["pk"][0]]
     if key_type(user_key) is None:
         raise DraftError(
             f"{users}: its key is {user_key}, and the user type's key must be one of {', '.join(KEY_TYPES)}: "
-            f"name another table with --users, or change the key's type"
+            f"name another table with --users, or change the key's type [AZ622]"
         )
 
     # --- types ----------------------------------------------------------------------------------
@@ -424,7 +442,7 @@ def draft(
                 f"  -- decide: {n} is read as a membership (the people it lists see what it links); "
                 f"remove {rel} if it isn't one"
             )
-        role_col = next((c for c, _ in t["columns"] if c in ("role", "kind", "level", "access")), None)
+        role_col = next((c for c, _ in t["columns"] if c in ROLE_COLUMNS), None)
         if role_col:
             notes[target].append(
                 f"  -- decide: {n}.{role_col} may say who does more, e.g.\n"

@@ -53,8 +53,8 @@
     rowstile client  [py|ts] [POLICY.authz]        typed helpers for app code; with neither, writes the
                                                    clients rowstile.toml names
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
-                                                   a first policy from the database's tables (those in public,
-                                                   unless --schema names others), and rowstile.toml
+                                                   a first policy from the database's tables (every schema of
+                                                   the app's, or those --schema names), and rowstile.toml
     rowstile lsp                                   the language server, for editors (stdin and stdout)
     rowstile mcp                                   the MCP server, for coding agents (stdin and stdout): check,
                                                    prove, review, test, why, lint, and push to a development database
@@ -220,6 +220,15 @@ class EnvFiles:
         self.read: set[str] = set()  # the folders whose files were read
 
     def load(self, folder: str) -> None:
+        self.peek(folder)
+        # what the command and its connection read from the environment: put there, unless it is there already
+        for key in sorted(ENV_NAMES & self.values.keys()):
+            if key not in os.environ:
+                os.environ[key] = self.values[key]
+                self.taken.add(key)
+
+    def peek(self, folder: str) -> None:
+        """Reads the files, and leaves the environment as it is."""
         self.read.add(folder)
         top = os.path.realpath(folder)
         for name in ENV_FILES:
@@ -238,11 +247,6 @@ class EnvFiles:
             for key, value in found.items():
                 if key not in self.values:
                     self.values[key], self.source[key] = value, name
-        # what the command and its connection read from the environment: put there, unless it is there already
-        for key in sorted(ENV_NAMES & self.values.keys()):
-            if key not in os.environ:
-                os.environ[key] = self.values[key]
-                self.taken.add(key)
 
     def get(self, name: str) -> str | None:
         """A variable rowstile.toml names (database = "env:NAME"): the environment's, else the files'."""
@@ -1211,6 +1215,12 @@ def main(argv: list[str]) -> None:
     except RecursionError:
         fail(f"rowstile {cmd}: an expression in the policy is nested too deep to read", 1)
 
+    if cmd == "init":
+        from init import out_problem
+
+        problem = out_problem(opts.get("--out", "db"))
+        if problem:
+            fail(problem, 2)
     given = dsn
     dsn = dsn if dsn is not None else (cfg.database or os.environ.get("DATABASE_URL"))
     ENV.where = cfg.database_from(given)
@@ -1373,13 +1383,22 @@ def main(argv: list[str]) -> None:
         elif cmd == "init":
             from init import init
 
+            # DATABASE_URL, which the next command reads, and where it is: with --db, the files weren't read above
+            app_url: tuple[str, str] | None = None
+            if os.environ.get("DATABASE_URL"):
+                app_url = (os.environ["DATABASE_URL"], "")
+            elif given is not None:
+                env_files = EnvFiles()
+                env_files.peek(cfg.dir)
+                if env_files.values.get("DATABASE_URL"):
+                    app_url = (env_files.values["DATABASE_URL"], env_files.source["DATABASE_URL"])
             schemas = [s for s in opts.get("--schema", "").split(",") if s] or None
             policy = transaction(
                 conn,
                 lambda db: database.draft(db, schemas, opts.get("--users"), opts.get("--role", "app_user")),
                 keep=False,
             )
-            init(policy, opts, cfg, ENV.where, dsn)
+            init(policy, opts, cfg, ENV.where, given, app_url)
         elif cmd == "reapply":
             transaction(conn, lambda db: database.reapply(db, rebuild="--force" in flags))
             print("applied again")
