@@ -649,7 +649,7 @@ BEGIN
 END $f$;
 -- custom roles, access requests, access reviews, break-glass, a key of one's own and view-as are for users: a
 -- service signed in (another principal type) is refused, saying so, even one the policy gives the permission the
--- call asks for
+-- call asks for. Nobody signed in passes: each caller that needs a user says so itself (sign in to ..., AZ714)
 CREATE FUNCTION authz_int.users_only(p_what text) RETURNS void
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_type text; v_id text;
@@ -4208,6 +4208,8 @@ END $f$;
 -- Which of these people (or principals of another type) hold a permission: who to tell about a change.
 -- It signs each one in with authz.act_as(), as the caller: so only a backend trusted to sign anyone in can
 -- use it, as it could ask authz.can for each one itself. Not in a session limited by scopes or view-as. SELECT * FROM authz.who_among('chat', '7', 'read', ARRAY['1', '2'])
+-- (it reads those settings as they are, not through authz_int.scopes_active(), which the app role may not call: the
+-- guard only keeps its last act_as, which ends scopes and view-as, from widening the session)
 CREATE OR REPLACE FUNCTION authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text DEFAULT 'user')
 RETURNS SETOF text LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := nullif(current_setting('authz.user_id', true), '');
@@ -5249,6 +5251,7 @@ BEGIN
     END IF;
   ELSE
     v_id := authz_int.canon(v_type, p_principal_id);
+    -- (no row there: authz.can holds only on rows that are, so the check refuses it, as one you can't manage)
     PERFORM authz_int.hold(v_type, v_id);
     PERFORM authz_int.check_manage_keys(v_type, v_id);
   END IF;
@@ -5497,6 +5500,11 @@ CREATE OR REPLACE FUNCTION authz.sync_members(p_type text, p_id text, p_relation
   OUT added int, OUT removed int)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
+  -- NULL is no list: it would remove every member (a sync job's failed fetch, a missing field)
+  IF p_members IS NULL OR EXISTS (SELECT 1 FROM unnest(p_members) x WHERE x IS NULL) THEN
+    RAISE EXCEPTION 'say who the members are: a list of ids with no NULL in it (an empty list for none)'
+      USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
+  END IF;
   CASE p_type || '.' || p_relation
     WHEN NULL THEN NULL;
     ELSE RAISE EXCEPTION '%.% has no single table of members to sync (it needs one source: table(group -> user), without where)',
@@ -5660,10 +5668,11 @@ DECLARE r authz.requests;
 BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.decide_request');
+  IF authz.uid() IS NULL THEN RAISE EXCEPTION 'sign in to decide a request' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ714'; END IF;
   IF p_approve IS NULL THEN RAISE EXCEPTION 'approve (true) or deny (false)' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
   SELECT * INTO r FROM authz.requests WHERE id = p_id AND status = 'pending' FOR UPDATE;
   IF r.id IS NULL THEN RAISE EXCEPTION 'no pending request %', p_id USING HINT = 'rowstile help AZ708'; END IF;
-  IF authz.uid() IS NULL OR r.requester = authz.uid()::text THEN
+  IF r.requester = authz.uid()::text THEN
     RAISE EXCEPTION 'you cannot decide your own request' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   IF NOT authz_int.may_manage(r.object_type, r.object_id, r.relation,

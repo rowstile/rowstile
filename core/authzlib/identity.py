@@ -234,7 +234,7 @@ BEGIN
 END $f$;
 -- custom roles, access requests, access reviews, break-glass, a key of one's own and view-as are for users: a
 -- service signed in (another principal type) is refused, saying so, even one the policy gives the permission the
--- call asks for
+-- call asks for. Nobody signed in passes: each caller that needs a user says so itself (sign in to ..., AZ714)
 CREATE FUNCTION authz_int.users_only(p_what text) RETURNS void
 LANGUAGE plpgsql STABLE {DEF} AS $f$
 DECLARE v_type text; v_id text;
@@ -319,6 +319,7 @@ BEGIN
     END IF;
   ELSE
     v_id := authz_int.canon(v_type, p_principal_id);
+    -- (no row there: authz.can holds only on rows that are, so the check refuses it, as one you can't manage)
     PERFORM authz_int.hold(v_type, v_id);
     PERFORM authz_int.check_manage_keys(v_type, v_id);
   END IF;
@@ -567,6 +568,11 @@ CREATE FUNCTION authz.sync_members(p_type text, p_id text, p_relation text, p_me
   OUT added int, OUT removed int)
 LANGUAGE plpgsql {DEF} AS $f$
 BEGIN
+  -- NULL is no list: it would remove every member (a sync job's failed fetch, a missing field)
+  IF p_members IS NULL OR EXISTS (SELECT 1 FROM unnest(p_members) x WHERE x IS NULL) THEN
+    RAISE EXCEPTION 'say who the members are: a list of ids with no NULL in it (an empty list for none)'
+      USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
+  END IF;
   CASE p_type || '.' || p_relation
 {sync}
     ELSE RAISE EXCEPTION '%.% has no single table of members to sync (it needs one source: table(group -> user), without where)',

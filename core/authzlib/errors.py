@@ -787,7 +787,8 @@ CODES = {
         "A call is missing something it needs (a reason, kept in the audit trail; approve or deny) or has a value "
         "out of range (a duration that isn't positive, emergency access longer than a day, a command "
         "`authz.explain_rule` doesn't explain, a row it can't find without an id, a page cursor for `authz.list` "
-        "that isn't an id of the type, a negative page size). SQLSTATE 22023; answer 400, as the SDKs do, with the "
+        "that isn't an id of the type, a negative page size, a member list for `authz.sync_members` that is NULL or "
+        "holds a NULL). SQLSTATE 22023; answer 400, as the SDKs do, with the "
         "database's words.",
         when="runtime",
     ),
@@ -815,7 +816,7 @@ CODES = {
     "AZ714": Code(
         "Sign in first",
         "A call that needs someone signed in ran in a transaction signed in as nobody (`authz.act_as(NULL, NULL)`, "
-        "a visitor who hasn't signed in): an access request, or an API key made for oneself. SQLSTATE 42501; "
+        "a visitor who hasn't signed in): an access request, deciding one, or an API key made for oneself. SQLSTATE 42501; "
         "answer 401, as the SDKs do, with the database's words. A transaction that never signed in says AZ701.",
         when="runtime",
     ),
