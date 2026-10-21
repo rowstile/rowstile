@@ -127,9 +127,12 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   `installing.md` (the site's Installing page: it holds the README's install lines, `DocPages` checks),
   `getting-started.md` (run as written by `tests/docs_test.sh`), `cookbook.md` + `cookbook/` (the index, and
   the recipes: each is `cookbook/<name>.md` beside `cookbook/<name>/` with `schema.sql`, `policy.authz`,
-  `tests.authz`, `rows.sql` for the playground and, where `SELECT *` on the first governed table isn't the
-  question to ask there, `ask.sql`; `tests/cookbook.sh` applies and tests each, proves its invariants and
-  checks every line its page shows is in them; the site and the playground list them from the folders,
+  `tests.authz`, `rows.sql` for the playground, `rowstile.toml` (so `rowstile dev` runs in a copy of the folder)
+  and, where `SELECT *` on the first governed table isn't the question to ask there, `ask.sql`;
+  `tests/cookbook.sh` applies and tests each, proves its invariants, runs `rowstile dev --once` in a copy, runs
+  each SQL block its page shows (as user 1, the app role; `<!-- not run: why -->` before one it can't), compares
+  each `$ rowstile ...` output with what the command prints, and checks every policy and test line its page shows
+  is in its files; the site and the playground list them from the folders,
   and `/playground/#e=<name>` opens one), `troubleshooting.md`,
   `operations.md`, `managed-postgres.md` (the setup on a managed service; Neon and Supabase, as tried),
   `signed-urls.md`, `comparison.md` and `compare/` (a page per alternative, titled `# rowstile and <it>`, which
