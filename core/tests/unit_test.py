@@ -283,6 +283,48 @@ class ThisRow(unittest.TestCase):
         for cond in ("x = $$now()$$", "x = 'nowhere' and \"now\" = 1"):
             check_stable_condition(cond, Loc(None, 1))
 
+    def test_names_past_ascii(self) -> None:
+        """Postgres takes any character past ASCII as a letter in a name, and folds only ASCII letters to lower case:
+        a function so named is a call, which may read other rows; `this.` goes before such a column; a bare one is
+        a column, read whole."""
+        from authzlib.conditions import tokens
+        from authzlib.database import BARE
+        from authzlib.parse import Loc, PolicyError
+        from authzlib.sqlutil import (
+            check_stable_condition,
+            fold,
+            names_in,
+            on_row,
+            reads_more,
+            reads_tables,
+            this_alone,
+            this_spans,
+        )
+
+        for sql in ("not app.muté(this.owner_id)", "muté(id)", "ma\u212ae_date(1, 2, 3) > x", "f$x(1)"):
+            self.assertTrue(reads_more(sql), sql)
+        self.assertFalse(reads_more("not archivé and make_date(année, 1, 1) > x"))
+        self.assertEqual((fold("ARCHIVÉ"), fold("MA\u212aE")), ("archivÉ", "ma\u212ae"))
+        self.assertEqual(on_row("this.étage > 1", "r"), "r.étage > 1")
+        self.assertEqual(
+            on_row("exists (select 1 from app.d d where d.p = this.archivé)", "d"),
+            "(SELECT (exists (select 1 from app.d d where d.p = authz__this.archivé)) FROM (SELECT d.archivé) AS authz__this)",
+        )
+        self.assertEqual(this_spans("→this.x = 1"), [])  # →this is a name: x is that table's
+        self.assertFalse(this_alone("→this = 1") or this_alone("this→ = 1"))
+        self.assertEqual(names_in("archivé and année"), {"archivé", "and", "année"})
+        self.assertEqual(
+            [m.group(1) for m in BARE.finditer("archivé and d.é or é(1) > année")], ["archivé", "and", "or", "année"]
+        )
+        self.assertEqual(
+            tokens("not ARCHIVÉ and this.année > 1"),
+            [("word", "not"), ("name", "archivÉ"), ("word", "and"), ("name", "année"), ("op", ">"), ("num", "1")],
+        )
+        # what reads another table, or changes with time, after names and a dollar quote past ASCII
+        self.assertTrue(reads_tables("titré$$ <> $é$it's$é$ and exists (select 1 from app.t)"))
+        with self.assertRaisesRegex(PolicyError, "it depends on now"):
+            check_stable_condition("titré$$ <> $é$it's$é$ and créé > now()", Loc(None, 1))
+
 
 class Golden(unittest.TestCase):
     """The generated SQL is what it was; after an intended change, run with --update and read the diff."""
@@ -2215,6 +2257,10 @@ class Statements(unittest.TestCase):
             ("trigger", "déclencheur ON app.dossiés"),
         )
         self.assertEqual(made("CREATE FUNCTION app.fé(a int) RETURNS int AS $$ $$"), ("function", "app.fé(a int)"))
+        # the same letters as a condition's reading (sqlutil.py; statements.py imports nothing of ours)
+        from authzlib import sqlutil, statements
+
+        self.assertEqual(statements.LETTER, sqlutil.LETTER)
 
     def test_what_each_makes(self) -> None:
         from authzlib.statements import made

@@ -476,30 +476,39 @@ case "$out" in *"more.authz: applied")
   *) bad "apply, the policy with invariants and bots" "$out";; esac
 [ -z "${KEEP:-}" ] && dropdb "$DB4"
 
-echo "-- names past ASCII, unquoted (Postgres reads é as a letter): in a condition and in a named test's SQL"
+echo "-- names past ASCII, unquoted (Postgres reads é as a letter): in conditions, their warnings and hints, a named test's SQL"
 DB5=authz_capitals_accents
 A() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB5" "$@"; }
 dropdb --if-exists "$DB5" 2>/dev/null; createdb "$DB5" || exit 1
 A >/dev/null <<'SQL'
 CREATE TABLE person (id bigint PRIMARY KEY);
 CREATE TABLE doc (id bigint PRIMARY KEY, owner_id bigint REFERENCES person, archivé boolean NOT NULL DEFAULT false,
-                  année int);
-GRANT SELECT, UPDATE ON person, doc TO app_user;
+                  année int, étage int, ÉTAT text);   -- ÉTAT is État: Postgres folds ASCII letters alone
+CREATE TABLE note (id bigint PRIMARY KEY, doc_id bigint REFERENCES doc, archivé boolean, ÉTAT text);
+GRANT SELECT, UPDATE ON person, doc, note TO app_user;
 INSERT INTO person VALUES (1);
 INSERT INTO doc VALUES (1, 1, false, 2025), (2, 1, true, 2024);
 SQL
 mkdir -p "$T/accents/db"
 printf 'policy   = "db/policy.authz"\ndatabase = "dbname=%s"\ntests    = ["db/tests.authz"]\n[migrations]\ntool = "sql"\ndir  = "db/migrations"\n' "$DB5" > "$T/accents/rowstile.toml"
-printf 'app role app_user\n\ntype user = public.person\n\ntype doc = public.doc\n  owner : user = owner_id\n\n  can view = owner and {not archivé}\n\nrules public.doc\n  select : view\n  update : owner and {année > 2000}\n' > "$T/accents/db/policy.authz"
+printf 'app role app_user\n\ntype user = public.person\n\ntype doc = public.doc\n  owner : user = owner_id\n\n  can view = owner and {not archivé and this.étage is null}\n  can peek = {exists (select 1 from note n where n.doc_id = this.id and archivé and ÉTAT = '"'"'x'"'"')}\n\nrules public.doc\n  select : view\n  update : owner and {année > 2000}\n' > "$T/accents/db/policy.authz"
 printf 'test "an archived doc is hidden"\n  as user 1 sees 1 {SELECT année FROM doc WHERE année > 2000}\n' > "$T/accents/db/tests.authz"
 in_accents() { out=$(cd "$T/accents" && python3 "$ROOT/cli/rowstile_cli.py" "$@" 2>&1); rc=$?; }
 in_accents apply
-[ $rc -eq 0 ] && is applied && ok "apply: a condition on archivé" || bad "apply, a condition on archivé" "$out"
+[ $rc -eq 0 ] && is applied && ok "apply: a condition on archivé, and this.étage" || bad "apply, a condition on archivé" "$out"
+case "$out" in *"names archivé, a column of public.doc's rows, but reads it from another table the condition names"*"HINT: for the row's, write this.archivé"*)
+  ok "... with the warning that the bare archivé in peek is the note's";; *) bad "the warning on a bare archivé" "$out";; esac
+case "$out" in *"names État, a column of public.doc's rows, but reads it from another table the condition names"*"HINT: for the row's, write this.État"*)
+  ok "... and ÉTAT's, the column État";; *) bad "the warning on a bare ÉTAT" "$out";; esac
 in_accents apply; is unchanged && ok "... again: unchanged" || bad "apply again, archivé" "$out"
 [ "$(A -c "SET authz.user_id = 1" -c "SET ROLE app_user" -c "SELECT string_agg(id::text, ' ') FROM doc")" = 1 ] &&
   ok "the archived doc is hidden from its owner" || bad "the rows as user 1" "$(A -c "SET authz.user_id = 1" -c "SET ROLE app_user" -c "SELECT * FROM doc" 2>&1)"
 in_accents test; case "$out" in *"policy tests passed (1 checks)") ok "test: a named test whose SQL reads année";; *) bad "test, année" "$out";; esac
 in_accents migrate; case "$out" in *"the whole policy"*"wrote db/migrations/"*) ok "migrate: the policy, read back statement by statement";; *) bad "migrate, archivé" "$out";; esac
+sed 's/{not archivé and this.étage is null}/{not d.archivé}/' "$T/accents/db/policy.authz" > "$T/accents/db/alias.authz"
+in_accents apply db/alias.authz
+case "$out" in *"HINT: d.archivé names a table only where the query reads one by that name: for the row the condition is about, write this.archivé")
+  ok "a condition naming d.archivé: refused, the hint names archivé whole";; *) bad "the hint on d.archivé" "$out";; esac
 [ -z "${KEEP:-}" ] && dropdb "$DB5"
 
 rm -rf "$T"

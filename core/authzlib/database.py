@@ -27,8 +27,13 @@ from .sqlutil import (
     DROP_MASKED_VIEWS,
     DROP_OLD_POLICIES,
     IF_PARTITIONED,
+    LETTER,
     LOST_RULES,
+    NAME,
+    NOT_AFTER_NAME,
+    NOT_BEFORE_NAME,
     POLICY_MARKS,
+    fold,
     lit,
     q,
     qt,
@@ -339,7 +344,7 @@ def condition_error(err: Exception, sql: str, policy: str, files: Files) -> Erro
         return None
     hint = got.get("H")
     table = re.search(r'missing FROM-clause entry for table "([^"]+)"', got.get("M", ""))
-    named = re.search(rf"\b{re.escape(table.group(1))}\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)", cond) if table else None
+    named = re.search(rf"{NOT_AFTER_NAME}{re.escape(table.group(1))}\s*\.\s*({NAME})", cond) if table else None
     if table and named:
         hint = (
             f"{table.group(1)}.{named.group(1)} names a table only where the query reads one by that name: for "
@@ -763,7 +768,7 @@ SQL_WORDS = frozenset(
     }
 )
 # a bare word in a condition: not after a dot or ::, not a qualifier or a function name
-BARE = re.compile(r"(?<![\w.$\"])(?<!::)([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*[.(])")
+BARE = re.compile(rf"(?<![{LETTER}0-9$.\"])(?<!::)({NAME}){NOT_BEFORE_NAME}(?!\s*[.(])")
 
 
 def row_conditions(c: Compiler) -> list[tuple[str, str, Loc]]:
@@ -808,7 +813,7 @@ def warn_captured_names(db: Db, compiler: Compiler) -> None:
         if not BARE.search(cond):
             continue
         alias = q(table.split(".")[1])
-        words = {m.group(1).lower() for code, part in sql_code(cond) if code for m in BARE.finditer(part)} - SQL_WORDS
+        words = {fold(m.group(1)) for code, part in sql_code(cond) if code for m in BARE.finditer(part)} - SQL_WORDS
         try:
             with savepoint(db, "authz_probe"):
                 db.script(

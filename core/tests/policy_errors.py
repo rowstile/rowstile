@@ -239,6 +239,12 @@ COMPILE = [
         10,
     ),
     (
+        "inheritance that depends on the time, after names and a dollar quote past ASCII",
+        "  can view = owner or (parent.view and {titré$$ <> $é$it's$é$ and créé > now() and titré$$ <> 'x'})\n",
+        "can't limit inheritance: it depends on now",
+        10,
+    ),
+    (
         "inheritance that depends on the time, written as a $$ string",
         "  can view = owner or (parent.view and {created_at > $$ today $$::date})\n",
         "can't limit inheritance: 'today' means the current time",

@@ -310,7 +310,19 @@ for s in "E'it\\'s'" "\$\$it's\$\$"; do
   [ "$out" = "false 0 false" ] &&
     ok "... and after a string holding a quote, $s: the app role sees no team, as authz.can says" || bad "a rule condition after $s" "$out"
 done
+# the same when the condition calls a function of the app's named with a letter past ASCII (Postgres takes é as a
+# letter): a call, which may read other rows, so the policy's rights run it
+PSQL -c "CREATE FUNCTION app.clés_prod() RETURNS boolean LANGUAGE sql STABLE AS \$f\$ SELECT EXISTS (SELECT 1 FROM app.files f WHERE f.name = 'prod-keys.txt') \$f\$" >/dev/null
+L="  can see = {not app.clés_prod()}" \
+  awk '{print} /^  member : team#member = app\.teams\(parent_id -> id\)/ {print ENVIRON["L"]}' example/docs.authz > "$T/accent.authz"
+printf '%s\n' 'rules app.teams' '  select : see' >> "$T/accent.authz"
+grep -qF "  can see = {not app.clés_prod()}" "$T/accent.authz" || bad "could not write the policy with app.clés_prod()"
+run apply "$T/accent.authz"; case "$out" in *": applied") ;; *) bad "the policy with app.clés_prod() applies" "$out";; esac
+out=$(as 6 "SELECT authz.can('file', 12, 'view') || ' ' || (SELECT count(*) FROM app.teams) || ' ' || authz.can('team', 10, 'see')")
+[ "$out" = "false 0 false" ] &&
+  ok "... and a call of app.clés_prod(), a name past ASCII: the app role sees no team, as authz.can says" || bad "a rule condition calling app.clés_prod()" "$out"
 CLI apply example/docs.authz >/dev/null 2>&1
+PSQL -c "DROP FUNCTION app.clés_prod()" >/dev/null
 
 echo "-- drafting a policy (rowstile init)"
 mkdir -p "$T/i" && ( cd "$T/i" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app ) > "$T/init.log" 2>&1

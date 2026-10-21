@@ -253,6 +253,14 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `rowstile apply`, `migrate`, `push` and `test` take a condition or a test's SQL that names a column with a
   letter past ASCII, unquoted, as Postgres does (`{not archivé}`, `SELECT année FROM ...`). They stopped with a
   Python traceback (`AssertionError`), and nothing was applied.
+- A rule's condition that calls a function of the app's named with a letter past ASCII (`{not app.muté(this.id)}`)
+  runs with the policy's rights, as one calling `app.muted` does. It was read as no call, so the app role ran
+  it, and the function read other tables through their row-level security: the app role could see rows
+  `authz.can` refused.
+- More conditions naming columns past ASCII read as Postgres reads them: `this.étage` names the row's column
+  (applying stopped: `missing FROM-clause entry for table "this"`), the hint for `d.archivé` names the whole
+  column (it said `d.archiv`), the warning on a bare `archivé` that a subquery's table takes is given (it was
+  missed), and `ARCHIVÉ` is the column `archivÉ`, as Postgres folds only ASCII letters to lower case.
 
 ## 0.1.0 (alpha)
 
