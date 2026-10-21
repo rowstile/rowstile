@@ -871,7 +871,7 @@ FEATURES: list[Feature] = [
         "lang.cascades",
         2,
         "Foreign keys whose action is meant: `cascade from`, and the warning of the others",
-        ("err.AZ625",),
+        ("lang.cascade", "err.AZ625"),
         Doc(LANG, "Rules"),
         (
             T("apply.sh", "re-applying warns of a foreign key that deletes a governed table's rows by cascade"),
@@ -883,6 +883,7 @@ FEATURES: list[Feature] = [
             T("unit_test.py", "test_a_cascade_line_added_and_removed"),
             T("unit_test.py", "test_a_cascade_line(self)"),
         ),
+        grammar=("Foreign keys whose action is meant",),
     ),
     Feature(
         "lang.scopes",

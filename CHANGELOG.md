@@ -14,7 +14,8 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `cascade from schema.table` under a table's rules says that its foreign key to that table deletes or changes its
   rows as meant (`ON DELETE CASCADE`, `SET NULL`, ...), and applying no longer warns of it. Where several keys
   to that table act, the line names the key's columns: `cascade from app.users (owner_id)`. Applying refuses a
-  line that names no such key, or several (AZ625). The review flags a line added, and `rowstile fmt` lays it out.
+  line that names no such key, or several (AZ625). The review flags a line added, `rowstile fmt` lays it out, and
+  the editors highlight it.
 - Versions have a beta stage, `X.Y.Z-beta.N` (on PyPI `X.Y.ZbN`), after the version's alphas and before its
   release candidates. The command orders versions so when it refuses to apply, push or migrate over what a
   newer version wrote (AZ616), and `rowstile init` asks a Python app for at least the beta it runs

@@ -18,7 +18,8 @@ where that is a policy the parser reads (`tree-sitter parse --xml` writes no XML
 
 Alike: the app role; the types (table, key, whether they sign in, where); each relation's sources in order, with
 their subjects; the permissions, as expressions (or, and, not, grouped as parentheses say, a run of ors or of ands
-flat); rules and masks, and the view of a table's rules; invariants; scopes; caveats; the tests and their steps.
+flat); rules and masks, and the view of a table's rules; `cascade from` lines; invariants; scopes; caveats; the
+tests and their steps.
 The grammar reads more than the parser takes, as an editor must (`a or b and c`, which the parser refuses): a
 policy the parser refuses is not compared. Both read a condition's text without its -- comments.
 """
@@ -121,6 +122,7 @@ def reading_py(pol: Policy) -> Shape:
         "role": pol.role,
         "types": types,
         "rules": rules,
+        "cascades": [(c.table, c.parent, c.columns) for c in pol.cascades if own(c.loc)],
         "views": dict(pol.views),
         "invariants": [(i.type, expr_py(i.expr)) for i in pol.invariants if own(i.loc)],
         # (what the parser makes of each item, a command or a permission, is its reading alone: the words compared)
@@ -252,7 +254,16 @@ def source_ts(tree: Tree, rel: ET.Element) -> Shape:
 
 
 def reading_ts(tree: Tree) -> Shape:
-    out: Shape = {"role": None, "types": {}, "rules": [], "views": {}, "invariants": [], "scopes": {}, "caveats": {}}
+    out: Shape = {
+        "role": None,
+        "types": {},
+        "rules": [],
+        "cascades": [],
+        "views": {},
+        "invariants": [],
+        "scopes": {},
+        "caveats": {},
+    }
     tests: list[Shape] = []
     unnamed: list[str] = []
     for top in kids(tree.root):
@@ -288,6 +299,9 @@ def reading_ts(tree: Tree) -> Shape:
                 view = field(top, "view")
                 if view is not None:
                     out["views"][table] = name_of(view)
+                for c in (k for k in kids(top) if k.tag == "cascade"):
+                    columns = tuple(name_of(x) or "" for x in kids(c) if x.tag == "column")
+                    out["cascades"].append((table, name_of(field(c, "table")), columns))
                 for r in (k for k in kids(top) if k.tag in ("rule", "mask")):
                     expression = expr_ts(tree, need(r, "expression"))
                     columns = tuple(name_of(c) or "" for c in kids(r) if c.tag == "column")

@@ -22,6 +22,9 @@
       "include": "#permission"
     },
     {
+      "include": "#cascade"
+    },
+    {
       "include": "#rule"
     },
     {
@@ -134,6 +137,28 @@
         },
         "3": {
           "name": "keyword.operator.assignment.authz"
+        }
+      }
+    },
+    "cascade": {
+      "match": "^\\s+(cascade)\\s+(from)\\s+([A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*)(?:\\s*\\(([^)]*)\\))?",
+      "captures": {
+        "1": {
+          "name": "keyword.control.command.authz"
+        },
+        "2": {
+          "name": "keyword.other.from.authz"
+        },
+        "3": {
+          "name": "entity.name.tag.table.authz"
+        },
+        "4": {
+          "patterns": [
+            {
+              "match": "[A-Za-z_][A-Za-z0-9_]*",
+              "name": "variable.other.column.authz"
+            }
+          ]
         }
       }
     },
