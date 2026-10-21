@@ -26,8 +26,25 @@ from typing import NotRequired, TypeAlias, TypedDict
 
 from . import Compiler, PolicyError, migrate, parse_policy
 from .connection import Db
-from .evaluate import FOLLOWS, Difference, Listing, Reference, alike_in, compare, facts, worlds_to_try
-from .parse import KEYWORDS, And, Arrow, Cascade, Cond, Expr, Loc, Not, Or, Perm, Policy, Ref, Rule, Type, read_lines
+from .evaluate import Difference, Listing, Reference, alike_in, compare, facts, names_read, worlds_to_try
+from .parse import (
+    KEYWORDS,
+    And,
+    Arrow,
+    ArrowOn,
+    Cascade,
+    Cond,
+    Expr,
+    Loc,
+    Not,
+    Or,
+    Perm,
+    Policy,
+    Rule,
+    Type,
+    leaves,
+    read_lines,
+)
 from .statements import split
 
 MARK = "<!-- rowstile review -->"
@@ -291,24 +308,6 @@ def entities(policy: str, files: dict[str, str] | None, pol: Policy) -> dict[str
     return out
 
 
-def reads(pol: Policy, t: Type, node: Expr, out: set[tuple[str, str]]) -> None:
-    """Adds to out what an expression on type t reads: the relations and permissions it names, and for `rel.perm`
-    the relation it follows and the permission on each type that relation reaches."""
-    match node:
-        case Ref(name):
-            out.add((t.name, name))
-        case Arrow(rel, perm):
-            out.add((t.name, rel))
-            for st, sr in t.relations[rel].subjects():
-                assert sr is None and st in pol.types, FOLLOWS
-                out.add((st, perm))
-        case Not(item):
-            reads(pol, t, item, out)
-        case And(items) | Or(items):
-            for x in items:
-                reads(pol, t, x, out)
-
-
 def uses(pol: Policy) -> dict[tuple[str, str], set[tuple[str, str]]]:
     """{(type, name): {(type, name) it reads}}: what each relation and permission is computed from."""
     graph: dict[tuple[str, str], set[tuple[str, str]]] = {}
@@ -317,7 +316,7 @@ def uses(pol: Policy) -> dict[tuple[str, str], set[tuple[str, str]]]:
             graph[(t.name, name)] = set()
     for t in pol.types.values():
         for p in t.perms.values():
-            reads(pol, t, p.expr, graph[(t.name, p.name)])
+            graph[(t.name, p.name)] |= names_read(pol.types, t, p.expr)
         for r in t.relations.values():
             for src in r.sources:
                 for st, sr in src.subjects:
@@ -585,10 +584,8 @@ def meaning(b: Side, h: Side, worlds: int, refactor: bool = True) -> Meaning:
         if any(c["what"] == key for c in changed):
             continue
         t = governing[r.table]
-        read: set[tuple[str, str]] = set()
-        reads(h.pol, t, r.expr, read)
         hit: set[tuple[str, str]] = set()
-        for x in read:
+        for x in names_read(h.pol.types, t, r.expr):
             hit |= ({x} | closure(graph, x)) & direct
         if hit:
             out["through"].append({"what": key, "via": sorted(f"{a}.{n}" for a, n in hit), "line": str(r.loc)})
@@ -654,14 +651,7 @@ def nots(node: Expr) -> list[Expr]:
 
 
 def arrows(node: Expr) -> set[tuple[str, str]]:
-    match node:
-        case Arrow(rel, perm):
-            return {(rel, perm)}
-        case Not(item):
-            return arrows(item)
-        case And(items) | Or(items):
-            return {a for x in items for a in arrows(x)}
-    return set()
+    return {(leaf.rel, leaf.perm) for leaf, _ in leaves(node) if isinstance(leaf, (Arrow, ArrowOn))}
 
 
 # the flags that say the head grants something the base didn't, with an example

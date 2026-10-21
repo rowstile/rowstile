@@ -28,7 +28,25 @@ from decimal import Decimal
 from typing import NamedTuple, TypeAlias, TypedDict, TypeVar, cast
 
 from .conditions import Node, Scalar, alike_columns, columns_of, reads_alike, simple, truth, uses_uid
-from .parse import KEYWORDS, ROLES, And, Arrow, ArrowOn, Cond, Expr, Not, Or, Policy, Ref, Relation, Rule, Source, Type
+from .parse import (
+    KEYWORDS,
+    ROLES,
+    And,
+    Arrow,
+    ArrowOn,
+    Cond,
+    Expr,
+    Leaf,
+    Not,
+    Or,
+    Policy,
+    Ref,
+    Relation,
+    Rule,
+    Source,
+    Type,
+    leaves,
+)
 
 # a relation or permission of a type, and the ids that hold it
 Name: TypeAlias = "tuple[str, str]"
@@ -137,34 +155,30 @@ class Reference:
         graph: dict[Name, set[Name]] = {}
         negated: set[tuple[Name, Name]] = set()
 
-        def walk(t: Type, key: Name, node: Expr, neg: bool) -> None:
+        def walk(t: Type, key: Name, node: Expr) -> None:
             """What the expression of t's `key` reads, into graph[key] (and negated, under a not)."""
-            found: set[Name] = set()
-            match node:
-                case Ref(name) if name == ROLES:
-                    pass  # the role holders' groups: the roles line's subjects, below
-                case Ref(name):
-                    found.add((t.name, name))
-                case Arrow(rel, perm):
-                    found.add((t.name, rel))
-                    for st, sr in t.relations[rel].subjects():
-                        assert sr is None and st in self.types, FOLLOWS
-                        found.add((st, perm))
-                case Not(item):
-                    walk(t, key, item, True)
-                case And(items) | Or(items):
-                    for x in items:
-                        walk(t, key, x, neg)
-            graph[key].update(found)
-            if neg:
-                negated.update((key, f) for f in found)
+            for leaf, nots in leaves(node):
+                found: set[Name] = set()
+                match leaf:
+                    case Ref(name) if name == ROLES:
+                        pass  # the role holders' groups: the roles line's subjects, below
+                    case Ref(name):
+                        found.add((t.name, name))
+                    case Arrow(rel, perm) | ArrowOn(rel, perm, _):
+                        found.add((t.name, rel))
+                        for st, sr in t.relations[rel].subjects():
+                            assert sr is None and st in self.types, FOLLOWS
+                            found.add((st, perm))
+                graph[key].update(found)
+                if nots:
+                    negated.update((key, f) for f in found)
 
         for t in self.types.values():
             for name in list(t.relations) + list(t.perms):
                 out = graph[(t.name, name)] = set()
                 subjects: list[tuple[str, str | None]] = []
                 if name in t.perms:
-                    walk(t, (t.name, name), t.perms[name].expr, False)
+                    walk(t, (t.name, name), t.perms[name].expr)
                     if t.roles and name in t.roles[1]:
                         subjects = t.roles[0]
                 else:
@@ -209,14 +223,7 @@ class Reference:
         found: set[CondKey] = set()
 
         def walk(t: Type, node: Expr) -> None:
-            match node:
-                case Cond(sql):
-                    found.add((t.name, sql))
-                case And(items) | Or(items):
-                    for x in items:
-                        walk(t, x)
-                case Not(item):
-                    walk(t, item)
+            found.update((t.name, leaf.sql) for leaf, _ in leaves(node) if isinstance(leaf, Cond))
 
         for t in self.types.values():
             for p in t.perms.values():
@@ -277,10 +284,6 @@ class Reference:
 
     def valid(self, t: Type) -> set[str]:
         return set(self.data.valid[t.name])
-
-    def role_owner_type(self, t: Type) -> str | None:
-        """The type `roles : ... from rel` names (what rel links to), or None."""
-        return role_owner_type(t)
 
     def role_owners(self, t: Type) -> dict[str, set[str]] | None:
         """For `roles : ... from rel`: each object's owners (what rel's columns and tables link it to); None
@@ -506,14 +509,7 @@ class World:
             out: set[tuple[str, str]] = set()
 
             def walk(t: Type, node: Expr) -> None:
-                match node:
-                    case Arrow(rel, _) | ArrowOn(rel, _, _):
-                        out.add((t.name, rel))
-                    case Not(item):
-                        walk(t, item)
-                    case And(items) | Or(items):
-                        for x in items:
-                            walk(t, x)
+                out.update((t.name, leaf.rel) for leaf, _ in leaves(node) if isinstance(leaf, (Arrow, ArrowOn)))
 
             for p in [*self.pols, pol]:
                 for t in p.types.values():
@@ -996,26 +992,21 @@ def corners(pols: Iterable[Policy]) -> list[dict[str, bool]]:
     denied: set[str] = set()
     wheres: set[str] = set()
 
-    def walk(node: Expr, negated: bool) -> None:
-        match node:
-            case Cond(sql):
-                (denied if negated else plain).add(sql)
-            case Not(item):
-                walk(item, not negated)
-            case And(items) | Or(items):
-                for x in items:
-                    walk(x, negated)
+    def walk(node: Expr) -> None:
+        for leaf, nots in leaves(node):
+            if isinstance(leaf, Cond):
+                (denied if nots % 2 else plain).add(leaf.sql)
 
     for pol in pols:
         for t in pol.types.values():
             if t.where:
                 wheres.add(t.where)
             for p in t.perms.values():
-                walk(p.expr, False)
+                walk(p.expr)
         for rule in pol.rules:
-            walk(rule.expr, False)
+            walk(rule.expr)
         for inv in pol.invariants:
-            walk(inv.expr, False)
+            walk(inv.expr)
     every = plain | denied | wheres
     if not every:
         return []
@@ -1051,16 +1042,15 @@ def reach(pols: Iterable[Policy]) -> int:
             return known.get(key, 0)
 
         def depth(t: Type, node: Expr, pol: Policy = pol) -> int:
-            match node:
+            return max(leaf_depth(t, leaf, pol) for leaf, _ in leaves(node))
+
+        def leaf_depth(t: Type, leaf: Leaf, pol: Policy = pol) -> int:
+            match leaf:
                 case Ref(name):
                     return deep(t, name)
                 case Arrow(rel, perm) | ArrowOn(rel, perm, _) if rel in t.relations:
                     targets = [st for st, sr in t.relations[rel].subjects() if sr is None and st in pol.types]
                     return max((1 + deep(pol.types[st], perm) for st in targets), default=1)
-                case Not(item):
-                    return depth(t, item)
-                case And(items) | Or(items):
-                    return max(depth(t, x) for x in items)
             return 0
 
         for t in pol.types.values():
@@ -1203,24 +1193,19 @@ def cone(pols: Sequence[Policy]) -> Cone | None:
 
     def walk(p: Policy, t: Type, node: Expr) -> None:
         out.types.add(t.name)
-        match node:
-            case Cond(sql):
-                out.conds.add((t.name, sql))
-            case Ref(name) if name == ROLES:
-                pass  # custom roles: the drawn worlds hold them, not the listed ones
-            case Ref(name):
-                visit(p, t, name)
-            case Arrow(rel, perm) | ArrowOn(rel, perm, _):
-                visit(p, t, rel)
-                for st, _ in t.relations[rel].subjects():
-                    assert st in p.types, FOLLOWS
-                    visit(p, p.types[st], perm)
-            case Not(item):
-                walk(p, t, item)
-            case _:
-                assert isinstance(node, (And, Or)), f"not an expression: {node!r}"
-                for x in node.items:
-                    walk(p, t, x)
+        for leaf, _ in leaves(node):
+            match leaf:
+                case Cond(sql):
+                    out.conds.add((t.name, sql))
+                case Ref(name) if name == ROLES:
+                    pass  # custom roles: the drawn worlds hold them, not the listed ones
+                case Ref(name):
+                    visit(p, t, name)
+                case _:  # an arrow: Arrow or ArrowOn, the leaves left
+                    visit(p, t, leaf.rel)
+                    for st, _ in t.relations[leaf.rel].subjects():
+                        assert st in p.types, FOLLOWS
+                        visit(p, p.types[st], leaf.perm)
 
     for p, t, expr in start:
         walk(p, t, expr)
@@ -1605,25 +1590,25 @@ def rule_key(rule: Rule) -> RuleKey:
     return (rule.table, rule.command, tuple(rule.columns))
 
 
-def expr_reads(ref: Reference, rule: Rule) -> set[Name]:
-    """The relations and permissions a rule reads itself (Reference.reads gives what they read)."""
+def names_read(types: Mapping[str, Type], t: Type, node: Expr) -> set[Name]:
+    """What an expression on type t reads itself: the relations and permissions it names, and for `rel.perm` the
+    relation it follows and the permission on each type that relation reaches."""
     out: set[Name] = set()
-
-    def walk(t: Type, node: Expr) -> None:
-        match node:
+    for leaf, _ in leaves(node):
+        match leaf:
             case Ref(name):
                 out.add((t.name, name))
-            case Arrow(rel, perm):
+            case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                 out.add((t.name, rel))
-                out.update((st, perm) for st, _ in t.relations[rel].subjects() if st in ref.types)
-            case Not(item):
-                walk(t, item)
-            case And(items) | Or(items):
-                for x in items:
-                    walk(t, x)
-
-    walk(ref.type_of_table(rule.table), rule.expr)
+                for st, sr in t.relations[rel].subjects():
+                    assert sr is None and st in types, FOLLOWS
+                    out.add((st, perm))
     return out
+
+
+def expr_reads(ref: Reference, rule: Rule) -> set[Name]:
+    """The relations and permissions a rule reads itself (Reference.reads gives what they read)."""
+    return names_read(ref.types, ref.type_of_table(rule.table), rule.expr)
 
 
 def apart(pol_a: Policy, pol_b: Policy) -> tuple[set[Name], set[RuleKey]] | None:
