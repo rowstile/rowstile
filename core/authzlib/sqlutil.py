@@ -113,6 +113,23 @@ BEGIN
 END $l$;"""
 
 
+# What a name in SQL may start with: Postgres takes any character past ASCII as a letter (archivé, année). The same
+# as statements.LETTER (statements.py is also loaded on its own, by the mutation tests: it imports nothing of ours)
+LETTER = r"A-Za-z_\x80-\U0010ffff"
+# a name Postgres reads unquoted: a letter, then letters, digits and $
+NAME = rf"[{LETTER}][{LETTER}0-9$]*"
+# where a name doesn't go on: not after (or before) a character a name holds
+NOT_AFTER_NAME = rf"(?<![{LETTER}0-9$])"
+NOT_BEFORE_NAME = rf"(?![{LETTER}0-9$])"
+ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def fold(name: str) -> str:
+    """An unquoted name as Postgres reads it: its ASCII letters in lower case, the others as written (ARCHIVÉ is
+    archivÉ; the Kelvin sign, U+212A, stays as written, where Python's lower() makes it k)."""
+    return name.translate(ASCII_LOWER)
+
+
 def ident(name: str) -> str:
     """Generated names longer than Postgres allows (63 bytes) are shortened
     with a hash, the same way every time they appear."""
@@ -310,7 +327,7 @@ CALL_WORDS = frozenset(
         "within",
     }
 )
-CALL = re.compile(r"(?<![\w.$\"])([A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)?)\s*\(")
+CALL = re.compile(rf"(?<![{LETTER}0-9$.\"])({NAME}(?:\s*\.\s*{NAME})?)\s*\(")
 # the operators Postgres has for its own types (comparison, arithmetic, text, patterns, arrays, JSON, ranges, network
 # addresses): any other is one an app made, and its function may read anything
 BUILTIN_OPERATORS = frozenset(
@@ -396,7 +413,7 @@ def reads_more(sql: str) -> bool:
     if READS_TABLE.search(shown):
         return True
     for m in CALL.finditer(shown):
-        name = re.sub(r"\s+", "", m.group(1)).lower()
+        name = fold(re.sub(r"\s+", "", m.group(1)))
         if name not in PURE_FUNCTIONS and name not in CALL_WORDS:
             return True
     return any(op not in BUILTIN_OPERATORS for op in operators(shown))
@@ -430,7 +447,7 @@ def name_part(c: str) -> bool:
 
 
 # a dollar quote's opening tag, where a token starts: $$, or $tag$
-DOLLAR_OPEN = re.compile(r"\$(?:[A-Za-z_\x80-\U0010ffff][A-Za-z0-9_\x80-\U0010ffff]*)?\$")
+DOLLAR_OPEN = re.compile(rf"\$(?:[{LETTER}][{LETTER}0-9]*)?\$")
 
 
 def literal_end(sql: str, i: int, escapes: bool) -> int:
@@ -503,7 +520,7 @@ def sql_code(sql: str) -> list[tuple[bool, str]]:
 
 
 # `this.` in a condition: the row the condition is about (not a part of a longer name, nor after a dot)
-THIS = re.compile(r"(?<![\w.$\"])this\s*\.\s*(?=[A-Za-z_\"])", re.IGNORECASE)
+THIS = re.compile(rf"(?<![{LETTER}0-9$.\"])this\s*\.\s*(?=[{LETTER}\"])", re.IGNORECASE)
 # `arg('ip')` in a caveat: what the share was made with (Compiler.caveat_sql)
 CAVEAT_ARG = re.compile(r"\barg\s*\(\s*'([^']*)'\s*\)")
 
@@ -527,14 +544,17 @@ def this_alone(sql: str) -> bool:
     """Whether a condition writes the word `this` other than as `this.` (a table called this, say)."""
     if "this" not in sql.lower():
         return False
-    return any(code and re.search(r"(?<![\w.$\"])this\b(?!\s*\.)", text, re.IGNORECASE) for code, text in sql_code(sql))
+    return any(
+        code and re.search(rf"(?<![{LETTER}0-9$.\"])this{NOT_BEFORE_NAME}(?!\s*\.)", text, re.IGNORECASE)
+        for code, text in sql_code(sql)
+    )
 
 
 # The alias a condition's row gets where the condition's own SQL could hide the alias of the place it goes in
 # (on_row). A condition may write no name that starts with RESERVED (AZ113), so nothing in it can be called that.
 RESERVED = "authz__"
 ROW_ALIAS = RESERVED + "this"
-IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+IDENT_RE = re.compile(NAME)
 QUOTED_RE = re.compile(r'"(?:[^"]|"")*"')
 
 

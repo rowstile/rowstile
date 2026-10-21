@@ -11,9 +11,9 @@ The grammar: or < and < not < a comparison (`=`, `<>`, `!=`, `<`, `<=`, `>`, `>=
 `[not] in (...)`, of a column (`col`, `this.col`) with a constant (`'text'`, a number, `true`, `false`, `null`)
 or `authz.uid()`; a column alone is a boolean. Values follow SQL's three-valued logic: NULL compares to nothing.
 
-A column is named as Postgres reads it: a bare name in lower case (`Archived` is `archived`), a quoted one as
-written (`"Archived"`, `"order"`, `"a""b"` for a"b). A number is read exactly, as Postgres reads it (numeric:
-`1.10` is `1.1`, a Decimal).
+A column is named as Postgres reads it: a bare name with its ASCII letters in lower case (`Archived` is `archived`,
+`ARCHIVÉ` is `archivÉ`), a quoted one as written (`"Archived"`, `"order"`, `"a""b"` for a"b). A number is read
+exactly, as Postgres reads it (numeric: `1.10` is `1.1`, a Decimal).
 
 Only what means the same whatever the column's type and collation, which a condition doesn't say: no text in
 order (`{name < 'b'}` follows the database's collation), no text Postgres would read as the column's number or
@@ -34,6 +34,8 @@ from collections.abc import Mapping
 from decimal import Decimal
 from functools import cache
 from typing import NamedTuple, TypeAlias
+
+from .sqlutil import NAME, fold
 
 # a column's value in a made-up row (a number with a decimal point: a Decimal, exact, as Postgres's numeric)
 Scalar: TypeAlias = "str | int | Decimal | bool | None"
@@ -85,7 +87,7 @@ Node: TypeAlias = "Col | Const | Uid | Cmp | IsNull | In | Bool"
 TOKEN = re.compile(
     r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<num>\d+(?:\.\d+)?)(?![\w.])|"
     r'(?P<uid>authz\s*\.\s*uid\s*\(\s*\))|(?P<quoted>(?:this\s*\.\s*)?"(?:[^"]|"")+")|'
-    r"(?P<name>(?:this\s*\.\s*)?[A-Za-z_][A-Za-z0-9_]*)|"
+    rf"(?P<name>(?:this\s*\.\s*)?{NAME})|"
     r"(?P<op><>|!=|<=|>=|=|<|>)|(?P<p>[(),]))",
     re.IGNORECASE,
 )
@@ -109,7 +111,7 @@ def tokens(sql: str) -> list[tuple[str, str]]:
         text = m.group(kind)
         if kind == "name":
             name = re.sub(r"^this\s*\.\s*", "", text, flags=re.IGNORECASE)
-            kind, text = ("word", name.lower()) if name.lower() in WORDS and name == text else ("name", name.lower())
+            kind, text = ("word", fold(name)) if fold(name) in WORDS and name == text else ("name", fold(name))
         elif kind == "quoted":  # a quoted name: as written, its case kept ("B1", "order", "a""b")
             name = re.sub(r"^this\s*\.\s*", "", text, flags=re.IGNORECASE)
             kind, text = "name", name[1:-1].replace('""', '"')
