@@ -3,7 +3,8 @@
 Relations and permissions are sets of ids, computed as a least fixpoint over some data. It is independent of
 the SQL the compiler writes, so the tests compare the two (tests/difftest.py), and it answers questions about
 a policy without a database: whether two policies grant the same in every small world (the review's check
-that a refactor changed nothing, `rowstile prove`), and the smallest world where they don't.
+that a refactor changed nothing), and if not, a world where they don't, made as small as it can be (smallest); or
+whether an invariant holds in every one (`rowstile prove`).
 
 The data (Data; difftest reads it from a database, World makes it up):
     ids[type]                                   every id of the type (text)
@@ -21,7 +22,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import random
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import NamedTuple, TypeAlias, TypedDict, TypeVar, cast
@@ -731,7 +732,7 @@ class World:
                 rate = self.ROLE if self.density is None else self.density
                 for p in perms:
                     for st, sr in subjects:
-                        sids = self.ids(st) if st in pol.types else ["1"]
+                        sids = ["*"] if sr == "*" else self.ids(st) if st in pol.types else ["1"]
                         out.rolepairs[(t.name, p, st, sr or "")] = self.pick(
                             ("roles", t.name, p, st, sr, owner_type),
                             lambda rng, ids=ids, s=sids, w=owner_ids, rate=rate: [
@@ -752,9 +753,10 @@ class World:
         self, pol: Policy, t: Type, r: Relation, src: Source, ids: list[str], st: str, sr: str | None
     ) -> list[Pair]:
         """The links one source holds for subjects st#sr: at most one per row in a column."""
+        # to user:* (or anyone) a link names no one row: its subject is '*', as authz.shares holds it
         subject_ids = (
             ["*"]
-            if st == "anyone"
+            if st == "anyone" or sr == "*"
             else ["tok1", "tok2"]
             if st == "link"
             else self.ids(st)
@@ -762,7 +764,7 @@ class World:
             else ["1"]
         )
         key = ("pairs", *source_key(t, r.name, src, st, sr))
-        chained = self.chained and st in pol.types and (t.name, r.name) in self.followed(pol)
+        chained = self.chained and subject_ids != ["*"] and st in pol.types and (t.name, r.name) in self.followed(pol)
         if src.kind == "column" and src.type_col:
             # (type_col, id_col): a row names one object of one type at most, whatever the types
             types = [x for x, _ in src.subjects if x in pol.types]
@@ -825,26 +827,71 @@ class World:
                 out += [i if t.name == "user" else f"{t.name}:{i}" for i in data.ids[t.name]]
         return [*out, ""]
 
-    def describe(self, pol: Policy, data: Data) -> list[str]:
-        """The world, as lines a reviewer can read."""
-        lines = [f"{t.name}: {', '.join(data.ids[t.name])}" for t in pol.types.values()]
+    @staticmethod
+    def named(pol: Policy, data: Data) -> set[str]:
+        """The types whose rows the world says something of: those its links, custom roles, conditions and columns
+        name (a smaller world names fewer)."""
+        out: set[str] = set()
+        for (tname, _, _, st, _), pairs in data.pairs.items():
+            out |= {tname, st} if pairs else set()
+        for (tname, _, st, _), roles in data.rolepairs.items():
+            owner = role_owner_type(pol.types[tname])
+            out |= {tname, st, *([owner] if owner else [])} if roles else set()
+        out |= {tname for (tname, _), ids in data.cond.items() if ids}
+        out |= {
+            tname
+            for tname, rows in data.columns.items()
+            if any(v is not None for r in rows.values() for v in r.values())
+        }
+        return out & set(pol.types)
+
+    def describe(self, pol: Policy, data: Data, types: Collection[str] | None = None) -> list[str]:
+        """The world, as lines a reviewer can read: the rows of each type (with types, of those alone), the columns
+        the simple conditions read, the rows each type's where keeps, those each other condition holds for, every
+        link and every custom role given."""
+        shown_types = [t for t in pol.types.values() if types is None or t.name in types]
+        lines = [f"{t.name}: {', '.join(data.ids[t.name])}" for t in shown_types]
         # the columns simple conditions read (not NULL; a relation's column is its link, below)
         linked = {
             (t.name, linked_column(src)) for t in pol.types.values() for r in t.relations.values() for src in r.sources
         }
         for tname, rows in sorted(data.columns.items()):
-            for i, values in rows.items():
+            for i, values in rows.items() if types is None or tname in types else ():
                 said = [(c, v) for c, v in sorted(values.items()) if v is not None and (tname, c) not in linked]
                 if said:
                     lines.append(f"{tname} {i}: " + ", ".join(f"{c} = {shown(v)}" for c, v in said))
+        # a row its type's where doesn't keep holds nothing and gives nothing: which rows it keeps, said
+        for t in shown_types:
+            if t.where:
+                kept = data.valid[t.name]
+                rows = f"{t.name} {', '.join(kept)}" if kept else f"no {t.name}"
+                lines.append(f"{{{t.where}}} holds for {rows} (the type's where)")
         for (tname, cond), ids in sorted(data.cond.items(), key=lambda kv: repr(kv[0])):
             if ids:
                 lines.append(f"{{{cond}}} holds for {tname} {', '.join(ids)}")
         for (tname, rname, _, st, sr), pairs in sorted(data.pairs.items(), key=lambda kv: repr(kv[0])):
             if pairs:
-                who = st + (f"#{sr}" if sr and sr != "*" else "")
-                lines.append(f"{tname}.{rname}: " + ", ".join(f"{tname} {o} -> {who} {s}" for o, s in pairs))
+                lines.append(f"{tname}.{rname}: " + ", ".join(f"{tname} {o} -> {subject(st, sr, s)}" for o, s in pairs))
+        for (tname, perm, st, sr), roles in sorted(data.rolepairs.items(), key=lambda kv: repr(kv[0])):
+            if roles:
+                owner = role_owner_type(pol.types[tname])
+                lines.append(
+                    f"{tname}.roles with {perm}: "
+                    + ", ".join(
+                        f"{tname} {o} -> {subject(st, sr, s)}" + (f" (a role of {owner} {w})" if owner else "")
+                        for o, s, w in roles
+                    )
+                )
         return lines
+
+
+def subject(st: str, sr: str | None, s: str) -> str:
+    """A link's subject as the policy writes it: `user 2`, `team#member 1`, `user:*`, `anyone`, `link tok1`."""
+    if sr == "*":
+        return f"{st}:*"
+    if st == "anyone":
+        return st
+    return f"{st}#{sr} {s}" if sr else f"{st} {s}"
 
 
 def shown(v: str | int | Decimal | bool) -> str:
@@ -854,54 +901,90 @@ def shown(v: str | int | Decimal | bool) -> str:
     return f"'{v}'" if isinstance(v, str) else str(v)
 
 
-def without_each(entries: dict[K, list[V]], still: Callable[[dict[K, list[V]]], bool]) -> tuple[dict[K, list[V]], bool]:
-    """Each entry's items taken away one at a time, in key order, where `still` holds without it."""
-    changed = False
-    for key in sorted(entries, key=repr):
-        i = 0
-        while i < len(entries[key]):
-            trial = dict(entries)
-            trial[key] = entries[key][:i] + entries[key][i + 1 :]
-            if still(trial):
-                entries, changed = trial, True
-            else:
-                i += 1
-    return entries, changed
+def kept_rows(pol: Policy, alike: frozenset[str] = frozenset()) -> Callable[[Data], Data]:
+    """What makes data whole again once a link or a column's value is taken away: the rows each type's where keeps,
+    read again from the columns and links, where the evaluator reads that where itself (as World.data does; alike:
+    the world's, World.facts). A row whose where needs a value then keeps it in a smaller world."""
+    ref = Reference(pol)
+    wheres: dict[str, Node] = {}
+    for t in pol.types.values():
+        node = facts(t.where, alike) if t.where else None
+        if node is not None and not uses_uid(node):
+            wheres[t.name] = node
+
+    def whole(data: Data) -> Data:
+        ref.data = data
+        valid = {
+            tname: [
+                i for i in data.ids[tname] if truth(node, ref.row_values(pol.types[tname]).get(i, {}), None) is True
+            ]
+            for tname, node in wheres.items()
+        }
+        return dataclasses.replace(data, valid={**data.valid, **valid})
+
+    return whole
 
 
-def without_values(
-    columns: dict[str, dict[str, dict[str, Scalar]]], still: Callable[[dict[str, dict[str, dict[str, Scalar]]]], bool]
-) -> tuple[dict[str, dict[str, dict[str, Scalar]]], bool]:
-    """Each column value made NULL, one at a time, where `still` holds with it NULL."""
-    changed = False
-    for tname in sorted(columns):
-        for i in sorted(columns[tname]):
-            for col in sorted(columns[tname][i]):
-                if columns[tname][i][col] is None:
-                    continue
-                trial = {t: {k: dict(v) for k, v in rows.items()} for t, rows in columns.items()}
-                trial[tname][i][col] = None
-                if still(trial):
-                    columns, changed = trial, True
-    return columns, changed
-
-
-def smallest(data: Data, still: Callable[[Data], bool]) -> Data:
+def smallest(data: Data, still: Callable[[Data], bool], whole: Callable[[Data], Data] | None = None) -> Data:
     """The data with every link, role and condition row taken away, and every column value made NULL, that
-    `still` doesn't need."""
+    `still` doesn't need; whole (kept_rows) makes each smaller data whole again before `still` is asked."""
+    return smallest_of([data], lambda ds: still(ds[0]), [whole] if whole else [])[0]
+
+
+def smallest_of(
+    datas: list[Data], still: Callable[[list[Data]], bool], whole: Sequence[Callable[[Data], Data]] = ()
+) -> list[Data]:
+    """smallest() for one world as several policies read it (each its data, made whole by its whole): a link, a
+    role, a condition's row or a column's value is taken from all of them at once."""
+
+    def made(ds: list[Data]) -> list[Data]:
+        return [f(d) for f, d in zip(whole, ds, strict=True)] if whole else ds
+
+    def without(entries: Callable[[Data], dict[K, list[V]]], put: Callable[[Data, dict[K, list[V]]], Data]) -> bool:
+        """Each entry's items taken away one at a time, in key order, where `still` holds without it."""
+        nonlocal datas
+        changed = False
+        for key in sorted({k for d in datas for k in entries(d)}, key=repr):
+            for item in list(dict.fromkeys(x for d in datas for x in entries(d).get(key, []))):
+                trial = made(
+                    [
+                        put(d, {**entries(d), key: [x for x in entries(d)[key] if x != item]})
+                        if key in entries(d)
+                        else d
+                        for d in datas
+                    ]
+                )
+                if still(trial):
+                    datas, changed = trial, True
+        return changed
+
+    def nulled(cell: tuple[str, str, str]) -> list[Data]:
+        tname, i, col = cell
+        out = []
+        for d in datas:
+            if col in d.columns.get(tname, {}).get(i, {}):
+                columns = {t: {k: dict(v) for k, v in rows.items()} for t, rows in d.columns.items()}
+                columns[tname][i][col] = None
+                d = dataclasses.replace(d, columns=columns)
+            out.append(d)
+        return made(out)
+
     changed = True
     while changed:
         # each trial is the data as it is now, one entry changed
-        cond, a = without_each(data.cond, lambda d, now=data: still(dataclasses.replace(now, cond=d)))
-        data = dataclasses.replace(data, cond=cond)
-        pairs, b = without_each(data.pairs, lambda d, now=data: still(dataclasses.replace(now, pairs=d)))
-        data = dataclasses.replace(data, pairs=pairs)
-        rolepairs, c = without_each(data.rolepairs, lambda d, now=data: still(dataclasses.replace(now, rolepairs=d)))
-        data = dataclasses.replace(data, rolepairs=rolepairs)
-        columns, d = without_values(data.columns, lambda cols, now=data: still(dataclasses.replace(now, columns=cols)))
-        data = dataclasses.replace(data, columns=columns)
+        a = without(lambda d: d.cond, lambda d, e: dataclasses.replace(d, cond=e))
+        b = without(lambda d: d.pairs, lambda d, e: dataclasses.replace(d, pairs=e))
+        c = without(lambda d: d.rolepairs, lambda d, e: dataclasses.replace(d, rolepairs=e))
+        d = False
+        cells = {(t, i, col) for x in datas for t, rows in x.columns.items() for i, r in rows.items() for col in r}
+        for cell in sorted(cells):
+            if all(x.columns.get(cell[0], {}).get(cell[1], {}).get(cell[2]) is None for x in datas):
+                continue
+            trial = nulled(cell)
+            if still(trial):
+                datas, d = trial, True
         changed = a or b or c or d
-    return data
+    return datas
 
 
 def corners(pols: Iterable[Policy]) -> list[dict[str, bool]]:
@@ -1505,14 +1588,17 @@ def compare(
     pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_size: int = 4, listing: Listing | None = None
 ) -> Difference | None:
     """None if the two policies grant the same in every world tried (each permission of either, for everyone
-    who signs in, and each rule), else the first difference found in the smallest world: what differs, for
-    whom, on which object, before and after, and the world. The worlds tried: drawn ones, and those listing lists
-    (a Listing of the two; one is made if none is given: its counts say what was listed)."""
+    who signs in, and each rule), else the first difference found, in the order the worlds are tried (not the
+    smallest world: a listed or a dense one may come first): what differs, for whom, on which object, before and
+    after, and that world made as small as it still differs in (smallest). The worlds tried: drawn ones, and those
+    listing lists (a Listing of the two; one is made if none is given: its counts say what was listed)."""
     found = first_difference(pol_a, pol_b, worlds, seed, max_size, listing)
     return found[0] if found else None
 
 
 RuleKey: TypeAlias = "tuple[str, str, tuple[str, ...]]"  # (table, command, columns)
+# what a permission or rule grants in two states, the first policy's and the second's (None: one of them hasn't it)
+Ask: TypeAlias = "Callable[[State, State], tuple[set[str], set[str]] | None]"
 
 
 def rule_key(rule: Rule) -> RuleKey:
@@ -1569,8 +1655,8 @@ def apart(pol_a: Policy, pol_b: Policy) -> tuple[set[Name], set[RuleKey]] | None
 def first_difference(
     pol_a: Policy, pol_b: Policy, worlds: int = 200, seed: int = 0, max_size: int = 4, listing: Listing | None = None
 ) -> tuple[Difference, Data, Data] | None:
-    """compare()'s difference, with the world it was found in, as each policy's data (tests/rewrites.py loads it as
-    rows, to see the database answer as the review says)."""
+    """compare()'s difference, with the world it shows in (made as small as it can be), as each policy's data
+    (tests/rewrites.py loads it as rows, to see the database answer as the review says)."""
     ref_a, ref_b = Reference(pol_a), Reference(pol_b)
     told = apart(pol_a, pol_b)
     perms = sorted(
@@ -1591,51 +1677,60 @@ def first_difference(
             ref.reads({*told[0], *(n for r in rules.values() for n in expr_reads(ref, r))})
             for ref, rules in ((ref_a, rules_a), (ref_b, rules_b))
         )
+    # each permission and rule asked of both: what each policy grants (None for a permission one of them hasn't: a
+    # change of meaning shown elsewhere)
+    asks: list[tuple[str, Ask]] = []
+    for name in perms:
+        asks.append(
+            (
+                f"{name[0]}.{name[1]}",
+                lambda sa, sb, name=name: (set(sa[name]), set(sb[name])) if name in sa and name in sb else None,
+            )
+        )
+    for key in sorted(set(rules_a) & set(rules_b), key=repr):
+        table, command, cols = key
+        asks.append(
+            (
+                f"rule {table} {command}" + (f" {', '.join(cols)}" if cols else ""),
+                lambda sa, sb, key=key: (ref_a.rule(sa, rules_a[key]), ref_b.rule(sb, rules_b[key])),
+            )
+        )
+    links = ("tok1",)
+    alike = alike_in((pol_a, pol_b))
+    whole = [kept_rows(pol_a, alike), kept_rows(pol_b, alike)]
     n = 0
     listed = listing if listing is not None else Listing((pol_a, pol_b))
     for w in worlds_to_try((pol_a, pol_b), worlds, str(seed), max_size, listed):
         n += 1
         da, db = w.data(pol_a), w.data(pol_b)
         for user in w.principals((pol_a, pol_b)):
-            links = ("tok1",)
             sa, sb = ref_a.evaluate(da, user, links, names_a), ref_b.evaluate(db, user, links, names_b)
-            for tname, p in perms:
-                ga = sa.get((tname, p))
-                gb = sb.get((tname, p))
-                if ga is None or gb is None:
-                    continue  # added or removed: a change of meaning shown elsewhere
-                if ga != gb:
-                    o = sorted(ga ^ gb)[0]
-                    return (
-                        {
-                            "what": f"{tname}.{p}",
-                            "user": user or "(nobody signed in)",
-                            "object": o,
-                            "before": o in ga,
-                            "after": o in gb,
-                            "world": w.describe(pol_b, db),
-                            "worlds": n,
-                        },
-                        da,
-                        db,
-                    )
-            for key in sorted(set(rules_a) & set(rules_b), key=repr):
-                ra, rb = ref_a.rule(sa, rules_a[key]), ref_b.rule(sb, rules_b[key])
-                if ra != rb:
-                    o = sorted(ra ^ rb)[0]
-                    table, command, cols = key
-                    name = f"rule {table} {command}" + (f" {', '.join(cols)}" if cols else "")
-                    return (
-                        {
-                            "what": name,
-                            "user": user or "(nobody signed in)",
-                            "object": o,
-                            "before": o in ra,
-                            "after": o in rb,
-                            "world": w.describe(pol_b, db),
-                            "worlds": n,
-                        },
-                        da,
-                        db,
-                    )
+            for what, ask in asks:
+                got = ask(sa, sb)
+                if got is None or got[0] == got[1]:
+                    continue
+                o = sorted(got[0] ^ got[1])[0]
+                answer = (o in got[0], o in got[1])
+
+                def still(
+                    ds: list[Data], user: str = user, ask: Ask = ask, o: str = o, answer: tuple[bool, bool] = answer
+                ) -> bool:
+                    now = ask(ref_a.evaluate(ds[0], user, links, names_a), ref_b.evaluate(ds[1], user, links, names_b))
+                    return now is not None and (o in now[0], o in now[1]) == answer
+
+                # the world made as small as it still tells them apart in, for this user on this object
+                small_a, small_b = smallest_of([da, db], still, whole)
+                return (
+                    {
+                        "what": what,
+                        "user": user or "(nobody signed in)",
+                        "object": o,
+                        "before": answer[0],
+                        "after": answer[1],
+                        "world": w.describe(pol_b, small_b),
+                        "worlds": n,
+                    },
+                    small_a,
+                    small_b,
+                )
     return None

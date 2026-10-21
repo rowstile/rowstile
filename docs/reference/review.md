@@ -21,6 +21,7 @@ says what a change does, in plain words, for the pull request:
   that only the first of them were tried. <!-- checked: tests/review.sh "a refactor: meaning unchanged, checked in small worlds"; tests/unit_test.py "test_a_refactor_is_checked_in_small_worlds"; tests/unit_test.py "test_the_listing_says_where_it_took_some_values_only"; tests/unit_test.py "test_a_long_and_of_links_widened_is_found"; tests/unit_test.py "test_a_chain_deeper_than_the_drawn_worlds_is_found" -->
   If one world grants otherwise, the review names what differs, for whom and on what, and the comment shows
   that world too. <!-- checked: tests/unit_test.py "test_the_comment_shows_why_it_is_no_refactor" -->
+  It is the first world found, made as small as it still grants otherwise in: what it holds plays a part. <!-- checked: tests/unit_test.py "test_a_difference_is_shown_in_the_smallest_world_it_shows_in" -->
   Worlds that are bigger, or hold custom roles, are only drawn: for them it is a search, not a proof. <!-- unchecked: a limit, said so that no more is expected of it -->
   Formatting and comments are "unchanged" too; text inside quotes is not formatting. <!-- checked: tests/unit_test.py "test_comments_only"; tests/unit_test.py "test_text_in_quotes_is_compared_as_written" -->
   A
