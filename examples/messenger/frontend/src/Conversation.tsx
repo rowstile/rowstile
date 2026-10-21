@@ -36,9 +36,12 @@ export function Conversation({ chatId, me, version, onChanged, onClose }: Props)
   useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [messages.length]);
 
   const loadOlder = async () => {
-    const page = await api.messages(chatId, messages[0]?.seq);
-    if (page.length === 0) setOlder(false);
-    setMessages((m) => [...page, ...m]);
+    setError(null);
+    try {
+      const page = await api.messages(chatId, messages[0]?.seq);
+      if (page.length === 0) setOlder(false);
+      setMessages((m) => [...page, ...m]);
+    } catch (err) { setError(err instanceof ApiError ? err : new ApiError(String(err), 0)); }
   };
 
   const send = async (e: React.FormEvent) => {
@@ -129,13 +132,18 @@ function Refusal({ error, onClose }: { error: ApiError; onClose: () => void }) {
 
 function CannotPost({ chat }: { chat: Chat }) {
   const [why, setWhy] = useState<string[] | null>(null);
+  const ask = async () => {
+    if (why) { setWhy(null); return; }
+    try { setWhy(await api.why(chat.id, "post")); }
+    catch (err) { setWhy([err instanceof Error ? err.message : String(err)]); }
+  };
   const reason = chat.i_blocked ? "You blocked this person. Unblock them to send messages."
     : chat.kind === "direct" ? "You can't message this person."
     : chat.admins_only ? "Only admins can send messages." : "You can't send messages here.";
   return (
     <div className="composer closed">
       <span>{reason}</span>
-      <button className="link" onClick={async () => setWhy(why ? null : await api.why(chat.id, "post"))}>why?</button>
+      <button className="link" onClick={ask}>why?</button>
       {why && <pre>{why.join("\n")}</pre>}
     </div>
   );

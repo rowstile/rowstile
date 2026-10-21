@@ -22,8 +22,8 @@ docker compose up -d --build          # the app on http://localhost:8001 (Postgr
 For development, the database in Docker and the rest on the host:
 
 ```
-docker compose up -d --wait db                # the database alone, on port 25433
-export MS_ADMIN_URL=postgresql://postgres:postgres@localhost:25433/messenger MS_APP_PASSWORD=ms_app
+docker compose up -d --wait db                # the database alone, on localhost:25433 (its owner: db/owner.sql)
+export MS_ADMIN_URL=postgresql://ms_owner:ms_owner@localhost:25433/messenger MS_APP_PASSWORD=ms_app
 cd backend
 uv run python ../db/migrate.py                # the migrations, as the tables' owner
 uv run uvicorn app.main:app --port 8001       # the API, as ms_app (MS_DATABASE_URL defaults to this database)
@@ -45,17 +45,17 @@ set that database up, so mark it as a development database once first: `rowstile
 | Blocking: neither can write to the other in their direct chat | `blocked : user = ms.direct_blocks(chat_id -> user_id)`, and `not blocked` in `post` |
 | ...and someone who blocked you can't be added to a chat with you | `rules ms.members insert : ... and not person.has_blocked` |
 | A direct chat stays two people | `add_members = ... or (creator and {kind = 'direct'} and {(select count(*) ...) < 2})`; a rule checks each row against the table as the statement found it, so for a statement that adds several at once, the schema counts too (`ms.pair_direct`, [migration 0064](db/migrations/0064_counts_held_by_the_schema.sql)) |
-| Nobody demotes or removes the owner, nor makes another | `update role : chat.manage and {role <> 'owner'}`, `update role after : {role <> 'owner'}`; and one owner a chat in the schema, for a group set up by one statement (`members_one_owner`, migration 0053) |
-| Edit your own messages for 15 minutes | `can edit = sender and {not deleted and created_at > now() - interval '15 minutes'}` |
+| Nobody demotes or removes the owner, nor makes another; the owner doesn't leave (they delete the group) | `update role : chat.manage and {role <> 'owner'}`, `update role after : {role <> 'owner'}`, `delete : (person or chat.manage) and {role <> 'owner'}`; and one owner a chat in the schema, for a group set up by one statement (`members_one_owner`, migration 0053) |
+| Edit your own messages for 15 minutes | `can edit = sender and {not deleted and created_at > now() - interval '15 minutes'}`, and `update edited_at : edit`: only an edit marks a message edited |
 | Delete for everyone: yours, or anyone's if you're an admin; no undelete | `can remove = sender or chat.manage`, `update deleted after : {deleted}` |
-| Invite links anyone can use for a week | `invitee : link shared by invite`, `can join = invitee and {kind = 'group'}`; the backend calls `authz.create_link`, and `authz.list_links` and `authz.revoke_link` so admins see the links and turn one off |
+| Invite links anyone can use for a week | `invitee : link shared by invite`, `can join = (invitee and {kind = 'group'}) or manage`; the backend calls `authz.create_link`, and `authz.list_links` and `authz.revoke_link` so admins see the links and turn one off. Admins may join without a link, so the link's address also names its chat (`/join/<token>?chat=7`): an admin who opens it is shown the group |
 | Bots post as themselves, only where an admin added them | `type bot = ms.bots principal where {active}`, `bot : bot = ms.chat_bots(...)`, `from_bot` in the insert rule |
 | Only a bot's owner makes its keys | `can manage_keys = owner` on the bot type; the backend calls `authz.create_api_key(..., 'bot', id)` |
 | Messages are numbered per chat | `type message = ms.messages (chat_id, seq)`: a composite key; the API asks `authz.can('message', '(7,42)', 'edit')` |
 
 Each row of this table is a test in [`db/tests/rules.authz`](db/tests/rules.authz): it makes the people and
 chats it needs, checks who may do what (as the app, through row-level security), and rolls back. `rowstile
-test` runs them: 49 checks, in about a second.
+test` runs them: 53 checks, in about a second.
 
 ## What the backend doesn't have to do
 

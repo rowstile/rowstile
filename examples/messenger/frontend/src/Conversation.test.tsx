@@ -9,7 +9,7 @@ import { App } from "./App";
 Element.prototype.scrollIntoView = () => {}; // jsdom lays nothing out
 
 const me: User = { id: "u1", phone: "+15550000001", name: "Ann", about: "" };
-const ben = { user_id: "u2", role: "member" as const, name: "Ben", phone: "+15550000002", about: "", joined_at: "", last_read_seq: 1 };
+const ben = { user_id: "u2", role: "member" as const, name: "Ben", phone: "+15550000002", about: "", last_read_seq: 1 };
 
 /** The API as the backend answers it, for chat 7 with one message (seq 1); each request is logged. */
 function fakeApi(read: number) {

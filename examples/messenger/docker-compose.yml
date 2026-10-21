@@ -1,19 +1,22 @@
 # The messenger and what it needs: Postgres with the rowstile command (built from this repository) and the app.
 #   docker compose up -d --build            # everything; the app on http://localhost:8001
 #   docker compose up -d db                 # just the database, for running the backend on the host
+# The database is published on this machine only (127.0.0.1). Its superuser makes the database and ms_owner
+# (db/owner.sql), once; the migrations, the policy and the tests run as ms_owner, the tables' owner, as rowstile's
+# setup has it: no superuser.
 services:
   db:
     build: {context: ../.., dockerfile: core/Dockerfile, args: {PG_MAJOR: "16"}}
     image: rowstile:16
     environment: {POSTGRES_PASSWORD: postgres, POSTGRES_DB: messenger}
-    ports: ["25433:5432"]
-    volumes: [db:/var/lib/postgresql/data]
+    ports: ["127.0.0.1:25433:5432"]
+    volumes: [db:/var/lib/postgresql/data, ./db/owner.sql:/docker-entrypoint-initdb.d/owner.sql:ro]
     healthcheck: {test: ["CMD", "pg_isready", "-U", "postgres", "-d", "messenger"], interval: 2s, retries: 30}
   app:
     build: {context: ../.., dockerfile: examples/messenger/backend/Dockerfile}
     depends_on: {db: {condition: service_healthy}}
     environment:
-      MS_ADMIN_URL: postgresql://postgres:postgres@db:5432/messenger
+      MS_ADMIN_URL: postgresql://ms_owner:ms_owner@db:5432/messenger
       MS_APP_PASSWORD: ms_app
       MS_DATABASE_URL: postgresql://ms_app:ms_app@db:5432/messenger
     ports: ["8001:8000"]
