@@ -15,6 +15,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   release candidates. The command orders versions so when it refuses to apply, push or migrate over what a
   newer version wrote (AZ616), and `rowstile init` asks a Python app for at least the beta it runs
   (`rowstile>=0.1.0b1`).
+- Codes for the mistakes `rowstile init` and `rowstile snapshot` report, each with its page (`rowstile help
+  AZ621`): AZ620 (no tables to draft from), AZ621 (which table holds the users), AZ622 (a users table the draft
+  can't use), AZ623 (too many people for a snapshot).
 
 ### Changed
 
@@ -58,6 +61,22 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   carry.
 
 ### Fixed
+
+- `rowstile init` stopped with a Python traceback (`KeyError`) when the table the columns naming users point to
+  wasn't among the drafted ones: in another schema (as Supabase's `auth.users`, with `--schema public`), or left
+  out for its name. It now says which table, which columns point to it, and what to do: draft its schema too,
+  or name the table with `--users`.
+- `rowstile init` notes that a membership's `permission` or `permissions` column may say who does more, as it
+  did for `role`, `kind`, `level` and `access`.
+- `rowstile init --db URL` sees a `DATABASE_URL` in `.env` or `.env.local` too: when it is another connection,
+  `rowstile.toml` reads the owner's from `ROWSTILE_DATABASE_URL`, and the note says the file. Before, it wrote
+  `env:DATABASE_URL`, and the next command connected with the app's URL from `.env`. With `--db`, the line
+  `found ..., Postgres` no longer says the connection came from `DATABASE_URL`.
+- `rowstile init --out` refuses an absolute path or one outside the folder, before writing anything (exit 2):
+  every later command refused the `rowstile.toml` it wrote. A folder name holding `"` or `\` is written
+  escaped, so `rowstile.toml` still reads.
+- `rowstile init --help` says it drafts from every schema of the app's when `--schema` names none. It said
+  `public` only.
 
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,

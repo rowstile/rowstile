@@ -492,7 +492,7 @@ FEATURES: list[Feature] = [
         "cli.review",
         2,
         "Reviewing a change: `rowstile review`, `rowstile snapshot`",
-        ("cli.review", "cli.snapshot"),
+        ("cli.review", "cli.snapshot", "err.AZ623"),
         Doc("docs/reference/review.md", "Reviewing a policy change"),
         (
             T("review.sh", "Access: who gains what, on the review data"),
@@ -500,6 +500,7 @@ FEATURES: list[Feature] = [
             T("review.sh", "the review database is left as it was"),
             T("unit_test.py", "test_a_widening_is_flagged_however_it_is_made"),
             T("confidence_test.py", 'cli(db, "snapshot"'),
+            T("confidence_test.py", "more people in the data than a snapshot is for: refused, saying how many"),
         ),
         (T("rewrites.py", "grants the same"),),
     ),
@@ -578,9 +579,17 @@ FEATURES: list[Feature] = [
         "cli.init",
         3,
         "A first policy from the database: `rowstile init`",
-        ("cli.init",),
+        ("cli.init", "err.AZ620", "err.AZ621", "err.AZ622"),
         Doc(TOOLS, "`rowstile init"),
-        (T("devx.sh", "a second init changes nothing in it"), T("unit_test.py", "class Draft(")),
+        (
+            T("devx.sh", "a second init changes nothing in it"),
+            T("unit_test.py", "class Draft("),
+            T("devx.sh", "a schema with no tables is named"),
+            T("devx.sh", "init where the users are in a schema not drafted: says which, and what to do"),
+            T("devx.sh", "a users table keyed by two columns: says what it lacks"),
+            T("devx.sh", "init --out outside the folder, by a $k path: refused, exit 2, nothing written"),
+            T("unit_test.py", "test_a_user_table_the_draft_leaves_out_is_said"),
+        ),
     ),
     # --- the servers ------------------------------------------------------------------------------------
     Feature(

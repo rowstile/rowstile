@@ -3,6 +3,7 @@ the coding agents that work in the app (AGENTS.md)."""
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import TYPE_CHECKING
@@ -71,9 +72,36 @@ def write_agents_note(note: str, folder: str = ".") -> str | None:
     return "added"
 
 
-def init(policy: str, opts: dict[str, str], cfg: Config, where: str = "", given: str | None = None) -> None:
+def out_problem(out: str) -> str | None:
+    """Why --out can't be the policy's folder, if it can't: rowstile.toml, written in this folder, names files
+    inside it only (as Config.inside reads them)."""
+    from authzlib.parse import within
+
+    if os.path.isabs(out) or not within(os.path.realpath("."), os.path.realpath(out)):
+        return (
+            f"rowstile init: --out {out}: {CONFIG}, written here, names files inside its folder only, by paths "
+            f"relative to it: name a folder below this one (--out db)"
+        )
+    return None
+
+
+def toml_text(value: str) -> str:
+    """A TOML string holding value: JSON's escapes are TOML's."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def init(
+    policy: str,
+    opts: dict[str, str],
+    cfg: Config,
+    where: str = "",
+    given: str | None = None,
+    app_url: tuple[str, str] | None = None,
+) -> None:
     """Writes the drafted policy, a first test file, rowstile.toml and the note for coding agents, keeping any
-    that exist. where: the .env file that named the database, if one did; given: --db, if it named it."""
+    that exist. where: the .env file that named the database, if one did; given: --db, if it named it; app_url:
+    DATABASE_URL and where it is ('' for the environment, else the .env file), read even when --db named the
+    database: it is the one the next command reads."""
     out = opts.get("--out", "db")
     written: list[str] = []
     policy_path = os.path.join(out, "policy.authz")
@@ -100,19 +128,21 @@ test "nobody signed in sees a {example}"
 
     found = stack.detect(os.getcwd())
     if found.found:
-        via = (" from DATABASE_URL" + (f" in {where}" if where else "")) if os.environ.get("DATABASE_URL") else ""
+        # where the connection came from: --db's, or DATABASE_URL's (a .env file's, or the environment's)
+        named = given is None and os.environ.get("DATABASE_URL")
+        via = (" from DATABASE_URL" + (f" in {where}" if where else "")) if named else ""
         print(f"found   {', '.join(found.found)}, Postgres{via}")
     if cfg.path is None:
         database, why = "env:DATABASE_URL", "a DSN or URL, or env:NAME for an environment variable holding one"
-        app_url = os.environ.get("DATABASE_URL")
-        if given and app_url and app_url != given:
+        if given and app_url and app_url[0] != given:
             # DATABASE_URL is another connection than the one --db named (often the app's, as its role): rowstile
             # applies as the tables' owner, so it reads the owner's from a name of its own
             database, why = "env:ROWSTILE_DATABASE_URL", "the tables' owner's connection: DATABASE_URL is another"
             print(
-                "note    DATABASE_URL is another connection than --db's (the app's, as its role?): rowstile.toml reads\n"
-                "        the tables' owner's from ROWSTILE_DATABASE_URL. Set it, in the environment or .env.local, to what\n"
-                "        --db named"
+                f"note    DATABASE_URL{f' (in {app_url[1]})' if app_url[1] else ''} is another connection than --db's "
+                "(the app's, as its role?):\n"
+                "        rowstile.toml reads the tables' owner's from ROWSTILE_DATABASE_URL. Set it, in the environment\n"
+                "        or .env.local, to what --db named"
             )
         extra = stack.config_lines(found) or [
             "# [clients]                    # generated on each change by rowstile dev",
@@ -121,8 +151,8 @@ test "nobody signed in sees a {example}"
         ]
         write_new(
             CONFIG,
-            f'''policy   = "{policy_path.replace(os.sep, "/")}"
-tests    = ["{os.path.join(out, "tests").replace(os.sep, "/")}/*.authz"]
+            f'''policy   = {toml_text(policy_path.replace(os.sep, "/"))}
+tests    = [{toml_text(os.path.join(out, "tests").replace(os.sep, "/") + "/*.authz")}]
 database = "{database}"     # {why}
 '''
             + "\n".join(extra)
