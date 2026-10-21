@@ -1,7 +1,7 @@
 //! rowstile for Zed: starts the rowstile language server (`rowstile lsp`) for .authz files.
 //!
-//! It runs `rowstile` from the project's PATH (the project's own install: npm, pip or uv), or what Zed's
-//! settings name:
+//! It runs `rowstile` from the PATH the shell gives the project, or what Zed's settings name (an install in the
+//! project, node_modules/.bin or a .venv, isn't on that PATH):
 //!
 //!     "lsp": { "rowstile": { "binary": { "path": "/path/to/rowstile", "arguments": ["lsp"] } } }
 use zed_extension_api::{self as zed, settings::LspSettings, LanguageServerId, Result};
@@ -22,9 +22,9 @@ impl zed::Extension for Rowstile {
         let command = match binary.and_then(|b| b.path) {
             Some(path) => path,
             None => worktree.which("rowstile").ok_or(
-                "rowstile isn't on the PATH: install it in the project \
-                 (https://github.com/rowstile/rowstile/blob/main/docs/installing.md), \
-                 or set lsp.rowstile.binary.path in Zed's settings",
+                "rowstile isn't on the PATH (https://rowstile.dev/installing). An install in the project \
+                 isn't on it either: set lsp.rowstile.binary.path in Zed's settings to its full path \
+                 (node_modules/.bin/rowstile or .venv/bin/rowstile in the project)",
             )?,
         };
         Ok(zed::Command { command, args, env: worktree.shell_env() })

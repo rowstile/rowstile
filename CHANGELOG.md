@@ -25,6 +25,8 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 ### Changed
 
 - The VS Code extension (0.1.3) is no longer marked a preview on the Marketplace and Open VSX.
+- The VS Code extension (0.1.3) asks for VS Code 1.82 or newer, the oldest its language client runs on (it
+  said 1.75).
 - The beta starts afresh: a database an alpha (0.1.0-alpha.9 or earlier) made is not upgraded to it. Apply the
   policy from scratch, on a new database, or on the same one after `rowstile remove --yes` (shares and history
   stay), then `rowstile apply`. Each release from the beta on upgrades from the one before it, and the upgrade
@@ -103,6 +105,16 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - The GitLab template's header said a top-level `ROWSTILE_VERSION` picks another release. GitLab gives the job's
   own variables first, so it was ignored. It now shows how to set it, and the stage, in the job, and says to set
   `ROWSTILE_REVIEW_TOKEN` in the CI/CD settings, not in the file.
+- The VS Code extension builds from the repository as its page says (`npm run package` in `editor/`): it
+  stopped on a missing `LICENSE`. The link on its Marketplace and Open VSX page, to installing the command, leads
+  to that page again. When the language server doesn't start, the extension (0.1.3) says why, and how to install
+  rowstile or set `rowstile.command`, where it only said it couldn't connect. A change to `rowstile.command`
+  starts the server again with it; it needed a window reload.
+- The editors' page says how to point VS Code and Zed at a `rowstile` installed in the project (npm's
+  `node_modules`, a `.venv`): such an install isn't on the PATH the editor starts the server with. Its Neovim
+  steps highlight: they now build the grammar, put it where Neovim looks and start highlighting, and say
+  Neovim 0.11 or newer. Paths into the repository say `core/cli/`, and Sublime Text is no longer said to read
+  the TextMate grammar as it is.
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed
