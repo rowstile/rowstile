@@ -38,6 +38,7 @@ from .parse import (
     names_roles,
     subject_spans,
     tail,
+    written,
 )
 from .sqlutil import (
     CAVEAT_ARG,
@@ -568,15 +569,16 @@ class Core:
     def check_denies(self) -> None:
         """`view = view__base and not denied` means what `(... or parent.view) and not denied` says only if
         denied holds on everything below a denied object: denied inherits through every link view__base
-        does (without a condition, or with the same one). Otherwise the deny would cut inheritance at the
-        denied object only, which needs each user's paths, and rowstile stores objects' ancestors. (A deny whose
-        inheritance goes through another type's permission comes back to it: analyze_recursion says so.)"""
+        does (without a condition, or with some of its conditions, in any order). Otherwise the deny would cut
+        inheritance at the denied object only, which needs each user's paths, and rowstile stores objects'
+        ancestors. (A deny whose inheritance goes through another type's permission comes back to it:
+        analyze_recursion says so.)"""
         for (tn, pn), negs in self.denies.items():
             t = self.T(tn)
             base_name = t.perms[pn].base
             assert base_name is not None  # split_denies gave every permission with a deny its base
             base = t.perms[base_name]
-            edges = self.perm_edges(t, base) or frozenset()
+            links = self.inherit_links(t, base)
             for x in negs:
                 assert isinstance(x, Not) and isinstance(x.item, Ref), "split_denies refuses any other deny (AZ306)"
                 name = x.item.name
@@ -597,8 +599,8 @@ class Core:
                         f"without one",
                         "AZ306",
                     )
-                got = self.perm_edges(t, t.perms[name]) or frozenset()
-                missing = sorted({e[1] for e in edges if e not in got and (e[0], e[1], None, e[3]) not in got})
+                got = self.inherit_links(t, t.perms[name])
+                missing = sorted({rel for (rel, st) in links if (rel, st) not in got})
                 if missing:
                     fail(
                         base.loc,
@@ -607,6 +609,37 @@ class Core:
                         f"{missing[0]}.{name}`",
                         "AZ306",
                     )
+                for link, ways in sorted(links.items()):
+                    for conds, shown in ways:
+                        # denied inherits at least where the base does: on none of the base's conditions or some
+                        if not any(theirs <= conds for theirs, _ in got[link]):
+                            fail(
+                                base.loc,
+                                f"{tn}.{pn}: `not {name}` must cover everything below, so {name} must inherit "
+                                f"through {link[0]} wherever {pn} does, and its conditions there are not "
+                                f"{pn}'s: {pn} inherits with {shown or 'no condition'}, {name} with "
+                                f"{' or '.join(s or 'no condition' for _, s in got[link])}. Write them as {pn}'s are "
+                                f"written, or leave them out",
+                                "AZ306",
+                            )
+
+    def inherit_links(self, t: Type, perm: Perm) -> dict[tuple[str, str], list[tuple[frozenset[str], str]]]:
+        """Each link (relation, target type) a recursive permission of t inherits through, with the conditions
+        of each item that does: as a set (their order changes nothing) and as written. Empty if it doesn't
+        recurse."""
+        links: dict[tuple[str, str], list[tuple[frozenset[str], str]]] = {}
+        if (t.name, perm.name) not in self.recursive:
+            return links
+        for item in self.top_items(perm):
+            conds = frozenset(self.split_inherit(t, perm, item)[1] or ())
+            shown = (
+                " and ".join(dict.fromkeys(written(x, False) for x in item.items if not isinstance(x, Arrow)))
+                if isinstance(item, And)
+                else ""
+            )
+            for rel, _, st in self.recursive_parts(t, perm, item)[0]:
+                links.setdefault((rel, st), []).append((conds, shown))
+        return links
 
     def validate(self) -> None:
         """What the policy must get right before anything is made of it. What only the database knows (the

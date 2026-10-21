@@ -102,6 +102,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   signed-in service. `signed_in` and `user:*` stay about users. <!-- answer: principals -->
 - **Permissions** combine relations with `or`, `and`, `not` and parentheses, which say what goes first
   where `and` and `or` meet: `owner or (parent.edit and {inherit})` (without them it is refused). <!-- checked: tests/policy_errors.py "and next to or"; tests/policy_errors.py "and next to or, the other way" --> <!-- answer: permission-operators -->
+  Parentheses that change nothing, `owner or (parent.edit or editor)` or `((owner or parent.edit) and {inherit})
+  and not hidden`, are read as if they weren't there.
   `rel.perm` follows a relation (`parent.edit`, `org.admin`, or to a user's own: `manager.oversee`,
   `author.has_blocked`), `signed_in` means any user signed in, `anyone` anyone at all, signed in
   or not (for rules on directories), and `nobody` nobody (`update id : nobody`), `{...}` is any SQL
@@ -134,6 +136,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   must inherit the same way (`can hidden = blocked or parent.hidden`), so it covers
   everything below; a deny on one object that only cuts inheritance there is refused, with
   a message saying so. <!-- checked: tests/policy_errors.py "a deny that doesn't cover what is below"; tests/unit_test.py "test_a_deny_inside_inheritance_covers_everything_below" --> <!-- answer: deny-below -->
+  Where the inheritance stops at conditions (`parent.view and {inherit}`), the deny's may stop at the same
+  ones, in any order, or at fewer; with other conditions it is refused, and the message shows both. <!-- checked: tests/policy_errors.py "a deny that inherits through the same relation on another condition"; tests/unit_test.py "test_parentheses_that_change_nothing_and_a_denys_conditions_in_another_order" -->
   A deny can't inherit through a relation that also points at another type (`parent : folder, project`:
   give the projects a relation of their own), nor through another type's permission that comes back to it
   (a `project.view` that inherits from folders): both are refused (AZ306). <!-- checked: tests/policy_errors.py "a deny on a permission that inherits through a relation to another type too"; tests/policy_errors.py "a deny on a permission that inherits through another type" -->
