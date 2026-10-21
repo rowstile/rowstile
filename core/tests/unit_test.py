@@ -2399,16 +2399,21 @@ class Migrations(unittest.TestCase):
             self.migrate.always_hash(database.migratable(self.text, {})[1]),
         )
 
-    def test_a_lock_without_those_steps_goes_by_its_version(self) -> None:
-        # a lock written before they were recorded: the version that wrote it makes the same; another may not
+    def test_a_lock_without_those_steps_runs_them(self) -> None:
+        # every lock rowstile migrate writes has the line; without it (cut by hand), nothing says the steps are the
+        # same: the migration runs them, and writes the line
         lock = re.sub(r"(?m)^always \| \w+\n", "", self.lock(self.text))
         self.assertIsNone(self.migrate.parse_lock(lock).always)
-        self.assertTrue(database.migration(self.text, {}, lock).empty)
-        older = re.sub(r"^# rowstile \S+:", "# rowstile 0.0.1:", lock, count=1, flags=re.M)
-        m = database.migration(self.text, {}, older)
+        m = database.migration(self.text, {}, lock)
+        self.assertIn("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;", m.sql)
+        self.assertEqual(m.summary, ["the same policy; what rowstile makes of it changed"])
         self.assertRegex(m.lock, r"(?m)^always \| [0-9a-f]{12}$")
+        # a lock another version wrote says so
+        older = re.sub(r"^# rowstile \S+:", "# rowstile 0.0.1:", self.lock(self.text), count=1, flags=re.M)
+        older = re.sub(r"(?m)^always \| \w+$", "always | 000000000000", older)
         self.assertEqual(
-            m.summary, [f"rowstile 0.0.1 -> {authzlib.__version__}: what the new version makes differently"]
+            database.migration(self.text, {}, older).summary,
+            [f"rowstile 0.0.1 -> {authzlib.__version__}: what the new version makes differently"],
         )
 
     def test_a_lock_rowfence_wrote_goes_by_its_version(self) -> None:

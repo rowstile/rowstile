@@ -79,15 +79,15 @@ DROP_OLD_POLICIES = f"""-- Remove the policies the previous version of this poli
 CREATE TEMP TABLE authz_old_tables ON COMMIT DROP AS
   SELECT DISTINCT p.polrelid::regclass AS tbl
   FROM pg_policy p
-  LEFT JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass
-  WHERE d.description IN {POLICY_MARKS} OR p.polname IN ('authz_select', 'authz_insert', 'authz_update', 'authz_delete');
+  JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass
+  WHERE d.description IN {POLICY_MARKS};
 DO $d$
 DECLARE old record;
 BEGIN
   FOR old IN SELECT pol.polname, pol.polrelid::regclass AS tbl
              FROM pg_policy pol
-             LEFT JOIN pg_description d ON d.objoid = pol.oid AND d.classoid = 'pg_policy'::regclass
-             WHERE d.description IN {POLICY_MARKS} OR pol.polname IN ('authz_select', 'authz_insert', 'authz_update', 'authz_delete') LOOP
+             JOIN pg_description d ON d.objoid = pol.oid AND d.classoid = 'pg_policy'::regclass
+             WHERE d.description IN {POLICY_MARKS} LOOP
     EXECUTE format('DROP POLICY %I ON %s', old.polname, old.tbl);
   END LOOP;
 END $d$;"""

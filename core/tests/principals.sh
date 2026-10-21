@@ -349,7 +349,8 @@ case "$out" in *service:*) echo "FAIL  --users 1,2 shows a service: $out"; fails
 check "lint notes a principal type nobody can make keys for" "0" \
   "RESET ROLE; SELECT count(*) FROM authz.lint() WHERE object = 'service' AND problem LIKE '%manage_keys%';"
 
-# keys stored before keys went with their principal's row, of a user deleted since: applying deletes them
+# the keys of a user deleted while no trigger watched (after rowstile remove, before the next apply): applying
+# deletes them
 PSQL -c "INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash) VALUES ('90', 'user', 'left', 'ak_', 'left over')" >/dev/null
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_principals.sql >/dev/null
 check "applying the policy deletes the keys of a principal whose row is gone" "0" \

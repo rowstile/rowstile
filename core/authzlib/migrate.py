@@ -221,7 +221,7 @@ class Lock:
     trees: dict[str, str] = field(default_factory=dict)  # name -> hash
     steps: dict[str, str] = field(default_factory=dict)  # name -> hash
     nexts: dict[str, str] = field(default_factory=dict)  # tree name -> hash: built beside, by the migration before
-    always: str | None = None  # the steps every migration runs, hashed (none: a lock from before)
+    always: str | None = None  # the steps every migration runs, hashed (none: no lock yet)
     objects: dict[str, LockObject] = field(default_factory=dict)  # 'kind key' -> what was made
     text: str = ""
 
@@ -411,8 +411,7 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
         it.name for it in c.items if isinstance(it, Step) and it.when == "changed" and old.steps.get(it.name) != it.hash
     }
     changed = drop or create or replace or restub or removed or rebuild or steps or refill - {SOFT}
-    # a lock from before the steps were hashed can only say which version wrote it
-    same_steps = old.always == always_hash(c) if old.always else old.version == __version__
+    same_steps = old.always == always_hash(c)
     if not lines and not changed and same_steps:
         # only lines moved, or only the version of rowstile changed: that alone needs no migration; the next one
         # writes the new lines (and version) too
@@ -696,8 +695,7 @@ def render(
 DO $authz_guard$
 DECLARE v_lock text;
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
-             WHERE attrelid = to_regclass('authz.policy_versions') AND attname = 'lock' AND NOT attisdropped) THEN
+  IF to_regclass('authz.policy_versions') IS NOT NULL THEN
     EXECUTE 'SELECT lock FROM authz.policy_versions ORDER BY id DESC LIMIT 1' INTO v_lock;
   END IF;
   {there} v_lock IS DISTINCT FROM {sql_lit(old_hash)} THEN

@@ -102,14 +102,6 @@ case "$out" in *"this migration changes the policy the migration before it left"
 out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -At -1 -v ON_ERROR_STOP=1 -d "${DB}_2" -c "SET LOCAL lock_timeout = '3s'" -f "$first" -c "SHOW lock_timeout" 2>&1)
 [ "$(echo "$out" | tail -n 1)" = 3s ] && ok "a migration run with a lock_timeout of its tool's keeps it" || bad "lock_timeout in a migration" "$(echo "$out" | tail -n 3)"
 echo "$first" >> "$T/applied_${DB}_2"
-# a database whose history has no lock column (made before migrations recorded it) holds no lock: refused, saying none
-# (beside an app table with a column named lock: the guard looks for the history's own)
-out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_2" -c "ALTER TABLE authz.policy_versions DROP COLUMN lock" \
-  -c "CREATE TABLE app.door_locks (lock text)" -f "$second" 2>&1)
-case "$out" in *"this migration changes the policy the migration before it left ("*"), but the database has none [AZ607]"*)
-  [ "$(psql -X -At -d "${DB}_2" -c "SELECT count(*) FROM pg_attribute WHERE attrelid = 'authz.policy_versions'::regclass AND attname = 'lock'")" = 1 ] &&
-  ok "... and so is one on a database whose history has no lock column: it has none, and nothing changes" || bad "guard without a lock column: the column after";;
-  *) bad "guard without a lock column" "$out";; esac
 out=$(migrate_db "${DB}_2" "$P/db/migrations") && [ "$(PSQL -d "${DB}_2" -c "SELECT authz.verify()")" = t ] &&
   ok "a new database gets both, in order" || bad "both on a new database" "$out"
 

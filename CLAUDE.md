@@ -217,8 +217,10 @@ For one suite, start a container and run it inside:
 ## Conventions
 
 - Generated SQL must be re-appliable: `DROP SCHEMA authz_gen, authz_int CASCADE` then recreate; persistent
-  state lives in schema `authz` (`CREATE TABLE IF NOT EXISTS`, migrations in `base.py`): a new column goes last
-  in its `CREATE TABLE`, and an `ADD COLUMN IF NOT EXISTS` beside it gives it to a database made before.
+  state lives in schema `authz` (`CREATE TABLE IF NOT EXISTS` in `base.py`). The beta started afresh: a database an
+  alpha made is applied from scratch, not upgraded, so `base.py` holds no migration from an older layout. From the
+  beta on, each release upgrades the databases the one before made: a new column goes last in its `CREATE TABLE`,
+  with an `ADD COLUMN IF NOT EXISTS` beside it that gives it to those.
   `tests/upgrade.sh` upgrades databases the release before made (from PyPI: push, apply, reapply, the next
   migration) and compares each with a new database, those tables' columns in order among what it compares.
 - Applying: the command runs the compiled SQL in one transaction, as the tables' owner; nothing may

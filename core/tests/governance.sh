@@ -346,7 +346,8 @@ admin "... and the folder and the request are both still there" "1|1" \
   "SELECT (SELECT count(*) FROM app.folders WHERE id = 41) || '|' || (SELECT count(*) FROM authz.requests WHERE object_id = '41' AND status = 'pending')"
 rm -f /tmp/authz_governance_rr.out
 PSQL -c "DELETE FROM app.folders WHERE id IN (41, 42, 43)" >/dev/null
-# a request whose requester was deleted before requests went with their rows: applying the policy cancels it
+# a request whose requester was deleted while no trigger watched (after rowstile remove, before the next apply):
+# applying the policy cancels it
 PSQL -c "INSERT INTO authz.requests (object_type, object_id, relation, requester, reason) VALUES ('folder', '6', 'viewer', '77', 'left over')" >/dev/null
 RQS=$(as 4 -c "SELECT authz.request_access('folder', 6, 'viewer', 'dave still needs it')")
 reapply /tmp/authz_governance.sql

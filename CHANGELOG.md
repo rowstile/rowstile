@@ -41,8 +41,18 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   write `update after :`). The review and the error pages no longer speak of `role x`, `roles : ... grant` or
   `check`. In VS Code, `check` in a rule is no longer coloured as a word of the language, and an `app role` line
   typed under an indented one moves back to the margin, as a `type` line does.
+- The beta starts afresh: a database an alpha made is not upgraded to it. Apply the policy to a new database
+  (`rowstile apply`, or an app's migrations from the first). What turned a database an older build made into
+  today's layout is gone: the old names of the shares' table, its indexes and the history's version column, ids
+  stored as integers, the columns added to rowstile's tables since, and a lock file without its `always` line
+  read by the version that wrote it (a migration from such a lock now runs the steps every migration runs).
 
 ### Fixed
+
+- Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
+  them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
+  `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed
+  table. Now it stays, and lint says it isn't rowstile's.
 
 - Where the SDKs write the sign-in into the statement (Python: the asyncpg adapter, SQLAlchemy with a driver of
   another parameter style, `act_as_sql()`; TypeScript: `actAsSql()`), an id holding a backslash stays one

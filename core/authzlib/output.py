@@ -1189,7 +1189,7 @@ DO $gi$
 DECLARE i record;
 BEGIN
   FOR i IN SELECT c.relname FROM pg_index x JOIN pg_class c ON c.oid = x.indexrelid
-           WHERE x.indrelid = 'authz.shares'::regclass AND (c.relname LIKE 'shares\\_obj\\_%' OR c.relname LIKE 'grants\\_obj\\_%')
+           WHERE x.indrelid = 'authz.shares'::regclass AND c.relname LIKE 'shares\\_obj\\_%'
              AND c.relname <> ALL (ARRAY[{", ".join(lit(n) for n in index_names)}]::text[]) LOOP
     EXECUTE format('DROP INDEX authz.%I', i.relname);
   END LOOP;
@@ -1200,7 +1200,9 @@ END $gi$;"""
             for t, n in zip(typed, index_names, strict=True)
         ]
         canonical = CANONICAL_SHARES if any(t.pktype != "text" or t.composite for t in self.types.values()) else ""
-        # (a subject id '*' names no row: it is every signed-in principal of the type, user:*)
+        # Rows deleted while no trigger watched them leave shares, keys and requests behind: rows deleted after
+        # rowstile remove, before the next apply, or while the policy didn't name their type (or didn't let it sign
+        # in). (A subject id '*' names no row: it is every signed-in principal of the type, user:*)
         sweep = (
             canonical
             + "-- Shares on rows that no longer exist (deleted while no trigger watched them) are dropped\n"
@@ -1598,9 +1600,10 @@ CREATE TRIGGER authz_shares_canon BEFORE INSERT OR UPDATE OF object_type, object
         return "\n".join(types + [canon, trigger])
 
 
-CANONICAL_SHARES = """-- Shares stored with ids that aren't canonical ('007', an uppercase uuid: written directly before every
--- write went through authz_int.canon) are made canonical, since the sweep below and the triggers compare
--- text; one that then repeats a share already stored goes, the first made staying
+CANONICAL_SHARES = """-- Shares stored with ids that aren't canonical for their type's key ('007' for a bigint, an uppercase uuid) are
+-- made canonical, since the sweep below and the triggers compare text: stored as canonical when written, an id
+-- isn't any more once the type of its key changes (text to bigint, say). One that then repeats a share already
+-- stored goes, the first made staying
 CREATE TEMP TABLE authz_uncanonical ON COMMIT DROP AS
   SELECT g.ctid AS row, authz_int.canon(g.object_type, g.object_id) AS object_id,
          authz_int.canon(g.subject_type, g.subject_id) AS subject_id
