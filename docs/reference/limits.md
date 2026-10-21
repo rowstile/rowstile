@@ -160,6 +160,12 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
 - **A `(type, id)` pair whose id is one column** is found by its type: its id is read through a `CASE` on the
   type, which no index serves. An index on `(type, id)` (what `rowstile indexes` asks for) finds the rows of that
   type, and each of them is read. Where most rows name one type, that is most of the table. <!-- checked: tests/confidence_test.py "the rows of that type found through" -->
+- **prove and the review read text as ICU's root collations do.** Two texts a column may hold as one value (the
+  same but for case, accents, spaces or punctuation, numbers written two ways, the same words in another order)
+  are left to the database there. <!-- checked: tests/conditions_test.py "and not alike" -->
+  A collation made for a language, or built from rules, may hold more texts as one value: Lithuanian holds
+  `'ylp'` and `'ilp'` alike. For a column under such a collation, the database is the check:
+  `authz.check_invariants()` on its data, and the review's access part on a review database. <!-- unchecked: a limit of the made-up worlds, said so that no more is expected of them -->
 
 ## What a 0.x release promises
 

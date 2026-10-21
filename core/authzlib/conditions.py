@@ -24,13 +24,24 @@ which a real column rounds, nor 16777216, one more than which it rounds: the mad
 number too), no order against authz.uid() (the user key's type decides it). Those are left to the
 database too. A column a relation reads holds the linked ids' text: compared with a number, as a number
 (tests/conditions_test.py asks Postgres the same questions).
+
+Text equality means the same whatever the collation only for one text: a row equals it or doesn't, and `{s = 'a'}`,
+`{s in ('a')}` and `not {s <> 'a'}` say the same. Two texts compared with one column may be one value to it: a
+case-insensitive collation holds 'a' and 'A' alike, an accent-insensitive one 'cafe' and 'café', one that ignores
+punctuation 'ab' and 'a-b', a char(n) column 'a' and 'a ', a date column '2024-01-01' and '2024-1-1'. The evaluator
+holds a row equal to one text at most, so it reads a column's texts only where none of them is alike another
+(alike): it reads `{status = 'draft'}` beside `{status = 'published'}`, and leaves `{s = 'a'}` beside `{s = 'A'}`
+to the database (evaluate.World.facts). alike covers the collations ICU makes from its root (`und-u-ks-level1`,
+`-ka-shifted`, `-kn`...) and the types that read text as a number, a date or a set of words; not those made for a
+language (Lithuanian holds 'y' as 'i', Danish 'aa' as 'å') or by rules of the app's own.
 """
 
 from __future__ import annotations
 
 import re
 import struct
-from collections.abc import Mapping
+import unicodedata
+from collections.abc import Iterable, Mapping
 from decimal import Decimal
 from functools import cache
 from typing import NamedTuple, TypeAlias
@@ -85,7 +96,7 @@ class Bool(NamedTuple):
 Node: TypeAlias = "Col | Const | Uid | Cmp | IsNull | In | Bool"
 
 TOKEN = re.compile(
-    r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<num>\d+(?:\.\d+)?)(?![\w.])|"
+    r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<num>[0-9]+(?:\.[0-9]+)?)(?![\w.])|"  # (`٣` is a name to Postgres)
     r'(?P<uid>authz\s*\.\s*uid\s*\(\s*\))|(?P<quoted>(?:this\s*\.\s*)?"(?:[^"]|"")+")|'
     rf"(?P<name>(?:this\s*\.\s*)?{NAME})|"
     r"(?P<op><>|!=|<=|>=|=|<|>)|(?P<p>[(),]))",
@@ -393,3 +404,67 @@ def truth(n: Node, row: Mapping[str, Scalar], uid: str | None) -> bool | None:
 
 def uses_uid(node: Node) -> bool:
     return any(how == "uid" for hows in columns_of(node).values() for how, _ in hows)
+
+
+# words a date or a time column reads as a moment: 'now' and 'today' are one date, 'epoch' is '1970-01-01'
+MOMENTS = ("now", "today", "tomorrow", "yesterday", "epoch", "allballs")
+
+
+def words(text: str) -> list[str]:
+    """A text's words as the loosest collation reads them: accents off ('é' is 'e', 'ﬁ' is 'fi'), the case folded
+    ('ß' is 'ss'), what it ignores inside a word dropped (a soft hyphen), cut at anything but a letter or a digit."""
+    folded = unicodedata.normalize("NFKD", unicodedata.normalize("NFKD", text).casefold())
+    out, word = [], ""
+    for ch in folded:
+        kind = unicodedata.category(ch)
+        if kind[0] in "LN":
+            word += ch
+        elif kind[0] != "M" and kind != "Cf":
+            out, word = (out + [word] if word else out), ""
+    return out + [word] if word else out
+
+
+def alike(a: str, b: str) -> bool:
+    """Whether a column may hold two texts as one value, by its collation or its type: when they read the same
+    without case, accents, spaces and punctuation ('a' and 'A ', 'cafe' and 'Café', 'ab' and 'a-b'), or have the
+    same words in another order ('a b' and 'b a', a tsvector), or both name a number or a moment (a date, a uuid, an
+    interval, digits a collation compares as numbers: 'a1' and 'a01'), or either holds a letter past ASCII once its
+    accents are off ('æ', 'ø', 'ł', another script: ICU holds many of those alike)."""
+    if a == b:
+        return True
+    wa, wb = words(a), words(b)
+    ja, jb = "".join(wa), "".join(wb)
+
+    def counted(joined: str) -> bool:
+        return any(ch.isnumeric() for ch in joined) or joined in MOMENTS
+
+    return ja == jb or set(wa) == set(wb) or not (ja + jb).isascii() or (counted(ja) and counted(jb))
+
+
+def texts_of(node: Node) -> dict[str, set[str]]:
+    """The texts the condition compares each column with ({s = 'a' or s in ('b', null)}: s with 'a' and 'b')."""
+    out: dict[str, set[str]] = {}
+    for col, hows in columns_of(node).items():
+        for how, v in hows:
+            if how not in ("bool", "uid", "null") and isinstance(v, str):
+                out.setdefault(col, set()).add(v)
+    return out
+
+
+def alike_columns(nodes: Iterable[Node]) -> frozenset[str]:
+    """The columns the conditions compare with two texts that may be alike (alike): wherever it is, a condition that
+    compares such a column with a text is the database's to read."""
+    seen: dict[str, set[str]] = {}
+    for node in nodes:
+        for col, texts in texts_of(node).items():
+            seen.setdefault(col, set()).update(texts)
+    return frozenset(
+        col
+        for col, texts in seen.items()
+        if any(alike(a, b) for i, a in enumerate(sorted(texts)) for b in sorted(texts)[i + 1 :])
+    )
+
+
+def reads_alike(node: Node, columns: frozenset[str]) -> bool:
+    """Whether the condition compares one of these columns (alike_columns) with a text."""
+    return any(col in columns for col in texts_of(node))

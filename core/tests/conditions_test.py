@@ -11,6 +11,16 @@ holds as the ids' text; some named only in quotes, "B" beside b, "order"), every
 same rows, signed in as each user and as nobody. Whatever
 conditions.py takes as simple must give Postgres's answer on every row: true, false or NULL. One it doesn't take
 (a function, arithmetic, a cast) is left to the database, as any other condition.
+
+Two columns don't tell texts apart byte by byte: ci, under a collation that ignores case, accents and punctuation
+and compares digits as numbers (ICU, not deterministic), and ch, a char(3). A made-up row holds one of the texts
+its column is compared with, or another: a row of the database is read as the text it equals, so what the
+evaluator reads of one must be Postgres's answer on the other. That holds while no row equals two texts the
+evaluator reads apart: every two texts Postgres holds equal, under such collations or as a value of a type (a
+date, a uuid, a tsvector...), must be alike (conditions.alike), and a condition comparing a column with two alike
+texts is the database's to read (evaluate.facts). The run fails too when fewer than a fifth of the conditions are
+read, or when some kind of them never is (a comparison, `in`, `is null`, authz.uid(), a column alone, a text on
+ci): a reading that stopped would leave nothing to tell apart.
 """
 
 from __future__ import annotations
@@ -28,7 +38,25 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "cli"))
 import pgwire  # noqa: E402
-from authzlib.conditions import Scalar, simple, truth  # noqa: E402
+from authzlib.conditions import (  # noqa: E402
+    Bool,
+    Cmp,
+    Col,
+    In,
+    IsNull,
+    Node,
+    Scalar,
+    Uid,
+    alike,
+    alike_columns,
+    plain,
+    simple,
+    texts_of,
+    truth,
+)
+
+# the nondeterministic collation ci is under: case, accents and punctuation ignored, digits compared as numbers
+LOOSE = "und-u-ka-shifted-kn-ks-level1"
 
 # each column's values (None: NULL), as Python holds them in a made-up world, and as SQL writes them
 COLUMNS: dict[str, tuple[str, list[Scalar]]] = {
@@ -47,7 +75,12 @@ COLUMNS: dict[str, tuple[str, list[Scalar]]] = {
     "B": ("boolean", [False, None, True]),
     "order": ("integer", [1, 2, None]),
     'a"b': ("text", ["a", "b", None]),
+    # texts a column holds as one value: by its collation, by char(n)'s padding
+    "ci": ("text COLLATE loose", ["a", "A", "á", "b", "B", "ab", "a-b", "a b", "x1", "x01", "", None]),
+    "ch": ("char(3)", ["a", "a  ", "A", "ab", "", None]),
 }
+# the columns whose equality isn't byte by byte: a row is read as the text of the condition it equals
+LOOSE_COLUMNS = ("ci", "ch")
 BOOLEANS = ("b", "B")
 USERS = ["1", "2", "10", None]  # who is signed in: authz.uid(); None, nobody
 # the constants a condition compares each column with: some of another kind, as SQL allows ('10' for a number)
@@ -64,7 +97,21 @@ CONSTANTS: dict[str, list[str]] = {
     "B": ["true", "false", "'t'", "null"],
     "order": ["1", "2", "1.5", "'2'", "null"],
     'a"b': ["'a'", "'b'", "'A'", "null"],
+    "ci": ["'a'", "'A'", "'á'", "'b'", "'ab'", "'a-b'", "'x1'", "'x01'", "''", "'c'", "null"],
+    "ch": ["'a'", "'a '", "'A'", "'ab'", "''", "' '", "null"],
 }
+# texts to ask Postgres about two by two (beside the constants'): what a collation or a type may hold as one value
+TEXTS = [
+    "a", "A", "á", "Á", "ä", "ae", "æ", "o", "ø", "oe", "œ", "l", "ł", "d", "đ", "ss", "ß", "i", "\u0131", "ab", "a-b",
+    "a b", "a_b", "b a", "a a", "x1", "x01", "x 1", "draft", "Draft", "published", "a ", " ", "", "a\u00ad",
+    "\uff41", "\u0663", "2024-01-01", "2024-1-1", "20240101", "Jan 1 2024", "now", "today", "epoch", "1970-01-01",
+    "allballs", "00:00", "1 day", "24 hours", '{"a": 1}', '{"a":1}', '{"b": 2, "a": 1}', '{"a": 1, "b": 2}',
+    "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", "A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11", "{a0eebc999c0b4ef8bb6d6bb9bd380a11}",
+    "10.0.0.1", "10.0.0.1/32", "café", "cafe", "CAFE",
+]  # fmt: skip
+# what Postgres compares those texts under: collations ICU makes from its root, and types that read text
+COLLATIONS = ["und-u-ks-level2", "und-u-ks-level1", "und-u-ka-shifted", "und-u-kn", LOOSE]
+TYPES = ["char(12)", "date", "time", "uuid", "interval", "inet", "jsonb", "tsvector"]
 OPS = ["=", "<>", "!=", "<", "<=", ">", ">="]
 
 
@@ -162,6 +209,52 @@ def answer(v: object) -> bool | None:
     return v
 
 
+def kinds(node: Node) -> set[str]:
+    """The kinds of reading a condition has: a comparison, `in`, `is null`, authz.uid(), a column alone."""
+    match node:
+        case Cmp(left=a, right=b):
+            return {"authz.uid()" if Uid() in (a, b) else "a comparison"}
+        case In():
+            return {"in"}
+        case IsNull():
+            return {"is null"}
+        case Col():
+            return {"a column alone"}
+        case Bool(items=items):
+            return set().union(*(kinds(x) for x in items))
+    return set()
+
+
+FORMS = ("a comparison", "in", "is null", "authz.uid()", "a column alone", "a text on ci", "alike texts, drawn")
+
+
+def one_value(conn: pgwire.Connection, texts: list[str]) -> list[str]:
+    """Each two texts that Postgres holds as one value, under one of COLLATIONS or as one of TYPES, and that alike
+    doesn't say may be."""
+    conn.script(
+        "SET client_min_messages = warning;\nCREATE TABLE texts (t text);\n"
+        + "".join(f"INSERT INTO texts VALUES ({sql_value(t)});\n" for t in texts)
+        + "".join(
+            f"CREATE COLLATION c{i} (provider = icu, locale = '{loc}', deterministic = false);\n"
+            for i, loc in enumerate(COLLATIONS)
+        )
+    )
+    pairs: list[tuple[str, str, str]] = []
+    for i, loc in enumerate(COLLATIONS):
+        got = conn.query(
+            f'SELECT a.t, b.t FROM texts a, texts b WHERE a.t < b.t COLLATE "C" AND a.t = b.t COLLATE c{i}'
+        )
+        pairs += [(str(a), str(b), f"collation {loc}") for a, b in got]
+    for ty in TYPES:
+        valid = f"pg_input_is_valid(a.t, '{ty}') AND pg_input_is_valid(b.t, '{ty}')"
+        got = conn.query(
+            f'SELECT a.t, b.t FROM texts a, texts b WHERE a.t < b.t COLLATE "C" AND {valid} '
+            f"AND CASE WHEN {valid} THEN a.t::{ty} = b.t::{ty} END"
+        )
+        pairs += [(str(a), str(b), ty) for a, b in got]
+    return [f"{a!r} and {b!r} are one value ({how}), and not alike" for a, b, how in pairs if not alike(a, b)]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", type=int, default=3000)
@@ -176,6 +269,7 @@ def main() -> None:
     data = rows(rng, 150)
     cols = ", ".join(f"{quoted(c)} {ty}" for c, (ty, _) in COLUMNS.items())
     conn.script(
+        f"CREATE COLLATION loose (provider = icu, locale = '{LOOSE}', deterministic = false);\n"
         "CREATE SCHEMA authz;\n"
         "CREATE FUNCTION authz.uid() RETURNS bigint LANGUAGE sql STABLE AS "
         "$$ SELECT nullif(current_setting('conditions_test.uid', true), '')::bigint $$;\n"
@@ -186,9 +280,30 @@ def main() -> None:
         )
     )
     collation = conn.query("SELECT datcollate FROM pg_database WHERE datname = current_database()")[0][0]
-    tried = simple_ones = refused = 0
+    tried = simple_ones = refused = drawn = 0
     differences: list[str] = []
     seen: set[str] = set()
+    read: set[str] = set()
+    equal: dict[tuple[str, str], set[int]] = {}  # (a loose column, a text): the rows Postgres says equal it
+
+    def equals(col: str, text: str) -> set[int]:
+        if (col, text) not in equal:
+            got = conn.query(f"SELECT id FROM rows WHERE {quoted(col)} = $1", [text])
+            equal[(col, text)] = {int(str(i)) for (i,) in got}
+        return equal[(col, text)]
+
+    def as_read(i: int, node: Node) -> dict[str, Scalar] | str:
+        """Row i as a made-up row holds it for the condition: a loose column's value as the text it equals, or
+        another; a message when it equals two texts."""
+        row = dict(data[i])
+        for col, texts in texts_of(node).items():
+            if col in LOOSE_COLUMNS and row[col] is not None:
+                hits = sorted(t for t in texts if i in equals(col, t))
+                if len(hits) > 1:
+                    return f"{col} = {sql_value(row[col])} equals each of {hits}, read as two values"
+                row[col] = hits[0] if hits else "(another)"
+        return row
+
     for _ in range(args.cases):
         cond = condition(rng)
         if cond in seen:
@@ -207,9 +322,19 @@ def main() -> None:
         except pgwire.PgError:
             refused += 1  # Postgres refuses it (a text compared with a number...): no policy has it
             continue
+        if alike_columns([node]):
+            drawn += 1  # two texts its column may hold as one: the evaluator draws its rows (evaluate.facts)
+            read.add("alike texts, drawn")
+            continue
         simple_ones += 1
+        read |= kinds(node) | ({"a text on ci"} if "ci" in texts_of(node) else set())
         for uid, pg in answers.items():
-            bad = [(i, ours, pg[i]) for i, r in enumerate(data) if (ours := truth(node, r, uid)) != pg[i]]
+            bad: list[tuple[int, object, bool | None]] = []
+            for i in range(len(data)):
+                row = as_read(i, node)
+                ours = row if isinstance(row, str) else truth(node, row, uid)
+                if ours != pg[i]:
+                    bad.append((i, ours, pg[i]))
             if bad:
                 i, ours, theirs = bad[0]
                 shown = ", ".join(f"{c} = {sql_value(data[i][c])}" for c in COLUMNS)
@@ -218,15 +343,26 @@ def main() -> None:
                     f"Postgres {theirs} ({len(bad)} rows)"
                 )
                 break
+    texts = sorted(
+        {t for t in TEXTS if plain(t)}
+        | {k[1:-1].replace("''", "'") for c in ("s", "ci", "ch") for k in CONSTANTS[c] if k.startswith("'")}
+    )
+    missed = one_value(conn, texts)
     conn.close()
     subprocess.run(["dropdb", "--if-exists", args.db], capture_output=True)
+    failures = [*differences, *missed]
+    if simple_ones < tried // 5:
+        failures.append(f"only {simple_ones} of {tried} conditions read: fewer than a fifth")
+    failures += [f"no condition read as {form}" for form in FORMS if form not in read]
     print(
-        f"{tried} conditions, {simple_ones} simple and accepted by Postgres, {refused} refused by Postgres, "
-        f"{len(differences)} read otherwise than Postgres (collation {collation}, seed {args.seed})"
+        f"{tried} conditions, {simple_ones} simple and accepted by Postgres, {drawn} with alike texts (drawn), "
+        f"{refused} refused by Postgres, {len(differences)} read otherwise than Postgres (collation {collation}, "
+        f"seed {args.seed}); {len(texts)} texts two by two under {len(COLLATIONS)} collations and {len(TYPES)} "
+        f"types, {len(missed)} one value and not alike"
     )
-    for d in differences[: args.show]:
+    for d in failures[: args.show]:
         print("  " + d)
-    sys.exit(1 if differences else 0)
+    sys.exit(1 if failures else 0)
 
 
 if __name__ == "__main__":

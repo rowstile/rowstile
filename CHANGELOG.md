@@ -351,6 +351,15 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `lost the database: the server closed the connection`, as it does when the server closes between two
   statements. When the server said why first (the session was ended, it is shutting down), those words are
   still what the command says.
+- `rowstile prove` and the review read two texts compared with one column as two values, so
+  `{status = 'Public'}` and `{status = 'public'}` never held on one row there. A column under a case-insensitive
+  collation holds both, and prove said an invariant held that the data broke. Texts a column may hold as one
+  value (the same but for case, accents, spaces or punctuation; two that name numbers or dates; letters past
+  ASCII) are now left to the database there, as a subquery is: prove draws the rows each holds for, and the
+  review says it can't compare a change between them. Different words (`'draft'`, `'published'`) are still read
+  as two.
+- `{size > ٣}` compared size with the number 3; Postgres reads `٣` as a column's name. Only the digits 0 to 9
+  make a number now.
 
 ## 0.1.0 (alpha)
 
