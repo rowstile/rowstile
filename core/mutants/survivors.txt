@@ -127,7 +127,7 @@ gcd93a4ce00 equivalent refusals.py RefusalMixin.refuse_sql: the mutated current_
 gac53ebffc1 equivalent output.py OutputMixin.share_sql: authz_int.share_if is called only by authz.share (a SECURITY DEFINER function) and by rowstile why's probes, which run as the owner: it runs as the owner either way.
 gf5c3e4f8ba equivalent output.py OutputMixin.keys_sql: authz_int.shares_canon is no SECURITY DEFINER, and its body names only authz_int.canon, schema-qualified, and NEW's fields: no name it reads depends on the search_path.
 gfe8f327828 equivalent output.py OutputMixin.column_rule_sql: the mutated text is a comment in the generated SQL.
-g82b5c3e2c3 equivalent sqlutil.py <module>: only the masked views rowstile made carry VIEW_MARKS ('rowstile masked view', and the two older names), and they are views: without relkind = 'v' the loop finds the same ones.
+g82b5c3e2c3 equivalent sqlutil.py <module>: only the masked views rowstile made carry VIEW_MARKS ('rowstile masked view'), and they are views: without relkind = 'v' the loop finds the same ones.
 g75eb22f10b equivalent sqlutil.py <module>: Postgres gives a partition its table's row triggers itself, under the same names, so the NOT EXISTS on the trigger's name already leaves partitions out: child_triggers() lists the same rows.
 g17b60cd8f9 equivalent sqlutil.py <module>: a collatable column always has a collation and a non-collatable one has none (0 for both it and its type), so the OR adds COLLATE only where the column's collation is its type's own: the stub's columns have the same collations.
 g2b86c9dff7 equivalent sqlutil.py sql_code: at i == 2 the mutant also reads <alnum>e'...' as an E'' string; SQL has that only as a two-letter type name ending in e written against a literal, which no type is.

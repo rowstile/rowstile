@@ -132,7 +132,7 @@ TYPE_WORDS = ["can", "shared", "by", "if", "where", "roles", "from", "principal"
 SHARE_FIELDS = ["object_id", "subject_type", "subject_id", "subject_relation"]  # what `shared if {...}` reads
 KIND_CLASS, KIND_FIELD, KIND_METHOD, KIND_NAMESPACE = 5, 8, 6, 3  # SymbolKind
 C_KEYWORD, C_FIELD, C_METHOD, C_CLASS, C_MODULE = 14, 5, 2, 7, 9  # CompletionItemKind
-SETTINGS_FILE = re.compile(r"(.*?(?:rowstile|rowfence)\.toml): (.*)", re.S)  # a mistake in it, as the command says it
+SETTINGS_FILE = re.compile(r"(.*?rowstile\.toml): (.*)", re.S)  # a mistake in it, as the command says it
 RETRY, RETRY_MOST = 5, 60  # seconds before a database that couldn't be read is tried again: 5, 10, 20, ... 60
 
 
@@ -187,8 +187,6 @@ class Server:
         if now == self.read:
             return
         first, self.read = self.read is None, now
-        if cfg is not None and said.getvalue():
-            print(said.getvalue(), end="", file=sys.stderr)  # a note (rowfence.toml is read for now)
         self.cfg, self.catalog, self.failed, self.tried = cfg, None, 0, 0.0
         self.clear()
         if cfg is None:

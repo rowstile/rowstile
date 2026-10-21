@@ -1,5 +1,5 @@
 -- The messenger's tables. Who may read or change what is not here: it is in db/policy.authz, which
--- rowfence turns into row-level security on these tables. What is here is plain data integrity.
+-- rowstile turns into row-level security on these tables. What is here is plain data integrity.
 CREATE SCHEMA ms;
 
 -- people: sign up with a phone number and a name

@@ -1,6 +1,6 @@
--- policy.authz: every access rule of the messenger. Applied by db/migrate.py with authz.apply(); the
--- backend has no permission checks of its own. Read it top to bottom: people, bots, chats, then what
--- each table allows.
+-- policy.authz: every access rule of the messenger. It reaches the database as the migrations rowstile
+-- migrate writes into db/migrations; the backend has no permission checks of its own. Read it top to
+-- bottom: people, bots, chats, then what each table allows.
 
 app role ms_app
 

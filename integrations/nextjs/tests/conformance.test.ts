@@ -77,11 +77,6 @@ test("3: not signed in is an error that says how", async () => {
   }
 });
 
-// a database rowfence applied (rowstile's name before) says `rowfence help` in its hints: the code still reads
-test("the code in a hint rowfence wrote", () => {
-  expect(errorCode({ code: "28000", message: "sign in first", hint: "sign in with authz.act_as(); rowfence help AZ701" })).toBe("AZ701");
-});
-
 // 4: one pooled connection, Ann then Bob: Bob never sees Ann's rows
 test("4: a pooled connection carries no one over", async () => {
   for (const user of ["1", "2", "", "3", "2"]) {

@@ -47,14 +47,14 @@ CREATE TEMP TABLE authz_old_tables ON COMMIT DROP AS
   SELECT DISTINCT p.polrelid::regclass AS tbl
   FROM pg_policy p
   JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass
-  WHERE d.description IN ('rowstile', 'rowfence', 'authzc');
+  WHERE d.description IN ('rowstile');
 DO $d$
 DECLARE old record;
 BEGIN
   FOR old IN SELECT pol.polname, pol.polrelid::regclass AS tbl
              FROM pg_policy pol
              JOIN pg_description d ON d.objoid = pol.oid AND d.classoid = 'pg_policy'::regclass
-             WHERE d.description IN ('rowstile', 'rowfence', 'authzc') LOOP
+             WHERE d.description IN ('rowstile') LOOP
     EXECUTE format('DROP POLICY %I ON %s', old.polname, old.tbl);
   END LOOP;
 END $d$;
@@ -64,7 +64,7 @@ DO $mv$
 DECLARE v record; cols text;
 BEGIN
   FOR v IN SELECT c.oid, c.oid::regclass AS name FROM pg_class c JOIN pg_description d ON d.objoid = c.oid
-           AND d.classoid = 'pg_class'::regclass WHERE c.relkind = 'v' AND d.description IN ('rowstile masked view', 'rowfence masked view', 'authzc masked view') LOOP
+           AND d.classoid = 'pg_class'::regclass WHERE c.relkind = 'v' AND d.description IN ('rowstile masked view') LOOP
     BEGIN
       EXECUTE format('DROP VIEW %s', v.name);
     EXCEPTION WHEN dependent_objects_still_exist THEN
@@ -5907,7 +5907,7 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
            FROM pg_policy p
            LEFT JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass
            WHERE p.polrelid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY['"mt"."docs"']::text[]) x)
-             AND coalesce(d.description, '') NOT IN ('rowstile', 'rowfence', 'authzc')
+             AND coalesce(d.description, '') NOT IN ('rowstile')
              AND EXISTS (SELECT 1 FROM unnest(p.polroles) o
                          WHERE CASE WHEN o = 0 THEN true ELSE pg_has_role(v_role, o, 'MEMBER') END)
            ORDER BY p.polrelid::regclass::text, p.polname LOOP
@@ -6084,7 +6084,7 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
              AND d.refobjid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY['"mt"."docs"', '"mt"."folders"', '"mt"."orgs"', '"mt"."projects"', '"mt"."teams"', '"mt"."users"', '"mt"."doc_orgs"', '"mt"."org_members"', '"mt"."team_members"']::text[]) x)
              AND v.oid <> d.refobjid AND v.relkind IN ('v', 'm')
              AND v.relnamespace NOT IN (to_regnamespace('authz_gen'), to_regnamespace('authz_int'))
-             AND coalesce(ds.description, '') NOT IN ('rowstile masked view', 'rowfence masked view', 'authzc masked view')
+             AND coalesce(ds.description, '') NOT IN ('rowstile masked view')
              AND NOT coalesce(v.reloptions @> ARRAY['security_invoker=true'], false)
              AND NOT coalesce(v.reloptions @> ARRAY['security_invoker=on'], false)
              AND has_table_privilege(v_role, v.oid, 'SELECT') LOOP
@@ -6222,7 +6222,7 @@ BEGIN
            FROM pg_depend d WHERE d.refclassid = 'pg_class'::regclass AND d.refobjid = c.oid AND d.deptype = 'n'
              AND NOT (d.classid = 'pg_rewrite'::regclass AND d.objid IN (SELECT oid FROM pg_rewrite WHERE ev_class = c.oid))) || ')', '; ')
   INTO v_old FROM pg_class c JOIN pg_description d ON d.objoid = c.oid AND d.classoid = 'pg_class'::regclass
-  WHERE c.relkind = 'v' AND d.description IN ('rowstile masked view', 'rowfence masked view', 'authzc masked view') AND c.oid <> ALL (ARRAY[to_regclass('"mt"."docs_visible"')::oid]::oid[]);
+  WHERE c.relkind = 'v' AND d.description IN ('rowstile masked view') AND c.oid <> ALL (ARRAY[to_regclass('"mt"."docs_visible"')::oid]::oid[]);
   IF v_old IS NOT NULL THEN
     RAISE EXCEPTION 'this policy no longer makes a masked view that something in the database is built on: % [AZ617]', v_old
       USING HINT = 'Drop or change what is built on it, then apply again.';

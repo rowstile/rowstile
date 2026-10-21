@@ -1,4 +1,4 @@
--- policy.authz: who can do what in the file manager. Applied by db/migrate.py with authz.apply().
+-- policy.authz: who can do what in the file manager. rowstile migrate writes it as migrations.
 -- Folders nest; what you may do in a folder you may do in everything inside it, unless a folder
 -- stops inheritance (inherit = false). People share folders and files with users and groups.
 

@@ -2416,14 +2416,14 @@ class Migrations(unittest.TestCase):
             [f"rowstile 0.0.1 -> {authzlib.__version__}: what the new version makes differently"],
         )
 
-    def test_a_lock_rowfence_wrote_goes_by_its_version(self) -> None:
-        # rowstile was called rowfence (and authzc): their lock files' headers still give the version
+    def test_a_lock_gives_the_version_that_wrote_it(self) -> None:
+        # its header, `# rowstile <version>:`; a header of another name gives none
         lock = self.lock(self.text)
-        for old in ("rowfence", "authzc"):
-            renamed = re.sub(r"^# rowstile ", f"# {old} ", lock, count=1, flags=re.M)
-            self.assertEqual(self.migrate.parse_lock(renamed).version, authzlib.__version__, old)
-        newer = re.sub(r"^# rowstile \S+:", "# rowfence 99.0.0:", lock, count=1, flags=re.M)
-        with self.assertRaises(database.Error):  # still refused when a newer one wrote it
+        self.assertEqual(self.migrate.parse_lock(lock).version, authzlib.__version__)
+        renamed = re.sub(r"^# rowstile ", "# rowfence ", lock, count=1, flags=re.M)
+        self.assertIsNone(self.migrate.parse_lock(renamed).version)
+        newer = re.sub(r"^# rowstile \S+:", "# rowstile 99.0.0:", lock, count=1, flags=re.M)
+        with self.assertRaises(database.Error):  # refused when a newer one wrote it
             database.migrations(self.text, {}, newer)
 
     def test_a_tree_that_changes_is_built_beside_first(self) -> None:

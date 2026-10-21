@@ -59,7 +59,9 @@ describe("@rowstile/client", () => {
 
   test("what a driver kept of an error", () => {
     expect(dbError({ code: "42501" })).toMatchObject({ code: "42501", message: "" });
-    expect(errorCode({ code: "P0001", message: "a check said no [AZ612]" })).toBe("AZ612");
+    // the code is read where the runtime puts it, "rowstile help AZnnn"; an applying error's "[AZ612]" is no answer
+    expect([errorCode({ code: "P0001", message: "no", hint: "rowstile help AZ612" }), errorCode({ code: "P0001", message: "a check said no [AZ612]" })])
+      .toEqual(["AZ612", undefined]);
     // a column rule's words, with no table in them: the rule's code, nothing made up
     const nameless = refusal({ code: "42501", message: "changing locked of  needs: folder.manage", hint: "rowstile help AZ709" });
     expect([nameless?.table, nameless?.command, nameless?.code]).toEqual([undefined, undefined, "AZ709"]);

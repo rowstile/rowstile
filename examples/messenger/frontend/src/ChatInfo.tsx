@@ -126,7 +126,7 @@ function InviteLink({ chatId }: { chatId: number }) {
     <section>
       <h3>Invite link</h3>
       {link ? <><input readOnly value={link} onFocus={(e) => e.target.select()} />
-                <p className="hint">Anyone with this link can join for a week. Only a hash of it is stored.</p></>
+                <p className="hint">Anyone with this link can join until it expires: the list below says when. Only a hash of it is stored.</p></>
         : <button className="link" onClick={async () => { setLink(`${location.origin}/join/${(await api.invite(chatId)).token}`); load(); }}>
             Create an invite link</button>}
       <ul className="people">

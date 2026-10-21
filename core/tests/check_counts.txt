@@ -21,7 +21,7 @@ interleavings 324
 interleavings (read committed) 36
 invariance of the fixed policies 27
 keep unchanged trees 8
-language server 106
+language server 105
 masks 32
 mcp 68
 migrate vs apply 54

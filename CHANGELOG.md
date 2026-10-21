@@ -46,6 +46,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   today's layout is gone: the old names of the shares' table, its indexes and the history's version column, ids
   stored as integers, the columns added to rowstile's tables since, and a lock file without its `always` line
   read by the version that wrote it (a migration from such a lock now runs the steps every migration runs).
+- rowstile's earlier names are no longer read: `rowfence.toml` (name it `rowstile.toml`), `ROWFENCE_PYTHON` for
+  the npm launcher (set `ROWSTILE_PYTHON`), the marks `rowfence` and `authzc` on row-level security policies and
+  masked views, and the lock file headers `# rowfence` and `# authzc`.
+- The SDKs read an error's code from `rowstile help AZnnn` alone (`error_code()`, `errorCode()`): no longer from
+  `rowfence help AZnnn`, nor from `[AZnnn]` at the end of a message, which only errors from applying a policy
+  carry.
 
 ### Fixed
 

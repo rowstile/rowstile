@@ -261,9 +261,9 @@ def error_code(exc: BaseException) -> str | None:
 
     errs = _db_error(exc)
     for text in (_field(errs, "message_hint", "hint"), _field(errs, "message_primary", "message") or str(errs[-1])):
-        m = re.search(r"(?:rowstile|rowfence) help (AZ\d{3})|\[(AZ\d{3})\]", text or "")
+        m = re.search(r"rowstile help (AZ\d{3})", text or "")
         if m:
-            return m.group(1) or m.group(2)
+            return m.group(1)
     return None
 
 

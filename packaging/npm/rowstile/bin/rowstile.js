@@ -83,7 +83,7 @@ function tooLong(exe) {
   }
 }
 
-const own = process.env.ROWSTILE_PYTHON || process.env.ROWFENCE_PYTHON ? null : bundled();   // ROWFENCE_PYTHON: the name before the rename
+const own = process.env.ROWSTILE_PYTHON ? null : bundled();
 const long = own && tooLong(own);
 if (long && !onPath()) {
   console.error(`rowstile: this project's path is too long for Windows to load the Python that came with the package ` +
@@ -92,7 +92,7 @@ if (long && !onPath()) {
   process.exit(1);
 }
 // a Python on PATH, when the bundled one can't be loaded from here
-const python = process.env.ROWSTILE_PYTHON || process.env.ROWFENCE_PYTHON || (long ? null : own) || onPath();
+const python = process.env.ROWSTILE_PYTHON || (long ? null : own) || onPath();
 if (!python) {
   console.error(`rowstile: no Python to run on. The package for this platform (@rowstile/cli-${key}) isn't installed` +
     (PLATFORMS.includes(key) ? " (optional dependencies turned off?)" : `, and there is none for ${key}`) +

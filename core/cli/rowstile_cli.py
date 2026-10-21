@@ -125,7 +125,6 @@ from authzlib.sqlutil import POLICY_MARKS  # noqa: E402
 T = TypeVar("T")
 
 CONFIG = "rowstile.toml"
-OLD_CONFIG = "rowfence.toml"  # the file's name before rowstile was renamed, read with a warning
 EXPLAIN_SHOWN = 12  # lines of a failing check's explanation shown
 
 
@@ -529,11 +528,6 @@ def load_config() -> Config:
     d = os.getcwd()
     while True:
         path = os.path.join(d, CONFIG)
-        if not os.path.exists(path) and os.path.exists(old := os.path.join(d, OLD_CONFIG)):
-            print(
-                f"{old}: rowstile was called rowfence; rename this file {CONFIG} (it is read for now)", file=sys.stderr
-            )
-            path = old
         if os.path.exists(path):
             try:
                 import tomllib

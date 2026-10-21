@@ -767,7 +767,7 @@ def stopped_push(folder: str, db: str) -> None:
 
 def project() -> str:
     """A project folder: rowstile.toml, the docs example's policy and its named tests."""
-    folder = tempfile.mkdtemp(prefix="pga_mcp_")
+    folder = tempfile.mkdtemp(prefix="rowstile_mcp_")
     os.makedirs(os.path.join(folder, "db", "tests"))
     with open(os.path.join(ROOT, "example", "docs.authz"), encoding="utf-8") as fh:
         policy = fh.read().split("\ntest\n")[0] + "\n"  # its test section needs the scenario's data
