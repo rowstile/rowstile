@@ -5067,6 +5067,8 @@ class Wire(unittest.TestCase):
         closes. Over a Unix socket the next statement's send fails first (a broken pipe): the error is the server's
         words all the same, read as libpq reads them after a write that failed; and on the way out, undoing a
         savepoint or looking for the policy's condition that failed doesn't put another error in their place."""
+        import contextlib
+        import select
         import socket
         import struct
 
@@ -5077,9 +5079,12 @@ class Wire(unittest.TestCase):
         fatal = said(b"E", b"SFATAL\0VFATAL\0C57P01\0Mterminating connection due to administrator command\0\0")
         ended = ("57P01", "terminating connection due to administrator command", "FATAL")
 
-        def session(answers: Sequence[bytes] = (), then: bytes = b"") -> pgwire.Connection:
+        def session(answers: Sequence[bytes] = (), then: bytes = b"", waits: bool = False) -> pgwire.Connection:
             """A connection over a Unix socket whose server signs it in, answers each statement with the next of
-            answers, then sends `then` and closes. With no answers, it has closed when this returns."""
+            answers, then sends `then` and closes. With no answers, it has closed when this returns. One that waits
+            closes once the client's next statement has come, unread: the system then resets the connection (as
+            Postgres's does when it ends a session while a statement is on its way), and the client's next read
+            fails with the reset, every time, where it would find the end."""
             mine, theirs = socket.socketpair()
 
             def serve() -> None:
@@ -5093,12 +5098,14 @@ class Wire(unittest.TestCase):
                         theirs.recv(length - 4, socket.MSG_WAITALL)
                     theirs.sendall(answer)
                 theirs.sendall(then)
+                if waits:
+                    select.select([theirs], [], [], 5)
                 theirs.close()
 
             server = threading.Thread(target=serve, daemon=True)
             server.start()
             conn = pgwire.Connection(mine, "ann", None, "app", None)
-            if not answers:
+            if not answers and not waits:
                 server.join(5)
             return conn
 
@@ -5127,6 +5134,28 @@ class Wire(unittest.TestCase):
         with self.assertRaisesRegex(pgwire.ProtocolError, "^the server closed the connection$"):
             conn.query("SELECT 1")
         conn.close()
+        # a statement on its way: the server closes with it unread, and the connection is reset; what the server
+        # said before is read first, and the reset is the server closing the connection
+        for send in ("query", "script", "execute"):
+            conn = session(then=fatal, waits=True)
+            with self.assertRaises(pgwire.PgError, msg=send) as caught:
+                getattr(conn, send)("SELECT 1")
+            e = caught.exception
+            self.assertEqual((e.code, e.message, e.fields["S"]), ended, send)
+            conn.close()
+            conn = session(waits=True)
+            with self.assertRaisesRegex(pgwire.ProtocolError, "^the server closed the connection$", msg=send):
+                getattr(conn, send)("SELECT 1")
+            conn.close()
+        # a connection the system aborted (Windows says so of one that broke): the same, on a read or a write
+        for broken in (("recv",), ("recv", "sendall")):
+            conn = session(waits=True)
+            with contextlib.ExitStack() as stack:
+                for call in broken:
+                    stack.enter_context(mock.patch.object(socket.socket, call, side_effect=ConnectionAbortedError))
+                with self.assertRaisesRegex(pgwire.ProtocolError, "^the server closed the connection$", msg=broken):
+                    conn.query("SELECT 1")
+            conn.close()
 
         class Db:
             """authzlib's Db over the connection, each statement it was asked for kept."""
@@ -5162,7 +5191,7 @@ class Wire(unittest.TestCase):
             raise KeyboardInterrupt
         db.conn.close()
         # ... but Undo asks for the undoing: a failure to undo is that failure
-        db = Db(session([saved]))
+        db = Db(session([saved], waits=True))
         with (
             self.assertRaisesRegex(pgwire.ProtocolError, "^the server closed the connection$"),
             database.savepoint(db, "sp"),

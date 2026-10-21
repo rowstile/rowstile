@@ -1252,7 +1252,7 @@ def main() -> None:
         )
         check(
             "the connection reset under a request: 503, lost the database, and no traceback",
-            (status, e["detail"], logged) == (503, "lost the database: [Errno 104] Connection reset by peer", ""),
+            (status, e["detail"], logged) == (503, "lost the database: the server closed the connection", ""),
             (status, e, logged[-600:]),
         )
         check("... and the next request connects again", Client(via).call("/api/overview")[0] == 200)

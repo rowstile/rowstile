@@ -194,7 +194,7 @@ class Connection:
             said = self._last_words()
             if said is not None:
                 raise said from None
-            if isinstance(e, (BrokenPipeError, ConnectionResetError)):
+            if isinstance(e, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
                 raise ProtocolError("the server closed the connection") from None
             raise
 
@@ -211,8 +211,13 @@ class Connection:
             return said
 
     def _recv_exact(self, n: int) -> bytes:
+        """The next n bytes. A connection reset is the server closing it too: it closed with what was sent still
+        unread (a statement on its way when the session was ended), and the system reset the connection."""
         while len(self.buf) < n:
-            chunk = self.sock.recv(65536)
+            try:
+                chunk = self.sock.recv(65536)
+            except (ConnectionResetError, ConnectionAbortedError):
+                chunk = b""
             if not chunk:
                 raise ProtocolError("the server closed the connection")
             self.buf += chunk
