@@ -1548,19 +1548,37 @@ class Listed(World):
 
 
 def worlds_to_try(
-    pols: Sequence[Policy], worlds: int, seed: str, max_size: int = 4, listing: Listing | None = None
+    pols: Sequence[Policy],
+    worlds: int,
+    seed: str,
+    max_size: int = 4,
+    listing: Listing | None = None,
+    by_size: bool = False,
 ) -> Iterable[World]:
-    """The worlds a comparison of policies goes through: drawn ones, smallest first, then the corners, then the
-    listed ones (with a listing: LISTED for each drawn one asked for, after every one with ALWAYS links at most),
-    then the rare ones (rare_worlds)."""
-    for size in range(1, max_size + 1):
-        for k in range(max(1, worlds // max_size)):
-            yield World(f"{seed}/{size}/{k}", size, pols=pols)
+    """The worlds a comparison of policies, or prove, goes through: drawn ones, smallest first, then the corners,
+    then the listed ones (with a listing: LISTED for each drawn one asked for, after every one with ALWAYS links at
+    most), then the rare ones (rare_worlds). by_size (prove: its counterexample is the smallest it finds): at each
+    size, the drawn worlds and the corners, one of each in turn while both last, so that neither waits for the
+    other."""
     # the corners: each condition yes or no on every row (but those that read who is signed in or a relation)
-    for n, corner in enumerate(corners(pols)):
-        for size in range(1, max_size + 1):
-            for k in range(3):
-                yield World(f"{seed}/corner{n}/{size}/{k}", size, corner, pols=pols)
+    found = corners(pols)
+    for size in range(1, max_size + 1):
+        drawn = [World(f"{seed}/{size}/{k}", size, pols=pols) for k in range(max(1, worlds // max_size))]
+        if not by_size:
+            yield from drawn
+            continue
+        cornered = [
+            World(f"{seed}/corner{n}/{size}/{k}", size, corner, pols=pols)
+            for k in range(3)
+            for n, corner in enumerate(found)
+        ]
+        for i in range(max(len(drawn), len(cornered))):
+            yield from drawn[i : i + 1] + cornered[i : i + 1]
+    if not by_size:
+        for n, corner in enumerate(found):
+            for size in range(1, max_size + 1):
+                for k in range(3):
+                    yield World(f"{seed}/corner{n}/{size}/{k}", size, corner, pols=pols)
     if listing is not None:
         for w in listing.worlds():
             yield w

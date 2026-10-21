@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import NotRequired, TypedDict
 
-from .evaluate import Data, Reference, World, alike_in, corners, kept_rows, principal_of, rare_worlds, smallest
+from .evaluate import Data, Reference, World, alike_in, kept_rows, principal_of, smallest, worlds_to_try
 from .parse import Invariant, Policy
 
 WORLDS = 400
@@ -56,24 +56,6 @@ def shrink(ref: Reference, inv: Invariant, data: Data) -> Data:
     return smallest(data, lambda d: broken(ref, inv, d) is not None, kept_rows(ref.pol, alike_in([ref.pol])))
 
 
-def worlds_to_try(pol: Policy, worlds: int, seed: int, max_size: int) -> list[World]:
-    """Smallest first; at each size, the drawn worlds and each corner a few times (its links are still drawn), one
-    of each in turn while both last: neither waits for the other."""
-    out: list[World] = []
-    found = corners([pol])
-    for size in range(1, max_size + 1):
-        drawn = [World(f"{seed}/{size}/{k}", size) for k in range(max(1, worlds // max_size))]
-        cornered = [
-            World(f"{seed}/corner{n}/{size}/{k}", size, corner, pols=[pol])
-            for k in range(3)
-            for n, corner in enumerate(found)
-        ]
-        for i in range(max(len(drawn), len(cornered))):
-            out += drawn[i : i + 1] + cornered[i : i + 1]
-    # then the worlds a draw rarely makes: dense ones, and chains as long as the policy reads deep (evaluate.py)
-    return out + list(rare_worlds([pol], worlds, str(seed)))
-
-
 def prove(pol: Policy, worlds: int = WORLDS, seed: int = 0, max_size: int = MAX_SIZE) -> list[Proof]:
     """One result per invariant: whether it held in every world tried, and for a broken one who holds it, on
     what, in which world."""
@@ -88,7 +70,7 @@ def prove(pol: Policy, worlds: int = WORLDS, seed: int = 0, max_size: int = MAX_
             "worlds": 0,
         }
         n = 0
-        tried = worlds_to_try(pol, worlds, seed, max_size)
+        tried = list(worlds_to_try([pol], worlds, str(seed), max_size, by_size=True))
         result["size"] = max(w.size for w in tried)
         for w in tried:
             n += 1
