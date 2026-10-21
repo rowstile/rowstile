@@ -407,7 +407,6 @@ BEGIN
            LEFT JOIN pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass
            WHERE p.polrelid = ANY (SELECT to_regclass(x) FROM unnest({arr([qt(t) for t in governed])}) x)
              AND coalesce(d.description, '') NOT IN {POLICY_MARKS}
-             AND p.polname NOT IN ('authz_select', 'authz_insert', 'authz_update', 'authz_delete')
              AND EXISTS (SELECT 1 FROM unnest(p.polroles) o
                          WHERE CASE WHEN o = 0 THEN true ELSE pg_has_role(v_role, o, 'MEMBER') END)
            ORDER BY p.polrelid::regclass::text, p.polname LOOP

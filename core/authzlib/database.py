@@ -543,13 +543,7 @@ def _push(db: Db, policy: str, files: Files, downgrade: bool = False) -> str:
     from . import BUILD, migrate
 
     last = None
-    if there(db, "authz.policy_versions") and number(
-        db.rows(
-            "SELECT count(*) AS n FROM pg_catalog.pg_attribute WHERE attrelid = 'authz.policy_versions'::regclass "
-            "AND attname = 'lock' AND NOT attisdropped"
-        )[0],
-        "n",
-    ):
+    if there(db, "authz.policy_versions"):
         rows = db.rows(
             "SELECT action, policy, files::text AS files, version, lock FROM authz.policy_versions "
             "ORDER BY id DESC LIMIT 1"

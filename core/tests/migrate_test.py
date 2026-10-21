@@ -268,25 +268,19 @@ CASES: list[tuple[str, str, str, str]] = [
         ),
     ),
 ]
-# functions an older build made kept "$user" on their search path; a migration changes only some functions, and
-# the others must take the path the migration runs with
-OLDER_BUILD = 'functions an older build made ("$user" on their search path)'
-CASES.insert(1, (OLDER_BUILD, "docs", DOCS, CASES[0][3]))
+# functions made with another search path than the migration's (the schemas on it changed since: one made, one
+# dropped); a migration changes only some functions, and the others must take the path the migration runs with
+OTHER_PATHS = "functions made with another search path (they take the migration's)"
+CASES.insert(1, (OTHER_PATHS, "docs", DOCS, CASES[0][3]))
 OLD_PATHS = r"""DO $o$
 DECLARE f record;
 BEGIN
   FOR f IN SELECT p.oid::regprocedure AS fn FROM pg_proc p
            WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int'))
              AND EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c ^@ 'search_path=' AND c <> 'search_path=pg_catalog, pg_temp') LOOP
-    EXECUTE format('ALTER FUNCTION %s SET search_path = "$user", public, pg_temp', f.fn);
+    EXECUTE format('ALTER FUNCTION %s SET search_path = app, public, pg_temp', f.fn);
   END LOOP;
 END $o$;"""
-# an older build turned row-level security on for the tables with rules alone, with other statements: the lock's
-# lines for them hold another hash, and the partitions and the table that inherits are left without it. The next
-# migration runs those statements again, and drops nothing: what reads the tables stays where it is
-OLDER_RLS = "row-level security as an older build turned it on (its statements run again, nothing dropped)"
-CASES.append((OLDER_RLS, "children", CHILDREN, CHILDREN))
-RLS_OFF = "ALTER TABLE ch.notes_low DISABLE ROW LEVEL SECURITY; ALTER TABLE ch.docs_old DISABLE ROW LEVEL SECURITY;"
 
 
 # what the app built on what rowstile made, for the cases that say so
@@ -471,8 +465,6 @@ def main() -> None:
         if ONLY and not any(o in name for o in ONLY):
             continue
         for direction, a, b in (("", old, new), (" (and back)", new, old)):
-            if name == OLDER_RLS and direction:
-                continue  # the same policy both ways
             label = name + direction
             db_m, db_w = "authz_mig_m", "authz_mig_w"
             changes = CHANGES.get(schema, "")
@@ -481,15 +473,7 @@ def main() -> None:
             apply_whole(db_m, a)
             psql(db_m, app)
             lock = migrate.lock_of(database.migratable(a, {})[1])
-            if name == OLDER_RLS:  # the lock the older build wrote, and its hash, which its migration recorded
-                lock = re.sub(r"(?m)^(rls .*) \| \w+$", r"\1 | 000000000000", lock)
             ms = database.migrations(b, {}, lock, label)
-            if name == OLDER_RLS and (all(m.empty for m in ms) or any(re.search(r"(?m)^DROP ", m.sql) for m in ms)):
-                failed += 1
-                print(
-                    f"FAIL  {label}: {'no migration' if all(m.empty for m in ms) else 'the migration drops something'}"
-                )
-                continue
             if name == REORDERED_COLUMN_RULES and any(re.search(r"(?m)^(CREATE|DROP) TRIGGER", m.sql) for m in ms):
                 failed += 1
                 print(f"FAIL  {label}: the migration makes a column rule's trigger again")
@@ -500,14 +484,8 @@ def main() -> None:
             # the database applied whole starts as this one is now: a copy (the same as building it again, sooner)
             sh("dropdb", "--if-exists", db_w)
             sh("createdb", "--template", db_m, db_w)
-            if name == OLDER_BUILD:
+            if name == OTHER_PATHS:
                 psql(db_m, OLD_PATHS)
-            if name == OLDER_RLS:
-                psql(
-                    db_m,
-                    RLS_OFF + f"UPDATE authz.policy_versions SET lock = '{migrate.digest(lock, 16)}' "
-                    "WHERE id = (SELECT max(id) FROM authz.policy_versions);",
-                )
             try:
                 if len(ms) == 1:
                     psql(db_m, changes)

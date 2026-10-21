@@ -130,18 +130,6 @@ nshares=$(PSQL -c "SELECT count(*) FROM authz.shares")
 CLI reapply >/dev/null 2>&1; CLI reapply >/dev/null 2>&1
 [ "$(PSQL -c "SELECT count(*) FROM authz.shares")" = "$nshares" ] && [ "$(PSQL -c "SELECT authz.verify()")" = t ] &&
   ok "applying again keeps the $nshares shares and the trees stay consistent" || bad "reapply"
-# shares stored before every write was made canonical (as an earlier version could): two spellings of one
-# share, and one alone
-PSQL -c "ALTER TABLE authz.shares DISABLE TRIGGER authz_shares_canon" \
-     -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES
-           ('file', '012', 'viewer', 'user', '04', ''), ('file', '12', 'viewer', 'user', '004', ''), ('file', '0013', 'viewer', 'user', '03', '')" \
-     -c "ALTER TABLE authz.shares ENABLE TRIGGER authz_shares_canon" >/dev/null
-CLI reapply >/dev/null 2>&1
-[ "$(PSQL -c "SELECT count(*) FILTER (WHERE object_id IN ('012', '0013') OR subject_id IN ('04', '004', '03')) || ' '
-                     || count(*) FILTER (WHERE (object_id, subject_id) IN (('12', '4'), ('13', '3')))
-              FROM authz.shares WHERE object_type = 'file' AND relation = 'viewer'")" = "0 2" ] &&
-  ok "applying makes the ids of shares stored as written canonical, keeping one of two spellings" ||
-  bad "canonical ids" "$(PSQL -c "SELECT string_agg(object_id || '>' || subject_id, ' ') FROM authz.shares WHERE object_type = 'file' AND relation = 'viewer'")"
 # applying again warns of what the policy can't make safe: a foreign key that deletes rows of a governed table by
 # cascade (which skips row-level security), and a table that lost its rules (its row-level security stays on)
 PSQL -c "ALTER TABLE app.files ADD CONSTRAINT files_folder_cascade FOREIGN KEY (folder_id) REFERENCES app.folders ON DELETE CASCADE" >/dev/null
@@ -155,21 +143,30 @@ case "$out" in *"app.files has no rules any more, and row-level security is stil
   [ "$(PSQL -c "SELECT relrowsecurity FROM pg_class WHERE oid = 'app.files'::regclass")" = t ] &&
     ok "re-applying warns of a table that lost its rules, whose row-level security stays on" || bad "row-level security after the rules went";;
   *) bad "a table that lost its rules" "$out";; esac
-# the same, where an older version made the table's policies without the comment that marks them (one reading
-# nothing of rowstile's, which no schema's CASCADE takes along): they are known by their names, dropped, and the
-# warning given all the same
+# rowstile's policies are known by the comment that marks them, never by their names: the app's own policies
+# named as rowstile names its own (authz_select is the obvious name for a rule written by hand) are left as they
+# are, by applying and by removing, and lint names one on a governed table
 run apply "$T/docs.authz" >/dev/null
-PSQL -c "DO \$u\$ DECLARE p name; BEGIN
-  FOR p IN SELECT polname FROM pg_policy WHERE polrelid = 'app.files'::regclass LOOP
-    EXECUTE format('COMMENT ON POLICY %I ON app.files IS NULL', p);
-  END LOOP; END \$u\$" -c "DROP POLICY authz_delete ON app.files" \
-     -c "CREATE POLICY authz_delete ON app.files FOR DELETE TO app_user USING (owner_id = 0)" >/dev/null
-unmarked=$(PSQL -c "SELECT count(*) FROM pg_policy p WHERE polrelid = 'app.files'::regclass AND obj_description(p.oid, 'pg_policy') IS NULL")
-run apply "$T/nofiles.authz"
-case "$out" in *"app.files has no rules any more, and row-level security is still on, so the app role sees none of its rows"*"$T/nofiles.authz: applied")
-  [ "$unmarked" -gt 0 ] && [ "$(PSQL -c "SELECT count(*) FROM pg_policy WHERE polrelid = 'app.files'::regclass")" = 0 ] &&
-    ok "... also when an older version made its policies unmarked: they are dropped by their names" || bad "unmarked policies left on app.files" "$unmarked unmarked before";;
-  *) bad "a table that lost its unmarked rules" "$out";; esac
+PSQL -c "CREATE POLICY authz_select ON app.org_members FOR SELECT TO app_user USING (true)" \
+     -c "COMMENT ON POLICY authz_select ON app.org_members IS 'who is in which org is no secret'" \
+     -c "DROP POLICY authz_delete ON app.files" -c "CREATE POLICY authz_delete ON app.files FOR DELETE TO app_user USING (true)" >/dev/null
+mine() { PSQL -c "SELECT string_agg(polrelid::regclass || ' ' || polname, ', ' ORDER BY polname) FROM pg_policy p
+                  WHERE obj_description(p.oid, 'pg_policy') IS DISTINCT FROM 'rowstile'"; }
+[ "$(mine)" = "app.files authz_delete, app.org_members authz_select" ] &&
+  [ "$(PSQL -c "SELECT problem FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'the policy authz_delete %'")" = \
+    "the policy authz_delete (delete) on it is not rowstile's: Postgres joins a table's policies with OR, so it lets app_user through whatever the rules say. DROP POLICY authz_delete ON app.files, and say what it allowed in the policy file" ] &&
+  ok "lint names the app's own policy on a governed table, though it is called as rowstile calls its own" ||
+  bad "lint and the app's own authz_delete" "$(mine)"
+run remove --yes
+[ "$(mine)" = "app.files authz_delete, app.org_members authz_select" ] &&
+  [ "$(PSQL -c "SELECT count(*) FROM pg_policy p WHERE obj_description(p.oid, 'pg_policy') = 'rowstile'")" = 0 ] &&
+  ok "... and removing leaves the app's own policies, taking only rowstile's" || bad "remove and the app's own policies" "$out: $(mine)"
+PSQL -c "DROP POLICY authz_delete ON app.files" >/dev/null
+run apply "$T/docs.authz"
+[ "$out" = "$T/docs.authz: applied" ] && [ "$(mine)" = "app.org_members authz_select" ] &&
+  ok "... and so does applying: no warning, the app's authz_select on a table with no rules kept" ||
+  bad "apply and the app's own authz_select" "$out: $(mine)"
+PSQL -c "DROP POLICY authz_select ON app.org_members" >/dev/null
 # a policy for another app role: the role it named before keeps no row and none of rowstile's functions
 psql -X -q -d postgres -c "DROP ROLE IF EXISTS authz_apply_web" -c "CREATE ROLE authz_apply_web" >/dev/null 2>&1
 sed 's/^app role app_user$/app role authz_apply_web/' "$T/docs.authz" > "$T/web.authz"
@@ -704,45 +701,44 @@ case "$out" in *"authz.uid() returns another type than this policy's user ids (u
   ok "applying is refused, and says what to drop first";; *) bad "user ids of another type" "$out";; esac
 dropdb "$UDB"
 
-echo "-- a database an early version made"
-# before 0.1.0: the shares were authz.grants, with integer ids, and the history named the version extension_version
-EDB="${DB}_early"
-fresh "$EDB"
-quiet -d "$EDB" -f example/app_schema.sql >/dev/null || exit 1
-quiet -d "$EDB" >/dev/null <<'SQL' || exit 1
-CREATE SCHEMA authz;
-CREATE TABLE authz.grants (
-  object_type text NOT NULL, object_id bigint NOT NULL, relation text NOT NULL, subject_type text NOT NULL,
-  subject_id bigint NOT NULL, subject_relation text NOT NULL DEFAULT '', expires_at timestamptz, created_by bigint,
-  PRIMARY KEY (object_type, object_id, relation, subject_type, subject_id, subject_relation));
-CREATE INDEX grants_by_subject ON authz.grants (subject_type, subject_id, subject_relation, object_type, relation);
-INSERT INTO authz.grants VALUES ('file', 11, 'viewer', 'user', 3, '', NULL, 1);
-CREATE TABLE authz.policy_versions (
-  id bigserial PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), by_role text NOT NULL DEFAULT current_user,
-  action text NOT NULL CHECK (action IN ('apply', 'remove')), policy text, files jsonb NOT NULL DEFAULT '{}',
-  extension_version text NOT NULL);
-INSERT INTO authz.policy_versions (action, policy, extension_version) VALUES ('apply', 'an early policy', '0.0.9');
--- a table of the app's with columns named as the history's were and are: what looks for them names its table
-CREATE TABLE app.history (extension_version text, lock text);
+echo "-- a type whose key changes type (text, then bigint)"
+# a share's ids are stored as the canonical text of the type's key, which changes with the key's type: applying
+# again makes the shares stored before canonical for the new one (two spellings of one share kept once), so the
+# sweep of shares on rows that are gone, which compares text, keeps them. (rowstile's triggers on the key stop
+# its type from changing: the policy is removed first, and applied again after.)
+KDB="${DB}_key"
+fresh "$KDB"
+quiet -d "$KDB" >/dev/null <<'SQL' || exit 1
+CREATE SCHEMA app;
+CREATE TABLE app.users (id bigint PRIMARY KEY);
+CREATE TABLE app.tags (id text PRIMARY KEY);
+INSERT INTO app.users VALUES (3), (4);
+INSERT INTO app.tags VALUES ('012'), ('0013');
 SQL
-# (as plain SQL, the compiled policy as the first migration holds it: the command reads the history's version first)
-out=$(python3 compile_policy.py example/docs.authz | quiet -d "$EDB" 2>&1); rc=$?
-E() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$EDB" "$@"; }
-[ $rc -eq 0 ] && [ "$(E -c "SELECT to_regclass('authz.grants') IS NULL, (SELECT string_agg(format('%s %s %s %s %s', object_type, object_id, relation, subject_id, created_by), '; ') FROM authz.shares)")" = "t|file 11 viewer 3 1" ] &&
-  [ "$(E -c "SELECT string_agg(attname || ' ' || format_type(atttypid, atttypmod), ', ' ORDER BY attname) FROM pg_attribute WHERE attrelid = 'authz.shares'::regclass AND attname IN ('object_id', 'subject_id', 'created_by')")" = "created_by text, object_id text, subject_id text" ] &&
-  [ "$(E -c "SELECT string_agg(indexrelid::regclass::text, ' ') FROM pg_index WHERE indrelid = 'authz.shares'::regclass AND NOT indisprimary AND indexrelid::regclass::text NOT LIKE 'authz.shares_obj%'")" = "authz.shares_by_subject" ] &&
-  ok "the compiled policy turns authz.grants into authz.shares, its rows kept, its ids text" || bad "the early shares" "$out"
-[ "$(E -c "SELECT string_agg(policy || ' ' || version, '; ' ORDER BY id) FROM authz.policy_versions")" = "an early policy 0.0.9" ] &&
-  ok "... and the history's extension_version is its version column, the early row kept" || bad "the early history" "$(E -c "SELECT * FROM authz.policy_versions ORDER BY id" 2>&1)"
-[ "$(E -c "SET authz.user_id = 3" -c "SELECT authz.can('file', 11, 'view')")" = t ] && ok "... and the early share is in force (user 3 views file 11)" || bad "the early share in force"
-out=$(python3 compile_policy.py example/docs.authz | quiet -d "$EDB" 2>&1); rc=$?
-[ $rc -eq 0 ] && ok "... and applied again: the history's column renamed once, the app's own extension_version left" || bad "applying again" "$out"
-# a history from before its lock column (as releases before migrations left it), the app's table with one: push
-# reads the history's own
-E -c "ALTER TABLE authz.policy_versions DROP COLUMN lock" >/dev/null
-out=$(python3 cli/rowstile_cli.py --db "dbname=$EDB" push example/docs.authz --development 2>&1); rc=$?
-[ $rc -eq 0 ] && ok "... and pushed to, its history without a lock column beside an app table with one" || bad "push, no lock column" "$out"
-dropdb "$EDB"
+printf 'app role app_user\n\ntype user = app.users\n\ntype tag = app.tags\n  viewer : user shared\n  can share = viewer\n  can view = viewer\n' > "$T/tags.authz"
+sed 's/^type tag = app.tags$/type tag = app.tags (id text)/' "$T/tags.authz" > "$T/tags_text.authz"
+K() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$KDB" "$@"; }
+tagged() { K -c "SELECT string_agg(object_id || '>' || subject_id, ' ' ORDER BY object_id, subject_id) FROM authz.shares WHERE object_type = 'tag'"; }
+out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags_text.authz" 2>&1) &&
+  K -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES
+          ('tag', '012', 'viewer', 'user', '04'), ('tag', '0013', 'viewer', 'user', '3')" >/dev/null &&
+  out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" remove --yes 2>&1) &&
+  K -c "ALTER TABLE app.tags ALTER COLUMN id TYPE bigint USING id::bigint" \
+    -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('tag', '12', 'viewer', 'user', '4')" >/dev/null ||
+  bad "a policy over tags" "$out"
+before=$(tagged)
+out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags.authz" 2>&1)
+[ "$before" = "0013>3 012>4 12>4" ] && [ "$out" = "$T/tags.authz: applied" ] && [ "$(tagged)" = "12>4 13>3" ] &&
+  [ "$(K -c "SET authz.user_id = 3" -c "SELECT authz.can('tag', 13, 'view')")" = t ] &&
+  ok "applying after a key's type changed makes the shares' ids canonical for it, keeping one of two spellings" ||
+  bad "a key whose type changed" "$out: $before, then $(tagged)"
+# the warning of a table left with no rules, when its rule was the only one: no other policy of rowstile's is there
+printf '\nrules app.tags\n  select : view\n' | cat "$T/tags.authz" - > "$T/tags_rules.authz"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags_rules.authz" 2>&1 &&
+      python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags.authz" 2>&1)
+case "$out" in *"tags_rules.authz: applied"*"app.tags has no rules any more, and row-level security is still on"*"$T/tags.authz: applied")
+  ok "re-applying warns of a table that lost the only rule there was";; *) bad "a table that lost the only rule" "$out";; esac
+dropdb "$KDB"
 
 rm -rf "$T"
 if [ $fails -eq 0 ]; then echo "apply: all passed"; else echo "apply: $fails failed"; exit 1; fi
