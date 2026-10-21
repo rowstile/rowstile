@@ -44,28 +44,28 @@
 > rules app.folders: select : edit
 > rules app.folders: update : edit
 
-always | 2e04af4e8a23
+always | b3539f053605
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
-function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
+function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 45dbc2c29b55 shape=77f3e79f
 function authz.can(p_type text, p_id integer, p_perm text) | bead8057c546 shape=c9dbc446
-function authz.can(p_type text, p_id text, p_perm text) | 7dde4e81e96f shape=220bc89f
+function authz.can(p_type text, p_id text, p_perm text) | 310f98c9baad shape=220bc89f
 function authz.cancel_request(p_id bigint) | d25e105562ab shape=19aa0bb3
 function authz.changes_since(p_pos bigint, p_limit int) | b494cb9cea48 shape=0448ffba
 function authz.check_invariants() | 25615812f12b shape=a2072420
 function authz.close_review(p_review bigint, p_revoke_undecided boolean) | 5c17d4af6ead shape=8a35940c
 function authz.connection_check() | 622b3e3ffea4 shape=35f6ddfc
 function authz.create_api_key(p_name text, p_scopes text, p_expires_at timestamptz, p_principal_type text, p_principal_id text) | 64a171935538 shape=bff4e5f3
-function authz.create_link(p_type text, p_id bigint, p_relation text, p_expires_at timestamptz) | 3737b3f6cdd1 shape=f4261756
+function authz.create_link(p_type text, p_id integer, p_relation text, p_expires_at timestamptz) | 300cacb212e5 shape=4b257371
 function authz.create_link(p_type text, p_id text, p_relation text, p_expires_at timestamptz) | 94706d6ae734 shape=08f941c7
-function authz.create_role(p_owner_type text, p_owner_id bigint, p_object_type text, p_name text, p_permissions text[]) | 204199562663 shape=67327103
-function authz.create_role(p_owner_type text, p_owner_id text, p_object_type text, p_name text, p_permissions text[]) | 2953809445fa shape=b74c801b
+function authz.create_role(p_owner_type text, p_owner_id integer, p_object_type text, p_name text, p_permissions text[]) | 4539b4e08f5a shape=27ee7b25
+function authz.create_role(p_owner_type text, p_owner_id text, p_object_type text, p_name text, p_permissions text[]) | 44f8d0375cda shape=b74c801b
 function authz.decide_request(p_id bigint, p_approve boolean, p_note text) | 763b303c1435 shape=ebe1e76d
 function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id integer, p_perm text, p_user text) | 1409a3a04a15 shape=7d31b532
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 184922d1b31d shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | 1e145f454a48 shape=1223ad2f
-function authz.lint() | 84a0601ed3a5 shape=54cb1505
+function authz.lint() | 7bb071170764 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 8d5b8e132afb shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id integer) | cec8e40d450f shape=92b36157
@@ -79,27 +79,29 @@ function authz.perms(p_type text, p_id integer) | 5c62b8a0215d shape=8f3765fb
 function authz.perms(p_type text, p_id text) | d2b929a3bb85 shape=cd5e1942
 function authz.perms_of(p_type text, p_ids text[]) | 6cb4d6d6f68e shape=00a7b763
 function authz.principal() | eacc5f7b7c1c shape=bda73c60
-function authz.request_access(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | aa594c43b7aa shape=c44eec2e
+function authz.request_access(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 126a242c46ba shape=dd76d64f
 function authz.request_access(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 5f24b90aefb6 shape=ab39b58e
 function authz.review_decide(p_review bigint, p_item int, p_keep boolean) | e7b5234590bf shape=76724fb2
 function authz.review_items(p_review bigint) | 9f111fa185c9 shape=fc0e6cb7
 function authz.revoke_api_key(p_id bigint) | a995821f5205 shape=590521c4
 function authz.revoke_link(p_type text, p_id integer, p_link text) | 9238636c8fb2 shape=66671298
 function authz.revoke_link(p_type text, p_id text, p_link text) | 7488c637bb10 shape=6418747f
-function authz.roles_of(p_owner_type text, p_owner_id bigint) | 118e4ddbfcfa shape=77be0f38
-function authz.roles_of(p_owner_type text, p_owner_id text) | e656fc12d5a8 shape=e439cd41
+function authz.roles_of(p_owner_type text, p_owner_id integer) | 54870d3667c5 shape=1679f0a4
+function authz.roles_of(p_owner_type text, p_owner_id text) | 8fb1b8f0dfaf shape=e439cd41
 function authz.set_role_permissions(p_role bigint, p_permissions text[]) | 50ed7c0695c3 shape=3cffc528
-function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 432b631cd9d6 shape=38174c64
-function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 9aa2633d3679 shape=9eda2a73
+function authz.share(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 890550356463 shape=3259edea
+function authz.share(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 5d82a913c811 shape=126ff5f2
+function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | cc5687ceb3a8 shape=a6e2bc4c
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | e8eaf1911fa9 shape=386e2b78
-function authz.start_review(p_type text, p_id bigint, p_closes_at timestamptz) | ede0d805b2b1 shape=c2dba351
+function authz.start_review(p_type text, p_id integer, p_closes_at timestamptz) | 0c4728f8ca1e shape=2de600a1
 function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 54b5115398e4 shape=879e84e5
 function authz.sync_members(p_type text, p_id text, p_relation text, p_members text[], OUT added int, OUT removed int) | 36e5b9e768f5 shape=c0ea90e1
 function authz.trim_audit(p_keep interval) | 506854f7888f shape=59da80c2
 function authz.trim_changes(p_keep interval) | 99129c6c680e shape=5f059d1e
 function authz.uid() | fb2fb32b221e shape=989761a7
-function authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint, p_subject_relation text) | 9fe75a510714 shape=55f81bb0
-function authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | 72397e26cf97 shape=0bec2b1b
+function authz.unshare(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text) | fce36bdc220f shape=272443ba
+function authz.unshare(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | f24af047d1b4 shape=acb910a0
+function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text) | 321df275fba9 shape=80662401
 function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | 7b1add04a56d shape=d4ebe9cc
 function authz.verify() | 8e50658767de shape=8e0f53a6
 function authz.view_as(p_user text, p_reason text) | d73ddfa59896 shape=5d7b6326
@@ -289,7 +291,7 @@ schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | f7d2efdcef9f
 step cascades | 573b3386f3ac
-step grant_api | cf93aea409ae
+step grant_api | 2d4813f529e2
 step grant_functions | db5343f0fb0f
 step grant_views | beccea35a5e4
 step mask_privileges | 0f76f9d7c5d3
