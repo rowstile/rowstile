@@ -226,7 +226,8 @@ jobs:
       # the client `rowstile client ts` writes, under tsc --strict: correct calls pass, wrong names don't
       - run: python3 core/tests/client_types.py
   # The editors: the Tree-sitter grammar (generated, its corpus, every policy in the repository parses, read as the
-  # parser reads it) and the Zed extension's build (editor/test.sh)
+  # parser reads it), the VS Code extension packaged as its README says, Neovim set up as it says, and the Zed
+  # extension's build (editor/test.sh)
   editor:
     needs: unit
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}

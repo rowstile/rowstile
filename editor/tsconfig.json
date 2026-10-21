@@ -6,5 +6,5 @@
     "target": "ES2022", "lib": ["ES2022"], "module": "NodeNext", "moduleResolution": "NodeNext", "types": ["vscode"],
     "skipLibCheck": true, "noUnusedLocals": true, "noImplicitReturns": true, "noFallthroughCasesInSwitch": true
   },
-  "files": ["extension.js"]
+  "files": ["extension.js", "extension_test.js"]
 }

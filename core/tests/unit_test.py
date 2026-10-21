@@ -10433,6 +10433,15 @@ class Licence(unittest.TestCase):
         ):
             self.assertEqual(a.read(), b.read(), "editor/zed/LICENSE: copy the repository's LICENSE")
 
+    def test_the_vscode_extension_has_the_repositorys_licence(self) -> None:
+        # vsce packages the licence package.json's files names from the extension's folder (editor/README.md's
+        # npm run package, and the release's)
+        with (
+            open(os.path.join(self.REPO, "LICENSE"), encoding="utf-8") as a,
+            open(os.path.join(self.REPO, "editor", "LICENSE"), encoding="utf-8") as b,
+        ):
+            self.assertEqual(a.read(), b.read(), "editor/LICENSE: copy the repository's LICENSE")
+
 
 class CoverageReport(unittest.TestCase):
     """tests/coverage_report.py, which says what the suites run of authzlib and cli (ci.sh --coverage): how it reads
@@ -13137,9 +13146,47 @@ class Mutants(unittest.TestCase):
 
 class Editors(unittest.TestCase):
     """Zed reads its queries from the extension's folder: they are the grammar's (editor/tree-sitter-authz),
-    copied. The grammar itself is tested by editor/test.sh (it needs the Tree-sitter CLI)."""
+    copied. The grammar itself is tested by editor/test.sh (it needs the Tree-sitter CLI). The VS Code extension
+    asks for a VS Code its language client runs on, and the paths the editors' page gives exist."""
 
     REPO = os.path.dirname(ROOT)
+
+    def test_vscode_engine_is_what_the_client_needs(self) -> None:
+        # The Marketplace offers the extension to every VS Code engines.vscode allows: no locked dependency may ask
+        # for a newer one. @types/vscode is the engine's version (vsce refuses types newer than the engine)
+        def least(spec: str) -> tuple[int, int, int]:
+            m = search(r"^[\^~]?(\d+)\.(\d+)\.(\d+)$", spec)
+            return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+        with open(os.path.join(self.REPO, "editor", "package.json"), encoding="utf-8") as fh:
+            package = json.load(fh)
+        with open(os.path.join(self.REPO, "editor", "package-lock.json"), encoding="utf-8") as fh:
+            lock = json.load(fh)
+        engine = least(package["engines"]["vscode"])
+        newer = {
+            name: entry["engines"]["vscode"]
+            for name, entry in lock["packages"].items()
+            if name
+            and isinstance(entry.get("engines"), dict)
+            and "vscode" in entry["engines"]
+            and least(entry["engines"]["vscode"]) > engine
+        }
+        self.assertEqual(newer, {}, f"editor/package.json: engines.vscode {package['engines']['vscode']} is older")
+        self.assertEqual(least(package["devDependencies"]["@types/vscode"])[:2], engine[:2], "@types/vscode")
+
+    def test_the_paths_the_editors_page_gives_exist(self) -> None:
+        # paths in a checkout: `core/cli/lsp.py` (from the repository's root or editor/), and /path/to/rowstile/...
+        # in the examples and in the setting's description, which VS Code shows
+        missing: list[str] = []
+        for rel in ("editor/README.md", "editor/package.json"):
+            with open(os.path.join(self.REPO, rel), encoding="utf-8") as fh:
+                text = fh.read()
+            paths = re.findall(r"/path/to/rowstile/([\w./-]+)", text)
+            paths += re.findall(r"`([\w-]+(?:/[\w.-]+)+\.(?:py|js|json|md|scm))`", text)
+            for path in paths:
+                if not any(os.path.exists(os.path.join(self.REPO, base, path)) for base in ("", "editor")):
+                    missing.append(f"{rel}: {path}")
+        self.assertEqual(missing, [])
 
     def test_zed_has_the_grammars_queries(self) -> None:
         grammar = os.path.join(self.REPO, "editor", "tree-sitter-authz", "queries")
