@@ -234,12 +234,13 @@ class Authz:
 
     def share(self, type_: str, id_: Id, relation: str, subject_type: str, subject_id: Id, subject_relation: str = "",
               expires_at: When | None = None, starts_at: When | None = None, caveat: str | None = None,
-              caveat_args: str | None = None) -> None:
+              caveat_args: Row | None = None) -> None:
+        """caveat_args: what the caveat's arg('name') reads, {"ip": "10.0.0.7"}."""
         if relation not in SHARED_RELATIONS.get(type_, {}):
             raise ValueError(f"{type_}.{relation} is not shared in the policy")
         self._one("SELECT authz.share(%s, %s::text, %s, %s, %s::text, %s, %s, %s, %s, %s::jsonb)",
                   (type_, _id(id_), relation, subject_type, _id(subject_id), subject_relation, expires_at, starts_at,
-                   caveat, caveat_args))
+                   caveat, None if caveat_args is None else json.dumps(caveat_args, default=str)))
 
     def create_link(self, type_: str, id_: Id, relation: str, expires_at: When | None = None) -> str:
         """A share with anyone holding the returned token (shown once; only its hash is stored)."""

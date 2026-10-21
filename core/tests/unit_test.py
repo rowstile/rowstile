@@ -26,7 +26,7 @@ import types
 import unittest
 from collections.abc import Callable, Iterable, Sequence
 from decimal import Decimal
-from typing import ClassVar, cast
+from typing import ClassVar, Protocol, cast
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1323,6 +1323,129 @@ class CompositeKeys(unittest.TestCase):
         # a type checker refuses a permission the type hasn't: each type's are a Literal
         c = Compiler(parse_policy(read(POLICIES["docs"])))
         self.assertIn('FilePermission = Literal["share", "edit", "view"]', c.client("py", "x").split("\n"))
+
+
+class ClientNames(unittest.TestCase):
+    """The generated clients' names, and the reference's lists of them (docs/reference/app-code.md)."""
+
+    CASES = (
+        errors_prelude()
+        + "type doc = app.docs\n  owner : user = owner_id\n  can view = owner\n"
+        + "type Doc = app.docs2\n  owner : user = owner_id\n  can edit = owner\n"
+        + "type orgUnit = app.units\n  owner : user = owner_id\n  can see = owner\n"
+    )
+
+    @staticmethod
+    def python(policy: str) -> dict[str, object]:
+        ns: dict[str, object] = {}
+        exec(database.client("py", policy), ns)
+        return ns
+
+    @staticmethod
+    def bullet(start: str) -> str:
+        """The reference's paragraph about a client, from its first words to the blank line after it."""
+        text = read("../docs/reference/app-code.md")
+        return text[text.index(start) :].split("\n\n")[0]
+
+    @staticmethod
+    def named(text: str) -> list[str]:
+        """The names in backquotes, without what is in parentheses after one (`list` (with `after` ...))."""
+        return re.findall(r"`(\w+)`", re.sub(r" \([^()]*(?:\([^()]*\)[^()]*)*\)", "", text))
+
+    def test_each_type_gets_its_own_alias(self) -> None:
+        # a type's name keeps its own case: orgUnit's alias isn't OrgunitPermission
+        lines = database.client("py", self.CASES).split("\n")
+        self.assertIn('OrgUnitPermission = Literal["see"]', lines)
+        # doc and Doc would get the same alias, the second one replacing the first: neither has one, and why
+        self.assertEqual([x for x in lines if x.startswith("DocPermission")], [])
+        self.assertIn("# doc and Doc would both be DocPermission: neither has it, use Permission", lines)
+        self.assertNotIn("DocPermission", self.python(self.CASES))
+
+    def test_share_takes_caveat_args_as_a_dict(self) -> None:
+        sent: list[Sequence[object]] = []
+
+        class Cursor:
+            def __enter__(self) -> "Cursor":
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                return None
+
+            def execute(self, sql: str, params: Sequence[object]) -> None:
+                sent.append(params)
+
+            def fetchone(self) -> None:
+                return None
+
+        class Connection:
+            def cursor(self) -> Cursor:
+                return Cursor()
+
+        class Sharing(Protocol):
+            def share(self, *args: object, **kwargs: object) -> None: ...
+
+        authz = cast(Callable[[Connection], Sharing], self.python(read(POLICIES["docs"]))["Authz"])(Connection())
+        share = authz.share
+        share("folder", 3, "viewer", "user", 4, caveat="from_ip", caveat_args={"ip": "10.0.0.7", "n": 1})
+        share("folder", 3, "viewer", "user", 4)
+        self.assertEqual([p[-2:] for p in sent], [("from_ip", '{"ip": "10.0.0.7", "n": 1}'), (None, None)])
+
+    def test_the_reference_lists_the_python_clients_calls(self) -> None:
+        ns = self.python(read(POLICIES["docs"]))
+        calls = {n for n in vars(cast(type, ns["Authz"])) if not n.startswith("_")}
+        text = self.bullet("- **Python: supported.**")
+        listed = self.named(text[text.index("`Authz(conn)`, with ") : text.index("; the errors")])
+        self.assertEqual(sorted(set(listed) | {"refusal"}), sorted(calls))
+        self.assertIn("`refusal(error)`", text)
+        for name in ("Refused", "NotFound", "ObjectType", "Permission", "FilePermission"):
+            self.assertIn(f"`{name}`", text)
+            self.assertIn(name, ns)
+        self.assertIn("(its `caveat_args` a dict)", text)
+
+    def test_the_reference_lists_the_typescript_clients_calls(self) -> None:
+        ts = database.client("ts", read(POLICIES["docs"]))
+        body = ts[ts.index("export function authz(db: Queryable)") :]
+        calls = re.findall(r"^    (\w+): async", body, re.M)
+        text = self.bullet("- **TypeScript: preview.**")
+        listed = self.named(text[text.index("`authz(db)` has ") : text.index(": Python's calls in camelCase")])
+        self.assertEqual(sorted(listed), sorted(calls))
+        # Python's calls in camelCase, except principal and signing in (asUser and asPrincipal)
+        python = {n for n in vars(cast(type, self.python(read(POLICIES["docs"]))["Authz"])) if not n.startswith("_")}
+        camel = {re.sub(r"_(\w)", lambda m: m.group(1).upper(), n) for n in python}
+        self.assertEqual(sorted(camel - set(calls)), ["principal", "refusal", "signIn", "signInAs"])
+        self.assertIn("except `principal`", text)
+        for name in ("asUser", "asPrincipal", "refusal", "Refused", "NotFound"):
+            self.assertRegex(ts, rf"export (async function|function|class) {name}\b")
+        share = search(r"\n    share: [^\n]*\n[^\n]*", body).group(0)
+        for option in ("subjectRelation", "expiresAt", "startsAt", "caveat", "caveatArgs"):
+            self.assertIn(f"{option}?:", share)
+            self.assertIn(f"`{option}`", text)
+
+    def test_the_reference_lists_the_sdks_calls(self) -> None:
+        sdk = read("../sdk/typescript/client/src/index.ts")
+        interface = search(r"export interface AuthzCalls \{\n(.*?)\n\}", sdk, re.S).group(1)
+        calls = set(re.findall(r"^  (\w+)[<(]", interface, re.M))
+        prisma = search(
+            r"export type PrismaAuthz = [^{]*\{(.*?)\n\};", read("../sdk/typescript/prisma/src/index.ts"), re.S
+        )
+        text = read("../docs/reference/app-code.md")
+        sentence = text[text.index("The SDK's calls") :].split(". Its `share`")[0]
+        listed = re.findall(r"`(\w+)`", sentence[sentence.index(") are ") :])
+        self.assertEqual(
+            sorted(listed), sorted(calls | {"expect"} | set(re.findall(r"^  (\w+)<", prisma.group(1), re.M)))
+        )
+        self.assertNotIn("expiresAt", search(r"\n  share<[^;]*;", interface).group(0))  # no expiry, start or caveat
+        self.assertIn("Its `share` takes no expiry, start or caveat.", text)
+
+    def test_the_reference_names_every_function_the_app_role_may_call(self) -> None:
+        c = Compiler(parse_policy(read(POLICIES["docs"])))
+        c.compile("x")
+        reference = "".join(
+            read(f"../docs/reference/{p}") for p in sorted(os.listdir(os.path.join(ROOT, "..", "docs", "reference")))
+        )
+        # authz.link_hashes is what the rules read (the links the transaction presents), not a call for apps
+        missing = {s.split("(")[0] for s in c.api_signatures()} - {"authz.link_hashes"}
+        self.assertEqual(sorted(n for n in missing if f"{n}(" not in reference), [])
 
 
 class Principals(unittest.TestCase):

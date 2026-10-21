@@ -89,7 +89,10 @@ def main() -> None:
         for a, b in re.findall(r"^\s+([A-Za-z0-9_]+) [-=.]+>(?:\|[^|]*\|)? ([A-Za-z0-9_]+)$", g, re.M):
             used |= {a, b}
         check(f"{name}: every node an arrow uses is declared", used <= declared, sorted(used - declared))
-        check(f"{name}: arrows were drawn", len(used) > 3)
+        # every relation draws an arrow to who it holds
+        relations = set(re.findall(r"^\s+([A-Za-z0-9_]+)\[[^\n]*:::rel$", g, re.M))
+        froms = {a for a, _ in re.findall(r"^\s+([A-Za-z0-9_]+) [-=.]+>(?:\|[^|]*\|)? ([A-Za-z0-9_]+)$", g, re.M)}
+        check(f"{name}: an arrow from every relation", relations and relations <= froms, sorted(relations - froms))
 
     print("-- the Python client (--client py)")
     tmp = tempfile.mkdtemp()
@@ -166,12 +169,23 @@ def main() -> None:
         check("expect, when the rule allows the write: NotFound", True)
     except authz_client.Refused as e:
         check("expect, when the rule allows the write: NotFound", False, e.why)
+    why = a.explain("file", 12, "view")
     check(
-        "explain: says why",
-        any("erin" in e or "admin" in e for e in a.explain("file", 12, "view")) or bool(a.explain("file", 12, "view")),
-        a.explain("file", 12, "view"),
+        "explain: says yes, then the rule it follows",
+        why[:2]
+        == [
+            "yes  user 5 holds view on file 12",
+            "  file.view = edit or viewer or (folder.view and not {confidential})",
+        ],
+        why[:2],
     )
     a.decide_request(rid, True, "fine")
+    made = [r for r in a.list_shares("folder", 2) if r["subject_type"] == "user" and r["subject_id"] == "3"]
+    check(
+        "decide_request: approving makes carol's share, until the time she asked for",
+        [(r["relation"], r["expires_at"] is not None) for r in made] == [("viewer", True)],
+        made,
+    )
     a.share("file", 11, "viewer", "user", 4)
     check("share, then who", "4" in a.who("file", 11, "view"), a.who("file", 11, "view"))
     shares = a.list_shares("file", 11)
@@ -194,8 +208,20 @@ def main() -> None:
         list(a.list_links("file", 11)) == [],
         a.list_links("file", 11),
     )
+    conn.execute("COMMIT")
+    conn.execute("BEGIN")
+    conn.execute("SET LOCAL ROLE app_user")
+    a.sign_in(3)
     a.use_links(["not-a-token"])
+    presented = conn.query("SELECT current_setting('authz_ctx.links')")
+    check("use_links: the request presents the tokens", presented == [("not-a-token",)], presented)
+    check(
+        "use_links: a token that is no link gives nothing (carol still can't view file 12)",
+        a.can("file", 12, "view") is False,
+    )
     a.use_links([])
+    presented = conn.query("SELECT current_setting('authz_ctx.links')")
+    check("use_links, none: the request presents none", presented == [("",)], presented)
     conn.execute("COMMIT")
     # link tokens are for the transaction that presents them: none are left after it
     conn.execute("BEGIN")
