@@ -645,7 +645,9 @@ class Grants:
         except Undo:
             pass
         except self.db.errors as e:
-            way.error = getattr(e, "message", str(e))
+            # (a read that counts what else it does can fail after authz.can said yes: a way whose cost wasn't
+            # counted is no answer, only one that couldn't be tried)
+            way.grants, way.error = False, getattr(e, "message", str(e))
         return way
 
     def judge(self, way: Way, t: Type, perm: str, kinds: Sequence[Part], held: dict[Person, tuple[Held, Held]]) -> None:
