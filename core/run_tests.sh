@@ -274,8 +274,9 @@ tests/migrations.sh
 record $? "migrations"
 }
 unit command 47 migrations
-# ROWSTILE_UPGRADES=every (nightly): from every release on PyPI older than this version, each with a world of data
-# that this version's answers on it are judged by; else from the release before, with the world too
+# ROWSTILE_UPGRADES=every (nightly): from every release on PyPI older than this version (from 0.1.0-beta.1 on: the
+# beta started afresh), each with a world of data that this version's answers on it are judged by; else from the
+# release before, with the world too
 if [ "${ROWSTILE_UPGRADES:-}" = every ]; then
 upgrade() {
 step "upgrading from every release (from PyPI): the docs app's databases and a world of data, upgraded by this version"
@@ -286,8 +287,17 @@ unit command 540 upgrade
 else
 upgrade() {
 step "upgrading: databases the release before made (from PyPI), pushed to, applied and migrated by this version, and a world of data"
-tests/upgrade.sh --world
-record $? "upgrade"
+local out rc
+out=$(tests/upgrade.sh --world 2>&1); rc=$?
+echo "$out"
+# no release to upgrade from yet (none from the beta on is older than this version): it says so and checks nothing,
+# under a name of its own, which tests/check_counts.txt gives no count. PyPI out of reach stays "upgrade", short of
+# its count
+if [ "${out##*$'\n'}" = "upgrade: skipped, nothing to upgrade from" ]; then
+  record $rc "upgrade, skipped: nothing to upgrade from"
+else
+  record $rc "upgrade"
+fi
 }
 unit command 38 upgrade   # (with the world: 16 s before it, on CI)
 fi

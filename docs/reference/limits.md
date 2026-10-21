@@ -153,9 +153,14 @@ rowstile 0.1.0 is in beta: complete enough to use before it is released, and it 
 it shows a need. Until 1.0, a minor release (0.1 to 0.2) may change the policy language, the `authz.*`
 functions, the SDKs, the error codes and the file formats (`rowstile.toml`, the lock file). What it does keep:
 
-- **Each release upgrades from the one before it**: a database applied by 0.1 is migrated by 0.2, and the
-  suites test it. <!-- checked: tests/upgrade.sh "the migration applies on the database"; tests/upgrade.sh "applied is applied again, not taken as up to date"; tests/upgrade.sh "it holds what applying this version on a new database leaves"; tests/upgrade.sh "the shares made before still grant" -->
-  Skipping releases is tested each night too, from every release on PyPI, but it is not promised.
+- **Each release from 0.1.0-beta.1 on upgrades from the one before it**: a database applied by 0.1 is
+  migrated by 0.2, and the suites test it. <!-- checked: tests/upgrade.sh "the migration applies on the database"; tests/upgrade.sh "applied is applied again, not taken as up to date"; tests/upgrade.sh "it holds what applying this version on a new database leaves"; tests/upgrade.sh "the shares made before still grant" -->
+  Skipping releases is tested each night too, from every release on PyPI from the beta on, but it is not
+  promised.
+- **The beta starts afresh**: a database an alpha (0.1.0-alpha.9 or earlier) made is not upgraded. Apply the
+  policy from scratch: on a new database, or on the same one after `rowstile remove --yes`, then `rowstile
+  apply` (shares and history stay through remove). <!-- checked: tests/apply.sh "a removed policy can be applied again"; tests/apply.sh "shares are kept" -->
+  The upgrade tests start from the beta too. <!-- checked: tests/unit_test.py "test_the_alphas_are_never_the_release_before" -->
 - **The changelog says what changed**, and its **Upgrading** says what to do: a policy line to rewrite, a call
   to rename, a migration to make.
 - **A patch (0.1.1) only fixes.** <!-- unchecked: how releases are made (RELEASING.md), which no test can hold --> Nothing to do when upgrading.

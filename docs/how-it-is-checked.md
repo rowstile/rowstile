@@ -190,9 +190,11 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   the app would, and each holds what applying this version on a new database leaves, down to the columns of the
   tables rowstile keeps across applies; the policy's tests and the scenario pass, and what the app made before
   still works. <!-- checked: tests/upgrade.sh "it holds what applying this version on a new database leaves"; tests/upgrade.sh "the API key made before still signs dave in" -->
+  The release before is one from 0.1.0-beta.1 on: the beta started afresh, and no alpha is upgraded from. Until
+  a release after the beta is out, the suite says there is nothing to upgrade from, and skips. <!-- checked: tests/unit_test.py "test_the_alphas_are_never_the_release_before"; tests/unit_test.py "test_an_upgrade_with_nothing_to_upgrade_from" -->
   It also makes a world of data the way the random checks do: shares in every state, links, moves, through that
-  release's own triggers and `authz.share`; every night it does all of this from every release on PyPI (six
-  alphas today). Each release is upgraded with the docs app it was released with: a copy in the tests where it
+  release's own triggers and `authz.share`; every night it does all of this from every release on PyPI
+  from the beta on. Each release is upgraded with the docs app it was released with: a copy in the tests where it
   differs from today's ([`tests/docs_app.py`](../core/tests/docs_app.py)), so a change to the docs app that an
   old release would not compile leaves its upgrade checked. <!-- checked: tests/unit_test.py "test_each_release_is_upgraded_with_its_own"; tests/upgrade.sh "the docs app" --> After the upgrade, by `reapply` and by the next migration, `authz.can` answers every user,
   object and permission (1,277 checks) as on a new database with the same rows, all of difftest's questions get
@@ -277,7 +279,7 @@ each feature against each suite.
 | What apps see of a refusal: each code's SQLSTATE and HTTP answer, the reason in the error | 1 | [app-code](reference/app-code.md) | `unit_test.py`, `reference.sh`, `adversarial.sh`, `integrations/fastapi`, `integrations/nextjs` | `around.py` |
 | Applying a policy: `rowstile apply`, `check`, `push`, `diff`, `remove` | 1 | [tools](reference/tools.md) | `apply.sh`, `cli.sh`, `migrations.sh`, `children.sh` | `interrupt.py`, `around.py`, `migrate_test.py` |
 | Migrations: `rowstile migrate`, the lock file, trees built beside then swapped in | 1 | [migrations](reference/migrations.md) | `migrations.sh`, `unit_test.py` | `migrate_test.py`, `interrupt.py` |
-| Upgrading rowstile: `rowstile reapply`, migrations from an older release | 1 | [migrations](reference/migrations.md) | `upgrade.sh`, `apply.sh` | `upgrade_world.py` |
+| Upgrading rowstile: `rowstile reapply`, migrations from an older release (from the beta on) | 1 | [migrations](reference/migrations.md) | `upgrade.sh`, `unit_test.py`, `apply.sh` | `upgrade_world.py` |
 | Running the policy's tests: `rowstile test` | 2 | [tools](reference/tools.md) | `cli.sh`, `devx.sh`, `confidence_test.py` |  |
 | Asking the database as someone: `rowstile can`, `explain`, `perms`, `list`, `who`, `explain-rule`, `sql` | 2 | [tools](reference/tools.md) | `cli.sh`, `devx.sh`, `capitals.sh` |  |
 | What would grant a permission: `rowstile why` | 2 | [tools](reference/tools.md) | `studio_test.py`, `unit_test.py` |  |

@@ -1,10 +1,2 @@
 # Each release's docs app (core/example: docs.authz, docs.test.authz, app_schema.sql) as its tag has it: the version,
 # then the SHA-256 of the three files (tests/docs_app.py digest()). Written by python3 tests/docs_app.py --sync.
-0.1.0-alpha.2 9bf0345ce28b7f49550b6bbb275b4493f9352d48fdb20b9e58d3653bbd0b8aa0
-0.1.0-alpha.3 9bf0345ce28b7f49550b6bbb275b4493f9352d48fdb20b9e58d3653bbd0b8aa0
-0.1.0-alpha.4 9bf0345ce28b7f49550b6bbb275b4493f9352d48fdb20b9e58d3653bbd0b8aa0
-0.1.0-alpha.5 9bf0345ce28b7f49550b6bbb275b4493f9352d48fdb20b9e58d3653bbd0b8aa0
-0.1.0-alpha.6 9bf0345ce28b7f49550b6bbb275b4493f9352d48fdb20b9e58d3653bbd0b8aa0
-0.1.0-alpha.7 9bf0345ce28b7f49550b6bbb275b4493f9352d48fdb20b9e58d3653bbd0b8aa0
-0.1.0-alpha.8 9bf0345ce28b7f49550b6bbb275b4493f9352d48fdb20b9e58d3653bbd0b8aa0
-0.1.0-alpha.9 9bf0345ce28b7f49550b6bbb275b4493f9352d48fdb20b9e58d3653bbd0b8aa0

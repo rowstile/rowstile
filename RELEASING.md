@@ -31,10 +31,13 @@ betas before its candidates, and the command orders them so: `0.2.0-alpha.2`, th
 `0.2.0-rc.1`, then `0.2.0` (`core/authzlib/versions.py`, the one grammar `packaging/version.py`, the downgrade
 guard, `rowstile init` and the upgrade test read).
 
-Every release upgrades from the one before it, and that is tested: `core/tests/upgrade.sh` installs the newest
-release on PyPI older than the checkout's version, and upgrades databases it made. Every night, `upgrade.sh
---every` does so from each release on PyPI, with a world of data whose answers after the upgrade must be a new
-database's: before a release, the last night's run passed (or run it on the release's commit:
+Every release from `0.1.0-beta.1` on upgrades from the one before it, and that is tested: `core/tests/upgrade.sh`
+installs the newest release on PyPI older than the checkout's version, and upgrades databases it made. The beta
+started afresh: the alphas before it are never the release before (`FIRST` in `core/tests/previous_release.py`),
+and until a release from the beta on is older than the checkout's version, the suite says there is nothing to
+upgrade from and skips (the beta's own release, and `main` until the beta is on PyPI). Every night, `upgrade.sh
+--every` does so from each release on PyPI from the beta on, with a world of data whose answers after the upgrade
+must be a new database's: before a release, the last night's run passed (or run it on the release's commit:
 `ROWSTILE_PART=command ROWSTILE_UPGRADES=every core/ci.sh 16`). What 1.0 promises beyond that is decided
 before 1.0.
 
@@ -81,8 +84,9 @@ A build from `main` records its version with a hash of the compiler's sources (`
         `python3 ../../core/cli/rowstile_cli.py migrate --name rowstile_X_Y_Z`. This is the upgrade users
         will make, run by CI on each app
       - `python3 core/tests/docs_app.py --sync`: the release records its own docs app
-        (`core/tests/docs_apps/releases.txt`), which `tests/upgrade.sh` upgrades it with later; without it the
-        release run's unit tests, which have the tags, fail on the release's own tag (as 0.1.0-alpha.8's did)
+        (`core/tests/docs_apps/releases.txt`, from `0.1.0-beta.1` on: the beta's release is the first line), which
+        `tests/upgrade.sh` upgrades it with later; without it the release run's unit tests, which have the tags,
+        fail on the release's own tag (as 0.1.0-alpha.8's did)
    2. `main`'s next version: `python3 packaging/version.py X.(Y+1).0-dev` after a final release,
       `X.Y.Z-dev` after an alpha, a beta or a candidate, with the subject line that version.
 2. **Merge it** with a rebase once CI is green, so both commits land on `main` as they are.

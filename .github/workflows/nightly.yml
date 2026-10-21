@@ -1,6 +1,6 @@
 # What ci.yml leaves out of each push, every night on main: every suite on PostgreSQL 17 and 18 (ci.yml runs
-# them all on 16, and only what depends on the version on 17 and 18), with upgrades from every release (each push:
-# from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
+# them all on 16, and only what depends on the version on 17 and 18), with upgrades from every release from the beta
+# on (each push: from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
 # SDKs' conformance suites on 17 and 18, the grammar and the parser on more policies (grammar), each statement of
 # rowstile's PL/pgSQL the suites run (statements), the parser and the compiler under a coverage-guided fuzzer (fuzz),
 # and the scale benchmark last.
@@ -46,7 +46,8 @@ jobs:
         part: [unit, policy, command, random]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      # (the part command upgrades from every release on PyPI, not only the one before: core/tests/upgrade.sh --every)
+      # (the part command upgrades from every release on PyPI from 0.1.0-beta.1 on, not only the one before:
+      # core/tests/upgrade.sh --every)
       - run: bash core/ci.sh ${{ matrix.pg }}
         env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}", ROWSTILE_PART: "${{ matrix.part }}", ROWSTILE_UPGRADES: every}
       # a cancelled job may stop before ci.sh removes its container: this job's own (the label names the job)

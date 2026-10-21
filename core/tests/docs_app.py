@@ -10,13 +10,13 @@ with an older release and upgrades them with this checkout's command: the policy
 compile. So each release is upgraded with the docs app as its tag has it: where it is this checkout's, core/example;
 where it differs, a copy in tests/docs_apps/VERSION/, each file named with `.txt` after it (a release's policy is in
 its release's language: the checks that read every policy in the repository leave it alone).
-tests/docs_apps/releases.txt records each release's (its SHA-256, digest()), from FIRST on (the first release on
-PyPI: nothing upgrades from one before it). tests/unit_test.py holds the copies to it (one for each release whose
-docs app differs from this checkout's, none for the others), and it to the tags where the checkout has them. CI's
-checkouts may have no tags: the copies are committed. When core/example changes, or after a release, --sync writes
-them again from the tags. A release's own commit records itself (its version isn't a -dev one: --sync records it
-from this checkout, as no tag has it yet), so that the release run, on its tag, finds its tag recorded. A version not
-recorded is upgraded with core/example's (and upgrade.sh says so).
+tests/docs_apps/releases.txt records each release's (its SHA-256, digest()), from FIRST on (previous_release.py's:
+the beta started afresh, and nothing upgrades from an alpha before it). tests/unit_test.py holds the copies to it
+(one for each release whose docs app differs from this checkout's, none for the others), and it to the tags where
+the checkout has them. CI's checkouts may have no tags: the copies are committed. When core/example changes, or
+after a release, --sync writes them again from the tags. A release's own commit records itself (its version isn't a
+-dev one: --sync records it from this checkout, as no tag has it yet), so that the release run, on its tag, finds
+its tag recorded. A version not recorded is upgraded with core/example's (and upgrade.sh says so).
 """
 
 from __future__ import annotations
@@ -32,10 +32,9 @@ from collections.abc import Callable
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORE = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from previous_release import key  # noqa: E402
+from previous_release import FIRST, key  # noqa: E402
 
 FILES = ("docs.authz", "docs.test.authz", "app_schema.sql")
-FIRST = "0.1.0-alpha.2"  # the first release on PyPI (0.1.0-alpha.1 never was)
 MAIN = "example"  # this checkout's docs app, from core/
 COPIES = os.path.join("tests", "docs_apps")  # the releases' copies, from core/
 COPIED = ".txt"  # what a copy's file name has after the file's own
@@ -90,17 +89,19 @@ def git(*args: str) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(["git", "-C", CORE, *args], capture_output=True)
 
 
-def tags() -> list[str]:
-    """The releases from FIRST on that this checkout has tags of (v0.1.0-alpha.7: 0.1.0-alpha.7), oldest first;
-    none where git or the tags aren't there (CI's suites' checkouts)."""
+def tags() -> list[str] | None:
+    """The releases from FIRST on that this checkout has tags of (v0.1.0-beta.1: 0.1.0-beta.1), oldest first; None
+    where git or the tags aren't there at all (CI's suites' checkouts)."""
     try:
         p = git("tag", "--list", "v*")
     except OSError:
-        return []
+        return None
+    if p.returncode != 0 or not p.stdout.split():
+        return None
     first = key(FIRST)
     assert first is not None
     out: list[tuple[tuple[int, ...], str]] = []
-    for tag in p.stdout.decode().split() if p.returncode == 0 else []:
+    for tag in p.stdout.decode().split():
         k = key(tag[1:])
         if k is not None and k >= first:
             out.append((k, tag[1:]))
@@ -117,9 +118,11 @@ def releasing() -> str | None:
 
 def expected() -> list[str]:
     """What releases.txt must record where the checkout has the tags: the tagged releases, and the release this
-    checkout is, when its tag isn't there yet."""
+    checkout is, when its tag isn't there yet (FIRST's own release too, when only older tags are there)."""
     out = tags()
-    if out and (version := releasing()) and version not in out:
+    if out is None:
+        return []
+    if (version := releasing()) and version not in out:
         out.append(version)
     return out
 
@@ -144,7 +147,7 @@ def _read_main(name: str) -> bytes:
 def sync() -> list[str]:
     """releases.txt and the copies, written again from the tags: what changed."""
     versions = tags()
-    if not versions:
+    if versions is None:
         raise RuntimeError("no tags here (git fetch --tags)")
     main = digest_of(files())
     said: list[str] = []
