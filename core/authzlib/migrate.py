@@ -2,9 +2,9 @@
 
 A migration takes a database from the policy the lock file recorded to the policy now. The compiled
 policy is read back as objects (statements.py): each function, view, trigger, row-level security
-policy and table, with a hash of its SQL. The lock file (authz/policy.lock, committed next to the
-migrations) lists them, one sorted line each, after the policy's own lines. So the next migration holds
-only what changed:
+policy and table, with a hash of its SQL. The lock file (by default next to the policy:
+db/policy.lock for db/policy.authz) lists them, one sorted line each, after the policy's own lines. So the
+next migration holds only what changed:
 
 - a function whose arguments and result are the same: CREATE OR REPLACE, in place
 - a view that changed, or reads something that is made again: emptied in place first (the same columns, reading
@@ -182,7 +182,6 @@ def read(compiler: Compiler, policy: str, files: dict[str, str]) -> Compiled:
             target.stmts.append((comments, stmt))
         if mode == "tree":
             cur = None
-        if mode == "tree":
             h = compiler.tree_keep.get(name, (None,))[0] or digest(code(sql), 32)
             items.append(Tree(name, sql, h, objs, order, compiler.tree_next.get(name)))
         else:
