@@ -281,6 +281,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   (applying stopped: `missing FROM-clause entry for table "this"`), the hint for `d.archivé` names the whole
   column (it said `d.archiv`), the warning on a bare `archivé` that a subquery's table takes is given (it was
   missed), and `ARCHIVÉ` is the column `archivÉ`, as Postgres folds only ASCII letters to lower case.
+- `rowstile fmt` lays out a condition whose string, quoted name or dollar quote goes on to a line that starts
+  with `--`: that line is in the quote, not a comment. fmt refused such a policy, saying formatting would change
+  what it says. And a run of spaces inside a quote counts: the lock file's lines, and fmt's check that it
+  changes nothing, read `'a   b'` and `'a b'` as two things.
 
 ## 0.1.0 (alpha)
 

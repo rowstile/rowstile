@@ -99,7 +99,8 @@ def format_policy(text: str) -> str:
             items.append(Line("blank", "", "", 0))
             continue
         stripped = raw.strip()
-        if stripped.startswith("--"):
+        # a comment line, unless a quote left open on the line before goes on: then the -- is in the quote
+        if stripped.startswith("--") and not reading.quote:
             items.append(Line("comment", "", stripped, 0 if not raw[:1].isspace() else 2))
             continue
         open_braces = reading.depth
@@ -292,13 +293,19 @@ def tests_of(text: str, files: dict[str, str]) -> list[object]:
 
 def format(text: str, files: dict[str, str] | None = None) -> str:
     """The policy as rowstile fmt writes it; FormatError if that would change what it says."""
-    out = format_policy(text)
+
+    def says(policy: str) -> tuple[list[str], list[object]]:
+        return [tight(x) for x in meaning_lines(policy, files or {})], tests_of(policy, files or {})
+
     try:
-        same = [tight(x) for x in meaning_lines(text, files or {})] == [
-            tight(x) for x in meaning_lines(out, files or {})
-        ] and tests_of(text, files or {}) == tests_of(out, files or {})
+        before = says(text)
     except Exception as e:
         raise FormatError(f"can't format a policy that doesn't parse: {e}") from None
+    out = format_policy(text)
+    try:
+        same = says(out) == before
+    except Exception:  # the policy parses (above): the layout doesn't
+        same = False
     if not same:
         raise FormatError("formatting would change what the policy says (a bug in rowstile fmt: please report it)")
     return out

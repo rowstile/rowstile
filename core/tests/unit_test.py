@@ -5917,6 +5917,58 @@ class Fmt(unittest.TestCase):
                 fmt.format(text)
         self.assertEqual(fmt.format(text), text)  # (the layout itself says the same)
 
+    def test_a_layout_that_does_not_parse_is_fmts_mistake_not_the_policys(self) -> None:
+        # the policy is read before it is laid out: only a policy that doesn't parse is told so
+        from authzlib import fmt
+
+        text = self.BASE + '\ntest "x"\n  user 1 can view doc 1\n'
+        with (
+            mock.patch.object(fmt, "format_policy", lambda t: t.replace("doc 1\n", "doc\n")),  # (a test's line)
+            self.assertRaisesRegex(fmt.FormatError, r"^formatting would change what the policy says \(a bug"),
+        ):
+            fmt.format(text)
+        with self.assertRaisesRegex(fmt.FormatError, r"^can't format a policy that doesn't parse: .*AZ104"):
+            fmt.format(self.BASE.replace("can view = owner", "can view"))
+
+    def test_a_line_that_starts_with_dashes_inside_a_quote_is_no_comment(self) -> None:
+        # a string, a name or a dollar quote left open on the line before goes on: its -- is in the quote, and the
+        # line is laid out as the condition's next line
+        from authzlib.fmt import format
+        from authzlib.parse import meaning_lines
+
+        for quote, close in (("'", "'"), ('"', '"'), ("$$", "$$")):
+            src = self.BASE.replace(
+                "  can view = owner\n", f"  can view = owner and {{x <> {quote}a\n-- b{close} or y}}\n"
+            )
+            want = self.BASE.replace(
+                "  can view = owner\n", f"  can view = owner and {{x <> {quote}a\n             -- b{close} or y}}\n"
+            )
+            self.assertEqual(format(src), want, quote)
+            self.assertEqual(format(want), want, quote)
+            self.assertIn(f"type doc: can view = owner and {{x <> {quote}a -- b{close} or y}}", meaning_lines(want, {}))
+
+    def test_spaces_inside_a_quote_are_what_the_policy_says(self) -> None:
+        # a run of spaces counts inside a string or a name, not between words: the lock file's lines and fmt's
+        # check see a layout that changed one
+        from authzlib import fmt
+        from authzlib.parse import meaning_lines
+
+        def view(cond: str) -> list[str]:
+            return meaning_lines(self.BASE.replace("can view = owner", f"can view = owner and {cond}"), {})
+
+        self.assertNotEqual(view("{name <> 'a   b'}"), view("{name <> 'a b'}"))
+        self.assertNotEqual(view('{"a   b" = 1}'), view('{"a b" = 1}'))
+        self.assertNotEqual(view("{name <> $$a   b$$}"), view("{name <> $$a b$$}"))
+        self.assertEqual(view("{name  <>\t'a b'   or  x}"), view("{name <> 'a b' or x}"))
+        self.assertIn("type doc: can view = owner and {name <> 'a   b'}", view("{name   <>   'a   b'}"))
+        text = self.BASE.replace("can view = owner", "can view = owner and {name <> 'a   b'}")
+        self.assertEqual(fmt.format(text), text)
+        with (
+            mock.patch.object(fmt, "format_policy", lambda t: t.replace("'a   b'", "'a b'")),
+            self.assertRaisesRegex(fmt.FormatError, r"^formatting would change what the policy says \(a bug"),
+        ):
+            fmt.format(text)
+
 
 class Confidence(unittest.TestCase):
     """rowstile prove (invariants in small worlds) and coverage (branches no test makes true)."""
