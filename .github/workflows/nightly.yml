@@ -1,9 +1,9 @@
 # What ci.yml leaves out of each push, every night on main: every suite on PostgreSQL 17 and 18 (ci.yml runs
 # them all on 16, and only what depends on the version on 17 and 18), with upgrades from every release from the beta
 # on (each push: from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
-# SDKs' conformance suites on 17 and 18, the grammar and the parser on more policies (grammar), each statement of
-# rowstile's PL/pgSQL the suites run (statements), the parser and the compiler under a coverage-guided fuzzer (fuzz),
-# and the scale benchmark last.
+# SDKs' conformance suites on 17 and 18, rowstile's migrations run by goose, dbmate and Flyway (tools), the grammar
+# and the parser on more policies (grammar), each statement of rowstile's PL/pgSQL the suites run (statements), the
+# parser and the compiler under a coverage-guided fuzzer (fuzz), and the scale benchmark last.
 # On GitHub's runners, as ci.yml (or the one the repository variable RUNNER names). Run by hand too
 # (workflow_dispatch), all of it or one job: `gh workflow run nightly.yml -f only=bench`. And several soaks at
 # once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7` (and
@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run only this job (suites, proofs, soak, small, full, conformance, grammar, statements, fuzz, bench); empty: all of them"
+        description: "Run only this job (suites, proofs, soak, small, full, conformance, tools, grammar, statements, fuzz, bench); empty: all of them"
         default: ""
       soaks:
         description: "How many soaks to run at once (1 to 9), each with its own seed, on 16, 17 and 18 in turn"
@@ -213,6 +213,14 @@ jobs:
       - run: flock /tmp/rowstile-ci-conformance-python.lock bash integrations/fastapi/test.sh
       - run: npm ci --no-audit --no-fund
       - run: flock /tmp/rowstile-ci-conformance-typescript.lock bash integrations/nextjs/test.sh
+  # The migrations rowstile migrate writes for goose, dbmate and Flyway, run by each tool, in an empty folder and in
+  # one numbered by hand, then the app's next migration after them (core/tests/migration_tools.sh)
+  tools:
+    if: ${{ !inputs.only || inputs.only == 'tools' }}
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - run: bash core/tests/migration_tools.sh
   # The editors' grammar and the compiler's parser on core/tests/small.py's whole set, each policy written two ways,
   # in four parts side by side, a quarter each (editor/test.sh --agree; each push: up to size 4)
   grammar:
@@ -304,7 +312,7 @@ jobs:
   # Last, once the others are done: on a self-hosted runner, timings need the machine to themselves.
   bench:
     if: ${{ !cancelled() && (!inputs.only || inputs.only == 'bench') }}
-    needs: [suites, proofs, soak, conformance, statements, fuzz]
+    needs: [suites, proofs, soak, conformance, tools, statements, fuzz]
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1

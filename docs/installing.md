@@ -62,9 +62,9 @@ The command is Python 3.11 or newer and its standard library: there is nothing e
 
 ## Then
 
-`rowstile init` finds the stack (Next.js, Prisma, Drizzle, FastAPI, SQLAlchemy, Alembic), writes
-`rowstile.toml` for its migration tool, adds the SDK's packages to `package.json` (for Python, names the one
-to add) and says which line to change.
+`rowstile init` finds the stack (Next.js, Prisma, Drizzle, FastAPI, SQLAlchemy, Alembic, goose, dbmate,
+Flyway), writes `rowstile.toml` for its migration tool, adds the SDK's packages to `package.json` (for Python,
+names the one to add) and says which line to change.
 
 - [Getting started](getting-started.md): from a schema to a policy, its tests, the edit loop and the first
   migration.

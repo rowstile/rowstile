@@ -18,9 +18,13 @@ enough. <!-- checked: tests/apply.sh "rowstile apply, on a database with no exte
 | `alembic` | a revision after the current head, `<rev>_authz_<name>.py`, with its SQL beside it (`.sql`) <!-- checked: tests/migrations.sh "alembic: revisions chained by down_revision, each with its SQL beside it" --> |
 | `prisma` | `prisma/migrations/<time>_authz_<name>/migration.sql` <!-- checked: tests/migrations.sh "prisma: a folder with migration.sql for each" --> |
 | `drizzle` | `drizzle/<n>_authz_<name>.sql` with statement breakpoints, its journal entry and snapshot <!-- checked: tests/migrations.sh "drizzle: numbered files, statement breakpoints, the journal, a snapshot each" --> |
-| `sql` | `<n>_authz_<name>.sql` after numbered files (`0005_...`), else `<time>_authz_<name>.sql` <!-- checked: tests/migrations.sh "sql: two timestamped files"; tests/unit_test.py "test_file_names" --> |
-| `goose`, `dbmate` | the same SQL, with each tool's markers <!-- checked: tests/migrations.sh "+goose Up, one statement block"; tests/migrations.sh "migrate:up and down" --> |
-| `flyway` | `V<time>__authz_<name>.sql`, and its script config file beside it (`.sql.conf`, `placeholderReplacement=false`: the SQL holds `${`, which Flyway would take for a placeholder) <!-- checked: tests/migrations.sh "flyway: each script's config file turns placeholders off" --> |
+| `sql` | `<n>_authz_<name>.sql` when the folder's last file is numbered (`0005_...` after `0004_...`), else `<time>_authz_<name>.sql` <!-- checked: tests/migrations.sh "sql: two timestamped files"; tests/unit_test.py "test_file_names" --> |
+| `goose`, `dbmate` | the same SQL, with each tool's markers, named as for `sql` <!-- checked: tests/migrations.sh "+goose Up, one statement block"; tests/migrations.sh "migrate:up and down"; tests/migration_tools.sh "runs, both" --> |
+| `flyway` | `V<n>__authz_<name>.sql` when the folder's last version is a number (`V3__` after `V2__`), else `V<time>__authz_<name>.sql`; and its script config file beside it (`.sql.conf`, `placeholderReplacement=false`: the SQL holds `${`, which Flyway would take for a placeholder) <!-- checked: tests/migrations.sh "flyway: each script's config file turns placeholders off"; tests/unit_test.py "test_file_names"; tests/migration_tools.sh "runs, both" --> |
+
+A number, not the time, after numbered files: the app's next migration, numbered after rowstile's, then comes
+after it too. goose, dbmate (`--strict`) and Flyway refuse a migration whose version is below one applied
+already. <!-- checked: tests/migration_tools.sh "numbered after them" -->
 
 - **The lock file** (`db/policy.lock`, next to the policy; commit it) lists the policy's lines, then
   each function, view, trigger, policy and table the migrations made so far, with a hash of its SQL. <!-- checked: tests/migrations.sh "the lock file starts with the policy's lines" -->

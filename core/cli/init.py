@@ -135,6 +135,8 @@ test "nobody signed in sees a {example}"
         named = given is None and os.environ.get("DATABASE_URL")
         via = (" from DATABASE_URL" + (f" in {where}" if where else "")) if named else ""
         print(f"found   {', '.join(found.found)}, Postgres{via}")
+    for note in found.notes:
+        print(f"note    {note}")
     if cfg.path is None:
         database, why = "env:DATABASE_URL", "a DSN or URL, or env:NAME for an environment variable holding one"
         if given and app_url and app_url[0] != given:

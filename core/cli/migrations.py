@@ -4,9 +4,12 @@
     tool = "alembic"                alembic | prisma | drizzle | sql | goose | dbmate | flyway
     dir  = "alembic/versions"       where the tool keeps its migrations (each tool has a default)
     lock = "db/policy.lock"         the lock file (default: next to the policy, <policy>.lock)
+    write_after = 300               rowstile dev writes the migration this long after the last save (0: never)
 
-Each writer gets the migration's SQL and a name, and returns the files it wrote. File names start with the
-time (UTC), as the tools do, so migrations sort in the order they were written.
+Each writer gets the migration's SQL and a name, and returns the files it wrote, named so that they come after
+the folder's others: Alembic chains a revision after the head; Drizzle Kit takes the journal's next number; sql,
+goose, dbmate and Flyway take the number after the folder's last when it is a number (0005 after 0004, V3 after
+V2), else the time (UTC), as Prisma always does.
 """
 
 from __future__ import annotations
@@ -90,7 +93,9 @@ def slug(name: str) -> str:
 def generated_patterns(tool: str, folder_rel: str | None, lock_rel: str | None) -> list[str]:
     """The .gitattributes lines that mark what rowstile migrate writes as generated: the lock file and the
     migrations folder, each named from the .gitattributes file's folder (None: outside it, so no line)."""
-    pat = f"{folder_rel}/*_authz_*/**" if tool == "prisma" else f"{folder_rel}/*_authz_*"
+    # the .gitattributes file's own folder: /*_authz_*, as git takes no pattern starting with ./
+    top = "" if folder_rel == "." else folder_rel
+    pat = f"{top}/*_authz_*/**" if tool == "prisma" else f"{top}/*_authz_*"
     paths = ([lock_rel] if lock_rel else []) + ([pat] if folder_rel else [])
     return [f"{path} linguist-generated=true" for path in paths]
 
@@ -130,28 +135,25 @@ def write_migration(tool: str, folder: str, name: str, sql: str, now: float | No
         raise Error(f"unknown migration tool '{tool}' (use one of {', '.join(TOOLS)})")
     name = slug(name)
     ts = stamp(now)
+    names = os.listdir(folder) if os.path.isdir(folder) else []
     # after every migration already there, even ones written the same second
-    existing = [
-        m.group(1)
-        for f in (os.listdir(folder) if os.path.isdir(folder) else [])
-        for m in [re.match(r"^V?(\d{14})", f)]
-        if m
-    ]
+    existing = [m.group(1) for f in names for m in [re.match(r"^V?(\d{14})", f)] if m]
     if existing and max(existing) >= ts:
         ts = stamp(calendar.timegm(time.strptime(max(existing), "%Y%m%d%H%M%S")) + 1)
+    version = (next_version(names, VERSIONS[tool]) if tool in VERSIONS else None) or ts
     if tool == "sql":
-        return [write(os.path.join(folder, sql_file_name(folder, name, ts)), sql)]
+        return [write(os.path.join(folder, f"{version}_{name}.sql"), sql)]
     if tool == "flyway":
         # the SQL holds ${ (a dollar quote before a JSON object), which Flyway would read as a placeholder: its
         # script config file, beside the migration, turns that off for this script
-        path = os.path.join(folder, f"V{ts}__{name}.sql")
+        path = os.path.join(folder, f"V{version}__{name}.sql")
         return [write(path, sql), write(path + ".conf", "placeholderReplacement=false\n")]
     if tool == "dbmate":
-        return [write(os.path.join(folder, f"{ts}_{name}.sql"), f"-- migrate:up\n{sql}\n-- migrate:down\n")]
+        return [write(os.path.join(folder, f"{version}_{name}.sql"), f"-- migrate:up\n{sql}\n-- migrate:down\n")]
     if tool == "goose":
         return [
             write(
-                os.path.join(folder, f"{ts}_{name}.sql"),
+                os.path.join(folder, f"{version}_{name}.sql"),
                 f"-- +goose Up\n-- +goose StatementBegin\n{sql}-- +goose StatementEnd\n",
             )
         ]
@@ -162,19 +164,28 @@ def write_migration(tool: str, folder: str, name: str, sql: str, now: float | No
     return alembic(folder, name, sql, now)
 
 
-def sql_file_name(folder: str, name: str, ts: str) -> str:
-    """Plain SQL files are named like the ones already there: numbered (0005_name.sql) after numbered ones,
-    so they sort in order, else starting with the time."""
-    numbers = [
-        m.group(1)
-        for f in (os.listdir(folder) if os.path.isdir(folder) else [])
-        for m in [re.match(r"^(\d{1,13})_.*\.sql$", f)]
-        if m
-    ]
-    if numbers:
-        width = max(len(n) for n in numbers)
-        return f"{max(int(n) for n in numbers) + 1:0{width}d}_{name}.sql"
-    return f"{ts}_{name}.sql"
+# a migration's version in its file's name, as each tool reads it: goose's from .sql and .go files; Flyway's may
+# have parts (V1.2__, V1_2__), compared as numbers
+VERSIONS = {
+    "sql": r"(\d+)_.*\.sql",
+    "goose": r"(\d+)_.*\.(?:sql|go)",
+    "dbmate": r"(\d+).*\.sql",
+    "flyway": r"V(\d+(?:[._]\d+)*)__.*\.sql",
+}
+
+
+def next_version(names: list[str], pattern: str) -> str | None:
+    """The version after the last of the folder's when that one is a number (0005 after 0004, 1.3 after 1.2: its
+    last part, as wide), so that the app's next migration, numbered after it, comes after it too: goose, Flyway
+    and dbmate --strict refuse one below a migration applied already. None when the last is a time (14 digits or
+    more) or there is none: the migration's version is then the time."""
+    versions = [m.group(1) for n in names for m in [re.fullmatch(pattern, n)] if m]
+    if not versions:
+        return None
+    last = max(versions, key=lambda v: [int(p) for p in re.findall(r"\d+", v)])
+    if len(re.findall(r"\d+", last)[0]) >= 14:
+        return None
+    return re.sub(r"\d+$", lambda m: f"{int(m.group()) + 1:0{len(m.group())}d}", last)
 
 
 # --- Drizzle Kit: numbered files, a journal, and a snapshot per migration ------------------------------
