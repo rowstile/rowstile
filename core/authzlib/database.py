@@ -460,8 +460,40 @@ def applied(db: Db) -> tuple[str, Files]:
             "SELECT action, policy, files::text AS files FROM authz.policy_versions ORDER BY id DESC LIMIT 1"
         )
     if not rows or rows[0]["action"] != "apply":
-        raise Error("no policy is applied [AZ609]", hint="rowstile apply db/policy.authz")
+        raise no_policy()
     return text(rows[0], "policy"), files_map(text_or_none(rows[0], "files") or "{}")
+
+
+def no_policy() -> Error:
+    return Error("no policy is applied [AZ609]", hint="rowstile apply db/policy.authz")
+
+
+def missing_function(db: Db, message: str) -> Error | None:
+    """What to say when Postgres answered `message` ("function authz.x(...) does not exist") to a call the command
+    made, or a statement it ran for someone (`rowstile sql`). No policy is applied: AZ609. The policy in force was
+    applied by another build of rowstile, and the function is one this build makes: that build doesn't make it as
+    this command calls it, AZ626 (or AZ616, when that build is newer). Otherwise (the policy this build applied, a
+    name rowstile doesn't make) None: Postgres's own words say it, as for any other mistake in a statement."""
+    from . import BUILD
+    from .base import GENERATED_FUNCTIONS
+
+    rows: list[dict[str, Value]] = []
+    if there(db, "authz.policy_versions"):
+        rows = db.rows("SELECT action, version FROM authz.policy_versions ORDER BY id DESC LIMIT 1")
+    if not rows or rows[0]["action"] != "apply":
+        return no_policy()
+    theirs, called = text(rows[0], "version"), re.match(r"function authz\.(\w+)\(", message)
+    if theirs == BUILD or not called or called.group(1) not in GENERATED_FUNCTIONS:
+        return None
+    said = f"authz.{called.group(1)} isn't in the policy in force as this command calls it: rowstile {theirs} applied"
+    if older_than(BUILD, theirs):
+        return Error(
+            f"{said} it, which is newer than this command ({BUILD}) [AZ616]", hint="upgrade the rowstile command"
+        )
+    return Error(
+        f"{said} it, and this command is {BUILD} [AZ626]",
+        hint="rowstile reapply (a database that takes migrations: rowstile migrate, then deploy the migration)",
+    )
 
 
 def refuse_newer_database(db: Db) -> None:

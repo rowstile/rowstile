@@ -56,6 +56,8 @@ enough. <!-- checked: tests/apply.sh "rowstile apply, on a database with no exte
   and the tree keeps its rows. <!-- checked: tests/migrate_test.py "a release changes a message of an inheritance tree's function"; tests/unit_test.py "test_a_tree_function_changed_alone_is_replaced_in_place" -->
   A new version that makes the same
   needs no migration. <!-- checked: tests/migrations.sh "exit 0 after an upgrade that makes the same"; tests/unit_test.py "test_a_new_version_alone_needs_no_migration" -->
+  Until the database is upgraded, a command that calls a function the policy in force doesn't have says which
+  version applied that policy, and `rowstile reapply` (`AZ626`). <!-- checked: tests/cli.sh "a function an older rowstile didn't make: which version applied the policy, and rowstile reapply (AZ626)" -->
   The other way round is refused: a command older than the version that last wrote the
   lock file or the database stops (`AZ616`), unless told `--downgrade`. <!-- checked: tests/migrations.sh "a lock a newer version wrote is refused"; tests/apply.sh "a policy a newer version applied is refused, naming both versions"; tests/apply.sh "remove refuses a policy a newer version applied, as apply does, and removes nothing" -->
 - **Development**: `rowstile push` (and `rowstile dev`, on every save) runs the migration from the policy
