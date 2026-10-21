@@ -85,6 +85,20 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   that reads nothing, however its name is written, or an operator Postgres doesn't have for its own types) is
   called as a function per row the rules check, which costs more on large reads than the same test written as
   a relation.
+- **A write rule sees the tables as the statement found them.** Postgres checks each row an `INSERT` or
+  `UPDATE` writes as it writes it, and a rule's condition, relation or permission reads the tables as they were
+  before the statement: the statement's other rows aren't there for it, those of a `WITH` query in the same
+  statement included, and neither are rows another transaction hasn't committed yet. So a rule that holds while
+  rows are missing (`not exists (...)`, `count(*) < 2`, a permission that holds while a chat has nobody in it)
+  is checked for each row on its own. With `insert : {(select count(*) from app.seats s where s.room_id =
+  this.room_id) < 2}`, a third seat added alone is refused, but one `INSERT` of three rows into an empty room
+  writes all three. <!-- checked: tests/apply.sh "refuses the third seat added alone"; tests/apply.sh "but not three seats in one statement"; tests/apply.sh "nor the rows a WITH query of the same statement writes" -->
+  Two transactions at once, each adding one seat to a room that has one, do the same, unless both are
+  SERIALIZABLE: then one of them fails, to retry. A limit on how many rows there may be (two people in a direct
+  chat, one owner of a group) belongs in the schema, which holds it for every statement and every transaction:
+  a unique index (`CREATE UNIQUE INDEX ON app.members (chat_id) WHERE role = 'owner'`), or a trigger that
+  counts after the statement and a unique key that two transactions at once can't both write, as the
+  [messenger example](../../examples/messenger/README.md) does. <!-- unchecked: advice on the app's own schema, which rowstile doesn't make -->
 - **Partitions go through their table**: apply turns row-level security on, with no rules
   of their own, for the partitions of a governed table and the tables that inherit from it,
   so the app role reads and writes them only through the table (whose rules and triggers

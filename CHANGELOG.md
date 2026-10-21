@@ -126,6 +126,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `authz.create_role` stores it as `7`. It now reads it as `authz.can` does.
 - The decision log (`authz_debug.log_decisions`) named a service by its bare id, as if it were the user with that
   id. It now names who asked as the audit trail does: `service:7`, `user:service:1`.
+- The docs didn't say that a write rule checks each row against the tables as the statement found them, so a
+  count in a rule is no limit on how many rows there may be: with `insert : {(select count(*) ...) < 2}`, one
+  `INSERT` of three rows writes all three. The limits page says so now, and what to use instead (a unique index,
+  or a trigger). The messenger example relied on such counts: one `INSERT` could put three people in a direct
+  chat, or two owners in a new group. Its schema now holds both.
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch
