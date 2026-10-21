@@ -870,7 +870,9 @@ INSERT INTO authz_int.scope_items VALUES
   ('read', 'cmd', NULL, 'select'),
   ('read', 'perm', NULL, '*');
 
--- the scopes this transaction is limited to (NULL: not limited); believed only if signed, like the user
+-- the scopes this transaction is limited to (NULL: not limited); believed only if signed, like the user. (session_ok()
+-- raises for a session that isn't signed rather than say false: the first branch is only what one would get if it
+-- ever did, no scope at all)
 CREATE FUNCTION authz_int.scopes_active() RETURNS text[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
   SELECT CASE WHEN NOT authz_int.session_ok() THEN ARRAY[]::text[]
