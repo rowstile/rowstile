@@ -4816,16 +4816,20 @@ class Wire(unittest.TestCase):
             ("postgresql://h/app?channel_binding=maybe", "channel_binding=maybe"),
             ("host=h colour=blue", "unknown connection setting 'colour'"),
             ("postgresql://u:pa#ss@h/app", "must be written %23"),
-            ("host=h port=abc", "numbers"),
-            # SQL's doubled quote isn't libpq's (psql refuses it too): it was read as "its"
-            ("host=h password='it''s'", '"\'s\'" has no "=" after it: put a value with spaces in single quotes'),
+            ("host=h port=abc", "the port is a number from 1 to 65535, not 'abc'"),
+            # SQL's doubled quote isn't libpq's (psql refuses it too): it was read as "its"; what follows the password
+            # is likely the rest of it, and isn't repeated
+            ("host=h password='it''s'", "after its password (not repeated here): put a value with spaces in single"),
+            ("host=h password=my secret", "can't read the connection string after its password (not repeated here)"),
+            ("host=h dbname=my db", '"db" has no "=" after it: put a value with spaces in single quotes'),
             ("host=h password='secret", "a quote isn't closed"),
             # libpq tries each host in turn; this client connects to one, and says so rather than looking up "h1,h2"
             ("host=h1,h2 dbname=app", "the connection asks for several hosts (h1,h2), which the rowstile command"),
             ("postgresql://u@h1:5432,h2:5432/app", "several hosts (h1:5432,h2:5432)"),
         ):
-            with self.assertRaisesRegex(ValueError, re.escape(said), msg=dsn):
+            with self.assertRaisesRegex(ValueError, re.escape(said), msg=dsn) as caught:
                 self.pgwire.parse_dsn(dsn)
+            self.assertNotIn("secret", str(caught.exception), dsn)
 
     def server(
         self,
@@ -5073,6 +5077,202 @@ class Wire(unittest.TestCase):
             connect(host="127.0.0.1", port=port, sslmode="verify-full", timeout=5)
         self.assertNotIn("start", seen)
 
+    def tries(self, *ways: str) -> tuple[int, list[str], Callable[[], None]]:
+        """A made-up server on a local port for one connection per way, in turn. A way is what it answers the TLS
+        request (S: yes, with the test certificate; N: no), then what it does with the session: signs the client in
+        (in), refuses it as a pg_hba.conf line for the other way would (out), as a server starting up does (busy,
+        57P03), or saying the password is wrong (wrong). seen: how each connection went ("tls in", "plain out", "tls
+        failed": the client gave up in the handshake). The function returned waits until the server is done."""
+        import ssl
+        import struct
+
+        fixtures = os.path.join(ROOT, "tests", "fixtures")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(os.path.join(fixtures, "wire_test.crt"), os.path.join(fixtures, "wire_test.key"))
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(len(ways))
+        seen: list[str] = []
+
+        def exactly(conn: socket.socket, n: int) -> bytes:
+            data = b""
+            while len(data) < n:
+                chunk = conn.recv(n - len(data))
+                if not chunk:
+                    raise ConnectionError("closed")
+                data += chunk
+            return data
+
+        def one(conn: socket.socket, answer: str, then: str, held: list[socket.socket]) -> None:
+            conn.settimeout(5)
+            length, code = struct.unpack("!ii", exactly(conn, 8))
+            how = "plain"
+            if code == 80877103:
+                conn.sendall(answer.encode())
+                if answer == "S":
+                    try:
+                        conn = context.wrap_socket(conn, server_side=True)
+                    except OSError:
+                        seen.append("tls failed")
+                        return
+                    held.append(conn)
+                    how = "tls"
+                length, code = struct.unpack("!ii", exactly(conn, 8))
+            exactly(conn, length - 8)
+            seen.append(f"{how} {then}")
+            if then == "in":
+                conn.sendall(self.said(b"R", struct.pack("!i", 0)) + self.said(b"Z", b"I"))
+                while conn.recv(1024):
+                    pass
+                return
+            code, message = {
+                "out": (
+                    "28000",
+                    f'no pg_hba.conf entry for host "127.0.0.1", user "ann", database "app", '
+                    f"{'SSL encryption' if how == 'tls' else 'no encryption'}",
+                ),
+                "busy": ("57P03", "the database system is starting up"),
+                "wrong": ("28P01", 'password authentication failed for user "ann"'),
+            }[then]
+            conn.sendall(self.said(b"E", f"SFATAL\0C{code}\0M{message}\0\0".encode()))
+
+        def serve() -> None:
+            try:
+                for way in ways:
+                    conn, _ = listener.accept()
+                    held = [conn]
+                    try:
+                        answer, then = way.split()
+                        one(conn, answer, then, held)
+                    except OSError:
+                        pass
+                    finally:
+                        for sock in held:
+                            sock.close()
+            finally:
+                listener.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        return listener.getsockname()[1], seen, lambda: thread.join(5)
+
+    def test_prefer_and_allow_as_libpq_tries_them(self) -> None:
+        import shutil
+
+        pgwire = self.pgwire
+
+        def connect(port: int, sslmode: str = "prefer") -> None:
+            pgwire.connect(host="127.0.0.1", port=port, user="ann", database="app", sslmode=sslmode, timeout=5).close()
+
+        # prefer: TLS that fails (a root.crt in libpq's folder that didn't sign the server's certificate, which psql
+        # takes all the same) is tried again without TLS, as libpq tries it
+        os.makedirs(self.folder)
+        shutil.copy(os.path.join(ROOT, "tests", "fixtures", "wire_ca.crt"), os.path.join(self.folder, "root.crt"))
+        port, seen, done = self.tries("S in", "N in")
+        connect(port)
+        done()
+        self.assertEqual(seen, ["tls failed", "plain in"])
+        os.remove(os.path.join(self.folder, "root.crt"))
+        # ... and so is a session the server refuses over TLS (a hostnossl line in pg_hba.conf)
+        port, seen, done = self.tries("S out", "N in")
+        connect(port)
+        done()
+        self.assertEqual(seen, ["tls out", "plain in"])
+        # ... not one refused where the server has no TLS (nothing else to try), nor a server starting up (as libpq)
+        for way, said in (("N out", "28000: no pg_hba.conf entry .*, no encryption"), ("S busy", "57P03: ")):
+            port, seen, done = self.tries(way)
+            with self.assertRaisesRegex(pgwire.PgError, f"^{said}", msg=way):
+                connect(port)
+            done()
+            self.assertEqual(len(seen), 1, way)
+        # refused both ways: both said, in turn; once where the words are the same (a wrong password)
+        port, seen, done = self.tries("S out", "N out")
+        with self.assertRaisesRegex(
+            pgwire.ProtocolError,
+            '^28000: no pg_hba.conf entry for host "127.0.0.1", user "ann", database "app", SSL encryption; then '
+            'without TLS: 28000: no pg_hba.conf entry for host "127.0.0.1", user "ann", database "app", no encryption$',
+        ):
+            connect(port)
+        port, seen, done = self.tries("S wrong", "N wrong")
+        with self.assertRaisesRegex(pgwire.PgError, '^28P01: password authentication failed for user "ann"$'):
+            connect(port)
+        done()
+        self.assertEqual(seen, ["tls wrong", "plain wrong"])
+        # allow: without TLS first (it was asked for first, as prefer asks), then with it where that was refused
+        port, seen, done = self.tries("S in")
+        connect(port, "allow")
+        done()
+        self.assertEqual(seen, ["plain in"])
+        port, seen, done = self.tries("N out", "S in")
+        connect(port, "allow")
+        done()
+        self.assertEqual(seen, ["plain out", "tls in"])
+        port, seen, done = self.tries("N out", "N in")
+        with self.assertRaisesRegex(
+            pgwire.ProtocolError,
+            "no encryption; then with TLS: the server doesn't do TLS, and sslmode=allow asks for it$",
+        ):
+            connect(port, "allow")
+        # require: one way, refused as the server refuses it
+        port, seen, done = self.tries("S out")
+        with self.assertRaisesRegex(pgwire.PgError, "^28000: .*, SSL encryption$"):
+            connect(port, "require")
+
+    def test_copy_from_stdin_is_failed_not_waited_on(self) -> None:
+        # the server waits for the rows of a COPY ... FROM STDIN (rowstile sql can send one): the client fails the
+        # copy (CopyFail), and the server's error comes back; the connection goes on (both protocols)
+        import struct
+
+        pgwire, said = self.pgwire, self.said
+        ready = said(b"Z", b"I")
+        copy_in = said(b"G", struct.pack("!bh", 0, 0))
+        failed = said(b"E", b"SERROR\0C57014\0MCOPY from stdin failed: " + pgwire.NO_COPY.encode() + b"\0\0")
+        selected = said(b"C", b"SELECT 0\0") + ready
+
+        def session(replies: list[tuple[bytes, bytes]]) -> tuple[pgwire.Connection, list[bytes], Callable[[], None]]:
+            """A made-up server over a socket pair: it signs the client in, then answers each message of the kind
+            replies names next with that reply. got: the kinds of the messages it was sent (f with its text)."""
+            mine, theirs = socket.socketpair()
+            got: list[bytes] = []
+
+            def serve() -> None:
+                theirs.settimeout(5)
+                theirs.recv(struct.unpack("!i", theirs.recv(4, socket.MSG_WAITALL))[0] - 4, socket.MSG_WAITALL)
+                theirs.sendall(said(b"R", struct.pack("!i", 0)) + ready)
+                while replies:
+                    kind = theirs.recv(1)
+                    body = theirs.recv(
+                        struct.unpack("!i", theirs.recv(4, socket.MSG_WAITALL))[0] - 4, socket.MSG_WAITALL
+                    )
+                    got.append(kind + body if kind == b"f" else kind)
+                    if kind == replies[0][0]:
+                        theirs.sendall(replies.pop(0)[1])
+                theirs.close()
+
+            server = threading.Thread(target=serve, daemon=True)
+            server.start()
+            return pgwire.Connection(mine, "ann", None, "app", None), got, lambda: server.join(5)
+
+        refusal = re.escape(f"57014: COPY from stdin failed: {pgwire.NO_COPY}")
+        # the extended protocol (rowstile sql): the Sync sent with the statement is ignored during the copy, so one
+        # follows the CopyFail
+        conn, got, done = session([(b"S", said(b"1") + said(b"2") + copy_in), (b"S", failed + ready), (b"S", selected)])
+        with self.assertRaisesRegex(pgwire.PgError, f"^{refusal}$"):
+            conn.query("COPY t FROM STDIN")
+        self.assertEqual(conn.query("SELECT 0"), [])
+        conn.close()
+        done()
+        stop = b"f" + pgwire.NO_COPY.encode() + b"\0"
+        self.assertEqual(got, [b"P", b"B", b"D", b"E", b"S", stop, b"S", b"P", b"B", b"D", b"E", b"S"])
+        # the simple protocol (script): the CopyFail alone
+        conn, got, done = session([(b"Q", copy_in), (b"f", failed + ready), (b"Q", selected)])
+        with self.assertRaisesRegex(pgwire.PgError, f"^{refusal}$"):
+            conn.script("COPY t FROM STDIN")
+        conn.script("SELECT 0")
+        conn.close()
+        done()
+        self.assertEqual(got, [b"Q", stop, b"Q"])
+
     def test_scram_is_bound_to_the_tls_channel(self) -> None:
         wrong = self.pgwire.ProtocolError
 
@@ -5141,7 +5341,7 @@ class Wire(unittest.TestCase):
         # a server in the middle holds another certificate than the one the client was shown: the exchange fails
         port, seen = self.server(tls=True, scram="other")
         with self.assertRaisesRegex(self.pgwire.PgError, "28P01"):
-            connect(port)
+            connect(port, sslmode="require")  # (prefer tries again without TLS, as libpq does: nothing to bind then)
         with open(os.path.join(ROOT, "tests", "fixtures", "wire_test.crt"), encoding="ascii") as fh:
             import ssl
 
@@ -5181,7 +5381,13 @@ class Wire(unittest.TestCase):
         inner = hashlib.md5(b"secretann").hexdigest()
         self.assertEqual(seen["password"], "md5" + hashlib.md5(inner.encode() + b"salt").hexdigest())
         for auth, scram, password, said in (
-            ("cleartext", None, None, "the server asks for a password"),
+            (
+                "cleartext",
+                None,
+                None,
+                "the server asks for a password, and none was given: put it in the connection string or PGPASSWORD "
+                "(the rowstile command reads no password file, such as ~/.pgpass)",
+            ),
             ("gss", None, "secret", "unsupported authentication method 7"),
             ("sasl-other", None, "secret", "unsupported SASL mechanisms"),
             (None, "badnonce", "secret", "the server's nonce does not extend ours"),
@@ -5200,8 +5406,6 @@ class Wire(unittest.TestCase):
                 conn.script("SELECT 1\0")
             with self.assertRaisesRegex(ValueError, "parameters cannot contain NUL characters"):
                 conn.query("SELECT $1", ["a\0b"])
-            with self.assertRaisesRegex(ValueError, "the number of %s placeholders and arguments differ"):
-                conn.cursor().execute("SELECT %s, %s", (1,))
         finally:
             conn.close()
 
@@ -5596,9 +5800,21 @@ class Wire(unittest.TestCase):
             free.close()
         self.assertEqual(str(caught.exception), f"127.0.0.1 port {port}: connection refused")
         self.assertEqual(caught.exception.where, f"127.0.0.1 port {port}")
-        with tempfile.TemporaryDirectory() as folder, self.assertRaises(Unreachable) as caught:
+        closed: list[int] = []
+        close = socket.socket.close
+
+        def closing(sock: socket.socket) -> None:
+            closed.append(sock.family)
+            close(sock)
+
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            mock.patch.object(socket.socket, "close", closing),
+            self.assertRaises(Unreachable) as caught,
+        ):
             connect(host=folder, port=5433, timeout=5)
         self.assertEqual(str(caught.exception), f"the socket {folder}/.s.PGSQL.5433: no such file or directory")
+        self.assertEqual(closed, [socket.AF_UNIX])  # the socket it made is closed, not left to the collector
         # a name with no address (as the system's resolver says it)
         no_name = socket.gaierror(socket.EAI_NONAME, "Name or service not known")
         with mock.patch.object(socket, "getaddrinfo", side_effect=no_name), self.assertRaises(Unreachable) as caught:
@@ -5629,6 +5845,36 @@ class Wire(unittest.TestCase):
                     "connection refused)\n"
                 )
             )
+
+    def test_the_port_and_connect_timeout_as_libpq_reads_them(self) -> None:
+        parse = self.pgwire.parse_dsn
+        # a whole number, a sign and spaces around it allowed (strtol); a port from 1 to 65535
+        self.assertEqual(parse("host=h port=' 5433 '")["port"], 5433)
+        self.assertEqual(parse("postgresql://h:5433/app")["port"], 5433)
+        for dsn, env, port in (
+            ("postgresql://h:70000/app", {}, "70000"),  # was blamed on a # in the password
+            ("postgresql://h:0/app", {}, "0"),
+            ("postgresql://u:p@[::1]:70000/app", {}, "70000"),
+            ("host=h port=70000", {}, "70000"),
+            ("host=h port=-1", {}, "-1"),
+            ("host=h", {"PGPORT": "99999"}, "99999"),
+        ):
+            with (
+                mock.patch.dict(os.environ, env),
+                self.assertRaisesRegex(ValueError, f"^the port is a number from 1 to 65535, not '{port}'$", msg=dsn),
+            ):
+                parse(dsn)
+        with self.assertRaisesRegex(ValueError, "^the URL's port isn't a number: a #, \\? or / in the password"):
+            parse("postgresql://u:pa/ss@h/app")
+        # connect_timeout: zero or less waits as long as it takes (None), as libpq; not given, 10 s (libpq: no limit)
+        for written, timeout in (("0", None), ("-1", None), ("' 7 '", 7.0), ("+3", 3.0)):
+            self.assertEqual(parse(f"host=h connect_timeout={written}")["timeout"], timeout, written)
+        self.assertEqual(parse("host=h")["timeout"], 10.0)
+        with mock.patch.dict(os.environ, {"PGCONNECT_TIMEOUT": "0"}):
+            self.assertIsNone(parse("host=h")["timeout"])
+        for written in ("x", "1.5", "99999999999"):
+            with self.assertRaisesRegex(ValueError, f"^connect_timeout is a number of seconds, not '{written}'$"):
+                parse(f"host=h connect_timeout={written}")
 
     def test_a_socket_on_windows(self) -> None:
         # Windows has no Unix sockets: a host that is a folder is refused, saying what to write instead
@@ -5888,7 +6134,10 @@ class Wire(unittest.TestCase):
             ("host=h", {"PGSSLCERTMODE": "require"}, "a client certificate (PGSSLCERTMODE=require)"),
             ("postgresql://h/d?sslnegotiation=direct", {}, "TLS without asking the server first (sslnegotiation"),
             ("postgresql://h/d?oauth_client_id=x", {}, "OAuth (oauth_client_id=x)"),
-            ("host=h scram_client_key=a2V5", {}, "SCRAM keys in place of the password (scram_client_key=a2V5)"),
+            # a secret's value isn't repeated
+            ("host=h scram_client_key=a2V5", {}, "SCRAM keys in place of the password (scram_client_key), which"),
+            ("host=h scram_server_key=a2V5", {}, "SCRAM keys in place of the password (scram_server_key), which"),
+            ("postgresql://h/d?oauth_client_secret=a2V5", {}, "OAuth (oauth_client_secret), which the rowstile"),
             ("host=h replication=database", {}, "a replication connection (replication=database)"),
             ("host=h", {"PGMINPROTOCOLVERSION": "3.2"}, "a protocol version above 3.0 (PGMINPROTOCOLVERSION=3.2)"),
             ("host=h", {"PGPASSFILE": "/p"}, "a password file (PGPASSFILE=/p)"),
@@ -5899,8 +6148,12 @@ class Wire(unittest.TestCase):
                 "TLS older than TLSv1.2 (ssl_max_protocol_version=TLSv1.1)",
             ),
         ):
-            with mock.patch.dict(os.environ, env), self.assertRaisesRegex(ValueError, re.escape(said), msg=dsn):
+            with (
+                mock.patch.dict(os.environ, env),
+                self.assertRaisesRegex(ValueError, re.escape(said), msg=dsn) as caught,
+            ):
                 parse(dsn)
+            self.assertNotIn("a2V5", str(caught.exception), dsn)
         for dsn, said in (
             ("host=h ssl_min_protocol_version=TLSv9", 'invalid "ssl_min_protocol_version" value: "TLSv9"'),
             (

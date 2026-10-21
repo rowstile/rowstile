@@ -247,6 +247,13 @@ run sql --as user:5 "UPDATE app.files SET name = name WHERE false"; [ $rc -eq 0 
 run sql --as user:5 "SELECT true AS yes, ARRAY['x','y z',NULL] AS words, '{\"k\": 1}'::jsonb AS doc"
 [ $rc -eq 0 ] && [ "$(echo "$out" | sed -n 3p)" = 't    {x,"y z",NULL}  {"k": 1}' ] &&
   ok "... and writes values as Postgres does, as psql shows them: t, {x,\"y z\",NULL}, JSON" || bad "sql's values" "$out"
+# COPY ... FROM STDIN waits for rows the command has none of: the copy is failed at once, in the server's words
+# (it waited for good, the transaction open), on a table without row-level security the app role may write
+PSQL -c "CREATE TABLE app.cli_inbox (x int); GRANT INSERT ON app.cli_inbox TO app_user"
+out=$(timeout 20 python3 cli/rowstile_cli.py --db "dbname=$DB" sql --as user:5 "COPY app.cli_inbox FROM STDIN" 2>&1); rc=$?
+[ "$rc $out" = "1 COPY from stdin failed: the rowstile command sends no rows to COPY FROM STDIN (psql's \\copy does)" ] &&
+  ok "sql with a COPY FROM STDIN says the command sends no rows, at once" || bad "sql COPY FROM STDIN" "$rc $out"
+PSQL -c "DROP TABLE app.cli_inbox"
 
 echo "-- files that can't be read as they should"
 { cat example/docs.authz; printf -- '-- caf\351\n'; } > "$T/latin.authz"

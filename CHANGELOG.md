@@ -102,6 +102,21 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `rowstile indexes` and `authz.lint()` counted an index's INCLUDE columns as if the index were sorted by them.
   An index on `(parent_id) INCLUDE (parent_type)` was said to serve a lookup by `(parent_type, parent_id)`, so a
   lookup with no index could go unnamed. Only an index's key columns count now.
+- `rowstile sql --as WHO "COPY t FROM STDIN"` waited for good, with a transaction open on the server. The copy now
+  fails at once: "COPY from stdin failed: the rowstile command sends no rows to COPY FROM STDIN (psql's \copy
+  does)".
+- The command connects as libpq does where it didn't. `sslmode=prefer` (the default) tries again without TLS when
+  TLS fails (a `~/.postgresql/root.crt` that didn't sign the server's certificate) or the server refuses the
+  session over TLS. `sslmode=allow` tries without TLS first. `connect_timeout=0`, or less, waits as long as it
+  takes (it meant 10 seconds, and `-1` was refused). What still differs is named in the tools reference: no
+  password file, 10 seconds where `connect_timeout` isn't given, and no client certificate.
+- A port out of range (`postgresql://h:70000/app`, `port=0`) is said as such. A URL's was blamed on a `#` in the
+  password.
+- A password stays out of the messages. A refused setting that holds a secret (`scram_client_key`,
+  `scram_server_key`, `oauth_client_secret`) is named without its value, and the rest of a password with a space
+  in it, unquoted (`password=my secret`), isn't repeated.
+- When the server asks for a password and none was given, the error says where to give one, and that the command
+  reads no password file such as `~/.pgpass`.
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch

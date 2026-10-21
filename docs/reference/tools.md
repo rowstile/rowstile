@@ -62,7 +62,12 @@ as `sslmode=require`, as libpq reads it (where the URL has both, the one written
 libpq's settings, in a connection string, a URL or a `PG*` variable, is done as libpq does it, left alone where
 that changes neither what is checked nor where the command connects (`application_name`, `keepalives`, `sslsni`
 and the like), or refused, naming it: a service, a password file where no password is given, a host address apart
-from its name (`hostaddr`), several hosts, client certificates, GSS encryption, OAuth. <!-- checked: tests/unit_test.py "test_each_libpq_setting_is_honoured_left_alone_or_refused"; tests/unit_test.py "test_what_it_cannot_honour_is_refused_not_dropped"; tests/unit_test.py "test_a_url_and_its_options" -->
+from its name (`hostaddr`), several hosts, client certificates, GSS encryption, OAuth. <!-- checked: tests/unit_test.py "test_each_libpq_setting_is_honoured_left_alone_or_refused"; tests/unit_test.py "test_what_it_cannot_honour_is_refused_not_dropped"; tests/unit_test.py "test_a_url_and_its_options"; tests/unit_test.py "test_prefer_and_allow_as_libpq_tries_them" -->
+Three things differ from libpq. The command reads no password file (`~/.pgpass`): give the password in the
+connection string or `PGPASSWORD`. Where `connect_timeout` isn't given, it waits 10 seconds for the server (libpq
+waits as long as it takes; `connect_timeout=0` does here too). <!-- checked: tests/unit_test.py "test_the_port_and_connect_timeout_as_libpq_reads_them" -->
+And the command sends no client certificate: libpq sends `~/.postgresql/postgresql.crt` to a server that asks for
+one.
 A value in a string of
 keywords is quoted as for libpq (`password='it\'s'`). Where nothing names them, the defaults are libpq's: the
 system's user, a database named after it, and the server's socket in `/var/run/postgresql` (Debian's and Ubuntu's
