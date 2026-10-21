@@ -41,5 +41,5 @@
   },
   "scripts": { "package": "npx --yes @vscode/vsce@3.9.2 package" },
   "dependencies": { "vscode-languageclient": "^9.0.1" },
-  "devDependencies": { "@types/vscode": "~1.82.0" }
+  "devDependencies": { "@types/vscode": "~1.82.0", "vscode-oniguruma": "2.0.1", "vscode-textmate": "9.3.2" }
 }

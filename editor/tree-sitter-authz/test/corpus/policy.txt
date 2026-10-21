@@ -618,3 +618,154 @@ rules ms.messages
         (identifier))
       (column
         (identifier)))))
+
+================================================================================
+Columns named before or after: the last word before the colon says when
+================================================================================
+
+rules app.files
+  update after : edit
+  update after after : edit
+  update before before : edit
+  update before after : edit
+  update after, b : edit
+  mask before, after, b : edit
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (rules
+    table: (table_name
+      schema: (identifier)
+      name: (identifier))
+    (rule
+      command: (command)
+      expression: (ref
+        (identifier)))
+    (rule
+      command: (command)
+      (column
+        (identifier))
+      expression: (ref
+        (identifier)))
+    (rule
+      command: (command)
+      (column
+        (identifier))
+      expression: (ref
+        (identifier)))
+    (rule
+      command: (command)
+      (column
+        (identifier))
+      expression: (ref
+        (identifier)))
+    (rule
+      command: (command)
+      (column
+        (identifier))
+      (column
+        (identifier))
+      expression: (ref
+        (identifier)))
+    (mask
+      (column
+        (identifier))
+      (column
+        (identifier))
+      (column
+        (identifier))
+      expression: (ref
+        (identifier)))))
+
+================================================================================
+Conditions whose SQL hides braces and quotes: 'x', E'x', "names", $$x$$, comments
+================================================================================
+
+type file = app.files
+  can a = {"a}b" is not null and "it's" is not null}
+  can b = {name <> $$}$$ and name <> 'it''s }'}
+  can c = {name in (E'it\'s', e'}') and a$b = 1 and E = 'x'}
+  can d = {not archived /* a } here */}
+  can e = {not archived -- the } here is SQL's comment
+    }
+
+test "own data"
+  given a = {INSERT INTO app.users (name) VALUES ('x') -- don't
+    RETURNING id}
+  user $a can view file 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type
+    name: (identifier)
+    table: (table_name
+      schema: (identifier)
+      name: (identifier))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)
+        (comment))))
+  (test
+    name: (string)
+    (given
+      name: (identifier)
+      (sql
+        (sql_text
+          (comment))))
+    (check
+      principal: (identifier)
+      who: (variable)
+      permission: (identifier)
+      type: (identifier)
+      object: (value))))
+
+================================================================================
+Test ids: a $ inside a value, a variable (all up to a space), a quoted literal
+================================================================================
+
+test
+  user a$b can view file 1
+  user $ann cannot view file 'a b'
+  user $a-b can view file 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (test
+    (check
+      principal: (identifier)
+      who: (value)
+      permission: (identifier)
+      type: (identifier)
+      object: (value))
+    (check
+      principal: (identifier)
+      who: (variable)
+      permission: (identifier)
+      type: (identifier)
+      object: (literal))
+    (check
+      principal: (identifier)
+      who: (variable)
+      permission: (identifier)
+      type: (identifier)
+      object: (value))))

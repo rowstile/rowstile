@@ -1,0 +1,60 @@
+-- The lines a block starts with, a comment after them, and the forms on a type's lines.
+include "roles.authz"
+-- <------- keyword.declaration.authz
+--      ^^^^^^^^^^^^^ string.quoted.double.authz
+
+type user = app.users
+type service = app.services (id uuid) principal
+--                                    ^^^^^^^^^ keyword.other.principal.authz
+type file = app.files
+  owner : user = owner_id
+--^^^^^ variable.other.relation.authz
+  viewer : user:*, service:* shared
+--^^^^^^ variable.other.relation.authz
+--         ^^^^ support.type.subject.authz
+--             ^^ keyword.operator.wildcard.authz
+--                 ^^^^^^^ support.type.subject.authz
+--                        ^^ keyword.operator.wildcard.authz
+--                           ^^^^^^ keyword.other.authz
+  editor : user = app.file_editors(object: file_id, subject: user_id)
+--^^^^^^ variable.other.relation.authz
+--                ^^^^^^^^^^^^^^^^ entity.name.tag.table.authz
+--                                 ^^^^^^ keyword.other.authz
+--                                                  ^^^^^^^ keyword.other.authz
+--                                         ^^^^^^^ source.authz
+  member : team#member = app.file_teams(file_id -> team_id)
+--^^^^^^ variable.other.relation.authz
+--                       ^^^^^^^^^^^^^^ entity.name.tag.table.authz
+  can view = owner or viewer or editor or member
+
+test "an owner sees the file"    -- with its own data
+-- <---- keyword.declaration.section.authz
+--   ^^^^^^^^^^^^^^^^^^^^^^^^ string.quoted.authz
+--                               ^^^^^^^^^^^^^^^^^^^^ comment.line.double-dash.authz
+  as user 'a b' allowed {SELECT 1}
+--^^ keyword.control.authz
+--   ^^^^^^^^^^ variable.other.authz
+--              ^^^^^^^ keyword.control.authz
+  as user 'it''s' sees 0 {SELECT 1}
+--   ^^^^^^^^^^^^ variable.other.authz
+--                ^^^^^^ keyword.control.authz
+  user 'a b' can view file 'x y'
+--^^^^^^^^^^ variable.other.authz
+--           ^^^ keyword.control.authz
+--               ^^^^ entity.name.function.permission.authz
+--                    ^^^^ entity.name.type.authz
+  user a$b cannot view file 1
+--^^^^^^^^ variable.other.authz
+--         ^^^^^^ keyword.control.authz
+
+test   -- on the data already there
+-- <---- keyword.declaration.section.authz
+--     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comment.line.double-dash.authz
+  anyone cannot view file 1
+--^^^^^^ variable.other.authz
+--       ^^^^^^ keyword.control.authz
+
+invariants   -- what is never so
+-- <---------- keyword.declaration.section.authz
+--           ^^^^^^^^^^^^^^^^^^^ comment.line.double-dash.authz
+  never file: view and not owner

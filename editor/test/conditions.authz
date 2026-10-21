@@ -1,0 +1,24 @@
+-- Conditions whose SQL holds what parse.py reads as quoted: a brace or a quote there opens or closes nothing.
+type user = app.users
+type file = app.files
+  owner : user = owner_id
+  can view = owner
+  can a = owner or {"a}b" is not null}
+  can b = owner or {"it's" is not null}
+  can c = owner or {name <> $$}$$}
+  can d = owner or {name <> E'it\'s'}
+  can e = owner or {name in (E'it\'s', e'}')}
+  can f = owner or {name <> 'it''s }'}
+  can g = owner or {not archived /* a } here */}
+  can h = owner or {not archived -- the } here is SQL's comment
+    }
+  can i = owner or {a$b = 1 and E = 'x'}
+--^^^ keyword.declaration.permission.authz
+--    ^ entity.name.function.permission.authz
+
+test "its own data"
+  given a = {INSERT INTO app.users (name) VALUES ('x') -- don't
+    RETURNING id}
+  user $a can view file 1
+--^^^^^^^ variable.other.authz
+--        ^^^ keyword.control.authz

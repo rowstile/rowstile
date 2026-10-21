@@ -1,0 +1,32 @@
+-- An update rule: its last word before the colon, if it is before or after, says which row the rule is
+-- checked on; the words before it are columns, which may be named before or after too.
+type user = app.users
+type file = app.files
+  owner : user = owner_id
+  can edit = owner
+
+rules app.files
+  update after : edit
+--       ^^^^^ keyword.other.when.authz
+  update folder_id after : edit
+--       ^^^^^^^^^ variable.other.column.authz
+--                 ^^^^^ keyword.other.when.authz
+  update folder_id before : edit
+--       ^^^^^^^^^ variable.other.column.authz
+--                 ^^^^^^ keyword.other.when.authz
+  update after after : edit
+--       ^^^^^ variable.other.column.authz
+--             ^^^^^ keyword.other.when.authz
+  update before before : edit
+--       ^^^^^^ variable.other.column.authz
+--              ^^^^^^ keyword.other.when.authz
+  update before after : edit
+--       ^^^^^^ variable.other.column.authz
+--              ^^^^^ keyword.other.when.authz
+  update after, before, title : edit
+--       ^^^^^ variable.other.column.authz
+--              ^^^^^^ variable.other.column.authz
+--                      ^^^^^ variable.other.column.authz
+  mask before, after, title : edit
+--     ^^^^^^ variable.other.column.authz
+--             ^^^^^ variable.other.column.authz

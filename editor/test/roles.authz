@@ -1,0 +1,3 @@
+-- The file blocks.authz includes.
+type team = app.teams
+  member : user = user_id
