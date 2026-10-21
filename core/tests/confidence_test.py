@@ -701,7 +701,9 @@ def main() -> None:
     check(
         "each governed table read as someone, with its time",
         set(tables) == {"app.folders", "app.files"}
-        and all(t["ms"] is not None and t["ms"] >= 0 for t in tables.values()),
+        and all(t["ms"] is not None and t["ms"] >= 0 for t in tables.values())
+        # (no count of rows: the read is a count(*), whose plan's top node gives one row, whatever the table holds)
+        and all(set(t) == {"table", "ms", "warnings"} for t in tables.values()),
         p,
     )
     rc, out = cli(db, "plans", "--as", "user:1")
@@ -721,11 +723,11 @@ def main() -> None:
         d.script("REVOKE SELECT ON app.files FROM app_user")
         return perf.plans(d, database.policy_compiler(*database.applied(d)), ("user", "1"))
 
-    failed = {t["table"]: (t["ms"], t["rows"], t["warnings"]) for t in work(unreadable)["tables"]}
+    failed = {t["table"]: (t["ms"], t["warnings"]) for t in work(unreadable)["tables"]}
     check(
         "a table the app role may not read: the read failed, and why; the others are read",
-        failed.get("app.files") == (None, None, ["failed: permission denied for table files"])
-        and failed.get("app.folders", (None, None, []))[0] is not None,
+        failed.get("app.files") == (None, ["failed: permission denied for table files"])
+        and failed.get("app.folders", (None, []))[0] is not None,
         failed,
     )
     with mock.patch.object(perf, "SLOW_MS", -1):  # every read is slower than that
@@ -955,11 +957,21 @@ def main() -> None:
     pair = {"cx.folders.parent_type, parent_id", "cx.backings.backer_type, backer_id"}
     on_type = by("CREATE INDEX ON cx.folders (parent_type); CREATE INDEX ON cx.backings (backer_type)")
     on_id = by("CREATE INDEX ON cx.folders (parent_id); CREATE INDEX ON cx.backings (backer_id)")
-    found = [rowstile_cli.transaction(pconn, f, keep=False) for f in (served, on_type, on_id)]
+    # an index's INCLUDE columns are held in it, not sorted by: they lead nothing
+    included = by(
+        "CREATE INDEX ON cx.folders (parent_id) INCLUDE (parent_type); "
+        "CREATE INDEX ON cx.backings (backer_id) INCLUDE (backer_type)"
+    )
+    found = [rowstile_cli.transaction(pconn, f, keep=False) for f in (served, on_type, on_id, included)]
     check(
         "indexes and lint: a (type, id) pair is served by an index on (type, id) or on its type, not by one on its id",
         found[0] == (set(), set()) and found[1] == (set(), set()) and found[2] == (pair, pair),
         found,
+    )
+    check(
+        "indexes and lint: an index on (id) INCLUDE (type) serves no (type, id) pair: its INCLUDE columns lead nothing",
+        found[3] == (pair, pair),
+        found[3],
     )
     pconn.close()
     subprocess.run(["dropdb", "--if-exists", pairs], capture_output=True)

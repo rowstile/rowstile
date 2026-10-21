@@ -47,7 +47,6 @@ NO_TRANSACTION = {"goose": "-- +goose NO TRANSACTION", "dbmate": "-- migrate:up 
 class TablePlan(TypedDict):
     table: str
     ms: float | None  # None: the read failed
-    rows: int | None
     warnings: list[str]
 
 
@@ -125,10 +124,12 @@ def needed_indexes(c: Compiler) -> list[Lookup]:
 def table_indexes(db: Db, table: str) -> list[tuple[str, ...]]:
     """The column lists of the table's indexes (a primary key and unique constraints included): the columns
     each one starts with, up to its first expression (an index on (lower(name), team_id) serves no lookup by
-    team_id). Valid indexes only."""
+    team_id). Its key columns only: an index on (a) INCLUDE (b) holds b but is not sorted by it, so it serves no
+    lookup by (a, b). Valid indexes only."""
     rows = db.rows(
         "SELECT array(SELECT a.attname::text FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(n, o) "
-        "LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.n ORDER BY k.o) AS cols "
+        "LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.n WHERE k.o <= i.indnkeyatts "
+        "ORDER BY k.o) AS cols "
         "FROM pg_catalog.pg_index i WHERE i.indrelid = to_regclass($1) AND i.indpred IS NULL AND i.indisvalid",
         [qt(table)],  # quoted: to_regclass folds a bare name to lower case, and "TeamMember" is then not found
     )
@@ -241,7 +242,7 @@ def app_role(db: Db) -> str | None:
 def sample_principal(db: Db, c: Compiler) -> tuple[str | None, str | None]:
     """Someone to look as: the first user (by key) in the data."""
     for t in c.types.values():
-        if t.name == "user" or t.principal:
+        if t.principal:
             r = db.rows(f"SELECT ({c.key(t, 'r')})::text AS id FROM {qt(t.table)} r ORDER BY 1 LIMIT 1")
             if r:
                 return t.name, text(r[0], "id")
@@ -281,7 +282,7 @@ def walk(plan: dict[str, Value], out: list[str], governed: str) -> None:
 
 def plans(db: Db, c: Compiler, who: tuple[str, str] | None = None) -> Plans:
     """Each governed table read as someone (default: a user in the data), with EXPLAIN ANALYZE as the app
-    role: how long it took, how many rows, and what looks slow. Runs in the caller's transaction (roll it back)."""
+    role: how long it took, and what looks slow. Runs in the caller's transaction (roll it back)."""
     from .database import Error, may_take, savepoint
 
     role = app_role(db)
@@ -311,11 +312,10 @@ def plans(db: Db, c: Compiler, who: tuple[str, str] | None = None) -> Plans:
                 ms = round(_num(top, "Execution Time", 0.0), 2)
                 if ms > SLOW_MS:
                     warnings.insert(0, f"took {ms} ms")
-                count = _num(plan, "Actual Rows", 0)
-                out.append({"table": table, "ms": ms, "rows": int(count), "warnings": list(dict.fromkeys(warnings))})
+                out.append({"table": table, "ms": ms, "warnings": list(dict.fromkeys(warnings))})
                 db.rows("RESET ROLE")
         except db.errors as e:
-            out.append({"table": table, "ms": None, "rows": None, "warnings": [f"failed: {getattr(e, 'message', e)}"]})
+            out.append({"table": table, "ms": None, "warnings": [f"failed: {getattr(e, 'message', e)}"]})
     return {"as": f"{ptype}:{pid}" if pid else "anyone", "tables": out}
 
 

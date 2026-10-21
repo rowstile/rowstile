@@ -7777,11 +7777,12 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     CONTINUE WHEN (SELECT c.relkind FROM pg_class c WHERE c.oid = to_regclass(r.tbl)) = 'v';
     -- an index whose first columns are these (one, or a composite key's, in any order), or what serves a (type, id)
     -- pair alone (its ids where they are two columns, its type where its id is one): a finished one, with no
-    -- condition (the lookups are joins, which a partial index doesn't serve), as rowstile indexes counts them
+    -- condition (the lookups are joins, which a partial index doesn't serve), as rowstile indexes counts them; its key
+    -- columns only (an index on (a) INCLUDE (b) is not sorted by b)
     IF NOT EXISTS (SELECT 1 FROM pg_index i, unnest(ARRAY[r.col, r.alone]) w(cs)
                    WHERE w.cs IS NOT NULL AND i.indrelid = to_regclass(r.tbl) AND i.indisvalid AND i.indpred IS NULL
                      AND (SELECT array_agg(a.attname::text ORDER BY a.attname)
-                          FROM unnest((i.indkey::int2[])[0:cardinality(string_to_array(w.cs, ', ')) - 1]) k
+                          FROM unnest((i.indkey::int2[])[0:least(cardinality(string_to_array(w.cs, ', ')), i.indnkeyatts) - 1]) k
                           JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k)
                          = (SELECT array_agg(c ORDER BY c) FROM unnest(string_to_array(w.cs, ', ')) c)) THEN
       severity := 'performance'; object := to_regclass(r.tbl)::text || '.' || r.col;

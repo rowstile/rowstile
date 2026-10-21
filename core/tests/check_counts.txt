@@ -7,7 +7,7 @@ capitals 98
 children 100
 cli 151
 concurrency 28
-confidence 63
+confidence 64
 cookbook 102
 cuts half way 28
 cuts half way, every statement 31

@@ -99,6 +99,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `connection_check` and the API key calls, and it said the TypeScript client had the same calls, which it
   doesn't quite (no `principal`, signing in with `asUser`). It now lists each client's calls, and which calls the
   TypeScript SDK has. Its table of functions names `authz.perms_of` and `authz.connection_check`.
+- `rowstile indexes` and `authz.lint()` counted an index's INCLUDE columns as if the index were sorted by them.
+  An index on `(parent_id) INCLUDE (parent_type)` was said to serve a lookup by `(parent_type, parent_id)`, so a
+  lookup with no index could go unnamed. Only an index's key columns count now.
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch

@@ -51,7 +51,6 @@ class DevMixin(Core):
         ]
         edges: list[str] = []
         specials: set[str] = set()
-        user_node = "user" if "user" in self.types else None
         for t in self.types.values():
             if t.name == "user" and not t.perms:
                 out.append('  user(("user")):::user')
@@ -77,13 +76,13 @@ class DevMixin(Core):
                             lab = how
                         elif sr == "*":
                             # everyone of the type who is signed in: the user, or the type's box
-                            target = user_node if st == "user" else _box(st)
+                            target = "user" if st == "user" else _box(st)
                             lab = how + (" (everyone)" if st == "user" else f" (every {st})")
                         elif sr and drawn:
                             target = _id(st, sr)
                             lab = how
                         elif st == "user":
-                            target = user_node
+                            target = "user"
                             lab = how
                         else:
                             target = _box(st)
