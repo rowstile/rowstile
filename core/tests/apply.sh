@@ -370,8 +370,17 @@ case "$out" in *t) ok "... and so does apply --force";; *) bad "apply --force" "
 dropdb "${DB}_restored"
 
 echo "-- removing"
-nshares=$(PSQL -c "SELECT count(*) FROM authz.shares")
+# an older command doesn't know all a newer one makes, and would leave some of it behind: refused, as apply is
+PSQL -c "UPDATE authz.policy_versions SET version = '99.0.0' WHERE id = (SELECT max(id) FROM authz.policy_versions)" >/dev/null
 run remove --yes
+case "$out" in *"this database's policy was last written by rowstile 99.0.0, which is newer than this command ("*"): going on would put this older version's work back [AZ616]
+HINT: upgrade the rowstile command; to go back to this version on purpose, add --downgrade")
+  [ $rc -ne 0 ] && [ "$(PSQL -c "SELECT to_regnamespace('authz_int') IS NOT NULL, (SELECT action FROM authz.policy_versions ORDER BY id DESC LIMIT 1)")" = "t|apply" ] &&
+  ok "remove refuses a policy a newer version applied, as apply does, and removes nothing" || bad "remove over a newer version: rc or what is left" "$rc";;
+  *) bad "remove over a newer version" "$out";; esac
+nshares=$(PSQL -c "SELECT count(*) FROM authz.shares")
+run remove --yes --downgrade
+[ $rc -eq 0 ] && ok "... unless asked: remove --yes --downgrade" || bad "remove --downgrade" "$out"
 case "$out" in *"app.files was governed by the removed policy, and row-level security is still on"*) ok "remove warns that row-level security stays on";;
   *) bad "remove warning" "$out";; esac
 [ "$(PSQL -c "SELECT count(*) FROM pg_namespace WHERE nspname IN ('authz_gen', 'authz_int')")" = 0 ] && ok "its schemas are gone" || bad "schemas left"
@@ -458,6 +467,37 @@ PSQL -c "DROP TABLE mt.docs CASCADE" >/dev/null 2>&1
 run remove --yes
 [ $rc -eq 0 ] && [ "$(PSQL -c "SELECT count(*) FROM authz.masked_tables")" = 0 ] &&
   ok "remove after the app dropped a masked table: nothing to give back on it, the mask forgotten" || bad "remove without the masked table" "$rc $out"
+# every privilege anyone but an object's owner holds, in the app's schemas and rowstile's: removing leaves them as
+# they were before the first apply (the app role keeps no USAGE or EXECUTE in authz, a mask's columns are given back)
+privs() { psql -X -q -At -d "$1" -c "
+  WITH acl AS (
+    SELECT 'schema ' || n.nspname AS what, a.grantee, a.privilege_type FROM pg_namespace n, aclexplode(n.nspacl) a
+     WHERE a.grantee <> n.nspowner
+    UNION ALL
+    SELECT 'relation ' || c.oid::regclass, a.grantee, a.privilege_type FROM pg_class c, aclexplode(c.relacl) a
+     WHERE a.grantee <> c.relowner
+    UNION ALL
+    SELECT 'column ' || c.oid::regclass || '.' || att.attname, a.grantee, a.privilege_type
+      FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid, aclexplode(att.attacl) a
+    UNION ALL
+    SELECT 'routine ' || p.oid::regprocedure, a.grantee, a.privilege_type FROM pg_proc p, aclexplode(p.proacl) a
+     WHERE a.grantee <> p.proowner
+    UNION ALL
+    SELECT 'default ' || d.defaclobjtype::text, a.grantee, a.privilege_type FROM pg_default_acl d, aclexplode(d.defaclacl) a)
+  SELECT what || ' ' || CASE grantee WHEN 0 THEN 'PUBLIC' ELSE grantee::regrole::text END || ' ' || privilege_type
+    FROM acl WHERE what !~ '^[a-z]+ (pg_|information_schema)' ORDER BY 1"; }
+for pair in "example/app_schema.sql example/docs.authz" "tests/multi_schema.sql tests/multi.authz"; do
+  set -- $pair
+  fresh "${DB}_privs"
+  quiet -d "${DB}_privs" -f "$1" >/dev/null || exit 1
+  before=$(privs "${DB}_privs")
+  out=$(python3 cli/rowstile_cli.py --db "dbname=${DB}_privs" apply "$2" 2>&1 &&
+        python3 cli/rowstile_cli.py --db "dbname=${DB}_privs" remove --yes 2>&1) || bad "apply and remove $2" "$out"
+  left=$(diff <(echo "$before") <(privs "${DB}_privs") | grep '^[<>]' | tr '\n' ';')
+  [ -n "$before" ] && [ -z "$left" ] && ok "$2: after remove, every privilege is as it was before the first apply" ||
+    bad "$2: privileges after remove, against before the first apply" "$left"
+done
+dropdb "${DB}_privs"
 
 echo "-- a condition Postgres refuses"
 # rowstile check can't see these (they need the tables): applying names the condition's line

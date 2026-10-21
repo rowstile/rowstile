@@ -107,6 +107,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   security too, so deleting a row (or changing its key) can change rows the user may not change. The warning says
   which action and what it does, and asks for `RESTRICT` (where it said `ON DELETE RESTRICT`) or a `cascade from`
   line. `ON UPDATE CASCADE` stays quiet: the row still names the same row.
+- `rowstile remove` left the app role its USAGE on schema `authz` and its EXECUTE on `authz.ctx` and
+  `authz.link_hashes`, which applying gives. It now takes them back: after removing, every privilege is as it
+  was before the first apply.
+- `rowstile remove` ran over a policy a newer version of rowstile applied, though an older command doesn't
+  know everything a newer one makes and would leave some of it behind. It is refused now (AZ616), as `apply`,
+  `push` and `migrate` are, unless told `--downgrade`.
 - `rowstile init` stopped with a Python traceback (`KeyError`) when the table the columns naming users point to
   wasn't among the drafted ones: in another schema (as Supabase's `auth.users`, with `--schema public`), or left
   out for its name. It now says which table, which columns point to it, and what to do: draft its schema too,
