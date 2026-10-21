@@ -1559,7 +1559,7 @@ END $keep$;"""
             body = f"BEGIN RETURN (SELECT w.{q(self.pk(t))} FROM {qt(t.table)} w WHERE w.{q(self.pk(t))} = ({cast}){where}); END"
             attrs = "LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT"
             out.append(
-                f"-- the signed-in {t.name}, if a {t.name} is signed in (an id its table doesn't have"
+                f"-- the signed-in {t.name}, if one is signed in (an id its table doesn't have"
                 + (", or one failing the type's where," if t.where else "")
                 + " counts as nobody)\n"
                 f"CREATE FUNCTION authz_int.{q(t.name + '__me')}() RETURNS {t.pktype} {attrs} AS $me$ {body} $me$;"
