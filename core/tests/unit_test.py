@@ -4037,7 +4037,11 @@ rules app.folders
         self.assertEqual(
             failed, ["- fails: a test", "- fails: another (tests/a.authz line 3): `user 1 can view file 2: no`"]
         )
-        sql = "ALTER TABLE app.docs ENABLE ROW LEVEL SECURITY;\nDROP TRIGGER t ON app.docs;\n"
+        # (rowstile's own tables, quoted or not, are none of the app's)
+        sql = (
+            "ALTER TABLE app.docs ENABLE ROW LEVEL SECURITY;\nDROP TRIGGER t ON app.docs;\n"
+            'DROP TRIGGER u ON authz.audit;\nCREATE POLICY p ON "authz_gen"."x" USING (true);\n'
+        )
         self.assertEqual(
             self.review.table_locks(sql), {"app.docs": ("ACCESS EXCLUSIVE", "row-level security turned on")}
         )
