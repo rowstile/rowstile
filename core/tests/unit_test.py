@@ -10804,6 +10804,18 @@ class CoverageReport(unittest.TestCase):
             self.report.not_run(f),
             [f"{2:>11}  {two}", f"{3:>11}  never to the function's end, line 5: {three}"],
         )
+        # the way on from a failure at a loop's end (back to the loop) is no branch a run can take: not shown
+        code = "for x in xs:\n    if bad(x):\n        fail(x)\nraise E\n"
+        f = self.report.File(
+            name="x.py",
+            statements=[1, 2, 3, 4],
+            missing=[],
+            never={2: [1], 3: [1], 4: [-1]},
+            branches=4,
+            branches_run=1,
+        )
+        self.assertEqual(self.report.stops(code), {3, 4})
+        self.assertEqual(self.report.not_run(f, code=code), [f"{2:>11}  never to line 1: if bad(x):"])
 
     def test_what_made_a_function(self) -> None:
         kind = self.report.kind

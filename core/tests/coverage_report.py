@@ -447,16 +447,27 @@ def summary(files: Sequence[File]) -> str:
     )
 
 
-def not_run(f: File, only: set[int] | None = None) -> list[str]:
-    """The lines of f nothing runs, as runs of lines, and the branches never taken from lines that ran; with
-    `only`, those among these lines."""
-    lines = source(f.name)
+def stops(code: str) -> set[int]:
+    """The lines a statement that never goes on starts on: fail(...) and raise. Coverage counts the way on from
+    such a statement (back to its loop, say) as a branch, which no run can take."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()
+    return {node.lineno for node in ast.walk(tree) if isinstance(node, ast.stmt) and fails(node)}
+
+
+def not_run(f: File, only: set[int] | None = None, code: str | None = None) -> list[str]:
+    """The lines of f nothing runs, as runs of lines, and the branches never taken from lines that ran (but the
+    way on from a failure, `stops`); with `only`, those among these lines. code: f's text, if not read from it."""
+    lines = source(f.name) if code is None else code.split("\n")
+    never_on = stops("\n".join(lines))
     missing = [n for n in f.missing if only is None or n in only]
     entries = [(a, f"{a if a == b else f'{a}-{b}':>11}  {text(lines, a)}") for a, b in ranges(missing, f.statements)]
     entries += [
         (n, f"{n:>11}  never to {', '.join(where(t) for t in targets)}: {text(lines, n)}")
         for n, targets in f.never.items()
-        if only is None or n in only
+        if (only is None or n in only) and n not in never_on
     ]
     return [entry for _, entry in sorted(entries)]
 
