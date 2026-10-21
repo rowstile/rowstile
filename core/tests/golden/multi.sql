@@ -2323,21 +2323,18 @@ CREATE VIEW authz_int."org__admin" AS
   SELECT x.id FROM (
   SELECT s."org_id" AS id FROM "mt"."org_members" s WHERE s."user_id" = (SELECT authz.uid()) AND coalesce((role = 'admin'), false)) x
   WHERE EXISTS (SELECT 1 FROM "mt"."orgs" w WHERE w."id" = x.id AND coalesce((not suspended), false));
-CREATE VIEW authz_gen."org__admin" WITH (security_barrier) AS SELECT id FROM authz_int."org__admin";
 
 -- org.manage_roles (line 10): admin
 CREATE VIEW authz_int."org__manage_roles" AS
   SELECT x.id FROM (
   SELECT id FROM authz_int."org__admin") x
   WHERE EXISTS (SELECT 1 FROM "mt"."orgs" w WHERE w."id" = x.id AND coalesce((not suspended), false));
-CREATE VIEW authz_gen."org__manage_roles" WITH (security_barrier) AS SELECT id FROM authz_int."org__manage_roles";
 
 -- org.member (line 8)
 CREATE VIEW authz_int."org__member" AS
   SELECT x.id FROM (
   SELECT s."org_id" AS id FROM "mt"."org_members" s WHERE s."user_id" = (SELECT authz.uid())) x
   WHERE EXISTS (SELECT 1 FROM "mt"."orgs" w WHERE w."id" = x.id AND coalesce((not suspended), false));
-CREATE VIEW authz_gen."org__member" WITH (security_barrier) AS SELECT id FROM authz_int."org__member";
 
 -- org.view (line 11): member or admin
 CREATE VIEW authz_int."org__view" AS
@@ -2346,7 +2343,6 @@ CREATE VIEW authz_int."org__view" AS
   UNION ALL
   (SELECT id FROM authz_int."org__admin")) x
   WHERE EXISTS (SELECT 1 FROM "mt"."orgs" w WHERE w."id" = x.id AND coalesce((not suspended), false));
-CREATE VIEW authz_gen."org__view" WITH (security_barrier) AS SELECT id FROM authz_int."org__view";
 
 -- team.member (line 14)
 CREATE VIEW authz_int."team__member" AS
@@ -2357,10 +2353,9 @@ CREATE VIEW authz_int."team__member" AS
     SELECT e.obj FROM (
   SELECT g.object_id::bigint AS obj, g.subject_id::bigint AS subj FROM authz.shares g WHERE g.object_type = 'team' AND g.relation = 'member' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) e JOIN m ON e.subj = m.id)
   SELECT id FROM m;
-CREATE VIEW authz_gen."team__member" WITH (security_barrier) AS SELECT id FROM authz_int."team__member";
 
 -- team.member for the user signed in, as an array (reads ask once per statement)
-CREATE FUNCTION authz_gen."team__member__ids"() RETURNS bigint[]
+CREATE FUNCTION authz_int."team__member__ids"() RETURNS bigint[]
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   RETURN ARRAY(SELECT id FROM authz_int."team__member");
@@ -2369,37 +2364,32 @@ END $f$;
 -- team.manage (line 16): member
 CREATE VIEW authz_int."team__manage" AS
   SELECT id FROM authz_int."team__member";
-CREATE VIEW authz_gen."team__manage" WITH (security_barrier) AS SELECT id FROM authz_int."team__manage";
 
 -- team.manage_roles (line 17): member
 CREATE VIEW authz_int."team__manage_roles" AS
   SELECT id FROM authz_int."team__member";
-CREATE VIEW authz_gen."team__manage_roles" WITH (security_barrier) AS SELECT id FROM authz_int."team__manage_roles";
 
 -- folder.owner (line 31)
 CREATE VIEW authz_int."folder__owner" AS
   SELECT x.id FROM (
   SELECT r."id" AS id FROM "mt"."folders" r WHERE r."owner_id" = (SELECT authz.uid())) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__owner" WITH (security_barrier) AS SELECT id FROM authz_int."folder__owner";
 
 -- folder.editor (line 32)
 CREATE VIEW authz_int."folder__editor" AS
   SELECT x.id FROM (
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__editor" WITH (security_barrier) AS SELECT id FROM authz_int."folder__editor";
 
 -- folder.custom roles granting edit (line 37)
 CREATE VIEW authz_int."folder__roles:edit" AS
   SELECT x.id FROM (
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__roles:edit" WITH (security_barrier) AS SELECT id FROM authz_int."folder__roles:edit";
 
 -- folder.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__edit__start"() RETURNS SETOF bigint
@@ -2418,12 +2408,10 @@ END $f$;
 -- project.lead (line 22)
 CREATE VIEW authz_int."project__lead" AS
   SELECT r."id" AS id FROM "mt"."projects" r WHERE r."lead_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."project__lead" WITH (security_barrier) AS SELECT id FROM authz_int."project__lead";
 
 -- project.org.admin
 CREATE VIEW authz_int."project__org__admin" AS
   SELECT r."id" AS id FROM "mt"."projects" r WHERE r."org_id" IN (SELECT id FROM authz_int."org__admin");
-CREATE VIEW authz_gen."project__org__admin" WITH (security_barrier) AS SELECT id FROM authz_int."project__org__admin";
 
 -- project.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."project__edit__start"() RETURNS SETOF bigint
@@ -2442,7 +2430,6 @@ CREATE VIEW authz_int."project__edit" AS
   SELECT 'folder'::text, x::text FROM authz_int."folder__edit__start"() x
   UNION ALL
   SELECT 'project'::text, x::text FROM authz_int."project__edit__start"() x);
-CREATE VIEW authz_gen."project__edit" WITH (security_barrier) AS SELECT id FROM authz_int."project__edit";
 
 -- folder.edit (line 38): owner or editor or (parent.edit and {not locked}) or roles
 CREATE VIEW authz_int."folder__edit" AS
@@ -2453,29 +2440,26 @@ CREATE VIEW authz_int."folder__edit" AS
   UNION ALL
   SELECT 'project'::text, x::text FROM authz_int."project__edit__start"() x)) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__edit" WITH (security_barrier) AS SELECT id FROM authz_int."folder__edit";
 
 -- folder.viewer (line 33)
 CREATE VIEW authz_int."folder__viewer" AS
   SELECT x.id FROM (
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = '*' AND (SELECT authz.uid()) IS NOT NULL AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'link' AND g.subject_id = ANY ((SELECT authz.link_hashes())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__viewer" WITH (security_barrier) AS SELECT id FROM authz_int."folder__viewer";
 
 -- folder.custom roles granting view (line 37)
 CREATE VIEW authz_int."folder__roles:view" AS
   SELECT x.id FROM (
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__roles:view" WITH (security_barrier) AS SELECT id FROM authz_int."folder__roles:view";
 
 -- folder.view: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__view__start"() RETURNS SETOF bigint
@@ -2495,21 +2479,19 @@ END $f$;
 CREATE VIEW authz_int."project__viewer" AS
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = '*' AND (SELECT authz.uid()) IS NOT NULL AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'anyone' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'link' AND g.subject_id = ANY ((SELECT authz.link_hashes())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END));
-CREATE VIEW authz_gen."project__viewer" WITH (security_barrier) AS SELECT id FROM authz_int."project__viewer";
 
 -- project.custom roles granting view (line 24)
 CREATE VIEW authz_int."project__roles:view" AS
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END));
-CREATE VIEW authz_gen."project__roles:view" WITH (security_barrier) AS SELECT id FROM authz_int."project__roles:view";
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END));
 
 -- project.view: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."project__view__start"() RETURNS SETOF bigint
@@ -2530,12 +2512,10 @@ CREATE VIEW authz_int."project__view" AS
   SELECT 'folder'::text, x::text FROM authz_int."folder__view__start"() x
   UNION ALL
   SELECT 'project'::text, x::text FROM authz_int."project__view__start"() x);
-CREATE VIEW authz_gen."project__view" WITH (security_barrier) AS SELECT id FROM authz_int."project__view";
 
 -- project.peek (line 27): lead
 CREATE VIEW authz_int."project__peek" AS
   SELECT id FROM authz_int."project__lead";
-CREATE VIEW authz_gen."project__peek" WITH (security_barrier) AS SELECT id FROM authz_int."project__peek";
 
 -- folder.view (line 39): edit or viewer or parent.view or roles
 CREATE VIEW authz_int."folder__view" AS
@@ -2546,30 +2526,26 @@ CREATE VIEW authz_int."folder__view" AS
   UNION ALL
   SELECT 'project'::text, x::text FROM authz_int."project__view__start"() x)) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__view" WITH (security_barrier) AS SELECT id FROM authz_int."folder__view";
 
 -- folder.share (line 40): edit
 CREATE VIEW authz_int."folder__share" AS
   SELECT x.id FROM (
   SELECT id FROM authz_int."folder__edit") x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__share" WITH (security_barrier) AS SELECT id FROM authz_int."folder__share";
 
 -- folder.peek (line 41): view
 CREATE VIEW authz_int."folder__peek" AS
   SELECT x.id FROM (
   SELECT id FROM authz_int."folder__view") x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__peek" WITH (security_barrier) AS SELECT id FROM authz_int."folder__peek";
 
 -- folder.custom roles granting archive (line 37)
 CREATE VIEW authz_int."folder__roles:archive" AS
   SELECT x.id FROM (
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END))) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__roles:archive" WITH (security_barrier) AS SELECT id FROM authz_int."folder__roles:archive";
 
 -- folder.archive (line 42): owner or roles
 CREATE VIEW authz_int."folder__archive" AS
@@ -2578,24 +2554,20 @@ CREATE VIEW authz_int."folder__archive" AS
   UNION ALL
   (SELECT id FROM authz_int."folder__roles:archive")) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__archive" WITH (security_barrier) AS SELECT id FROM authz_int."folder__archive";
 
 -- doc.author (line 46)
 CREATE VIEW authz_int."doc__author" AS
   SELECT r."id" AS id FROM "mt"."docs" r WHERE r."author_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."doc__author" WITH (security_barrier) AS SELECT id FROM authz_int."doc__author";
 
 -- doc.container.edit
 CREATE VIEW authz_int."doc__container__edit" AS
   (SELECT r."id" AS id FROM "mt"."docs" r WHERE (r."container_type" = 'folder' AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IN (SELECT id FROM authz_int."folder__edit")))
   UNION ALL
   (SELECT r."id" AS id FROM "mt"."docs" r WHERE (r."container_type" = 'project' AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IN (SELECT id FROM authz_int."project__edit")));
-CREATE VIEW authz_gen."doc__container__edit" WITH (security_barrier) AS SELECT id FROM authz_int."doc__container__edit";
 
 -- doc.custom roles granting edit (line 48)
 CREATE VIEW authz_int."doc__roles:edit" AS
   SELECT g.object_id::uuid AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."doc_orgs" w WHERE w."doc_id" = g.object_id::uuid AND coalesce((active), false))) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END);
-CREATE VIEW authz_gen."doc__roles:edit" WITH (security_barrier) AS SELECT id FROM authz_int."doc__roles:edit";
 
 -- doc.edit (line 49): author or container.edit or roles
 CREATE VIEW authz_int."doc__edit" AS
@@ -2604,14 +2576,12 @@ CREATE VIEW authz_int."doc__edit" AS
   (SELECT id FROM authz_int."doc__container__edit")
   UNION ALL
   (SELECT id FROM authz_int."doc__roles:edit");
-CREATE VIEW authz_gen."doc__edit" WITH (security_barrier) AS SELECT id FROM authz_int."doc__edit";
 
 -- doc.container.view
 CREATE VIEW authz_int."doc__container__view" AS
   (SELECT r."id" AS id FROM "mt"."docs" r WHERE (r."container_type" = 'folder' AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IN (SELECT id FROM authz_int."folder__view")))
   UNION ALL
   (SELECT r."id" AS id FROM "mt"."docs" r WHERE (r."container_type" = 'project' AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IN (SELECT id FROM authz_int."project__view")));
-CREATE VIEW authz_gen."doc__container__view" WITH (security_barrier) AS SELECT id FROM authz_int."doc__container__view";
 
 -- doc.view (line 50): edit or container.view
 CREATE VIEW authz_int."doc__view" AS
@@ -2620,31 +2590,26 @@ CREATE VIEW authz_int."doc__view" AS
   (SELECT id FROM authz_int."doc__roles:edit")
   UNION ALL
   (SELECT id FROM authz_int."doc__container__view");
-CREATE VIEW authz_gen."doc__view" WITH (security_barrier) AS SELECT id FROM authz_int."doc__view";
 
 -- doc.container.peek
 CREATE VIEW authz_int."doc__container__peek" AS
   (SELECT r."id" AS id FROM "mt"."docs" r WHERE (r."container_type" = 'folder' AND (CASE WHEN r."container_type" = 'folder' THEN r."container_id" END)::bigint IN (SELECT id FROM authz_int."folder__peek")))
   UNION ALL
   (SELECT r."id" AS id FROM "mt"."docs" r WHERE (r."container_type" = 'project' AND (CASE WHEN r."container_type" = 'project' THEN r."container_id" END)::bigint IN (SELECT id FROM authz_int."project__peek")));
-CREATE VIEW authz_gen."doc__container__peek" WITH (security_barrier) AS SELECT id FROM authz_int."doc__container__peek";
 
 -- doc.glance (line 51): container.peek or container.edit
 CREATE VIEW authz_int."doc__glance" AS
   (SELECT id FROM authz_int."doc__container__peek")
   UNION ALL
   (SELECT id FROM authz_int."doc__container__edit");
-CREATE VIEW authz_gen."doc__glance" WITH (security_barrier) AS SELECT id FROM authz_int."doc__glance";
 
 -- project.parent.edit
 CREATE VIEW authz_int."project__parent__edit" AS
   SELECT r."id" AS id FROM "mt"."projects" r WHERE r."folder_id" IN (SELECT id FROM authz_int."folder__edit");
-CREATE VIEW authz_gen."project__parent__edit" WITH (security_barrier) AS SELECT id FROM authz_int."project__parent__edit";
 
 -- project.parent.view
 CREATE VIEW authz_int."project__parent__view" AS
   SELECT r."id" AS id FROM "mt"."projects" r WHERE r."folder_id" IN (SELECT id FROM authz_int."folder__view");
-CREATE VIEW authz_gen."project__parent__view" WITH (security_barrier) AS SELECT id FROM authz_int."project__parent__view";
 
 -- folder.parent.edit
 CREATE VIEW authz_int."folder__parent__edit" AS
@@ -2653,7 +2618,6 @@ CREATE VIEW authz_int."folder__parent__edit" AS
   UNION ALL
   (SELECT r."id" AS id FROM "mt"."folders" r WHERE (r."parent_type" = 'project' AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint IN (SELECT id FROM authz_int."project__edit")))) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__parent__edit" WITH (security_barrier) AS SELECT id FROM authz_int."folder__parent__edit";
 
 -- folder.parent.view
 CREATE VIEW authz_int."folder__parent__view" AS
@@ -2662,7 +2626,6 @@ CREATE VIEW authz_int."folder__parent__view" AS
   UNION ALL
   (SELECT r."id" AS id FROM "mt"."folders" r WHERE (r."parent_type" = 'project' AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint IN (SELECT id FROM authz_int."project__view")))) x
   WHERE EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = x.id AND coalesce((not archived), false));
-CREATE VIEW authz_gen."folder__parent__view" WITH (security_barrier) AS SELECT id FROM authz_int."folder__parent__view";
 
 ALTER TABLE "mt"."docs" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
@@ -2678,20 +2641,33 @@ BEGIN
   END LOOP;
 END $rls$;
 
+-- mt.docs: no row has the id, or the user may select it (what the rules' explanations answer for)
+CREATE FUNCTION authz_int."mt.docs:seen"(p_id uuid) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  RETURN NOT EXISTS (SELECT 1 FROM "mt"."docs" o WHERE o."id" = p_id)
+      OR EXISTS (SELECT 1 FROM "mt"."docs" "docs" WHERE "docs"."id" = p_id
+        AND (SELECT authz_int.scope_cmd('mt.docs', 'select')) AND (coalesce("docs"."author_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))));
+END $f$;
+
 CREATE FUNCTION authz_gen."mt.docs:update:items"(p_row "mt"."docs") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."mt.docs:seen"("docs"."id") THEN ARRAY[
     coalesce((coalesce("docs"."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = "docs"."id")
-    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
-    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))), false),
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))), false),
     coalesce((SELECT authz_int.scope_cmd('mt.docs', 'update')), false),
     coalesce(true, false),
     coalesce((coalesce("docs"."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = "docs"."id")
-    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
-    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))), false)]
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "docs";
 END;
 
@@ -2747,22 +2723,22 @@ END $f$;
 -- mt.docs select (line 57): view
 CREATE POLICY "authz_select" ON "mt"."docs" FOR SELECT TO app_user
   USING (((SELECT authz_int.scope_cmd('mt.docs', 'select')) AND (coalesce("docs"."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = "docs"."id")
-    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
-    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint))))));
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint))))));
 
 COMMENT ON POLICY "authz_select" ON "mt"."docs" IS 'rowstile';
 
 -- mt.docs update (line 58): edit
 CREATE POLICY "authz_update" ON "mt"."docs" FOR UPDATE TO app_user
   USING (((SELECT authz_int.scope_cmd('mt.docs', 'update')) AND (coalesce("docs"."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = "docs"."id")
-    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
-    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint))))))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint))))))
   WITH CHECK (((SELECT authz_int.scope_cmd('mt.docs', 'update')) AND (coalesce("docs"."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = "docs"."id")
-    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
-    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))))
     OR authz_gen."mt.docs:update:refuse"(ROW("docs".*)::"mt"."docs"));
 
 COMMENT ON POLICY "authz_update" ON "mt"."docs" IS 'rowstile';
@@ -2787,18 +2763,18 @@ DECLARE cols text; uses text;
 BEGIN
   SELECT string_agg(CASE a.attname
       WHEN 'body' THEN format('CASE WHEN %s THEN %I.%I END AS %I', '(coalesce("docs"."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = "docs"."id")
-    OR (("docs"."container_type" = ''folder'' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''folder'' THEN "docs"."container_id" END)::bigint))
-    OR ("docs"."container_type" = ''project'' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''project'' THEN "docs"."container_id" END)::bigint))))', 'docs', a.attname, a.attname)
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = ''folder'' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''folder'' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = ''project'' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''project'' THEN "docs"."container_id" END)::bigint))))', 'docs', a.attname, a.attname)
       ELSE format('%I.%I', 'docs', a.attname) END, ', ' ORDER BY a.attnum) INTO cols
   FROM pg_attribute a WHERE a.attrelid = '"mt"."docs"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
   -- in place when it is there: what the app built on it (a view over it) goes on working
   BEGIN
     EXECUTE format('CREATE OR REPLACE VIEW "mt"."docs_visible" WITH (security_barrier) AS SELECT %s FROM "mt"."docs" "docs" WHERE %s',
                    cols, '(SELECT authz_int.scope_cmd(''mt.docs'', ''select'')) AND (coalesce("docs"."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = "docs"."id")
-    OR (("docs"."container_type" = ''folder'' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''folder'' THEN "docs"."container_id" END)::bigint))
-    OR ("docs"."container_type" = ''project'' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''project'' THEN "docs"."container_id" END)::bigint))))');
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = ''folder'' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''folder'' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = ''project'' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''project'' THEN "docs"."container_id" END)::bigint))))');
   EXCEPTION WHEN invalid_table_definition THEN
     -- its columns are not the ones it had (the table's changed): made anew, unless something is built on it
     BEGIN
@@ -2810,9 +2786,9 @@ BEGIN
     END;
     EXECUTE format('CREATE VIEW "mt"."docs_visible" WITH (security_barrier) AS SELECT %s FROM "mt"."docs" "docs" WHERE %s',
                    cols, '(SELECT authz_int.scope_cmd(''mt.docs'', ''select'')) AND (coalesce("docs"."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = "docs"."id")
-    OR (("docs"."container_type" = ''folder'' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''folder'' THEN "docs"."container_id" END)::bigint))
-    OR ("docs"."container_type" = ''project'' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''project'' THEN "docs"."container_id" END)::bigint))))');
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = ''folder'' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''folder'' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = ''project'' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = ''project'' THEN "docs"."container_id" END)::bigint))))');
   END;
 END $mv$;
 COMMENT ON VIEW "mt"."docs_visible" IS 'rowstile masked view';
@@ -2877,10 +2853,10 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'manage_roles' THEN RETURN EXISTS (SELECT 1 FROM "mt"."orgs" o WHERE o."id" = v_bigint AND ((EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."id")
+        WHEN 'manage_roles' THEN RETURN EXISTS (SELECT 1 FROM "mt"."orgs" o WHERE o."id" = v_bigint AND ((EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."id")
     AND coalesce((not suspended), false))));
-        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "mt"."orgs" o WHERE o."id" = v_bigint AND (((EXISTS (SELECT 1 FROM authz_gen."org__member" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."id"))
+        WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "mt"."orgs" o WHERE o."id" = v_bigint AND (((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."id"))
     AND coalesce((not suspended), false))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -2888,8 +2864,8 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'manage' THEN RETURN EXISTS (SELECT 1 FROM "mt"."teams" o WHERE o."id" = v_bigint AND (coalesce(o."id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]), false)));
-        WHEN 'manage_roles' THEN RETURN EXISTS (SELECT 1 FROM "mt"."teams" o WHERE o."id" = v_bigint AND (coalesce(o."id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]), false)));
+        WHEN 'manage' THEN RETURN EXISTS (SELECT 1 FROM "mt"."teams" o WHERE o."id" = v_bigint AND (coalesce(o."id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]), false)));
+        WHEN 'manage_roles' THEN RETURN EXISTS (SELECT 1 FROM "mt"."teams" o WHERE o."id" = v_bigint AND (coalesce(o."id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]), false)));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'project' THEN
@@ -2897,13 +2873,13 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "mt"."projects" o WHERE o."id" = v_bigint AND ((coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id"))));
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"))));
         WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "mt"."projects" o WHERE o."id" = v_bigint AND ((coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."project__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."project__roles:view" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."folder_id"))));
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."project__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."project__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))));
         WHEN 'peek' THEN RETURN EXISTS (SELECT 1 FROM "mt"."projects" o WHERE o."id" = v_bigint AND (coalesce(o."lead_id" = (SELECT authz.uid()), false)));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -2912,43 +2888,43 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "mt"."folders" o WHERE o."id" = v_bigint AND (((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
     AND coalesce((not archived), false))));
         WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "mt"."folders" o WHERE o."id" = v_bigint AND (((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:view" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
-    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
     AND coalesce((not archived), false))));
         WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "mt"."folders" o WHERE o."id" = v_bigint AND (((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
     AND coalesce((not archived), false))));
         WHEN 'peek' THEN RETURN EXISTS (SELECT 1 FROM "mt"."folders" o WHERE o."id" = v_bigint AND (((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:view" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
-    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
     AND coalesce((not archived), false))));
         WHEN 'archive' THEN RETURN EXISTS (SELECT 1 FROM "mt"."folders" o WHERE o."id" = v_bigint AND (((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:archive" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:archive" v WHERE v.id = o."id"))
     AND coalesce((not archived), false))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -2957,17 +2933,17 @@ BEGIN
       v_uuid := p_id::uuid;
       CASE p_perm
         WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "mt"."docs" o WHERE o."id" = v_uuid AND ((coalesce(o."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = o."id")
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))));
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = o."id")
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))));
         WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "mt"."docs" o WHERE o."id" = v_uuid AND ((coalesce(o."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = o."id")
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))));
-        WHEN 'glance' THEN RETURN EXISTS (SELECT 1 FROM "mt"."docs" o WHERE o."id" = v_uuid AND ((((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))));
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = o."id")
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))));
+        WHEN 'glance' THEN RETURN EXISTS (SELECT 1 FROM "mt"."docs" o WHERE o."id" = v_uuid AND ((((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     ELSE
@@ -2996,106 +2972,106 @@ BEGIN
     WHEN 'org.manage_roles' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."orgs" o
-        WHERE (EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."id")
+        WHERE (EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."id")
     AND coalesce((not suspended), false));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."orgs" o
-        WHERE (EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."id")
+        WHERE (EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."id")
     AND coalesce((not suspended), false))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."orgs" o
-        WHERE o."id" > p_after::bigint AND (EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."id")
+        WHERE o."id" > p_after::bigint AND (EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."id")
     AND coalesce((not suspended), false))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'org.view' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."orgs" o
-        WHERE ((EXISTS (SELECT 1 FROM authz_gen."org__member" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."id"))
+        WHERE ((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."id"))
     AND coalesce((not suspended), false));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."orgs" o
-        WHERE ((EXISTS (SELECT 1 FROM authz_gen."org__member" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."id"))
+        WHERE ((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."id"))
     AND coalesce((not suspended), false))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."orgs" o
-        WHERE o."id" > p_after::bigint AND ((EXISTS (SELECT 1 FROM authz_gen."org__member" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."id"))
+        WHERE o."id" > p_after::bigint AND ((EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."id"))
     AND coalesce((not suspended), false))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'team.manage' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."teams" o
-        WHERE coalesce(o."id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]), false);
+        WHERE coalesce(o."id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]), false);
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."teams" o
-        WHERE coalesce(o."id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]), false)
+        WHERE coalesce(o."id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]), false)
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."teams" o
-        WHERE o."id" > p_after::bigint AND coalesce(o."id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]), false)
+        WHERE o."id" > p_after::bigint AND coalesce(o."id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]), false)
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'team.manage_roles' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."teams" o
-        WHERE coalesce(o."id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]), false);
+        WHERE coalesce(o."id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]), false);
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."teams" o
-        WHERE coalesce(o."id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]), false)
+        WHERE coalesce(o."id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]), false)
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."teams" o
-        WHERE o."id" > p_after::bigint AND coalesce(o."id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]), false)
+        WHERE o."id" > p_after::bigint AND coalesce(o."id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]), false)
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'project.edit' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."projects" o
         WHERE (coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id"));
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."projects" o
         WHERE (coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."projects" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'project.view' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."projects" o
         WHERE (coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."project__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."project__roles:view" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."folder_id"));
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."project__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."project__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."projects" o
         WHERE (coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."project__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."project__roles:view" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."folder_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."project__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."project__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."projects" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."project__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."project__roles:view" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."folder_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."project__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."project__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'project.peek' THEN
@@ -3115,30 +3091,30 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
     AND coalesce((not archived), false));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE o."id" > p_after::bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
@@ -3146,42 +3122,42 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:view" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
-    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
     AND coalesce((not archived), false));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:view" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
-    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE o."id" > p_after::bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:view" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
-    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
@@ -3189,30 +3165,30 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
     AND coalesce((not archived), false));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE o."id" > p_after::bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint)))))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
@@ -3220,42 +3196,42 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:view" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
-    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
     AND coalesce((not archived), false));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:view" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
-    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE o."id" > p_after::bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:edit" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:view" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:edit" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:view" v WHERE v.id = o."id")
     OR (coalesce((not locked), false)
-    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
-    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
-    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    AND ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
+    OR ((o."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'folder' THEN o."parent_id" END)::bigint))
+    OR (o."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."parent_type" = 'project' THEN o."parent_id" END)::bigint))))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
@@ -3263,18 +3239,18 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:archive" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:archive" v WHERE v.id = o."id"))
     AND coalesce((not archived), false));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:archive" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:archive" v WHERE v.id = o."id"))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."folders" o
         WHERE o."id" > p_after::bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__roles:archive" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__roles:archive" v WHERE v.id = o."id"))
     AND coalesce((not archived), false))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
@@ -3282,66 +3258,66 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
         WHERE (coalesce(o."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = o."id")
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))));
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = o."id")
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
         WHERE (coalesce(o."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = o."id")
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = o."id")
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
         WHERE o."id" > p_after::uuid AND (coalesce(o."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = o."id")
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = o."id")
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'doc.view' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
         WHERE (coalesce(o."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = o."id")
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))));
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = o."id")
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
         WHERE (coalesce(o."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = o."id")
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = o."id")
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
         WHERE o."id" > p_after::uuid AND (coalesce(o."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = o."id")
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = o."id")
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'doc.glance' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
-        WHERE (((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))));
+        WHERE (((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
-        WHERE (((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
+        WHERE (((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "mt"."docs" o
-        WHERE o."id" > p_after::uuid AND (((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
-    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
-    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
+        WHERE o."id" > p_after::uuid AND (((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__peek" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint)))
+    OR ((o."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'folder' THEN o."container_id" END)::bigint))
+    OR (o."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN o."container_type" = 'project' THEN o."container_id" END)::bigint))))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     ELSE
@@ -4119,7 +4095,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'viewer: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END) ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'viewer: shared with' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4149,7 +4125,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'a custom role given to you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') || coalesce(' (role ' || (SELECT ro.name FROM authz.roles ro WHERE 'role:' || ro.id = g.relation) || ')', '') FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END) ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('project', 'view'))::text[]) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'a custom role given to' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4291,7 +4267,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'editor: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'editor' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END) ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'editor: shared with' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4313,7 +4289,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'viewer: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END) ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'viewer: shared with' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4355,7 +4331,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'a custom role given to you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') || coalesce(' (role ' || (SELECT ro.name FROM authz.roles ro WHERE 'role:' || ro.id = g.relation) || ')', '') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END) ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'edit'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'a custom role given to' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4377,7 +4353,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'a custom role given to you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') || coalesce(' (role ' || (SELECT ro.name FROM authz.roles ro WHERE 'role:' || ro.id = g.relation) || ')', '') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END) ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'view'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'a custom role given to' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4399,7 +4375,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'a custom role given to you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') || coalesce(' (role ' || (SELECT ro.name FROM authz.roles ro WHERE 'role:' || ro.id = g.relation) || ')', '') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END) ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = g.object_id::bigint)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('folder', 'archive'))::text[]) AND EXISTS (SELECT 1 FROM authz.roles ro WHERE 'role:' || ro.id = g.relation AND ro.owner_type = 'org' AND ro.owner_id IN (SELECT (w."org_id")::text FROM "mt"."folders" w WHERE w."id" = p_id)) AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND (g.caveat IS NULL OR CASE g.caveat WHEN 'business_hours' THEN coalesce((authz.ctx('mode') = 'business'), false) WHEN 'from_ip' THEN coalesce((authz.ctx('ip') = (g.caveat_args ->> 'ip')), false) ELSE false END)) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'a custom role given to' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4794,9 +4770,9 @@ BEGIN
     WHEN 'doc' THEN
       RETURN EXISTS (SELECT 1 FROM "mt"."docs" "docs" WHERE "docs"."id" = p_id::uuid
         AND (SELECT authz_int.scope_cmd('mt.docs', 'select')) AND (coalesce("docs"."author_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:edit" v WHERE v.id = "docs"."id")
-    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
-    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_gen."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))));
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
+    OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
+    OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))));
     ELSE RETURN false;
   END CASE;
 END $f$;
@@ -5819,8 +5795,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
-             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"doc__roles:edit"', '"folder__edit"', '"folder__view"', '"project__edit"', '"project__view"']::text[]))
+    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."doc__roles:edit"', 'authz_int."folder__edit"', 'authz_int."folder__view"', 'authz_int."project__edit"', 'authz_int."project__view"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -5832,7 +5808,8 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole)
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+             AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"mt.docs:rules:explain"', '"mt.docs:update:items"', '"mt.docs:update:refuse"', '"mt.docs:update:why"']::text[]))
     AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.who(text, uuid, text)', 'authz.explain(text, uuid, text, text)', 'authz.list_shares(text, uuid)', 'authz.list_links(text, uuid)', 'authz.revoke_link(text, uuid, text)', 'authz.can(text, bigint, text)', 'authz.can(text, uuid, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.who_among(text, uuid, text, text[], text)', 'authz.perms(text, bigint)', 'authz.perms(text, uuid)']::regprocedure[])) LOOP
     severity := 'error'; object := r.object;
     problem := format('%s holds %s on it, which the policy doesn''t give (a default privilege of the owner, or a grant made since the last apply): the next apply takes it back, or %s', r.who, r.privilege, r.stmt);
@@ -6247,8 +6224,8 @@ BEGIN
   END LOOP;
 END $ch$;
 
-REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen FROM app_user;
-GRANT SELECT ON authz_gen.policy_lines, authz_gen."doc__roles:edit", authz_gen."folder__edit", authz_gen."folder__view", authz_gen."project__edit", authz_gen."project__view" TO app_user;
+REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM app_user;
+GRANT SELECT ON authz_gen.policy_lines, authz_int."doc__roles:edit", authz_int."folder__edit", authz_int."folder__view", authz_int."project__edit", authz_int."project__view" TO app_user;
 
 -- Privileges the policy doesn't give on rowstile's schemas and what is in them are taken back
 DO $r$
@@ -6265,8 +6242,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
-             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"doc__roles:edit"', '"folder__edit"', '"folder__view"', '"project__edit"', '"project__view"']::text[]))
+    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."doc__roles:edit"', 'authz_int."folder__edit"', 'authz_int."folder__view"', 'authz_int."project__edit"', 'authz_int."project__view"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -6278,7 +6255,8 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole)
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+             AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"mt.docs:rules:explain"', '"mt.docs:update:items"', '"mt.docs:update:refuse"', '"mt.docs:update:why"']::text[]))
     AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.who(text, uuid, text)', 'authz.explain(text, uuid, text, text)', 'authz.list_shares(text, uuid)', 'authz.list_links(text, uuid)', 'authz.revoke_link(text, uuid, text)', 'authz.can(text, bigint, text)', 'authz.can(text, uuid, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.who_among(text, uuid, text, text[], text)', 'authz.perms(text, bigint)', 'authz.perms(text, uuid)']::regprocedure[])) LOOP
     EXECUTE g.stmt;
     v_taken := v_taken + 1;
@@ -6294,7 +6272,14 @@ GRANT USAGE ON SCHEMA authz, authz_gen TO app_user;
 
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz_gen FROM PUBLIC;
 
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz_gen TO app_user;
+DO $gf$
+DECLARE f regprocedure;
+BEGIN
+  FOR f IN SELECT p.oid::regprocedure FROM pg_proc p WHERE p.pronamespace = 'authz_gen'::regnamespace
+           AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"mt.docs:rules:explain"', '"mt.docs:update:items"', '"mt.docs:update:refuse"', '"mt.docs:update:why"']::text[]) LOOP
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', f, 'app_user');
+  END LOOP;
+END $gf$;
 
 GRANT EXECUTE ON FUNCTION
   authz.uid(),

@@ -2664,27 +2664,22 @@ END $tr$;
 -- user.self (line 5)
 CREATE VIEW authz_int."user__self" AS
   SELECT r."id" AS id FROM "alt"."users" r WHERE r."id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."user__self" WITH (security_barrier) AS SELECT id FROM authz_int."user__self";
 
 -- user.manage_roles (line 6): self
 CREATE VIEW authz_int."user__manage_roles" AS
   SELECT id FROM authz_int."user__self";
-CREATE VIEW authz_gen."user__manage_roles" WITH (security_barrier) AS SELECT id FROM authz_int."user__manage_roles";
 
 -- grp.owner (line 9)
 CREATE VIEW authz_int."grp__owner" AS
   SELECT r."gid" AS id FROM "alt"."groups" r WHERE r."owner_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."grp__owner" WITH (security_barrier) AS SELECT id FROM authz_int."grp__owner";
 
 -- grp.share (line 12): owner
 CREATE VIEW authz_int."grp__share" AS
   SELECT id FROM authz_int."grp__owner";
-CREATE VIEW authz_gen."grp__share" WITH (security_barrier) AS SELECT id FROM authz_int."grp__share";
 
 -- proj.lead (line 15)
 CREATE VIEW authz_int."proj__lead" AS
   SELECT r."id" AS id FROM "alt"."projects" r WHERE r."lead_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."proj__lead" WITH (security_barrier) AS SELECT id FROM authz_int."proj__lead";
 
 -- grp.member (line 10)
 CREATE VIEW authz_int."grp__member" AS
@@ -2695,10 +2690,9 @@ CREATE VIEW authz_int."grp__member" AS
     SELECT e.obj FROM (
   SELECT g.object_id::bigint AS obj, g.subject_id::bigint AS subj FROM authz.shares g WHERE g.object_type = 'grp' AND g.relation = 'member' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) e JOIN m ON e.subj = m.id)
   SELECT id FROM m;
-CREATE VIEW authz_gen."grp__member" WITH (security_barrier) AS SELECT id FROM authz_int."grp__member";
 
 -- grp.member for the user signed in, as an array (reads ask once per statement)
-CREATE FUNCTION authz_gen."grp__member__ids"() RETURNS bigint[]
+CREATE FUNCTION authz_int."grp__member__ids"() RETURNS bigint[]
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   RETURN ARRAY(SELECT id FROM authz_int."grp__member");
@@ -2706,56 +2700,47 @@ END $f$;
 
 -- proj.team (line 16)
 CREATE VIEW authz_int."proj__team" AS
-  SELECT s."project_id" AS id FROM "alt"."project_groups" s WHERE s."group_id" = ANY ((SELECT authz_gen."grp__member__ids"())::bigint[]);
-CREATE VIEW authz_gen."proj__team" WITH (security_barrier) AS SELECT id FROM authz_int."proj__team";
+  SELECT s."project_id" AS id FROM "alt"."project_groups" s WHERE s."group_id" = ANY ((SELECT authz_int."grp__member__ids"())::bigint[]);
 
 -- proj.view (line 17): lead or team
 CREATE VIEW authz_int."proj__view" AS
   (SELECT id FROM authz_int."proj__lead")
   UNION ALL
   (SELECT id FROM authz_int."proj__team");
-CREATE VIEW authz_gen."proj__view" WITH (security_barrier) AS SELECT id FROM authz_int."proj__view";
 
 -- doc.owner (line 20)
 CREATE VIEW authz_int."doc__owner" AS
   SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."owner_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."doc__owner" WITH (security_barrier) AS SELECT id FROM authz_int."doc__owner";
 
 -- doc.share (line 32): owner
 CREATE VIEW authz_int."doc__share" AS
   SELECT id FROM authz_int."doc__owner";
-CREATE VIEW authz_gen."doc__share" WITH (security_barrier) AS SELECT id FROM authz_int."doc__share";
 
 -- doc.writer (line 23)
 CREATE VIEW authz_int."doc__writer" AS
   SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'writer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL;
-CREATE VIEW authz_gen."doc__writer" WITH (security_barrier) AS SELECT id FROM authz_int."doc__writer";
 
 -- doc.reader (line 22)
 CREATE VIEW authz_int."doc__reader" AS
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'reader' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'reader' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
-CREATE VIEW authz_gen."doc__reader" WITH (security_barrier) AS SELECT id FROM authz_int."doc__reader";
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'reader' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
 
 -- doc.blocked (line 21)
 CREATE VIEW authz_int."doc__blocked" AS
   SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."blocked_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."doc__blocked" WITH (security_barrier) AS SELECT id FROM authz_int."doc__blocked";
 
 -- doc.project.view
 CREATE VIEW authz_int."doc__project__view" AS
   (SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."project_id" IN (SELECT id FROM authz_int."proj__view"))
   UNION ALL
   (SELECT s."doc_no" AS id FROM "alt"."doc_projects" s WHERE s."proj_id" IN (SELECT id FROM authz_int."proj__view"));
-CREATE VIEW authz_gen."doc__project__view" WITH (security_barrier) AS SELECT id FROM authz_int."doc__project__view";
 
 -- doc.custom roles granting view (line 30)
 CREATE VIEW authz_int."doc__roles:view" AS
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
-CREATE VIEW authz_gen."doc__roles:view" WITH (security_barrier) AS SELECT id FROM authz_int."doc__roles:view";
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
 
 -- doc.view__base: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."doc__view__base__start"() RETURNS SETOF bigint
@@ -2777,10 +2762,9 @@ END $f$;
 CREATE VIEW authz_int."doc__view__base" AS
   SELECT c.descendant AS id FROM authz_int."doc__parent_shortcut__tree" c
   WHERE c.ancestor IN (SELECT s.id FROM authz_int."doc__view__base__start"() s(id));
-CREATE VIEW authz_gen."doc__view__base" WITH (security_barrier) AS SELECT id FROM authz_int."doc__view__base";
 
 -- doc.view__base for one object (checks of single rows and authz.can)
-CREATE FUNCTION authz_gen."doc__view__base__has"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."doc__view__base__has"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   RETURN EXISTS (SELECT 1 FROM authz_int."doc__parent_shortcut__tree" c
@@ -2800,14 +2784,12 @@ END $f$;
 -- doc.view__base: what the object's own columns give
 CREATE VIEW authz_int."doc__view__base__direct" AS
   SELECT id FROM authz_int."doc__owner";
-CREATE VIEW authz_gen."doc__view__base__direct" WITH (security_barrier) AS SELECT id FROM authz_int."doc__view__base__direct";
 
 -- doc.banned (line 24)
 CREATE VIEW authz_int."doc__banned" AS
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'banned' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'banned' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
-CREATE VIEW authz_gen."doc__banned" WITH (security_barrier) AS SELECT id FROM authz_int."doc__banned";
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'banned' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
 
 -- doc.hidden: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."doc__hidden__start"() RETURNS SETOF bigint
@@ -2821,10 +2803,9 @@ END $f$;
 CREATE VIEW authz_int."doc__hidden" AS
   SELECT c.descendant AS id FROM authz_int."doc__parent_shortcut__tree2" c
   WHERE c.ancestor IN (SELECT s.id FROM authz_int."doc__hidden__start"() s(id));
-CREATE VIEW authz_gen."doc__hidden" WITH (security_barrier) AS SELECT id FROM authz_int."doc__hidden";
 
 -- doc.hidden for one object (checks of single rows and authz.can)
-CREATE FUNCTION authz_gen."doc__hidden__has"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."doc__hidden__has"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   RETURN EXISTS (SELECT 1 FROM authz_int."doc__parent_shortcut__tree2" c
@@ -2838,7 +2819,6 @@ CREATE VIEW authz_int."doc__view" AS
   SELECT r."doc_no" AS id FROM "alt"."docs" r
   WHERE r."doc_no" IN (SELECT id FROM authz_int."doc__view__base")
     AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM authz_int."doc__hidden") x WHERE x.id = r."doc_no");
-CREATE VIEW authz_gen."doc__view" WITH (security_barrier) AS SELECT id FROM authz_int."doc__view";
 
 -- doc.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."doc__edit__start"() RETURNS SETOF bigint
@@ -2856,10 +2836,9 @@ END $f$;
 CREATE VIEW authz_int."doc__edit" AS
   SELECT c.descendant AS id FROM authz_int."doc__parent__tree" c
   WHERE c.ancestor IN (SELECT s.id FROM authz_int."doc__edit__start"() s(id));
-CREATE VIEW authz_gen."doc__edit" WITH (security_barrier) AS SELECT id FROM authz_int."doc__edit";
 
 -- doc.edit for one object (checks of single rows and authz.can)
-CREATE FUNCTION authz_gen."doc__edit__has"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."doc__edit__has"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   RETURN EXISTS (SELECT 1 FROM authz_int."doc__parent__tree" c
@@ -2876,8 +2855,7 @@ END $f$;
 CREATE VIEW authz_int."doc__roles:publish" AS
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
-CREATE VIEW authz_gen."doc__roles:publish" WITH (security_barrier) AS SELECT id FROM authz_int."doc__roles:publish";
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
 
 -- doc.publish (line 39): (edit or roles) and not {locked}
 CREATE VIEW authz_int."doc__publish" AS
@@ -2886,56 +2864,53 @@ CREATE VIEW authz_int."doc__publish" AS
   UNION ALL
   (SELECT id FROM authz_int."doc__roles:publish"))
     AND NOT coalesce((locked), false);
-CREATE VIEW authz_gen."doc__publish" WITH (security_barrier) AS SELECT id FROM authz_int."doc__publish";
 
 -- doc.mine (line 40): {owner_id = authz.uid()}
 CREATE VIEW authz_int."doc__mine" AS
   SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE coalesce((owner_id = (SELECT authz.uid())), false);
-CREATE VIEW authz_gen."doc__mine" WITH (security_barrier) AS SELECT id FROM authz_int."doc__mine";
-
--- doc.parent.edit for one object, through link tables and shares: as the owner
-CREATE FUNCTION authz_gen."doc__parent__edit__links"(p_id bigint) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = p_id AND authz_gen."doc__edit__has"(s."parent"))
-$f$;
 
 -- doc.project.view
 CREATE VIEW authz_int."doc__project__view__ext" AS
   SELECT s."doc_no" AS id FROM "alt"."doc_projects" s WHERE s."proj_id" IN (SELECT id FROM authz_int."proj__view");
-CREATE VIEW authz_gen."doc__project__view__ext" WITH (security_barrier) AS SELECT id FROM authz_int."doc__project__view__ext";
+
+-- doc.parent.edit for one object, through link tables and shares: as the owner
+CREATE FUNCTION authz_int."doc__parent__edit__links"(p_id bigint) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = p_id AND authz_int."doc__edit__has"(s."parent"))
+$f$;
 
 -- doc.shortcut.view__base for one object, through link tables and shares: as the owner
-CREATE FUNCTION authz_gen."doc__shortcut__view__base__links"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."doc__shortcut__view__base__links"(p_id bigint) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__view__base__has"(g.subject_id::bigint))
+  SELECT EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__view__base__has"(g.subject_id::bigint))
 $f$;
 
 -- doc: a condition that reads other rows, run with the policy's rights wherever it is checked
-CREATE FUNCTION authz_gen."doc__check_60f7f3204e"(p_row "alt"."docs") RETURNS boolean
+CREATE FUNCTION authz_int."doc__check_60f7f3204e"(p_row "alt"."docs") RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT coalesce((not exists (select 1 from alt.holds h where h.target = "docs".doc_no)), false) FROM (SELECT (p_row).*) AS "docs"
 $f$;
 
 -- doc.parent.view__base for one object, through link tables and shares: as the owner
-CREATE FUNCTION authz_gen."doc__parent__view__base__links"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."doc__parent__view__base__links"(p_id bigint) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = p_id AND authz_gen."doc__view__base__has"(s."parent"))
+  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = p_id AND authz_int."doc__view__base__has"(s."parent"))
 $f$;
 
 -- doc.parent.hidden for one object, through link tables and shares: as the owner
-CREATE FUNCTION authz_gen."doc__parent__hidden__links"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."doc__parent__hidden__links"(p_id bigint) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = p_id AND authz_gen."doc__hidden__has"(s."parent"))
+  SELECT EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = p_id AND authz_int."doc__hidden__has"(s."parent"))
 $f$;
 
 -- doc.shortcut.hidden for one object, through link tables and shares: as the owner
-CREATE FUNCTION authz_gen."doc__shortcut__hidden__links"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."doc__shortcut__hidden__links"(p_id bigint) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-  SELECT EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__hidden__has"(g.subject_id::bigint))
+  SELECT EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint))
 $f$;
 
 -- doc: a condition that reads other rows, run with the policy's rights wherever it is checked
-CREATE FUNCTION authz_gen."doc__check_cdfdd53dac"(p_row "alt"."docs") RETURNS boolean
+CREATE FUNCTION authz_int."doc__check_cdfdd53dac"(p_row "alt"."docs") RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
   SELECT coalesce((exists (select 1 from alt.holds h where h.target = "docs".up)), false) FROM (SELECT (p_row).*) AS "docs"
 $f$;
@@ -2943,48 +2918,40 @@ $f$;
 -- doc.shortcut.view__base
 CREATE VIEW authz_int."doc__shortcut__view__base" AS
   SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND g.subject_id IN (SELECT id::text FROM authz_int."doc__view__base") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL;
-CREATE VIEW authz_gen."doc__shortcut__view__base" WITH (security_barrier) AS SELECT id FROM authz_int."doc__shortcut__view__base";
 
 -- doc.parent.view__base
 CREATE VIEW authz_int."doc__parent__view__base__ext" AS
   SELECT s."child" AS id FROM "alt"."doc_links" s WHERE s."parent" IN (SELECT id FROM authz_int."doc__view__base");
-CREATE VIEW authz_gen."doc__parent__view__base__ext" WITH (security_barrier) AS SELECT id FROM authz_int."doc__parent__view__base__ext";
 
 -- doc.parent.hidden
 CREATE VIEW authz_int."doc__parent__hidden__ext" AS
   SELECT s."child" AS id FROM "alt"."doc_links" s WHERE s."parent" IN (SELECT id FROM authz_int."doc__hidden");
-CREATE VIEW authz_gen."doc__parent__hidden__ext" WITH (security_barrier) AS SELECT id FROM authz_int."doc__parent__hidden__ext";
 
 -- doc.shortcut.hidden
 CREATE VIEW authz_int."doc__shortcut__hidden" AS
   SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND g.subject_id IN (SELECT id::text FROM authz_int."doc__hidden") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL;
-CREATE VIEW authz_gen."doc__shortcut__hidden" WITH (security_barrier) AS SELECT id FROM authz_int."doc__shortcut__hidden";
 
 -- doc.parent.edit
 CREATE VIEW authz_int."doc__parent__edit" AS
   (SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."up" IN (SELECT id FROM authz_int."doc__edit"))
   UNION ALL
   (SELECT s."child" AS id FROM "alt"."doc_links" s WHERE s."parent" IN (SELECT id FROM authz_int."doc__edit"));
-CREATE VIEW authz_gen."doc__parent__edit" WITH (security_barrier) AS SELECT id FROM authz_int."doc__parent__edit";
 
 -- doc.parent.hidden
 CREATE VIEW authz_int."doc__parent__hidden" AS
   (SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."up" IN (SELECT id FROM authz_int."doc__hidden"))
   UNION ALL
   (SELECT s."child" AS id FROM "alt"."doc_links" s WHERE s."parent" IN (SELECT id FROM authz_int."doc__hidden"));
-CREATE VIEW authz_gen."doc__parent__hidden" WITH (security_barrier) AS SELECT id FROM authz_int."doc__parent__hidden";
 
 -- doc.parent.view__base
 CREATE VIEW authz_int."doc__parent__view__base" AS
   (SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."up" IN (SELECT id FROM authz_int."doc__view__base"))
   UNION ALL
   (SELECT s."child" AS id FROM "alt"."doc_links" s WHERE s."parent" IN (SELECT id FROM authz_int."doc__view__base"));
-CREATE VIEW authz_gen."doc__parent__view__base" WITH (security_barrier) AS SELECT id FROM authz_int."doc__parent__view__base";
 
 -- doc.parent.edit
 CREATE VIEW authz_int."doc__parent__edit__ext" AS
   SELECT s."child" AS id FROM "alt"."doc_links" s WHERE s."parent" IN (SELECT id FROM authz_int."doc__edit");
-CREATE VIEW authz_gen."doc__parent__edit__ext" WITH (security_barrier) AS SELECT id FROM authz_int."doc__parent__edit__ext";
 
 ALTER TABLE "alt"."docs" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
@@ -3000,23 +2967,46 @@ BEGIN
   END LOOP;
 END $rls$;
 
+-- alt.docs: no row has the id, or the user may select it (what the rules' explanations answer for)
+CREATE FUNCTION authz_int."alt.docs:seen"(p_id bigint) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  RETURN NOT EXISTS (SELECT 1 FROM "alt"."docs" o WHERE o."doc_no" = p_id)
+      OR EXISTS (SELECT 1 FROM "alt"."docs" "docs" WHERE "docs"."doc_no" = p_id
+        AND (SELECT authz_int.scope_cmd('alt.docs', 'select')) AND ((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
+    OR (NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false)
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = "docs"."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = "docs"."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = "docs"."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__view__base__has"(g.subject_id::bigint))
+    OR (coalesce((not exists (select 1 from alt.holds h where h.target = "docs".doc_no)), false)
+    AND (authz_int."doc__view__base__has"("docs"."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = "docs"."doc_no" AND authz_int."doc__view__base__has"(s."parent")))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
+    OR (authz_int."doc__hidden__has"("docs"."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = "docs"."doc_no" AND authz_int."doc__hidden__has"(s."parent")))
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = "docs"."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint))), false)));
+END $f$;
+
 CREATE FUNCTION authz_gen."alt.docs:insert:items"(p_row "alt"."docs") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce((coalesce(("docs".owner_id = (SELECT authz.uid())), false)
     AND (coalesce((up is null), false)
-    OR (authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no")))), false),
+    OR (authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no")))), false),
     coalesce((SELECT authz_int.scope_cmd('alt.docs', 'insert')), false),
     coalesce(true, false),
     coalesce(coalesce(("docs".owner_id = (SELECT authz.uid())), false), false),
     coalesce((coalesce((up is null), false)
-    OR (authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no"))), false),
-    coalesce((authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no")), false),
+    OR (authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))), false),
+    coalesce((authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no")), false),
     coalesce(coalesce((up is null), false), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[7]) END
   FROM (SELECT (p_row).*) AS "docs";
 END;
 
@@ -3061,49 +3051,50 @@ END $f$;
 CREATE FUNCTION authz_gen."alt.docs:update:items"(p_row "alt"."docs") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = "docs"."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = "docs"."doc_no")
     AND ((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = "docs"."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = "docs"."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = "docs"."doc_no")
-    OR authz_gen."doc__shortcut__view__base__links"("docs"."doc_no")
-    OR (authz_gen."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
-    AND (authz_gen."doc__view__base__has"("docs"."up")
-    OR authz_gen."doc__parent__view__base__links"("docs"."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = "docs"."doc_no")
-    OR (authz_gen."doc__hidden__has"("docs"."up")
-    OR authz_gen."doc__parent__hidden__links"("docs"."doc_no"))
-    OR authz_gen."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = "docs"."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = "docs"."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
+    OR authz_int."doc__shortcut__view__base__links"("docs"."doc_no")
+    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    AND (authz_int."doc__view__base__has"("docs"."up")
+    OR authz_int."doc__parent__view__base__links"("docs"."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
+    OR (authz_int."doc__hidden__has"("docs"."up")
+    OR authz_int."doc__parent__hidden__links"("docs"."doc_no"))
+    OR authz_int."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
     OR (coalesce((not locked), false)
-    AND NOT authz_gen."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
-    AND (authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no")))), false),
+    AND NOT authz_int."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
+    AND (authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no")))), false),
     coalesce((SELECT authz_int.scope_cmd('alt.docs', 'update')), false),
     coalesce(true, false),
     coalesce((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = "docs"."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = "docs"."doc_no")
     AND ((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = "docs"."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = "docs"."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = "docs"."doc_no")
-    OR authz_gen."doc__shortcut__view__base__links"("docs"."doc_no")
-    OR (authz_gen."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
-    AND (authz_gen."doc__view__base__has"("docs"."up")
-    OR authz_gen."doc__parent__view__base__links"("docs"."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = "docs"."doc_no")
-    OR (authz_gen."doc__hidden__has"("docs"."up")
-    OR authz_gen."doc__parent__hidden__links"("docs"."doc_no"))
-    OR authz_gen."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = "docs"."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = "docs"."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
+    OR authz_int."doc__shortcut__view__base__links"("docs"."doc_no")
+    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    AND (authz_int."doc__view__base__has"("docs"."up")
+    OR authz_int."doc__parent__view__base__links"("docs"."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
+    OR (authz_int."doc__hidden__has"("docs"."up")
+    OR authz_int."doc__parent__hidden__links"("docs"."doc_no"))
+    OR authz_int."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
     OR (coalesce((not locked), false)
-    AND NOT authz_gen."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
-    AND (authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no")))), false)]
+    AND NOT authz_int."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
+    AND (authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no")))), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "docs";
 END;
 
@@ -3138,13 +3129,14 @@ END $f$;
 CREATE FUNCTION authz_gen."alt.docs:delete:items"(p_row "alt"."docs") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
     AND NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false)), false),
     coalesce((SELECT authz_int.scope_cmd('alt.docs', 'delete')), false),
     coalesce(true, false),
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false),
     coalesce(NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[5]) END
   FROM (SELECT (p_row).*) AS "docs";
 END;
 
@@ -3187,19 +3179,19 @@ END $f$;
 CREATE POLICY "authz_select" ON "alt"."docs" FOR SELECT TO app_user
   USING (((SELECT authz_int.scope_cmd('alt.docs', 'select')) AND ((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = "docs"."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = "docs"."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = "docs"."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = "docs"."doc_no")
-    OR (authz_gen."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = "docs"."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = "docs"."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = "docs"."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = "docs"."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = "docs"."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = "docs"."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = "docs"."doc_no")), false))));
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = "docs"."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = "docs"."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = "docs"."doc_no")
+    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = "docs"."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = "docs"."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = "docs"."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = "docs"."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = "docs"."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = "docs"."doc_no")), false))));
 
 COMMENT ON POLICY "authz_select" ON "alt"."docs" IS 'rowstile';
 
@@ -3207,8 +3199,8 @@ COMMENT ON POLICY "authz_select" ON "alt"."docs" IS 'rowstile';
 CREATE POLICY "authz_insert" ON "alt"."docs" FOR INSERT TO app_user
   WITH CHECK (((SELECT authz_int.scope_cmd('alt.docs', 'insert')) AND (coalesce(("docs".owner_id = (SELECT authz.uid())), false)
     AND (coalesce((up is null), false)
-    OR (authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no")))))
+    OR (authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no")))))
     OR authz_gen."alt.docs:insert:refuse"(ROW("docs".*)::"alt"."docs"));
 
 COMMENT ON POLICY "authz_insert" ON "alt"."docs" IS 'rowstile';
@@ -3216,45 +3208,45 @@ COMMENT ON POLICY "authz_insert" ON "alt"."docs" IS 'rowstile';
 -- alt.docs update (line 45): edit
 CREATE POLICY "authz_update" ON "alt"."docs" FOR UPDATE TO app_user
   USING (((SELECT authz_int.scope_cmd('alt.docs', 'update')) AND (coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = "docs"."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = "docs"."doc_no")
     AND ((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = "docs"."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = "docs"."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = "docs"."doc_no")
-    OR authz_gen."doc__shortcut__view__base__links"("docs"."doc_no")
-    OR (authz_gen."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
-    AND (authz_gen."doc__view__base__has"("docs"."up")
-    OR authz_gen."doc__parent__view__base__links"("docs"."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = "docs"."doc_no")
-    OR (authz_gen."doc__hidden__has"("docs"."up")
-    OR authz_gen."doc__parent__hidden__links"("docs"."doc_no"))
-    OR authz_gen."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = "docs"."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = "docs"."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
+    OR authz_int."doc__shortcut__view__base__links"("docs"."doc_no")
+    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    AND (authz_int."doc__view__base__has"("docs"."up")
+    OR authz_int."doc__parent__view__base__links"("docs"."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
+    OR (authz_int."doc__hidden__has"("docs"."up")
+    OR authz_int."doc__parent__hidden__links"("docs"."doc_no"))
+    OR authz_int."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
     OR (coalesce((not locked), false)
-    AND NOT authz_gen."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
-    AND (authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no"))))))
+    AND NOT authz_int."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
+    AND (authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))))))
   WITH CHECK (((SELECT authz_int.scope_cmd('alt.docs', 'update')) AND (coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = "docs"."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = "docs"."doc_no")
     AND ((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = "docs"."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = "docs"."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = "docs"."doc_no")
-    OR authz_gen."doc__shortcut__view__base__links"("docs"."doc_no")
-    OR (authz_gen."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
-    AND (authz_gen."doc__view__base__has"("docs"."up")
-    OR authz_gen."doc__parent__view__base__links"("docs"."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = "docs"."doc_no")
-    OR (authz_gen."doc__hidden__has"("docs"."up")
-    OR authz_gen."doc__parent__hidden__links"("docs"."doc_no"))
-    OR authz_gen."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = "docs"."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = "docs"."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
+    OR authz_int."doc__shortcut__view__base__links"("docs"."doc_no")
+    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    AND (authz_int."doc__view__base__has"("docs"."up")
+    OR authz_int."doc__parent__view__base__links"("docs"."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
+    OR (authz_int."doc__hidden__has"("docs"."up")
+    OR authz_int."doc__parent__hidden__links"("docs"."doc_no"))
+    OR authz_int."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
     OR (coalesce((not locked), false)
-    AND NOT authz_gen."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
-    AND (authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no")))))
+    AND NOT authz_int."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
+    AND (authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no")))))
     OR authz_gen."alt.docs:update:refuse"(ROW("docs".*)::"alt"."docs"));
 
 COMMENT ON POLICY "authz_update" ON "alt"."docs" IS 'rowstile';
@@ -3269,11 +3261,12 @@ COMMENT ON POLICY "authz_delete" ON "alt"."docs" IS 'rowstile';
 CREATE FUNCTION authz_gen."alt.docs:column owner_id:items"(p_row "alt"."docs") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false),
     coalesce((SELECT authz_int.scope_cmd('alt.docs', 'update')), false),
     coalesce(true, false),
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "docs";
 END;
 
@@ -3291,51 +3284,51 @@ BEGIN
 END $f$;
 
 -- alt.docs update owner_id (line 46): share
--- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
--- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."alt.docs:column owner_id:holds"(p_row "alt"."docs") RETURNS boolean
+-- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
+-- role uses it without naming it (authz_int)
+CREATE FUNCTION authz_int."alt.docs:column owner_id:holds"(p_row "alt"."docs") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false) FROM (SELECT (p_row).*) AS "docs";
 END;
--- checked on the row before the change, for roles that row-level security applies to on the
--- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
+-- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."alt.docs:column owner_id"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "alt"."docs";
 BEGIN
-  IF pg_catalog.row_security_active('"alt"."docs"'::pg_catalog.regclass) THEN
-    -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
-    IF TG_RELID = '"alt"."docs"'::pg_catalog.regclass THEN v_row := OLD;
-    ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(OLD)); END IF;
-    IF NOT authz_gen."alt.docs:column owner_id:holds"(v_row) THEN
-      BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:column owner_id:why"(v_row) l);
-      EXCEPTION WHEN OTHERS THEN
-        v_lines := 'no explanation: ' || SQLERRM;
-      END;
-      RAISE EXCEPTION 'changing owner_id of alt.docs % needs: share', OLD."doc_no" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
-        SCHEMA = 'alt', TABLE = 'docs', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
-    END IF;
-  END IF;
-  RETURN NEW;
+  -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
+  IF TG_RELID = '"alt"."docs"'::pg_catalog.regclass THEN v_row := OLD;
+  ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(OLD)); END IF;
+  BEGIN
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:column owner_id:why"(v_row) l);
+  EXCEPTION WHEN OTHERS THEN
+    v_lines := 'no explanation: ' || SQLERRM;
+  END;
+  RAISE EXCEPTION 'changing owner_id of alt.docs % needs: share', OLD."doc_no" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+    SCHEMA = 'alt', TABLE = 'docs', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
 END $f$;
+-- checked on the row before the change, for roles that row-level security applies to on the
+-- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
+-- the row as the table's own
 CREATE TRIGGER "authz_update owner_id" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
-  WHEN (OLD."owner_id" IS DISTINCT FROM NEW."owner_id")
+  WHEN ((OLD."owner_id" IS DISTINCT FROM NEW."owner_id")
+    AND pg_catalog.row_security_active('"alt"."docs"'::pg_catalog.regclass)
+    AND NOT authz_int."alt.docs:column owner_id:holds"(pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(OLD))))
   EXECUTE FUNCTION authz_int."alt.docs:column owner_id"();
 
 CREATE FUNCTION authz_gen."alt.docs:column up after:items"(p_row "alt"."docs") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."alt.docs:seen"("docs"."doc_no") THEN ARRAY[
     coalesce((coalesce((up is null), false)
-    OR (authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no"))), false),
+    OR (authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))), false),
     coalesce((SELECT authz_int.scope_cmd('alt.docs', 'update')), false),
     coalesce(true, false),
-    coalesce((authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no")), false),
+    coalesce((authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no")), false),
     coalesce(coalesce((up is null), false), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[5]) END
   FROM (SELECT (p_row).*) AS "docs";
 END;
 
@@ -3359,39 +3352,38 @@ BEGIN
 END $f$;
 
 -- alt.docs update up after (line 47): parent.edit or {up is null}
--- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
--- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."alt.docs:column up after:holds"(p_row "alt"."docs") RETURNS boolean
+-- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
+-- role uses it without naming it (authz_int)
+CREATE FUNCTION authz_int."alt.docs:column up after:holds"(p_row "alt"."docs") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce((coalesce((up is null), false)
-    OR (authz_gen."doc__edit__has"("docs"."up")
-    OR authz_gen."doc__parent__edit__links"("docs"."doc_no"))), false) FROM (SELECT (p_row).*) AS "docs";
+    OR (authz_int."doc__edit__has"("docs"."up")
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))), false) FROM (SELECT (p_row).*) AS "docs";
 END;
--- checked on the row after the change, for roles that row-level security applies to on the
--- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
+-- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."alt.docs:column up after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "alt"."docs";
 BEGIN
-  IF pg_catalog.row_security_active('"alt"."docs"'::pg_catalog.regclass) THEN
-    -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
-    IF TG_RELID = '"alt"."docs"'::pg_catalog.regclass THEN v_row := NEW;
-    ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(NEW)); END IF;
-    IF NOT authz_gen."alt.docs:column up after:holds"(v_row) THEN
-      BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:column up after:why"(v_row) l);
-      EXCEPTION WHEN OTHERS THEN
-        v_lines := 'no explanation: ' || SQLERRM;
-      END;
-      RAISE EXCEPTION 'changing up of alt.docs % needs: parent.edit or {up is null}', OLD."doc_no" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
-        SCHEMA = 'alt', TABLE = 'docs', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
-    END IF;
-  END IF;
-  RETURN NEW;
+  -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
+  IF TG_RELID = '"alt"."docs"'::pg_catalog.regclass THEN v_row := NEW;
+  ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(NEW)); END IF;
+  BEGIN
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."alt.docs:column up after:why"(v_row) l);
+  EXCEPTION WHEN OTHERS THEN
+    v_lines := 'no explanation: ' || SQLERRM;
+  END;
+  RAISE EXCEPTION 'changing up of alt.docs % needs: parent.edit or {up is null}', OLD."doc_no" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+    SCHEMA = 'alt', TABLE = 'docs', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
 END $f$;
+-- checked on the row after the change, for roles that row-level security applies to on the
+-- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
+-- the row as the table's own
 CREATE TRIGGER "authz_update_after up" BEFORE UPDATE ON "alt"."docs" FOR EACH ROW
-  WHEN (OLD."up" IS DISTINCT FROM NEW."up")
+  WHEN ((OLD."up" IS DISTINCT FROM NEW."up")
+    AND pg_catalog.row_security_active('"alt"."docs"'::pg_catalog.regclass)
+    AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(NEW))))
   EXECUTE FUNCTION authz_int."alt.docs:column up after"();
 
 -- Foreign keys that delete governed rows skip row-level security
@@ -3460,7 +3452,7 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "alt"."projects" o WHERE o."id" = v_bigint AND ((coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."proj__team" v WHERE v.id = o."id"))));
+    OR EXISTS (SELECT 1 FROM authz_int."proj__team" v WHERE v.id = o."id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'doc' THEN
@@ -3469,66 +3461,66 @@ BEGIN
       CASE p_perm
         WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "alt"."docs" o WHERE o."doc_no" = v_bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)));
         WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "alt"."docs" o WHERE o."doc_no" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
     AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__view__base__has"(g.subject_id::bigint))
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__view__base__has"(g.subject_id::bigint))
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND (authz_gen."doc__view__base__has"(o."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_gen."doc__view__base__has"(s."parent")))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (authz_gen."doc__hidden__has"(o."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_gen."doc__hidden__has"(s."parent")))
-    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__hidden__has"(g.subject_id::bigint))), false)))
+    AND (authz_int."doc__view__base__has"(o."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_int."doc__view__base__has"(s."parent")))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (authz_int."doc__hidden__has"(o."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_int."doc__hidden__has"(s."parent")))
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint))), false)))
     OR (coalesce((not locked), false)
     AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
-    AND (authz_gen."doc__edit__has"(o."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_gen."doc__edit__has"(s."parent")))))));
-        WHEN 'hidden' THEN RETURN EXISTS (SELECT 1 FROM "alt"."docs" o WHERE o."doc_no" = v_bigint AND ((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (authz_gen."doc__hidden__has"(o."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_gen."doc__hidden__has"(s."parent")))
-    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__hidden__has"(g.subject_id::bigint)))));
+    AND (authz_int."doc__edit__has"(o."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_int."doc__edit__has"(s."parent")))))));
+        WHEN 'hidden' THEN RETURN EXISTS (SELECT 1 FROM "alt"."docs" o WHERE o."doc_no" = v_bigint AND ((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (authz_int."doc__hidden__has"(o."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_int."doc__hidden__has"(s."parent")))
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint)))));
         WHEN 'publish' THEN RETURN EXISTS (SELECT 1 FROM "alt"."docs" o WHERE o."doc_no" = v_bigint AND ((NOT coalesce((locked), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."doc__roles:publish" v WHERE v.id = o."doc_no")
+    AND (EXISTS (SELECT 1 FROM authz_int."doc__roles:publish" v WHERE v.id = o."doc_no")
     OR (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
     AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__view__base__has"(g.subject_id::bigint))
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__view__base__has"(g.subject_id::bigint))
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND (authz_gen."doc__view__base__has"(o."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_gen."doc__view__base__has"(s."parent")))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (authz_gen."doc__hidden__has"(o."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_gen."doc__hidden__has"(s."parent")))
-    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__hidden__has"(g.subject_id::bigint))), false)))
+    AND (authz_int."doc__view__base__has"(o."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_int."doc__view__base__has"(s."parent")))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (authz_int."doc__hidden__has"(o."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_int."doc__hidden__has"(s."parent")))
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint))), false)))
     OR (coalesce((not locked), false)
     AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
-    AND (authz_gen."doc__edit__has"(o."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_gen."doc__edit__has"(s."parent")))))))));
+    AND (authz_int."doc__edit__has"(o."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_int."doc__edit__has"(s."parent")))))))));
         WHEN 'mine' THEN RETURN EXISTS (SELECT 1 FROM "alt"."docs" o WHERE o."doc_no" = v_bigint AND (coalesce((owner_id = (SELECT authz.uid())), false)));
         WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "alt"."docs" o WHERE o."doc_no" = v_bigint AND (((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__view__base__has"(g.subject_id::bigint))
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__view__base__has"(g.subject_id::bigint))
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND (authz_gen."doc__view__base__has"(o."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_gen."doc__view__base__has"(s."parent")))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (authz_gen."doc__hidden__has"(o."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_gen."doc__hidden__has"(s."parent")))
-    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__hidden__has"(g.subject_id::bigint))), false))));
+    AND (authz_int."doc__view__base__has"(o."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_int."doc__view__base__has"(s."parent")))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (authz_int."doc__hidden__has"(o."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = o."doc_no" AND authz_int."doc__hidden__has"(s."parent")))
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = o."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint))), false))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     ELSE
@@ -3584,16 +3576,16 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "alt"."projects" o
         WHERE (coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."proj__team" v WHERE v.id = o."id"));
+    OR EXISTS (SELECT 1 FROM authz_int."proj__team" v WHERE v.id = o."id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "alt"."projects" o
         WHERE (coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."proj__team" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."proj__team" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "alt"."projects" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."lead_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."proj__team" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."proj__team" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'doc.share' THEN
@@ -3613,180 +3605,180 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
     AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
     OR (coalesce((not locked), false)
     AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__edit" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))));
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__edit" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
     AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
     OR (coalesce((not locked), false)
     AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__edit" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__edit" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))
         ORDER BY o."doc_no" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
         WHERE o."doc_no" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
     AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
     OR (coalesce((not locked), false)
     AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__edit" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__edit" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))
         ORDER BY o."doc_no" LIMIT p_limit;
       END IF;
     WHEN 'doc.hidden' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
-        WHERE (EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no"));
+        WHERE (EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
-        WHERE (EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no"))
+        WHERE (EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no"))
         ORDER BY o."doc_no" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
-        WHERE o."doc_no" > p_after::bigint AND (EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no"))
+        WHERE o."doc_no" > p_after::bigint AND (EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no"))
         ORDER BY o."doc_no" LIMIT p_limit;
       END IF;
     WHEN 'doc.publish' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
         WHERE (NOT coalesce((locked), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."doc__roles:publish" v WHERE v.id = o."doc_no")
+    AND (EXISTS (SELECT 1 FROM authz_int."doc__roles:publish" v WHERE v.id = o."doc_no")
     OR (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
     AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
     OR (coalesce((not locked), false)
     AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__edit" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))));
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__edit" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
         WHERE (NOT coalesce((locked), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."doc__roles:publish" v WHERE v.id = o."doc_no")
+    AND (EXISTS (SELECT 1 FROM authz_int."doc__roles:publish" v WHERE v.id = o."doc_no")
     OR (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
     AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
     OR (coalesce((not locked), false)
     AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__edit" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__edit" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))))
         ORDER BY o."doc_no" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
         WHERE o."doc_no" > p_after::bigint AND (NOT coalesce((locked), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."doc__roles:publish" v WHERE v.id = o."doc_no")
+    AND (EXISTS (SELECT 1 FROM authz_int."doc__roles:publish" v WHERE v.id = o."doc_no")
     OR (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__writer" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__writer" v WHERE v.id = o."doc_no")
     AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false)))
     OR (coalesce((not locked), false)
     AND NOT coalesce((exists (select 1 from alt.holds h where h.target = o.up)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__edit" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__edit" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__edit__ext" v WHERE v.id = o."doc_no"))))))
         ORDER BY o."doc_no" LIMIT p_limit;
       END IF;
     WHEN 'doc.mine' THEN
@@ -3807,54 +3799,54 @@ BEGIN
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false));
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
         WHERE ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false))
         ORDER BY o."doc_no" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."doc_no"::text FROM "alt"."docs" o
         WHERE o."doc_no" > p_after::bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce(o."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = o."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = o."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = o."doc_no")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = o."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = o."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = o."doc_no")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = o."doc_no")
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = o.doc_no)), false)
-    AND ((EXISTS (SELECT 1 FROM authz_gen."doc__view__base__direct" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__view__base" v WHERE v.id = o."up"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = o."doc_no")
-    OR (EXISTS (SELECT 1 FROM authz_gen."doc__hidden" v WHERE v.id = o."up")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false))
+    AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = o."up"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = o."doc_no"))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = o."doc_no")
+    OR (EXISTS (SELECT 1 FROM authz_int."doc__hidden" v WHERE v.id = o."up")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__parent__hidden__ext" v WHERE v.id = o."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__hidden" v WHERE v.id = o."doc_no")), false))
         ORDER BY o."doc_no" LIMIT p_limit;
       END IF;
     ELSE
@@ -4473,7 +4465,7 @@ CREATE FUNCTION authz_int."proj__team__why"(p_id bigint, p_depth int, p_seen tex
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
-  IF p_id IN (SELECT s."project_id" AS id FROM "alt"."project_groups" s WHERE s."group_id" = ANY ((SELECT authz_gen."grp__member__ids"())::bigint[])) THEN
+  IF p_id IN (SELECT s."project_id" AS id FROM "alt"."project_groups" s WHERE s."group_id" = ANY ((SELECT authz_int."grp__member__ids"())::bigint[])) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT s."group_id" AS gid FROM "alt"."project_groups" s WHERE s."project_id" = p_id AND s."group_id" IN (SELECT id FROM authz_int."grp__member")) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'team: a row in alt.project_groups names' || ' grp ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."grp__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4530,7 +4522,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'reader: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'reader' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'reader' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'reader' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'reader' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."grp__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'reader: shared with' || ' grp ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."grp__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4559,7 +4551,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'banned: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'banned' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'banned' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = 'banned' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = 'banned' AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."grp__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'banned: shared with' || ' grp ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."grp__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4601,7 +4593,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'a custom role given to you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') || coalesce(' (role ' || (SELECT ro.name FROM authz.roles ro WHERE 'role:' || ro.id = g.relation) || ')', '') FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."grp__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'a custom role given to' || ' grp ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."grp__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4619,7 +4611,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'a custom role given to you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') || coalesce(' (role ' || (SELECT ro.name FROM authz.roles ro WHERE 'role:' || ro.id = g.relation) || ')', '') FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."grp__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'a custom role given to' || ' grp ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."grp__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4945,18 +4937,18 @@ BEGIN
       RETURN EXISTS (SELECT 1 FROM "alt"."docs" "docs" WHERE "docs"."doc_no" = p_id::bigint
         AND (SELECT authz_int.scope_cmd('alt.docs', 'select')) AND ((coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
     OR (NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."doc__reader" v WHERE v.id = "docs"."doc_no"))
-    OR (EXISTS (SELECT 1 FROM authz_gen."proj__view" v WHERE v.id = "docs"."project_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
-    OR EXISTS (SELECT 1 FROM authz_gen."doc__roles:view" v WHERE v.id = "docs"."doc_no")
-    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = "docs"."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__view__base__has"(g.subject_id::bigint))
+    AND EXISTS (SELECT 1 FROM authz_int."doc__reader" v WHERE v.id = "docs"."doc_no"))
+    OR (EXISTS (SELECT 1 FROM authz_int."proj__view" v WHERE v.id = "docs"."project_id")
+    OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
+    OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = "docs"."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__view__base__has"(g.subject_id::bigint))
     OR (coalesce((not exists (select 1 from alt.holds h where h.target = "docs".doc_no)), false)
-    AND (authz_gen."doc__view__base__has"("docs"."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = "docs"."doc_no" AND authz_gen."doc__view__base__has"(s."parent")))))
-    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_gen."doc__banned" v WHERE v.id = "docs"."doc_no")
-    OR (authz_gen."doc__hidden__has"("docs"."up")
-    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = "docs"."doc_no" AND authz_gen."doc__hidden__has"(s."parent")))
-    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = "docs"."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_gen."doc__hidden__has"(g.subject_id::bigint))), false)));
+    AND (authz_int."doc__view__base__has"("docs"."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = "docs"."doc_no" AND authz_int."doc__view__base__has"(s."parent")))))
+    AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
+    OR (authz_int."doc__hidden__has"("docs"."up")
+    OR EXISTS (SELECT 1 FROM "alt"."doc_links" s WHERE s."child" = "docs"."doc_no" AND authz_int."doc__hidden__has"(s."parent")))
+    OR EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = "docs"."doc_no"::text AND g.relation = 'shortcut' AND g.subject_type = 'doc' AND g.subject_relation = '' AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL AND authz_int."doc__hidden__has"(g.subject_id::bigint))), false)));
     ELSE RETURN false;
   END CASE;
 END $f$;
@@ -5900,8 +5892,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
-             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"doc__banned"', '"doc__hidden"', '"doc__parent__hidden__ext"', '"doc__parent__view__base__ext"', '"doc__project__view__ext"', '"doc__reader"', '"doc__roles:view"', '"doc__shortcut__hidden"', '"doc__shortcut__view__base"', '"doc__view__base"', '"doc__view__base__direct"', '"doc__writer"', '"proj__view"']::text[]))
+    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."doc__banned"', 'authz_int."doc__hidden"', 'authz_int."doc__parent__hidden__ext"', 'authz_int."doc__parent__view__base__ext"', 'authz_int."doc__project__view__ext"', 'authz_int."doc__reader"', 'authz_int."doc__roles:view"', 'authz_int."doc__shortcut__hidden"', 'authz_int."doc__shortcut__view__base"', 'authz_int."doc__view__base"', 'authz_int."doc__view__base__direct"', 'authz_int."doc__writer"', 'authz_int."proj__view"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -5913,7 +5905,8 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole)
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+             AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"alt.docs:column owner_id:items"', '"alt.docs:column owner_id:why"', '"alt.docs:column up after:items"', '"alt.docs:column up after:why"', '"alt.docs:delete:items"', '"alt.docs:delete:why"', '"alt.docs:insert:items"', '"alt.docs:insert:refuse"', '"alt.docs:insert:why"', '"alt.docs:rules:explain"', '"alt.docs:update:items"', '"alt.docs:update:refuse"', '"alt.docs:update:why"']::text[]))
     AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
     severity := 'error'; object := r.object;
     problem := format('%s holds %s on it, which the policy doesn''t give (a default privilege of the owner, or a grant made since the last apply): the next apply takes it back, or %s', r.who, r.privilege, r.stmt);
@@ -6326,8 +6319,8 @@ BEGIN
   END LOOP;
 END $ch$;
 
-REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen FROM app_user;
-GRANT SELECT ON authz_gen.policy_lines, authz_gen."doc__banned", authz_gen."doc__hidden", authz_gen."doc__parent__hidden__ext", authz_gen."doc__parent__view__base__ext", authz_gen."doc__project__view__ext", authz_gen."doc__reader", authz_gen."doc__roles:view", authz_gen."doc__shortcut__hidden", authz_gen."doc__shortcut__view__base", authz_gen."doc__view__base", authz_gen."doc__view__base__direct", authz_gen."doc__writer", authz_gen."proj__view" TO app_user;
+REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM app_user;
+GRANT SELECT ON authz_gen.policy_lines, authz_int."doc__banned", authz_int."doc__hidden", authz_int."doc__parent__hidden__ext", authz_int."doc__parent__view__base__ext", authz_int."doc__project__view__ext", authz_int."doc__reader", authz_int."doc__roles:view", authz_int."doc__shortcut__hidden", authz_int."doc__shortcut__view__base", authz_int."doc__view__base", authz_int."doc__view__base__direct", authz_int."doc__writer", authz_int."proj__view" TO app_user;
 
 -- Privileges the policy doesn't give on rowstile's schemas and what is in them are taken back
 DO $r$
@@ -6344,8 +6337,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
-             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"doc__banned"', '"doc__hidden"', '"doc__parent__hidden__ext"', '"doc__parent__view__base__ext"', '"doc__project__view__ext"', '"doc__reader"', '"doc__roles:view"', '"doc__shortcut__hidden"', '"doc__shortcut__view__base"', '"doc__view__base"', '"doc__view__base__direct"', '"doc__writer"', '"proj__view"']::text[]))
+    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."doc__banned"', 'authz_int."doc__hidden"', 'authz_int."doc__parent__hidden__ext"', 'authz_int."doc__parent__view__base__ext"', 'authz_int."doc__project__view__ext"', 'authz_int."doc__reader"', 'authz_int."doc__roles:view"', 'authz_int."doc__shortcut__hidden"', 'authz_int."doc__shortcut__view__base"', 'authz_int."doc__view__base"', 'authz_int."doc__view__base__direct"', 'authz_int."doc__writer"', 'authz_int."proj__view"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -6357,7 +6350,8 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole)
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+             AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"alt.docs:column owner_id:items"', '"alt.docs:column owner_id:why"', '"alt.docs:column up after:items"', '"alt.docs:column up after:why"', '"alt.docs:delete:items"', '"alt.docs:delete:why"', '"alt.docs:insert:items"', '"alt.docs:insert:refuse"', '"alt.docs:insert:why"', '"alt.docs:rules:explain"', '"alt.docs:update:items"', '"alt.docs:update:refuse"', '"alt.docs:update:why"']::text[]))
     AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
     EXECUTE g.stmt;
     v_taken := v_taken + 1;
@@ -6373,7 +6367,14 @@ GRANT USAGE ON SCHEMA authz, authz_gen TO app_user;
 
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz_gen FROM PUBLIC;
 
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz_gen TO app_user;
+DO $gf$
+DECLARE f regprocedure;
+BEGIN
+  FOR f IN SELECT p.oid::regprocedure FROM pg_proc p WHERE p.pronamespace = 'authz_gen'::regnamespace
+           AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"alt.docs:column owner_id:items"', '"alt.docs:column owner_id:why"', '"alt.docs:column up after:items"', '"alt.docs:column up after:why"', '"alt.docs:delete:items"', '"alt.docs:delete:why"', '"alt.docs:insert:items"', '"alt.docs:insert:refuse"', '"alt.docs:insert:why"', '"alt.docs:rules:explain"', '"alt.docs:update:items"', '"alt.docs:update:refuse"', '"alt.docs:update:why"']::text[]) LOOP
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', f, 'app_user');
+  END LOOP;
+END $gf$;
 
 GRANT EXECUTE ON FUNCTION
   authz.uid(),

@@ -296,7 +296,7 @@ echo "-- applying, and what it warns about"
 run apply "$T/trap.authz"
 qual=$(PSQL -c "SELECT qual FROM pg_policies WHERE schemaname = 'app' AND tablename = 'teams' AND policyname = 'authz_select'")
 case "$out $qual" in *"row-level security"*) bad "a rule condition that reads a governed table is warned about" "$out";;
-  *"authz_gen.team__check_"*) ok "a rule condition that reads a governed table runs with the policy's rights, as a function";;
+  *"authz_int.team__check_"*) ok "a rule condition that reads a governed table runs with the policy's rights, as a function";;
   *) bad "the rule condition" "$qual";; esac
 # the same when a quote Postgres reads as part of a string (E'it\'s', $$it's$$) comes before the subquery: user 6
 # may not view file 12, so the app role can't see it, but the policy's rights can, and no team may be seen

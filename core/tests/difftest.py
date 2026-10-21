@@ -68,9 +68,12 @@ def read(path: str) -> str:
 
 
 REFUSE = re.compile(r'authz_gen\."[^"]*:refuse"\(')
-# a column rule's trigger function: the row it checks, and the function that says whether the rule holds for it
-# (`<table>:column_<n>:holds`, or that name shortened with a hash when it is longer than Postgres allows)
-COLUMN_CHECK = re.compile(r"v_row := (OLD|NEW);.*?IF NOT (authz_gen\.\"[^\"]+\")\(v_row\) THEN", re.S)
+# a column rule's check, in its trigger's WHEN (kept parsed, as a policy is, so it may call what is in authz_int): the
+# function that says whether the rule holds (`<table>:column_<n>:holds`, or that name shortened with a hash when it is
+# longer than Postgres allows), and the row it checks
+COLUMN_WHEN = re.compile(
+    r"NOT (authz_int\.\"[^\"]+\")\(jsonb_populate_record\(NULL::[^,]+, to_jsonb\((old|new)(?:\.\*)?\)\)\)", re.I
+)
 
 
 def refusals_of(pol: Policy) -> re.Pattern[str]:
@@ -379,13 +382,14 @@ class Checker:
             )[1]
         )
         # Column rules (`update owner_id : share`) are triggers, named after the rule's head on their table: each
-        # one's condition is read back from its function, to be evaluated on every row as the policies' are.
+        # one's condition is read back from its WHEN, to be evaluated on every row as the policies' are.
         triggers: dict[tuple[str, str], str] = {
             (table, name): body
             for table, name, body in json.loads(
                 self.db.run(
                     "SELECT coalesce(json_agg(json_build_array(n.nspname || '.' || c.relname, tg.tgname, "
-                    "pg_get_functiondef(tg.tgfoid))), '[]') FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid "
+                    "pg_get_triggerdef(tg.oid))), '[]') FROM pg_trigger tg "
+                    "JOIN pg_class c ON c.oid = tg.tgrelid "
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
                     "WHERE (tg.tgname LIKE 'authz\\_update %' OR tg.tgname LIKE 'authz\\_update\\_after %') AND NOT tg.tgisinternal"
                 )[1]
@@ -403,13 +407,13 @@ class Checker:
         self.column_rules: list[tuple[Rule, str]] = []
         for r in ruled:
             name = ident(f"authz_update{'_after' if r.command == 'update after' else ''} {', '.join(r.columns)}")
-            m = COLUMN_CHECK.search(triggers.get((r.table, name), ""))
-            if not m or (m.group(1) == "NEW") != (r.command == "update after"):
+            w = COLUMN_WHEN.search(triggers.get((r.table, name), ""))
+            if not w or (w.group(2).upper() == "NEW") != (r.command == "update after"):
                 raise SystemExit(
                     f"{r.table}, the rule on {', '.join(r.columns)}: its trigger {name} is missing, or doesn't "
                     f"check the row {'after' if r.command == 'update after' else 'before'} the change"
                 )
-            self.column_rules.append((r, f"{m.group(2)}(the_row)"))  # asked of each row, FROM <table> the_row
+            self.column_rules.append((r, f"{w.group(1)}(the_row)"))  # asked of each row, FROM <table> the_row
         self.checks = 0  # how many snapshots so far: who is asked with a scope, and which
         self.scoped: tuple[str, str] = ("", "read")
 

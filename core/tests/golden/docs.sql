@@ -2436,22 +2436,18 @@ END $tr$;
 -- user.impersonate (line 27): {exists (select 1 from app.org_members a join app.org_members b on a.org_id = b.org_id where a.user_id = authz.uid() and a.role = 'admin' and b.user_id = this.id)}
 CREATE VIEW authz_int."user__impersonate" AS
   SELECT r."id" AS id FROM "app"."users" r WHERE coalesce((exists (select 1 from app.org_members a join app.org_members b on a.org_id = b.org_id where a.user_id = (SELECT authz.uid()) and a.role = 'admin' and b.user_id = r.id)), false);
-CREATE VIEW authz_gen."user__impersonate" WITH (security_barrier) AS SELECT id FROM authz_int."user__impersonate";
 
 -- folder.owner (line 42)
 CREATE VIEW authz_int."folder__owner" AS
   SELECT r."id" AS id FROM "app"."folders" r WHERE r."owner_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."folder__owner" WITH (security_barrier) AS SELECT id FROM authz_int."folder__owner";
 
 -- org.admin (line 32)
 CREATE VIEW authz_int."org__admin" AS
   SELECT s."org_id" AS id FROM "app"."org_members" s WHERE s."user_id" = (SELECT authz.uid()) AND coalesce((role = 'admin'), false);
-CREATE VIEW authz_gen."org__admin" WITH (security_barrier) AS SELECT id FROM authz_int."org__admin";
 
 -- folder.org.admin
 CREATE VIEW authz_int."folder__org__admin" AS
   SELECT r."id" AS id FROM "app"."folders" r WHERE r."org_id" IN (SELECT id FROM authz_int."org__admin");
-CREATE VIEW authz_gen."folder__org__admin" WITH (security_barrier) AS SELECT id FROM authz_int."folder__org__admin";
 
 -- folder.share: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__share__start"() RETURNS SETOF bigint
@@ -2467,10 +2463,9 @@ END $f$;
 CREATE VIEW authz_int."folder__share" AS
   SELECT c.descendant AS id FROM authz_int."folder__parent__tree" c
   WHERE c.ancestor IN (SELECT s.id FROM authz_int."folder__share__start"() s(id));
-CREATE VIEW authz_gen."folder__share" WITH (security_barrier) AS SELECT id FROM authz_int."folder__share";
 
 -- folder.share for one object (checks of single rows and authz.can)
-CREATE FUNCTION authz_gen."folder__share__has"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."folder__share__has"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   RETURN EXISTS (SELECT 1 FROM authz_int."folder__parent__tree" c
@@ -2486,7 +2481,6 @@ CREATE VIEW authz_int."folder__share__direct" AS
   (SELECT id FROM authz_int."folder__owner")
   UNION ALL
   (SELECT id FROM authz_int."folder__org__admin");
-CREATE VIEW authz_gen."folder__share__direct" WITH (security_barrier) AS SELECT id FROM authz_int."folder__share__direct";
 
 -- team.member (line 35)
 CREATE VIEW authz_int."team__member" AS
@@ -2497,10 +2491,9 @@ CREATE VIEW authz_int."team__member" AS
     SELECT unnest(ARRAY(SELECT e.obj FROM (
   SELECT s."parent_id" AS obj, s."id" AS subj FROM "app"."teams" s WHERE s."id" IS NOT NULL AND s."parent_id" IS NOT NULL) e WHERE e.subj = m.id)) FROM m)
   SELECT id FROM m;
-CREATE VIEW authz_gen."team__member" WITH (security_barrier) AS SELECT id FROM authz_int."team__member";
 
 -- team.member for the user signed in, as an array (reads ask once per statement)
-CREATE FUNCTION authz_gen."team__member__ids"() RETURNS bigint[]
+CREATE FUNCTION authz_int."team__member__ids"() RETURNS bigint[]
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   RETURN ARRAY(SELECT id FROM authz_int."team__member");
@@ -2510,10 +2503,9 @@ END $f$;
 CREATE VIEW authz_int."folder__editor" AS
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]) AND coalesce((access = 'edit'), false));
-CREATE VIEW authz_gen."folder__editor" WITH (security_barrier) AS SELECT id FROM authz_int."folder__editor";
+  (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]) AND coalesce((access = 'edit'), false));
 
 -- folder.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__edit__start"() RETURNS SETOF bigint
@@ -2531,10 +2523,9 @@ END $f$;
 CREATE VIEW authz_int."folder__edit" AS
   SELECT c.descendant AS id FROM authz_int."folder__parent__tree" c
   WHERE c.ancestor IN (SELECT s.id FROM authz_int."folder__edit__start"() s(id));
-CREATE VIEW authz_gen."folder__edit" WITH (security_barrier) AS SELECT id FROM authz_int."folder__edit";
 
 -- folder.edit for one object (checks of single rows and authz.can)
-CREATE FUNCTION authz_gen."folder__edit__has"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."folder__edit__has"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   RETURN EXISTS (SELECT 1 FROM authz_int."folder__parent__tree" c
@@ -2550,18 +2541,16 @@ END $f$;
 -- org.member (line 31)
 CREATE VIEW authz_int."org__member" AS
   SELECT s."org_id" AS id FROM "app"."org_members" s WHERE s."user_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."org__member" WITH (security_barrier) AS SELECT id FROM authz_int."org__member";
 
 -- folder.viewer (line 43)
 CREATE VIEW authz_int."folder__viewer" AS
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'org' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."org__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]));
-CREATE VIEW authz_gen."folder__viewer" WITH (security_barrier) AS SELECT id FROM authz_int."folder__viewer";
+  (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]));
 
 -- folder.view: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."folder__view__start"() RETURNS SETOF bigint
@@ -2581,10 +2570,9 @@ END $f$;
 CREATE VIEW authz_int."folder__view" AS
   SELECT c.descendant AS id FROM authz_int."folder__linked_into_parent__tree" c
   WHERE c.ancestor IN (SELECT s.id FROM authz_int."folder__view__start"() s(id));
-CREATE VIEW authz_gen."folder__view" WITH (security_barrier) AS SELECT id FROM authz_int."folder__view";
 
 -- folder.view for one object (checks of single rows and authz.can)
-CREATE FUNCTION authz_gen."folder__view__has"(p_id bigint) RETURNS boolean
+CREATE FUNCTION authz_int."folder__view__has"(p_id bigint) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   RETURN EXISTS (SELECT 1 FROM authz_int."folder__linked_into_parent__tree" c
@@ -2602,53 +2590,44 @@ END $f$;
 -- folder.org.member
 CREATE VIEW authz_int."folder__org__member" AS
   SELECT r."id" AS id FROM "app"."folders" r WHERE r."org_id" IN (SELECT id FROM authz_int."org__member");
-CREATE VIEW authz_gen."folder__org__member" WITH (security_barrier) AS SELECT id FROM authz_int."folder__org__member";
 
 -- folder.break_glass (line 54): org.member
 CREATE VIEW authz_int."folder__break_glass" AS
   SELECT id FROM authz_int."folder__org__member";
-CREATE VIEW authz_gen."folder__break_glass" WITH (security_barrier) AS SELECT id FROM authz_int."folder__break_glass";
 
 -- file.owner (line 58)
 CREATE VIEW authz_int."file__owner" AS
   SELECT r."id" AS id FROM "app"."files" r WHERE r."owner_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."file__owner" WITH (security_barrier) AS SELECT id FROM authz_int."file__owner";
 
 -- file.folder.share
 CREATE VIEW authz_int."file__folder__share" AS
   SELECT r."id" AS id FROM "app"."files" r WHERE r."folder_id" IN (SELECT id FROM authz_int."folder__share");
-CREATE VIEW authz_gen."file__folder__share" WITH (security_barrier) AS SELECT id FROM authz_int."file__folder__share";
 
 -- file.share (line 61): owner or folder.share
 CREATE VIEW authz_int."file__share" AS
   (SELECT id FROM authz_int."file__owner")
   UNION ALL
   (SELECT id FROM authz_int."file__folder__share");
-CREATE VIEW authz_gen."file__share" WITH (security_barrier) AS SELECT id FROM authz_int."file__share";
 
 -- file.folder.edit
 CREATE VIEW authz_int."file__folder__edit" AS
   SELECT r."id" AS id FROM "app"."files" r WHERE r."folder_id" IN (SELECT id FROM authz_int."folder__edit");
-CREATE VIEW authz_gen."file__folder__edit" WITH (security_barrier) AS SELECT id FROM authz_int."file__folder__edit";
 
 -- file.edit (line 62): share or folder.edit
 CREATE VIEW authz_int."file__edit" AS
   (SELECT id FROM authz_int."file__owner")
   UNION ALL
   (SELECT id FROM authz_int."file__folder__edit");
-CREATE VIEW authz_gen."file__edit" WITH (security_barrier) AS SELECT id FROM authz_int."file__edit";
 
 -- file.viewer (line 59)
 CREATE VIEW authz_int."file__viewer" AS
   (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'file' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL)
   UNION ALL
-  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'file' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
-CREATE VIEW authz_gen."file__viewer" WITH (security_barrier) AS SELECT id FROM authz_int."file__viewer";
+  (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'file' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL);
 
 -- file.folder.view
 CREATE VIEW authz_int."file__folder__view" AS
   SELECT r."id" AS id FROM "app"."files" r WHERE r."folder_id" IN (SELECT id FROM authz_int."folder__view");
-CREATE VIEW authz_gen."file__folder__view" WITH (security_barrier) AS SELECT id FROM authz_int."file__folder__view";
 
 -- file.view (line 63): edit or viewer or (folder.view and not {confidential})
 CREATE VIEW authz_int."file__view" AS
@@ -2661,27 +2640,22 @@ CREATE VIEW authz_int."file__view" AS
   (SELECT r."id" AS id FROM "app"."files" r
   WHERE r."id" IN (SELECT id FROM authz_int."file__folder__view")
     AND NOT coalesce((confidential), false));
-CREATE VIEW authz_gen."file__view" WITH (security_barrier) AS SELECT id FROM authz_int."file__view";
 
 -- folder.linked_into.view
 CREATE VIEW authz_int."folder__linked_into__view" AS
   SELECT s."folder_id" AS id FROM "app"."folder_links" s WHERE s."parent_id" IN (SELECT id FROM authz_int."folder__view");
-CREATE VIEW authz_gen."folder__linked_into__view" WITH (security_barrier) AS SELECT id FROM authz_int."folder__linked_into__view";
 
 -- folder.parent.share
 CREATE VIEW authz_int."folder__parent__share" AS
   SELECT r."id" AS id FROM "app"."folders" r WHERE r."parent_id" IN (SELECT id FROM authz_int."folder__share");
-CREATE VIEW authz_gen."folder__parent__share" WITH (security_barrier) AS SELECT id FROM authz_int."folder__parent__share";
 
 -- folder.parent.edit
 CREATE VIEW authz_int."folder__parent__edit" AS
   SELECT r."id" AS id FROM "app"."folders" r WHERE r."parent_id" IN (SELECT id FROM authz_int."folder__edit");
-CREATE VIEW authz_gen."folder__parent__edit" WITH (security_barrier) AS SELECT id FROM authz_int."folder__parent__edit";
 
 -- folder.parent.view
 CREATE VIEW authz_int."folder__parent__view" AS
   SELECT r."id" AS id FROM "app"."folders" r WHERE r."parent_id" IN (SELECT id FROM authz_int."folder__view");
-CREATE VIEW authz_gen."folder__parent__view" WITH (security_barrier) AS SELECT id FROM authz_int."folder__parent__view";
 
 -- invariant (line 87): never folder: share and not org.member
 CREATE VIEW authz_int."folder__never__1" AS
@@ -2703,16 +2677,32 @@ BEGIN
   END LOOP;
 END $rls$;
 
+-- app.folders: no row has the id, or the user may select it (what the rules' explanations answer for)
+CREATE FUNCTION authz_int."app.folders:seen"(p_id bigint) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  RETURN NOT EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = p_id)
+      OR EXISTS (SELECT 1 FROM "app"."folders" "folders" WHERE "folders"."id" = p_id
+        AND (SELECT authz_int.scope_cmd('app.folders', 'select')) AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = "folders"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = "folders"."id")
+    OR (coalesce((inherit), false)
+    AND authz_int."folder__view__has"("folders"."parent_id"))
+    OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = "folders"."id" AND authz_int."folder__view__has"(s."parent_id"))));
+END $f$;
+
 CREATE FUNCTION authz_gen."app.folders:insert:items"(p_row "app"."folders") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    AND authz_gen."folder__edit__has"("folders"."parent_id")), false),
+    AND authz_int."folder__edit__has"("folders"."parent_id")), false),
     coalesce((SELECT authz_int.scope_cmd('app.folders', 'insert')), false),
     coalesce(true, false),
-    coalesce(authz_gen."folder__edit__has"("folders"."parent_id"), false),
+    coalesce(authz_int."folder__edit__has"("folders"."parent_id"), false),
     coalesce(coalesce("folders"."owner_id" = (SELECT authz.uid()), false), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[5]) END
   FROM (SELECT (p_row).*) AS "folders";
 END;
 
@@ -2750,19 +2740,20 @@ END $f$;
 CREATE FUNCTION authz_gen."app.folders:update:items"(p_row "app"."folders") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = "folders"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = "folders"."id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__edit__has"("folders"."parent_id"))), false),
+    AND authz_int."folder__edit__has"("folders"."parent_id"))), false),
     coalesce((SELECT authz_int.scope_cmd('app.folders', 'update')), false),
     coalesce(true, false),
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = "folders"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = "folders"."id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__edit__has"("folders"."parent_id"))), false)]
+    AND authz_int."folder__edit__has"("folders"."parent_id"))), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "folders";
 END;
 
@@ -2797,17 +2788,18 @@ END $f$;
 CREATE FUNCTION authz_gen."app.folders:delete:items"(p_row "app"."folders") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id"))), false),
+    AND authz_int."folder__share__has"("folders"."parent_id"))), false),
     coalesce((SELECT authz_int.scope_cmd('app.folders', 'delete')), false),
     coalesce(true, false),
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id"))), false)]
+    AND authz_int."folder__share__has"("folders"."parent_id"))), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "folders";
 END;
 
@@ -2848,20 +2840,20 @@ END $f$;
 -- app.folders select (line 71): view
 CREATE POLICY "authz_select" ON "app"."folders" FOR SELECT TO app_user
   USING (((SELECT authz_int.scope_cmd('app.folders', 'select')) AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = "folders"."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = "folders"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = "folders"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = "folders"."id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = "folders"."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = "folders"."parent_id")))
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__linked_into__view" v WHERE v.id = "folders"."id"))));
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = "folders"."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = "folders"."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = "folders"."id"))));
 
 COMMENT ON POLICY "authz_select" ON "app"."folders" IS 'rowstile';
 
 -- app.folders insert (line 72): parent.edit and owner
 CREATE POLICY "authz_insert" ON "app"."folders" FOR INSERT TO app_user
   WITH CHECK (((SELECT authz_int.scope_cmd('app.folders', 'insert')) AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    AND authz_gen."folder__edit__has"("folders"."parent_id")))
+    AND authz_int."folder__edit__has"("folders"."parent_id")))
     OR authz_gen."app.folders:insert:refuse"(ROW("folders".*)::"app"."folders"));
 
 COMMENT ON POLICY "authz_insert" ON "app"."folders" IS 'rowstile';
@@ -2869,15 +2861,15 @@ COMMENT ON POLICY "authz_insert" ON "app"."folders" IS 'rowstile';
 -- app.folders update (line 73): edit
 CREATE POLICY "authz_update" ON "app"."folders" FOR UPDATE TO app_user
   USING (((SELECT authz_int.scope_cmd('app.folders', 'update')) AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = "folders"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = "folders"."id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__edit__has"("folders"."parent_id")))))
+    AND authz_int."folder__edit__has"("folders"."parent_id")))))
   WITH CHECK (((SELECT authz_int.scope_cmd('app.folders', 'update')) AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = "folders"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = "folders"."id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__edit__has"("folders"."parent_id"))))
+    AND authz_int."folder__edit__has"("folders"."parent_id"))))
     OR authz_gen."app.folders:update:refuse"(ROW("folders".*)::"app"."folders"));
 
 COMMENT ON POLICY "authz_update" ON "app"."folders" IS 'rowstile';
@@ -2885,9 +2877,9 @@ COMMENT ON POLICY "authz_update" ON "app"."folders" IS 'rowstile';
 -- app.folders delete (line 76): share
 CREATE POLICY "authz_delete" ON "app"."folders" FOR DELETE TO app_user
   USING (((SELECT authz_int.scope_cmd('app.folders', 'delete')) AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id")))));
+    AND authz_int."folder__share__has"("folders"."parent_id")))));
 
 COMMENT ON POLICY "authz_delete" ON "app"."folders" IS 'rowstile';
 
@@ -2905,16 +2897,30 @@ BEGIN
   END LOOP;
 END $rls$;
 
+-- app.files: no row has the id, or the user may select it (what the rules' explanations answer for)
+CREATE FUNCTION authz_int."app.files:seen"(p_id bigint) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  RETURN NOT EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = p_id)
+      OR EXISTS (SELECT 1 FROM "app"."files" "files" WHERE "files"."id" = p_id
+        AND (SELECT authz_int.scope_cmd('app.files', 'select')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = "files"."id")
+    OR authz_int."folder__edit__has"("files"."folder_id")
+    OR (NOT coalesce((confidential), false)
+    AND authz_int."folder__view__has"("files"."folder_id"))));
+END $f$;
+
 CREATE FUNCTION authz_gen."app.files:insert:items"(p_row "app"."files") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    AND authz_gen."folder__edit__has"("files"."folder_id")), false),
+    AND authz_int."folder__edit__has"("files"."folder_id")), false),
     coalesce((SELECT authz_int.scope_cmd('app.files', 'insert')), false),
     coalesce(true, false),
-    coalesce(authz_gen."folder__edit__has"("files"."folder_id"), false),
+    coalesce(authz_int."folder__edit__has"("files"."folder_id"), false),
     coalesce(coalesce("files"."owner_id" = (SELECT authz.uid()), false), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[5]) END
   FROM (SELECT (p_row).*) AS "files";
 END;
 
@@ -2952,13 +2958,14 @@ END $f$;
 CREATE FUNCTION authz_gen."app.files:update:items"(p_row "app"."files") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__edit__has"("files"."folder_id")), false),
+    OR authz_int."folder__edit__has"("files"."folder_id")), false),
     coalesce((SELECT authz_int.scope_cmd('app.files', 'update')), false),
     coalesce(true, false),
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__edit__has"("files"."folder_id")), false)]
+    OR authz_int."folder__edit__has"("files"."folder_id")), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "files";
 END;
 
@@ -2993,13 +3000,14 @@ END $f$;
 CREATE FUNCTION authz_gen."app.files:delete:items"(p_row "app"."files") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__edit__has"("files"."folder_id")), false),
+    OR authz_int."folder__edit__has"("files"."folder_id")), false),
     coalesce((SELECT authz_int.scope_cmd('app.files', 'delete')), false),
     coalesce(true, false),
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__edit__has"("files"."folder_id")), false)]
+    OR authz_int."folder__edit__has"("files"."folder_id")), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "files";
 END;
 
@@ -3040,19 +3048,19 @@ END $f$;
 -- app.files select (line 79): view
 CREATE POLICY "authz_select" ON "app"."files" FOR SELECT TO app_user
   USING (((SELECT authz_int.scope_cmd('app.files', 'select')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."file__viewer" v WHERE v.id = "files"."id")
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = "files"."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = "files"."folder_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = "files"."id")
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = "files"."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = "files"."folder_id"))
     OR (NOT coalesce((confidential), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = "files"."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = "files"."folder_id"))))));
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = "files"."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = "files"."folder_id"))))));
 
 COMMENT ON POLICY "authz_select" ON "app"."files" IS 'rowstile';
 
 -- app.files insert (line 80): folder.edit and owner
 CREATE POLICY "authz_insert" ON "app"."files" FOR INSERT TO app_user
   WITH CHECK (((SELECT authz_int.scope_cmd('app.files', 'insert')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    AND authz_gen."folder__edit__has"("files"."folder_id")))
+    AND authz_int."folder__edit__has"("files"."folder_id")))
     OR authz_gen."app.files:insert:refuse"(ROW("files".*)::"app"."files"));
 
 COMMENT ON POLICY "authz_insert" ON "app"."files" IS 'rowstile';
@@ -3060,9 +3068,9 @@ COMMENT ON POLICY "authz_insert" ON "app"."files" IS 'rowstile';
 -- app.files update (line 81): edit
 CREATE POLICY "authz_update" ON "app"."files" FOR UPDATE TO app_user
   USING (((SELECT authz_int.scope_cmd('app.files', 'update')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__edit__has"("files"."folder_id"))))
+    OR authz_int."folder__edit__has"("files"."folder_id"))))
   WITH CHECK (((SELECT authz_int.scope_cmd('app.files', 'update')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__edit__has"("files"."folder_id")))
+    OR authz_int."folder__edit__has"("files"."folder_id")))
     OR authz_gen."app.files:update:refuse"(ROW("files".*)::"app"."files"));
 
 COMMENT ON POLICY "authz_update" ON "app"."files" IS 'rowstile';
@@ -3070,33 +3078,34 @@ COMMENT ON POLICY "authz_update" ON "app"."files" IS 'rowstile';
 -- app.files delete (line 84): edit
 CREATE POLICY "authz_delete" ON "app"."files" FOR DELETE TO app_user
   USING (((SELECT authz_int.scope_cmd('app.files', 'delete')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__edit__has"("files"."folder_id"))));
+    OR authz_int."folder__edit__has"("files"."folder_id"))));
 
 COMMENT ON POLICY "authz_delete" ON "app"."files" IS 'rowstile';
 
 CREATE FUNCTION authz_gen."app.folders:column parent_id after:items"(p_row "app"."folders") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
-    coalesce((authz_gen."folder__edit__has"("folders"."parent_id")
+  SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
+    coalesce((authz_int."folder__edit__has"("folders"."parent_id")
     OR (coalesce((parent_id is null), false)
     AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id"))))), false),
+    AND authz_int."folder__share__has"("folders"."parent_id"))))), false),
     coalesce((SELECT authz_int.scope_cmd('app.folders', 'update')), false),
     coalesce(true, false),
-    coalesce(authz_gen."folder__edit__has"("folders"."parent_id"), false),
+    coalesce(authz_int."folder__edit__has"("folders"."parent_id"), false),
     coalesce((coalesce((parent_id is null), false)
     AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id")))), false),
+    AND authz_int."folder__share__has"("folders"."parent_id")))), false),
     coalesce(coalesce((parent_id is null), false), false),
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id"))), false)]
+    AND authz_int."folder__share__has"("folders"."parent_id"))), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[7]) END
   FROM (SELECT (p_row).*) AS "folders";
 END;
 
@@ -3121,58 +3130,58 @@ BEGIN
 END $f$;
 
 -- app.folders update parent_id after (line 74): parent.edit or ({parent_id is null} and share)
--- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
--- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."app.folders:column parent_id after:holds"(p_row "app"."folders") RETURNS boolean
+-- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
+-- role uses it without naming it (authz_int)
+CREATE FUNCTION authz_int."app.folders:column parent_id after:holds"(p_row "app"."folders") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT coalesce((authz_gen."folder__edit__has"("folders"."parent_id")
+  SELECT coalesce((authz_int."folder__edit__has"("folders"."parent_id")
     OR (coalesce((parent_id is null), false)
     AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id"))))), false) FROM (SELECT (p_row).*) AS "folders";
+    AND authz_int."folder__share__has"("folders"."parent_id"))))), false) FROM (SELECT (p_row).*) AS "folders";
 END;
--- checked on the row after the change, for roles that row-level security applies to on the
--- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
+-- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.folders:column parent_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "app"."folders";
 BEGIN
-  IF pg_catalog.row_security_active('"app"."folders"'::pg_catalog.regclass) THEN
-    -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
-    IF TG_RELID = '"app"."folders"'::pg_catalog.regclass THEN v_row := NEW;
-    ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(NEW)); END IF;
-    IF NOT authz_gen."app.folders:column parent_id after:holds"(v_row) THEN
-      BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.folders:column parent_id after:why"(v_row) l);
-      EXCEPTION WHEN OTHERS THEN
-        v_lines := 'no explanation: ' || SQLERRM;
-      END;
-      RAISE EXCEPTION 'changing parent_id of app.folders % needs: parent.edit or ({parent_id is null} and share)', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
-        SCHEMA = 'app', TABLE = 'folders', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
-    END IF;
-  END IF;
-  RETURN NEW;
+  -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
+  IF TG_RELID = '"app"."folders"'::pg_catalog.regclass THEN v_row := NEW;
+  ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(NEW)); END IF;
+  BEGIN
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.folders:column parent_id after:why"(v_row) l);
+  EXCEPTION WHEN OTHERS THEN
+    v_lines := 'no explanation: ' || SQLERRM;
+  END;
+  RAISE EXCEPTION 'changing parent_id of app.folders % needs: parent.edit or ({parent_id is null} and share)', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+    SCHEMA = 'app', TABLE = 'folders', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
 END $f$;
+-- checked on the row after the change, for roles that row-level security applies to on the
+-- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
+-- the row as the table's own
 CREATE TRIGGER "authz_update_after parent_id" BEFORE UPDATE ON "app"."folders" FOR EACH ROW
-  WHEN (OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
+  WHEN ((OLD."parent_id" IS DISTINCT FROM NEW."parent_id")
+    AND pg_catalog.row_security_active('"app"."folders"'::pg_catalog.regclass)
+    AND NOT authz_int."app.folders:column parent_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(NEW))))
   EXECUTE FUNCTION authz_int."app.folders:column parent_id after"();
 
 CREATE FUNCTION authz_gen."app.folders:column id, owner_id, org_id, inherit:items"(p_row "app"."folders") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."app.folders:seen"("folders"."id") THEN ARRAY[
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id"))), false),
+    AND authz_int."folder__share__has"("folders"."parent_id"))), false),
     coalesce((SELECT authz_int.scope_cmd('app.folders', 'update')), false),
     coalesce(true, false),
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id"))), false)]
+    AND authz_int."folder__share__has"("folders"."parent_id"))), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "folders";
 END;
 
@@ -3190,53 +3199,53 @@ BEGIN
 END $f$;
 
 -- app.folders update id, owner_id, org_id, inherit (line 75): share
--- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
--- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."app.folders:column id, owner_id, org_id, inherit:holds"(p_row "app"."folders") RETURNS boolean
+-- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
+-- role uses it without naming it (authz_int)
+CREATE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit:holds"(p_row "app"."folders") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"("folders"."parent_id"))), false) FROM (SELECT (p_row).*) AS "folders";
+    AND authz_int."folder__share__has"("folders"."parent_id"))), false) FROM (SELECT (p_row).*) AS "folders";
 END;
--- checked on the row before the change, for roles that row-level security applies to on the
--- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
+-- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "app"."folders";
 BEGIN
-  IF pg_catalog.row_security_active('"app"."folders"'::pg_catalog.regclass) THEN
-    -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
-    IF TG_RELID = '"app"."folders"'::pg_catalog.regclass THEN v_row := OLD;
-    ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(OLD)); END IF;
-    IF NOT authz_gen."app.folders:column id, owner_id, org_id, inherit:holds"(v_row) THEN
-      BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.folders:column id, owner_id, org_id, inherit:why"(v_row) l);
-      EXCEPTION WHEN OTHERS THEN
-        v_lines := 'no explanation: ' || SQLERRM;
-      END;
-      RAISE EXCEPTION 'changing id, owner_id, org_id, inherit of app.folders % needs: share', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
-        SCHEMA = 'app', TABLE = 'folders', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
-    END IF;
-  END IF;
-  RETURN NEW;
+  -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
+  IF TG_RELID = '"app"."folders"'::pg_catalog.regclass THEN v_row := OLD;
+  ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(OLD)); END IF;
+  BEGIN
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.folders:column id, owner_id, org_id, inherit:why"(v_row) l);
+  EXCEPTION WHEN OTHERS THEN
+    v_lines := 'no explanation: ' || SQLERRM;
+  END;
+  RAISE EXCEPTION 'changing id, owner_id, org_id, inherit of app.folders % needs: share', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+    SCHEMA = 'app', TABLE = 'folders', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
 END $f$;
+-- checked on the row before the change, for roles that row-level security applies to on the
+-- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
+-- the row as the table's own
 CREATE TRIGGER "authz_update id, owner_id, org_id, inherit" BEFORE UPDATE ON "app"."folders" FOR EACH ROW
-  WHEN (OLD."id" IS DISTINCT FROM NEW."id"
+  WHEN ((OLD."id" IS DISTINCT FROM NEW."id"
      OR OLD."owner_id" IS DISTINCT FROM NEW."owner_id"
      OR OLD."org_id" IS DISTINCT FROM NEW."org_id"
      OR OLD."inherit" IS DISTINCT FROM NEW."inherit")
+    AND pg_catalog.row_security_active('"app"."folders"'::pg_catalog.regclass)
+    AND NOT authz_int."app.folders:column id, owner_id, org_id, inherit:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."folders", pg_catalog.to_jsonb(OLD))))
   EXECUTE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit"();
 
 CREATE FUNCTION authz_gen."app.files:column folder_id after:items"(p_row "app"."files") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
-    coalesce(authz_gen."folder__edit__has"("files"."folder_id"), false),
+  SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
+    coalesce(authz_int."folder__edit__has"("files"."folder_id"), false),
     coalesce((SELECT authz_int.scope_cmd('app.files', 'update')), false),
     coalesce(true, false),
-    coalesce(authz_gen."folder__edit__has"("files"."folder_id"), false)]
+    coalesce(authz_int."folder__edit__has"("files"."folder_id"), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "files";
 END;
 
@@ -3256,49 +3265,49 @@ BEGIN
 END $f$;
 
 -- app.files update folder_id after (line 82): folder.edit
--- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
--- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."app.files:column folder_id after:holds"(p_row "app"."files") RETURNS boolean
+-- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
+-- role uses it without naming it (authz_int)
+CREATE FUNCTION authz_int."app.files:column folder_id after:holds"(p_row "app"."files") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT coalesce(authz_gen."folder__edit__has"("files"."folder_id"), false) FROM (SELECT (p_row).*) AS "files";
+  SELECT coalesce(authz_int."folder__edit__has"("files"."folder_id"), false) FROM (SELECT (p_row).*) AS "files";
 END;
--- checked on the row after the change, for roles that row-level security applies to on the
--- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
+-- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.files:column folder_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "app"."files";
 BEGIN
-  IF pg_catalog.row_security_active('"app"."files"'::pg_catalog.regclass) THEN
-    -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
-    IF TG_RELID = '"app"."files"'::pg_catalog.regclass THEN v_row := NEW;
-    ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(NEW)); END IF;
-    IF NOT authz_gen."app.files:column folder_id after:holds"(v_row) THEN
-      BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.files:column folder_id after:why"(v_row) l);
-      EXCEPTION WHEN OTHERS THEN
-        v_lines := 'no explanation: ' || SQLERRM;
-      END;
-      RAISE EXCEPTION 'changing folder_id of app.files % needs: folder.edit', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
-        SCHEMA = 'app', TABLE = 'files', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
-    END IF;
-  END IF;
-  RETURN NEW;
+  -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
+  IF TG_RELID = '"app"."files"'::pg_catalog.regclass THEN v_row := NEW;
+  ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(NEW)); END IF;
+  BEGIN
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.files:column folder_id after:why"(v_row) l);
+  EXCEPTION WHEN OTHERS THEN
+    v_lines := 'no explanation: ' || SQLERRM;
+  END;
+  RAISE EXCEPTION 'changing folder_id of app.files % needs: folder.edit', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+    SCHEMA = 'app', TABLE = 'files', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
 END $f$;
+-- checked on the row after the change, for roles that row-level security applies to on the
+-- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
+-- the row as the table's own
 CREATE TRIGGER "authz_update_after folder_id" BEFORE UPDATE ON "app"."files" FOR EACH ROW
-  WHEN (OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
+  WHEN ((OLD."folder_id" IS DISTINCT FROM NEW."folder_id")
+    AND pg_catalog.row_security_active('"app"."files"'::pg_catalog.regclass)
+    AND NOT authz_int."app.files:column folder_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(NEW))))
   EXECUTE FUNCTION authz_int."app.files:column folder_id after"();
 
 CREATE FUNCTION authz_gen."app.files:column id, owner_id, confidential:items"(p_row "app"."files") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."app.files:seen"("files"."id") THEN ARRAY[
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__share__has"("files"."folder_id")), false),
+    OR authz_int."folder__share__has"("files"."folder_id")), false),
     coalesce((SELECT authz_int.scope_cmd('app.files', 'update')), false),
     coalesce(true, false),
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__share__has"("files"."folder_id")), false)]
+    OR authz_int."folder__share__has"("files"."folder_id")), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "files";
 END;
 
@@ -3316,40 +3325,39 @@ BEGIN
 END $f$;
 
 -- app.files update id, owner_id, confidential (line 83): share
--- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
--- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."app.files:column id, owner_id, confidential:holds"(p_row "app"."files") RETURNS boolean
+-- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
+-- role uses it without naming it (authz_int)
+CREATE FUNCTION authz_int."app.files:column id, owner_id, confidential:holds"(p_row "app"."files") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__share__has"("files"."folder_id")), false) FROM (SELECT (p_row).*) AS "files";
+    OR authz_int."folder__share__has"("files"."folder_id")), false) FROM (SELECT (p_row).*) AS "files";
 END;
--- checked on the row before the change, for roles that row-level security applies to on the
--- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
+-- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.files:column id, owner_id, confidential"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "app"."files";
 BEGIN
-  IF pg_catalog.row_security_active('"app"."files"'::pg_catalog.regclass) THEN
-    -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
-    IF TG_RELID = '"app"."files"'::pg_catalog.regclass THEN v_row := OLD;
-    ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(OLD)); END IF;
-    IF NOT authz_gen."app.files:column id, owner_id, confidential:holds"(v_row) THEN
-      BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.files:column id, owner_id, confidential:why"(v_row) l);
-      EXCEPTION WHEN OTHERS THEN
-        v_lines := 'no explanation: ' || SQLERRM;
-      END;
-      RAISE EXCEPTION 'changing id, owner_id, confidential of app.files % needs: share', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
-        SCHEMA = 'app', TABLE = 'files', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
-    END IF;
-  END IF;
-  RETURN NEW;
+  -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
+  IF TG_RELID = '"app"."files"'::pg_catalog.regclass THEN v_row := OLD;
+  ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(OLD)); END IF;
+  BEGIN
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."app.files:column id, owner_id, confidential:why"(v_row) l);
+  EXCEPTION WHEN OTHERS THEN
+    v_lines := 'no explanation: ' || SQLERRM;
+  END;
+  RAISE EXCEPTION 'changing id, owner_id, confidential of app.files % needs: share', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+    SCHEMA = 'app', TABLE = 'files', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
 END $f$;
+-- checked on the row before the change, for roles that row-level security applies to on the
+-- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
+-- the row as the table's own
 CREATE TRIGGER "authz_update id, owner_id, confidential" BEFORE UPDATE ON "app"."files" FOR EACH ROW
-  WHEN (OLD."id" IS DISTINCT FROM NEW."id"
+  WHEN ((OLD."id" IS DISTINCT FROM NEW."id"
      OR OLD."owner_id" IS DISTINCT FROM NEW."owner_id"
      OR OLD."confidential" IS DISTINCT FROM NEW."confidential")
+    AND pg_catalog.row_security_active('"app"."files"'::pg_catalog.regclass)
+    AND NOT authz_int."app.files:column id, owner_id, confidential:holds"(pg_catalog.jsonb_populate_record(NULL::"app"."files", pg_catalog.to_jsonb(OLD))))
   EXECUTE FUNCTION authz_int."app.files:column id, owner_id, confidential"();
 
 -- Foreign keys that delete governed rows skip row-level security
@@ -3419,22 +3427,22 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__share__has"(o."parent_id")))));
+    AND authz_int."folder__share__has"(o."parent_id")))));
         WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__edit__has"(o."parent_id")))));
+    AND authz_int."folder__edit__has"(o."parent_id")))));
         WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__view__has"(o."parent_id"))
-    OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = o."id" AND authz_gen."folder__view__has"(s."parent_id")))));
-        WHEN 'break_glass' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_gen."org__member" v WHERE v.id = o."org_id")));
+    AND authz_int."folder__view__has"(o."parent_id"))
+    OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = o."id" AND authz_int."folder__view__has"(s."parent_id")))));
+        WHEN 'break_glass' THEN RETURN EXISTS (SELECT 1 FROM "app"."folders" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'file' THEN
@@ -3442,14 +3450,14 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__share__has"(o."folder_id"))));
+    OR authz_int."folder__share__has"(o."folder_id"))));
         WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR authz_gen."folder__edit__has"(o."folder_id"))));
+    OR authz_int."folder__edit__has"(o."folder_id"))));
         WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "app"."files" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."file__viewer" v WHERE v.id = o."id")
-    OR authz_gen."folder__edit__has"(o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR authz_int."folder__edit__has"(o."folder_id")
     OR (NOT coalesce((confidential), false)
-    AND authz_gen."folder__view__has"(o."folder_id")))));
+    AND authz_int."folder__view__has"(o."folder_id")))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     ELSE
@@ -3492,169 +3500,169 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__share" v WHERE v.id = o."parent_id"))));
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__share" v WHERE v.id = o."parent_id"))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__share" v WHERE v.id = o."parent_id"))))
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__share" v WHERE v.id = o."parent_id"))))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__share" v WHERE v.id = o."parent_id"))))
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__share" v WHERE v.id = o."parent_id"))))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'folder.edit' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."parent_id"))));
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."parent_id"))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."parent_id"))))
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."parent_id"))))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."parent_id"))))
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."parent_id"))))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'folder.view' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."parent_id")))
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__linked_into__view" v WHERE v.id = o."id"));
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = o."id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."parent_id")))
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__linked_into__view" v WHERE v.id = o."id"))
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = o."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = o."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = o."id")
     OR (coalesce((inherit), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."parent_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."parent_id")))
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__linked_into__view" v WHERE v.id = o."id"))
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."parent_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."parent_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."folder__linked_into__view" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'folder.break_glass' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
-        WHERE EXISTS (SELECT 1 FROM authz_gen."org__member" v WHERE v.id = o."org_id");
+        WHERE EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id");
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
-        WHERE EXISTS (SELECT 1 FROM authz_gen."org__member" v WHERE v.id = o."org_id")
+        WHERE EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."folders" o
-        WHERE o."id" > p_after::bigint AND EXISTS (SELECT 1 FROM authz_gen."org__member" v WHERE v.id = o."org_id")
+        WHERE o."id" > p_after::bigint AND EXISTS (SELECT 1 FROM authz_int."org__member" v WHERE v.id = o."org_id")
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'file.share' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__share" v WHERE v.id = o."folder_id")));
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__share" v WHERE v.id = o."folder_id")));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__share" v WHERE v.id = o."folder_id")))
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__share" v WHERE v.id = o."folder_id")))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__share" v WHERE v.id = o."folder_id")))
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__share" v WHERE v.id = o."folder_id")))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'file.edit' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id")));
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id")));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id")))
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id")))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id")))
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id")))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'file.view' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."file__viewer" v WHERE v.id = o."id")
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"))
     OR (NOT coalesce((confidential), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."folder_id"))));
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."file__viewer" v WHERE v.id = o."id")
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"))
     OR (NOT coalesce((confidential), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."folder_id"))))
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "app"."files" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."file__viewer" v WHERE v.id = o."id")
-    OR (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__edit" v WHERE v.id = o."folder_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = o."id")
+    OR (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = o."folder_id"))
     OR (NOT coalesce((confidential), false)
-    AND (EXISTS (SELECT 1 FROM authz_gen."folder__share__direct" v WHERE v.id = o."folder_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__view" v WHERE v.id = o."folder_id"))))
+    AND (EXISTS (SELECT 1 FROM authz_int."folder__share__direct" v WHERE v.id = o."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = o."folder_id"))))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     ELSE
@@ -4262,7 +4270,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'viewer: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'viewer: shared with' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4276,7 +4284,7 @@ BEGIN
     END LOOP;
     RETURN;
   END IF;
-  IF p_id IN (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[])) THEN
+  IF p_id IN (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[])) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT s."team_id" AS gid FROM "app"."folder_team_access" s WHERE s."folder_id" = p_id AND s."team_id" IN (SELECT id FROM authz_int."team__member")) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'viewer: a row in app.folder_team_access names' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4294,14 +4302,14 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'editor: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'editor' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'editor' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'editor: shared with' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
     END LOOP;
     RETURN;
   END IF;
-  IF p_id IN (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT authz_gen."team__member__ids"())::bigint[]) AND coalesce((access = 'edit'), false)) THEN
+  IF p_id IN (SELECT s."folder_id" AS id FROM "app"."folder_team_access" s WHERE s."team_id" = ANY ((SELECT authz_int."team__member__ids"())::bigint[]) AND coalesce((access = 'edit'), false)) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT s."team_id" AS gid FROM "app"."folder_team_access" s WHERE s."folder_id" = p_id AND s."team_id" IN (SELECT id FROM authz_int."team__member")) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'editor: a row in app.folder_team_access names' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4505,7 +4513,7 @@ BEGIN
     RETURN NEXT pad || 'yes  ' || 'viewer: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'file' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
     RETURN;
   END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'file' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_gen."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
+  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'file' AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."team__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'file' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'team' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."team__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) x LIMIT 1 LOOP
       RETURN NEXT pad || 'yes  ' || 'viewer: shared with' || ' team ' || v_t.gid || ', and you are member there';
       RETURN QUERY SELECT * FROM authz_int."team__member__why"(v_t.gid::bigint, p_depth + 1, p_seen);
@@ -4632,19 +4640,19 @@ BEGIN
     WHEN 'folder' THEN
       RETURN EXISTS (SELECT 1 FROM "app"."folders" "folders" WHERE "folders"."id" = p_id::bigint
         AND (SELECT authz_int.scope_cmd('app.folders', 'select')) AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."org__admin" v WHERE v.id = "folders"."org_id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__editor" v WHERE v.id = "folders"."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."folder__viewer" v WHERE v.id = "folders"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = "folders"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = "folders"."id")
     OR (coalesce((inherit), false)
-    AND authz_gen."folder__view__has"("folders"."parent_id"))
-    OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = "folders"."id" AND authz_gen."folder__view__has"(s."parent_id"))));
+    AND authz_int."folder__view__has"("folders"."parent_id"))
+    OR EXISTS (SELECT 1 FROM "app"."folder_links" s WHERE s."folder_id" = "folders"."id" AND authz_int."folder__view__has"(s."parent_id"))));
     WHEN 'file' THEN
       RETURN EXISTS (SELECT 1 FROM "app"."files" "files" WHERE "files"."id" = p_id::bigint
         AND (SELECT authz_int.scope_cmd('app.files', 'select')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."file__viewer" v WHERE v.id = "files"."id")
-    OR authz_gen."folder__edit__has"("files"."folder_id")
+    OR EXISTS (SELECT 1 FROM authz_int."file__viewer" v WHERE v.id = "files"."id")
+    OR authz_int."folder__edit__has"("files"."folder_id")
     OR (NOT coalesce((confidential), false)
-    AND authz_gen."folder__view__has"("files"."folder_id"))));
+    AND authz_int."folder__view__has"("files"."folder_id"))));
     ELSE RETURN false;
   END CASE;
 END $f$;
@@ -5600,8 +5608,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
-             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"file__viewer"', '"folder__edit"', '"folder__editor"', '"folder__linked_into__view"', '"folder__share__direct"', '"folder__view"', '"folder__viewer"', '"org__admin"']::text[]))
+    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."file__viewer"', 'authz_int."folder__edit"', 'authz_int."folder__editor"', 'authz_int."folder__linked_into__view"', 'authz_int."folder__share__direct"', 'authz_int."folder__view"', 'authz_int."folder__viewer"', 'authz_int."org__admin"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -5613,7 +5621,8 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole)
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+             AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"app.files:column folder_id after:items"', '"app.files:column folder_id after:why"', '"app.files:column id, owner_id, confidential:items"', '"app.files:column id, owner_id, confidential:why"', '"app.files:delete:items"', '"app.files:delete:why"', '"app.files:insert:items"', '"app.files:insert:refuse"', '"app.files:insert:why"', '"app.files:rules:explain"', '"app.files:update:items"', '"app.files:update:refuse"', '"app.files:update:why"', '"app.folders:column id, owner_id, org_id, inherit:items"', '"app.folders:column id, owner_id, org_id, inherit:why"', '"app.folders:column parent_id after:items"', '"app.folders:column parent_id after:why"', '"app.folders:delete:items"', '"app.folders:delete:why"', '"app.folders:insert:items"', '"app.folders:insert:refuse"', '"app.folders:insert:why"', '"app.folders:rules:explain"', '"app.folders:update:items"', '"app.folders:update:refuse"', '"app.folders:update:why"']::text[]))
     AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
     severity := 'error'; object := r.object;
     problem := format('%s holds %s on it, which the policy doesn''t give (a default privilege of the owner, or a grant made since the last apply): the next apply takes it back, or %s', r.who, r.privilege, r.stmt);
@@ -6030,8 +6039,8 @@ BEGIN
   END LOOP;
 END $ch$;
 
-REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen FROM app_user;
-GRANT SELECT ON authz_gen.policy_lines, authz_gen."file__viewer", authz_gen."folder__edit", authz_gen."folder__editor", authz_gen."folder__linked_into__view", authz_gen."folder__share__direct", authz_gen."folder__view", authz_gen."folder__viewer", authz_gen."org__admin" TO app_user;
+REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM app_user;
+GRANT SELECT ON authz_gen.policy_lines, authz_int."file__viewer", authz_int."folder__edit", authz_int."folder__editor", authz_int."folder__linked_into__view", authz_int."folder__share__direct", authz_int."folder__view", authz_int."folder__viewer", authz_int."org__admin" TO app_user;
 
 -- Privileges the policy doesn't give on rowstile's schemas and what is in them are taken back
 DO $r$
@@ -6048,8 +6057,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
-             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"file__viewer"', '"folder__edit"', '"folder__editor"', '"folder__linked_into__view"', '"folder__share__direct"', '"folder__view"', '"folder__viewer"', '"org__admin"']::text[]))
+    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."file__viewer"', 'authz_int."folder__edit"', 'authz_int."folder__editor"', 'authz_int."folder__linked_into__view"', 'authz_int."folder__share__direct"', 'authz_int."folder__view"', 'authz_int."folder__viewer"', 'authz_int."org__admin"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -6061,7 +6070,8 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole)
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+             AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"app.files:column folder_id after:items"', '"app.files:column folder_id after:why"', '"app.files:column id, owner_id, confidential:items"', '"app.files:column id, owner_id, confidential:why"', '"app.files:delete:items"', '"app.files:delete:why"', '"app.files:insert:items"', '"app.files:insert:refuse"', '"app.files:insert:why"', '"app.files:rules:explain"', '"app.files:update:items"', '"app.files:update:refuse"', '"app.files:update:why"', '"app.folders:column id, owner_id, org_id, inherit:items"', '"app.folders:column id, owner_id, org_id, inherit:why"', '"app.folders:column parent_id after:items"', '"app.folders:column parent_id after:why"', '"app.folders:delete:items"', '"app.folders:delete:why"', '"app.folders:insert:items"', '"app.folders:insert:refuse"', '"app.folders:insert:why"', '"app.folders:rules:explain"', '"app.folders:update:items"', '"app.folders:update:refuse"', '"app.folders:update:why"']::text[]))
     AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
     EXECUTE g.stmt;
     v_taken := v_taken + 1;
@@ -6077,7 +6087,14 @@ GRANT USAGE ON SCHEMA authz, authz_gen TO app_user;
 
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz_gen FROM PUBLIC;
 
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz_gen TO app_user;
+DO $gf$
+DECLARE f regprocedure;
+BEGIN
+  FOR f IN SELECT p.oid::regprocedure FROM pg_proc p WHERE p.pronamespace = 'authz_gen'::regnamespace
+           AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"app.files:column folder_id after:items"', '"app.files:column folder_id after:why"', '"app.files:column id, owner_id, confidential:items"', '"app.files:column id, owner_id, confidential:why"', '"app.files:delete:items"', '"app.files:delete:why"', '"app.files:insert:items"', '"app.files:insert:refuse"', '"app.files:insert:why"', '"app.files:rules:explain"', '"app.files:update:items"', '"app.files:update:refuse"', '"app.files:update:why"', '"app.folders:column id, owner_id, org_id, inherit:items"', '"app.folders:column id, owner_id, org_id, inherit:why"', '"app.folders:column parent_id after:items"', '"app.folders:column parent_id after:why"', '"app.folders:delete:items"', '"app.folders:delete:why"', '"app.folders:insert:items"', '"app.folders:insert:refuse"', '"app.folders:insert:why"', '"app.folders:rules:explain"', '"app.folders:update:items"', '"app.folders:update:refuse"', '"app.folders:update:why"']::text[]) LOOP
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', f, 'app_user');
+  END LOOP;
+END $gf$;
 
 GRANT EXECUTE ON FUNCTION
   authz.uid(),

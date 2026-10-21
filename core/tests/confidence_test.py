@@ -801,7 +801,7 @@ def main() -> None:
         def plan(d: Db) -> Value:
             d.rows("SELECT authz.act_as('user', '7')")
             d.script("SET LOCAL enable_seqscan = off")
-            return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_gen."{view}"')[0].values()))
+            return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_int."{view}"')[0].values()))
 
         return plan_scans(rowstile_cli.transaction(kconn, plan, keep=False))
 
@@ -854,9 +854,9 @@ def main() -> None:
         )
         d.rows("SELECT authz.act_as('user', '34')")
         d.script("SET LOCAL enable_seqscan = off")
-        ids = sorted(str(r["id"]) for r in d.rows('SELECT id FROM authz_gen."team__member"'))
+        ids = sorted(str(r["id"]) for r in d.rows('SELECT id FROM authz_int."team__member"'))
         return ids, plan_scans(
-            next(iter(d.rows('EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_gen."team__member"')[0].values()))
+            next(iter(d.rows('EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_int."team__member"')[0].values()))
         )
 
     ids, steps = rowstile_cli.transaction(kconn, nested, keep=False) if rc == 0 else ([], [])
@@ -894,7 +894,7 @@ def main() -> None:
         def plan(d: Db) -> Value:
             d.rows("SELECT authz.act_as('user', '7')")
             d.script("SET LOCAL enable_seqscan = off")
-            return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_gen."{view}"')[0].values()))
+            return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_int."{view}"')[0].values()))
 
         return index_conds(rowstile_cli.transaction(pconn, plan, keep=False))
 

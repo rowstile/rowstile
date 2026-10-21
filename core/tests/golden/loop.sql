@@ -1642,7 +1642,6 @@ END $f$;
 -- org.owner (line 10)
 CREATE VIEW authz_int."org__owner" AS
   SELECT r."id" AS id FROM "lp"."orgs" r WHERE r."owner_id" = (SELECT authz.uid());
-CREATE VIEW authz_gen."org__owner" WITH (security_barrier) AS SELECT id FROM authz_int."org__owner";
 
 -- org.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."org__edit__start"() RETURNS SETOF bigint
@@ -1655,7 +1654,6 @@ END $f$;
 -- setting.admin (line 17)
 CREATE VIEW authz_int."setting__admin" AS
   SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'setting' AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL;
-CREATE VIEW authz_gen."setting__admin" WITH (security_barrier) AS SELECT id FROM authz_int."setting__admin";
 
 -- setting.edit: where inheritance starts, for the current user
 CREATE FUNCTION authz_int."setting__edit__start"() RETURNS SETOF bigint
@@ -1676,12 +1674,10 @@ CREATE VIEW authz_int."org__edit" AS
   SELECT 'org'::text, x::text FROM authz_int."org__edit__start"() x
   UNION ALL
   SELECT 'setting'::text, x::text FROM authz_int."setting__edit__start"() x);
-CREATE VIEW authz_gen."org__edit" WITH (security_barrier) AS SELECT id FROM authz_int."org__edit";
 
 -- org.view (line 13): edit
 CREATE VIEW authz_int."org__view" AS
   SELECT id FROM authz_int."org__edit";
-CREATE VIEW authz_gen."org__view" WITH (security_barrier) AS SELECT id FROM authz_int."org__view";
 
 -- setting.edit (line 18): admin or email.edit
 CREATE VIEW authz_int."setting__edit" AS
@@ -1694,7 +1690,6 @@ CREATE VIEW authz_int."setting__edit" AS
   SELECT 'org'::text, x::text FROM authz_int."org__edit__start"() x
   UNION ALL
   SELECT 'setting'::text, x::text FROM authz_int."setting__edit__start"() x);
-CREATE VIEW authz_gen."setting__edit" WITH (security_barrier) AS SELECT id FROM authz_int."setting__edit";
 
 -- email.edit (line 22): domain.edit and {verified}
 CREATE VIEW authz_int."email__edit" AS
@@ -1707,7 +1702,6 @@ CREATE VIEW authz_int."email__edit" AS
   SELECT 'org'::text, x::text FROM authz_int."org__edit__start"() x
   UNION ALL
   SELECT 'setting'::text, x::text FROM authz_int."setting__edit__start"() x);
-CREATE VIEW authz_gen."email__edit" WITH (security_barrier) AS SELECT id FROM authz_int."email__edit";
 
 -- domain.edit (line 26): org.edit
 CREATE VIEW authz_int."domain__edit" AS
@@ -1720,27 +1714,22 @@ CREATE VIEW authz_int."domain__edit" AS
   SELECT 'org'::text, x::text FROM authz_int."org__edit__start"() x
   UNION ALL
   SELECT 'setting'::text, x::text FROM authz_int."setting__edit__start"() x);
-CREATE VIEW authz_gen."domain__edit" WITH (security_barrier) AS SELECT id FROM authz_int."domain__edit";
 
 -- org.settings.edit
 CREATE VIEW authz_int."org__settings__edit" AS
   SELECT r."id" AS id FROM "lp"."orgs" r WHERE r."settings_id" IN (SELECT id FROM authz_int."setting__edit");
-CREATE VIEW authz_gen."org__settings__edit" WITH (security_barrier) AS SELECT id FROM authz_int."org__settings__edit";
 
 -- setting.email.edit
 CREATE VIEW authz_int."setting__email__edit" AS
   SELECT r."id" AS id FROM "lp"."settings" r WHERE r."email_id" IN (SELECT id FROM authz_int."email__edit");
-CREATE VIEW authz_gen."setting__email__edit" WITH (security_barrier) AS SELECT id FROM authz_int."setting__email__edit";
 
 -- email.domain.edit
 CREATE VIEW authz_int."email__domain__edit" AS
   SELECT r."id" AS id FROM "lp"."emails" r WHERE r."domain_id" IN (SELECT id FROM authz_int."domain__edit");
-CREATE VIEW authz_gen."email__domain__edit" WITH (security_barrier) AS SELECT id FROM authz_int."email__domain__edit";
 
 -- domain.org.edit
 CREATE VIEW authz_int."domain__org__edit" AS
   SELECT r."id" AS id FROM "lp"."domains" r WHERE r."org_id" IN (SELECT id FROM authz_int."org__edit");
-CREATE VIEW authz_gen."domain__org__edit" WITH (security_barrier) AS SELECT id FROM authz_int."domain__org__edit";
 
 ALTER TABLE "lp"."orgs" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
@@ -1756,16 +1745,27 @@ BEGIN
   END LOOP;
 END $rls$;
 
+-- lp.orgs: no row has the id, or the user may select it (what the rules' explanations answer for)
+CREATE FUNCTION authz_int."lp.orgs:seen"(p_id bigint) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  RETURN NOT EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = p_id)
+      OR EXISTS (SELECT 1 FROM "lp"."orgs" "orgs" WHERE "orgs"."id" = p_id
+        AND (SELECT authz_int.scope_cmd('lp.orgs', 'select')) AND (coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")));
+END $f$;
+
 CREATE FUNCTION authz_gen."lp.orgs:update:items"(p_row "lp"."orgs") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
+  SELECT CASE WHEN authz_int."lp.orgs:seen"("orgs"."id") THEN ARRAY[
     coalesce((coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = "orgs"."settings_id")), false),
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")), false),
     coalesce((SELECT authz_int.scope_cmd('lp.orgs', 'update')), false),
     coalesce(true, false),
     coalesce((coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = "orgs"."settings_id")), false)]
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "orgs";
 END;
 
@@ -1821,16 +1821,16 @@ END $f$;
 -- lp.orgs select (line 29): view
 CREATE POLICY "authz_select" ON "lp"."orgs" FOR SELECT TO app_user
   USING (((SELECT authz_int.scope_cmd('lp.orgs', 'select')) AND (coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = "orgs"."settings_id"))));
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id"))));
 
 COMMENT ON POLICY "authz_select" ON "lp"."orgs" IS 'rowstile';
 
 -- lp.orgs update (line 30): edit
 CREATE POLICY "authz_update" ON "lp"."orgs" FOR UPDATE TO app_user
   USING (((SELECT authz_int.scope_cmd('lp.orgs', 'update')) AND (coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = "orgs"."settings_id"))))
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id"))))
   WITH CHECK (((SELECT authz_int.scope_cmd('lp.orgs', 'update')) AND (coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = "orgs"."settings_id")))
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")))
     OR authz_gen."lp.orgs:update:refuse"(ROW("orgs".*)::"lp"."orgs"));
 
 COMMENT ON POLICY "authz_update" ON "lp"."orgs" IS 'rowstile';
@@ -1849,16 +1849,27 @@ BEGIN
   END LOOP;
 END $rls$;
 
+-- lp.settings: no row has the id, or the user may select it (what the rules' explanations answer for)
+CREATE FUNCTION authz_int."lp.settings:seen"(p_id bigint) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  RETURN NOT EXISTS (SELECT 1 FROM "lp"."settings" o WHERE o."id" = p_id)
+      OR EXISTS (SELECT 1 FROM "lp"."settings" "settings" WHERE "settings"."id" = p_id
+        AND (SELECT authz_int.scope_cmd('lp.settings', 'select')) AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")));
+END $f$;
+
 CREATE FUNCTION authz_gen."lp.settings:update:items"(p_row "lp"."settings") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
-    coalesce((EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = "settings"."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = "settings"."email_id")), false),
+  SELECT CASE WHEN authz_int."lp.settings:seen"("settings"."id") THEN ARRAY[
+    coalesce((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")), false),
     coalesce((SELECT authz_int.scope_cmd('lp.settings', 'update')), false),
     coalesce(true, false),
-    coalesce((EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = "settings"."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = "settings"."email_id")), false)]
+    coalesce((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "settings";
 END;
 
@@ -1913,17 +1924,17 @@ END $f$;
 
 -- lp.settings select (line 33): edit
 CREATE POLICY "authz_select" ON "lp"."settings" FOR SELECT TO app_user
-  USING (((SELECT authz_int.scope_cmd('lp.settings', 'select')) AND (EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = "settings"."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = "settings"."email_id"))));
+  USING (((SELECT authz_int.scope_cmd('lp.settings', 'select')) AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id"))));
 
 COMMENT ON POLICY "authz_select" ON "lp"."settings" IS 'rowstile';
 
 -- lp.settings update (line 34): edit
 CREATE POLICY "authz_update" ON "lp"."settings" FOR UPDATE TO app_user
-  USING (((SELECT authz_int.scope_cmd('lp.settings', 'update')) AND (EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = "settings"."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = "settings"."email_id"))))
-  WITH CHECK (((SELECT authz_int.scope_cmd('lp.settings', 'update')) AND (EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = "settings"."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = "settings"."email_id")))
+  USING (((SELECT authz_int.scope_cmd('lp.settings', 'update')) AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id"))))
+  WITH CHECK (((SELECT authz_int.scope_cmd('lp.settings', 'update')) AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")))
     OR authz_gen."lp.settings:update:refuse"(ROW("settings".*)::"lp"."settings"));
 
 COMMENT ON POLICY "authz_update" ON "lp"."settings" IS 'rowstile';
@@ -1941,6 +1952,16 @@ BEGIN
     EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', c);
   END LOOP;
 END $rls$;
+
+-- lp.emails: no row has the id, or the user may select it (what the rules' explanations answer for)
+CREATE FUNCTION authz_int."lp.emails:seen"(p_id bigint) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  RETURN NOT EXISTS (SELECT 1 FROM "lp"."emails" o WHERE o."id" = p_id)
+      OR EXISTS (SELECT 1 FROM "lp"."emails" "emails" WHERE "emails"."id" = p_id
+        AND (SELECT authz_int.scope_cmd('lp.emails', 'select')) AND (coalesce((verified), false)
+    AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = "emails"."domain_id")));
+END $f$;
 
 CREATE FUNCTION authz_gen."lp.emails:rules:explain"(p_command text, p_id text, p_row jsonb) RETURNS text[]
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
@@ -1966,7 +1987,7 @@ END $f$;
 -- lp.emails select (line 37): edit
 CREATE POLICY "authz_select" ON "lp"."emails" FOR SELECT TO app_user
   USING (((SELECT authz_int.scope_cmd('lp.emails', 'select')) AND (coalesce((verified), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."domain__edit" v WHERE v.id = "emails"."domain_id"))));
+    AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = "emails"."domain_id"))));
 
 COMMENT ON POLICY "authz_select" ON "lp"."emails" IS 'rowstile';
 
@@ -1984,14 +2005,24 @@ BEGIN
   END LOOP;
 END $rls$;
 
+-- lp.domains: no row has the id, or the user may select it (what the rules' explanations answer for)
+CREATE FUNCTION authz_int."lp.domains:seen"(p_id bigint) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+BEGIN
+  RETURN NOT EXISTS (SELECT 1 FROM "lp"."domains" o WHERE o."id" = p_id)
+      OR EXISTS (SELECT 1 FROM "lp"."domains" "domains" WHERE "domains"."id" = p_id
+        AND (SELECT authz_int.scope_cmd('lp.domains', 'select')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"));
+END $f$;
+
 CREATE FUNCTION authz_gen."lp.domains:update:items"(p_row "lp"."domains") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
-    coalesce(EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id"), false),
+  SELECT CASE WHEN authz_int."lp.domains:seen"("domains"."id") THEN ARRAY[
+    coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false),
     coalesce((SELECT authz_int.scope_cmd('lp.domains', 'update')), false),
     coalesce(true, false),
-    coalesce(EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id"), false)]
+    coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "domains";
 END;
 
@@ -2046,14 +2077,14 @@ END $f$;
 
 -- lp.domains select (line 40): edit
 CREATE POLICY "authz_select" ON "lp"."domains" FOR SELECT TO app_user
-  USING (((SELECT authz_int.scope_cmd('lp.domains', 'select')) AND EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id")));
+  USING (((SELECT authz_int.scope_cmd('lp.domains', 'select')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id")));
 
 COMMENT ON POLICY "authz_select" ON "lp"."domains" IS 'rowstile';
 
 -- lp.domains update (line 41): edit
 CREATE POLICY "authz_update" ON "lp"."domains" FOR UPDATE TO app_user
-  USING (((SELECT authz_int.scope_cmd('lp.domains', 'update')) AND EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id")))
-  WITH CHECK (((SELECT authz_int.scope_cmd('lp.domains', 'update')) AND EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id"))
+  USING (((SELECT authz_int.scope_cmd('lp.domains', 'update')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id")))
+  WITH CHECK (((SELECT authz_int.scope_cmd('lp.domains', 'update')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"))
     OR authz_gen."lp.domains:update:refuse"(ROW("domains".*)::"lp"."domains"));
 
 COMMENT ON POLICY "authz_update" ON "lp"."domains" IS 'rowstile';
@@ -2061,11 +2092,12 @@ COMMENT ON POLICY "authz_update" ON "lp"."domains" IS 'rowstile';
 CREATE FUNCTION authz_gen."lp.domains:column org_id after:items"(p_row "lp"."domains") RETURNS boolean[]
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT ARRAY[
-    coalesce(EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id"), false),
+  SELECT CASE WHEN authz_int."lp.domains:seen"("domains"."id") THEN ARRAY[
+    coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false),
     coalesce((SELECT authz_int.scope_cmd('lp.domains', 'update')), false),
     coalesce(true, false),
-    coalesce(EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id"), false)]
+    coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false)]
+    ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM (SELECT (p_row).*) AS "domains";
 END;
 
@@ -2085,37 +2117,36 @@ BEGIN
 END $f$;
 
 -- lp.domains update org_id after (line 42): org.edit
--- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
--- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
-CREATE FUNCTION authz_gen."lp.domains:column org_id after:holds"(p_row "lp"."domains") RETURNS boolean
+-- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
+-- role uses it without naming it (authz_int)
+CREATE FUNCTION authz_int."lp.domains:column org_id after:holds"(p_row "lp"."domains") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT coalesce(EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id"), false) FROM (SELECT (p_row).*) AS "domains";
+  SELECT coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false) FROM (SELECT (p_row).*) AS "domains";
 END;
--- checked on the row after the change, for roles that row-level security applies to on the
--- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
+-- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."lp.domains:column org_id after"() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row "lp"."domains";
 BEGIN
-  IF pg_catalog.row_security_active('"lp"."domains"'::pg_catalog.regclass) THEN
-    -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
-    IF TG_RELID = '"lp"."domains"'::pg_catalog.regclass THEN v_row := NEW;
-    ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(NEW)); END IF;
-    IF NOT authz_gen."lp.domains:column org_id after:holds"(v_row) THEN
-      BEGIN
-        v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."lp.domains:column org_id after:why"(v_row) l);
-      EXCEPTION WHEN OTHERS THEN
-        v_lines := 'no explanation: ' || SQLERRM;
-      END;
-      RAISE EXCEPTION 'changing org_id of lp.domains % needs: org.edit', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
-        SCHEMA = 'lp', TABLE = 'domains', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
-    END IF;
-  END IF;
-  RETURN NEW;
+  -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
+  IF TG_RELID = '"lp"."domains"'::pg_catalog.regclass THEN v_row := NEW;
+  ELSE v_row := pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(NEW)); END IF;
+  BEGIN
+    v_lines := (SELECT string_agg(l, E'\n') FROM authz_gen."lp.domains:column org_id after:why"(v_row) l);
+  EXCEPTION WHEN OTHERS THEN
+    v_lines := 'no explanation: ' || SQLERRM;
+  END;
+  RAISE EXCEPTION 'changing org_id of lp.domains % needs: org.edit', OLD."id" USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+    SCHEMA = 'lp', TABLE = 'domains', CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
 END $f$;
+-- checked on the row after the change, for roles that row-level security applies to on the
+-- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
+-- the row as the table's own
 CREATE TRIGGER "authz_update_after org_id" BEFORE UPDATE ON "lp"."domains" FOR EACH ROW
-  WHEN (OLD."org_id" IS DISTINCT FROM NEW."org_id")
+  WHEN ((OLD."org_id" IS DISTINCT FROM NEW."org_id")
+    AND pg_catalog.row_security_active('"lp"."domains"'::pg_catalog.regclass)
+    AND NOT authz_int."lp.domains:column org_id after:holds"(pg_catalog.jsonb_populate_record(NULL::"lp"."domains", pg_catalog.to_jsonb(NEW))))
   EXECUTE FUNCTION authz_int."lp.domains:column org_id after"();
 
 -- Foreign keys that delete governed rows skip row-level security
@@ -2174,17 +2205,17 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = o."settings_id"))));
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))));
         WHEN 'view' THEN RETURN EXISTS (SELECT 1 FROM "lp"."orgs" o WHERE o."id" = v_bigint AND ((coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = o."settings_id"))));
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'setting' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."settings" o WHERE o."id" = v_bigint AND ((EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = o."email_id"))));
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."settings" o WHERE o."id" = v_bigint AND ((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = o."email_id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'email' THEN
@@ -2192,14 +2223,14 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."emails" o WHERE o."id" = v_bigint AND ((coalesce((verified), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."domain__edit" v WHERE v.id = o."domain_id"))));
+    AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = o."domain_id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'domain' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN false; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."domains" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = o."org_id")));
+        WHEN 'edit' THEN RETURN EXISTS (SELECT 1 FROM "lp"."domains" o WHERE o."id" = v_bigint AND (EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     ELSE
@@ -2229,77 +2260,77 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = o."settings_id"));
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = o."settings_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = o."settings_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'org.view' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = o."settings_id"));
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
         WHERE (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = o."settings_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."orgs" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = o."settings_id"))
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = o."settings_id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'setting.edit' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."settings" o
-        WHERE (EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = o."email_id"));
+        WHERE (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = o."email_id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."settings" o
-        WHERE (EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = o."email_id"))
+        WHERE (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = o."email_id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."settings" o
-        WHERE o."id" > p_after::bigint AND (EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = o."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = o."email_id"))
+        WHERE o."id" > p_after::bigint AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = o."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = o."email_id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'email.edit' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."emails" o
         WHERE (coalesce((verified), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."domain__edit" v WHERE v.id = o."domain_id"));
+    AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = o."domain_id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."emails" o
         WHERE (coalesce((verified), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."domain__edit" v WHERE v.id = o."domain_id"))
+    AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = o."domain_id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."emails" o
         WHERE o."id" > p_after::bigint AND (coalesce((verified), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."domain__edit" v WHERE v.id = o."domain_id"))
+    AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = o."domain_id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'domain.edit' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."domains" o
-        WHERE EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = o."org_id");
+        WHERE EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id");
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "lp"."domains" o
-        WHERE EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = o."org_id")
+        WHERE EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "lp"."domains" o
-        WHERE o."id" > p_after::bigint AND EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = o."org_id")
+        WHERE o."id" > p_after::bigint AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = o."org_id")
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     ELSE
@@ -2966,18 +2997,18 @@ BEGIN
     WHEN 'org' THEN
       RETURN EXISTS (SELECT 1 FROM "lp"."orgs" "orgs" WHERE "orgs"."id" = p_id::bigint
         AND (SELECT authz_int.scope_cmd('lp.orgs', 'select')) AND (coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_gen."setting__edit" v WHERE v.id = "orgs"."settings_id")));
+    OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")));
     WHEN 'setting' THEN
       RETURN EXISTS (SELECT 1 FROM "lp"."settings" "settings" WHERE "settings"."id" = p_id::bigint
-        AND (SELECT authz_int.scope_cmd('lp.settings', 'select')) AND (EXISTS (SELECT 1 FROM authz_gen."setting__admin" v WHERE v.id = "settings"."id")
-    OR EXISTS (SELECT 1 FROM authz_gen."email__edit" v WHERE v.id = "settings"."email_id")));
+        AND (SELECT authz_int.scope_cmd('lp.settings', 'select')) AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
+    OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")));
     WHEN 'email' THEN
       RETURN EXISTS (SELECT 1 FROM "lp"."emails" "emails" WHERE "emails"."id" = p_id::bigint
         AND (SELECT authz_int.scope_cmd('lp.emails', 'select')) AND (coalesce((verified), false)
-    AND EXISTS (SELECT 1 FROM authz_gen."domain__edit" v WHERE v.id = "emails"."domain_id")));
+    AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = "emails"."domain_id")));
     WHEN 'domain' THEN
       RETURN EXISTS (SELECT 1 FROM "lp"."domains" "domains" WHERE "domains"."id" = p_id::bigint
-        AND (SELECT authz_int.scope_cmd('lp.domains', 'select')) AND EXISTS (SELECT 1 FROM authz_gen."org__edit" v WHERE v.id = "domains"."org_id"));
+        AND (SELECT authz_int.scope_cmd('lp.domains', 'select')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"));
     ELSE RETURN false;
   END CASE;
 END $f$;
@@ -3901,8 +3932,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
-             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"domain__edit"', '"email__edit"', '"org__edit"', '"setting__admin"', '"setting__edit"']::text[]))
+    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."domain__edit"', 'authz_int."email__edit"', 'authz_int."org__edit"', 'authz_int."setting__admin"', 'authz_int."setting__edit"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -3914,7 +3945,8 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole)
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+             AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"lp.domains:column org_id after:items"', '"lp.domains:column org_id after:why"', '"lp.domains:rules:explain"', '"lp.domains:update:items"', '"lp.domains:update:refuse"', '"lp.domains:update:why"', '"lp.emails:rules:explain"', '"lp.orgs:rules:explain"', '"lp.orgs:update:items"', '"lp.orgs:update:refuse"', '"lp.orgs:update:why"', '"lp.settings:rules:explain"', '"lp.settings:update:items"', '"lp.settings:update:refuse"', '"lp.settings:update:why"']::text[]))
     AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
     severity := 'error'; object := r.object;
     problem := format('%s holds %s on it, which the policy doesn''t give (a default privilege of the owner, or a grant made since the last apply): the next apply takes it back, or %s', r.who, r.privilege, r.stmt);
@@ -4321,8 +4353,8 @@ BEGIN
   END LOOP;
 END $ch$;
 
-REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen FROM app_user;
-GRANT SELECT ON authz_gen.policy_lines, authz_gen."domain__edit", authz_gen."email__edit", authz_gen."org__edit", authz_gen."setting__admin", authz_gen."setting__edit" TO app_user;
+REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM app_user;
+GRANT SELECT ON authz_gen.policy_lines, authz_int."domain__edit", authz_int."email__edit", authz_int."org__edit", authz_int."setting__admin", authz_int."setting__edit" TO app_user;
 
 -- Privileges the policy doesn't give on rowstile's schemas and what is in them are taken back
 DO $r$
@@ -4339,8 +4371,8 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
               c.oid::regclass, gw.who)
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
-    AND NOT (a.grantee = 'app_user'::regrole AND c.relnamespace = 'authz_gen'::regnamespace AND a.privilege_type = 'SELECT'
-             AND '"' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['"policy_lines"', '"domain__edit"', '"email__edit"', '"org__edit"', '"setting__admin"', '"setting__edit"']::text[]))
+    AND NOT (a.grantee = 'app_user'::regrole AND a.privilege_type = 'SELECT'
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."domain__edit"', 'authz_int."email__edit"', 'authz_int."org__edit"', 'authz_int."setting__admin"', 'authz_int."setting__edit"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -4352,7 +4384,8 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
   FROM pg_proc p, aclexplode(p.proacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE p.pronamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> p.proowner
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, 'app_user'::regrole))
-    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole)
+    AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = 'app_user'::regrole
+             AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"lp.domains:column org_id after:items"', '"lp.domains:column org_id after:why"', '"lp.domains:rules:explain"', '"lp.domains:update:items"', '"lp.domains:update:refuse"', '"lp.domains:update:why"', '"lp.emails:rules:explain"', '"lp.orgs:rules:explain"', '"lp.orgs:update:items"', '"lp.orgs:update:refuse"', '"lp.orgs:update:why"', '"lp.settings:rules:explain"', '"lp.settings:update:items"', '"lp.settings:update:refuse"', '"lp.settings:update:why"']::text[]))
     AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = 'app_user'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
     EXECUTE g.stmt;
     v_taken := v_taken + 1;
@@ -4368,7 +4401,14 @@ GRANT USAGE ON SCHEMA authz, authz_gen TO app_user;
 
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz_gen FROM PUBLIC;
 
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz_gen TO app_user;
+DO $gf$
+DECLARE f regprocedure;
+BEGIN
+  FOR f IN SELECT p.oid::regprocedure FROM pg_proc p WHERE p.pronamespace = 'authz_gen'::regnamespace
+           AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"lp.domains:column org_id after:items"', '"lp.domains:column org_id after:why"', '"lp.domains:rules:explain"', '"lp.domains:update:items"', '"lp.domains:update:refuse"', '"lp.domains:update:why"', '"lp.emails:rules:explain"', '"lp.orgs:rules:explain"', '"lp.orgs:update:items"', '"lp.orgs:update:refuse"', '"lp.orgs:update:why"', '"lp.settings:rules:explain"', '"lp.settings:update:items"', '"lp.settings:update:refuse"', '"lp.settings:update:why"']::text[]) LOOP
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', f, 'app_user');
+  END LOOP;
+END $gf$;
 
 GRANT EXECUTE ON FUNCTION
   authz.uid(),

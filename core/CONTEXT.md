@@ -75,7 +75,7 @@ _Avoid_: beta (a release's stage), experimental
 ### Deployment
 
 **App role**:
-The Postgres role the application connects as; every policy applies to it and it is never trusted to choose its own user.
+The Postgres role the application connects as; every policy applies to it and it is never trusted to choose its own user. Its rules read rowstile's views for it; it can't name them.
 _Avoid_: app user, service account, role (alone)
 
 **Trusted backend**:

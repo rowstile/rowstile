@@ -485,7 +485,7 @@ class PointChecks(unittest.TestCase):
         """Write rules and authz.can check one object at a time (__has functions); select rules may read many
         rows, so they must keep the views (a function call per row would make lists slow)."""
         sql = compiled("docs")
-        self.assertIn('authz_gen."folder__edit__has"', self.policy(sql, '"app"."folders"', "insert"))
+        self.assertIn('authz_int."folder__edit__has"', self.policy(sql, '"app"."folders"', "insert"))
         self.assertNotIn("__has", self.policy(sql, '"app"."folders"', "select"))
         self.assertNotIn("__has", self.policy(sql, '"app"."files"', "select"))
         can = sql[sql.index("CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text") :]
@@ -590,10 +590,8 @@ class ColumnRules(unittest.TestCase):
                     continue
                 self.assertNotRegex(body, r"\bauthz_int\.", f"{name} runs as its caller and names authz_int")
         sql = Compiler(parse_policy(ruled)).compile("x")
-        holds = re.findall(r'CREATE FUNCTION authz_gen\."cx\.\w+:column [\w, ]+:holds".*?END;', sql, re.S)
-        self.assertEqual(
-            len(holds), len(re.findall(r'IF NOT authz_gen\."cx\.\w+:column [\w, ]+:holds"\(v_row\) THEN', sql))
-        )
+        holds = re.findall(r'CREATE FUNCTION authz_int\."cx\.\w+:column [\w, ]+:holds".*?END;', sql, re.S)
+        self.assertEqual(len(holds), len(re.findall(r'AND NOT authz_int\."cx\.\w+:column [\w, ]+:holds"\(', sql)))
         self.assertTrue(any('"bot__me"' in fn for fn in holds), "the rule that names the bot is behind no function")
 
     def test_triggers_are_named_after_what_they_guard(self) -> None:
@@ -1109,7 +1107,7 @@ class CompositeKeys(unittest.TestCase):
             (
                 "folder__editor",
                 '(s."org_id", s."team_slug") IN (SELECT (k.k)."org_id", (k.k)."slug" FROM (SELECT '
-                'x.id::authz_gen."team__key" AS k FROM (SELECT unnest((SELECT authz_gen."team__member__ids"())::text[]) '
+                'x.id::authz_gen."team__key" AS k FROM (SELECT unnest((SELECT authz_int."team__member__ids"())::text[]) '
                 "AS id) x) k)",
             ),
             (
@@ -2343,7 +2341,7 @@ class Migrations(unittest.TestCase):
             "  can share = owner or folder.share\n  can comment = folder.view\n",
         )
         m = database.migration(new, {}, self.lock(self.text))
-        self.assertIn('CREATE VIEW authz_gen."file__comment"', m.sql)
+        self.assertIn('CREATE VIEW authz_int."file__comment"', m.sql)
         self.assertIn("CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text, p_perm text)", m.sql)
         self.assertNotIn('CREATE TABLE authz_int."folder__parent__tree"', m.sql)
         self.assertNotIn("CREATE POLICY", m.sql)
