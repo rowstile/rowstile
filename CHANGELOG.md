@@ -111,6 +111,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `@rowstile/react` works in a Next.js server component, such as `app/layout.tsx`: the package is a client
   module (`"use client"`). Rendering `<AuthzProvider>` or `<Can>` there failed the build, which asked for
   `"use client"` in a file of the app.
+- The messenger example: an open chat loaded its messages again and again, without stopping, and each load
+  marked the chat read, which told every member's browser to load it too. The chat now loads once per change,
+  and marking read what was read already changes nothing and tells nobody.
 
 ## 0.1.0 (alpha)
 
