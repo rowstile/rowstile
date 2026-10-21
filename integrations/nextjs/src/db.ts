@@ -1,16 +1,16 @@
 // The app's database: Prisma, signed in as the request's user on every transaction (@rowstile/prisma).
 import { PrismaPg } from "@prisma/adapter-pg";
-import { headers } from "next/headers";
 import pg from "pg";
 import { authz, signedIn } from "@rowstile/prisma";
 import { changes } from "@rowstile/pg";
 import "@rowstile/next";                              // signed-in reads never land in a cache
+import { auth } from "./auth.ts";                     // the session: Auth.js's auth(), or your own
 import { PrismaClient } from "./generated/prisma/client.ts";
 import "./authz.gen.ts";                              // the policy's names, for the SDK's types
 
-/** Who the request is. A real app reads its session (auth()); the conformance app, a header. */
+/** Who the request is: the session's user (none: nobody, who sees only what `anyone` may). */
 export async function requestUser(): Promise<string | null> {
-  return (await headers()).get("x-user");
+  return (await auth())?.user?.id ?? null;
 }
 
 const url = process.env.ROWSTILE_APP_URL;

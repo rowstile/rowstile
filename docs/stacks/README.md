@@ -12,8 +12,10 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 | Anything else (Go, Ruby, Java, Rust, ...) | [sql.md](sql.md) | none: a few SQL statements |
 
 Every line of code these pages show is in a tested app (`integrations/fastapi`, `integrations/nextjs`, the
-conformance suites) or in `docs/getting-started.md`, which runs as written; `core/tests/unit_test.py`
-checks it, so the pages can't drift from what works.
+conformance suites), in `docs/getting-started.md`, which runs as written, or, for the SQL the SDKs send, in
+the SDKs' own code. `core/tests/unit_test.py` checks each line, and that the install lines have each rowstile
+package the code imports. It checks lines one by one: a block may be a few lines of a longer file, so read
+the text around it too.
 
 Start with [getting started](../getting-started.md) for the policy itself. Or from an app that already
 runs, as a template repository: the [FastAPI starter](https://github.com/rowstile/starter-fastapi) and the

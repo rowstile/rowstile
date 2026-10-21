@@ -9291,6 +9291,52 @@ class StackPages(unittest.TestCase):
                 missing, [], f"docs/stacks/{page}: lines in no tested app ({', '.join(self.SOURCES[page])})"
             )
 
+    def blocks(self, page: str) -> list[tuple[str, str]]:
+        """A page's code blocks: (language, text)."""
+        with open(os.path.join(self.REPO, "docs", "stacks", page), encoding="utf-8") as fh:
+            return re.findall(r"```(\w+)\n(.*?)```", fh.read(), re.S)
+
+    def test_no_page_takes_the_user_from_a_header(self) -> None:
+        """The conformance apps' checks name the user in a header; a page shows the app's session instead."""
+        for page in sorted(self.SOURCES):
+            shown = [line.strip() for lang, block in self.blocks(page) for line in block.split("\n")]
+            self.assertEqual([line for line in shown if "x-user" in line], [], f"docs/stacks/{page}")
+
+    def test_the_install_lines_have_what_the_code_imports(self) -> None:
+        """Each rowstile package a page's code imports (or SDK module, for Python: its extra) is in its sh blocks."""
+        with open(os.path.join(self.REPO, "sdk", "python", "pyproject.toml"), encoding="utf-8") as fh:
+            extras = set(
+                re.findall(r"^(\w+) = \[", fh.read().split("[project.optional-dependencies]")[1].split("\n[")[0], re.M)
+            )
+        self.assertIn("fastapi", extras)
+        for page in sorted(self.SOURCES):
+            blocks = self.blocks(page)
+            sh = "\n".join(text for lang, text in blocks if lang == "sh")
+            ts = "\n".join(text for lang, text in blocks if lang in ("ts", "tsx"))
+            py = "\n".join(text for lang, text in blocks if lang == "python")
+            packages = set(re.findall(r"""(?:from|import) "(@rowstile/[\w-]+)""", ts))
+            missing = sorted(p for p in packages if f"{p}@" not in sh)
+            installed = {e for group in re.findall(r"\[([\w,]+)\]", sh) for e in group.split(",")}
+            modules = set(re.findall(r"\browstile\.(\w+)|from rowstile import (\w+)", py))
+            missing += sorted(f"rowstile[{m}]" for pair in modules for m in pair if m in extras and m not in installed)
+            self.assertEqual(missing, [], f"docs/stacks/{page}: imported, not installed")
+
+    def test_a_module_the_python_uses_is_imported(self) -> None:
+        """A module a page's Python uses by name (`os.environ`, `rowstile.job`) is imported on the page."""
+        for page in sorted(self.SOURCES):
+            py = "\n".join(text for lang, text in self.blocks(page) if lang == "python")
+            if not py:
+                continue
+            have = set().union(*(self.lines(s) for s in self.SOURCES[page]))
+            modules = {m.group(1) for line in have if (m := re.fullmatch(r"import (\w+)", line))}
+            self.assertIn("os", modules, page)
+            unimported = sorted(
+                m
+                for m in modules
+                if re.search(rf"(?<![\w.]){m}\.\w", py) and not re.search(rf"^\s*import {m}\s*$", py, re.M)
+            )
+            self.assertEqual(unimported, [], f"docs/stacks/{page}: used, not imported")
+
     def caption(self, page: str, line: str) -> bool:
         """A comment naming the file a snippet is from ("// src/db.ts"), which the app has."""
         m = re.fullmatch(r"(?://|#|--) (\S+\.\w+)", line)

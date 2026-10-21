@@ -28,7 +28,10 @@ acts for: `acting_as` decides for the ones begun inside it.
 `install(engine)` signs in every transaction the engine begins. SQLModel is built on the same engine.
 
 ```python
-    from rowstile import sqlalchemy as authz_sa
+import pytest
+import rowstile
+from rowstile import sqlalchemy as authz_sa
+
     engine = authz_sa.install(create_engine(APP.replace("+asyncpg", "+psycopg")))
         with rowstile.acting_as(2), Session(engine) as s:
             assert sorted(s.scalars(select(Note.id)).all()) == [2, 3]

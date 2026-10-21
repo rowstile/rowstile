@@ -12,6 +12,7 @@ from rowstile.fastapi import Rowstile
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from .auth import session_user
 from .authz_client import ObjectType, Permission
 from .models import Folder, Message, Note, Project
 
@@ -19,13 +20,8 @@ from .models import Folder, Message, Note, Project
 queries = authz_sa.Queries[ObjectType, Permission]()
 
 
-def user_of(request: Request) -> str | None:
-    """Who the request is: a real app would read its session or token; here a header (none: nobody)."""
-    return request.headers.get("x-user")
-
-
 def signed_in() -> int:
-    """The user the request acts for (Rowstile set it from user_of), as the tables' key."""
+    """The user the request acts for (Rowstile set it from session_user), as the tables' key."""
     who = rowstile.current()
     return int(who.id) if who is not None and who.id is not None else 0
 
@@ -35,7 +31,7 @@ def make_app(url: str | None = None, check_connection: bool = True, pool_size: i
     Session = async_sessionmaker(engine, expire_on_commit=False)
     app = FastAPI()
     app.state.engine, app.state.Session = engine, Session
-    authz = Rowstile(app, engine, user=user_of, check_connection=check_connection)
+    authz = Rowstile(app, engine, user=session_user, check_connection=check_connection)
     app.state.authz = authz
 
     @app.get("/projects")
