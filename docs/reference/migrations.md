@@ -51,7 +51,9 @@ enough. <!-- checked: tests/apply.sh "rowstile apply, on a database with no exte
 - **The first migration** is the whole policy, which also applies over a database that already has
   one (applied with `rowstile apply`). <!-- checked: tests/unit_test.py "test_the_first_is_the_whole_policy"; tests/migrations.sh "which says it is the whole policy" -->
 - **Upgrading rowstile** is the next migration when the new version makes something differently:
-  `rowstile migrate --check` says so, and `rowstile migrate` writes it. <!-- checked: tests/unit_test.py "test_a_changed_step_every_migration_runs_is_a_migration"; tests/upgrade.sh "exit 1, the new version makes something differently"; tests/upgrade.sh "migrate writes the migration from the old lock file to this version" -->
+  `rowstile migrate --check` says so, and `rowstile migrate` writes it. <!-- checked: tests/unit_test.py "test_a_changed_step_every_migration_runs_is_a_migration"; tests/upgrade.sh "exit 1, the new version makes something differently"; tests/upgrade.sh "migrate writes the migration from the old lock file to this version"; tests/migrate_test.py "a release grants the app role another function, and nothing else"; tests/unit_test.py "test_a_changed_grant_alone_is_a_migration" -->
+  When it changes only an inheritance tree's functions (a message, say), the migration replaces them in place
+  and the tree keeps its rows. <!-- checked: tests/migrate_test.py "a release changes a message of an inheritance tree's function"; tests/unit_test.py "test_a_tree_function_changed_alone_is_replaced_in_place" -->
   A new version that makes the same
   needs no migration. <!-- checked: tests/migrations.sh "exit 0 after an upgrade that makes the same"; tests/unit_test.py "test_a_new_version_alone_needs_no_migration" -->
   The other way round is refused: a command older than the version that last wrote the

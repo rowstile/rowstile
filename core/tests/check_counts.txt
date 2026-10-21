@@ -24,7 +24,7 @@ keep unchanged trees 9
 language server 105
 masks 32
 mcp 70
-migrate vs apply 58
+migrate vs apply 77
 migrations 71
 moves 23
 multi scenario 93
@@ -37,5 +37,5 @@ signed sessions 65
 small policies 3
 studio 201
 tools 38
-unit 553
+unit 555
 upgrade 71
