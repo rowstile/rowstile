@@ -4,14 +4,23 @@
 #   include:
 #     - remote: https://raw.githubusercontent.com/rowstile/rowstile/v0.1.0-dev/review-ci/gitlab/rowstile-review.gitlab-ci.yml
 #   variables:
-#     ROWSTILE_REVIEW_TOKEN: ...     # a project access token with the api scope (masked), to write the note
 #     REVIEW_DATABASE_URL: ...       # optional: a database at the target branch's state, with the review data
+#
+# The note is written with ROWSTILE_REVIEW_TOKEN, a project access token with the api scope: set it in the
+# project's CI/CD settings, masked, not in the file. Without it, the review is in the job's log and its artifact.
 #
 # Access and the tests' results need that database; prepare it in a job before this one (a Postgres
 # service, your migration tool). Without it the review leaves Access out.
 #
-# The command comes from PyPI, the release the template's tag names; ROWSTILE_VERSION picks another, and
-# ROWSTILE_PACKAGE anything pip installs instead (a wheel's path or URL).
+# The command comes from PyPI, the release the template's tag names. ROWSTILE_VERSION picks another, and
+# ROWSTILE_PACKAGE anything pip installs instead (a wheel's path or URL). The job sets both, and a job's own
+# variables come before the pipeline's: set them in the job, by its name in the including file (or in the CI/CD
+# settings). The job's stage is test; a pipeline without that stage names another the same way:
+#
+#   rowstile-review:
+#     stage: verify
+#     variables:
+#       ROWSTILE_VERSION: X.Y.Z
 rowstile-review:
   stage: test
   image: python:3.12-slim
@@ -42,11 +51,26 @@ rowstile-review:
           if [ -n "$id" ] || [ "${count:-0}" -lt 100 ]; then break; fi
           page=$((page + 1))
         done
-        body=$(python3 -c 'import json,sys; print(json.dumps({"body": open("review.md").read()}))')
+        # the note from a file: a long review is more than one argument may hold. One longer than a note may be
+        # (1,000,000 characters) is cut, and the note says the whole review is this job's artifact
+        note=$(mktemp)
+        python3 - "$note" <<'EOF'
+      import json, os, sys
+      review = open("review.md", encoding="utf-8").read()
+      limit = 999_000
+      if len(review) > limit:
+          rest = f"\n\n**The review is longer than a note may be. The rest is in [review.md]({os.environ['CI_JOB_URL']}/artifacts/file/review.md).**\n"
+          kept = review[: limit - len(rest) - len("\n\n</details>")].rsplit("\n", 1)[0]
+          if kept.count("<details>") > kept.count("</details>"):
+              kept += "\n\n</details>"
+          review = kept + rest
+      with open(sys.argv[1], "w", encoding="utf-8") as fh:
+          json.dump({"body": review}, fh)
+      EOF
         if [ -n "$id" ]; then
-          curl -sf -X PUT -H "PRIVATE-TOKEN: $ROWSTILE_REVIEW_TOKEN" -H "Content-Type: application/json" -d "$body" "$api/$id" >/dev/null
+          curl -sf -X PUT -H "PRIVATE-TOKEN: $ROWSTILE_REVIEW_TOKEN" -H "Content-Type: application/json" --data-binary "@$note" "$api/$id" >/dev/null
         else
-          curl -sf -X POST -H "PRIVATE-TOKEN: $ROWSTILE_REVIEW_TOKEN" -H "Content-Type: application/json" -d "$body" "$api" >/dev/null
+          curl -sf -X POST -H "PRIVATE-TOKEN: $ROWSTILE_REVIEW_TOKEN" -H "Content-Type: application/json" --data-binary "@$note" "$api" >/dev/null
         fi
       fi
   artifacts:
