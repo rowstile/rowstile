@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import NotRequired, TypedDict
 
-from .evaluate import Data, Reference, World, corners, rare_worlds, smallest
+from .evaluate import Data, Reference, World, alike_in, corners, kept_rows, principal_of, rare_worlds, smallest
 from .parse import Invariant, Policy
 
 WORLDS = 400
@@ -51,8 +51,9 @@ def broken(ref: Reference, inv: Invariant, data: Data) -> tuple[str, str] | None
 
 
 def shrink(ref: Reference, inv: Invariant, data: Data) -> Data:
-    """The world with every link, share and condition taken away that the counterexample doesn't need."""
-    return smallest(data, lambda d: broken(ref, inv, d) is not None)
+    """The world with every link, share and condition taken away that the counterexample doesn't need (a row its
+    type's where keeps keeps what the where needs)."""
+    return smallest(data, lambda d: broken(ref, inv, d) is not None, kept_rows(ref.pol, alike_in([ref.pol])))
 
 
 def worlds_to_try(pol: Policy, worlds: int, seed: int, max_size: int) -> list[World]:
@@ -97,16 +98,10 @@ def prove(pol: Policy, worlds: int = WORLDS, seed: int = 0, max_size: int = MAX_
                 found = broken(ref, inv, small)
                 assert found is not None  # shrink keeps the world broken
                 who, obj = found
-                lines = w.describe(pol, small)
-                # the types the counterexample names: the invariant's, whoever holds it, and those its links use
-                used = {inv.type, (who.split(":")[0] if ":" in who else "user") if who != "nobody" else inv.type}
-                used |= {x.split(".")[0] for x in lines if "." in x.split(":")[0]}
-                used |= {part.split()[-2] for x in lines if "->" in x for part in x.split("->")[1:]}
-                lines = [
-                    x
-                    for x in lines
-                    if "." in x.split(":")[0] or x.startswith("{") or x.split(":")[0].split()[0] in used
-                ]
+                # the rows of the types the counterexample names: the invariant's, the holder's, and those the world
+                # says something of (its links, roles, conditions and columns)
+                used = {inv.type, *([principal_of(who, pol.types)[0]] if who != "nobody" else [])}
+                lines = w.describe(pol, small, used | World.named(pol, small))
                 result.update(holds=False, who=who, object=obj, world=lines)
                 break
         result["worlds"] = n
@@ -120,13 +115,19 @@ def describe(results: list[Proof], max_size: int = MAX_SIZE) -> str:
         lines.append(f"{r['line']}: {r['invariant']}")
         if r["holds"]:
             size = r.get("size", max_size)
-            lines.append(f"  ok   holds in every world tried ({r['worlds']} worlds, up to {size} of each type)")
+            lines.append(
+                f"  ok   holds in every world tried ({plural(r['worlds'], 'world')}, up to {size} of each type)"
+            )
         else:
             who = r.get("who", "nobody")
             who = who if who == "nobody" else f"user {who}" if ":" not in who else who.replace(":", " ")
             lines.append(
                 f"  no   {who} holds it on {r['type']} {r.get('object', '')} in this world (the smallest found, "
-                f"after {r['worlds']} worlds):"
+                f"after {plural(r['worlds'], 'world')}):"
             )
             lines += ["         " + x for x in r.get("world", [])]
     return "\n".join(lines)
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")

@@ -180,6 +180,8 @@ at once is rare in worlds drawn row by row); then worlds where most links hold (
 chains of objects one link longer than the policy reads deep. <!-- checked: tests/confidence_test.py "an invariant the policy doesn't guarantee: exit 1, and the smallest counterexample"; tests/unit_test.py "test_prove_finds_a_counterexample_that_needs_conditions_at_once"; tests/unit_test.py "test_prove_tries_what_a_counterexample_may_need" -->
 It answers with the smallest counterexample, or
 says that there is none among the worlds tried. <!-- checked: tests/unit_test.py "test_prove_finds_the_smallest_counterexample"; tests/unit_test.py "test_prove_says_when_none_is_found" -->
+A counterexample is the world as you would make it: its rows, its links and shares (one to `user:*` says so), the
+custom roles given, the values its conditions read, and the rows each type's `where` keeps. <!-- checked: tests/unit_test.py "test_a_world_says_what_each_link_and_role_names"; tests/unit_test.py "test_a_counterexample_says_which_rows_the_types_where_keeps"; tests/unit_test.py "test_a_link_to_every_user_reads_as_one" -->
 It is a search,
 not a proof for worlds of any size, and it reads the policy, not your data.
 

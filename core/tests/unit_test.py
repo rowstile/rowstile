@@ -6997,6 +6997,145 @@ class Confidence(unittest.TestCase):
             ["user: 1", "team: 1", "doc: 1", "doc.viewer: doc 1 -> team#member 1", "team.member: team 1 -> user 1"],
         )
 
+    def test_a_counterexample_says_which_rows_the_types_where_keeps(self) -> None:
+        # a row its type's where doesn't keep holds nothing: the world keeps what the where needs as it is made
+        # smaller (active = true), and says which rows the where keeps, one the evaluator can't read too
+        from authzlib import prove
+
+        folder = (
+            "type org = app.orgs\n  member : user = app.members(org_id -> user_id)\n"
+            "type folder = app.folders\n  org : org = org_id\n  owner : user = owner_id\n  can share = owner\n"
+            "invariants\n  never folder: share and not org.member\n"
+        )
+        opaque = "exists (select 1 from app.bans b where b.user_id = this.id) is false"
+        for where, said in (
+            ("active", ["user 1: active = true", "{active} holds for user 1 (the type's where)"]),
+            (opaque, [f"{{{opaque}}} holds for user 1 (the type's where)"]),
+        ):
+            head = self.HEAD.replace("app.users\n", f"app.users where {{{where}}}\n")
+            [r] = prove.prove(parse_policy(head + folder, "p.authz"))
+            self.assertEqual(r.get("world"), ["user: 1", "folder: 1", *said, "folder.owner: folder 1 -> user 1"])
+        # a team its members hold it through
+        [r] = prove.prove(
+            parse_policy(
+                self.HEAD + "type team = app.teams where {not disbanded}\n"
+                "  member : user = app.team_members(team_id -> user_id)\n"
+                "type folder = app.folders\n  viewer : team#member = app.folder_teams(folder_id -> team_id)\n"
+                "  can view = viewer\ninvariants\n  never folder: view\n",
+                "p.authz",
+            )
+        )
+        self.assertIn("team 1: disbanded = false", r.get("world", []))
+        self.assertIn("{not disbanded} holds for team 1 (the type's where)", r.get("world", []))
+
+    def test_a_link_to_every_user_reads_as_one(self) -> None:
+        # a share to user:* is to every signed-in user, not to one: its subject is '*' in every world, as in
+        # authz.shares, and the counterexample says user:*
+        from authzlib import evaluate, prove
+
+        text = (
+            "type folder = app.folders\n  viewer : user:* shared\n  owner : user = owner_id\n  can share = nobody\n"
+            "  can view = viewer\ninvariants\n  never folder: view and not owner\n"
+        )
+        pol = parse_policy(self.HEAD + text, "p.authz")
+        [r] = prove.prove(pol)
+        self.assertEqual(r.get("world"), ["user: 1", "folder: 1", "folder.viewer: folder 1 -> user:*"])
+        roles = parse_policy(
+            self.HEAD + "type doc = app.docs\n  admin : user = admin_id\n  roles : user:*\n"
+            "  can manage_roles = admin\n  can view = roles\n",
+            "p.authz",
+        )
+        held = set()
+        for k in range(20):
+            held |= {s for _, s in evaluate.World(f"s/{k}", 4).data(pol).pairs[("folder", "viewer", 0, "user", "*")]}
+            held |= {s for _, s, _ in evaluate.World(f"s/{k}", 4).data(roles).rolepairs[("doc", "view", "user", "*")]}
+        self.assertEqual(held, {"*"})
+
+    def test_a_world_says_what_each_link_and_role_names(self) -> None:
+        # who a link or a custom role is given to, as the policy writes it, and whose role it is; which rows a where
+        # keeps, none here; and with types, only those types' rows
+        from authzlib import evaluate
+
+        pol = parse_policy(
+            self.HEAD.replace("app.users\n", "app.users where {active}\n")
+            + "type org = app.orgs\n  admin : user = admin_id\n  can manage_roles = admin\n"
+            "type doc = app.docs\n  org : org = org_id\n  reader : anyone shared by view\n  roles : user, user:* from org\n"
+            "  can view = roles\n  can edit = roles\n  can read = reader\n",
+            "p.authz",
+        )
+        ids = {"user": ["1", "2"], "org": ["1"], "doc": ["1"]}
+        data = evaluate.Data(
+            ids=ids,
+            valid={**ids, "user": []},
+            pairs={("doc", "reader", 0, "anyone", ""): [("1", "*")], ("doc", "org", 0, "org", ""): []},
+            rolepairs={
+                ("doc", "edit", "user", ""): [],
+                ("doc", "view", "user", ""): [("1", "2", "1")],
+                ("doc", "view", "user", "*"): [("1", "*", "1")],
+            },
+            columns={"user": {"1": {"active": False}, "2": {}}},
+        )
+        lines = [
+            "user 1: active = false",
+            "{active} holds for no user (the type's where)",
+            "doc.reader: doc 1 -> anyone",
+            "doc.roles with view: doc 1 -> user 2 (a role of org 1)",
+            "doc.roles with view: doc 1 -> user:* (a role of org 1)",
+        ]
+        world = evaluate.World("", 1)
+        self.assertEqual(world.describe(pol, data), ["user: 1, 2", "org: 1", "doc: 1", *lines])
+        self.assertEqual(evaluate.World.named(pol, data), {"user", "org", "doc"})
+        self.assertEqual(world.describe(pol, data, {"doc"}), ["doc: 1", *lines[2:]])
+
+    def test_prove_counts_one_world_as_one(self) -> None:
+        from authzlib import prove
+
+        for n, said in ((1, "1 world"), (2, "2 worlds")):
+            ok = prove.Proof(invariant="never doc: view", type="doc", line="line 9", holds=True, worlds=n, size=1)
+            self.assertIn(f"  ok   holds in every world tried ({said}, up to 1 of each type)", prove.describe([ok]))
+            no = prove.Proof(
+                invariant="never doc: view", type="doc", line="line 9", holds=False, worlds=n, who="1", object="1"
+            )
+            self.assertIn(f"in this world (the smallest found, after {said}):", prove.describe([no]))
+
+    def test_a_difference_is_shown_in_the_smallest_world_it_shows_in(self) -> None:
+        # a viewer taken away: the folder's parent plays no part, so the world shown has no parent link, though
+        # the world it was found in had one; it is one world, as each policy reads it
+        from authzlib import evaluate
+
+        base = (
+            self.HEAD + "type folder = app.folders\n  parent : folder = parent_id\n  owner : user = owner_id\n"
+            "  viewer : user = app.folder_viewers(folder_id -> user_id)\n  can view = owner or viewer or parent.view\n"
+        )
+        a = parse_policy(base, "a.authz")
+        b = parse_policy(base.replace("owner or viewer or parent.view", "owner or parent.view"), "b.authz")
+        found = evaluate.first_difference(a, b)
+        assert found is not None
+        diff, da, db = found
+        self.assertEqual(
+            (diff["what"], diff["user"], diff["object"], diff["before"], diff["after"]),
+            ("folder.view", "1", "1", True, False),
+        )
+        self.assertEqual(diff["world"], ["user: 1", "folder: 1", "folder.viewer: folder 1 -> user 1"])
+        self.assertEqual((da.pairs, da.columns), (db.pairs, db.columns))
+
+    def test_one_world_as_two_policies_read_it_is_made_smaller_as_one(self) -> None:
+        # a link both read goes from both at once; a condition or a column only one reads, from that one
+        from authzlib import evaluate
+
+        ids = {"user": ["1"], "doc": ["1"]}
+        q = ("doc", "q", 0, "user", "")
+        a = evaluate.Data(ids=ids, valid=ids, pairs={q: [("1", "1")]}, columns={"doc": {"1": {"x": None}}})
+        b = evaluate.Data(
+            ids=ids, valid=ids, pairs={q: [("1", "1")]}, cond={("doc", "c"): ["1"]}, columns={"doc": {"1": {"y": 1}}}
+        )
+        sa, sb = evaluate.smallest_of([a, b], lambda ds: True)
+        self.assertEqual((sa.pairs, sa.cond, sa.columns), ({q: []}, {}, {"doc": {"1": {"x": None}}}))
+        self.assertEqual((sb.pairs, sb.cond, sb.columns), ({q: []}, {("doc", "c"): []}, {"doc": {"1": {"y": None}}}))
+        # the link stays where one of them needs it, in both
+        sa, sb = evaluate.smallest_of([a, b], lambda ds: bool(ds[1].pairs[q]))
+        self.assertEqual((sa.pairs, sb.pairs), ({q: [("1", "1")]}, {q: [("1", "1")]}))
+
     def test_a_polymorphic_row_has_one_parent(self) -> None:
         both = "  owner : user = owner_id\n  can x = owner\n  can y = not owner\n"
         text = (

@@ -139,6 +139,13 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   a bare syntax error. It applies, and the messages that name the file's lines say its name as written, a `%` in
   it too. A file whose name holds a dollar quote's tag (`$f$`) can't be included: the include line is refused,
   saying to rename the file (AZ108).
+- `rowstile prove`'s counterexample, and the world the review shows when a change is no refactor, say what the
+  world holds as you would make it. A share to `user:*` read as a share to one user (`folder 1 -> user 1`); it
+  reads `folder 1 -> user:*`. The rows each type's `where` keeps are said (`{active} holds for user 1 (the type's
+  where)`), and making the world smaller no longer takes away the value a kept row needs (`active = true`): the
+  user shown looked suspended. The custom roles given are listed (`doc.roles with view: doc 1 -> user 1`), and
+  `anyone` reads `anyone`, not `anyone *`. The review's world is made as small as it still grants otherwise in,
+  as prove's is: no link that plays no part. "after 1 worlds" reads "after 1 world".
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch
