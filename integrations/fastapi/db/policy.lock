@@ -35,12 +35,12 @@
 > rules app.folders: select : edit
 > rules app.folders: update : edit
 
-always | 562f2a83f6bc
+always | 61dad16d6841
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 45dbc2c29b55 shape=77f3e79f
 function authz.can(p_type text, p_id bigint, p_perm text) | 3b89f3888983 shape=a0df7b00
-function authz.can(p_type text, p_id text, p_perm text) | 080876c030bb shape=220bc89f
+function authz.can(p_type text, p_id text, p_perm text) | 5e3d5f37ddfd shape=220bc89f
 function authz.cancel_request(p_id bigint) | d25e105562ab shape=19aa0bb3
 function authz.changes_since(p_pos bigint, p_limit int) | b494cb9cea48 shape=0448ffba
 function authz.check_invariants() | 25615812f12b shape=a2072420
@@ -56,8 +56,8 @@ function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9fc8335de7a shape=0a2287cd
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 39a8463aa247 shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | a8dc6b690a11 shape=1223ad2f
-function authz.lint() | 10c3d00d405d shape=54cb1505
-function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 15abd6aea98d shape=e713a7cc
+function authz.lint() | b540cbdcf5d9 shape=54cb1505
+function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 233210d3f82d shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
@@ -99,29 +99,33 @@ function authz.who(p_type text, p_id text, p_perm text) | 7fa135fdc045 shape=1cf
 function authz.who_among(p_type text, p_id bigint, p_perm text, p_users text[], p_principal_type text) | c12c43bbe47f shape=9f8e2d53
 function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 01aaf32fb926 shape=17b9de43
 function authz_gen."app.folders:rules:explain"(p_command text, p_id text, p_row jsonb) | ebdd13046dce shape=60afa031
-function authz_gen."app.folders:update:items"(p_row "app"."folders") | 13ea4f505ab2 shape=a38bff5e atomic
+function authz_gen."app.folders:update:items"(p_row "app"."folders") | cc2c086c7e00 shape=a38bff5e atomic
 function authz_gen."app.folders:update:refuse"(p_row "app"."folders") | 7fe335da163e shape=023dccf5
 function authz_gen."app.folders:update:why"(p_row "app"."folders", p_stored boolean) | a8b758d8b3e9 shape=77e73222
-function authz_gen."app.inbox:insert:items"(p_row "app"."inbox") | 3608158c7877 shape=65471cf6 atomic
+function authz_gen."app.inbox:insert:items"(p_row "app"."inbox") | 68c7c88487c9 shape=65471cf6 atomic
 function authz_gen."app.inbox:insert:refuse"(p_row "app"."inbox") | d197bf6f90c9 shape=4859c5d1
 function authz_gen."app.inbox:insert:why"(p_row "app"."inbox") | 3cfbe19f4d7c shape=fabd3911
 function authz_gen."app.inbox:rules:explain"(p_command text, p_id text, p_row jsonb) | 72183e3de12c shape=c37cb4d6
-function authz_gen."app.notes:delete:items"(p_row "app"."notes") | e9df1dc8c810 shape=9c8712ee atomic
+function authz_gen."app.notes:delete:items"(p_row "app"."notes") | 29f2b0cdbb41 shape=9c8712ee atomic
 function authz_gen."app.notes:delete:why"(p_row "app"."notes") | adc19826650d shape=f0c703ff
-function authz_gen."app.notes:insert:items"(p_row "app"."notes") | 22c23f09336b shape=f3e50ac8 atomic
+function authz_gen."app.notes:insert:items"(p_row "app"."notes") | 8d6b951968bb shape=f3e50ac8 atomic
 function authz_gen."app.notes:insert:refuse"(p_row "app"."notes") | ef8f641067cf shape=ee7e27ac
 function authz_gen."app.notes:insert:why"(p_row "app"."notes") | b7db3ba32281 shape=d2366d1a
 function authz_gen."app.notes:rules:explain"(p_command text, p_id text, p_row jsonb) | 4491d6a28db0 shape=0f580fa9
-function authz_gen."app.notes:update:items"(p_row "app"."notes") | 6a4fd6f24b7f shape=0224e9c4 atomic
+function authz_gen."app.notes:update:items"(p_row "app"."notes") | 3edf002f7c17 shape=0224e9c4 atomic
 function authz_gen."app.notes:update:refuse"(p_row "app"."notes") | b894d1874ffb shape=b9a31115
 function authz_gen."app.notes:update:why"(p_row "app"."notes", p_stored boolean) | d706df08b4f4 shape=95aad17a
 function authz_gen."app.projects:rules:explain"(p_command text, p_id text, p_row jsonb) | d2348a62fff8 shape=ff9a6d73
-function authz_gen."folder__edit__has"(p_id bigint) | cea3b48a0697 shape=5b0a9aa6
+function authz_int."app.folders:seen"(p_id bigint) | 3460b1220427 shape=da914980
+function authz_int."app.inbox:seen"(p_id bigint) | b5bc45f0d8a8 shape=4454b51e
+function authz_int."app.notes:seen"(p_id bigint) | cc18d14d369e shape=6981fb35
+function authz_int."app.projects:seen"(p_id bigint) | a146870eb2a8 shape=ade77385
 function authz_int."folder__col_audit_del"() | b9a8e2b4863d shape=09f230d2
 function authz_int."folder__col_audit_ins"() | 3d40925a4a8c shape=ccf8c653
 function authz_int."folder__col_audit_row"() | 041b6c2ef9fd shape=08554970
 function authz_int."folder__col_audit_trunc"() | 5895dc611a64 shape=54802037
 function authz_int."folder__col_audit_upd"() | 43722dedbdfe shape=89500885
+function authz_int."folder__edit__has"(p_id bigint) | 7e3230aff58f shape=9bfa87ef
 function authz_int."folder__edit__start"() | ec5267213246 shape=43cb2f64
 function authz_int."folder__edit__who"(p_id bigint) | 0ff556e62469 shape=5800ac07
 function authz_int."folder__edit__who_base"(p_id bigint) | dafa7cf827f3 shape=f3423a04
@@ -228,17 +232,17 @@ function authz_int.shares_canon() | 641cdc251996 shape=ebabc566
 function authz_int.sign() | 26fda3872285 shape=de0f1c18
 function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b078e77 shape=13054e65
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
-function authz_int.visible(p_type text, p_id text) | 6bb8449425ac shape=e14964bd
+function authz_int.visible(p_type text, p_id text) | 381ec41df1f4 shape=e14964bd
 function authz_int.writable() | dce4bbfe1638 shape=2260a03a
-policy "authz_delete" ON "app"."notes" | 2db5bc5bd121
+policy "authz_delete" ON "app"."notes" | a483c6eb0d19
 policy "authz_insert" ON "app"."inbox" | e5a79ff47ac0
-policy "authz_insert" ON "app"."notes" | d85a030e0ccc
-policy "authz_select" ON "app"."folders" | cf84f091c379
+policy "authz_insert" ON "app"."notes" | 547f2fcf584e
+policy "authz_select" ON "app"."folders" | ccb703ce424d
 policy "authz_select" ON "app"."inbox" | d5a1d86699b3
-policy "authz_select" ON "app"."notes" | ebc8cbb2ad5c
-policy "authz_select" ON "app"."projects" | b1eea7956e5c
-policy "authz_update" ON "app"."folders" | ff7a4c23b504
-policy "authz_update" ON "app"."notes" | 1173b8551a3e
+policy "authz_select" ON "app"."notes" | f38e0bb37b1c
+policy "authz_select" ON "app"."projects" | 083bedb02e78
+policy "authz_update" ON "app"."folders" | 674f7f8b2604
+policy "authz_update" ON "app"."notes" | d1c538612a6a
 rls "app"."folders" | 3a9ec931ab49
 rls "app"."inbox" | e8128a72e9a7
 rls "app"."notes" | 895f402ca9d0
@@ -248,8 +252,8 @@ schema authz_int | 985712437937
 step base | f7d2efdcef9f
 step cascades | ce7adaa10abf
 step grant_api | 058ff1185f6a
-step grant_functions | 1656a21c48f9
-step grant_views | b717c2f9cf78
+step grant_functions | 584dfd75df4e
+step grant_views | 6f59c10e9266
 step mask_privileges | 0f76f9d7c5d3
 step share_indexes | b7adfd36bb93
 step sweep | 617caa4e7bfd
@@ -318,22 +322,6 @@ trigger authz_role_gone ON authz.roles | c1f1e6ba7c5c
 trigger authz_role_perm_audit ON authz.role_permissions | 00c06f622ad5
 trigger authz_share_audit ON authz.shares | 71f2e2c3290d
 trigger authz_shares_canon ON authz.shares | 93a3fd26e809
-view authz_gen."folder__edit" | cf563f203344
-view authz_gen."folder__edit__direct" | d5b0b4364d84
-view authz_gen."folder__owner" | 66f373af0147
-view authz_gen."folder__parent__edit" | 31ae7b0f6b7c
-view authz_gen."message__read" | 3673360872b0
-view authz_gen."message__recipient" | 2ff92598f39d
-view authz_gen."note__author" | 949a8026529b
-view authz_gen."note__edit" | 09da2d73fd4e
-view authz_gen."note__project__owner" | cf835be7ee7d
-view authz_gen."note__project__view" | 2e6d1aff7070
-view authz_gen."note__view" | 6a7242b886be
-view authz_gen."project__edit" | bc2123b3fc8e
-view authz_gen."project__member" | c264fc591be7
-view authz_gen."project__owner" | 0f8670643a70
-view authz_gen."project__service" | debb9d5a4688
-view authz_gen."project__view" | 91b5008307cf
 view authz_int."folder__edit" | fdca737fb6b6
 view authz_int."folder__edit__direct" | 3d9ecbaee034
 view authz_int."folder__owner" | fcf00d3d9dcf
