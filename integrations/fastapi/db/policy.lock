@@ -56,7 +56,7 @@ function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9fc8335de7a shape=0a2287cd
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 39a8463aa247 shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | a8dc6b690a11 shape=1223ad2f
-function authz.lint() | f179d0063104 shape=54cb1505
+function authz.lint() | 10c3d00d405d shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 15abd6aea98d shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
@@ -209,8 +209,8 @@ function authz_int.manage_perm(p_type text, p_relation text, p_subject text) | 0
 function authz_int.mark_row(p_type text, p_id text) | a3fe56708926 shape=267bf94f
 function authz_int.may_inspect(p_type text, p_id text) | c144ba24c8dd shape=0942af2e
 function authz_int.may_manage(p_type text, p_id text, p_relation text, p_subject text) | a92f01d8d85a shape=4b7f1aa2
-function authz_int.on_grant() | 9be0691fe65f shape=e128dbcd
 function authz_int.on_role() | 374a49793145 shape=e9d1adac
+function authz_int.on_share() | 0856cdef73f8 shape=56b3e887
 function authz_int.policy_path() | e79bf262c639 shape=79d267c2
 function authz_int.requests_gone(p_type text, p_ids text[]) | ba4366db286f shape=3524efd2
 function authz_int.role_gone() | beab44fb9bb2 shape=970d6f43
@@ -245,13 +245,13 @@ rls "app"."notes" | 895f402ca9d0
 rls "app"."projects" | 432b11d414de
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
-step base | 65f0fce9c06c
+step base | f7d2efdcef9f
 step cascades | ce7adaa10abf
 step grant_api | 058ff1185f6a
 step grant_functions | 1656a21c48f9
 step grant_views | b717c2f9cf78
 step mask_privileges | 0f76f9d7c5d3
-step share_indexes | 0311c9237786
+step share_indexes | b7adfd36bb93
 step sweep | 617caa4e7bfd
 step tables | 385b1e8871c6
 table authz_gen.policy_lines | 9ac99c239bde shape=dcfedc96
@@ -313,10 +313,10 @@ trigger "authz_user_keys_gone_trunc" ON "app"."users" | 3dafb0e71024
 trigger "authz_user_keys_gone_trunc_first" ON "app"."users" | 85fc09129d36
 trigger authz_audit_append_only ON authz.audit | b7dda6de8867
 trigger authz_audit_no_truncate ON authz.audit | fa619d666219
-trigger authz_grant_audit ON authz.shares | fd0f4207936d
 trigger authz_role_audit ON authz.roles | d4799a1152c8
 trigger authz_role_gone ON authz.roles | c1f1e6ba7c5c
 trigger authz_role_perm_audit ON authz.role_permissions | 00c06f622ad5
+trigger authz_share_audit ON authz.shares | 71f2e2c3290d
 trigger authz_shares_canon ON authz.shares | 93a3fd26e809
 view authz_gen."folder__edit" | cf563f203344
 view authz_gen."folder__edit__direct" | d5b0b4364d84
