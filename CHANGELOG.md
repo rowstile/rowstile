@@ -285,6 +285,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   with `--`: that line is in the quote, not a comment. fmt refused such a policy, saying formatting would change
   what it says. And a run of spaces inside a quote counts: the lock file's lines, and fmt's check that it
   changes nothing, read `'a   b'` and `'a b'` as two things.
+- When the server closed the connection without a word (it crashed, a proxy dropped it) while a statement was
+  on its way to it, the command said `lost the database: [Errno 104] Connection reset by peer`. It now says
+  `lost the database: the server closed the connection`, as it does when the server closes between two
+  statements. When the server said why first (the session was ended, it is shutting down), those words are
+  still what the command says.
 
 ## 0.1.0 (alpha)
 
