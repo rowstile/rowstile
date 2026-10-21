@@ -23,12 +23,14 @@ export function Conversation({ chatId, me, version, onChanged, onClose }: Props)
         const first = m[0]?.seq ?? Infinity;
         return [...old.filter((x) => x.seq < first), ...m];
       });
+      // only what is new: marking read what was read already would still tell every member's browser
       const last = m[m.length - 1];
-      if (last) api.markRead(chatId, last.seq).then(onChanged, () => undefined);
+      const read = c.members.find((x) => x.user_id === me.id)?.last_read_seq ?? 0;
+      if (last && last.seq > read) api.markRead(chatId, last.seq).then(onChanged, () => undefined);
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) onClose();     // removed from it, or it's gone
     }
-  }, [chatId, onChanged, onClose]);
+  }, [chatId, me.id, onChanged, onClose]);
 
   useEffect(() => { load(); }, [load, version]);
   useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [messages.length]);

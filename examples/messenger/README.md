@@ -16,6 +16,7 @@ transaction in as the person asking, runs plain SQL, and turns the database's re
 ```
 docker compose up -d --build          # the app on http://localhost:8001 (Postgres and rowstile, built from this repository)
 ./test.sh                             # the API tests: the database in Docker, the tests on the host
+(cd frontend && npm ci && npm test)   # the web app's tests
 ```
 
 For development: `docker compose up -d db`, then `uv run python ../db/migrate.py` and

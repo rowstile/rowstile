@@ -293,6 +293,29 @@ def test_read_receipts() -> None:
     assert seen["Ben"] == seq
 
 
+def test_marking_read_what_was_read_tells_nobody() -> None:
+    """Every member's open chat reloads on "chat N changed": a mark-read that moves nothing must not say it."""
+    ann, ben = person("Ann"), person("Ben")
+    chat = direct(ann, ben)
+    first = say(ann, chat, "one").json()["seq"]
+    second = say(ann, chat, "two").json()["seq"]
+    with psycopg.connect(ADMIN, autocommit=True) as conn:
+        conn.execute("LISTEN ms_events")
+        conn.execute("LISTEN ms_test_done")
+        ben.post(f"/api/chats/{chat}/read", json={"seq": second})  # moves Ben's mark: his chats hear of it
+        ben.post(f"/api/chats/{chat}/read", json={"seq": second})  # read already
+        ben.post(f"/api/chats/{chat}/read", json={"seq": first})  # before it
+        ann.post(f"/api/chats/{chat}/read", json={"seq": second})  # Ann's own message, read when she sent it
+        say(ben, chat, "three")  # a new message: Ben's mark follows it, the message is news
+        admin("SELECT pg_notify('ms_test_done', '')")
+        heard: list[str] = []
+        for n in conn.notifies(timeout=10):
+            if n.channel == "ms_test_done":
+                break
+            heard.append(n.payload)
+    assert heard == [f"{chat}:{ben.me['id']}", str(chat), f"{chat}:{ben.me['id']}"]
+
+
 # --- bots: principals ------------------------------------------------------------------------------
 def test_bots() -> None:
     ann, ben = person("Ann"), person("Ben")

@@ -48,6 +48,8 @@ function Main({ me, onMe }: { me: User; onMe: (u: User | null) => void }) {
   const [dialog, setDialog] = useState<"new" | "settings" | null>(null);
   const [filter, setFilter] = useState("");
   const refresh = useCallback(() => api.chats().then(setChats, () => undefined), []);
+  // one function for as long as Main lives: the open conversation reloads when it changes
+  const close = useCallback(() => { setOpen(null); refresh(); }, [refresh]);
 
   useEffect(() => { refresh(); }, [refresh]);
   // live: the server says which chat changed (only chats we may read); we refetch it through the API
@@ -89,7 +91,7 @@ function Main({ me, onMe }: { me: User; onMe: (u: User | null) => void }) {
       </aside>
       <main className="pane">
         {open ? <Conversation key={open} chatId={open} me={me} version={version[open] ?? 0} onChanged={refresh}
-                              onClose={() => { setOpen(null); refresh(); }} />
+                              onClose={close} />
           : <div className="welcome"><h2>Messenger</h2><p>Pick a chat, or start one.</p>
               <p className="hint">Who may read, post, add people or delete messages is decided by the database,
                 from <code>db/policy.authz</code>. This app only asks.</p></div>}

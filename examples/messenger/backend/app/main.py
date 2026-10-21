@@ -388,8 +388,9 @@ def post(chat_id: int, body: NewMessage, user: DictRow = Depends(auth.current_us
             (chat_id, user["id"], body.body),
         )
         tx.run(
-            "UPDATE ms.members SET last_read_seq = greatest(last_read_seq, %s) WHERE chat_id = %s AND user_id = %s",
-            (row["seq"], chat_id, user["id"]),
+            # only a mark that moves: an update of the row tells every member's open chat (ms.announce)
+            "UPDATE ms.members SET last_read_seq = %s WHERE chat_id = %s AND user_id = %s AND last_read_seq < %s",
+            (row["seq"], chat_id, user["id"], row["seq"]),
         )
         return row
 
@@ -437,9 +438,9 @@ class Read(BaseModel):
 @app.post("/api/chats/{chat_id}/read")
 def mark_read(chat_id: int, body: Read, user: DictRow = Depends(auth.current_user)) -> dict[str, bool]:
     with db.as_user(user["id"]) as tx:
-        tx.run(
-            "UPDATE ms.members SET last_read_seq = greatest(last_read_seq, %s) WHERE chat_id = %s AND user_id = %s",
-            (body.seq, chat_id, user["id"]),
+        tx.run(  # a mark that wouldn't move changes no row, so nobody is told of it
+            "UPDATE ms.members SET last_read_seq = %s WHERE chat_id = %s AND user_id = %s AND last_read_seq < %s",
+            (body.seq, chat_id, user["id"], body.seq),
         )
     return {"ok": True}
 
