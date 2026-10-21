@@ -252,7 +252,7 @@ For one suite, start a container and run it inside:
   row checks (`row_sql`). Select rules and `authz.list` use row checks without `point` (lookups into the views,
   which Postgres hashes once for many rows; a recursive permission is first checked against its `__direct` view,
   what the object's own columns give). Write rules and `authz.can` use `point=True`: recursive permissions go
-  through their `authz_gen."<type>__<perm>__has"` function. Never use point checks in select rules or lists: a
+  through their `authz_int."<type>__<perm>__has"` function. Never use point checks in select rules or lists: a
   function call per row makes them slow (`tests/unit_test.py` checks this). `row_sql` orders items cheapest
   first (`item_cost`); keep OR/AND, not CASE.
 - A deny inside inheritance (`(viewer or parent.view) and not denied`) is split by `split_denies`
@@ -339,9 +339,17 @@ For one suite, start a container and run it inside:
   written after it on the line it ends on, no `--` or `>` inside (`Promises` in `tests/unit_test.py` has the rule). Every code block of `docs/reference/`
   runs in `tests/reference.sh`, or a comment right before it says why not: `<!-- not run: why -->`.
 
+- What the rules read is hidden: every view and the functions the rules call (`__has`, `__links`, `__check`,
+  `__ids`) are in `authz_int`, where the app role has no USAGE and can't name them. Postgres keeps a policy, a
+  BEGIN ATOMIC body and a trigger's `WHEN` as read when applied and checks a schema only when a name is looked up,
+  so the rules still use them; the app role keeps SELECT or EXECUTE on what the rules use and nothing else
+  (`extra_grants_sql`, lint). `authz_gen` holds no views: only `policy_lines` and the rules' own functions. A rule
+  on a column is checked in its trigger's `WHEN`. Never name `authz_int` in text read at run time as the app role
+  (a plpgsql body, dynamic SQL). `tests/own_ids.sql` (`adversarial.sh`) checks that nothing the app role may name
+  tells apart two objects the API can't.
 - Refused writes: every `WITH CHECK` is `check OR authz_gen."<table>:<cmd>:refuse"(ROW(t.*)::table)`;
-  the explaining functions are BEGIN ATOMIC in `authz_gen` (the app role can't use `authz_int` by name at run
-  time), run as the app role, and must never leak what `authz.explain` wouldn't. Anything that evaluates a policy's
+  the explaining functions are BEGIN ATOMIC in `authz_gen`, run as the app role, answer only for a new row or one
+  the user may select (`authz_int."<table>:seen"`), and must never leak what `authz.explain` wouldn't. Anything that evaluates a policy's
   `with_check` text on rows (difftest) must drop the refuse call (`without_refusals`).
 - Named tests never run on `apply` (they write); each runs in a subtransaction that always rolls back. New test
   syntax gets a case in `tests/policy_errors.py` and the grammars: `editor/syntaxes/` (TextMate) and
