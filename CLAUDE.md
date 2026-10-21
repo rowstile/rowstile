@@ -80,10 +80,12 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
     shared buffers; `regress.sh` is the CI check (10k folders against `baseline.txt`)
   - `Dockerfile` — Postgres for development and tests: the stock image, python3, the command
     (build context: repo root)
-- `editor/` — `test.sh` (in containers: the grammar, the Zed build); the VS Code extension: TextMate grammar (the
-  site highlights ```authz with it too), and `extension.js` starting `rowstile lsp`; `tree-sitter-authz/` (the
-  Tree-sitter grammar and its queries, for Zed, Helix and Neovim; `src/` is generated and committed, editors
-  build from it); `zed/` (the Zed extension: its queries are copies of the grammar's, `Editors` in `unit_test.py`)
+- `editor/` — `test.sh` (in containers: the grammar, the Zed build, the VS Code extension built as its README says
+  and `extension_test.js` against stand-ins for VS Code, Neovim set up as the README says); the VS Code extension:
+  TextMate grammar (the site highlights ```authz with it too), and `extension.js` starting `rowstile lsp`;
+  `tree-sitter-authz/` (the Tree-sitter grammar and its queries, for Zed, Helix and Neovim; `src/` is generated and
+  committed, editors build from it); `zed/` (the Zed extension: its queries are copies of the grammar's, `Editors`
+  in `unit_test.py`)
 - `review-ci/` — the review for CI: `github/action.yml` (a composite action; it installs the release its tag names
   from PyPI, or with `version: source` this checkout's command, as `.github/workflows/ci.yml` does) and
   `gitlab/rowstile-review.gitlab-ci.yml`
@@ -357,7 +359,7 @@ For one suite, start a container and run it inside:
 - Named tests never run on `apply` (they write); each runs in a subtransaction that always rolls back. New test
   syntax gets a case in `tests/policy_errors.py` and the grammars: `editor/syntaxes/` (TextMate) and
   `editor/tree-sitter-authz/` (Tree-sitter: `grammar.js`, then `npx tree-sitter generate`, a corpus case).
-- The language server (`cli/lsp.py`) parses and compiles. From a database it only reads the tables' and columns'
+- The language server (`core/cli/lsp.py`) parses and compiles. From a database it only reads the tables' and columns'
   names, once, for completion, and only with `database` in rowstile.toml; applying, pushing and testing belong to
   `rowstile dev`. `tests/lsp_test.py` drives it over the protocol; its part with a database runs where `createdb`
   works.
