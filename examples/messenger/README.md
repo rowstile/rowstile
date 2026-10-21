@@ -44,8 +44,8 @@ set that database up, so mark it as a development database once first: `rowstile
 | Announcement groups: only admins post | `can post = (member and not blocked and ({not admins_only} or admin)) or bot` |
 | Blocking: neither can write to the other in their direct chat | `blocked : user = ms.direct_blocks(chat_id -> user_id)`, and `not blocked` in `post` |
 | ...and someone who blocked you can't be added to a chat with you | `rules ms.members insert : ... and not person.has_blocked` |
-| A direct chat stays two people | `add_members = ... or (creator and {kind = 'direct'} and {(select count(*) ...) < 2})` |
-| Nobody demotes or removes the owner, nor makes another | `update role : chat.manage and {role <> 'owner'}`, `update role after : {role <> 'owner'}` |
+| A direct chat stays two people | `add_members = ... or (creator and {kind = 'direct'} and {(select count(*) ...) < 2})`; a rule checks each row against the table as the statement found it, so for a statement that adds several at once, the schema counts too (`ms.pair_direct`, [migration 0064](db/migrations/0064_counts_held_by_the_schema.sql)) |
+| Nobody demotes or removes the owner, nor makes another | `update role : chat.manage and {role <> 'owner'}`, `update role after : {role <> 'owner'}`; and one owner a chat in the schema, for a group set up by one statement (`members_one_owner`, migration 0053) |
 | Edit your own messages for 15 minutes | `can edit = sender and {not deleted and created_at > now() - interval '15 minutes'}` |
 | Delete for everyone: yours, or anyone's if you're an admin; no undelete | `can remove = sender or chat.manage`, `update deleted after : {deleted}` |
 | Invite links anyone can use for a week | `invitee : link shared by invite`, `can join = invitee and {kind = 'group'}`; the backend calls `authz.create_link`, and `authz.list_links` and `authz.revoke_link` so admins see the links and turn one off |

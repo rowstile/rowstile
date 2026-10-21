@@ -216,6 +216,44 @@ def test_only_setting_a_group_up_makes_its_owner() -> None:
     assert bodies(cat, g) == []
 
 
+def test_several_rows_at_once_keep_the_counts() -> None:
+    """A rule checks each row against the tables as the statement found them: one INSERT of several rows passes a
+    count that each row passes alone. The API adds one row a statement; the schema holds the counts for any writer."""
+    from app import db
+
+    ann, ben, cat = person("Ann"), person("Ben"), person("Cat")
+    three = "INSERT INTO ms.members (chat_id, user_id) VALUES (%s, %s), (%s, %s), (%s, %s)"
+    with db.as_user(ann.me["id"]) as tx:
+        d = tx.one("INSERT INTO ms.chats (kind, created_by) VALUES ('direct', %s) RETURNING id", (ann.me["id"],))["id"]
+    with (
+        pytest.raises(psycopg.errors.CheckViolation, match="a direct chat is two people"),
+        db.as_user(ann.me["id"]) as tx,
+    ):
+        tx.run(three, (d, ann.me["id"], d, ben.me["id"], d, cat.me["id"]))
+    # ... nor after one of the two left
+    chat = direct(ann, ben)
+    assert ben.delete(f"/api/chats/{chat}/members/{ben.me['id']}").status_code == 204
+    with (
+        pytest.raises(psycopg.errors.CheckViolation, match="a direct chat is two people"),
+        db.as_user(ann.me["id"]) as tx,
+    ):
+        tx.run(
+            "INSERT INTO ms.members (chat_id, user_id) VALUES (%s, %s), (%s, %s)",
+            (chat, ben.me["id"], chat, cat.me["id"]),
+        )
+    # one owner, also when the group is set up by one statement
+    with db.as_user(ann.me["id"]) as tx:
+        g = tx.one(
+            "INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Two owners', %s) RETURNING id",
+            (ann.me["id"],),
+        )["id"]
+    with pytest.raises(psycopg.errors.UniqueViolation, match="members_one_owner"), db.as_user(ann.me["id"]) as tx:
+        tx.run(
+            "INSERT INTO ms.members (chat_id, user_id, role) VALUES (%s, %s, 'owner'), (%s, %s, 'owner')",
+            (g, ann.me["id"], g, ben.me["id"]),
+        )
+
+
 def test_lint_has_nothing_new_to_say() -> None:
     """authz.lint() on the app's database: no warning but the ones listed here, each with its reason."""
     known = {"ms.credentials_for(text)", "ms.sign_up(text,text,text)"}  # accounts are the app's, outside the policy

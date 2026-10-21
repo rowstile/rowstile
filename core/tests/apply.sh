@@ -764,6 +764,35 @@ out=$(psql -X -q -At -d "$CDB" -c "SET ROLE app_user" -c "SET authz.user_id = 2"
 [ -z "$out" ] && ok "... and changes nothing for someone else" || bad "an update by someone else" "$out"
 dropdb "$CDB"
 
+echo "-- a write rule sees the table as the statement found it"
+# a room holds two seats, by a condition that counts them: Postgres checks each row before the statement's
+# other rows are there, so the count misses them (docs/reference/limits.md says so, and what to do instead)
+fresh "$CDB"
+quiet -d "$CDB" -c "CREATE SCHEMA app" -c "CREATE TABLE app.users (id bigint PRIMARY KEY)" \
+  -c "CREATE TABLE app.seats (room_id bigint, user_id bigint, PRIMARY KEY (room_id, user_id))" \
+  -c "GRANT USAGE ON SCHEMA app TO app_user" -c "GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA app TO app_user" \
+  -c "INSERT INTO app.users VALUES (1), (2), (3)" >/dev/null || exit 1
+printf '%s\n' "app role app_user" "type user = app.users" "type seat = app.seats (room_id, user_id)" \
+  "rules app.seats" "  select : anyone" \
+  "  insert : {(select count(*) from app.seats s where s.room_id = this.room_id) < 2}" > "$T/seats.authz"
+python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/seats.authz" >/dev/null 2>&1
+seat() { psql -X -q -At -d "$CDB" -c "SET ROLE app_user" -c "SET authz.user_id = 1" -c "$1" 2>&1; }
+seats() { psql -X -q -At -d "$CDB" -c "SELECT count(*) FROM app.seats WHERE room_id = $1"; }
+seat "INSERT INTO app.seats VALUES (10, 1)" >/dev/null; seat "INSERT INTO app.seats VALUES (10, 2)" >/dev/null
+out=$(seat "INSERT INTO app.seats VALUES (10, 3)")
+case "$out" in *"permission denied: user 1 may not insert this row into app.seats"*)
+  [ "$(seats 10)" = 2 ] && ok "a rule that counts the rows already there refuses the third seat added alone" ||
+    bad "the third seat alone" "$(seats 10) seats";;
+  *) bad "the third seat alone" "$out";; esac
+out=$(seat "INSERT INTO app.seats VALUES (11, 1), (11, 2), (11, 3)")
+[ -z "$out" ] && [ "$(seats 11)" = 3 ] &&
+  ok "... but not three seats in one statement: each row's check sees none of the statement's other rows" ||
+  bad "three seats in one statement" "$(seats 11) seats: $out"
+out=$(seat "WITH a AS (INSERT INTO app.seats VALUES (12, 1), (12, 2)) INSERT INTO app.seats VALUES (12, 3)")
+[ -z "$out" ] && [ "$(seats 12)" = 3 ] &&
+  ok "... nor the rows a WITH query of the same statement writes" || bad "a WITH query's seats" "$(seats 12) seats: $out"
+dropdb "$CDB"
+
 echo "-- a group that fails its type's where passes nothing on, nor through the group it is in"
 # team 911 is inside team 910, which may view folder 9100; user 902 is in team 911 only, user 901 in team 910. The walk
 # through sub-teams is written two ways: through tables alone, and with shares among its sources
