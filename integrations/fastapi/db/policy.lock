@@ -99,20 +99,20 @@ function authz.who(p_type text, p_id text, p_perm text) | 7fa135fdc045 shape=1cf
 function authz.who_among(p_type text, p_id bigint, p_perm text, p_users text[], p_principal_type text) | c12c43bbe47f shape=9f8e2d53
 function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 01aaf32fb926 shape=17b9de43
 function authz_gen."app.folders:rules:explain"(p_command text, p_id text, p_row jsonb) | ebdd13046dce shape=60afa031
-function authz_gen."app.folders:update:items"(p_row "app"."folders") | cc2c086c7e00 shape=a38bff5e atomic
+function authz_gen."app.folders:update:items"(p_row "app"."folders") | 2c15489a3f4c shape=a38bff5e atomic
 function authz_gen."app.folders:update:refuse"(p_row "app"."folders") | 7fe335da163e shape=023dccf5
 function authz_gen."app.folders:update:why"(p_row "app"."folders", p_stored boolean) | a8b758d8b3e9 shape=77e73222
-function authz_gen."app.inbox:insert:items"(p_row "app"."inbox") | 68c7c88487c9 shape=65471cf6 atomic
+function authz_gen."app.inbox:insert:items"(p_row "app"."inbox") | fee8f7bee2a1 shape=65471cf6 atomic
 function authz_gen."app.inbox:insert:refuse"(p_row "app"."inbox") | d197bf6f90c9 shape=4859c5d1
 function authz_gen."app.inbox:insert:why"(p_row "app"."inbox") | 3cfbe19f4d7c shape=fabd3911
 function authz_gen."app.inbox:rules:explain"(p_command text, p_id text, p_row jsonb) | 72183e3de12c shape=c37cb4d6
-function authz_gen."app.notes:delete:items"(p_row "app"."notes") | 29f2b0cdbb41 shape=9c8712ee atomic
+function authz_gen."app.notes:delete:items"(p_row "app"."notes") | 530081202fcf shape=9c8712ee atomic
 function authz_gen."app.notes:delete:why"(p_row "app"."notes") | adc19826650d shape=f0c703ff
-function authz_gen."app.notes:insert:items"(p_row "app"."notes") | 8d6b951968bb shape=f3e50ac8 atomic
+function authz_gen."app.notes:insert:items"(p_row "app"."notes") | ea1a6513a948 shape=f3e50ac8 atomic
 function authz_gen."app.notes:insert:refuse"(p_row "app"."notes") | ef8f641067cf shape=ee7e27ac
 function authz_gen."app.notes:insert:why"(p_row "app"."notes") | b7db3ba32281 shape=d2366d1a
 function authz_gen."app.notes:rules:explain"(p_command text, p_id text, p_row jsonb) | 4491d6a28db0 shape=0f580fa9
-function authz_gen."app.notes:update:items"(p_row "app"."notes") | 3edf002f7c17 shape=0224e9c4 atomic
+function authz_gen."app.notes:update:items"(p_row "app"."notes") | 2e1e545d8f0a shape=0224e9c4 atomic
 function authz_gen."app.notes:update:refuse"(p_row "app"."notes") | b894d1874ffb shape=b9a31115
 function authz_gen."app.notes:update:why"(p_row "app"."notes", p_stored boolean) | d706df08b4f4 shape=95aad17a
 function authz_gen."app.projects:rules:explain"(p_command text, p_id text, p_row jsonb) | d2348a62fff8 shape=ff9a6d73
@@ -235,14 +235,14 @@ function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
 function authz_int.visible(p_type text, p_id text) | 381ec41df1f4 shape=e14964bd
 function authz_int.writable() | dce4bbfe1638 shape=2260a03a
 policy "authz_delete" ON "app"."notes" | a483c6eb0d19
-policy "authz_insert" ON "app"."inbox" | e5a79ff47ac0
-policy "authz_insert" ON "app"."notes" | 547f2fcf584e
+policy "authz_insert" ON "app"."inbox" | 3884765796a1
+policy "authz_insert" ON "app"."notes" | d131ce93a99f
 policy "authz_select" ON "app"."folders" | ccb703ce424d
 policy "authz_select" ON "app"."inbox" | d5a1d86699b3
 policy "authz_select" ON "app"."notes" | f38e0bb37b1c
 policy "authz_select" ON "app"."projects" | 083bedb02e78
-policy "authz_update" ON "app"."folders" | 674f7f8b2604
-policy "authz_update" ON "app"."notes" | d1c538612a6a
+policy "authz_update" ON "app"."folders" | 703faf987f6e
+policy "authz_update" ON "app"."notes" | d0592db7c2cf
 rls "app"."folders" | 3a9ec931ab49
 rls "app"."inbox" | e8128a72e9a7
 rls "app"."notes" | 895f402ca9d0
