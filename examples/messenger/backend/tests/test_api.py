@@ -7,8 +7,12 @@ row-level security decides: the backend has no permission checks of its own.
 import json
 import os
 import random
+import shutil
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, LiteralString
 
 import psycopg
@@ -339,6 +343,26 @@ def test_bots() -> None:
     # a switched-off bot's key signs in as nobody
     admin("UPDATE ms.bots SET active = false WHERE id = %s", (bot["id"],))
     assert c.get("/api/bot/chats", headers=key).status_code == 401
+
+
+def test_migrate_runs_outside_this_repository(tmp_path: Path) -> None:
+    """db/migrate.py copied into an app of its own: no rowstile checkout above it, the command the one installed."""
+    db_dir = Path(__file__).resolve().parents[2] / "db"
+    shutil.copytree(db_dir, tmp_path / "db")
+    (tmp_path / "backend" / "app").mkdir(parents=True)
+    (tmp_path / "bin").mkdir()
+    installed = tmp_path / "bin" / "rowstile"
+    installed.write_text('#!/bin/sh\necho "# written by rowstile $*"\n', encoding="utf-8")
+    installed.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+    # each migration was applied already: there is nothing to run, and with --client only the client to write
+    for args, said in (([], ""), (["--client"], "wrote backend/app/authz_client.py\n")):
+        p = subprocess.run(
+            [sys.executable, str(tmp_path / "db" / "migrate.py"), *args], env=env, capture_output=True, text=True
+        )
+        assert (p.returncode, p.stderr, p.stdout) == (0, "", said)
+    client = (tmp_path / "backend" / "app" / "authz_client.py").read_text(encoding="utf-8")
+    assert client == f"# written by rowstile client py {tmp_path / 'db' / 'policy.authz'}\n"
 
 
 # --- live updates ------------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# The messenger: the web app built, then the backend serving it. Build context: the repository root (for the rowstile command)
+# The messenger: the web app built, then the backend serving it. Build context: the repository root
 FROM node:24-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS web
 WORKDIR /web
 COPY examples/messenger/frontend/package.json examples/messenger/frontend/package-lock.json ./
@@ -13,9 +13,6 @@ COPY examples/messenger/backend/pyproject.toml examples/messenger/backend/uv.loc
 RUN uv sync --frozen --no-dev --no-install-project
 COPY examples/messenger/backend/ ./
 COPY examples/messenger/db/ /ms/db/
-# the rowstile command, which migrate.py runs to apply the policy
-COPY core/authzlib /core/authzlib
-COPY core/cli /core/cli
 COPY --from=web /web/dist /ms/frontend/dist
 ENV PATH=/ms/backend/.venv/bin:$PATH
 # migrations and the policy first, as the database owner; then the app, as ms_app

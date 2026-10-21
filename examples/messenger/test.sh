@@ -9,6 +9,8 @@ python3 check_public_surface.py || exit 1
 # every change to db/policy.authz has its migration (rowstile migrate writes it)
 python3 ../../core/cli/rowstile_cli.py migrate --check || exit 1
 docker compose down -v >/dev/null 2>&1        # a new database each time: migrations run from the start
+here=$(pwd)
+trap '[ -n "${KEEP:-}" ] || (cd "$here" && docker compose down)' EXIT    # however the run ends
 docker compose up -d --build --wait db || exit 1
 cd backend
 rc=0
@@ -24,6 +26,4 @@ if ! grep -q "runs them: $n checks" ../README.md; then
   echo "README.md says another number of checks than rowstile test ran ($n)"; rc=1
 fi
 uv run pytest -q "$@" || rc=1
-cd ..
-[ -n "${KEEP:-}" ] || docker compose down
 exit $rc

@@ -114,6 +114,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - The messenger example: an open chat loaded its messages again and again, without stopping, and each load
   marked the chat read, which told every member's browser to load it too. The chat now loads once per change,
   and marking read what was read already changes nothing and tells nobody.
+- The messenger example's development steps work as written: the README gives the two settings `db/migrate.py`
+  needs (it stopped with a `KeyError`) and `npm ci` before `npm run dev`. `migrate.py` runs outside this
+  repository (it looked for the repository's command as it started, and stopped with a `StopIteration`): it
+  needs the command only for `--client`, and outside the repository it runs the one installed. The app's image
+  no longer copies the command, and `test.sh` takes the database down when a step stops the run early.
 
 ## 0.1.0 (alpha)
 
