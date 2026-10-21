@@ -3307,13 +3307,13 @@ rules app.folders
 
     def test_the_review_data_in_words(self) -> None:
         """Who gains and loses, said as who they are: a service is no user, nor is someone not signed in (both were
-        counted as users), and a user whose id holds a ':' is a user. And a project without a lock file has its
-        policy applied whole on the review data: when that fails, Tests said "the migration fails", and Deploy
-        nothing."""
+        counted as users), and a user whose id holds a ':' (written user:<id>) is a user, even one that reads like a
+        bot. And a project without a lock file has its policy applied whole on the review data: when that fails,
+        Tests said "the migration fails", and Deploy nothing."""
         rows = [
-            {"change": "gains", "user_id": "google:123", "type": "file", "what": "permission view", "id": "11"},
-            # (org is a type, but none that signs in: a user's id)
-            {"change": "gains", "user_id": "org:9", "type": "file", "what": "permission view", "id": "12"},
+            {"change": "gains", "user_id": "user:google:123", "type": "file", "what": "permission view", "id": "11"},
+            # (bot is a type that signs in: the preview writes the user whose id is bot:9 as user:bot:9)
+            {"change": "gains", "user_id": "user:bot:9", "type": "file", "what": "permission view", "id": "12"},
             {"change": "gains", "user_id": "bot:7", "type": "folder", "what": "permission view", "id": "1"},
             {"change": "gains", "user_id": None, "type": "folder", "what": "permission view", "id": "2"},
             {"change": "gains", "user_id": "3", "type": "folder", "what": "permission view", "id": "1"},
@@ -3343,7 +3343,7 @@ rules app.folders
             )
             md = self.review.markdown(r)
             self.assertIn(
-                "| gains | `file` view | 2 users | 2 | user google:123, file 11: owner; user org:9, file 12 |", md
+                "| gains | `file` view | 2 users | 2 | user google:123, file 11: owner; user bot:9, file 12 |", md
             )
             self.assertIn(
                 "| gains | `folder` view | 1 user, 1 bot and someone not signed in | 2 | "
@@ -3355,7 +3355,7 @@ rules app.folders
                 run.call_args.args[5],
                 [
                     ("user:google:123", "file", "11", "view"),
-                    ("user:org:9", "file", "12", "view"),
+                    ("user:bot:9", "file", "12", "view"),
                     ("bot:7", "folder", "1", "view"),
                     ("", "folder", "2", "view"),
                 ],

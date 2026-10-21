@@ -581,13 +581,13 @@ BEGIN
   END CASE;
   IF principal_id IS NOT NULL THEN RETURN NEXT; END IF;
 END $f$;
--- how the audit trail and created_by name who acted: a user's id, or type:id for other principals
+-- how the audit trail and created_by name who acted, as the SDKs write a principal: a user's id ('42'), or
+-- user:<id> for an id holding ':' or that is 'nobody' ('user:service:1'); type:id for other principals
 CREATE FUNCTION authz_int.actor() RETURNS text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
   RETURN CASE WHEN NOT authz_int.session_ok() THEN NULL
-              WHEN coalesce(pg_catalog.current_setting('authz.principal_type', true), '') IN ('', 'user') THEN nullif(current_setting('authz.user_id', true), '')
-              ELSE pg_catalog.current_setting('authz.principal_type', true) || ':' || nullif(current_setting('authz.user_id', true), '') END;
+              ELSE CASE WHEN coalesce(pg_catalog.current_setting('authz.principal_type', true), '') IN ('', 'user') THEN CASE WHEN pg_catalog.strpos(nullif(current_setting('authz.user_id', true), ''), ':') > 0 OR nullif(current_setting('authz.user_id', true), '') = 'nobody' THEN 'user:' || nullif(current_setting('authz.user_id', true), '') ELSE nullif(current_setting('authz.user_id', true), '') END ELSE pg_catalog.current_setting('authz.principal_type', true) || ':' || nullif(current_setting('authz.user_id', true), '') END END;
 END $f$;
 
 -- per type: its table, key, how to find a row x by an id ($1, text), and a row's id (columns unqualified)
@@ -3941,7 +3941,7 @@ BEGIN
     RAISE EXCEPTION 'custom roles on % cannot grant %', p_object_type, v_bad USING HINT = 'rowstile help AZ706';
   END IF;
   INSERT INTO authz.roles (owner_type, owner_id, object_type, name, created_by)
-  VALUES (p_owner_type, authz_int.canon(p_owner_type, p_owner_id), p_object_type, p_name, authz.uid()::text)
+  VALUES (p_owner_type, authz_int.canon(p_owner_type, p_owner_id), p_object_type, p_name, authz_int.actor())
   RETURNING id INTO v_id;
   INSERT INTO authz.role_permissions SELECT v_id, p FROM unnest(p_permissions) p ON CONFLICT DO NOTHING;
   RETURN v_id;
@@ -4868,8 +4868,8 @@ CREATE OR REPLACE FUNCTION authz.explain(p_type text, p_id bigint, p_perm text, 
 CREATE OR REPLACE FUNCTION authz.list_shares(p_type text, p_id bigint) RETURNS TABLE (relation text, role text, subject_type text, subject_id text, subject_relation text, expires_at timestamptz, starts_at timestamptz, caveat text, created_by text, created_at timestamptz) LANGUAGE sql STABLE AS
   $$ SELECT * FROM authz.list_shares(p_type, p_id::text) $$;
 
--- Invariants: checked as everyone who can sign in (each user, each other principal as 'service:3') and as
--- nobody; returns the violations
+-- Invariants: checked as everyone who can sign in (named as the audit trail names them: '42', 'user:a:b',
+-- 'service:3') and as nobody; returns the violations
 CREATE OR REPLACE FUNCTION authz.check_invariants() RETURNS TABLE (invariant text, user_id text, object_ids text[])
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_pt text := coalesce(current_setting('authz.principal_type', true), '');
@@ -4883,7 +4883,7 @@ BEGIN
       PERFORM authz_int.sign();
       v_ids := ARRAY(SELECT id::text FROM authz_int."folder__never__1" ORDER BY 1 LIMIT 5);
       IF cardinality(v_ids) > 0 THEN
-        invariant := 'never folder: share and not org.member (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'invariant never folder: share and not org.member'), '?') || ')'; user_id := nullif(CASE WHEN v_p = '' THEN v_u ELSE v_p || ':' || v_u END, ''); object_ids := v_ids;
+        invariant := 'never folder: share and not org.member (' || coalesce((SELECT l.loc FROM authz_gen.policy_lines l WHERE l.what = 'invariant never folder: share and not org.member'), '?') || ')'; user_id := nullif(CASE WHEN coalesce(v_p, '') IN ('', 'user') THEN CASE WHEN pg_catalog.strpos(v_u, ':') > 0 OR v_u = 'nobody' THEN 'user:' || v_u ELSE v_u END ELSE v_p || ':' || v_u END, ''); object_ids := v_ids;
         RETURN NEXT;
       END IF;
     END LOOP;
@@ -5381,7 +5381,7 @@ BEGIN
                         CASE WHEN r.duration IS NULL THEN NULL ELSE now() + r.duration END);
   END IF;
   UPDATE authz.requests SET status = CASE WHEN p_approve THEN 'approved' ELSE 'denied' END,
-    decided_by = authz.uid()::text, decided_at = now(), note = p_note WHERE id = p_id;
+    decided_by = authz_int.actor(), decided_at = now(), note = p_note WHERE id = p_id;
   PERFORM authz_int.audit(CASE WHEN p_approve THEN 'approve_request' ELSE 'deny_request' END, r.object_type,
     r.object_id, r.relation, 'user', r.requester, '', jsonb_build_object('request', p_id, 'note', p_note));
 END $f$;
@@ -5433,7 +5433,7 @@ BEGIN
   IF g.object_id IS NULL THEN
     INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation,
                               expires_at, created_by)
-    VALUES (p_type, p_id, p_relation, 'user', authz.uid()::text, '', v_until, authz.uid()::text);
+    VALUES (p_type, p_id, p_relation, 'user', authz.uid()::text, '', v_until, authz_int.actor());
   ELSIF g.caveat IS NOT NULL OR (g.starts_at IS NOT NULL AND g.starts_at > now())
         OR (g.expires_at IS NOT NULL AND g.expires_at < v_until) THEN
     -- a share that would not let them in now becomes an unconditional one until then (the old one is in the audit)
@@ -5467,7 +5467,7 @@ BEGIN
     RAISE EXCEPTION 'you cannot review % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   INSERT INTO authz.reviews (object_type, object_id, created_by, closes_at)
-  VALUES (p_type, p_id, authz.uid()::text, p_closes_at) RETURNING id INTO v_id;
+  VALUES (p_type, p_id, authz_int.actor(), p_closes_at) RETURNING id INTO v_id;
   INSERT INTO authz.review_items (review_id, item, relation, subject_type, subject_id, subject_relation, expires_at)
   SELECT v_id, row_number() OVER (ORDER BY g.created_at, g.relation, g.subject_type, g.subject_id), g.relation,
          g.subject_type, g.subject_id, g.subject_relation, g.expires_at
@@ -5510,7 +5510,7 @@ BEGIN
     RAISE EXCEPTION 'you cannot decide on % in review % (you could not unshare it)', i.relation, p_review
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
-  UPDATE authz.review_items SET keep = p_keep, decided_by = authz.uid()::text, decided_at = now()
+  UPDATE authz.review_items SET keep = p_keep, decided_by = authz_int.actor(), decided_at = now()
   WHERE review_id = p_review AND item = p_item;
 END $f$;
 -- Close: revoke what reviewers marked (and, if asked, whatever nobody decided and you could unshare)

@@ -701,12 +701,15 @@ def named(user: str) -> str:
 
 def principal(user: str, pol: Policy) -> tuple[str, str] | None:
     """Who an id of the review data is: (type, id), None for someone not signed in. The data writes a user by
-    their id alone, which may hold a ':' too, and another principal as type:id (a type of pol that signs in)."""
+    their id alone, or as user:id when it holds ':' or is 'nobody', and another principal as type:id (a type of
+    pol that signs in)."""
     if user in ("", NOBODY):
         return None
     kind, sep, pid = user.partition(":")
+    if sep and kind == "user":
+        return ("user", pid)
     other = pol.types.get(kind)
-    return (kind, pid) if sep and other is not None and other.principal and kind != "user" else ("user", user)
+    return (kind, pid) if sep and other is not None and other.principal else ("user", user)
 
 
 def words(user: str, pol: Policy) -> str:

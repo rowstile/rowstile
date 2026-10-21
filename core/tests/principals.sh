@@ -220,7 +220,7 @@ check "explain names the custom role a permission comes through" "yes  a custom 
 expect_code "viewing as someone, the role's permissions can't be changed" \
   "42501: this session is read-only (viewing as someone else, or a read-only token)" \
   -c "SET authz.user_id = '2'; SET authz.acting_user = '9'" -c "SELECT authz.set_role_permissions($ROLE, ARRAY['view'])"
-PSQL -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SELECT authz.revoke('doc', 1, 'role:$ROLE', 'user', 2)" >/dev/null
+PSQL -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SELECT authz.unshare('doc', 1, 'role:$ROLE', 'user', 2)" >/dev/null
 # a role on albums, which have no share permission, though docs do: nobody may ask for it
 AROLE=$(state -c "SET authz.user_id = '2'" -c "SELECT authz.create_role('team', 1, 'album', 'looker', ARRAY['view'])")
 expect_code "a role on a type with no share permission can't be asked for" \
@@ -463,6 +463,105 @@ if agrees "a user can't revoke another's key" "P0001: no API key $UKEY of yours"
   echo "ok    a user can't revoke another's key, where only bots' keys have a manage_keys permission"
 else echo "FAIL  revoking another user's key: expected no API key $UKEY of yours, got ${got:-ok}"; fails=$((fails + 1)); fi
 [ -n "${KEEP:-}" ] || dropdb "$MDB"
+
+echo "-- who acted, as the SDKs write it: a user whose id reads like another principal, or like nobody"
+# A user is written by their id ('42'), or user:<id> when the id holds ':' or is 'nobody', so the user whose id is
+# service:1 is never written as service 1 is, nor the user whose id is nobody as nobody: the audit trail, every
+# created_by and decided_by, what the logins return, the invariants and the preview all name them so.
+IDB="${DB}_ids"
+dropdb --if-exists "$IDB" 2>/dev/null; createdb "$IDB" || exit 1
+IPSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$IDB" "$@"; }
+icheck() {  # $1 label, $2 expected, $3 SQL (as app_user, in one transaction)
+  got=$(IPSQL -c "SET ROLE app_user; $3" 2>&1 | tail -n 1)
+  if [ "$got" = "$2" ]; then echo "ok    $1"; else echo "FAIL  $1: expected '$2', got '$got'"; fails=$((fails + 1)); fi
+}
+AS_COLON="SELECT authz.act_as('user', 'service:1');"
+AS_NOBODY="SELECT authz.act_as('user', 'nobody');"
+AS_42="SELECT authz.act_as('user', '42');"
+AS_S1="SELECT authz.act_as('service', '1');"
+PGOPTIONS="-c client_min_messages=warning" IPSQL <<'SQL' >/dev/null || exit 1
+CREATE SCHEMA pi;
+CREATE TABLE pi.users (id text PRIMARY KEY, support_id text);
+CREATE TABLE pi.services (id bigint PRIMARY KEY);
+CREATE TABLE pi.teams (id bigint PRIMARY KEY, admin_id text);
+CREATE TABLE pi.docs (id bigint PRIMARY KEY, owner_id text, oncall_id text);
+INSERT INTO pi.users VALUES ('42', 'service:1'), ('service:1', NULL), ('nobody', NULL);
+INSERT INTO pi.services VALUES (1);
+INSERT INTO pi.teams VALUES (1, 'service:1');
+INSERT INTO pi.docs VALUES (1, 'service:1', 'nobody'), (2, 'nobody', 'service:1'), (3, '42', NULL);
+GRANT USAGE ON SCHEMA pi TO app_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA pi TO app_user;
+SQL
+cat > /tmp/authz_principals_ids.authz <<'POLICY'
+app role app_user
+type user = pi.users (id text)
+  support : user = support_id
+  can impersonate = support
+type service = pi.services principal
+type team = pi.teams
+  admin : user = admin_id
+  can manage_roles = admin
+type doc = pi.docs
+  owner  : user = owner_id
+  oncall : user = oncall_id
+  reader : user, service shared
+  roles  : user
+  can share = owner or reader
+  can view  = owner or reader or roles
+  can break_glass = oncall
+rules pi.docs
+  select : view
+invariants
+  never doc: reader and not owner
+POLICY
+python3 compile_policy.py /tmp/authz_principals_ids.authz > /tmp/authz_principals_ids.sql || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$IDB" -f /tmp/authz_principals_ids.sql >/dev/null || exit 1
+IPSQL -c "SET ROLE app_user; $AS_42 SELECT authz.share('doc', 3, 'reader', 'service', '1')" >/dev/null
+icheck "the user whose id is service:1 shares: created_by says user:service:1" "user:service:1" \
+  "$AS_COLON SELECT authz.share('doc', 1, 'reader', 'user', '42'); SELECT created_by FROM authz.list_shares('doc', 1) WHERE subject_id = '42';"
+icheck "... and the user whose id is nobody: user:nobody" "user:nobody" \
+  "$AS_NOBODY SELECT authz.share('doc', 2, 'reader', 'user', '42'); SELECT created_by FROM authz.list_shares('doc', 2) WHERE subject_id = '42';"
+icheck "... a user whose id is plain stays their id: 42" "42" \
+  "$AS_42 SELECT authz.share('doc', 3, 'reader', 'user', 'nobody'); SELECT created_by FROM authz.list_shares('doc', 3) WHERE subject_id = 'nobody';"
+icheck "... and service 1 is still service:1" "service:1" \
+  "$AS_S1 SELECT authz.share('doc', 3, 'reader', 'user', 'service:1'); SELECT created_by FROM authz.list_shares('doc', 3) WHERE subject_type = 'user' AND subject_id = 'service:1';"
+icheck "the audit trail names them the same way, each as itself" "42 user:service:1 user:nobody 42 service:1" \
+  "RESET ROLE; SELECT string_agg(user_id, ' ' ORDER BY id) FROM authz.audit WHERE action = 'share';"
+icheck "explain says who shared it the same way" "1" \
+  "$AS_42 SELECT count(*) FROM authz.explain('doc', 1, 'view') e WHERE e LIKE '%(by user:service:1)%';"
+icheck "a login with a key returns who signed in the same way" "user:service:1" \
+  "$AS_COLON SELECT authz.login_key(authz.create_api_key('mine'));"
+icheck "view-as records who is looking as acting_user, the same way" "view_as 42 user:service:1" \
+  "$AS_COLON SELECT authz.view_as('42', 'ticket 7'); RESET ROLE; SELECT action || ' ' || user_id || ' ' || acting_user FROM authz.audit WHERE action = 'view_as';"
+REQ=$(IPSQL -c "SET ROLE app_user; $AS_42 SELECT authz.request_access('doc', 1, 'reader', 'to help', '1 day');" | tail -n 1)
+icheck "a request decided by the user whose id is service:1: decided_by says user:service:1" "approved user:service:1" \
+  "$AS_COLON SELECT authz.decide_request($REQ, true); RESET ROLE; SELECT status || ' ' || decided_by FROM authz.requests WHERE id = $REQ;"
+REV=$(IPSQL -c "SET ROLE app_user; $AS_NOBODY SELECT authz.start_review('doc', 2);" | tail -n 1)
+icheck "a review started and decided by the user whose id is nobody: user:nobody, both" "user:nobody user:nobody" \
+  "$AS_NOBODY SELECT authz.review_decide($REV, 1, true); RESET ROLE; SELECT r.created_by || ' ' || i.decided_by FROM authz.reviews r JOIN authz.review_items i ON i.review_id = r.id WHERE r.id = $REV;"
+icheck "the glass broken by the user whose id is service:1: its share's created_by says user:service:1" "user:service:1" \
+  "$AS_COLON SELECT authz.break_glass('doc', 2, 'reader', 'INC-1'); RESET ROLE; SELECT created_by FROM authz.shares WHERE object_id = '2' AND subject_id = 'service:1';"
+icheck "a custom role made by the user whose id is service:1: created_by says user:service:1" "user:service:1" \
+  "$AS_COLON SELECT authz.create_role('team', 1, 'doc', 'helper', ARRAY['view']); RESET ROLE; SELECT created_by FROM authz.roles WHERE name = 'helper';"
+icheck "invariants name each the same way" "42 service:1 user:nobody user:service:1" \
+  "RESET ROLE; SELECT string_agg(user_id, ' ' ORDER BY user_id) FROM authz.check_invariants();"
+got=$(psql -X -q -At -d "$IDB" -f <(python3 compile_policy.py /tmp/authz_principals_ids.authz --tests) 2>&1)
+for who in "user service:1" "user nobody" "user 42" "service 1"; do
+  case "$got" in *"FAIL  invariant never doc: reader and not owner"*": $who can reach "*) echo "ok    ... and the policy tests say $who";;
+    *) echo "FAIL  the policy tests on $who breaking an invariant: $got"; fails=$((fails + 1));; esac
+done
+case "$got" in *": user user:"*) echo "FAIL  the policy tests say user user:...: $got"; fails=$((fails + 1));;
+  *) echo "ok    ... and never user user:<id>";; esac
+sed 's/^  can break_glass = oncall$/  can break_glass = oncall\n  can page = oncall/' /tmp/authz_principals_ids.authz > /tmp/authz_principals_ids_page.authz
+out=$(python3 compile_policy.py /tmp/authz_principals_ids_page.authz --diff | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$IDB" 2>&1 | grep -E '^gains\|[^|]*\|doc\|' | sort | tr '\n' ' ')
+if [ "$out" = "gains|user:nobody|doc|permission page|1 gains|user:service:1|doc|permission page|2 " ]; then
+  echo "ok    the preview names them the same way"
+else echo "FAIL  the preview of who may page: $out"; fails=$((fails + 1)); fi
+out=$(python3 compile_policy.py /tmp/authz_principals_ids_page.authz --diff --users user:service:1 | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$IDB" 2>&1 | grep -E '^gains\|[^|]*\|doc\|' | tr '\n' ' ')
+if [ "$out" = "gains|user:service:1|doc|permission page|2 " ]; then
+  echo "ok    ... and the users asked for are named so: user:service:1 is that user alone"
+else echo "FAIL  the preview for --users user:service:1: $out"; fails=$((fails + 1)); fi
+[ -n "${KEEP:-}" ] || dropdb "$IDB"
 
 [ -n "${KEEP:-}" ] || dropdb "$DB"
 echo "principals: $fails failure(s)"

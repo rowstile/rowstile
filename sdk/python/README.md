@@ -34,7 +34,8 @@ or `None` (nobody: only what `anyone` may see; `None` given to a call is nobody 
 it acts for). A plain id is always a user's, whatever it holds: `"service:3"` is the user with that id, so an
 id from outside (a username, an identity provider's subject) can't name a service. `Principal.parse(text)`
 reads back what `str()` wrote, for text your own code wrote (a job's argument): `str()` writes a user
-whose id holds `:` or is `nobody` as `user:<id>` (`user:service:3`), so every principal reads back as itself. Every transaction signs in, even when nobody is signed in, and nothing
+whose id holds `:` or is `nobody` as `user:<id>` (`user:service:3`), so every principal reads back as itself.
+The audit trail and `created_by` name who acted the same way, so `Principal.parse` reads them too. Every transaction signs in, even when nobody is signed in, and nothing
 uses a session-level `SET`, so pools and poolers in transaction mode are safe; behind one that keeps no prepared
 statements, turn the driver's off ([Behind a pooler](../../docs/operations.md#behind-a-pooler)).
 
