@@ -16,3 +16,8 @@ test "a ticket is seen in its organisation, and nowhere else"
   as user $bo refused {UPDATE app.tickets SET assignee_id = $ann WHERE (org_id, id) = ($acme, 1)}
   as user $ann allowed {UPDATE app.tickets SET assignee_id = $ann WHERE (org_id, id) = ($acme, 1)}
   as user $ann refused {UPDATE app.tickets SET org_id = $globex WHERE (org_id, id) = ($acme, 1)}
+  as user $ann allowed {UPDATE app.tickets SET assignee_id = $cy WHERE (org_id, id) = ($acme, 1)}
+  as user $bo allowed {INSERT INTO app.tickets VALUES ($acme, 3, $cy, 'Filed for Cy')}
+  user $cy cannot view ticket $t
+  as user $cy sees 0 {SELECT FROM app.tickets WHERE org_id = $acme}
+  as user $cy refused {UPDATE app.tickets SET title = 'Edited from Globex' WHERE (org_id, id) = ($acme, 1)}

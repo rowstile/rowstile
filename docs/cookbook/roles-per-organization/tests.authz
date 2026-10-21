@@ -5,6 +5,7 @@ test "admins, members and guests"
   given bo = {INSERT INTO app.users VALUES (902, 'Bo') RETURNING id}
   given cy = {INSERT INTO app.users VALUES (903, 'Cy') RETURNING id}
   given acme = {INSERT INTO app.orgs VALUES (901, 'Acme') RETURNING id}
+  given globex = {INSERT INTO app.orgs VALUES (902, 'Globex') RETURNING id}
   given {INSERT INTO app.org_members VALUES ($acme, $ann, 'admin'), ($acme, $bo, 'member'), ($acme, $cy, 'guest')}
   given mine = {INSERT INTO app.documents (org_id, owner_id, title) VALUES ($acme, $bo, 'Notes') RETURNING id}
   given hers = {INSERT INTO app.documents (org_id, owner_id, title) VALUES ($acme, $ann, 'Handbook') RETURNING id}
@@ -17,6 +18,9 @@ test "admins, members and guests"
   as user $ann allowed {SELECT authz.share('document', $hers, 'viewer', 'user', $cy)}
   user $cy can view document $hers
   user $cy cannot view document $mine
+  as user $bo refused {INSERT INTO app.documents (org_id, owner_id, title) VALUES ($globex, $bo, 'Planted')}
+  as user $bo refused {UPDATE app.documents SET org_id = $globex WHERE id = $mine}
+  as user $ann refused {UPDATE app.documents SET org_id = $globex WHERE id = $mine}
 
 test "a role the admins make"
   given ann = {INSERT INTO app.users VALUES (901, 'Ann') RETURNING id}

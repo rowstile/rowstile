@@ -21,8 +21,9 @@ type document = app.documents
   can view  = edit or viewer or org.member or roles
 
 rules app.documents
-  select                  : view
-  insert                  : org.member and owner
-  update                  : edit
-  update org_id, owner_id : share
-  delete                  : share
+  select          : view
+  insert          : org.member and owner
+  update          : edit
+  update owner_id : share
+  update org_id   : nobody  -- a document stays in its organisation
+  delete          : share
