@@ -16,7 +16,7 @@ from __future__ import annotations
 from .compiler import Core, only_on, rule_name
 from .insight import expr_text
 from .parse import And, Arrow, ArrowOn, Expr, Or, Ref, Rule, Type
-from .sqlutil import lit, q, qt, reads_more, row_cond
+from .sqlutil import from_row, lit, q, qt, reads_more, row_cond, whole_row
 
 EXPLAIN_LINES = 20  # lines of authz.explain per object, at most
 TARGETS = 3  # objects explained per relation, at most
@@ -64,7 +64,7 @@ class RefusalMixin(Core):
             f"LANGUAGE sql STABLE\nBEGIN ATOMIC\n"
             f"  SELECT CASE WHEN authz_int.{q(table + ':seen')}({self.key(t, alias)}) THEN ARRAY[\n    {body}]\n"
             f"    ELSE pg_catalog.array_fill(false, ARRAY[{len(exprs)}]) END\n"
-            f"  FROM (SELECT (p_row).*) AS {alias};\nEND;"
+            f"  FROM {from_row('p_row', alias)};\nEND;"
         )
 
     def row_targets_sql(self, t: Type, alias: str, node: Expr, rel: str) -> list[tuple[str, str]]:
@@ -214,7 +214,7 @@ END $f$;"""
             out += [self.rule_items_sql(t, table, alias, r), self.rule_why_sql(t, table, alias, r)]
             if r.command in ("insert", "update", "update after"):
                 out.append(self.refuse_sql(t, table, r))
-                refuse[r.command] = f"{self.rule_fn(table, r.command, 'refuse')}(ROW({alias}.*)::{qt(table)})"
+                refuse[r.command] = f"{self.rule_fn(table, r.command, 'refuse')}({whole_row(alias, table)})"
         out.append(self.explain_table_sql(t, table, by_cmd))
         return out, refuse
 

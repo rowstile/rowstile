@@ -3840,7 +3840,7 @@ BEGIN ATOMIC
     coalesce(true, false),
     coalesce(coalesce("notes"."author_id" = (SELECT authz.uid()), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "notes";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "notes";
 END;
 
 CREATE FUNCTION authz_gen."cx.notes:insert:why"(p_row "cx"."notes") RETURNS SETOF text
@@ -3892,7 +3892,7 @@ END $f$;
 -- cx.notes insert (line 62): write
 CREATE POLICY "authz_insert" ON "cx"."notes" FOR INSERT TO app_user
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.notes', 'insert')) AND coalesce("notes"."author_id" = (SELECT authz.uid()), false))
-    OR authz_gen."cx.notes:insert:refuse"(ROW("notes".*)::"cx"."notes"));
+    OR authz_gen."cx.notes:insert:refuse"(("notes".*)::"cx"."notes"));
 
 COMMENT ON POLICY "authz_insert" ON "cx"."notes" IS 'rowstile';
 
@@ -3932,18 +3932,18 @@ LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT CASE WHEN authz_int."cx.folders:seen"("folders"."id") THEN ARRAY[
     coalesce(((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR (authz_int."folder__check_383ac878f2"(ROW("folders".*)::"cx"."folders")
+    OR (authz_int."folder__check_383ac878f2"(("folders".*)::"cx"."folders")
     AND (("folders"."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN "folders"."parent_id" END)::bigint)))))
     AND coalesce((not archived), false)), false),
     coalesce((SELECT authz_int.scope_cmd('cx.folders', 'update')), false),
     coalesce(coalesce((not archived), false), false),
     coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR (authz_int."folder__check_383ac878f2"(ROW("folders".*)::"cx"."folders")
+    OR (authz_int."folder__check_383ac878f2"(("folders".*)::"cx"."folders")
     AND (("folders"."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN "folders"."parent_id" END)::bigint))))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "folders";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 
 CREATE FUNCTION authz_gen."cx.folders:update:why"(p_row "cx"."folders", p_stored boolean) RETURNS SETOF text
@@ -3991,7 +3991,7 @@ BEGIN ATOMIC
     AND (("folders"."parent_type" = 'folder' AND authz_int."folder__file__has"((CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__file" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN "folders"."parent_id" END)::bigint))))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "folders";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 
 CREATE FUNCTION authz_gen."cx.folders:delete:why"(p_row "cx"."folders") RETURNS SETOF text
@@ -4033,7 +4033,7 @@ END $f$;
 CREATE POLICY "authz_select" ON "cx"."folders" FOR SELECT TO app_user
   USING (((SELECT authz_int.scope_cmd('cx.folders', 'select')) AND ((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."folder__viewer" v WHERE v.id = "folders"."id")
-    OR (authz_int."folder__check_383ac878f2"(ROW("folders".*)::"cx"."folders")
+    OR (authz_int."folder__check_383ac878f2"(("folders".*)::"cx"."folders")
     AND (("folders"."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN "folders"."parent_id" END)::bigint))))
     OR (("folders"."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
@@ -4045,16 +4045,16 @@ COMMENT ON POLICY "authz_select" ON "cx"."folders" IS 'rowstile';
 -- cx.folders update (line 66): edit
 CREATE POLICY "authz_update" ON "cx"."folders" FOR UPDATE TO app_user
   USING (((SELECT authz_int.scope_cmd('cx.folders', 'update')) AND ((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR (authz_int."folder__check_383ac878f2"(ROW("folders".*)::"cx"."folders")
+    OR (authz_int."folder__check_383ac878f2"(("folders".*)::"cx"."folders")
     AND (("folders"."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN "folders"."parent_id" END)::bigint)))))
     AND coalesce((not archived), false))))
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.folders', 'update')) AND ((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
-    OR (authz_int."folder__check_383ac878f2"(ROW("folders".*)::"cx"."folders")
+    OR (authz_int."folder__check_383ac878f2"(("folders".*)::"cx"."folders")
     AND (("folders"."parent_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'folder' THEN "folders"."parent_id" END)::bigint))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN "folders"."parent_id" END)::bigint)))))
     AND coalesce((not archived), false)))
-    OR authz_gen."cx.folders:update:refuse"(ROW("folders".*)::"cx"."folders"));
+    OR authz_gen."cx.folders:update:refuse"(("folders".*)::"cx"."folders"));
 
 COMMENT ON POLICY "authz_update" ON "cx"."folders" IS 'rowstile';
 
@@ -4105,7 +4105,7 @@ BEGIN ATOMIC
     coalesce((coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "regions";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "regions";
 END;
 
 CREATE FUNCTION authz_gen."cx.regions:update:why"(p_row "cx"."regions", p_stored boolean) RETURNS SETOF text
@@ -4171,7 +4171,7 @@ CREATE POLICY "authz_update" ON "cx"."regions" FOR UPDATE TO app_user
     OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id"))))
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.regions', 'update')) AND (coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id")))
-    OR authz_gen."cx.regions:update:refuse"(ROW("regions".*)::"cx"."regions"));
+    OR authz_gen."cx.regions:update:refuse"(("regions".*)::"cx"."regions"));
 
 COMMENT ON POLICY "authz_update" ON "cx"."regions" IS 'rowstile';
 
@@ -4206,13 +4206,13 @@ BEGIN ATOMIC
   SELECT CASE WHEN authz_int."cx.sites:seen"("sites"."id") THEN ARRAY[
     coalesce(((EXISTS (SELECT 1 FROM authz_int."region__chief" v WHERE v.id = "sites"."region_id")
     OR EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = "sites"."id"))
-    AND authz_int."site__check_77cc73ddd9"(ROW("sites".*)::"cx"."sites")), false),
+    AND authz_int."site__check_77cc73ddd9"(("sites".*)::"cx"."sites")), false),
     coalesce((SELECT authz_int.scope_cmd('cx.sites', 'update')), false),
-    coalesce(authz_int."site__check_77cc73ddd9"(ROW("sites".*)::"cx"."sites"), false),
+    coalesce(authz_int."site__check_77cc73ddd9"(("sites".*)::"cx"."sites"), false),
     coalesce((EXISTS (SELECT 1 FROM authz_int."region__chief" v WHERE v.id = "sites"."region_id")
     OR EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = "sites"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "sites";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "sites";
 END;
 
 CREATE FUNCTION authz_gen."cx.sites:update:why"(p_row "cx"."sites", p_stored boolean) RETURNS SETOF text
@@ -4268,7 +4268,7 @@ END $f$;
 -- cx.sites select (line 74): run
 CREATE POLICY "authz_select" ON "cx"."sites" FOR SELECT TO app_user
   USING (((SELECT authz_int.scope_cmd('cx.sites', 'select')) AND (EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = "sites"."id")
-    AND authz_int."site__check_77cc73ddd9"(ROW("sites".*)::"cx"."sites"))));
+    AND authz_int."site__check_77cc73ddd9"(("sites".*)::"cx"."sites"))));
 
 COMMENT ON POLICY "authz_select" ON "cx"."sites" IS 'rowstile';
 
@@ -4276,11 +4276,11 @@ COMMENT ON POLICY "authz_select" ON "cx"."sites" IS 'rowstile';
 CREATE POLICY "authz_update" ON "cx"."sites" FOR UPDATE TO app_user
   USING (((SELECT authz_int.scope_cmd('cx.sites', 'update')) AND ((EXISTS (SELECT 1 FROM authz_int."region__chief" v WHERE v.id = "sites"."region_id")
     OR EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = "sites"."id"))
-    AND authz_int."site__check_77cc73ddd9"(ROW("sites".*)::"cx"."sites"))))
+    AND authz_int."site__check_77cc73ddd9"(("sites".*)::"cx"."sites"))))
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.sites', 'update')) AND ((EXISTS (SELECT 1 FROM authz_int."region__chief" v WHERE v.id = "sites"."region_id")
     OR EXISTS (SELECT 1 FROM authz_int."site__over__run" v WHERE v.id = "sites"."id"))
-    AND authz_int."site__check_77cc73ddd9"(ROW("sites".*)::"cx"."sites")))
-    OR authz_gen."cx.sites:update:refuse"(ROW("sites".*)::"cx"."sites"));
+    AND authz_int."site__check_77cc73ddd9"(("sites".*)::"cx"."sites")))
+    OR authz_gen."cx.sites:update:refuse"(("sites".*)::"cx"."sites"));
 
 COMMENT ON POLICY "authz_update" ON "cx"."sites" IS 'rowstile';
 
@@ -4323,7 +4323,7 @@ BEGIN ATOMIC
     OR EXISTS (SELECT 1 FROM authz_int."project__inside__edit" v WHERE v.id = "projects"."id")
     OR EXISTS (SELECT 1 FROM authz_int."project__host__edit" v WHERE v.id = "projects"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "projects";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "projects";
 END;
 
 CREATE FUNCTION authz_gen."cx.projects:update:why"(p_row "cx"."projects", p_stored boolean) RETURNS SETOF text
@@ -4367,7 +4367,7 @@ BEGIN ATOMIC
     OR EXISTS (SELECT 1 FROM authz_int."project__inside__edit" v WHERE v.id = "projects"."id")
     OR EXISTS (SELECT 1 FROM authz_int."project__host__edit" v WHERE v.id = "projects"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "projects";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "projects";
 END;
 
 CREATE FUNCTION authz_gen."cx.projects:update_after:why"(p_row "cx"."projects") RETURNS SETOF text
@@ -4406,7 +4406,7 @@ BEGIN ATOMIC
     coalesce((coalesce("projects"."lead_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."project__backer__fund" v WHERE v.id = "projects"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "projects";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "projects";
 END;
 
 CREATE FUNCTION authz_gen."cx.projects:delete:why"(p_row "cx"."projects") RETURNS SETOF text
@@ -4460,7 +4460,7 @@ CREATE POLICY "authz_update" ON "cx"."projects" FOR UPDATE TO app_user
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.projects', 'update')) AND (coalesce("projects"."lead_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."project__inside__edit" v WHERE v.id = "projects"."id")
     OR EXISTS (SELECT 1 FROM authz_int."project__host__edit" v WHERE v.id = "projects"."id")))
-    OR authz_gen."cx.projects:update_after:refuse"(ROW("projects".*)::"cx"."projects"));
+    OR authz_gen."cx.projects:update_after:refuse"(("projects".*)::"cx"."projects"));
 
 COMMENT ON POLICY "authz_update" ON "cx"."projects" IS 'rowstile';
 

@@ -157,9 +157,11 @@ database, mark it once: `rowstile push --development`. If it is production, it t
 
 ## "cannot drop column ... because other objects depend on it" in a schema migration
 
-A view rowstile made reads that column, because the policy uses it. Do it in two steps: change the
-policy so it doesn't use the column and write its migration (`rowstile migrate`), then drop the column
-in a later migration.
+Something rowstile made reads that column, because the policy uses it: the DETAIL names it (a view, a
+function, a trigger or a row-level security policy). A column the policy doesn't use drops as usual. Do
+it in two steps: change the policy so it doesn't use the column and write its migration (`rowstile
+migrate`), then drop the column in a later migration. Don't add `CASCADE`: it drops what rowstile made
+with the column, the table's row-level security policies among them.
 
 ## A named test fails with "given x = {...} returned 0 rows"
 

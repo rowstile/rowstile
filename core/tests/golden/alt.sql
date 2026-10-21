@@ -3010,7 +3010,7 @@ BEGIN ATOMIC
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")), false),
     coalesce(coalesce((up is null), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[7]) END
-  FROM (SELECT (p_row).*) AS "docs";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
 END;
 
 CREATE FUNCTION authz_gen."alt.docs:insert:why"(p_row "alt"."docs") RETURNS SETOF text
@@ -3064,7 +3064,7 @@ BEGIN ATOMIC
     OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
     OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
     OR authz_int."doc__shortcut__view__base__links"("docs"."doc_no")
-    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    OR (authz_int."doc__check_60f7f3204e"(("docs".*)::"alt"."docs")
     AND (authz_int."doc__view__base__has"("docs"."up")
     OR authz_int."doc__parent__view__base__links"("docs"."doc_no"))))
     AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
@@ -3072,7 +3072,7 @@ BEGIN ATOMIC
     OR authz_int."doc__parent__hidden__links"("docs"."doc_no"))
     OR authz_int."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
     OR (coalesce((not locked), false)
-    AND NOT authz_int."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
+    AND NOT authz_int."doc__check_cdfdd53dac"(("docs".*)::"alt"."docs")
     AND (authz_int."doc__edit__has"("docs"."up")
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")))), false),
     coalesce((SELECT authz_int.scope_cmd('alt.docs', 'update')), false),
@@ -3086,7 +3086,7 @@ BEGIN ATOMIC
     OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
     OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
     OR authz_int."doc__shortcut__view__base__links"("docs"."doc_no")
-    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    OR (authz_int."doc__check_60f7f3204e"(("docs".*)::"alt"."docs")
     AND (authz_int."doc__view__base__has"("docs"."up")
     OR authz_int."doc__parent__view__base__links"("docs"."doc_no"))))
     AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
@@ -3094,11 +3094,11 @@ BEGIN ATOMIC
     OR authz_int."doc__parent__hidden__links"("docs"."doc_no"))
     OR authz_int."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
     OR (coalesce((not locked), false)
-    AND NOT authz_int."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
+    AND NOT authz_int."doc__check_cdfdd53dac"(("docs".*)::"alt"."docs")
     AND (authz_int."doc__edit__has"("docs"."up")
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "docs";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
 END;
 
 CREATE FUNCTION authz_gen."alt.docs:update:why"(p_row "alt"."docs", p_stored boolean) RETURNS SETOF text
@@ -3140,7 +3140,7 @@ BEGIN ATOMIC
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false),
     coalesce(NOT coalesce(coalesce("docs"."blocked_id" = (SELECT authz.uid()), false), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM (SELECT (p_row).*) AS "docs";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
 END;
 
 CREATE FUNCTION authz_gen."alt.docs:delete:why"(p_row "alt"."docs") RETURNS SETOF text
@@ -3187,7 +3187,7 @@ CREATE POLICY "authz_select" ON "alt"."docs" FOR SELECT TO app_user
     OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
     OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
     OR EXISTS (SELECT 1 FROM authz_int."doc__shortcut__view__base" v WHERE v.id = "docs"."doc_no")
-    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    OR (authz_int."doc__check_60f7f3204e"(("docs".*)::"alt"."docs")
     AND ((EXISTS (SELECT 1 FROM authz_int."doc__view__base__direct" v WHERE v.id = "docs"."up")
     OR EXISTS (SELECT 1 FROM authz_int."doc__view__base" v WHERE v.id = "docs"."up"))
     OR EXISTS (SELECT 1 FROM authz_int."doc__parent__view__base__ext" v WHERE v.id = "docs"."doc_no"))))
@@ -3204,7 +3204,7 @@ CREATE POLICY "authz_insert" ON "alt"."docs" FOR INSERT TO app_user
     AND (coalesce((up is null), false)
     OR (authz_int."doc__edit__has"("docs"."up")
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")))))
-    OR authz_gen."alt.docs:insert:refuse"(ROW("docs".*)::"alt"."docs"));
+    OR authz_gen."alt.docs:insert:refuse"(("docs".*)::"alt"."docs"));
 
 COMMENT ON POLICY "authz_insert" ON "alt"."docs" IS 'rowstile';
 
@@ -3219,7 +3219,7 @@ CREATE POLICY "authz_update" ON "alt"."docs" FOR UPDATE TO app_user
     OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
     OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
     OR authz_int."doc__shortcut__view__base__links"("docs"."doc_no")
-    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    OR (authz_int."doc__check_60f7f3204e"(("docs".*)::"alt"."docs")
     AND (authz_int."doc__view__base__has"("docs"."up")
     OR authz_int."doc__parent__view__base__links"("docs"."doc_no"))))
     AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
@@ -3227,7 +3227,7 @@ CREATE POLICY "authz_update" ON "alt"."docs" FOR UPDATE TO app_user
     OR authz_int."doc__parent__hidden__links"("docs"."doc_no"))
     OR authz_int."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
     OR (coalesce((not locked), false)
-    AND NOT authz_int."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
+    AND NOT authz_int."doc__check_cdfdd53dac"(("docs".*)::"alt"."docs")
     AND (authz_int."doc__edit__has"("docs"."up")
     OR authz_int."doc__parent__edit__links"("docs"."doc_no"))))))
   WITH CHECK (((SELECT authz_int.scope_cmd('alt.docs', 'update')) AND (coalesce("docs"."owner_id" = (SELECT authz.uid()), false)
@@ -3239,7 +3239,7 @@ CREATE POLICY "authz_update" ON "alt"."docs" FOR UPDATE TO app_user
     OR EXISTS (SELECT 1 FROM authz_int."doc__project__view__ext" v WHERE v.id = "docs"."doc_no"))
     OR EXISTS (SELECT 1 FROM authz_int."doc__roles:view" v WHERE v.id = "docs"."doc_no")
     OR authz_int."doc__shortcut__view__base__links"("docs"."doc_no")
-    OR (authz_int."doc__check_60f7f3204e"(ROW("docs".*)::"alt"."docs")
+    OR (authz_int."doc__check_60f7f3204e"(("docs".*)::"alt"."docs")
     AND (authz_int."doc__view__base__has"("docs"."up")
     OR authz_int."doc__parent__view__base__links"("docs"."doc_no"))))
     AND NOT coalesce((EXISTS (SELECT 1 FROM authz_int."doc__banned" v WHERE v.id = "docs"."doc_no")
@@ -3247,10 +3247,10 @@ CREATE POLICY "authz_update" ON "alt"."docs" FOR UPDATE TO app_user
     OR authz_int."doc__parent__hidden__links"("docs"."doc_no"))
     OR authz_int."doc__shortcut__hidden__links"("docs"."doc_no")), false)))
     OR (coalesce((not locked), false)
-    AND NOT authz_int."doc__check_cdfdd53dac"(ROW("docs".*)::"alt"."docs")
+    AND NOT authz_int."doc__check_cdfdd53dac"(("docs".*)::"alt"."docs")
     AND (authz_int."doc__edit__has"("docs"."up")
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")))))
-    OR authz_gen."alt.docs:update:refuse"(ROW("docs".*)::"alt"."docs"));
+    OR authz_gen."alt.docs:update:refuse"(("docs".*)::"alt"."docs"));
 
 COMMENT ON POLICY "authz_update" ON "alt"."docs" IS 'rowstile';
 
@@ -3270,7 +3270,7 @@ BEGIN ATOMIC
     coalesce(true, false),
     coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "docs";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
 END;
 
 CREATE FUNCTION authz_gen."alt.docs:column owner_id:why"(p_row "alt"."docs") RETURNS SETOF text
@@ -3292,7 +3292,7 @@ END $f$;
 CREATE FUNCTION authz_int."alt.docs:column owner_id:holds"(p_row "alt"."docs") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false) FROM (SELECT (p_row).*) AS "docs";
+  SELECT coalesce(coalesce("docs"."owner_id" = (SELECT authz.uid()), false), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."alt.docs:column owner_id"() RETURNS trigger
@@ -3332,7 +3332,7 @@ BEGIN ATOMIC
     OR authz_int."doc__parent__edit__links"("docs"."doc_no")), false),
     coalesce(coalesce((up is null), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM (SELECT (p_row).*) AS "docs";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
 END;
 
 CREATE FUNCTION authz_gen."alt.docs:column up after:why"(p_row "alt"."docs") RETURNS SETOF text
@@ -3362,7 +3362,7 @@ LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce((coalesce((up is null), false)
     OR (authz_int."doc__edit__has"("docs"."up")
-    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))), false) FROM (SELECT (p_row).*) AS "docs";
+    OR authz_int."doc__parent__edit__links"("docs"."doc_no"))), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."alt.docs:column up after"() RETURNS trigger

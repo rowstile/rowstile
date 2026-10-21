@@ -56,6 +56,7 @@ from .sqlutil import (
     row_cond,
     this_alone,
     union,
+    whole_row,
     with_uid,
 )
 
@@ -1971,7 +1972,7 @@ class Core:
                 f"LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
                 f"  SELECT coalesce(({row_cond(sql, bare)}), false) FROM (SELECT (p_row).*) AS {bare}\n$f$;"
             )
-        return f"{fn}(ROW({alias}.*)::{qt(t.table)})"
+        return f"{fn}({whole_row(alias, t.table)})"
 
     def link_checks(
         self, t: Type, r: Relation, names: list[str], checks: Mapping[str, str | None], obj: str

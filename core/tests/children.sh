@@ -238,6 +238,35 @@ run push --development; is pushed && ok "push: the same change on the first data
 same "... where the tables that inherit have the row triggers too" "$(triggers ch.docs_old)|$(triggers ch.docs_older)|$(triggers ch.docs_oldest)" "$retitled|$retitled|$retitled"
 same "... and the changed rule holds" "$(as 2 -c "UPDATE ch.docs SET title = 'mine' WHERE id = 21")" "ERROR:  changing owner_id, title of ch.docs 21 needs: own"
 
+echo "-- a column an app's migration adds or drops, after apply"
+# Postgres keeps a policy, a view and a BEGIN ATOMIC body as parsed, with a dependency on each column they name: the
+# rules pass the whole row and name only the columns they read, or no column of the table could be dropped
+reads() {
+  PSQL -c "SELECT string_agg(DISTINCT a.attname, ' ' ORDER BY a.attname) FROM pg_depend d
+    JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+    WHERE d.refobjid = '$1'::regclass AND d.classid IN ('pg_proc'::regclass, 'pg_policy'::regclass, 'pg_rewrite'::regclass)"
+}
+PSQL -c "ALTER TABLE ch.notes ADD COLUMN body text" -c "ALTER TABLE ch.docs ADD COLUMN body text" \
+     -c "ALTER TABLE ch.topics ADD COLUMN body text" -c "ALTER TABLE ch.posts ADD COLUMN body text"
+# (and a rule whose condition reads other rows: the app role checks it through a function given the row)
+echo '  insert : view and {not exists (select 1 from ch.holds h where h.shelf_id = this.shelf_id)}' >> "$T/db/policy.authz"
+run push; is pushed || bad "push after columns were added" "$out"
+same "the rules' functions, policies and views depend on the columns the rules read, not on the others" \
+  "$(reads ch.notes)|$(reads ch.docs)|$(reads ch.topics)|$(reads ch.posts)" "id owner_id parent_id|id owner_id|id owner_id parent_id|id shelf_id topic_id"
+same "a column no rule reads is dropped, from a table that has rules on inserts, updates and a column" \
+  "$(PSQL -c "ALTER TABLE ch.notes DROP COLUMN title" -c "ALTER TABLE ch.notes DROP COLUMN body" 2>&1)" ""
+same "... from one whose rows are in part stored in a table that inherits" "$(PSQL -c "ALTER TABLE ch.docs DROP COLUMN body" 2>&1)" ""
+same "... from one whose type has a condition that reads other rows" "$(PSQL -c "ALTER TABLE ch.topics DROP COLUMN body" 2>&1)" ""
+same "... and from one with a rule that does" "$(PSQL -c "ALTER TABLE ch.posts DROP COLUMN body" 2>&1)" ""
+same "... the rules still hold, and a refused insert still says why" \
+  "$(PSQL -v VERBOSITY=default -c "SET authz.user_id = 2" -c "SET ROLE app_user" -c "INSERT INTO ch.notes (id, owner_id) VALUES (5, 1)" 2>&1 | head -n 4 | tr '\n' '|')" \
+  "ERROR:  permission denied: user 2 may not insert this row into ch.notes|DETAIL:  no   insert : owner  (line 36)|  no   owner|HINT:  rowstile help AZ709|"
+same "... and an allowed one is made, there and where the rule reads other rows" \
+  "$(as 2 -c "$(changed "INSERT INTO ch.notes (id, owner_id) VALUES (5, 2)")")|$(as 1 -c "$(changed "INSERT INTO ch.posts (id, topic_id) VALUES (99, 1)")")" "1|1"
+same "a column a rule reads can't be dropped: Postgres names what reads it" \
+  "$(PSQL -v VERBOSITY=default -c "ALTER TABLE ch.docs DROP COLUMN title" 2>&1 | head -n 2 | tr '\n' '|')" \
+  "ERROR:  cannot drop desired object(s) because other objects depend on them|DETAIL:  trigger authz_update owner_id, title on table ch.docs depends on column title of table ch.docs|"
+
 echo "-- removed"
 run remove --yes
 same "remove leaves no trigger on the tables, nor on those under them" \

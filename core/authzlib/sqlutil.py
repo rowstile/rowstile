@@ -136,6 +136,21 @@ def qt(table: str) -> str:
     return ".".join(q(part) for part in table.split("."))
 
 
+# Postgres keeps a policy, a view and a BEGIN ATOMIC body as parsed, with a dependency on each column they name, and
+# `.*` names every column there: what passes or reads a whole row of the app's table must not spell it out, or no
+# column of the table could be dropped, not even one no rule reads.
+
+
+def from_row(param: str, alias: str) -> str:
+    """A function's row argument as a table named alias, in a FROM: only the columns read from it are named."""
+    return f"pg_catalog.unnest(ARRAY[{param}]) AS {alias}"
+
+
+def whole_row(alias: str, table: str) -> str:
+    """The row of alias, as the table's type, to pass to a function: no column is named."""
+    return f"({alias}.*)::{qt(table)}"
+
+
 def lit(s: object) -> str:
     return "'" + str(s).replace("'", "''") + "'"
 

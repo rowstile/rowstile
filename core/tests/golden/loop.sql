@@ -1767,7 +1767,7 @@ BEGIN ATOMIC
     coalesce((coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "orgs";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "orgs";
 END;
 
 CREATE FUNCTION authz_gen."lp.orgs:update:why"(p_row "lp"."orgs", p_stored boolean) RETURNS SETOF text
@@ -1832,7 +1832,7 @@ CREATE POLICY "authz_update" ON "lp"."orgs" FOR UPDATE TO app_user
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id"))))
   WITH CHECK (((SELECT authz_int.scope_cmd('lp.orgs', 'update')) AND (coalesce("orgs"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = "orgs"."settings_id")))
-    OR authz_gen."lp.orgs:update:refuse"(ROW("orgs".*)::"lp"."orgs"));
+    OR authz_gen."lp.orgs:update:refuse"(("orgs".*)::"lp"."orgs"));
 
 COMMENT ON POLICY "authz_update" ON "lp"."orgs" IS 'rowstile';
 
@@ -1872,7 +1872,7 @@ BEGIN ATOMIC
     coalesce((EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "settings";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "settings";
 END;
 
 CREATE FUNCTION authz_gen."lp.settings:update:why"(p_row "lp"."settings", p_stored boolean) RETURNS SETOF text
@@ -1937,7 +1937,7 @@ CREATE POLICY "authz_update" ON "lp"."settings" FOR UPDATE TO app_user
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id"))))
   WITH CHECK (((SELECT authz_int.scope_cmd('lp.settings', 'update')) AND (EXISTS (SELECT 1 FROM authz_int."setting__admin" v WHERE v.id = "settings"."id")
     OR EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = "settings"."email_id")))
-    OR authz_gen."lp.settings:update:refuse"(ROW("settings".*)::"lp"."settings"));
+    OR authz_gen."lp.settings:update:refuse"(("settings".*)::"lp"."settings"));
 
 COMMENT ON POLICY "authz_update" ON "lp"."settings" IS 'rowstile';
 
@@ -2027,7 +2027,7 @@ BEGIN ATOMIC
     coalesce(true, false),
     coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "domains";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains";
 END;
 
 CREATE FUNCTION authz_gen."lp.domains:update:why"(p_row "lp"."domains", p_stored boolean) RETURNS SETOF text
@@ -2089,7 +2089,7 @@ COMMENT ON POLICY "authz_select" ON "lp"."domains" IS 'rowstile';
 CREATE POLICY "authz_update" ON "lp"."domains" FOR UPDATE TO app_user
   USING (((SELECT authz_int.scope_cmd('lp.domains', 'update')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id")))
   WITH CHECK (((SELECT authz_int.scope_cmd('lp.domains', 'update')) AND EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"))
-    OR authz_gen."lp.domains:update:refuse"(ROW("domains".*)::"lp"."domains"));
+    OR authz_gen."lp.domains:update:refuse"(("domains".*)::"lp"."domains"));
 
 COMMENT ON POLICY "authz_update" ON "lp"."domains" IS 'rowstile';
 
@@ -2102,7 +2102,7 @@ BEGIN ATOMIC
     coalesce(true, false),
     coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "domains";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains";
 END;
 
 CREATE FUNCTION authz_gen."lp.domains:column org_id after:why"(p_row "lp"."domains") RETURNS SETOF text
@@ -2126,7 +2126,7 @@ END $f$;
 CREATE FUNCTION authz_int."lp.domains:column org_id after:holds"(p_row "lp"."domains") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false) FROM (SELECT (p_row).*) AS "domains";
+  SELECT coalesce(EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = "domains"."org_id"), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "domains";
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."lp.domains:column org_id after"() RETURNS trigger

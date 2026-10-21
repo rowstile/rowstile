@@ -2704,7 +2704,7 @@ BEGIN ATOMIC
     coalesce(authz_int."folder__edit__has"("folders"."parent_id"), false),
     coalesce(coalesce("folders"."owner_id" = (SELECT authz.uid()), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM (SELECT (p_row).*) AS "folders";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 
 CREATE FUNCTION authz_gen."app.folders:insert:why"(p_row "app"."folders") RETURNS SETOF text
@@ -2755,7 +2755,7 @@ BEGIN ATOMIC
     OR (coalesce((inherit), false)
     AND authz_int."folder__edit__has"("folders"."parent_id"))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "folders";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 
 CREATE FUNCTION authz_gen."app.folders:update:why"(p_row "app"."folders", p_stored boolean) RETURNS SETOF text
@@ -2801,7 +2801,7 @@ BEGIN ATOMIC
     OR (coalesce((inherit), false)
     AND authz_int."folder__share__has"("folders"."parent_id"))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "folders";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 
 CREATE FUNCTION authz_gen."app.folders:delete:why"(p_row "app"."folders") RETURNS SETOF text
@@ -2855,7 +2855,7 @@ COMMENT ON POLICY "authz_select" ON "app"."folders" IS 'rowstile';
 CREATE POLICY "authz_insert" ON "app"."folders" FOR INSERT TO app_user
   WITH CHECK (((SELECT authz_int.scope_cmd('app.folders', 'insert')) AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     AND authz_int."folder__edit__has"("folders"."parent_id")))
-    OR authz_gen."app.folders:insert:refuse"(ROW("folders".*)::"app"."folders"));
+    OR authz_gen."app.folders:insert:refuse"(("folders".*)::"app"."folders"));
 
 COMMENT ON POLICY "authz_insert" ON "app"."folders" IS 'rowstile';
 
@@ -2871,7 +2871,7 @@ CREATE POLICY "authz_update" ON "app"."folders" FOR UPDATE TO app_user
     OR EXISTS (SELECT 1 FROM authz_int."folder__editor" v WHERE v.id = "folders"."id")
     OR (coalesce((inherit), false)
     AND authz_int."folder__edit__has"("folders"."parent_id"))))
-    OR authz_gen."app.folders:update:refuse"(ROW("folders".*)::"app"."folders"));
+    OR authz_gen."app.folders:update:refuse"(("folders".*)::"app"."folders"));
 
 COMMENT ON POLICY "authz_update" ON "app"."folders" IS 'rowstile';
 
@@ -2923,7 +2923,7 @@ BEGIN ATOMIC
     coalesce(authz_int."folder__edit__has"("files"."folder_id"), false),
     coalesce(coalesce("files"."owner_id" = (SELECT authz.uid()), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM (SELECT (p_row).*) AS "files";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 
 CREATE FUNCTION authz_gen."app.files:insert:why"(p_row "app"."files") RETURNS SETOF text
@@ -2968,7 +2968,7 @@ BEGIN ATOMIC
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__edit__has"("files"."folder_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "files";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 
 CREATE FUNCTION authz_gen."app.files:update:why"(p_row "app"."files", p_stored boolean) RETURNS SETOF text
@@ -3010,7 +3010,7 @@ BEGIN ATOMIC
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__edit__has"("files"."folder_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "files";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 
 CREATE FUNCTION authz_gen."app.files:delete:why"(p_row "app"."files") RETURNS SETOF text
@@ -3063,7 +3063,7 @@ COMMENT ON POLICY "authz_select" ON "app"."files" IS 'rowstile';
 CREATE POLICY "authz_insert" ON "app"."files" FOR INSERT TO app_user
   WITH CHECK (((SELECT authz_int.scope_cmd('app.files', 'insert')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     AND authz_int."folder__edit__has"("files"."folder_id")))
-    OR authz_gen."app.files:insert:refuse"(ROW("files".*)::"app"."files"));
+    OR authz_gen."app.files:insert:refuse"(("files".*)::"app"."files"));
 
 COMMENT ON POLICY "authz_insert" ON "app"."files" IS 'rowstile';
 
@@ -3073,7 +3073,7 @@ CREATE POLICY "authz_update" ON "app"."files" FOR UPDATE TO app_user
     OR authz_int."folder__edit__has"("files"."folder_id"))))
   WITH CHECK (((SELECT authz_int.scope_cmd('app.files', 'update')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__edit__has"("files"."folder_id")))
-    OR authz_gen."app.files:update:refuse"(ROW("files".*)::"app"."files"));
+    OR authz_gen."app.files:update:refuse"(("files".*)::"app"."files"));
 
 COMMENT ON POLICY "authz_update" ON "app"."files" IS 'rowstile';
 
@@ -3108,7 +3108,7 @@ BEGIN ATOMIC
     OR (coalesce((inherit), false)
     AND authz_int."folder__share__has"("folders"."parent_id"))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[7]) END
-  FROM (SELECT (p_row).*) AS "folders";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 
 CREATE FUNCTION authz_gen."app.folders:column parent_id after:why"(p_row "app"."folders") RETURNS SETOF text
@@ -3142,7 +3142,7 @@ BEGIN ATOMIC
     AND (coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_int."folder__share__has"("folders"."parent_id"))))), false) FROM (SELECT (p_row).*) AS "folders";
+    AND authz_int."folder__share__has"("folders"."parent_id"))))), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.folders:column parent_id after"() RETURNS trigger
@@ -3184,7 +3184,7 @@ BEGIN ATOMIC
     OR (coalesce((inherit), false)
     AND authz_int."folder__share__has"("folders"."parent_id"))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "folders";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 
 CREATE FUNCTION authz_gen."app.folders:column id, owner_id, org_id, inherit:why"(p_row "app"."folders") RETURNS SETOF text
@@ -3209,7 +3209,7 @@ BEGIN ATOMIC
   SELECT coalesce((coalesce("folders"."owner_id" = (SELECT authz.uid()), false)
     OR EXISTS (SELECT 1 FROM authz_int."org__admin" v WHERE v.id = "folders"."org_id")
     OR (coalesce((inherit), false)
-    AND authz_int."folder__share__has"("folders"."parent_id"))), false) FROM (SELECT (p_row).*) AS "folders";
+    AND authz_int."folder__share__has"("folders"."parent_id"))), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.folders:column id, owner_id, org_id, inherit"() RETURNS trigger
@@ -3248,7 +3248,7 @@ BEGIN ATOMIC
     coalesce(true, false),
     coalesce(authz_int."folder__edit__has"("files"."folder_id"), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "files";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 
 CREATE FUNCTION authz_gen."app.files:column folder_id after:why"(p_row "app"."files") RETURNS SETOF text
@@ -3272,7 +3272,7 @@ END $f$;
 CREATE FUNCTION authz_int."app.files:column folder_id after:holds"(p_row "app"."files") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT coalesce(authz_int."folder__edit__has"("files"."folder_id"), false) FROM (SELECT (p_row).*) AS "files";
+  SELECT coalesce(authz_int."folder__edit__has"("files"."folder_id"), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.files:column folder_id after"() RETURNS trigger
@@ -3310,7 +3310,7 @@ BEGIN ATOMIC
     coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR authz_int."folder__share__has"("files"."folder_id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "files";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 
 CREATE FUNCTION authz_gen."app.files:column id, owner_id, confidential:why"(p_row "app"."files") RETURNS SETOF text
@@ -3333,7 +3333,7 @@ CREATE FUNCTION authz_int."app.files:column id, owner_id, confidential:holds"(p_
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce((coalesce("files"."owner_id" = (SELECT authz.uid()), false)
-    OR authz_int."folder__share__has"("files"."folder_id")), false) FROM (SELECT (p_row).*) AS "files";
+    OR authz_int."folder__share__has"("files"."folder_id")), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."app.files:column id, owner_id, confidential"() RETURNS trigger
