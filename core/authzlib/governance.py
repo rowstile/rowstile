@@ -376,6 +376,25 @@ END $f$;""")
     # requests, approvals, emergency access, reviews
     # ------------------------------------------------------------------
     def workflow_sql(self) -> str:
+        # each function taking an id also takes it as the key's type, as authz.can does
+        request_overloads = "\n".join(
+            f"CREATE FUNCTION authz.request_access(p_type text, p_id {pt}, p_relation text, p_reason text,\n"
+            f"  p_duration interval DEFAULT NULL) RETURNS bigint LANGUAGE sql AS\n"
+            f"  $$ SELECT authz.request_access(p_type, p_id::text, p_relation, p_reason, p_duration) $$;"
+            for pt in self.id_types()
+        )
+        break_glass_overloads = "\n".join(
+            f"CREATE FUNCTION authz.break_glass(p_type text, p_id {pt}, p_relation text, p_reason text,\n"
+            f"  p_duration interval DEFAULT interval '1 hour') RETURNS void LANGUAGE sql AS\n"
+            f"  $$ SELECT authz.break_glass(p_type, p_id::text, p_relation, p_reason, p_duration) $$;"
+            for pt in self.id_types()
+        )
+        review_overloads = "\n".join(
+            f"CREATE FUNCTION authz.start_review(p_type text, p_id {pt}, p_closes_at timestamptz DEFAULT now() + interval '14 days')\n"
+            f"RETURNS bigint LANGUAGE sql AS\n"
+            f"  $$ SELECT authz.start_review(p_type, p_id::text, p_closes_at) $$;"
+            for pt in self.id_types()
+        )
         return f"""-- Who may manage a relation on an object: the permission that shares it (with users, when asked)
 CREATE FUNCTION authz_int.manage_perm(p_type text, p_relation text, p_subject text DEFAULT NULL) RETURNS text
 LANGUAGE sql STABLE {DEF} AS $f$
@@ -442,9 +461,7 @@ BEGIN
   PERFORM pg_notify('authz_requests', v_id::text);
   RETURN v_id;
 END $f$;
-CREATE FUNCTION authz.request_access(p_type text, p_id bigint, p_relation text, p_reason text,
-  p_duration interval DEFAULT NULL) RETURNS bigint LANGUAGE sql AS
-  $$ SELECT authz.request_access(p_type, p_id::text, p_relation, p_reason, p_duration) $$;
+{request_overloads}
 
 -- A pending request goes when its requester's row goes, or its object's (deleted, given a new id, emptied out with
 -- its table: p_ids NULL), so that it never reaches whoever later has that id; it is kept, cancelled, with why.
@@ -568,9 +585,7 @@ BEGIN
   SELECT max(id) INTO v_audit FROM authz.audit WHERE action = 'break_glass' AND txid = txid_current();
   PERFORM pg_notify('authz_alerts', json_build_object('audit_id', v_audit, 'action', 'break_glass')::text);
 END $f$;
-CREATE FUNCTION authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text,
-  p_duration interval DEFAULT interval '1 hour') RETURNS void LANGUAGE sql AS
-  $$ SELECT authz.break_glass(p_type, p_id::text, p_relation, p_reason, p_duration) $$;
+{break_glass_overloads}
 
 -- Access reviews: snapshot the shares on an object; reviewers keep or revoke each; closing applies it.
 -- Starting one needs 'share' on the object (or being an administrator); revoking an item needs
@@ -595,9 +610,7 @@ BEGIN
   PERFORM authz_int.audit('start_review', p_type, p_id, NULL, NULL, NULL, NULL, jsonb_build_object('review', v_id));
   RETURN v_id;
 END $f$;
-CREATE FUNCTION authz.start_review(p_type text, p_id bigint, p_closes_at timestamptz DEFAULT now() + interval '14 days')
-RETURNS bigint LANGUAGE sql AS
-  $$ SELECT authz.start_review(p_type, p_id::text, p_closes_at) $$;
+{review_overloads}
 CREATE FUNCTION authz.review_items(p_review bigint)
 RETURNS TABLE (item int, relation text, subject_type text, subject_id text, subject_relation text,
                expires_at timestamptz, keep boolean, decided_by text)

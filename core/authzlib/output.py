@@ -441,13 +441,12 @@ CREATE OR REPLACE FUNCTION authz.uid() RETURNS {u.pktype} {attrs} AS $uid$ {body
             for t in self.types.values()
             for ps in [perms_of[t.name]]
         )
-        id_types = sorted({t.pktype for t in self.types.values()} - {"text"})
         overloads = "\n".join(
             f"CREATE FUNCTION authz.can(p_type text, p_id {pt}, p_perm text) RETURNS boolean LANGUAGE sql STABLE AS\n"
             f"  $$ SELECT authz.can(p_type, p_id::text, p_perm) $$;\n"
             f"CREATE FUNCTION authz.perms(p_type text, p_id {pt}) RETURNS text[] LANGUAGE sql STABLE AS\n"
             f"  $$ SELECT authz.perms(p_type, p_id::text) $$;"
-            for pt in id_types
+            for pt in self.id_types()
         )
         return f"""-- Check a permission from app code: SELECT authz.can('file', 11, 'edit')
 -- (only objects that exist; plans are cached per session)
@@ -457,12 +456,13 @@ DECLARE v_allowed boolean;{self.id_vars()}
 BEGIN
   IF current_setting('authz_debug.log_decisions', true) = 'on'
      AND current_setting('authz_debug.logging', true) IS DISTINCT FROM 'on' THEN
-    -- decision log (SET authz_debug.log_decisions = on; lines go to the server log)
+    -- decision log (SET authz_debug.log_decisions = on; lines go to the server log), naming who acted as the
+    -- audit trail does ('42', 'service:7'; none: nobody signed in)
     PERFORM set_config('authz_debug.logging', 'on', true);
     v_allowed := authz.can(p_type, p_id, p_perm);
     PERFORM set_config('authz_debug.logging', 'off', true);
     RAISE LOG 'authz decision: user=% type=% id=% perm=% -> %',
-      coalesce(to_json(nullif(current_setting('authz.user_id', true), ''))::text, 'none'), to_json(p_type)::text,
+      coalesce(to_json(authz_int.actor())::text, 'none'), to_json(p_type)::text,
       to_json(p_id)::text, to_json(p_perm)::text, coalesce(v_allowed::text, 'error');
     RETURN v_allowed;
   END IF;
@@ -631,13 +631,45 @@ CREATE TRIGGER authz_role_gone AFTER DELETE ON authz.roles
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.role_gone();"""
         )
 
+        # each function taking an id also takes it as the key's type (as authz.can does), both ids for share/unshare
+        share_overloads = "\n".join(
+            f"CREATE FUNCTION authz.share(p_type text, p_id {o}, p_relation text, p_subject_type text, p_subject_id {s},\n"
+            f"  p_subject_relation text DEFAULT '', p_expires_at timestamptz DEFAULT NULL, p_starts_at timestamptz DEFAULT NULL,\n"
+            f"  p_caveat text DEFAULT NULL, p_caveat_args jsonb DEFAULT NULL) RETURNS void LANGUAGE sql AS\n"
+            f"  $$ SELECT authz.share(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation,\n"
+            f"                        p_expires_at, p_starts_at, p_caveat, p_caveat_args) $$;"
+            for o, s in self.id_pairs()
+        )
+        unshare_overloads = "\n".join(
+            f"CREATE FUNCTION authz.unshare(p_type text, p_id {o}, p_relation text, p_subject_type text, p_subject_id {s},\n"
+            f"  p_subject_relation text DEFAULT '') RETURNS void LANGUAGE sql AS\n"
+            f"  $$ SELECT authz.unshare(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation) $$;"
+            for o, s in self.id_pairs()
+        )
         link_columns = "id text, relation text, created_by text, created_at timestamptz, expires_at timestamptz"
         link_overloads = "\n".join(
+            f"CREATE FUNCTION authz.create_link(p_type text, p_id {pt}, p_relation text, p_expires_at timestamptz DEFAULT NULL)\n"
+            f"RETURNS text LANGUAGE sql AS $$ SELECT authz.create_link(p_type, p_id::text, p_relation, p_expires_at) $$;"
+            for pt in self.id_types()
+        )
+        list_link_overloads = "\n".join(
             f"CREATE FUNCTION authz.list_links(p_type text, p_id {pt}) RETURNS TABLE ({link_columns}) LANGUAGE sql STABLE AS\n"
             f"  $$ SELECT * FROM authz.list_links(p_type, p_id::text) $$;\n"
             f"CREATE FUNCTION authz.revoke_link(p_type text, p_id {pt}, p_link text) RETURNS void LANGUAGE sql AS\n"
             f"  $$ SELECT authz.revoke_link(p_type, p_id::text, p_link) $$;"
-            for pt in sorted({t.pktype for t in self.types.values()} - {"text"})
+            for pt in self.id_types()
+        )
+        role_overloads = "\n".join(
+            f"CREATE FUNCTION authz.create_role(p_owner_type text, p_owner_id {pt}, p_object_type text, p_name text,\n"
+            f"  p_permissions text[]) RETURNS bigint LANGUAGE sql AS\n"
+            f"  $$ SELECT authz.create_role(p_owner_type, p_owner_id::text, p_object_type, p_name, p_permissions) $$;"
+            for pt in self.id_types()
+        )
+        roles_of_overloads = "\n".join(
+            f"CREATE FUNCTION authz.roles_of(p_owner_type text, p_owner_id {pt})\n"
+            f"RETURNS TABLE (id bigint, object_type text, name text, permissions text[]) LANGUAGE sql STABLE AS\n"
+            f"  $$ SELECT * FROM authz.roles_of(p_owner_type, p_owner_id::text) $$;"
+            for pt in self.id_types()
         )
         api = f"""-- Share: needs the relation's 'shared by' permission on the object, and every permission
 -- the relation grants (you can't grant more than you hold); the subject must exist
@@ -748,16 +780,7 @@ BEGIN
   DO UPDATE SET expires_at = EXCLUDED.expires_at, created_by = EXCLUDED.created_by,
                 starts_at = EXCLUDED.starts_at, caveat = EXCLUDED.caveat, caveat_args = EXCLUDED.caveat_args;
 END $f$;
-CREATE FUNCTION authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint,
-  p_subject_relation text DEFAULT '', p_expires_at timestamptz DEFAULT NULL, p_starts_at timestamptz DEFAULT NULL,
-  p_caveat text DEFAULT NULL, p_caveat_args jsonb DEFAULT NULL) RETURNS void LANGUAGE sql AS
-  $$ SELECT authz.share(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation,
-                        p_expires_at, p_starts_at, p_caveat, p_caveat_args) $$;
-CREATE FUNCTION authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text,
-  p_subject_relation text DEFAULT '', p_expires_at timestamptz DEFAULT NULL, p_starts_at timestamptz DEFAULT NULL,
-  p_caveat text DEFAULT NULL, p_caveat_args jsonb DEFAULT NULL) RETURNS void LANGUAGE sql AS
-  $$ SELECT authz.share(p_type, p_id::text, p_relation, p_subject_type, p_subject_id, p_subject_relation,
-                        p_expires_at, p_starts_at, p_caveat, p_caveat_args) $$;
+{share_overloads}
 
 -- Unshare: needs what sharing needs (the relation's 'shared by' permission)
 CREATE FUNCTION authz.unshare(p_type text, p_id text, p_relation text,
@@ -784,12 +807,7 @@ BEGIN
     AND relation = p_relation AND subject_type = p_subject_type
     AND subject_id = p_subject_id AND subject_relation = p_subject_relation;
 END $f$;
-CREATE FUNCTION authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint,
-  p_subject_relation text DEFAULT '') RETURNS void LANGUAGE sql AS
-  $$ SELECT authz.unshare(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation) $$;
-CREATE FUNCTION authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text,
-  p_subject_relation text DEFAULT '') RETURNS void LANGUAGE sql AS
-  $$ SELECT authz.unshare(p_type, p_id::text, p_relation, p_subject_type, p_subject_id, p_subject_relation) $$;
+{unshare_overloads}
 
 -- A link anyone holding the token can use: returns the token once (only its hash is stored).
 -- Requests present it with SET LOCAL authz_ctx.links = '<token>'.
@@ -801,8 +819,7 @@ BEGIN
                       '', p_expires_at);
   RETURN v_token;
 END $f$;
-CREATE FUNCTION authz.create_link(p_type text, p_id bigint, p_relation text, p_expires_at timestamptz DEFAULT NULL)
-RETURNS text LANGUAGE sql AS $$ SELECT authz.create_link(p_type, p_id::text, p_relation, p_expires_at) $$;
+{link_overloads}
 
 -- The relations whose links on an object the caller may see: every one it has links of if they may inspect it
 -- (they can share it, or are an administrator), else those they may share with a link. NULL: none
@@ -859,7 +876,7 @@ BEGIN
     RAISE EXCEPTION 'no link % on % %', p_link, p_type, p_id USING HINT = 'rowstile help AZ708';
   END IF;
 END $f$;
-{link_overloads}
+{list_link_overloads}
 
 -- Custom roles: defined per owner (e.g. an org) by people with 'manage_roles' there
 CREATE FUNCTION authz.create_role(p_owner_type text, p_owner_id text, p_object_type text, p_name text,
@@ -868,6 +885,7 @@ DECLARE v_id bigint; v_bad text;
 BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.create_role');
+  p_owner_id := authz_int.canon(p_owner_type, p_owner_id);
   IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles') THEN
     RAISE EXCEPTION '% has no manage_roles permission in the policy', p_owner_type USING HINT = 'rowstile help AZ707';
   END IF;
@@ -888,14 +906,12 @@ BEGIN
     RAISE EXCEPTION 'custom roles on % cannot grant %', p_object_type, v_bad USING HINT = 'rowstile help AZ706';
   END IF;
   INSERT INTO authz.roles (owner_type, owner_id, object_type, name, created_by)
-  VALUES (p_owner_type, authz_int.canon(p_owner_type, p_owner_id), p_object_type, p_name, authz_int.actor())
+  VALUES (p_owner_type, p_owner_id, p_object_type, p_name, authz_int.actor())
   RETURNING id INTO v_id;
   INSERT INTO authz.role_permissions SELECT v_id, p FROM unnest(p_permissions) p ON CONFLICT DO NOTHING;
   RETURN v_id;
 END $f$;
-CREATE FUNCTION authz.create_role(p_owner_type text, p_owner_id bigint, p_object_type text, p_name text,
-  p_permissions text[]) RETURNS bigint LANGUAGE sql AS
-  $$ SELECT authz.create_role(p_owner_type, p_owner_id::text, p_object_type, p_name, p_permissions) $$;
+{role_overloads}
 CREATE FUNCTION authz.set_role_permissions(p_role bigint, p_permissions text[]) RETURNS void
 LANGUAGE plpgsql {DEFINER} AS $f$
 DECLARE v authz.roles; v_bad text;
@@ -928,6 +944,7 @@ RETURNS TABLE (id bigint, object_type text, name text, permissions text[])
 LANGUAGE plpgsql STABLE {DEFINER} AS $f$
 BEGIN
   PERFORM authz_int.users_only('authz.roles_of');
+  p_owner_id := authz_int.canon(p_owner_type, p_owner_id);
   IF authz.uid() IS NULL OR NOT (
        (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles')
         AND authz.can(p_owner_type, p_owner_id, 'manage_roles'))
@@ -939,9 +956,7 @@ BEGIN
     ARRAY(SELECT p.permission FROM authz.role_permissions p WHERE p.role_id = r.id ORDER BY 1)
     FROM authz.roles r WHERE r.owner_type = p_owner_type AND r.owner_id = p_owner_id ORDER BY r.id;
 END $f$;
-CREATE FUNCTION authz.roles_of(p_owner_type text, p_owner_id bigint)
-RETURNS TABLE (id bigint, object_type text, name text, permissions text[]) LANGUAGE sql STABLE AS
-  $$ SELECT * FROM authz.roles_of(p_owner_type, p_owner_id::text) $$;"""
+{roles_of_overloads}"""
         return catalog, share_if + "\n\n" + role_relations + "\n\n" + ROW_MARKS, api
 
     # --- output ---------------------------------------------------------

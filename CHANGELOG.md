@@ -117,6 +117,15 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   in it, unquoted (`password=my secret`), isn't repeated.
 - When the server asks for a password and none was given, the error says where to give one, and that the command
   reads no password file such as `~/.pgpass`.
+- Every `authz.*` function that takes an object's id now takes it as the key's type too, as `authz.can` did:
+  `authz.share('folder', 1::bigint, 'viewer', 'user', some_uuid)` said "function does not exist" where users
+  have uuid keys, and so did `unshare`, `create_link`, `create_role`, `roles_of`, `request_access`,
+  `break_glass` and `start_review` given a uuid. A policy whose keys are all text no longer gets their bigint
+  versions.
+- `authz.roles_of('org', '007')` listed none of org 7's roles: it compared the id as written, where
+  `authz.create_role` stores it as `7`. It now reads it as `authz.can` does.
+- The decision log (`authz_debug.log_decisions`) named a service by its bare id, as if it were the user with that
+  id. It now names who asked as the audit trail does: `service:7`, `user:service:1`.
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch

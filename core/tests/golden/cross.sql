@@ -4568,12 +4568,13 @@ DECLARE v_allowed boolean; v_bigint bigint;
 BEGIN
   IF current_setting('authz_debug.log_decisions', true) = 'on'
      AND current_setting('authz_debug.logging', true) IS DISTINCT FROM 'on' THEN
-    -- decision log (SET authz_debug.log_decisions = on; lines go to the server log)
+    -- decision log (SET authz_debug.log_decisions = on; lines go to the server log), naming who acted as the
+    -- audit trail does ('42', 'service:7'; none: nobody signed in)
     PERFORM set_config('authz_debug.logging', 'on', true);
     v_allowed := authz.can(p_type, p_id, p_perm);
     PERFORM set_config('authz_debug.logging', 'off', true);
     RAISE LOG 'authz decision: user=% type=% id=% perm=% -> %',
-      coalesce(to_json(nullif(current_setting('authz.user_id', true), ''))::text, 'none'), to_json(p_type)::text,
+      coalesce(to_json(authz_int.actor())::text, 'none'), to_json(p_type)::text,
       to_json(p_id)::text, to_json(p_perm)::text, coalesce(v_allowed::text, 'error');
     RETURN v_allowed;
   END IF;
@@ -5218,7 +5219,7 @@ BEGIN
   DO UPDATE SET expires_at = EXCLUDED.expires_at, created_by = EXCLUDED.created_by,
                 starts_at = EXCLUDED.starts_at, caveat = EXCLUDED.caveat, caveat_args = EXCLUDED.caveat_args;
 END $f$;
-CREATE OR REPLACE FUNCTION authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint,
+CREATE OR REPLACE FUNCTION authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id bigint,
   p_subject_relation text DEFAULT '', p_expires_at timestamptz DEFAULT NULL, p_starts_at timestamptz DEFAULT NULL,
   p_caveat text DEFAULT NULL, p_caveat_args jsonb DEFAULT NULL) RETURNS void LANGUAGE sql AS
   $$ SELECT authz.share(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation,
@@ -5226,7 +5227,12 @@ CREATE OR REPLACE FUNCTION authz.share(p_type text, p_id bigint, p_relation text
 CREATE OR REPLACE FUNCTION authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text,
   p_subject_relation text DEFAULT '', p_expires_at timestamptz DEFAULT NULL, p_starts_at timestamptz DEFAULT NULL,
   p_caveat text DEFAULT NULL, p_caveat_args jsonb DEFAULT NULL) RETURNS void LANGUAGE sql AS
-  $$ SELECT authz.share(p_type, p_id::text, p_relation, p_subject_type, p_subject_id, p_subject_relation,
+  $$ SELECT authz.share(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation,
+                        p_expires_at, p_starts_at, p_caveat, p_caveat_args) $$;
+CREATE OR REPLACE FUNCTION authz.share(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint,
+  p_subject_relation text DEFAULT '', p_expires_at timestamptz DEFAULT NULL, p_starts_at timestamptz DEFAULT NULL,
+  p_caveat text DEFAULT NULL, p_caveat_args jsonb DEFAULT NULL) RETURNS void LANGUAGE sql AS
+  $$ SELECT authz.share(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation,
                         p_expires_at, p_starts_at, p_caveat, p_caveat_args) $$;
 
 -- Unshare: needs what sharing needs (the relation's 'shared by' permission)
@@ -5254,12 +5260,15 @@ BEGIN
     AND relation = p_relation AND subject_type = p_subject_type
     AND subject_id = p_subject_id AND subject_relation = p_subject_relation;
 END $f$;
-CREATE OR REPLACE FUNCTION authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint,
+CREATE OR REPLACE FUNCTION authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id bigint,
   p_subject_relation text DEFAULT '') RETURNS void LANGUAGE sql AS
   $$ SELECT authz.unshare(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation) $$;
 CREATE OR REPLACE FUNCTION authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id text,
   p_subject_relation text DEFAULT '') RETURNS void LANGUAGE sql AS
-  $$ SELECT authz.unshare(p_type, p_id::text, p_relation, p_subject_type, p_subject_id, p_subject_relation) $$;
+  $$ SELECT authz.unshare(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation) $$;
+CREATE OR REPLACE FUNCTION authz.unshare(p_type text, p_id bigint, p_relation text, p_subject_type text, p_subject_id bigint,
+  p_subject_relation text DEFAULT '') RETURNS void LANGUAGE sql AS
+  $$ SELECT authz.unshare(p_type, p_id::text, p_relation, p_subject_type, p_subject_id::text, p_subject_relation) $$;
 
 -- A link anyone holding the token can use: returns the token once (only its hash is stored).
 -- Requests present it with SET LOCAL authz_ctx.links = '<token>'.
@@ -5341,6 +5350,7 @@ DECLARE v_id bigint; v_bad text;
 BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.create_role');
+  p_owner_id := authz_int.canon(p_owner_type, p_owner_id);
   IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles') THEN
     RAISE EXCEPTION '% has no manage_roles permission in the policy', p_owner_type USING HINT = 'rowstile help AZ707';
   END IF;
@@ -5361,7 +5371,7 @@ BEGIN
     RAISE EXCEPTION 'custom roles on % cannot grant %', p_object_type, v_bad USING HINT = 'rowstile help AZ706';
   END IF;
   INSERT INTO authz.roles (owner_type, owner_id, object_type, name, created_by)
-  VALUES (p_owner_type, authz_int.canon(p_owner_type, p_owner_id), p_object_type, p_name, authz_int.actor())
+  VALUES (p_owner_type, p_owner_id, p_object_type, p_name, authz_int.actor())
   RETURNING id INTO v_id;
   INSERT INTO authz.role_permissions SELECT v_id, p FROM unnest(p_permissions) p ON CONFLICT DO NOTHING;
   RETURN v_id;
@@ -5401,6 +5411,7 @@ RETURNS TABLE (id bigint, object_type text, name text, permissions text[])
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
   PERFORM authz_int.users_only('authz.roles_of');
+  p_owner_id := authz_int.canon(p_owner_type, p_owner_id);
   IF authz.uid() IS NULL OR NOT (
        (EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_owner_type AND perm = 'manage_roles')
         AND authz.can(p_owner_type, p_owner_id, 'manage_roles'))
@@ -7501,7 +7512,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, '"app_user"'::regrole))
     AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = '"app_user"'::regrole
              AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"cx.folders:delete:items"', '"cx.folders:delete:why"', '"cx.folders:rules:explain"', '"cx.folders:update:items"', '"cx.folders:update:refuse"', '"cx.folders:update:why"', '"cx.notes:insert:items"', '"cx.notes:insert:refuse"', '"cx.notes:insert:why"', '"cx.notes:rules:explain"', '"cx.projects:delete:items"', '"cx.projects:delete:why"', '"cx.projects:rules:explain"', '"cx.projects:update:items"', '"cx.projects:update:refuse"', '"cx.projects:update:why"', '"cx.projects:update_after:items"', '"cx.projects:update_after:refuse"', '"cx.projects:update_after:why"', '"cx.regions:rules:explain"', '"cx.regions:update:items"', '"cx.regions:update:refuse"', '"cx.regions:update:why"', '"cx.sites:rules:explain"', '"cx.sites:update:items"', '"cx.sites:update:refuse"', '"cx.sites:update:why"']::text[]))
-    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
+    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.create_role(text, bigint, text, text, text[])', 'authz.roles_of(text, bigint)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, bigint, timestamptz)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)', 'authz.share(text, text, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, bigint, text)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, bigint, text)']::regprocedure[])) LOOP
     severity := 'error'; object := r.object;
     problem := format('%s holds %s on it, which the policy doesn''t give (a default privilege of the owner, or a grant made since the last apply): the next apply takes it back, or %s', r.who, r.privilege, r.stmt);
     RETURN NEXT;
@@ -7958,7 +7969,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, '"app_user"'::regrole))
     AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = '"app_user"'::regrole
              AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"cx.folders:delete:items"', '"cx.folders:delete:why"', '"cx.folders:rules:explain"', '"cx.folders:update:items"', '"cx.folders:update:refuse"', '"cx.folders:update:why"', '"cx.notes:insert:items"', '"cx.notes:insert:refuse"', '"cx.notes:insert:why"', '"cx.notes:rules:explain"', '"cx.projects:delete:items"', '"cx.projects:delete:why"', '"cx.projects:rules:explain"', '"cx.projects:update:items"', '"cx.projects:update:refuse"', '"cx.projects:update:why"', '"cx.projects:update_after:items"', '"cx.projects:update_after:refuse"', '"cx.projects:update_after:why"', '"cx.regions:rules:explain"', '"cx.regions:update:items"', '"cx.regions:update:refuse"', '"cx.regions:update:why"', '"cx.sites:rules:explain"', '"cx.sites:update:items"', '"cx.sites:update:refuse"', '"cx.sites:update:why"']::text[]))
-    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.unshare(text, bigint, text, text, bigint, text)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.create_role(text, bigint, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.roles_of(text, bigint)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.start_review(text, bigint, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)']::regprocedure[])) LOOP
+    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.create_role(text, bigint, text, text, text[])', 'authz.roles_of(text, bigint)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, bigint, timestamptz)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)', 'authz.share(text, text, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, bigint, text)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, bigint, text)']::regprocedure[])) LOOP
     EXECUTE g.stmt;
     v_taken := v_taken + 1;
   END LOOP;
@@ -7994,21 +8005,14 @@ GRANT EXECUTE ON FUNCTION
   authz.perms(text, text),
   authz.perms_of(text, text[]),
   authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb),
-  authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb),
-  authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb),
   authz.unshare(text, text, text, text, text, text),
-  authz.unshare(text, bigint, text, text, bigint, text),
-  authz.unshare(text, bigint, text, text, text, text),
   authz.create_link(text, text, text, timestamptz),
-  authz.create_link(text, bigint, text, timestamptz),
   authz.list_links(text, text),
   authz.revoke_link(text, text, text),
   authz.create_role(text, text, text, text, text[]),
-  authz.create_role(text, bigint, text, text, text[]),
   authz.set_role_permissions(bigint, text[]),
   authz.delete_role(bigint),
   authz.roles_of(text, text),
-  authz.roles_of(text, bigint),
   authz.who(text, text, text),
   authz.explain(text, text, text, text),
   authz.list_shares(text, text),
@@ -8021,14 +8025,11 @@ GRANT EXECUTE ON FUNCTION
   authz.login_jwt(text),
   authz.view_as(text, text),
   authz.request_access(text, text, text, text, interval),
-  authz.request_access(text, bigint, text, text, interval),
   authz.pending_requests(),
   authz.decide_request(bigint, boolean, text),
   authz.cancel_request(bigint),
   authz.break_glass(text, text, text, text, interval),
-  authz.break_glass(text, bigint, text, text, interval),
   authz.start_review(text, text, timestamptz),
-  authz.start_review(text, bigint, timestamptz),
   authz.review_items(bigint),
   authz.review_decide(bigint, integer, boolean),
   authz.close_review(bigint, boolean),
@@ -8037,9 +8038,21 @@ GRANT EXECUTE ON FUNCTION
   authz.list_shares(text, bigint),
   authz.list_links(text, bigint),
   authz.revoke_link(text, bigint, text),
+  authz.create_link(text, bigint, text, timestamptz),
+  authz.create_role(text, bigint, text, text, text[]),
+  authz.roles_of(text, bigint),
+  authz.request_access(text, bigint, text, text, interval),
+  authz.break_glass(text, bigint, text, text, interval),
+  authz.start_review(text, bigint, timestamptz),
   authz.can(text, bigint, text),
   authz.who_among(text, bigint, text, text[], text),
-  authz.perms(text, bigint)
+  authz.perms(text, bigint),
+  authz.share(text, text, text, text, bigint, text, timestamptz, timestamptz, text, jsonb),
+  authz.unshare(text, text, text, text, bigint, text),
+  authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb),
+  authz.unshare(text, bigint, text, text, text, text),
+  authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb),
+  authz.unshare(text, bigint, text, text, bigint, text)
   TO "app_user";
 
 -- Tables never analyzed (made just now, or too small for autovacuum to have reached them) are planned

@@ -124,6 +124,11 @@ check "it shares as itself: created_by says so" "service:7" \
   "$AS_SVC SELECT authz.share('doc', 1, 'reader', 'user', 3); SELECT created_by FROM authz.list_shares('doc', 1) WHERE subject_id = '3';"
 check "the audit trail says so too" "service:7" \
   "RESET ROLE; SELECT user_id FROM authz.audit WHERE action = 'share' AND object_id = '1' ORDER BY id DESC LIMIT 1;"
+got=$(PSQL -c "SET ROLE app_user; SET client_min_messages = log; SET authz_debug.log_decisions = on; $AS_SVC SELECT authz.can('doc', 1, 'view');" 2>&1 |
+      grep -o 'authz decision: .*')
+[ "$got" = 'authz decision: user="service:7" type="doc" id="1" perm="view" -> true' ] &&
+  echo "ok    the decision log names it as the audit trail does, not as user 7" ||
+  { echo "FAIL  the decision log names a service: $got"; fails=$((fails + 1)); }
 check "authz.who lists users" "1,3" "RESET ROLE; SELECT string_agg(x, ',' ORDER BY x) FROM authz.who('doc', 1, 'view') x;"
 expect_code "a role the policy doesn't govern can't sign in as a service" "42501: permission denied for schema authz" -c "RESET ROLE" -c "SET ROLE other_app" \
   -c "SELECT authz.act_as('service', '7')"
@@ -531,6 +536,11 @@ icheck "... and service 1 is still service:1" "service:1" \
   "$AS_S1 SELECT authz.share('doc', 3, 'reader', 'user', 'service:1'); SELECT created_by FROM authz.list_shares('doc', 3) WHERE subject_type = 'user' AND subject_id = 'service:1';"
 icheck "the audit trail names them the same way, each as itself" "42 user:service:1 user:nobody 42 service:1" \
   "RESET ROLE; SELECT string_agg(user_id, ' ' ORDER BY id) FROM authz.audit WHERE action = 'share';"
+got=$(IPSQL -c "SET ROLE app_user; SET client_min_messages = log; SET authz_debug.log_decisions = on; $AS_COLON SELECT authz.can('doc', 1, 'view');" 2>&1 |
+      grep -o 'authz decision: .*')
+[ "$got" = 'authz decision: user="user:service:1" type="doc" id="1" perm="view" -> true' ] &&
+  echo "ok    the decision log names them the same way: user:service:1" ||
+  { echo "FAIL  the decision log names the user whose id is service:1: $got"; fails=$((fails + 1)); }
 icheck "explain says who shared it the same way" "1" \
   "$AS_42 SELECT count(*) FROM authz.explain('doc', 1, 'view') e WHERE e LIKE '%(by user:service:1)%';"
 icheck "a login with a key returns who signed in the same way" "user:service:1" \
