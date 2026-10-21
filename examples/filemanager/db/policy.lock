@@ -87,7 +87,7 @@ function authz.create_link(p_type text, p_id bigint, p_relation text, p_expires_
 function authz.create_link(p_type text, p_id text, p_relation text, p_expires_at timestamptz) | 94706d6ae734 shape=08f941c7
 function authz.create_role(p_owner_type text, p_owner_id bigint, p_object_type text, p_name text, p_permissions text[]) | 204199562663 shape=67327103
 function authz.create_role(p_owner_type text, p_owner_id text, p_object_type text, p_name text, p_permissions text[]) | 2953809445fa shape=b74c801b
-function authz.decide_request(p_id bigint, p_approve boolean, p_note text) | 7195e145c7f7 shape=ebe1e76d
+function authz.decide_request(p_id bigint, p_approve boolean, p_note text) | 763b303c1435 shape=ebe1e76d
 function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9fc8335de7a shape=0a2287cd
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 09328ee77eed shape=7d6de14b
@@ -126,7 +126,7 @@ function authz.share(p_type text, p_id bigint, p_relation text, p_subject_type t
 function authz.share(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | e8eaf1911fa9 shape=386e2b78
 function authz.start_review(p_type text, p_id bigint, p_closes_at timestamptz) | ede0d805b2b1 shape=c2dba351
 function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 54b5115398e4 shape=879e84e5
-function authz.sync_members(p_type text, p_id text, p_relation text, p_members text[], OUT added int, OUT removed int) | 1fa9be20fea9 shape=c0ea90e1
+function authz.sync_members(p_type text, p_id text, p_relation text, p_members text[], OUT added int, OUT removed int) | 037de1ac67d6 shape=c0ea90e1
 function authz.trim_audit(p_keep interval) | 506854f7888f shape=59da80c2
 function authz.trim_changes(p_keep interval) | 99129c6c680e shape=5f059d1e
 function authz.uid() | 2d5c9a51d711 shape=e4787fc1
