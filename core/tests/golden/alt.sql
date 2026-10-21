@@ -1024,6 +1024,8 @@ END $imm$;
 
 -- ...as last applied (they read other rows or tables, so changes there are re-checked)
 CREATE TABLE authz_int."doc__parent__tree_cond_cache" (id bigint PRIMARY KEY, v boolean[] NOT NULL);
+-- the tree's own table, if a condition reads it through a query (found when applied)
+CREATE TABLE authz_int."doc__parent__tree_reads" (rel regclass PRIMARY KEY);
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION authz_int."doc__parent__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
@@ -1104,24 +1106,33 @@ CREATE FUNCTION authz_int."doc__parent__tree_on_deps"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN PERFORM authz_int."doc__parent__tree_recheck"(); RETURN NULL; END $f$;
 
--- find the tables the conditions read and watch them
+-- find the tables the conditions read and watch them; for the tree's own tables, only note those read
 -- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read (line 33)
 DO $dep$
 DECLARE d record;
 BEGIN
+  -- the conditions over an empty copy of each table, so that the row itself isn't among what they read
+  CREATE TEMP TABLE authz_reads1 (LIKE "alt"."docs");
+  CREATE TEMP VIEW authz_reads AS
+    SELECT coalesce((coalesce((not locked), false) AND coalesce((NOT coalesce((exists (select 1 from alt.holds h where h.target = r.up)), false)), false)), false) AS v FROM pg_temp.authz_reads1 r;
   FOR d IN SELECT DISTINCT c.oid::regclass AS rel, c.relkind
            FROM pg_depend dep
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_class c ON c.oid = dep.refobjid AND dep.refclassid = 'pg_class'::regclass
-           WHERE w.ev_class = 'authz_int."doc__parent__tree_conds"'::regclass
-             AND c.oid NOT IN (w.ev_class, '"alt"."docs"'::regclass) LOOP
+           WHERE w.ev_class = 'pg_temp.authz_reads'::regclass
+             AND c.oid NOT IN (w.ev_class, 'pg_temp.authz_reads1'::regclass) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
       RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
         'line 33', d.rel;
+    ELSIF d.rel IN ('"alt"."docs"'::regclass) THEN
+      INSERT INTO authz_int."doc__parent__tree_reads" VALUES (d.rel);
+    ELSE
+      EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
+                     'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__parent__tree_on_deps"()', 'authz_doc__parent__tree_dep', d.rel);
     END IF;
-    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
-                   'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__parent__tree_on_deps"()', 'authz_doc__parent__tree_dep', d.rel);
   END LOOP;
+  DROP VIEW pg_temp.authz_reads;
+  DROP TABLE pg_temp.authz_reads1;
 END $dep$;
 
 -- the tree's own columns may not loop (links through tables may: they add nothing)
@@ -1145,11 +1156,12 @@ END $f$;
 -- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."doc__parent__tree_on_rows"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE ids bigint[]; shift boolean := false;
+DECLARE ids bigint[]; shift boolean := false; wrote boolean;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT n."doc_no" FROM new_rows n);
   ELSIF TG_OP = 'UPDATE' THEN
+    wrote := EXISTS (SELECT 1 FROM new_rows);
     -- rows whose id changed: the old id disappears and the new one appears
     ids := ARRAY(
       SELECT o."doc_no" FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."doc_no" = o."doc_no")
@@ -1168,7 +1180,10 @@ BEGIN
   IF TG_OP <> 'DELETE' THEN PERFORM authz_int."doc__parent__tree_check_loops"(ids); END IF;
     PERFORM authz_int."doc__parent__tree_refresh"(ids, shift);
   END IF;
-  PERFORM authz_int."doc__parent__tree_recheck"();
+  -- a condition that reads this table through a query may hold differently on other rows now
+  IF coalesce(wrote, cardinality(ids) > 0) AND EXISTS (SELECT 1 FROM authz_int."doc__parent__tree_reads" WHERE rel = TG_RELID::regclass) THEN
+    PERFORM authz_int."doc__parent__tree_recheck"();
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_doc__parent__tree_ins" AFTER INSERT ON "alt"."docs"
@@ -1271,6 +1286,8 @@ END $imm$;
 
 -- ...as last applied (they read other rows or tables, so changes there are re-checked)
 CREATE TABLE authz_int."doc__parent_shortcut__tree_cond_cache" (id bigint PRIMARY KEY, v boolean[] NOT NULL);
+-- the tree's own table, if a condition reads it through a query (found when applied)
+CREATE TABLE authz_int."doc__parent_shortcut__tree_reads" (rel regclass PRIMARY KEY);
 
 -- recompute the given rows and everything linked below them; p_shift: only their own links changed
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_refresh"(p_ids bigint[], p_shift boolean DEFAULT false) RETURNS void
@@ -1352,24 +1369,33 @@ CREATE FUNCTION authz_int."doc__parent_shortcut__tree_on_deps"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN PERFORM authz_int."doc__parent_shortcut__tree_recheck"(); RETURN NULL; END $f$;
 
--- find the tables the conditions read and watch them
+-- find the tables the conditions read and watch them; for the tree's own tables, only note those read
 -- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read (line 36)
 DO $dep$
 DECLARE d record;
 BEGIN
+  -- the conditions over an empty copy of each table, so that the row itself isn't among what they read
+  CREATE TEMP TABLE authz_reads1 (LIKE "alt"."docs");
+  CREATE TEMP VIEW authz_reads AS
+    SELECT coalesce((not exists (select 1 from alt.holds h where h.target = r.doc_no)), false) AS v FROM pg_temp.authz_reads1 r;
   FOR d IN SELECT DISTINCT c.oid::regclass AS rel, c.relkind
            FROM pg_depend dep
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_class c ON c.oid = dep.refobjid AND dep.refclassid = 'pg_class'::regclass
-           WHERE w.ev_class = 'authz_int."doc__parent_shortcut__tree_conds"'::regclass
-             AND c.oid NOT IN (w.ev_class, '"alt"."docs"'::regclass) LOOP
+           WHERE w.ev_class = 'pg_temp.authz_reads'::regclass
+             AND c.oid NOT IN (w.ev_class, 'pg_temp.authz_reads1'::regclass) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
       RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
         'line 36', d.rel;
+    ELSIF d.rel IN ('"alt"."docs"'::regclass) THEN
+      INSERT INTO authz_int."doc__parent_shortcut__tree_reads" VALUES (d.rel);
+    ELSE
+      EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
+                     'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__parent_shortcut__tree_on_deps"()', 'authz_doc__parent_shortcut__tree_dep', d.rel);
     END IF;
-    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
-                   'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__parent_shortcut__tree_on_deps"()', 'authz_doc__parent_shortcut__tree_dep', d.rel);
   END LOOP;
+  DROP VIEW pg_temp.authz_reads;
+  DROP TABLE pg_temp.authz_reads1;
 END $dep$;
 
 -- the tree's own columns may not loop (links through tables may: they add nothing)
@@ -1393,11 +1419,12 @@ END $f$;
 -- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."doc__parent_shortcut__tree_on_rows"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE ids bigint[]; shift boolean := false;
+DECLARE ids bigint[]; shift boolean := false; wrote boolean;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT n."doc_no" FROM new_rows n);
   ELSIF TG_OP = 'UPDATE' THEN
+    wrote := EXISTS (SELECT 1 FROM new_rows);
     -- rows whose id changed: the old id disappears and the new one appears
     ids := ARRAY(
       SELECT o."doc_no" FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."doc_no" = o."doc_no")
@@ -1416,7 +1443,10 @@ BEGIN
   IF TG_OP <> 'DELETE' THEN PERFORM authz_int."doc__parent_shortcut__tree_check_loops"(ids); END IF;
     PERFORM authz_int."doc__parent_shortcut__tree_refresh"(ids, shift);
   END IF;
-  PERFORM authz_int."doc__parent_shortcut__tree_recheck"();
+  -- a condition that reads this table through a query may hold differently on other rows now
+  IF coalesce(wrote, cardinality(ids) > 0) AND EXISTS (SELECT 1 FROM authz_int."doc__parent_shortcut__tree_reads" WHERE rel = TG_RELID::regclass) THEN
+    PERFORM authz_int."doc__parent_shortcut__tree_recheck"();
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_doc__parent_shortcut__tree_ins" AFTER INSERT ON "alt"."docs"

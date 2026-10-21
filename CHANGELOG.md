@@ -146,6 +146,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   user shown looked suspended. The custom roles given are listed (`doc.roles with view: doc 1 -> user 1`), and
   `anyone` reads `anyone`, not `anyone *`. The review's world is made as small as it still grants otherwise in,
   as prove's is: no link that plays no part. "after 1 worlds" reads "after 1 world".
+- In a tree whose inheritance conditions read other tables (`{not exists (select 1 from app.frozen ...)}`), every
+  statement on the tree's own table checked those conditions again on every row of the type, under the type's
+  lock: renaming a folder waited for a folder's move in another transaction. Such a statement now checks them again
+  only when a condition reads that table itself (the folder above's columns, say), and only if it wrote a row.
+- In a tree of several types, moving a link in its table (an `UPDATE` of a placement) refreshed what was below the
+  new link, then what was below the old one: twice the work, and two entries in the change feed. It is done once.
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch

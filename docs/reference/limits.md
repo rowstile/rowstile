@@ -74,7 +74,8 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   verify in your backend and sign in from there ([Identity](identity.md)), or use an API key. <!-- checked: tests/identity.sh "alg none" -->
 - **Writes cost more**: each closure table is maintained on every structural write,
   and structural writes to one type are serialized. Inheritance conditions that read
-  other tables are re-evaluated for every row of the type when those tables change.
+  other tables are re-evaluated for every row of the type when those tables change
+  (and when a statement writes rows of the type's own table, if a condition reads it).
   A move rewrites one row per folder below it and per ancestor it gains or loses;
   while it runs, other tree writes to that type wait. If a link leads from inside the
   moved part back to the folder's old or new ancestors, everything below is recomputed

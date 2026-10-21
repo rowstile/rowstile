@@ -194,6 +194,25 @@ if [ -z "$got" ]; then echo "ok    a folder moved while a region's link is writt
 else echo "FAIL  a folder moved while a region's link is written: $got"; fails=$((fails + 1)); fi
 [ "$(psql -X -Atq -d "$X" -c "SELECT authz.verify()")" = t ] && echo "ok    ... and both trees match a rebuild" ||
   { echo "FAIL  the trees after the two writes"; fails=$((fails + 1)); }
+# the folders' conditions read another table (cx.frozen), not cx.folders: a write to a folder that changes nothing
+# the tree follows checks them again on no row, so it takes no lock of the tree
+psql -X -q -d "$X" -c "BEGIN" -c "UPDATE cx.folders SET parent_type = NULL, parent_id = NULL WHERE id = 2" -c "SELECT pg_sleep(3)" \
+  -c "COMMIT" > "$out" 2>&1 &
+sleep 1
+got=$(psql -X -q -At -d "$X" -c "SET lock_timeout = '1s'" -c "UPDATE cx.folders SET owner_id = NULL WHERE id = 1" 2>&1)
+wait
+if [ -z "$got" ]; then echo "ok    a folder given another owner while a folder's move is held open, without waiting"
+else echo "FAIL  a folder given another owner while a folder's move is held open: $got"; fails=$((fails + 1)); fi
+# a placement moved to another folder: one refresh of its old and new folders' contents, so one entry in the feed
+# for each of the two trees the placements are links of
+psql -X -q -v ON_ERROR_STOP=1 -d "$X" -c "INSERT INTO cx.projects (id, lead_id) VALUES (1, 1)" \
+  -c "INSERT INTO cx.placements VALUES (1, 1)" >/dev/null
+pos=$(psql -X -Atq -d "$X" -c "SELECT max(pos) FROM authz.changes")
+psql -X -q -v ON_ERROR_STOP=1 -d "$X" -c "UPDATE cx.placements SET folder_id = 2 WHERE project_id = 1"
+got=$(psql -X -Atq -d "$X" -c "SELECT string_agg(object_type || ' ' || array_to_string(object_ids, ','), '; ' ORDER BY pos)
+                                FROM authz.changes WHERE pos > $pos AND cause = 'inheritance'")
+[ "$got" = "project 1; project 1" ] && echo "ok    a placement moved to another folder: one feed entry for each tree" ||
+  { echo "FAIL  a placement moved to another folder, the feed's entries: $got"; fails=$((fails + 1)); }
 dropdb "$X"; rm -f "/tmp/${DB}_cross.sql"
 
 echo "-- a statement that changes no row of a tree of several types takes no lock of it"
@@ -230,6 +249,64 @@ wait
 if [ -z "$got" ]; then echo "ok    a project update that changes none doesn't wait for a folder's move"
 else echo "FAIL  a project update that changes none, while a folder is moved: $got"; fails=$((fails + 1)); fi
 dropdb "$X"; rm -f "/tmp/${DB}_two.authz" "/tmp/${DB}_two.sql"
+
+echo "-- conditions that read their tree's own table: checked again after a statement there that writes a row"
+# a folder inherits from the folder above unless that one is sealed; a shelf from its box unless the box is sealed,
+# and boxes sit in boxes or on shelves (a tree of two types, whose condition reads the other type's table)
+X="${DB}_self"
+dropdb --if-exists "$X" 2>/dev/null; createdb "$X" || exit 1
+cat > "/tmp/${DB}_self.authz" <<'POLICY'
+app role app_user
+type user = sr.users
+type folder = sr.folders
+  parent : folder = parent_id
+  owner  : user   = owner_id
+  can view = owner or (parent.view and {not exists (select 1 from sr.folders p where p.id = this.parent_id and p.sealed)})
+type shelf = sr.shelves
+  box : box = box_id
+  can view = box.view and {not exists (select 1 from sr.boxes b where b.id = this.box_id and b.sealed)}
+type box = sr.boxes
+  parent : box, shelf = (parent_type, parent_id)
+  owner  : user = owner_id
+  can view = owner or parent.view
+POLICY
+python3 compile_policy.py "/tmp/${DB}_self.authz" > "/tmp/${DB}_self.sql" &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -c "CREATE SCHEMA sr" \
+    -c "CREATE TABLE sr.users (id bigint PRIMARY KEY)" \
+    -c "CREATE TABLE sr.folders (id bigint PRIMARY KEY, parent_id bigint, owner_id bigint, sealed boolean NOT NULL DEFAULT false)" \
+    -c "CREATE TABLE sr.boxes (id bigint PRIMARY KEY, parent_type text, parent_id bigint, owner_id bigint,
+                               sealed boolean NOT NULL DEFAULT false)" \
+    -c "CREATE TABLE sr.shelves (id bigint PRIMARY KEY, box_id bigint)" -c "INSERT INTO sr.users VALUES (1)" \
+    -c "INSERT INTO sr.folders (id, parent_id, owner_id) VALUES (1, NULL, 1), (2, 1, NULL), (3, 2, NULL), (4, NULL, 1)" \
+    -c "INSERT INTO sr.boxes (id, owner_id) VALUES (1, 1), (3, 1)" -c "INSERT INTO sr.shelves VALUES (1, 1)" \
+    -c "INSERT INTO sr.boxes (id, parent_type, parent_id) VALUES (2, 'shelf', 1)" \
+    -f "/tmp/${DB}_self.sql" >/dev/null || { echo "setup failed (self)"; exit 1; }
+F='authz_int."folder__parent__tree"'
+B='authz_int."box_shelf__box_parent__tree"'
+inx() {   # $1 = label, $2 = SQL that must return t, in the database $X
+  if [ "$(psql -X -Atq -d "$X" -c "$2")" = "t" ]; then echo "ok    $1"; else echo "FAIL  $1"; fails=$((fails + 1)); fi
+}
+inx "below folder 1 and box 1, what inherits from them" \
+  "SELECT (SELECT array_agg(descendant ORDER BY descendant) FROM $F WHERE ancestor = 1) = '{1,2,3}'
+      AND (SELECT array_agg(dtype || ' ' || did ORDER BY dtype, did) FROM $B WHERE atype = 'box' AND aid = '1')
+          = '{\"box 1\",\"box 2\",\"shelf 1\"}'"
+psql -X -q -v ON_ERROR_STOP=1 -d "$X" -c "UPDATE sr.folders SET sealed = true WHERE id = 1" -c "UPDATE sr.boxes SET sealed = true WHERE id = 1"
+inx "a folder sealed: the folders below it inherit from it no longer" \
+  "SELECT (SELECT array_agg(descendant ORDER BY descendant) FROM $F WHERE ancestor = 1) = '{1}' AND authz.verify()"
+inx "a box sealed: the shelf in it, and the box on that, inherit from it no longer (a tree of two types)" \
+  "SELECT (SELECT array_agg(dtype || ' ' || did ORDER BY dtype, did) FROM $B WHERE atype = 'box' AND aid = '1') = '{\"box 1\"}'"
+# a statement that writes no row checks nothing again: it doesn't wait for a move held open
+psql -X -q -d "$X" -c "BEGIN" -c "UPDATE sr.folders SET parent_id = 1 WHERE id = 4" \
+  -c "UPDATE sr.boxes SET parent_type = 'box', parent_id = 1 WHERE id = 3" -c "SELECT pg_sleep(4)" -c "COMMIT" > "$out" 2>&1 &
+sleep 1
+got=$(psql -X -q -At -d "$X" -c "SET lock_timeout = '1s'" -c "UPDATE sr.folders SET sealed = false WHERE id = 99" 2>&1)
+got2=$(psql -X -q -At -d "$X" -c "SET lock_timeout = '1s'" -c "UPDATE sr.boxes SET sealed = false WHERE id = 99" 2>&1)
+wait
+if [ -z "$got" ]; then echo "ok    a folder update that writes none doesn't wait for a folder's move"
+else echo "FAIL  a folder update that writes none, while a folder is moved: $got"; fails=$((fails + 1)); fi
+if [ -z "$got2" ]; then echo "ok    a box update that writes none doesn't wait for a box's move"
+else echo "FAIL  a box update that writes none, while a box is moved: $got2"; fails=$((fails + 1)); fi
+dropdb "$X"; rm -f "/tmp/${DB}_self.authz" "/tmp/${DB}_self.sql"
 
 rm -f "$out" "$out.b"
 dropdb "$DB"
