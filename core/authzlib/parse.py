@@ -406,8 +406,9 @@ class Mark(NamedTuple):
     comment: bool  # in a -- comment, which runs to the end of the line
 
 
-# a dollar quote's tag in SQL: $$, or $name$
-DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
+# a dollar quote's tag in SQL: $$, or $name$, whose name is as an unquoted name is (letters past ASCII too, as
+# sqlutil.LETTER: that module imports this one)
+DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_\x80-\U0010ffff][A-Za-z0-9_\x80-\U0010ffff]*)?\$")
 # what may start a quote, open or close a brace, or start a comment: the text between is read in one step
 SPECIAL = re.compile(r"""['"{}$]|--|/\*""")
 # what may start a quote or a brace: a line with none, outside braces, ends its code where -- starts
