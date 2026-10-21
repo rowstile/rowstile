@@ -6,13 +6,14 @@ server (`rowstile lsp`, in `core/cli/lsp.py`):
 - **errors while typing**, on the line they name, from the same compiler the database runs;
 - **hover**: a permission's definition and what it inherits through, a relation's sources, a type's table and key;
 - **go to definition** and **find references** for types, relations and permissions (`parent.edit` goes to
-  the folder's `edit`);
+  the folder's `edit`; references in the policy's files and the open test files);
 - **outline** of types, relations, permissions and rules;
 - **completion**: after `rel.` the target type's permissions, inside a type its relations and permissions, and
   with a `database` in `rowstile.toml`, table names and, inside `{ }`, the columns of the row the condition is
   about, quoted where SQL needs it (`"parentId"`). Names are read from the database once, when first needed; when
   it can't be reached, the server's log says why, and it is tried again some seconds later;
-- **test files** (only `test "..."` blocks) are checked against the policy `rowstile.toml` names.
+- **test files** (only `test "..."` blocks) are checked against the policy `rowstile.toml` names, and again
+  when the policy changes.
 
 `rowstile.toml` is read again when it changes. A mistake in it is shown on it, and in a message; until it is
 fixed, the policy is checked without its settings.
