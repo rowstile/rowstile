@@ -23,7 +23,7 @@ invariance of the fixed policies 27
 keep unchanged trees 9
 language server 108
 masks 32
-mcp 70
+mcp 75
 migrate vs apply 77
 migrations 71
 moves 23

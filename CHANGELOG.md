@@ -93,6 +93,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `rowstile.toml` setting (`[migrations] lock` and `write_after`, `[review] snapshot`, `[clients] ts`), the exit
   codes, and which folder `migrate --dir` and `--out` are read from. `rowstile --help` names `review`'s policy
   argument and `[review] snapshot`, and says which policy `graph` draws.
+- The MCP server (`rowstile mcp`) answers a call whose arguments a tool refuses (one missing, null, or one that
+  reads as an option, such as `--development`) with the tool's failed call (`isError`, exit code 2, the reason in
+  its text), as MCP 2025-11-25 asks, so that the agent sees why and corrects the call. It answered with a protocol
+  error, which a client may keep from the agent. A call whose `arguments` isn't an object is a protocol error now,
+  where the tool ran as if it had none.
 - `rowstile why` and Studio listed a change both as the best way to grant a permission and as "could not be
   tried", when the change grants it but counting what else it gives failed (a condition that fails on another
   row, say). It is now listed only as not tried, with the database's reason: what else it gives was never counted.
