@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import types
 import unittest
@@ -2166,7 +2167,7 @@ class Command(unittest.TestCase):
             # a command's own lines of the usage, where the database comes from, and nothing of the others
             p = run("review", "--help")
             self.assertEqual(p.returncode, 0, p.stderr)
-            self.assertTrue(p.stdout.startswith("rowstile review  [--base REF]"), p.stdout)
+            self.assertTrue(p.stdout.startswith("rowstile review  [POLICY.authz] [--base REF]"), p.stdout)
             self.assertIn("\nThe database is --db DSN", p.stdout)
             self.assertIn("\nrowstile --help: every command, and rowstile.toml\n", p.stdout)
             self.assertNotIn("rowstile fmt", p.stdout)
@@ -2185,21 +2186,75 @@ class Command(unittest.TestCase):
         self.assertRegex(review, r"\n +\(exit 0 whatever it finds: test and migrate --check gate\)\n\n")
         self.assertIn("\nWithout --db, those variables may be in .env.local or .env beside rowstile.toml", review)
 
+    @staticmethod
+    def arguments_named(signature: str) -> tuple[int, int | None]:
+        """How many arguments a usage line's signature names, its options left out: (fewest, most; None: any)."""
+        words = re.sub(r"\[--[^\]]*\]", "", signature)  # [--as WHO], [--markdown|--json]
+        words = re.sub(rf"(?:{'|'.join(rowstile_cli.VALUED)}) \S+", "", words)  # --as WHO
+        words = re.sub(r"--[a-z][a-z-]*", "", words)  # --yes
+        fewest, most = 0, 0
+        for word in re.findall(r'\[[^\]]*\]|"[^"]*"|\S+', words):  # [ID], "SELECT ...", TYPE
+            fewest += not word.startswith("[")
+            most += 1
+        return fewest, None if re.search(r"\.\.\.\]", words) else most
+
+    @staticmethod
+    def reference_table() -> dict[str, tuple[set[str], bool]]:
+        """The commands docs/reference/tools.md's table names in its first column, each with the options it names
+        and whether it names a policy file (p.authz)."""
+        with open(os.path.join(os.path.dirname(ROOT), "docs", "reference", "tools.md"), encoding="utf-8") as fh:
+            page = fh.read()
+        rows = page[page.index("\n| command | what |\n") :].split("\n\n")[0].splitlines()[3:]
+        out: dict[str, tuple[set[str], bool]] = {}
+        for row in rows:
+            first = re.split(r"(?<!\\)\|", row)[1]
+            for span in re.findall(r"`rowstile ([^`]*)`", first):
+                head = span.split()[0].split("\\|")
+                for cmd in head if all(c in rowstile_cli.ARGUMENTS for c in head) else head[:1]:
+                    options, policy = out.get(cmd, (set(), False))
+                    options |= set(re.findall(r"(?<![\w-])--[a-z][a-z-]*", span)) - {cmd}
+                    out[cmd] = (options, policy or "p.authz" in span)
+        return out
+
     def test_each_command_takes_the_options_its_usage_names(self) -> None:
-        # the options the command takes (it refuses the others) are those its usage names, and --db where it reads a
-        # database; --downgrade on push, migrate and remove is named once, under apply
+        # the options the command takes (it refuses the others) are those its usage names, and those the reference's
+        # table names (docs/reference/tools.md), and --db where it reads a database; --downgrade on push, migrate and
+        # remove is named once in the usage, under apply. The usage names the arguments it takes, and the table the
+        # policy file where the usage does
         import features
         import mcp
 
         listed = features.usage()
+        table = self.reference_table()
+        self.assertEqual(set(table), set(listed), "the commands of docs/reference/tools.md's table and of --help")
         for cmd, takes in rowstile_cli.ARGUMENTS.items():
             options = set(takes.options.split())
             named = listed[cmd] | ({"--downgrade"} if cmd in ("push", "migrate", "remove") else set())
             self.assertEqual(options - {"--db"}, named - {"--db"}, cmd)  # (review names --db: its access part)
+            self.assertEqual(options - {"--db"}, table[cmd][0] - {"--db"}, f"docs/reference/tools.md: rowstile {cmd}")
+            line = rowstile_cli.usage_lines(cmd)[0]  # its words, then (at column 47, if on this line) what it does
+            signature = (line[:47] if line[45:47] == "  " else line).removeprefix(f"rowstile {cmd}")
+            self.assertEqual(self.arguments_named(signature), (takes.fewest, takes.most), f"rowstile {cmd} --help")
+            self.assertEqual(table[cmd][1], "POLICY.authz" in signature, f"docs/reference/tools.md: rowstile {cmd}")
         # the MCP server passes its --db to the commands that read a database, and to no other
         for tool in features.mcp_tools():
             name = tool.removeprefix("mcp.")
             self.assertEqual(name in mcp.NO_DATABASE, "--db" not in rowstile_cli.ARGUMENTS[name].options, name)
+
+    def test_every_setting_is_in_help_and_the_reference(self) -> None:
+        # the rowstile.toml that --help and docs/reference/tools.md show holds every setting rowstile reads, and no other
+        import tomllib
+
+        assert rowstile_cli.__doc__ is not None
+        usage = rowstile_cli.__doc__.split("\nrowstile.toml:\n\n")[1].split("\n\n")[0]
+        with open(os.path.join(os.path.dirname(ROOT), "docs", "reference", "tools.md"), encoding="utf-8") as fh:
+            page = fh.read()
+        reference = page.split("\n```toml\n")[1].split("\n```\n")[0]
+        for where, text in (("rowstile --help", textwrap.dedent(usage)), ("docs/reference/tools.md", reference)):
+            shown = tomllib.loads(text)
+            tables = {k: set(v) for k, v in shown.items() if isinstance(v, dict)}
+            tables[""] = {k for k, v in shown.items() if not isinstance(v, dict)}
+            self.assertEqual(tables, {k: set(v) for k, v in rowstile_cli.SETTINGS.items()}, where)
 
     def test_an_env_file_that_isnt_utf8_is_said(self) -> None:
         # a .env saved in another encoding (an accent in a comment) isn't read: nothing of it reaches the
@@ -2265,6 +2320,26 @@ class Command(unittest.TestCase):
                 self.assertEqual(p.returncode, code, p.stderr)
                 self.assertEqual(p.stdout.count("  + type file: can extra"), 20, p.stdout)
                 self.assertIn("\n  ... and 5 more\n", p.stdout)
+
+    def test_migrate_dir_is_a_folder_of_rowstile_tomls(self) -> None:
+        # --dir, as [migrations] dir and the other paths rowstile.toml holds, is read from rowstile.toml's folder,
+        # wherever the command runs (docs/reference/tools.md says so)
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
+                fh.write('policy = "policy.authz"\n[migrations]\ntool = "sql"\n')
+            with open(os.path.join(d, "policy.authz"), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(read(POLICIES["docs"]))
+            os.makedirs(os.path.join(d, "sub"))
+            p = subprocess.run(
+                [sys.executable, os.path.join(ROOT, "cli", "rowstile_cli.py"), "migrate", "--dir", "m", "--name", "a"],
+                cwd=os.path.join(d, "sub"),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual([f.endswith("_a.sql") for f in os.listdir(os.path.join(d, "m"))], [True], p.stdout)
+            self.assertEqual(os.listdir(os.path.join(d, "sub")), [])
 
     def test_migrate_finds_alembics_head_as_revisions_are_written(self) -> None:
         # a merge's revisions, laid out over lines (black and Ruff do it to a long tuple): the merge is the head, where

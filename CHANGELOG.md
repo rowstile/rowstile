@@ -88,6 +88,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Fixed
 
+- The tools reference lists every option each command takes (`migrate --tool --dir --one-phase --downgrade`,
+  `diff --limit`, `bench --people --rounds`, `init --role --out`, `snapshot --out`, and the others), every
+  `rowstile.toml` setting (`[migrations] lock` and `write_after`, `[review] snapshot`, `[clients] ts`), the exit
+  codes, and which folder `migrate --dir` and `--out` are read from. `rowstile --help` names `review`'s policy
+  argument and `[review] snapshot`, and says which policy `graph` draws.
 - `rowstile why` and Studio listed a change both as the best way to grant a permission and as "could not be
   tried", when the change grants it but counting what else it gives failed (a condition that fails on another
   row, say). It is now listed only as not tried, with the database's reason: what else it gives was never counted.
