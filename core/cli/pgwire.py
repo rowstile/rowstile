@@ -3,7 +3,10 @@ library only. Enough for the rowstile command and tests: trust, password, MD5 an
 SCRAM-SHA-256 authentication (bound to the TLS channel when the server offers it, as channel_binding
 says, and only the methods require_auth allows); TCP (with TLS, as sslmode says, the server's certificate checked
 against the root certificate libpq would use) or Unix sockets. A connection string's settings are libpq's: each is
-honoured as libpq honours it, left alone where that changes nothing checked, or refused.
+honoured as libpq honours it, left alone where that changes nothing checked, or refused. Three things differ: it
+reads no password file (libpq reads ~/.pgpass where no password is given), without connect_timeout it waits 10 s
+(libpq: no limit), and it sends no client certificate (libpq sends ~/.postgresql/postgresql.crt to a server that
+asks for one).
 
     conn = connect(host="/var/run/postgresql", user="app_user", password="...", database="app")
     conn.query("SELECT authz.can($1, $2, $3)", ["file", "11", "view"])   # -> [(True,)]
@@ -36,7 +39,7 @@ class ConnectArgs(TypedDict):
     password: str | None
     database: str
     options: str | None
-    timeout: float
+    timeout: float | None  # None: as long as it takes
     sslmode: str  # disable | allow | prefer | require | verify-ca | verify-full
     # the root certificates the server's certificate is checked against: a file, or system (the system's); None:
     # root.crt in libpq's folder, if it is there (then require checks against it too, as verify-ca)
@@ -61,6 +64,19 @@ class PgError(Exception):
 
 class ProtocolError(Exception):
     pass
+
+
+class TlsFailed(ProtocolError):
+    """TLS with the server failed: its handshake, or the root certificate file it would check the server against.
+    With sslmode=prefer the connection is tried again without TLS, as libpq tries it."""
+
+
+class _Again(Exception):
+    """A try that failed where libpq tries the other way (sslmode=allow or prefer): the error it failed with."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(str(error))
+        self.error = error
 
 
 class Unreachable(OSError):
@@ -149,6 +165,10 @@ def _text(value: object) -> str:
         )
         return "{" + ",".join(items) + "}"
     return str(value)
+
+
+# why a COPY ... FROM STDIN fails (the server's error says it after "COPY from stdin failed: ")
+NO_COPY = "the rowstile command sends no rows to COPY FROM STDIN (psql's \\copy does)"
 
 
 class Connection:
@@ -308,7 +328,10 @@ class Connection:
                 if code == 0:
                     continue
                 if code in (3, 5, 10) and password is None:
-                    raise ProtocolError("the server asks for a password")
+                    raise ProtocolError(
+                        "the server asks for a password, and none was given: put it in the connection string or "
+                        "PGPASSWORD (the rowstile command reads no password file, such as ~/.pgpass)"
+                    )
                 if code == 3 and password is not None:
                     self._send(b"p", self._cstr(password))
                     done = True
@@ -455,13 +478,18 @@ class Connection:
             elif kind == b"N":
                 if self.on_notice:
                     self.on_notice(self._fields(payload))
+            elif kind in (b"G", b"W"):
+                # the server waits for the rows of a COPY ... FROM STDIN, and ignores the Sync sent with the
+                # statement until the copy ends: the copy is failed, and a Sync after it ends the statement
+                self._send(b"f", self._cstr(NO_COPY))
+                self._send(b"S")
             elif kind == b"Z":
                 self.in_error = payload == b"E"
                 self.busy = False
                 if error:
                     raise error
                 return rows, [c[0] for c in cols]
-            # 1, 2, n, A, S: nothing to do
+            # 1, 2, n, A, S, and a COPY TO STDOUT's H, d, c: nothing to do
 
     def execute(self, sql: str) -> list[tuple[Value, ...]]:
         """Run a statement without parameters (BEGIN, COMMIT, ...)."""
@@ -483,6 +511,8 @@ class Connection:
             elif kind == b"N":
                 if self.on_notice:
                     self.on_notice(self._fields(payload))
+            elif kind in (b"G", b"W"):  # a COPY ... FROM STDIN waits for rows: the copy is failed, the server says so
+                self._send(b"f", self._cstr(NO_COPY))
             elif kind == b"Z":
                 self.in_error = payload == b"E"
                 self.busy = False
@@ -491,45 +521,12 @@ class Connection:
                 return
             # T, D, C, I, S, ...: nothing to keep
 
-    def cursor(self) -> Cursor:
-        return Cursor(self)
-
     def close(self) -> None:
         try:
             self._send(b"X")
         except (OSError, ProtocolError, PgError):
             pass
         self.sock.close()
-
-
-class Cursor:
-    """Just enough DB-API for the generated Python client: %s placeholders, fetchone/fetchall, description."""
-
-    def __init__(self, conn: Connection) -> None:
-        self.conn = conn
-        self.rows: list[tuple[Value, ...]] = []
-        self.description: list[tuple[str, None, None, None, None, None, None]] | None = None
-
-    def __enter__(self) -> Cursor:
-        return self
-
-    def __exit__(self, *exc: object) -> bool:
-        return False
-
-    def execute(self, sql: str, args: Sequence[object] = (), /) -> None:
-        parts = sql.split("%s")
-        if len(parts) - 1 != len(args):
-            raise ValueError("the number of %s placeholders and arguments differ")
-        text = parts[0] + "".join(f"${i + 1}" + p for i, p in enumerate(parts[1:]))
-        self.rows, names = self.conn.query_described(text, list(args))
-        self.description = [(n, None, None, None, None, None, None) for n in names]
-
-    def fetchone(self) -> tuple[Value, ...] | None:
-        return self.rows.pop(0) if self.rows else None
-
-    def fetchall(self) -> list[tuple[Value, ...]]:
-        rows, self.rows = self.rows, []
-        return rows
 
 
 def _saslprep(password: str) -> str:
@@ -826,7 +823,7 @@ LIBPQ: dict[str, str | None] = {
     "oauth_scope": None,
     "sslkeylogfile": None,
 }
-# what this client does with each. Honoured: done as libpq does it
+# what this client does with each. Honoured: done as libpq does it (connect_timeout's default aside: 10 s, not none)
 HONOURED = frozenset(
     {
         "host",
@@ -867,7 +864,9 @@ IGNORED = {
     "gssdelegation": "GSS sign-in, which the command doesn't do",
     "max_protocol_version": "the command speaks protocol 3.0, which no maximum excludes",
 }
-# taken with these values, which are what the command does anyway; any other is refused
+# taken with these values, which are what the command does anyway; any other is refused. sslcertmode=allow (libpq's
+# default) sends a client certificate to a server that asks for one: the command has none to send, and the server
+# says so if it needs one
 ONLY = {
     "gssencmode": (("disable", "prefer"), "GSS encryption"),
     "sslcertmode": (("disable", "allow"), "a client certificate"),
@@ -875,7 +874,7 @@ ONLY = {
     "min_protocol_version": (("3.0",), "a protocol version above 3.0"),
     "replication": (("0", "false", "off", "no"), "a replication connection"),
 }
-# never done: refused when given
+# never done: refused when given (named, and the value too, but for a secret's)
 REFUSED = {
     "service": "connection services",
     "hostaddr": "a host address apart from its name",
@@ -889,6 +888,7 @@ REFUSED = {
     "oauth_client_secret": "OAuth",
     "oauth_scope": "OAuth",
 }
+SECRETS = frozenset({"scram_client_key", "scram_server_key", "oauth_client_secret"})
 # and passfile, refused only when no password is given: libpq reads the file only then
 # what libpq sends with its start-up from these variables, as the session's settings
 STARTUP = {"PGDATESTYLE": "datestyle", "PGTZ": "timezone", "PGGEQO": "geqo"}
@@ -916,6 +916,8 @@ def _keywords(text: str) -> list[tuple[str, str]]:
         while i < n and text[i] in BLANKS:
             i += 1
         if i == n or text[i] != "=":
+            if out and out[-1][0] == "password":  # the rest of a password with a space or a quote in it, likely
+                raise ValueError(f"can't read the connection string after its password (not repeated here): {QUOTING}")
             raise ValueError(f'can\'t read the connection string: "{key}" has no "=" after it: {QUOTING}')
         i += 1
         while i < n and text[i] in BLANKS:
@@ -935,13 +937,21 @@ def _keywords(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def _integer(text: str) -> int | None:
+    """A whole number as libpq reads one (strtol, into an int): a sign and spaces around it allowed. None: not one."""
+    match = re.fullmatch(f"[{BLANKS}]*([+-]?[0-9]+)[{BLANKS}]*", text)
+    number = int(match[1]) if match else None
+    return number if number is not None and -(2**31) <= number < 2**31 else None
+
+
 def parse_dsn(text: str | None) -> ConnectArgs:
     """connect() arguments from "host=... port=... user=... password=... dbname=... sslmode=..." (read as libpq
     reads it) or a postgresql:// URL (its ?options too), with libpq's variables (PGHOST, PGSSLMODE, ...) for
     whatever is left out. Each of libpq's settings is honoured as libpq honours it, left alone where that changes
     nothing checked, or refused (ValueError, naming it); so are several hosts, and a setting libpq doesn't have, in
     a keyword string. A URL's other options (an ORM's own: ?schema=, ?pgbouncer=) are left to whoever they are
-    for."""
+    for. Three things differ from libpq (the module's docstring): the password file, connect_timeout's default, and
+    client certificates."""
     out: dict[str, str] = {}
 
     def setting(k: str, v: str, strict: bool) -> None:
@@ -965,12 +975,15 @@ def parse_dsn(text: str | None) -> ConnectArgs:
 
         u = urllib.parse.urlsplit(text)
         one(u.netloc.rpartition("@")[2])
+        port: int | str | None
         try:
             port = u.port
         except ValueError:
-            raise ValueError(
-                "the URL's port isn't a number: a #, ? or / in the password must be written %23, %3F, %2F"
-            ) from None
+            port = u.netloc.rpartition("@")[2].rpartition("]")[2].rpartition(":")[2]
+            if not re.fullmatch("[0-9]+", port):
+                raise ValueError(
+                    "the URL's port isn't a number: a #, ? or / in the password must be written %23, %3F, %2F"
+                ) from None  # out of range: said below, as for the port of a keyword string
         for k, v in (
             ("host", u.hostname),
             ("port", port),
@@ -1005,7 +1018,8 @@ def parse_dsn(text: str | None) -> ConnectArgs:
         return (out[k] if k in out else os.environ.get(var) if var else None) or None
 
     def refused(k: str, what: str, then: str = "") -> ValueError:
-        how = f"{k}={out[k]}" if k in out else f"{LIBPQ[k]}={os.environ.get(LIBPQ[k] or '')}"
+        name = k if k in out else LIBPQ[k] or k  # the setting, or the variable that gave it
+        how = name if k in SECRETS else f"{name}={given(k)}"
         return ValueError(f"the connection asks for {what} ({how}), which the rowstile command doesn't do{then}")
 
     for k, what in REFUSED.items():
@@ -1045,24 +1059,25 @@ def parse_dsn(text: str | None) -> ConnectArgs:
         raise ValueError("invalid SSL protocol version range")
     if tls["ssl_max_protocol_version"] and high < 12:
         raise refused("ssl_max_protocol_version", "TLS older than TLSv1.2")
-    port = given("port") or "5432"
-    timeout = given("connect_timeout") or "10"
-    if not port.isdigit() or not timeout.isdigit():
-        raise ValueError(
-            f"the port and connect_timeout are numbers, not {port!r}"
-            if not port.isdigit()
-            else f"connect_timeout is a number of seconds, not {timeout!r}"
-        )
-    host = one(given("host") or _default_host(int(port)))
+    written = given("port") or "5432"
+    port = _integer(written)
+    if port is None or not 1 <= port <= 65535:
+        raise ValueError(f"the port is a number from 1 to 65535, not {written!r}")
+    # connect_timeout: zero or less waits as long as it takes, as libpq waits; not given, 10 s (libpq: no limit)
+    written = given("connect_timeout") or "10"
+    timeout = _integer(written)
+    if timeout is None:
+        raise ValueError(f"connect_timeout is a number of seconds, not {written!r}")
+    host = one(given("host") or _default_host(port))
     user = given("user") or _system_user()
     return {
         "host": host,
-        "port": int(port),
+        "port": port,
         "user": user,
         "password": password,
         "database": given("dbname") or user,
         "options": given("options"),
-        "timeout": float(timeout) or 10,
+        "timeout": float(timeout) if timeout > 0 else None,
         "sslmode": sslmode,
         "sslrootcert": sslrootcert,
         "sslcrl": given("sslcrl"),
@@ -1111,25 +1126,29 @@ def _system_user() -> str:
         raise ValueError(f"no user name for the system's user {uid}: name one with user= or PGUSER") from None
 
 
-def _socket(host: str, port: int, timeout: float) -> socket.socket:
+def _socket(host: str, port: int, timeout: float | None) -> socket.socket:
     import socket
 
     if host.startswith("/"):
         if sys.platform == "win32":
             raise ProtocolError(f"host={host} is a Unix socket, which Windows doesn't have: use host=localhost")
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect(os.path.join(host, f".s.PGSQL.{port}"))
+        try:
+            sock.settimeout(timeout)
+            sock.connect(os.path.join(host, f".s.PGSQL.{port}"))
+        except BaseException:  # no socket there, or refused: closed, as create_connection closes its own
+            sock.close()
+            raise
     else:
         sock = socket.create_connection((host, port), timeout=timeout)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     return sock
 
 
-def _why(e: OSError, timeout: float) -> str:
+def _why(e: OSError, timeout: float | None) -> str:
     """What the system said of a connection that failed, in words: "connection refused", "no such file or
     directory", "name or service not known"; for no answer, how long it waited."""
-    if isinstance(e, TimeoutError) and not e.strerror:
+    if isinstance(e, TimeoutError) and not e.strerror and timeout:
         return f"no answer in {timeout:g} s (connect_timeout)"
     said = e.strerror or str(e) or type(e).__name__
     return said[:1].lower() + said[1:]
@@ -1163,15 +1182,15 @@ def _tls(
     maximum: str | None = None,
 ) -> socket.socket:
     """The socket under TLS, as sslmode says, as libpq does it: asked for (SSLRequest), and taken if the server has
-    it; require and stronger refuse a server without it. The server's certificate is checked against the root
-    certificate libpq would use: sslrootcert, else root.crt in libpq's folder (require then checks it too, as
-    verify-ca), or the system's with sslrootcert=system. verify-ca and verify-full go on only with one, and
-    verify-full checks the server's name too. With a root certificate file, a certificate sslcrl, sslcrldir (else
-    root.crl in libpq's folder) says is revoked is refused."""
+    it; prefer goes on without it where the server has none, the others refuse such a server. The server's
+    certificate is checked against the root certificate libpq would use: sslrootcert, else root.crt in libpq's
+    folder (require then checks it too, as verify-ca), or the system's with sslrootcert=system. verify-ca and
+    verify-full go on only with one, and verify-full checks the server's name too. With a root certificate file, a
+    certificate sslcrl, sslcrldir (else root.crl in libpq's folder) says is revoked is refused."""
     sock.sendall(struct.pack("!ii", 8, 80877103))
     answer = sock.recv(1)
     if answer == b"N":
-        if sslmode in ("require", "verify-ca", "verify-full"):
+        if sslmode != "prefer":  # allow asks for TLS once a try without it failed (connect)
             raise ProtocolError(f"the server doesn't do TLS, and sslmode={sslmode} asks for it")
         return sock
     if answer != b"S":
@@ -1189,7 +1208,7 @@ def _tls(
         try:
             context.load_verify_locations(cafile=root)
         except (OSError, ssl.SSLError) as e:
-            raise ProtocolError(f'could not read root certificate file "{root}": {e}') from None
+            raise TlsFailed(f'could not read root certificate file "{root}": {e}') from None
         context.verify_mode = ssl.CERT_REQUIRED
         crl = sslcrl or (None if sslcrldir else _libpq_file("root.crl"))
         if crl or sslcrldir:
@@ -1211,7 +1230,7 @@ def _tls(
     try:
         return context.wrap_socket(sock, server_hostname=host)
     except ssl.SSLError as e:
-        raise ProtocolError(f"TLS with the server failed (sslmode={sslmode}): {e}") from None
+        raise TlsFailed(f"TLS with the server failed (sslmode={sslmode}): {e}") from None
 
 
 def _target(conn: Connection, wanted: str) -> None:
@@ -1244,7 +1263,7 @@ def connect(
     password: str | None = None,
     database: str | None = None,
     options: str | None = None,
-    timeout: float = 10,
+    timeout: float | None = 10,
     sslmode: str = "prefer",
     sslrootcert: str | None = None,
     channel_binding: str = "prefer",
@@ -1258,28 +1277,65 @@ def connect(
     on_notice: Callable[[Fields], None] | None = None,
 ) -> Connection:
     """A session, signed in. on_notice: called with each NOTICE / WARNING the server sends, from the start (psql
-    prints those it sends as the session starts)."""
+    prints those it sends as the session starts). timeout: how long each try waits for the server (None: as long as
+    it takes). Tried as libpq tries it: with TLS, then without where that failed or the server refused the session
+    over it (prefer); without, then with (allow); one way otherwise (a socket's path: without)."""
     where = f"the socket {os.path.join(host, f'.s.PGSQL.{port}')}" if host.startswith("/") else f"{host} port {port}"
+
+    def attempt(tls: bool, again: bool) -> Connection:
+        """One try, with TLS or without. again: the other way is left to try, after TLS that failed or a session
+        the server refused over the way tried (not one this client refused, nor a server not ready yet): _Again."""
+        try:
+            sock = _socket(host, port, timeout)
+        except OSError as e:
+            raise Unreachable(where, _why(e, timeout)) from e
+        try:
+            if tls:
+                sock = _tls(
+                    sock,
+                    host,
+                    sslmode,
+                    sslrootcert,
+                    sslcrl,
+                    sslcrldir,
+                    ssl_min_protocol_version,
+                    ssl_max_protocol_version,
+                )
+            # the timeout holds until it is signed in
+            try:
+                conn = Connection(
+                    sock, user, password, database or user, options, channel_binding, require_auth, settings, on_notice
+                )
+            except PgError as e:
+                if again and e.code != "57P03" and _is_tls(sock) == tls:
+                    raise _Again(e) from None
+                raise
+            _target(conn, target_session_attrs)
+        except TlsFailed as e:
+            sock.close()
+            if again:
+                raise _Again(e) from None
+            raise
+        except OSError as e:  # the connection broke, or nothing answered, before the session started
+            sock.close()
+            raise Unreachable(where, _why(e, timeout)) from e
+        except BaseException:
+            sock.close()
+            raise
+        return conn
+
+    local = host.startswith("/")
+    tls = not local and sslmode not in ("disable", "allow")  # the first try: with TLS, or without
+    other = not local and sslmode in ("allow", "prefer")  # then the other way, where the first failed
     try:
-        sock = _socket(host, port, timeout)
-    except OSError as e:
-        raise Unreachable(where, _why(e, timeout)) from e
-    try:
-        if not host.startswith("/") and sslmode != "disable":
-            sock = _tls(
-                sock, host, sslmode, sslrootcert, sslcrl, sslcrldir, ssl_min_protocol_version, ssl_max_protocol_version
-            )
-        # the timeout holds until it is signed in
-        conn = Connection(
-            sock, user, password, database or user, options, channel_binding, require_auth, settings, on_notice
-        )
-        _target(conn, target_session_attrs)
-    except OSError as e:  # the connection broke, or nothing answered, before the session started
-        sock.close()
-        raise Unreachable(where, _why(e, timeout)) from e
-    except BaseException:
-        sock.close()
-        raise
-    sock.settimeout(None)
+        conn = attempt(tls, other)
+    except _Again as failed:
+        try:
+            conn = attempt(not tls, False)
+        except (OSError, PgError, ProtocolError) as e:
+            if str(e) == str(failed.error):  # the same on both: said once
+                raise
+            raise ProtocolError(f"{failed.error}; then {'without' if tls else 'with'} TLS: {e}") from e
+    conn.sock.settimeout(None)
     conn.address = (host, port)
     return conn

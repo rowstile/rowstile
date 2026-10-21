@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -32,6 +33,48 @@ class Ran:
 
     def __init__(self, rowcount: int) -> None:
         self.rowcount = rowcount
+
+
+class Cursor:
+    """Just enough DB-API (psycopg's) over the command's Postgres client for the generated Python client: %s
+    placeholders (%% for a percent sign), fetchone, fetchall, description."""
+
+    def __init__(self, conn: pgwire.Connection) -> None:
+        self.conn = conn
+        self.rows: list[tuple[pgwire.Value, ...]] = []
+        self.description: list[tuple[str, None, None, None, None, None, None]] | None = None
+
+    def __enter__(self) -> "Cursor":
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def execute(self, sql: str, args: Sequence[object] = (), /) -> None:
+        parts = re.split("(%%|%s)", sql)
+        if parts.count("%s") != len(args):
+            raise ValueError("the number of %s placeholders and arguments differ")
+        n = iter(range(1, len(args) + 1))
+        text = "".join("%" if p == "%%" else f"${next(n)}" if p == "%s" else p for p in parts)
+        self.rows, names = self.conn.query_described(text, list(args))
+        self.description = [(name, None, None, None, None, None, None) for name in names]
+
+    def fetchone(self) -> tuple[pgwire.Value, ...] | None:
+        return self.rows.pop(0) if self.rows else None
+
+    def fetchall(self) -> list[tuple[pgwire.Value, ...]]:
+        rows, self.rows = self.rows, []
+        return rows
+
+
+class Driver:
+    """The command's Postgres client, with a cursor as the generated Python client takes it."""
+
+    def __init__(self, conn: pgwire.Connection) -> None:
+        self.conn = conn
+
+    def cursor(self) -> Cursor:
+        return Cursor(self.conn)
 
 
 def check(label: str, ok: object, detail: object = "") -> None:
@@ -103,10 +146,10 @@ def main() -> None:
     conn = pgwire.connect(host=host, port=port, user=os.environ.get("PGUSER", "postgres"), database=db)
     conn.execute("BEGIN")
     conn.execute("SET LOCAL ROLE app_user")
-    a = authz_client.Authz(conn)
+    a = authz_client.Authz(Driver(conn))
     a.sign_in(3)
     check("can: carol may view file 11", a.can("file", 11, "view") is True)
-    cur = conn.cursor()
+    cur = Cursor(conn)
     cur.execute("UPDATE app.files SET name = name WHERE id = %s", (12,))  # file 12 is hidden from carol: no row changes
     for label, given in (("a count of 0", 0), ("no rows", []), ("the cursor that ran it", Ran(0))):
         try:
