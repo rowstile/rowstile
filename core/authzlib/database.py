@@ -1023,9 +1023,9 @@ def takes_app_role(db: Db, tests_sql: str, role: str) -> None:
         may_take(db, role)
 
 
-def test(db: Db, tests: Mapping[str, str] | None = None) -> list[TestRow]:
-    """The current policy's tests, the named tests in `tests` (file name -> text) and the invariants:
-    a row per check, as (test, line, ok, detail). Named tests roll back what they did."""
+def _run_tests(db: Db, tests: Mapping[str, str] | None, coverage: bool) -> tuple[list[dict[str, Value]], str, Files]:
+    """The tests function of the policy in force, with the named tests in `tests`, made, run and dropped: its rows,
+    and the policy and files it was compiled from."""
     from .testing import FN as TESTS_FN
 
     policy, files = applied(db)
@@ -1033,34 +1033,28 @@ def test(db: Db, tests: Mapping[str, str] | None = None) -> list[TestRow]:
 
     def make(c: Compiler) -> tuple[str, str]:
         c.add_test_files(named)
-        return c.tests_function_sql(), c.role
+        return c.tests_function_sql(coverage=coverage), c.role
 
     sql, role = compiled(policy, files, make)
     takes_app_role(db, sql, role)
     db.script(sql)
     rows = db.rows(f"SELECT * FROM {TESTS_FN}()")
     db.script(f"DROP FUNCTION {TESTS_FN}()")
-    return [test_row(r) for r in rows]
+    return rows, policy, files
+
+
+def test(db: Db, tests: Mapping[str, str] | None = None) -> list[TestRow]:
+    """The current policy's tests, the named tests in `tests` (file name -> text) and the invariants:
+    a row per check, as (test, line, ok, detail). Named tests roll back what they did."""
+    return [test_row(r) for r in _run_tests(db, tests, coverage=False)[0]]
 
 
 def coverage(db: Db, tests: Mapping[str, str] | None = None) -> tuple[list[TestRow], Report]:
     """test(), and the coverage of the permissions' branches by its passing checks: (rows, coverage.report)."""
     from . import coverage as cov
     from .testing import COVERAGE
-    from .testing import FN as TESTS_FN
 
-    policy, files = applied(db)
-    named = test_files(tests)
-
-    def make(c: Compiler) -> tuple[str, str]:
-        c.add_test_files(named)
-        return c.tests_function_sql(coverage=True), c.role
-
-    sql, role = compiled(policy, files, make)
-    takes_app_role(db, sql, role)
-    db.script(sql)
-    rows = db.rows(f"SELECT * FROM {TESTS_FN}()")
-    db.script(f"DROP FUNCTION {TESTS_FN}()")
+    rows, policy, files = _run_tests(db, tests, coverage=True)
     # the branches, as the policy in force writes them (compiled: a deny's hidden permission stays hidden)
     report = cov.report(
         policy_compiler(policy, files), [text_or_none(r, "detail") for r in rows if r["test"] == COVERAGE]
