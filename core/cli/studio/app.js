@@ -10,6 +10,7 @@
 /** @typedef {{database: string, as: string, writable: boolean, types: Type[], tables: string[], principals: string[], policy_file: string | null}} Overview */
 /** @typedef {{id: string | null, visible: boolean, values: Record<string, unknown>, masked: string[], perms: string[]}} Row */
 /** @typedef {{table: string, type: string | null, columns: string[], rows: Row[], offset: number, more: boolean, total: number, visible_total: number}} Rows */
+// fewer_people (who loses it on this object) is also takes' first entry, the one with n 0: the page says it from there
 /** @typedef {{text: string, grants: boolean, more_objects: number, more_people: number, also: string[], elsewhere: {type: string, perm: string, n: number}[], fewer_people: number, takes: {type: string, perm: string, n: number, people: number}[], lines: string[], kinds: string[]}} Way */
 /** @typedef {{text: string, error: string, lines: string[], kinds: string[]}} Untried */
 /** @typedef {{holds: boolean, explain: string[], needs: string, tried: boolean, stops: string[], notes: string[], ways: Way[], untried: Untried[]}} Why */
@@ -17,8 +18,10 @@
 /** @typedef {{change: string, type: string, what: string, users: number, objects: number}} Summary */
 /** @typedef {{change: string, type: string, what: string, id: string, user_id: string | null}} Change */
 /** @typedef {{same_text: boolean, summary: Summary[], rows: Change[], truncated: boolean}} Diff */
-/** @typedef {{relation: string, subject_type: string, subject_id: string, subject_relation: string, expires_at: string | null, created_by: string | null}} Share */
-/** @typedef {{id: number, object_type: string, object_id: string, relation: string, requester: string, reason: string | null}} AccessRequest */
+// authz.list_shares' row: a custom role's share has the role's name beside its relation, role:<id>; a link's
+// subject_id is (link), not the link's id (authz.list_links has that)
+/** @typedef {{relation: string, role: string | null, subject_type: string, subject_id: string, subject_relation: string, expires_at: string | null, starts_at: string | null, caveat: string | null, created_by: string | null, created_at: string}} Share */
+/** @typedef {{id: number, object_type: string, object_id: string, relation: string, requester: string, reason: string | null, duration: string | null, created_at: string}} AccessRequest */
 /** @typedef {{shares: Share[], requests: AccessRequest[]}} Shares */
 /** @typedef {{overview: Overview, rows: Rows, why: Why, test: Test, graph: {mermaid: string}, diff: Diff, shares: Shares,
  *             share: {ok: boolean}, unshare: {ok: boolean}, decide: {ok: boolean}}} Answers */
@@ -99,7 +102,7 @@ async function api(path, params = {}, body) {
   return out;
 }
 const who = () => state.as || "anyone";
-/** What the page loaded first (start() sets it before anything else runs). */
+/** The policy's types, permissions and tables, as last asked (start() asks before anything else runs). */
 function overview() {
   if (!state.overview) throw new Error("Studio hasn't loaded yet");
   return state.overview;
@@ -108,10 +111,11 @@ function overview() {
 // --- tabs and the view-as box ---------------------------------------------------------------------------
 /** @type {Record<string, () => unknown>} */
 const tabs = { graph: loadGraph, diff: loadDiff, shares: loadRequests };
-document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => {
+document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", async () => {
   const tab = /** @type {HTMLElement} */ (b).dataset.tab || "";
   document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.id === tab));
+  await refresh();
   (tabs[tab] || (() => {}))();
 }));
 $("as-form").addEventListener("submit", (e) => {
@@ -127,21 +131,35 @@ async function start() {
     return;
   }
   try {
-    state.overview = await api("overview");
+    show(await api("overview"));
   } catch (e) {
     $("grid-head").textContent = message(e);
     return;
   }
-  const o = state.overview;
+  input("as").value = state.as;
+}
+/** The policy's types, permissions and tables, asked again: under rowstile dev the policy changes while the page is
+ *  open. Asked when a tab or a table is opened; if it can't be had, the page goes on with the one it has. */
+async function refresh() {
+  try {
+    show(await api("overview"));
+  } catch (e) {
+    toast(message(e));
+  }
+}
+/** @param {Overview} o */
+function show(o) {
+  state.overview = o;
   $("db").textContent = `${o.database}, as ${o.as}`;
   $("mode").textContent = o.writable ? "can write" : "read-only";
   $("mode").classList.toggle("write", o.writable);
-  input("as").value = state.as;
   $("as-list").replaceChildren(el("option", { value: "anyone" }), ...o.principals.map((p) => el("option", { value: `${p}:` })));
   const types = new Map(o.types.map((t) => [t.table, t.name]));
-  $("table-list").replaceChildren(...o.tables.map((t) => el("button", { "data-table": t, onclick: () => loadRows(t, 0) },
+  $("table-list").replaceChildren(...o.tables.map((t) => el("button", { "data-table": t, class: t === state.table ? "on" : "", onclick: () => loadRows(t, 0) },
     t, types.get(t) ? el("small", {}, `type ${types.get(t)}`) : null)));
-  $("shares-type").replaceChildren(...o.types.filter((t) => t.relations.some((r) => r.shared)).map((t) => el("option", {}, t.name)));
+  const shared = input("shares-type").value;
+  $("shares-type").replaceChildren(...o.types.filter((t) => t.relations.some((r) => r.shared))
+    .map((t) => el("option", { selected: t.name === shared }, t.name)));
 }
 
 // --- tables, as someone -----------------------------------------------------------------------------------
@@ -153,7 +171,8 @@ async function loadRows(table, offset) {
   $("grid-head").textContent = "Loading…";
   let data;
   try {
-    data = await api("rows", { table, as: who(), offset });
+    // the policy asked again beside the rows: the panel offers the permissions it has now
+    [data] = await Promise.all([api("rows", { table, as: who(), offset }), refresh()]);
   } catch (e) {
     $("grid-head").textContent = message(e);
     $("grid").replaceChildren();
@@ -208,8 +227,10 @@ function select(row, tr) {
 
 /** @param {string} type @param {string} id @param {string} perm @param {HTMLElement} out */
 async function why(type, id, perm, out) {
-  out.replaceChildren(el("p", { class: "muted" }, state.as ? "Asking…" : "Pick someone to view as first."));
-  if (!state.as || state.as === "anyone") return;
+  // anyone holds nothing to explain: the page asks for someone rather than wait for an answer it won't ask for
+  const someone = !["", "anyone", "nobody"].includes(state.as);
+  out.replaceChildren(el("p", { class: "muted" }, someone ? "Asking…" : "Pick someone to view as first."));
+  if (!someone) return;
   let a;
   try {
     a = await api("why", { as: who(), type, id, perm });
@@ -243,7 +264,7 @@ async function why(type, id, perm, out) {
     }
     for (const n of a.notes) parts.push(el("p", { class: "muted" }, n));
   }
-  parts.push(el("div", { class: "row" }, el("span", { class: "muted" }, "Make a test:"),
+  parts.push(el("div", { class: "actions" }, el("span", { class: "muted" }, "Make a test:"),
     el("button", { onclick: () => makeTest(type, id, perm, "can", out) }, `${who()} can ${perm}`),
     el("button", { onclick: () => makeTest(type, id, perm, "cannot", out) }, `… cannot`)));
   out.replaceChildren(...parts);
@@ -268,9 +289,10 @@ const copy = (text) => el("button", { onclick: () => navigator.clipboard.writeTe
 
 // --- the graph ------------------------------------------------------------------------------------------------
 const page = /** @type {Window & {mermaid?: Mermaid}} */ (window);
-// Mermaid, one version, checked against its hash before it runs: this page holds the token
-const MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js";
-const MERMAID_HASH = "sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2";
+// Mermaid, the playground's version (unit_test.py holds them to one), checked against its hash before it runs: this
+// page holds the token. A hash that isn't the file's leaves the graph as text: tests/studio_page.mjs asks for a drawing
+const MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@12.0.0/dist/mermaid.min.js";
+const MERMAID_HASH = "sha384-xzghz1GQ5u9HCpVskeDPqMsdogD1yvuMQbEK53+wi+G70+6J1AG0L2cfi9PHjDWI";
 let graphs = 0;
 async function loadGraph() {
   const view = $("graph-view");
@@ -309,8 +331,9 @@ function script(src, integrity) {
 /** @param {string} domId */
 function detail(domId) {
   const types = overview().types;
-  // a node is type__name, a type's box type__0 (devtools.py): names hold no __, so the split is the type's
-  const [typeName, member] = domId.replace(/^flowchart-/, "").replace(/-\d+$/, "").split("__");
+  // a node is type__name, a type's box type__0 (devtools.py): names hold no __, so the split is the type's. Mermaid
+  // puts the drawing's id and "flowchart-" before it (policy-graph-1-flowchart-folder__view-12), a number after
+  const [typeName, member] = domId.replace(/^.*?flowchart-/, "").replace(/-\d+$/, "").split("__");
   const t = types.find((x) => x.name === typeName);
   if (!t) return;
   const name = member && member !== "0" ? member : null;
@@ -371,11 +394,16 @@ async function loadShares(type, id) {
   }
   const w = overview().writable;
   const t = overview().types.find((x) => x.name === type);
+  // a link is no subject Unshare can name: authz.revoke_link turns it off, by the id authz.list_links gives
+  const link = (/** @type {Share} */ s) => s.subject_type === "link";
   view.replaceChildren(
     d.shares.length ? el("table", {}, el("tbody", {}, d.shares.map((s) => el("tr", {},
-      el("td", {}, s.relation), el("td", {}, `${s.subject_type}${s.subject_relation ? "#" + s.subject_relation : ""} ${s.subject_id}`),
-      el("td", { class: "muted" }, s.expires_at ? `until ${s.expires_at}` : ""), el("td", { class: "muted" }, s.created_by ? `by ${s.created_by}` : ""),
-      w ? el("td", {}, el("button", { onclick: () => change("unshare", { type, id, relation: s.relation, subject_type: s.subject_type, subject_id: s.subject_id, subject_relation: s.subject_relation }, () => loadShares(type, id)) }, "Unshare")) : null))))
+      el("td", { title: s.role ? s.relation : "" }, s.role || s.relation),
+      el("td", {}, link(s) ? "a share link" : `${s.subject_type}${s.subject_relation ? "#" + s.subject_relation : ""} ${s.subject_id}`),
+      el("td", { class: "muted" }, [s.starts_at ? `from ${s.starts_at}` : "", s.expires_at ? `until ${s.expires_at}` : "", s.caveat ? `if ${s.caveat}` : ""].filter(Boolean).join(", ")),
+      el("td", { class: "muted" }, s.created_by ? `by ${s.created_by}` : ""),
+      w ? el("td", link(s) ? { class: "muted" } : {}, link(s) ? "turned off with authz.revoke_link"
+        : el("button", { onclick: () => change("unshare", { type, id, relation: s.relation, subject_type: s.subject_type, subject_id: s.subject_id, subject_relation: s.subject_relation }, () => loadShares(type, id)) }, "Unshare")) : null))))
       : el("p", { class: "muted" }, `No shares on ${type} ${id}.`),
     w && t ? shareForm(t, id) : el("p", { class: "muted" }, "Read-only: start Studio with --write (or rowstile dev) to change shares."));
 }
@@ -384,7 +412,7 @@ function shareForm(t, id) {
   const rel = el("select", {}, t.relations.filter((r) => r.shared).map((r) => el("option", {}, r.name)));
   const st = el("input", { placeholder: "user", size: 8, value: "user" });
   const sid = el("input", { placeholder: "id", size: 6 });
-  return el("form", { class: "row", onsubmit: (e) => {
+  return el("form", { class: "actions", onsubmit: (e) => {
     e.preventDefault();
     change("share", { type: t.name, id, relation: rel.value, subject_type: st.value, subject_id: sid.value }, () => loadShares(t.name, id));
   } }, el("span", { class: "muted" }, `As ${who()}, share`), rel, "with", st, sid, el("button", { class: "primary" }, "Share"));
@@ -410,9 +438,9 @@ async function loadRequests() {
   }
   const w = overview().writable;
   view.replaceChildren(d.requests.length ? el("table", {}, el("tbody", {}, d.requests.map((r) => el("tr", {},
-    el("td", {}, `#${r.id}`), el("td", {}, `user ${r.requester} asks for ${r.relation} on ${r.object_type} ${r.object_id}`),
+    el("td", {}, `#${r.id}`), el("td", {}, `user ${r.requester} asks for ${r.relation} on ${r.object_type} ${r.object_id}${r.duration ? ` for ${r.duration}` : ""}`),
     el("td", { class: "muted" }, r.reason || ""),
-    w ? el("td", {}, el("button", { onclick: () => change("decide", { request: r.id, approve: true }, loadRequests) }, `Approve as ${who()}`),
+    w ? el("td", {}, el("button", { onclick: () => change("decide", { request: r.id, approve: true }, loadRequests) }, `Approve as ${who()}${r.duration ? ` for ${r.duration}` : ""}`),
       " ", el("button", { onclick: () => change("decide", { request: r.id, approve: false }, loadRequests) }, "Deny")) : null))))
     : el("p", { class: "muted" }, "None pending."));
 }

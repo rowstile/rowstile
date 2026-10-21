@@ -938,6 +938,16 @@ def main() -> None:
         )
         status, _ = c.call("/api/unshare", {**body, "as": "user:1"})
         check("... and unsharing it", status == 200 and shares() == before)
+        # a link's share, as authz.list_shares gives it: its subject is (link), which no share has
+        link = {**body, "subject_type": "link", "subject_id": "(link)", "as": "user:1"}
+        status, e = c.call("/api/unshare", link)
+        check(
+            "unsharing a share link: refused, saying what turns it off (not a Done that leaves it on)",
+            status == 400
+            and e["detail"]
+            == "a share link isn't unshared: authz.revoke_link turns it off, by the id authz.list_links gives",
+            (status, e),
+        )
         # a body's size: the changes the page sends are a few hundred bytes. One over the cap is refused unread, one
         # that doesn't come whole is given up on, and either way the thread is let go
         json_head = {"Content-Type": "application/json"}

@@ -241,6 +241,15 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   says `npm ci`. `migrate.py` runs outside this repository (it stopped with a `StopIteration`): it needs the
   command only for `--client`, and outside the repository it runs the one installed. The app's image no longer
   copies the command, and `test.sh` takes the database and storage down when a step stops the run early.
+- Studio's page: in the Tables tab each row's cells sit under their headings again (each row was laid out as a
+  flex box, its cells bunched apart from the columns). "Why?" while viewing as anyone says to pick someone,
+  where it showed "Asking…" for ever. Clicking a type or a permission in the graph shows how it is written
+  (nothing happened). The page asks for the policy again when a tab or a table is opened, so under
+  `rowstile dev` a permission added or renamed since the page opened is offered. The shares show a custom
+  role's name (not `role:<id>`), a caveat, and when a share starts; a request shows for how long approving
+  gives it. A share link has no Unshare button: it removed nothing and said "Done". The page says
+  `authz.revoke_link` turns a link off, and Studio refuses to unshare a link.
+- Studio's graph uses the playground's Mermaid (12.0.0), from jsDelivr, checked against its hash.
 
 ## 0.1.0 (alpha)
 
