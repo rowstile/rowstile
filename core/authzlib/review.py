@@ -139,7 +139,6 @@ class Tests(TypedDict):
     renamed: list[Renamed]
     untested: list[Untested]
     unread: list[Unread]
-    invariants_removed: list[str]
     count: int
     run: NotRequired[TestRun]
 
@@ -383,7 +382,7 @@ def review(
         b.entities = {}
     unread = unread_tests(h)
     said = meaning(b, h, worlds)
-    flags = risk(b, h, worlds, said.get("counterexample"))
+    flags = risk(b, h, worlds, said["changed"], said.get("counterexample"))
     if said["equivalent"] not in (None, "text") and any(f["why"] in ALLOWS_MORE for f in flags):
         said = meaning(b, h, worlds, refactor=False)  # Risk found an example the comparison's worlds didn't
     out: Review = {
@@ -399,7 +398,7 @@ def review(
         from . import database
 
         wanted = [
-            (as_given(e["user"], h.pol), g["type"], e["id"], g["what"][11:])
+            (as_given(e["user"], h.pol), g["type"], e["id"], g["what"].removeprefix("permission "))
             for g in (out["access"] or {}).get("groups", [])
             if g["change"] == "gains" and g["what"].startswith("permission ")
             for e in g["examples"][:2]
@@ -410,7 +409,9 @@ def review(
         ran = database.review_run(db, h.policy, h.files, runnable, base_lock, wanted)
         for g in (out["access"] or {}).get("groups", []):
             for e in g["examples"]:
-                how = ran["how"].get((as_given(e["user"], h.pol), g["type"], e["id"], g["what"][11:]))
+                how = ran["how"].get(
+                    (as_given(e["user"], h.pol), g["type"], e["id"], g["what"].removeprefix("permission "))
+                )
                 if how:
                     e["how"] = ", ".join(x.removeprefix("yes").strip() for x in how)
         out["deploy"]["on_review_data"] = {"seconds": ran["deployed"], "error": ran["error"]}
@@ -564,7 +565,14 @@ def meaning(b: Side, h: Side, worlds: int, refactor: bool = True) -> Meaning:
             }
             found["what"] = names.get(found["what"], found["what"])
             out["counterexample"] = found
-    # what changes through something it uses
+    out["through"] = through(h, changed)
+    return out
+
+
+def through(h: Side, changed: list[Changed]) -> list[Through]:
+    """The permissions and rules that change through something they use: what changed, itself or through what it
+    reads."""
+    out: list[Through] = []
     graph = uses(h.pol)
     direct = {tuple(c["what"].split(".")) for c in changed if re.match(r"^\w+\.\w+$", c["what"])}
     for t in h.pol.types.values():
@@ -573,7 +581,7 @@ def meaning(b: Side, h: Side, worlds: int, refactor: bool = True) -> Meaning:
                 continue
             via = sorted(f"{a}.{n}" for a, n in closure(graph, (t.name, p.name)) & direct)
             if via:
-                out["through"].append({"what": f"{t.name}.{p.name}", "via": via, "line": str(p.loc)})
+                out.append({"what": f"{t.name}.{p.name}", "via": via, "line": str(p.loc)})
     governing: dict[str, Type] = {}  # a rule's table, its type's (AZ401: one type governs it)
     for t in h.pol.types.values():
         governing.setdefault(t.table, t)
@@ -588,7 +596,7 @@ def meaning(b: Side, h: Side, worlds: int, refactor: bool = True) -> Meaning:
         for x in names_read(h.pol.types, t, r.expr):
             hit |= ({x} | closure(graph, x)) & direct
         if hit:
-            out["through"].append({"what": key, "via": sorted(f"{a}.{n}" for a, n in hit), "line": str(r.loc)})
+            out.append({"what": key, "via": sorted(f"{a}.{n}" for a, n in hit), "line": str(r.loc)})
     return out
 
 
@@ -751,9 +759,9 @@ def who_of(ids: Iterable[str], pol: Policy) -> str:
     return ", ".join(said[:-1]) + " and " + said[-1] if len(said) > 1 else said[0]
 
 
-def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[Flag]:
-    """seen: Meaning's example of a difference (evaluate.compare's), from worlds of its own: one where the head
-    grants what the base didn't is one more widening found."""
+def risk(b: Side, h: Side, worlds: int, changed: list[Changed], seen: Difference | None = None) -> list[Flag]:
+    """changed: what Meaning found changed (changes()). seen: Meaning's example of a difference (evaluate.compare's),
+    from worlds of its own: one where the head grants what the base didn't is one more widening found."""
     flags: list[Flag] = []
 
     def line(key: str) -> str | None:
@@ -817,7 +825,6 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
     # what allows more than before, with an example from a small world: permissions and rules whose own text
     # changed, rules that are new, what changes through a relation that changed, and everything when a type's
     # where changed (the rows that count are more)
-    changed = changes(b, h)
     own: list[str] = []
     for c in changed:
         what = c["what"]
@@ -868,7 +875,7 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
             flag(f"`{what}` changed: `{c['before']}` -> `{c['after']}`", what, "a caveat changed")
         if c["kind"] == "changed" and what.startswith("rule ") and not is_rule:
             flag(f"the mask `{what[5:]}` changed", what, "a mask changed")
-    through = {t["what"]: t["via"] for t in meaning(b, h, 0, refactor=False)["through"]} if changed else {}
+    indirect = {t["what"]: t["via"] for t in through(h, changed)}
     wheres = [
         t.name
         for t in h.pol.types.values()
@@ -895,8 +902,8 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
             "a condition it can't read changed",
         )
     own = [w for w in own if w not in unreadable]
-    through = {w: via for w, via in through.items() if not all(v in unreadable for v in via)}
-    more = grants_more(b.pol, as_read(b, h, unreadable), list(dict.fromkeys([*own, *through, *everything])), worlds)
+    indirect = {w: via for w, via in indirect.items() if not all(v in unreadable for v in via)}
+    more = grants_more(b.pol, as_read(b, h, unreadable), list(dict.fromkeys([*own, *indirect, *everything])), worlds)
     if seen is not None and seen["after"] and not seen["before"]:
         types = {t.table: t.name for t in h.pol.types.values()}  # a rule's row is one of its table's type
         tname = types[seen["what"].split()[1]] if seen["what"].startswith("rule ") else seen["what"].split(".")[0]
@@ -938,7 +945,7 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
             what,
             kind,
         )
-    for what, via in through.items():
+    for what, via in indirect.items():
         if what in more and what not in own:
             who, where = more[what]
             flag(
@@ -951,7 +958,7 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
             )
     for tname in wheres:
         # one flag for the type: the first permission or rule that shows it
-        shown = next((w for w in everything if w in more and w not in own and w not in through), None)
+        shown = next((w for w in everything if w in more and w not in own and w not in indirect), None)
         if shown:
             who, where = more[shown]
             flag(
@@ -1056,8 +1063,6 @@ def tests(b: Side, h: Side, unread: list[Unread]) -> Tests:
                 continue
             if not re.search(rf"\b{re.escape(p.name)}\s+{re.escape(t.name)}\b", named):
                 untested.append({"what": f"{t.name}.{p.name}", "line": str(p.loc)})
-    inv_b = {" ".join(i.src.split()) for i in b.pol.invariants}
-    inv_h = {" ".join(i.src.split()) for i in h.pol.invariants}
     return {
         "flipped": flipped,
         "removed": removed,
@@ -1065,7 +1070,6 @@ def tests(b: Side, h: Side, unread: list[Unread]) -> Tests:
         "renamed": renamed,
         "untested": untested,
         "unread": unread,
-        "invariants_removed": sorted(inv_b - inv_h),
         "count": len(ch),
     }
 
@@ -1089,7 +1093,7 @@ LOCKS = [
         "row-level security turned on",
     ),
 ]
-STRENGTH = {"ACCESS SHARE": 1, "SHARE ROW EXCLUSIVE": 2, "ACCESS EXCLUSIVE": 3}
+STRENGTH = {"SHARE ROW EXCLUSIVE": 1, "ACCESS EXCLUSIVE": 2}
 
 
 def table_locks(sql: str) -> dict[str, tuple[str, str]]:
@@ -1101,7 +1105,7 @@ def table_locks(sql: str) -> dict[str, tuple[str, str]]:
             mm = rx.match(s)
             if mm:
                 tbl = mm.groups()[-1]
-                if tbl.strip('"').startswith(("authz", '"authz')) or tbl.startswith(("authz", '"authz')):
+                if tbl.strip('"').startswith("authz"):
                     break
                 if STRENGTH[mode] > STRENGTH.get(out.get(tbl, ("", ""))[0], 0):
                     out[tbl] = (mode, why)
@@ -1144,13 +1148,14 @@ def deploy(b: Side, h: Side, base_lock: str | None, head_lock: str | None) -> De
                 "bytes": len(m.sql),
                 "locks": {t: {"mode": mode, "why": why} for t, (mode, why) in sorted(table_locks(m.sql).items())},
                 "found_locks": found_locks(m.sql),
-                "rebuilds": m.rebuilt if (len(ms) == 1 or i == len(ms) - 1) and not (len(ms) == 2 and i == 1) else [],
+                # (the second of two: what the first didn't build beside)
+                "rebuilds": [t for t in m.rebuilt if len(ms) != 2 or t not in ms[0].rebuilt]
+                if i == len(ms) - 1
+                else [],
                 "builds_beside": m.rebuilt if len(ms) == 2 and i == 0 else [],
                 "swaps_in": ms[0].rebuilt if len(ms) == 2 and i == 1 else [],
             }
         )
-    if len(ms) == 2:
-        out["migrations"][-1]["rebuilds"] = [t for t in ms[1].rebuilt if t not in ms[0].rebuilt]
     if head_lock is not None:
         out["lock_current"] = head_lock == ms[-1].lock or all(m.empty for m in ms)
     return out
