@@ -42,7 +42,11 @@ if (!existsSync(join(DIST, "bundle.json"))) {
 const TYPES = { ".html": "text/html", ".mjs": "text/javascript", ".json": "application/json" };
 const server = createServer(async (req, res) => {
   try {
-    const path = new URL(req.url ?? "/", "http://x").pathname;
+    let path = new URL(req.url ?? "/", "http://x").pathname;
+    if (path.startsWith("/no-bundle/")) {             // the page without its bundle.json: a deploy that lost it
+      if (path.endsWith("/bundle.json")) throw new Error("not served");
+      path = path.slice("/no-bundle".length);
+    }
     const body = await readFile(join(DIST, decodeURIComponent(path).replace(/^\/$/, "/index.html")));
     res.writeHead(200, { "content-type": TYPES[extname(path)] ?? "text/html" }).end(body);
   } catch {
@@ -145,6 +149,10 @@ try {
   await js("document.querySelector('#status a[data-code]').click()");
   const help = await until("document.querySelector('#pane-help.on h2')?.textContent", 10000);
   check("... and the code opens its page", help?.startsWith("AZ203"), help);
+  const blocks = await js(`[...document.querySelectorAll('#pane-help pre')].map((p) => p.textContent)`);
+  check("... its mistake and its fix shown as code, fences gone", Array.isArray(blocks) && blocks.length === 3
+    && blocks[0].startsWith("app role app_user\ntype user") && blocks[1].startsWith("line 5:")
+    && !(await js("document.getElementById('pane-help').textContent")).includes("```"), blocks);
 
   // fixed again, then asked as someone
   await js(`(() => { const p = document.getElementById('policy');
@@ -157,6 +165,30 @@ try {
   await js(`(() => { document.getElementById('who').value = 'user:1'; document.getElementById('run-ask').click(); })()`);
   const ada = await until("document.querySelector('#answer p')?.textContent?.startsWith('1 row') && document.querySelector('#answer td')?.textContent");
   check("... as ada: her note", ada === "1", ada);
+
+  // an edit once an answer is shown: the tests run again and the question is asked again
+  await js(`(() => { const d = document.getElementById('data');
+    d.value = d.value.replace("'Chapter one')", "'Chapter one, edited')"); d.dispatchEvent(new Event('input')); })()`);
+  const edited = await until(`[...document.querySelectorAll('#answer td')].some((td) => td.textContent === 'Chapter one, edited')
+    && document.getElementById('state').textContent`, 30000);
+  check("an edit after an answer: the policy runs again, and so does the question", edited === "applied", edited);
+  /** Asks sql as user:1, from an empty answer, and waits for what it shows. @param {string} sql */
+  const ask = async (sql) => {
+    await js(`(() => { document.getElementById('answer').innerHTML = ''; document.getElementById('who').value = 'user:1';
+      document.getElementById('query').value = ${JSON.stringify(sql)}; document.getElementById('run-ask').click(); })()`);
+    return until("document.getElementById('answer').textContent", 10000);
+  };
+  check("... and Run still answers", (await ask("SELECT 2 AS two"))?.startsWith("two21 row"), await js("document.getElementById('answer').textContent"));
+  const big = await ask("SELECT ARRAY[9007199254740993::int8] AS big");
+  check("an int8 beyond 2^53 in an array: shown whole", big?.startsWith('big["9007199254740993"]1 row'), big);
+  check("... and Run answers after it", (await ask("SELECT 3 AS three"))?.startsWith("three31 row"), await js("document.getElementById('answer').textContent"));
+  const committed = await ask("INSERT INTO app.notes (project_id, author_id, body) VALUES (1, 1, 'kept'); COMMIT; SELECT body FROM app.notes ORDER BY id");
+  check("a COMMIT in the box: the answer says it wasn't rolled back, and who ran what followed",
+    /0 rows, as user:1; not rolled back: .* what followed ran signed in as nobody$/.test(committed ?? ""), committed);
+  check("... and the next answer still sees the row (until the next edit)", (await ask("SELECT body FROM app.notes ORDER BY id"))?.includes("kept"),
+    await js("document.getElementById('answer').textContent"));
+  const owner = await ask("RESET ROLE; SELECT count(*) AS n FROM app.notes");
+  check("a RESET ROLE in the box: the answer says it ran as the owner", /ended as postgres, not the app role/.test(owner ?? ""), owner);
 
   await js("document.querySelector('[data-pane=graph]').click()");
   const drawn = await until("document.querySelector('#pane-graph svg') !== null", 30000);
@@ -189,6 +221,10 @@ try {
   const shown = await until("document.getElementById('count').textContent");
   check("a link that isn't a state: the page loads, with an example", Boolean(ready) && shown === "7 ✓"
     && (await js("document.getElementById('example').value")) === "0", [ready, shown]);
+  const said = await js("document.getElementById('notice').textContent");
+  check("... and says, once the example has run, that the link couldn't be read", said === "The link's policy couldn't be read: this is an example.", said);
+  await js(`(() => { const s = document.getElementById('example'); s.value = '1'; s.dispatchEvent(new Event('change')); })()`);
+  check("... until another example is chosen", (await js("document.getElementById('notice').hidden")) === true);
 
   // a link that names one of the page's examples (the cookbook's recipes link this way)
   await open(`${PAGE}#e=owner-only`);
@@ -199,6 +235,13 @@ try {
     await js("document.getElementById('count').textContent"));
   await open(`${PAGE}#e=no-such-recipe`);
   check("a link that names no example: the first one", (await js("document.getElementById('example').value")) === "0");
+
+  // the page's bundle.json missing: it says so, rather than load for ever
+  await send("Page.navigate", { url: "about:blank" }, sessionId);
+  await until("location.href === 'about:blank'");
+  await send("Page.navigate", { url: `${PAGE}no-bundle/` }, sessionId);
+  const lost = await until("document.getElementById('state')?.textContent === \"couldn't load\" && document.getElementById('status').textContent", 30000);
+  check("no bundle.json: the page says it couldn't load, and why", lost === "The compiler and the examples didn't load: bundle.json: 404 Not Found", lost);
 } catch (e) {
   check("the page", false, e instanceof Error ? e.message : String(e));
 } finally {

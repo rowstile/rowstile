@@ -4,7 +4,9 @@ rowstile in the browser, with nothing installed: write a policy, its tables and 
 enforce it. The compiler (`core/authzlib`, standard library only) runs in Pyodide, in a worker; the SQL it
 writes runs in PGlite, Postgres 18 in WebAssembly. On each change the policy is compiled, applied to a fresh
 database with the tables, and its tests run. A mistake shows its line, its code and the code's page; "Ask as
-someone" runs a statement as the app role, signed in as whoever you name, and rolls it back. "Copy link" puts
+someone" runs a statement as the app role, signed in as whoever you name, and rolls it back (a `COMMIT` or
+`ROLLBACK` in the statement ends that transaction early, and what follows runs signed in as nobody; a `RESET
+ROLE` makes the rest run as the owner: the answer says so). "Copy link" puts
 the whole state in the link, and `#e=<name>` opens one of the page's own examples (each recipe of the cookbook
 links here that way).
 

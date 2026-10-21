@@ -10,7 +10,9 @@
 /** @typedef {{ok: false, step: string, message: string, detail: string | null, hint: string | null, code: string | null}} Failure */
 /** @typedef {{test: string, line: string | null, ok: boolean, detail: string | null}} TestRow */
 /** @typedef {{ok: true, tests: TestRow[]} | Failure} Run */
-/** @typedef {{ok: true, fields: string[], rows: unknown[][]} | Failure} Answer  (rows: each a list, in the fields' order) */
+/** @typedef {{ok: true, fields: string[], rows: unknown[][], rolledBack: boolean, asRole: string | null} | Failure} Answer
+ *  (rows: each a list, in the fields' order; rolledBack: false when the statement ended the transaction itself, with a
+ *  COMMIT or ROLLBACK; asRole: the role it ended as, when that isn't the app role, as after a RESET ROLE) */
 /** @typedef {{run(data: string, compiled: Compiled): Promise<Run>, ask(who: string, sql: string): Promise<Answer>}} Database */
 
 const GLUE = `
@@ -108,6 +110,21 @@ function failure(step, e) {
   return { ok: false, step, message: text(f.message) ?? String(e), detail: text(f.detail), hint: text(f.hint), code: text(f.code) };
 }
 
+/** One thing at a time (PGlite runs one statement at a time): each step starts once the one before it has
+ *  settled. A step that fails rejects its own promise only; the steps after it still run.
+ *  @returns {<T>(step: () => Promise<T>) => Promise<T>} */
+export function line() {
+  /** @type {Promise<unknown>} */
+  let tail = Promise.resolve();
+  /** @template T @param {() => Promise<T>} step @returns {Promise<T>} */
+  const next = (step) => {
+    const done = tail.then(step);
+    tail = done.catch(() => undefined);
+    return done;
+  };
+  return next;
+}
+
 /** A database for the playground: empty again before each run, then the app's tables and data, then the
  *  policy, then its tests. pg is a PGlite; its user is the superuser, which owns the tables, as the owner
  *  would on a server. @param {import("@electric-sql/pglite").PGlite} pg @returns {Database} */
@@ -117,6 +134,7 @@ export function database(pg) {
   return {
     /** Everything from nothing: {ok, tests: [{test, line, ok, detail}]} or {ok: false, step, message, ...} */
     async run(data, compiled) {
+      role = null;                                        // the reset below drops the last policy's role
       try {
         await pg.exec("ROLLBACK").catch(() => undefined);     // what a failed run left open (a policy is BEGIN ... COMMIT)
         await pg.exec(RESET);
@@ -143,10 +161,10 @@ export function database(pg) {
       }
     },
 
-    /** A statement as the app role, signed in as who ('user:3', 'bot:7', or '' for nobody); rolled back.
-     *  {ok, fields, rows} or {ok: false, message, ...} */
+    /** A statement as the app role, signed in as who ('user:3', 'bot:7', or '' for nobody); rolled back, unless
+     *  the statement ends the transaction itself. {ok, fields, rows, rolledBack, asRole} or {ok: false, message, ...} */
     async ask(who, sql) {
-      if (!role) return failure("ask", "run the policy first");
+      if (!role) return failure("ask", "the policy isn't applied: the Tests tab says why");
       if (role === "PUBLIC") {
         return failure("ask", "the policy names no app role: add a line like 'app role app_user'");
       }
@@ -156,11 +174,16 @@ export function database(pg) {
       try {
         await pg.exec(`SET ROLE "${role.replaceAll('"', '""')}"`);
         await pg.exec("BEGIN");
+        await pg.query("SELECT set_config('playground.asking', 'on', true)");     // gone once this transaction ends
         await pg.query("SELECT authz.act_as($1, $2)", [kind, id || null]);
         // rows as lists: two columns may have one name (a join's two ids), and a row keyed by name keeps one
         const results = await pg.exec(sql, { rowMode: "array" });
         const last = results[results.length - 1] ?? { fields: [], rows: [] };
-        return { ok: true, fields: last.fields.map((f) => f.name), rows: /** @type {unknown[][]} */ (last.rows) };
+        // a COMMIT or ROLLBACK in the statement ended the transaction (what it wrote stays), a RESET ROLE the app role
+        const after = await pg.query("SELECT current_setting('playground.asking', true) IS NOT DISTINCT FROM 'on' AS open, current_user AS u");
+        const { open, u } = /** @type {{open: boolean, u: string}} */ (after.rows[0]);
+        return { ok: true, fields: last.fields.map((f) => f.name), rows: /** @type {unknown[][]} */ (last.rows),
+          rolledBack: open, asRole: u === role ? null : u };
       } catch (e) {
         return failure("ask", e);
       } finally {

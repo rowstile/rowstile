@@ -2,7 +2,7 @@
 // Pyodide, in a worker), applied to a fresh database with the tables (PGlite) and its tests run. The engine is
 // core.mjs, which test.mjs runs headless. The versions below are package.json's (test.mjs checks they match).
 // Plain JavaScript, typed with JSDoc and checked strictly (playground/tsconfig.json).
-import { database } from "./core.mjs";
+import { database, line } from "./core.mjs";
 
 const PYODIDE = "https://cdn.jsdelivr.net/npm/pyodide@314.0.7/";
 const PGLITE = "https://cdn.jsdelivr.net/npm/@electric-sql/pglite@0.5.8/dist/index.js";
@@ -33,7 +33,7 @@ const el = {
   gutter: $("gutter"), status: $("status"), data: area("data"), tests: area("tests"),
   who: /** @type {HTMLInputElement} */ ($("who")), query: area("query"), runAsk: button("run-ask"),
   answer: $("answer"), results: $("pane-results"), count: $("count"), sql: $("sql"), graph: $("pane-graph"),
-  help: $("pane-help"),
+  help: $("pane-help"), notice: $("notice"),
 };
 /** @type {{compiler: Record<string, string>, examples: Example[]}} */
 let bundle = { compiler: {}, examples: [] };
@@ -49,7 +49,7 @@ let errorLine = null;
 let graphShown = null;
 /** @type {State | null} */
 let linked = null;                                // what the link the page was opened with carries
-let queue = Promise.resolve();                    // PGlite runs one thing at a time: runs and asks wait in line
+const inLine = line();                            // PGlite runs one thing at a time: runs and asks wait in line
 let generation = 0;                               // a newer edit makes older answers stale
 
 /** The compiler, in compiler.worker.mjs: each call a promise. @returns {Engine} */
@@ -81,6 +81,8 @@ function compilerWorker() {
   };
 }
 
+/** @param {unknown} e */
+const said = (e) => (e instanceof Error ? e.message : String(e));
 /** @param {unknown} s */
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => /** @type {Record<string, string>} */ ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 /** @param {() => unknown} fn @param {number} ms */
@@ -158,8 +160,8 @@ function helpPage(markdown) {
   // the pages are small and plain: headings, paragraphs, code blocks and `code`
   /** @param {string} s */
   const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
-  const html = markdown.split(/\n(?=```)|(?<=```)\n/).map((part) => {
-    const fence = /^```\w*\n([\s\S]*?)\n?```$/.exec(part);
+  const html = markdown.split(/(^```\w*\n[\s\S]*?\n```$)/m).map((part) => {      // each code block whole
+    const fence = /^```\w*\n([\s\S]*?)\n```$/.exec(part);
     if (fence) return `<pre><code>${esc(fence[1])}</code></pre>`;
     return part.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).map((p) =>
       p.startsWith("## ") ? `<h3>${inline(p.slice(3))}</h3>` : p.startsWith("# ") ? `<h2>${inline(p.slice(2))}</h2>`
@@ -226,7 +228,7 @@ async function refresh() {
   el.sql.textContent = out.sql;
   if (selected() === "graph") graph();
   const data = el.data.value;
-  queue = queue.then(async () => {
+  await inLine(async () => {
     if (mine !== generation) return;              // edited again meanwhile
     el.state.textContent = "running…";
     const run = await database.run(data, out);
@@ -234,16 +236,23 @@ async function refresh() {
     el.state.className = run.ok && run.tests.every((t) => t.ok) ? "pill ok" : "pill bad";
     el.state.textContent = run.ok ? "applied" : `failed: ${run.step}`;
     results(run);
-    if (run.ok && el.answer.innerHTML) await ask();
+    // the question shown is asked again, here: this step already holds the line, so not through ask()
+    if (run.ok && el.answer.innerHTML) await answer(database, el.who.value.trim(), el.query.value);
+  }).catch((e) => {
+    el.state.className = "pill bad";
+    el.state.textContent = "failed";
+    el.results.innerHTML = `<div class="error"><strong>the page:</strong> ${esc(said(e))}</div>`;
   });
-  await queue;
 }
 
-async function ask() {
-  const database = db;
-  if (!database || !compiled) return;
-  const who = el.who.value.trim(), sql = el.query.value;
-  queue = queue.then(async () => {
+// PGlite gives an int8 beyond 2^53 as a BigInt, which JSON.stringify refuses: an array of them shows as text
+/** @param {string} _ @param {unknown} v */
+const plain = (_, v) => (typeof v === "bigint" ? String(v) : v);
+
+/** Asks the database sql as who, and shows the answer. Its own mistakes are shown too: it never throws.
+ *  @param {Database} database @param {string} who @param {string} sql */
+async function answer(database, who, sql) {
+  try {
     const r = await database.ask(who, sql);
     if (!r.ok) {
       el.answer.innerHTML = `<div class="error"><strong>${esc(r.code === "42501" ? "refused" : r.step)}:</strong> ` +
@@ -252,13 +261,24 @@ async function ask() {
     }
     const head = r.fields.map((f) => `<th>${esc(f)}</th>`).join("");
     const body = r.rows.map((row) => `<tr>${row.map((cell) =>
-      `<td>${cell === null ? '<span class="muted">null</span>' : esc(typeof cell === "object" ? JSON.stringify(cell) : cell)}</td>`).join("")}</tr>`).join("");
+      `<td>${cell === null ? '<span class="muted">null</span>' : esc(typeof cell === "object" ? JSON.stringify(cell, plain) : cell)}</td>`).join("")}</tr>`).join("");
+    const ended = (r.rolledBack ? "rolled back" : "not rolled back: the statement ended the page's transaction " +
+      "(COMMIT or ROLLBACK), so what it wrote stays until the next edit, and what followed ran signed in as nobody") +
+      (r.asRole ? `; it ended as ${esc(r.asRole)}, not the app role (RESET ROLE), and the owner sees every row` : "");
     el.answer.innerHTML = r.fields.length
       ? `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` +
-        `<p class="muted">${r.rows.length} row${r.rows.length === 1 ? "" : "s"}, as ${esc(who || "nobody")}; rolled back</p>`
-      : `<p class="muted">done, as ${esc(who || "nobody")}; rolled back</p>`;
-  });
-  await queue;
+        `<p class="muted">${r.rows.length} row${r.rows.length === 1 ? "" : "s"}, as ${esc(who || "nobody")}; ${ended}</p>`
+      : `<p class="muted">done, as ${esc(who || "nobody")}; ${ended}</p>`;
+  } catch (e) {
+    el.answer.innerHTML = `<div class="error"><strong>the page:</strong> ${esc(said(e))}</div>`;
+  }
+}
+
+async function ask() {
+  const database = db;
+  if (!database || !compiled) return;
+  const who = el.who.value.trim(), sql = el.query.value;
+  await inLine(() => answer(database, who, sql));
 }
 
 async function graph() {
@@ -320,6 +340,7 @@ function wire() {
     const chosen = el.example.value === "" ? linked : bundle.examples[Number(el.example.value)];   // "": from the link
     if (!chosen) return;
     show(chosen);
+    el.notice.hidden = true;                      // what it said of the link the page was opened with
     history.replaceState(null, "", location.pathname);
     refresh();
   });
@@ -336,8 +357,23 @@ function wire() {
   });
 }
 
+/** The page couldn't start: it says why, rather than seem to load for ever. @param {string} why */
+function stopped(why) {
+  el.state.className = "pill bad";
+  el.state.textContent = "couldn't load";
+  el.status.className = "status bad";
+  el.status.textContent = why;
+}
+
 async function start() {
-  bundle = await (await fetch("./bundle.json")).json();
+  try {
+    const res = await fetch("./bundle.json");
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    bundle = await res.json();
+  } catch (e) {
+    stopped(`The compiler and the examples didn't load: bundle.json: ${said(e)}`);
+    return;
+  }
   el.example.innerHTML = bundle.examples.map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join("");
   /** @type {State} */
   let state = bundle.examples[0];
@@ -347,7 +383,9 @@ async function start() {
       state = linked = await unpack(shared[1]);
       el.example.insertAdjacentHTML("afterbegin", `<option value="" selected>from the link</option>`);
     } catch {
-      el.status.textContent = "the link's policy couldn't be read; showing an example";
+      // beside the compiler's status, which each run writes over
+      el.notice.textContent = "The link's policy couldn't be read: this is an example.";
+      el.notice.hidden = false;
     }
   }
   // #e=<slug>: one of the page's own examples, by its name (the cookbook's recipes link here)
@@ -371,10 +409,7 @@ async function start() {
     engine = worker;
     db = database(pg);
   } catch (e) {
-    el.state.className = "pill bad";
-    el.state.textContent = "couldn't load";
-    el.status.className = "status bad";
-    el.status.textContent = `Python or Postgres didn't load: ${e instanceof Error ? e.message : String(e)}`;
+    stopped(`Python or Postgres didn't load: ${said(e)}`);
     return;
   }
   const took = performance.now() - began;
