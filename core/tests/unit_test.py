@@ -6774,6 +6774,19 @@ class Confidence(unittest.TestCase):
         self.assertEqual(r["world"], ["user: 1", "folder: 1", "folder.owner: folder 1 -> user 1"])
         self.assertIn("no   user 1 holds it on folder 1", prove.describe([r]))
 
+    def test_prove_and_the_review_try_worlds_from_one_function_in_two_orders(self) -> None:
+        # the review: every drawn world, smallest first, then the corners; prove (by_size): at each size, a drawn
+        # world and a corner in turn, so its counterexample is the smallest it finds
+        pol = parse_policy(read(POLICIES["docs"]), "docs.authz")
+
+        def seeds(by_size: bool) -> list[str]:
+            return [w.rng_seed for w in evaluate.worlds_to_try([pol], 4, "s", 2, by_size=by_size)][:6]
+
+        self.assertEqual(seeds(False), ["s/1/0", "s/1/1", "s/2/0", "s/2/1", "s/corner0/1/0", "s/corner0/1/1"])
+        self.assertEqual(
+            seeds(True), ["s/1/0", "s/corner0/1/0", "s/1/1", "s/corner1/1/0", "s/corner2/1/0", "s/corner0/1/1"]
+        )
+
     def test_a_counterexample_shows_the_types_it_uses(self) -> None:
         # the rows of the types it names: the invariant's, the holder's (none for someone not signed in), and those a
         # link goes to, though the type is named nowhere else
