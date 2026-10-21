@@ -263,6 +263,10 @@ check "alice (who may not) does not" "0" "SET authz.user_id = 1; SELECT count(*)
 expect_code "alice cannot decide it" "42501: you cannot decide request 1" -c "SET authz.user_id = 1" -c "SELECT authz.decide_request($REQ, true)"
 expect_code "alice cannot deny it either" "42501: you cannot decide request 1" -c "SET authz.user_id = 1" -c "SELECT authz.decide_request($REQ, false)"
 expect_code "carol cannot approve her own request" "42501: you cannot decide your own request" -c "SET authz.user_id = 3" -c "SELECT authz.decide_request($REQ, true)"
+expect_code "nobody signed in is told to sign in, not that the request is theirs" "42501: sign in to decide a request" \
+  -c "SELECT authz.decide_request($REQ, true)"
+expect_code "... and so is an administrator with nobody signed in" "42501: sign in to decide a request" -c "RESET ROLE" \
+  -c "SELECT authz.decide_request($REQ, true)"
 expect_code "an answer is yes or no" "22023: approve (true) or deny (false)" -c "SET authz.user_id = 5" -c "SELECT authz.decide_request($REQ, NULL)"
 expect_code "... for a request still pending" "P0001: no pending request 999" -c "SET authz.user_id = 5" -c "SELECT authz.decide_request(999, true)"
 expect_code "dave cannot withdraw carol's request" "P0001: no pending request $REQ of yours" -c "SET authz.user_id = 4" -c "SELECT authz.cancel_request($REQ)"
@@ -497,6 +501,11 @@ case "$out" in *"loses  | 5       | app.files   | rows readable   | 16"*) echo "
 case "$out" in *gains*) echo "FAIL  the diff shows gains: $out"; fails=$((fails + 1));; *) echo "ok    ...and nobody gains anything";; esac
 check "the preview changed nothing" "t" "SET authz.user_id = 5; SELECT authz.can('file', 16, 'view')"
 admin "... not even the trail or the feed" "$BEFORE" "$COUNTS"
+# the preview signs in as each user in turn, then signs back in whoever it found signed in
+out=$(sed 's/^ROLLBACK;$/SELECT '"'"'signed in after the preview: '"'"' || current_setting('"'"'authz.user_id'"'"');/' "$TMPD/diff.sql" |
+      PGOPTIONS="-c client_min_messages=error -c authz.user_id=5" psql -X -q -At -d "$DB" 2>&1 | tail -n 1)
+[ "$out" = "signed in after the preview: 5" ] && echo "ok    the preview leaves signed in whoever it found" ||
+  { echo "FAIL  who is signed in after the preview: $out"; fails=$((fails + 1)); }
 out=$(python3 compile_policy.py "$TMPD/nolinks.authz" --diff --users 1,3 | PGOPTIONS="-c client_min_messages=error" psql -X -q -d "$DB" 2>&1)
 case "$out" in *"| 5 "*|*ERROR*) echo "FAIL  --users 1,3 shows other users: $out"; fails=$((fails + 1));; *) echo "ok    --users limits the preview";; esac
 rm -rf "$TMPD"

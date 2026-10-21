@@ -228,6 +228,15 @@ check "sync Engineering to alice and carol" "1|0" \
   "RESET ROLE; SELECT added || '|' || removed FROM authz.sync_members('team', '10', 'member', ARRAY['1', '3']);"
 check "... carol is now in Engineering" "t" "SET authz.user_id = 3; SELECT authz.can('folder', 3, 'edit');"
 expect_code "the app role cannot sync" "42501: permission denied for function sync_members" -c "SELECT authz.sync_members('team', '10', 'member', ARRAY['4'])"
+# NULL is no list (a sync job's failed fetch): the group is left as it is, not emptied
+expect_code "a NULL list is refused" "22023: say who the members are: a list of ids with no NULL in it (an empty list for none)" \
+  -c "RESET ROLE" -c "SELECT * FROM authz.sync_members('team', '10', 'member', NULL)"
+expect_code "... and a list with a NULL in it" "22023: say who the members are: a list of ids with no NULL in it" \
+  -c "RESET ROLE" -c "SELECT * FROM authz.sync_members('team', '10', 'member', ARRAY['1', NULL])"
+check "... Engineering keeps alice and carol" "1,3" \
+  "RESET ROLE; SELECT string_agg(user_id::text, ',' ORDER BY user_id) FROM app.team_members WHERE team_id = 10;"
+check "an empty list removes every member" "0|2" \
+  "RESET ROLE; BEGIN; SELECT added || '|' || removed FROM authz.sync_members('team', '10', 'member', ARRAY[]::text[]); ROLLBACK;"
 expect_code "only a relation from one table of members syncs" \
   "P0001: folder.viewer has no single table of members to sync (it needs one source: table(group -> user), without where)" \
   -c "RESET ROLE" -c "SELECT * FROM authz.sync_members('folder', '1', 'viewer', ARRAY['4'])"

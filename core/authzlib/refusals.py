@@ -312,6 +312,8 @@ END $f$;"""
         return f"""-- Which of these people (or principals of another type) hold a permission: who to tell about a change.
 -- It signs each one in with authz.act_as(), as the caller: so only a backend trusted to sign anyone in can
 -- use it, as it could ask authz.can for each one itself. Not in a session limited by scopes or view-as. SELECT * FROM authz.who_among('chat', '7', 'read', ARRAY['1', '2'])
+-- (it reads those settings as they are, not through authz_int.scopes_active(), which the app role may not call: the
+-- guard only keeps its last act_as, which ends scopes and view-as, from widening the session)
 CREATE FUNCTION authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text DEFAULT 'user')
 RETURNS SETOF text LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := nullif(current_setting('authz.user_id', true), '');

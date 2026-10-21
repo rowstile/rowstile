@@ -14,9 +14,9 @@ cuts half way, every statement 31
 cuts half way, other policies 1
 devx 139
 docs 11
-governance 218
+governance 221
 hand answers 270
-identity 80
+identity 84
 interleavings 324
 interleavings (read committed) 36
 invariance of the fixed policies 27

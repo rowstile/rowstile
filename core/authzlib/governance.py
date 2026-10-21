@@ -484,10 +484,11 @@ DECLARE r authz.requests;
 BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.decide_request');
+  IF authz.uid() IS NULL THEN RAISE EXCEPTION 'sign in to decide a request' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ714'; END IF;
   IF p_approve IS NULL THEN RAISE EXCEPTION 'approve (true) or deny (false)' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710'; END IF;
   SELECT * INTO r FROM authz.requests WHERE id = p_id AND status = 'pending' FOR UPDATE;
   IF r.id IS NULL THEN RAISE EXCEPTION 'no pending request %', p_id USING HINT = 'rowstile help AZ708'; END IF;
-  IF authz.uid() IS NULL OR r.requester = authz.uid()::text THEN
+  IF r.requester = authz.uid()::text THEN
     RAISE EXCEPTION 'you cannot decide your own request' USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   IF NOT authz_int.may_manage(r.object_type, r.object_id, r.relation,
@@ -729,6 +730,8 @@ END $f$;"""
         snapshot = lambda into: (
             f"""DO $snap$
 DECLARE who record; v_id text; v_u text; p record; pol record; m record;
+        v_me text := coalesce(current_setting('authz.user_id', true), '');
+        v_pt text := coalesce(current_setting('authz.principal_type', true), '');
 BEGIN
   IF to_regclass('authz_int.types') IS NULL THEN RETURN; END IF;
   IF to_regclass('authz_int.masked_columns') IS NOT NULL THEN
@@ -741,6 +744,7 @@ BEGIN
     {only}
     PERFORM set_config('authz.principal_type', who.ptype, true);
     PERFORM set_config('authz.user_id', v_id, true);
+    PERFORM authz_int.sign();
     FOR p IN SELECT type, perm FROM authz_int.perms LOOP
       INSERT INTO pg_temp.{into} SELECT v_u, p.type, 'permission ' || p.perm, x FROM authz.list(p.type, p.perm) x;
     END LOOP;
@@ -772,8 +776,9 @@ BEGIN
     END LOOP;
   END LOOP;
   END LOOP;
-  PERFORM set_config('authz.principal_type', '', true);
-  PERFORM set_config('authz.user_id', '', true);
+  PERFORM set_config('authz.principal_type', v_pt, true);
+  PERFORM set_config('authz.user_id', v_me, true);
+  PERFORM authz_int.sign();
 END $snap$;"""
         )
         setup = f"""SET LOCAL client_min_messages = warning;
