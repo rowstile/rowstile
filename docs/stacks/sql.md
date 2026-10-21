@@ -44,7 +44,7 @@ A transaction that forgets gets an error, not an empty page: SQLSTATE `28000`, w
 
 ## Answer refusals
 
-Every error rowstile raises names its code in the HINT, `rowstile help AZ709`: branch on the code, and
+Every error the app meets from rowstile names its code in the HINT, `rowstile help AZ709`: branch on the code, and
 `rowstile help` (or `docs/errors/`) says what it means, its SQLSTATE, and the HTTP status to answer it with.
 
 - **A refused INSERT, or an UPDATE whose new row the rules refuse**: SQLSTATE `42501`. The message names the

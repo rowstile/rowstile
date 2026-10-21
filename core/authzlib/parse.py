@@ -836,11 +836,7 @@ def read_lines(
         if inc in seen:
             fail(loc, f"{m.group(1)} is included twice (or includes itself)", "AZ108")
         if inc not in files:
-            fail(
-                loc,
-                f'can\'t find {m.group(1)}: pass it in the files argument, e.g. \'{{"{inc}": "..."}}\'',
-                "AZ108",
-            )
+            fail(loc, f"can't find {inc} in the policy's folder", "AZ108")
         seen.add(inc)
         out += read_lines(inc, files[inc], files, seen)
     return out

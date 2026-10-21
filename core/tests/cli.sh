@@ -42,7 +42,7 @@ case "$out" in "$T/bad.authz: parts/bad.authz line 3: "*) [ $rc -eq 1 ] && ok "c
 run apply "$T/bad.authz"
 case "$out" in *"parts/bad.authz line 3"*) [ $rc -eq 1 ] && ok "apply refuses it, exit 1" || bad "apply bad exit" "$rc";; *) bad "apply bad" "$out";; esac
 printf 'include "parts/missing.authz"\n' > "$T/missing.authz"
-run check "$T/missing.authz"; case "$out" in *"line 1: can't find parts/missing.authz"*) ok "a missing include is reported with its line";; *) bad "missing" "$out";; esac
+run check "$T/missing.authz"; [ "$out" = "$T/missing.authz: line 1: can't find parts/missing.authz in the policy's folder [AZ108]" ] && ok "a missing include is reported with its line, in the command's words" || bad "missing" "$out"
 
 echo "-- diff"
 sed -e '/or linked_into.view/d' -e '/^  linked_into : folder/d' example/docs.authz > "$T/parts/all.authz"

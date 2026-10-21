@@ -512,7 +512,7 @@ def draft(
                 f"   -- the {member}s of the {tname}s inside count here too"
             )
             out.append(
-                f"  -- decide: {member}s of a {tname} inside are {member}s of this one. For this {tname}'s view to pass"
+                f"  -- decide: {member}s of the {tname}s inside are {member}s of this one. For this {tname}'s view to pass"
             )
             out.append(
                 f"  --   down to those inside instead: remove that line, and write can view = {member} or {p}.view"

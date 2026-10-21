@@ -810,7 +810,7 @@ class Core:
             if "manage_roles" in t.perms and not roles_anywhere and t.name not in owners_of_roles:
                 fail(
                     t.perms["manage_roles"].loc,
-                    f"{t.name}.manage_roles lets people create custom roles owned by a "
+                    f"{t.name}.manage_roles lets people create custom roles owned by the "
                     f"{t.name}, but no roles line counts them: write `roles : user from <relation to {t.name}>` on "
                     f"the type they are for, and `roles` in the permissions they may give",
                     "AZ307",
@@ -832,7 +832,7 @@ class Core:
                     fail(
                         t.roles[2],
                         f"custom roles on {t.name} are the roles of its {t.roles_from}, which people with "
-                        f"manage_roles on a {owner} create, and {owner} has no `can manage_roles`",
+                        f"manage_roles on it create, and {owner} has no `can manage_roles`",
                         "AZ307",
                     )
         if roles_anywhere and not any("manage_roles" in t.perms for t in self.types.values()):
@@ -871,7 +871,7 @@ class Core:
                 shown = "[" + ", ".join(c for c, _ in self.T(tn).key) + "]" if k > 1 else "one column"
                 fail(
                     src.loc,
-                    f"{t.name}.{r.name}: the {side} is a {tn}, whose key is {shown}, "
+                    f"{t.name}.{r.name}: the {side} is of type {tn}, whose key is {shown}, "
                     f"but this source gives {n} column{'s' if n > 1 else ''}"
                     + (": write them in square brackets, [col1, col2]" if k > 1 else ""),
                     "AZ206",

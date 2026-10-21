@@ -366,13 +366,13 @@ COMPILE = [
     (
         "brackets for a key of one column",
         "  dp : grp = [owner_id, up]\n",
-        "the subject is a grp, whose key is one column, but this source gives 2 columns [AZ206]",  # (no brackets)
+        "the subject is of type grp, whose key is one column, but this source gives 2 columns [AZ206]",  # (no brackets)
         10,
     ),
     (
         "one column for a composite key",
         "type pair = alt.doc_links (child, parent)\ntype thing = alt.docs (doc_no)\n  p : pair = up\n  can view = p.x\n",
-        "the subject is a pair, whose key is [child, parent], but this source gives 1 column: write them in square brackets",
+        "the subject is of type pair, whose key is [child, parent], but this source gives 1 column: write them in square brackets",
         12,
     ),
     (
@@ -552,13 +552,13 @@ COMPILE = [
     (
         "manage_roles with no roles to make",
         "  can manage_roles = owner\n",
-        "doc.manage_roles lets people create custom roles owned by a doc, but no roles line counts them",
+        "doc.manage_roles lets people create custom roles owned by the doc, but no roles line counts them",
         10,
     ),
     (
         "roles from an owner nobody may make roles for",
         "  roles : user from parent\n  can view = owner or roles\n",
-        "custom roles on doc are the roles of its parent, which people with manage_roles on a doc create, and doc has "
+        "custom roles on doc are the roles of its parent, which people with manage_roles on it create, and doc has "
         "no `can manage_roles`",
         10,
     ),
@@ -840,6 +840,11 @@ APPLY_OK = [
     ),
     ("an empty search_path while applying", "  can view = owner\n", {"PGOPTIONS": "-c search_path="}),
     (
+        "a deny and a condition both joining the inheritance with and",
+        "  can hidden = reader or parent.hidden\n  can view = (owner or parent.view) and {not locked} and not hidden\n",
+        {},
+    ),
+    (
         "a column named check, in a rule on it: an editor may change the body, not check",
         "type note = alt.notes\n  owner : user = owner_id\n  editor : user = editor_id\n  can edit = owner or editor\n"
         "  can seal = owner\nrules alt.notes\n  select : edit\n  update : edit\n  update check : seal\n",
@@ -1038,7 +1043,12 @@ GRANT SELECT, UPDATE ON alt.notes TO app_user;
 # Included files passed as a map, the way the rowstile command passes them: never read from disk.
 # (what, main policy, files, expected start of the message)
 INCLUDES = [
-    ("an include missing from the files", 'include "roles.authz"\n', {}, "line 1: can't find roles.authz"),
+    (
+        "an include missing from the files",
+        'include "roles.authz"\n',
+        {},
+        "line 1: can't find roles.authz in the policy's folder [AZ108]",
+    ),
     (
         "a server file",
         'include "/etc/passwd"\n',
@@ -1079,7 +1089,7 @@ INCLUDES = [
         "an include resolved from the including file's folder",
         'include "sub/a.authz"\n',
         {"sub/a.authz": 'include "b.authz"\n', "b.authz": BASE},
-        "sub/a.authz line 1: can't find b.authz",
+        "sub/a.authz line 1: can't find sub/b.authz in the policy's folder [AZ108]",
     ),
     (
         "the same file twice",
@@ -1102,7 +1112,13 @@ TESTS = [
     (
         "acting as a type that doesn't sign in",
         'test "t"\n  given g = {SELECT 1}\n  grp $g can share doc 1\n',
-        "'grp' doesn't sign in",
+        "'grp' doesn't sign in: a test acts as anyone or as a type that signs in (user) [AZ502]",
+        12,
+    ),
+    (
+        "... where two types sign in",
+        'type bot = alt.bots principal\ntest "t"\n  grp 1 can share doc 1\n',
+        "'grp' doesn't sign in: a test acts as anyone or as a type that signs in (user, bot) [AZ502]",
         12,
     ),
     ("a line that is none of a test's", 'test "t"\n  user 1 maybe share doc 1\n', "a test's lines are", 11),

@@ -4234,7 +4234,7 @@ class Draft(unittest.TestCase):
             "  parent : team = parent_id\n"
             "  member : user = app.team_members(team_id -> user_id)\n"
             "  member : team#member = app.teams(parent_id -> id)   -- the members of the teams inside count here too\n"
-            "  -- decide: members of a team inside are members of this one. For this team's view to pass\n"
+            "  -- decide: members of the teams inside are members of this one. For this team's view to pass\n"
             "  --   down to those inside instead: remove that line, and write can view = member or parent.view\n"
             "  can edit = nobody   -- decide: nobody edits what it is in; who edits these?\n"
             "  can view = member\n",
@@ -9134,7 +9134,10 @@ class ErrorCodes(unittest.TestCase):
 
     def test_every_raise_has_a_code(self) -> None:
         """What the generated SQL raises carries a code: in its message ([AZ601], applying) or its HINT
-        (rowstile help AZ701, what apps see)."""
+        (rowstile help AZ701, what apps see), as the errors index says: never a code apps meet at the end of
+        the message."""
+        from authzlib.errors import CODES
+
         for name in sorted(os.listdir(os.path.join(ROOT, "authzlib"))):
             if not name.endswith(".py"):
                 continue
@@ -9142,6 +9145,13 @@ class ErrorCodes(unittest.TestCase):
             for m in re.finditer(r"RAISE EXCEPTION", src):
                 end = re.compile(r";(?=\n|\"|')").search(src, m.start())  # the statement's end, in SQL or a string
                 stmt = src[m.start() : end.end() if end else len(src)]
+                for code in re.findall(r"\[(AZ\d{3})\]", stmt):
+                    self.assertNotEqual(
+                        CODES[code].when,
+                        "runtime",
+                        f"authzlib/{name} line {src.count(chr(10), 0, m.start()) + 1}: {code} is one apps meet: "
+                        "its code goes in the HINT (rowstile help " + code + "), not at the end of the message",
+                    )
                 if re.search(r"\[AZ\d{3}\]|rowstile help AZ\d{3}|HINT = \{lit\(hint\)\}", stmt) or any(
                     u in stmt for u in self.UNCODED
                 ):
@@ -9155,11 +9165,12 @@ class ErrorCodes(unittest.TestCase):
         from authzlib import errors
 
         for code, c in errors.CODES.items():
+            if c.wrong and c.right:
+                self.assertNotEqual(c.wrong, c.right, f"{code}'s mistake and its fix are the same policy")
             for kind, text in (("mistake", c.wrong), ("fix", c.right)):
                 if not text:
                     continue
-                files = dict(c.files) if kind == "fix" or code != "AZ108" else {}
-                got = errors.said(text, files, c.when)
+                got = errors.said(text, dict(c.files), c.when)
                 if kind == "fix" or c.when not in ("compile", "tests"):
                     self.assertIsNone(got, f"{code}'s {kind} should compile")
                 else:
