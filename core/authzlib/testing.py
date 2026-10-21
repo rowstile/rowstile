@@ -83,7 +83,8 @@ class TestMixin(Core):
                     signs_in = [t.name for t in self.types.values() if t.principal]
                     fail(
                         st.loc,
-                        f"'{st.ptype}' doesn't sign in: a test acts as anyone or as one of {', '.join(signs_in)}",
+                        f"'{st.ptype}' doesn't sign in: a test acts as anyone or as a type that signs in "
+                        f"({', '.join(signs_in)})",
                         "AZ502",
                     )
                 for scope in st.scopes:

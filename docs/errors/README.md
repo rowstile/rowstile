@@ -1,6 +1,6 @@
 # Error codes
 
-Every mistake rowstile reports ends with its code: `line 4: folder.owner: unknown type 'person' [AZ201]`. `rowstile help AZ201` prints its page in the terminal.
+What the command, the editor or a migration reports ends with its code: `line 4: folder.owner: unknown type 'person' [AZ201]`. An error the app meets at run time carries its code in its HINT instead: `rowstile help AZ709`. `rowstile help AZ201` prints a code's page in the terminal.
 
 ## Reading the policy
 

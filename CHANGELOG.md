@@ -132,6 +132,14 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `authz.connection_check()` didn't find a connection's role named with capitals, and said nothing of it.
   `rowstile init --role AppUser` quotes the name in the `CREATE ROLE` it says to run. A policy that names a
   role made without quotes (`CREATE ROLE App_User` makes `app_user`) writes it in lower case.
+- A missing included file is reported as `can't find teams.authz in the policy's folder`, with the name it
+  looked for from the policy's folder. The command said to "pass it in the files argument", which it has no
+  such thing as.
+- Error pages and messages say what the compiler does. AZ302 no longer calls a permission inheriting across
+  types (projects and folders inside each other) a mistake; AZ306 says conditions may join the inheritance
+  beside the deny; the error codes' index says that an error the app meets at run time carries its code in its
+  HINT, not at the end of the message. AZ502 names the types that sign in without "one of" a list of one, and
+  messages no longer say "a org".
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed

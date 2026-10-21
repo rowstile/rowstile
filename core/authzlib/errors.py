@@ -1,6 +1,7 @@
-"""Every mistake rowstile reports has a stable code, like AZ201, at the end of its message: 'line 4: folder.owner:
-unknown type 'person' [AZ201]'. This file is each code's page: what it means, a policy that makes the mistake and
-the same policy fixed. `rowstile help AZ201` prints it; docs/errors/ is written from it (tests/unit_test.py
+"""Every mistake rowstile reports has a stable code, like AZ201. What the command, the editor or a migration reports
+ends with it: 'line 4: folder.owner: unknown type 'person' [AZ201]'; an error the app meets at run time carries it in
+its HINT instead ('rowstile help AZ709'). This file is each code's page: what it means, a policy that makes the
+mistake and the same policy fixed. `rowstile help AZ201` prints it; docs/errors/ is written from it (tests/unit_test.py
 --update), and the unit tests compile every example: the mistake must give its code, the fix must compile.
 """
 
@@ -117,11 +118,12 @@ CODES = {
     "AZ108": Code(
         "An included file that can't be read",
         '`include "roles.authz"` names a file relative to the file that includes it. The command reads it from '
-        "disk; code that compiles a policy passes it in the `files` map (name -> text). A file can be included "
-        "only once, and never by itself. It is in the policy's folder or below it: named with `/`, without `..` "
-        "out of the folder, a drive or a `/` at the start (the review runs on a pull request's files, and must "
-        "not read others).",
-        'include "teams.authz"\ntype folder = app.folders\n  owner : user = owner_id\n  can view = owner\n',
+        "disk; code that compiles a policy passes it in the `files` map (name -> text). The message names the "
+        "file it looked for, from the policy's folder: put the file there, or correct the name. A file can be "
+        "included only once, and never by itself. It is in the policy's folder or below it: named with `/`, "
+        "without `..` out of the folder, a drive or a `/` at the start (the review runs on a pull request's "
+        "files, and must not read others).",
+        'include "team.authz"\ntype folder = app.folders\n  owner : user = owner_id\n  can view = owner\n',
         'include "teams.authz"\ntype folder = app.folders\n  owner : user = owner_id\n  can view = owner\n',
         files=(
             (
@@ -307,9 +309,11 @@ CODES = {
     ),
     "AZ302": Code(
         "A permission that depends on itself",
-        "A permission may use itself only through a relation between objects of one type, `parent.view`: that "
-        "is inheritance, stored as a tree. Any other loop (`a = b`, `b = a`, or two permissions inheriting "
-        "through each other) has no answer.",
+        "A permission may use itself only by inheriting: through a relation to objects of its own type "
+        "(`parent.view`), or through other types' permissions that come back to it (projects and folders inside "
+        "each other). That is inheritance, stored as a tree. Such a loop uses one permission per type: "
+        "`can a = owner or parent.b` with `can b = owner or parent.a` is refused. Any other loop "
+        "(`can edit = owner or view` with `can view = edit`) has no answer.",
         "type folder = app.folders\n  owner : user = owner_id\n  can edit = owner or view\n  can view = edit\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can edit = owner\n  can view = edit\n",
     ),
@@ -347,10 +351,10 @@ CODES = {
         "A deny that doesn't fit its inheritance",
         "`can view = (reader or parent.view) and not blocked`: the deny must reach everything below, so "
         "`blocked` is a permission of the same type that inherits through the same relation "
-        "(`can blocked = blocker or parent.blocked`), and the inheritance is joined with `and` only by the deny. "
-        "`blocked` has no deny of its own: that could cut it below a blocked object. And `view` inherits within "
-        "its own type: not through another type's permission (`project.view`, where projects and folders are "
-        "inside each other).",
+        "(`can blocked = blocker or parent.blocked`), and only the deny and conditions (`{not archived}`) join "
+        "the inheritance with `and`. `blocked` has no deny of its own: that could cut it below a blocked object. "
+        "And `view` inherits within its own type: not through another type's permission (`project.view`, where "
+        "projects and folders are inside each other).",
         "type folder = app.folders\n  owner   : user = owner_id\n  parent  : folder = parent_id\n"
         "  blocker : user = app.folder_blocks(folder_id -> user_id)\n  can blocked = blocker\n"
         "  can view = (owner or parent.view) and not blocked\n",
@@ -856,7 +860,7 @@ def message(code: str) -> str | None:
     c = CODES[code]
     if not c.wrong or c.when not in ("compile", "tests"):
         return None
-    e = said(c.wrong, {} if code == "AZ108" else dict(c.files), c.when)
+    e = said(c.wrong, dict(c.files), c.when)
     return str(e) if e else None
 
 
@@ -890,8 +894,9 @@ def index() -> str:
     out = [
         "# Error codes",
         "",
-        "Every mistake rowstile reports ends with its code: `line 4: folder.owner: unknown type 'person' "
-        "[AZ201]`. `rowstile help AZ201` prints its page in the terminal.",
+        "What the command, the editor or a migration reports ends with its code: `line 4: folder.owner: "
+        "unknown type 'person' [AZ201]`. An error the app meets at run time carries its code in its HINT "
+        "instead: `rowstile help AZ709`. `rowstile help AZ201` prints a code's page in the terminal.",
         "",
     ]
     for prefix, name in GROUPS:
