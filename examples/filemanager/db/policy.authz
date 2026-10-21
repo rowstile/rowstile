@@ -92,3 +92,5 @@ rules fm.group_members
   update group_id after : manage
   update id, user_id    : nobody            -- a membership's person never changes
   delete                : manage or person  -- anyone may leave a group
+  -- an account is deleted by the tables' owner (no rule lets the app), and its memberships go with it
+  cascade from fm.users

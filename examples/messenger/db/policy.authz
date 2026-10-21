@@ -69,6 +69,8 @@ rules ms.bots
   update              : manage
   update id, owner_id : nobody
   delete              : manage
+  -- an account is deleted by the tables' owner (no rule lets the app): its bots go with it
+  cascade from ms.users
 
 rules ms.chats
   select                                        : read or join or setup
@@ -76,6 +78,8 @@ rules ms.chats
   update                                        : manage
   update kind, created_by, created_at, last_seq : nobody
   delete                                        : owner and {kind = 'group'}
+  -- a chat outlives the account that made it
+  cascade from ms.users
 
 rules ms.members
   -- added by someone who may (not as an admin unless they are one; as the owner only when the chat is set
@@ -92,6 +96,9 @@ rules ms.members
   update last_read_seq                           : person
   update chat_id, user_id, joined_at, joined_seq : nobody
   delete                                         : person or (chat.manage and {role <> 'owner'})  -- leave, or be removed
+  -- a group deleted by its owner takes every membership in it; an account deleted, its memberships
+  cascade from ms.chats
+  cascade from ms.users
 
 rules ms.messages
   select                                             : read
@@ -102,13 +109,25 @@ rules ms.messages
   update deleted after                               : {deleted}  -- no undelete
   update chat_id, seq, sender_id, bot_id, created_at : nobody
   delete                                             : nobody     -- messages are deleted for everyone, not removed
+  -- a group deleted by its owner takes its messages, which no rule removes; a deleted account's or bot's
+  -- messages stay, from nobody
+  cascade from ms.chats
+  cascade from ms.users
+  cascade from ms.bots
 
 rules ms.chat_bots
   select : chat.read
   insert : chat.manage and bot.manage and {added_by = authz.uid()}  -- your own bots, into chats you manage
   delete : chat.manage or bot.manage
+  -- a deleted chat or bot takes the bot out of the chat; a deleted account leaves the bots it added
+  cascade from ms.chats
+  cascade from ms.bots
+  cascade from ms.users
 
 rules ms.blocks
   select : blocker
   insert : blocker
   delete : blocker
+  -- an account deleted, the blocks it made and those made against it
+  cascade from ms.users (blocker_id)
+  cascade from ms.users (blocked_id)
