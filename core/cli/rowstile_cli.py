@@ -12,13 +12,13 @@
                                                    inheritance trees are built beside the ones in use first
                                                    (--one-phase: one); --check: exit 1 if there are changes no
                                                    migration has (for CI)
-    rowstile review  [--base REF] [--markdown|--json|--annotations] [--out FILE] [--db DSN]
+    rowstile review  [POLICY.authz] [--base REF] [--markdown|--json|--annotations] [--out FILE] [--db DSN]
                                                    what the change since REF (default main) does: meaning,
                                                    access (with --db: a database at REF with review data),
                                                    risk, tests, deploy; the pull request comment with --markdown,
                                                    or in FILE with --out, beside what it prints (one review for both)
                                                    (exit 0 whatever it finds: test and migrate --check gate)
-    rowstile fmt     [--check] [FILE.authz ...]     write policies and test files one way (--check: exit 1 if
+    rowstile fmt     [--check] [FILE.authz ...]    write policies and test files one way (--check: exit 1 if
                                                    one isn't; for CI); line endings stay the file's own
     rowstile push    [POLICY.authz] [--development]
                                                    bring a development database to the policy with the same
@@ -38,7 +38,8 @@
     rowstile test    [TESTS.authz ...] [--coverage]
                                                    the policy's tests, these named tests, and the invariants;
                                                    --coverage: the branches of each permission no test makes true
-    rowstile graph   [POLICY.authz]                Mermaid diagram (of the current policy if none given)
+    rowstile graph   [POLICY.authz]                Mermaid diagram of the file, else of the policy rowstile.toml
+                                                   names, else (and with --db) of the policy in force
     rowstile lint                                  the ways around row-level security the database leaves open
                                                    (authz.lint()); exit 1 if there are errors or warnings
     rowstile indexes [--check]                     the lookups the policy makes into the app's tables that no
@@ -47,7 +48,7 @@
                                                    time, and full scans or per-row subplans that would be slow
     rowstile bench   [--people N] [--rounds N]     p50 and p95 of reads, lists, checks and updates (undone), as
                                                    people in the data
-    rowstile snapshot [--check] [--out FILE]      who holds what on this database's data, one sorted line per
+    rowstile snapshot [--check] [--out FILE]       who holds what on this database's data, one sorted line per
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
@@ -95,6 +96,8 @@ rowstile.toml:
     lock = "db/policy.lock"                # what the migrations made so far (default: next to the policy)
     write_after = 300                      # rowstile dev writes the migration this long after the last save
                                            # (seconds; 0: never, run rowstile migrate yourself)
+    [review]
+    snapshot = "db/access.snapshot"        # rowstile snapshot's file (default: access.snapshot next to the policy)
 
 The compiler runs here: the database only runs the SQL it writes, and the authz.* functions
 apps call. Applying, previewing and testing each run in one transaction on the database.
