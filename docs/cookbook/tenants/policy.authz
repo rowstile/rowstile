@@ -11,7 +11,7 @@ type ticket = app.tickets (org_id, id)
   org      : org  = org_id
   assignee : user = assignee_id
 
-  can edit = assignee or org.admin
+  can edit = (assignee and org.member) or org.admin
   can view = edit or org.member
 
 rules app.tickets
@@ -20,3 +20,6 @@ rules app.tickets
   update             : edit
   update assignee_id : org.admin  -- only admins reassign
   update org_id, id  : nobody
+
+invariants
+  never ticket: view and not org.member

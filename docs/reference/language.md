@@ -159,7 +159,11 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   Postgres checks both), unless `update after : ...` says what must hold after it. <!-- answer: update-before-after --> A column rule checks the
   row before the change (`update owner_id : share`, or
   `update owner_id before : share`) or after it (`update folder_id after : folder.edit`: where
-  a row moves to); `authz.lint()` warns about a move nothing checks the destination of. <!-- checked: tests/governance.sh "lint finds a move nothing checks the destination of" --> <!-- answer: column-rules -->
+  a row moves to). `authz.lint()` warns about a move in a tree (a column that links a row to another of its own
+  type) that nothing checks the destination of, and about any column that gives a relation and that whoever
+  may update the row may change, with no rule on it. <!-- checked: tests/governance.sh "lint finds a move nothing checks the destination of"; tests/governance.sh "lint finds a column that gives a relation and that an editor may change" -->
+  A rule on the row before the change (`update org_id : share`) says who may move a row to another
+  organisation, not to which: `update org_id after : org.member` or `update org_id : nobody` says that. <!-- answer: column-rules -->
   An update two column rules both refuse is refused in the words of a rule on the row before the change first
   (`update id, owner_id` before `update folder_id after`), then of the one whose columns come first in name
   order, whatever order the policy writes them in. <!-- checked: tests/adversarial.sh "and both at once: the rule on the row before the change says why"; tests/invariance.py "the same answers"; tests/unit_test.py "test_triggers_are_named_after_what_they_guard" -->

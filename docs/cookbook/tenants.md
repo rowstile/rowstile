@@ -12,7 +12,7 @@ type ticket = app.tickets (org_id, id)
   org      : org  = org_id
   assignee : user = assignee_id
 
-  can edit = assignee or org.admin
+  can edit = (assignee and org.member) or org.admin
   can view = edit or org.member
 
 rules app.tickets
@@ -21,10 +21,18 @@ rules app.tickets
   update             : edit
   update assignee_id : org.admin
   update org_id, id  : nobody
+
+invariants
+  never ticket: view and not org.member
 ```
 
 - `org.member` follows the ticket's `org` to that organisation's members: the tenant check, written once,
   where the type is. No query has to remember `WHERE org_id = ...`.
+- `assignee and org.member`: the column names anyone, so the assignee holds the ticket only while in its
+  organisation. With `assignee or org.admin`, a ticket assigned to someone of another organisation would be
+  theirs to read and edit.
+- The invariant says it for every ticket, and `rowstile prove` finds no small world where someone outside the
+  organisation sees one.
 - `where {role = 'admin'}` makes a second relation from the same table.
 - `(org_id, id)` after the table says the key has two columns. In `authz.can` and the other functions, such a
   row's id is its text, `'(7,42)'`.
@@ -33,7 +41,7 @@ rules app.tickets
 
 ## Tested
 
-Cy is an admin of another organisation:
+Cy is an admin of another organisation. A ticket of Acme assigned to him still gives him nothing:
 
 ```authz
 test "a ticket is seen in its organisation, and nowhere else"
@@ -42,6 +50,11 @@ test "a ticket is seen in its organisation, and nowhere else"
   as user $cy refused {INSERT INTO app.tickets VALUES ($acme, 2, $cy, 'Not mine to file')}
   as user $bo refused {UPDATE app.tickets SET assignee_id = $ann WHERE (org_id, id) = ($acme, 1)}
   as user $ann refused {UPDATE app.tickets SET org_id = $globex WHERE (org_id, id) = ($acme, 1)}
+  as user $ann allowed {UPDATE app.tickets SET assignee_id = $cy WHERE (org_id, id) = ($acme, 1)}
+  as user $bo allowed {INSERT INTO app.tickets VALUES ($acme, 3, $cy, 'Filed for Cy')}
+  user $cy cannot view ticket $t
+  as user $cy sees 0 {SELECT FROM app.tickets WHERE org_id = $acme}
+  as user $cy refused {UPDATE app.tickets SET title = 'Edited from Globex' WHERE (org_id, id) = ($acme, 1)}
 ```
 
 ## Try it

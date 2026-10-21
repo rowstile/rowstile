@@ -21,8 +21,10 @@ rules app.notes
 - `select : view` filters every read: a query for all notes returns the asker's own.
 - `insert : owner` asks that a new row names whoever is signed in as its owner, so nobody makes notes in
   someone else's name.
-- `update owner_id : nobody` stops people from giving their notes away. Without it, `update : edit` would let
-  an owner change any column, that one included.
+- `update owner_id : nobody` says outright that a note is never given away. Here `update : edit` refuses it
+  too: that rule must also hold on the row after the change, and the note's owner is then someone else. The
+  line matters as soon as `edit` holds for more than the owner, since an editor could make himself the owner.
+  Without it, `authz.lint()` warns that whoever may update a note may change its owner.
 
 ## Tested
 

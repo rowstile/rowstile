@@ -186,6 +186,18 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   worlds it lists counted rows of every type, also those the change doesn't read: with 14 types, a permission
   rewritten as `owner or owner` took almost four minutes, and each more type about four times as long. Only the
   types the change reads vary now, and the listing gets further in the same number of worlds.
+- The app role reads only the `authz_gen` views its rules look up. It could read every view the policy made, and
+  some list rows the rules hide: with `can view = folder.view and not {confidential}` on files, the view of
+  `folder.view` on files listed the confidential files in the folders a user may view. Code that read such a view
+  now gets `permission denied`: `authz.list` answers what it asked. Applying the policy again (or the next
+  migration) brings it in.
+- Three cookbook recipes gave more access than their pages said. In roles per organization, a document's owner
+  could move it into another organisation, or make one there, and its members saw it: its organisation now
+  can't change (`update org_id : nobody`). In tenants, a ticket assigned to someone of another organisation was
+  theirs to read and edit: the assignee now holds it only as a member (`(assignee and org.member)`), and an
+  invariant says no one outside sees a ticket. The multi-tenant page says that someone in two organisations may
+  move a project across, and how to forbid it. The language reference says which moves `authz.lint()` warns
+  about. A policy copied from these recipes wants the same change.
 
 ## 0.1.0 (alpha)
 

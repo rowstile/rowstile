@@ -40,7 +40,9 @@ rules app.projects
   delete                    : workspace.manage
 ```
 
-A project moves only to a workspace its mover may see, so never across tenants.
+A project moves only to a workspace its mover may see. Someone in two organisations sees workspaces of both, so
+they may move a project from one organisation to the other (the last test shows it). Where a project must
+stay in its organisation, write `update workspace_id : nobody`: it then stays in its workspace.
 
 ## Proved, not only tested
 
@@ -79,6 +81,15 @@ test "a project is seen in its organisation, by the people of its workspace"
 test "someone put in a workspace without being in its organisation holds nothing"
   given {INSERT INTO app.workspace_members VALUES ($design, $dee)}
   user $dee cannot view workspace $design
+```
+
+Eve is in both organisations, and in a workspace of each:
+
+```authz
+test "someone in two organisations may move a project from one to the other"
+  user $dee cannot view project $p
+  as user $eve allowed {UPDATE app.projects SET workspace_id = $research WHERE id = $p}
+  user $dee can view project $p
 ```
 
 ## Try it

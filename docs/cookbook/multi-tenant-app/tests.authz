@@ -28,3 +28,17 @@ test "someone put in a workspace without being in its organisation holds nothing
   given design = {INSERT INTO app.workspaces (org_id, name) VALUES ($acme, 'Design') RETURNING id}
   given {INSERT INTO app.workspace_members VALUES ($design, $dee)}
   user $dee cannot view workspace $design
+
+test "someone in two organisations may move a project from one to the other"
+  given dee = {INSERT INTO app.users VALUES (904, 'Dee') RETURNING id}
+  given eve = {INSERT INTO app.users VALUES (905, 'Eve') RETURNING id}
+  given acme = {INSERT INTO app.orgs VALUES (901, 'Acme') RETURNING id}
+  given globex = {INSERT INTO app.orgs VALUES (902, 'Globex') RETURNING id}
+  given {INSERT INTO app.org_members VALUES ($globex, $dee, 'admin'), ($acme, $eve, 'member'), ($globex, $eve, 'member')}
+  given design = {INSERT INTO app.workspaces (org_id, name) VALUES ($acme, 'Design') RETURNING id}
+  given research = {INSERT INTO app.workspaces (org_id, name) VALUES ($globex, 'Research') RETURNING id}
+  given {INSERT INTO app.workspace_members VALUES ($design, $eve), ($research, $eve)}
+  given p = {INSERT INTO app.projects (workspace_id, name) VALUES ($design, 'Website') RETURNING id}
+  user $dee cannot view project $p
+  as user $eve allowed {UPDATE app.projects SET workspace_id = $research WHERE id = $p}
+  user $dee can view project $p

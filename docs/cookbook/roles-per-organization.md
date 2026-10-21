@@ -19,6 +19,14 @@ type document = app.documents
   can share = owner or org.admin
   can edit  = share or roles
   can view  = edit or viewer or org.member or roles
+
+rules app.documents
+  select          : view
+  insert          : org.member and owner
+  update          : edit
+  update owner_id : share
+  update org_id   : nobody  -- a document stays in its organisation
+  delete          : share
 ```
 
 - `where {role = 'admin'}` makes a relation from some rows of a table. Admins and members see every document
@@ -30,6 +38,9 @@ type document = app.documents
 - `can manage_roles = admin` says who makes them. An admin creates one with
   `authz.create_role('org', 1, 'document', 'reviewer', ARRAY['view'])`, which returns its id, and gives it like
   a relation: `authz.share('document', 7, 'role:<id>', 'user', 4)`.
+- `insert : org.member and owner`: you make a document in your own name, in an organisation you are in.
+  `update org_id : nobody` keeps it there. Without it, its owner could move it into any organisation, and every
+  member of that one would see it.
 
 ## Tested
 
@@ -43,6 +54,8 @@ test "admins, members and guests"
   as user $ann allowed {SELECT authz.share('document', $hers, 'viewer', 'user', $cy)}
   user $cy can view document $hers
   user $cy cannot view document $mine
+  as user $bo refused {INSERT INTO app.documents (org_id, owner_id, title) VALUES ($globex, $bo, 'Planted')}
+  as user $bo refused {UPDATE app.documents SET org_id = $globex WHERE id = $mine}
 ```
 
 The second test makes a role and gives it in one statement, since giving it needs the id that making it
