@@ -3,6 +3,7 @@
 No database needed; where one is (createdb works: the PG* variables), also the completion of its tables and
 columns.   python3 tests/lsp_test.py"""
 
+import atexit
 import contextlib
 import json
 import os
@@ -1124,6 +1125,8 @@ def made_database() -> str | None:
         return None
     if made.returncode:
         return None
+    # dropped when the suite ends, however it ends (a check that raises, a step that fails)
+    atexit.register(subprocess.run, ["dropdb", "--if-exists", db], capture_output=True)
     env = dict(os.environ, PGOPTIONS="-c client_min_messages=error")
     psql = ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db]
     for step in (
@@ -1253,6 +1256,7 @@ else:
         # some seconds later, and its tables offered then; rowstile.toml naming another: read at the next completion
         later = "authz_lsp_later"
         subprocess.run(["dropdb", "--if-exists", later], capture_output=True)
+        atexit.register(subprocess.run, ["dropdb", "--if-exists", later], capture_output=True)
         with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
             fh.write(f'policy = "policy.authz"\ndatabase = "dbname={later}"\n')
         c = Client(d)

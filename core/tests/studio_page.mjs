@@ -205,9 +205,9 @@ const viewAs = (who) => call((/** @type {string} */ who) => {
   /** @type {HTMLInputElement} */ (document.getElementById("as")).value = who;
   /** @type {HTMLFormElement} */ (document.getElementById("as-form")).requestSubmit();
 }, who);
-/** Opens a table of the tables tab, and waits for its rows. @param {string} table @param {string} who */
-const openTable = async (table, who) => {
-  await clickWhere("#table-list button", "table", table);
+/** Opens a type's rows in the tables tab, and waits for them. @param {string} type @param {string} who */
+const openTable = async (type, who) => {
+  await clickWhere("#table-list button", "type", type);
   return until(() => call((/** @type {string} */ who) => document.getElementById("grid-head")?.textContent?.startsWith(`${who} sees`)
     && document.querySelectorAll("#grid tbody tr").length, who));
 };
@@ -247,8 +247,10 @@ try {
 
   // the grid: a table, its cells under their headings
   await viewAs("anyone");
-  const rows = await openTable("app.folders", "anyone");
+  const rows = await openTable("folder", "anyone");
   check("the folders, as anyone", rows === 8, rows);
+  const order = await js("[...document.querySelectorAll('#grid tbody tr')].map((tr) => tr.dataset.id).join(' ')");
+  check("... in their key's order: 20 after 6, not after 2", order === "1 2 3 4 5 6 20 21", order);
   const layout = await js(`(() => {
     const left = (/** @type {Element} */ e) => Math.round(e.getBoundingClientRect().left);
     const heads = [...document.querySelectorAll('#grid thead th')].map(left);
@@ -316,7 +318,7 @@ try {
   const glance = withShares.replace("  can peek    = view or roles\n", "  can peek    = view or roles\n  can glance  = viewer\n");
   writeFileSync(policy, glance);
   command("apply", policy);
-  await openTable("app.folders", "user:3");
+  await openTable("folder", "user:3");
   await clickWhere("#grid tbody tr", "id", "1");
   const perms = await until("!document.getElementById('panel').hidden && [...document.querySelectorAll('#panel .perm .name')].map((n) => n.textContent)");
   check("a permission added since the page opened: offered once a table is opened", JSON.stringify(perms) === '["share","edit","view","break_glass","peek","glance"]', perms);

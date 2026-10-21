@@ -917,7 +917,7 @@ class Dev:
 
             try:
                 url = studio.Studio(
-                    self.dsn, self.cfg, self.policy, writable=True, port=self.studio_port, read_policy=read_policy
+                    self.dsn, self.policy, writable=True, port=self.studio_port, read_policy=read_policy
                 ).start()
                 print(f"Studio on {url}")
             except OSError as e:
@@ -1269,7 +1269,7 @@ def main(argv: list[str]) -> None:
     if cmd == "studio":
         import studio
 
-        studio.serve(dsn or "", cfg, cfg.policy, "--write" in flags, int(opts.get("--port", "4983")), read_policy)
+        studio.serve(dsn or "", cfg.policy, "--write" in flags, int(opts.get("--port", "4983")), read_policy)
         return
 
     try:

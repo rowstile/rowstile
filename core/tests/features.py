@@ -624,7 +624,15 @@ FEATURES: list[Feature] = [
         ),
         Doc(TOOLS, "`rowstile studio"),
         tuple(T("studio_test.py", f"/api/{r}") for r in ("overview", "rows", "why", "graph", "diff", "shares", "test"))
-        + (T("studio_test.py", "the API needs the token"), T("studio_test.py", "read-only: no shares made")),
+        + (T("studio_test.py", "the API needs the token"), T("studio_test.py", "read-only: no shares made"))
+        # the guards walked over every route, and what each route's transaction may do
+        + (
+            T("studio_test.py", "no token: 401 on every route"),
+            T("studio_test.py", "no host at all (HTTP/1.0): 403 on every route"),
+            T("studio_test.py", "a route that tries no change runs READ ONLY"),
+            T("studio_test.py", "and nothing any route wrote stays"),
+            T("studio_test.py", "a type's rows in its key's order, page after page"),
+        ),
         note="the rows: what the app role reads, as row-level security gives it, not held to the reference",
     ),
     Feature(
@@ -1115,12 +1123,12 @@ def mcp_tools() -> set[str]:
 
 
 def studio_routes() -> set[str]:
-    """Studio's API: the GET routes (its `gets` table) and the changes a page may POST."""
+    """Studio's API: the GET routes (its `routes` table) and the changes a page may POST (CHANGES)."""
     text = read("core/cli/studio.py")
-    table = text[text.index("gets: dict[") :]
+    table = text[text.index("    def routes(self)") :]
     table = table[: table.index("}")]
-    gets = set(re.findall(r'"(\w+)":\s*studio\.', table))
-    m = re.search(r'method == "POST" and name in \(([^)]*)\)', text)
+    gets = set(re.findall(r'"(\w+)":\s*self\.', table))
+    m = re.search(r"^CHANGES = \(([^)]*)\)", text, re.M)
     assert m is not None, "Studio's POST routes are not where they were"
     return {f"studio.{n}" for n in gets | set(re.findall(r'"(\w+)"', m[1]))}
 

@@ -11543,7 +11543,7 @@ class StudioPort(unittest.TestCase):
 
         def run() -> None:
             try:
-                studio.serve(None, rowstile_cli.Config(), None, False, port, rowstile_cli.read_policy)
+                studio.serve(None, None, False, port, rowstile_cli.read_policy)
             except SystemExit as e:
                 ended.append(e.code)
 

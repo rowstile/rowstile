@@ -7,6 +7,7 @@ page that has the token, on localhost. And rowstile studio, the command: what it
     PGHOST=... PGUSER=... python3 tests/studio_test.py [--db authz_studio]
 """
 
+import atexit
 import contextlib
 import http.client
 import io
@@ -23,7 +24,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, NamedTuple
 from unittest import mock
 
@@ -36,6 +37,7 @@ import pgwire  # noqa: E402
 import rowstile_cli  # noqa: E402
 import studio  # noqa: E402
 from authzlib import database, grant  # noqa: E402
+from authzlib.connection import Db  # noqa: E402
 from authzlib.parse import Type  # noqa: E402
 
 fails = 0
@@ -62,6 +64,15 @@ def psql(db: str, sql: str) -> str:
     if r.returncode:
         raise SystemExit(f"psql failed: {r.stderr}")
     return r.stdout.strip()
+
+
+def scratch_db(name: str) -> str:
+    """A database of this suite's own, made empty, and dropped when the suite ends however it ends (a check that
+    raises, a psql that fails): an interrupted run leaves none behind on a server other suites share."""
+    subprocess.run(["dropdb", "--if-exists", name], capture_output=True)
+    subprocess.run(["createdb", name], check=True)
+    atexit.register(subprocess.run, ["dropdb", "--if-exists", name], capture_output=True)
+    return name
 
 
 def cli(db: str, *args: str) -> tuple[int, str]:
@@ -172,12 +183,20 @@ class Raw(NamedTuple):
 
 
 def by_hand(
-    s: studio.Studio, head: dict[str, str], body: bytes = b"", path: str = "/api/share", wait: float = 8
+    s: studio.Studio,
+    head: Mapping[str, str | None],
+    body: bytes = b"",
+    path: str = "/api/share",
+    wait: float = 8,
+    method: str = "POST",
+    version: str = "HTTP/1.1",
 ) -> Raw:
-    """A POST as no browser sends it: these headers (the token's and the host's besides), then this much of the
-    body, the connection left open. Read until Studio closes it, or `wait` seconds pass."""
+    """A request as no browser sends it: these headers (the token's and the host's besides, unless head gives
+    them as None), then this much of the body, the connection left open. Read until Studio closes it, or `wait`
+    seconds pass."""
     headers = {"Host": f"127.0.0.1:{s.port}", "X-Studio-Token": s.token, **head}
-    request = f"POST {path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers.items()) + "\r\n"
+    request = f"{method} {path} {version}\r\n"
+    request += "".join(f"{k}: {v}\r\n" for k, v in headers.items() if v is not None) + "\r\n"
     started = time.monotonic()
     got = b""
     with socket.create_connection(("127.0.0.1", s.port), timeout=wait) as conn:
@@ -220,6 +239,130 @@ def waiting(db: str, s: studio.Studio, path: str, body: object, lock: str, then:
         asked.join()
     locker.close()
     return (*got[0], logged.getvalue())
+
+
+# a request to each route Studio answers with GET, as the page asks it (the docs app): the guards are walked over
+# every one of them, and the changes Studio takes (studio.CHANGES)
+ASKS = {
+    "overview": "",
+    "rows": "type=folder&as=user:2",
+    "why": "as=user:3&type=folder&id=3&perm=edit",
+    "graph": "",
+    "diff": "",
+    "shares": "type=folder&id=1",
+    "test": "as=user:3&type=folder&id=3&perm=edit",
+}
+# a change each of the routes that make one would make, as the folder's owner
+CHANGED = {
+    "share": {
+        "as": "user:1",
+        "type": "folder",
+        "id": "3",
+        "relation": "editor",
+        "subject_type": "user",
+        "subject_id": "3",
+    },
+    "unshare": {
+        "as": "user:5",
+        "type": "folder",
+        "id": "1",
+        "relation": "viewer",
+        "subject_type": "org",
+        "subject_id": "1",
+        "subject_relation": "member",
+    },
+    "decide": {"as": "user:5", "request": 1, "approve": True},
+}
+NO_TOKEN = "no token: open Studio from the address rowstile printed (it carries the token)"
+OLD_TOKEN = (
+    "this page's token isn't this Studio's: Studio was started again since the page was opened, and each start "
+    "makes a new token. Open the address rowstile printed last"
+)
+
+
+def guards(s: studio.Studio, label: str, db: str) -> None:
+    """The token and the host, asked of every route (each GET, each change), as no page sends them: refused with
+    words before anything else, and no change made."""
+    routes = [*s.routes(), *studio.CHANGES]
+    check(
+        f"{label}: the guards are walked over every route Studio answers", sorted(routes) == sorted([*ASKS, *CHANGED])
+    )
+    shares = lambda: psql(db, "SELECT string_agg(s::text, ' ' ORDER BY s::text) FROM authz.shares s")
+    before = shares()
+    localhost = "Studio answers on localhost only"
+    for what, head, version, want in (
+        (
+            "no token: 401 on every route, saying where to find it",
+            {"X-Studio-Token": None},
+            "HTTP/1.1",
+            (401, NO_TOKEN),
+        ),
+        (
+            "a token not this Studio's: 401 on every route, saying Studio was started again",
+            {"X-Studio-Token": "wrong"},
+            "HTTP/1.1",
+            (401, OLD_TOKEN),
+        ),
+        (
+            "a host that isn't localhost (a DNS name pointed here): 403 on every route, saying localhost only",
+            {"Host": "evil.example"},
+            "HTTP/1.1",
+            (403, localhost),
+        ),
+        (
+            "no host at all (HTTP/1.0): 403 on every route, saying localhost only",
+            {"Host": None},
+            "HTTP/1.0",
+            (403, localhost),
+        ),
+    ):
+        wrong: list[tuple[str, Raw]] = []
+        for name in routes:
+            if name in CHANGED:
+                body = json.dumps(CHANGED[name]).encode()
+                sent = {**head, "Content-Type": "application/json", "Content-Length": str(len(body))}
+                r = by_hand(s, sent, body, f"/api/{name}", version=version)
+            else:
+                r = by_hand(s, head, path=f"/api/{name}?{ASKS[name]}", method="GET", version=version)
+            if (r.status, r.answer and r.answer.get("detail")) != want:
+                wrong.append((name, r))
+        check(f"{label}: {what}", not wrong, wrong)
+    check(f"{label}: ... no share made or taken by any of them", shares() == before, (before, shares()))
+
+
+def read_only(s: studio.Studio, db: str, label: str, tries: Sequence[str]) -> None:
+    """Every GET route as if it wrote: the policy in force, which each reads first, read after a row is inserted.
+    In its READ ONLY transaction the database refuses the write; the routes in `tries` (why and the access diff,
+    which try changes where Studio may write) are let through, and nothing they wrote stays."""
+    psql(db, "CREATE TABLE public.studio_marks (route text)")
+    real = database.applied
+    asking = [""]
+
+    def writing(d: Db) -> tuple[str, database.Files]:
+        d.rows("INSERT INTO public.studio_marks VALUES ($1)", [asking[0]])
+        return real(d)
+
+    got: dict[str, tuple[int, Answer]] = {}
+    with mock.patch.object(studio.database, "applied", writing):
+        for name, ask in ASKS.items():
+            asking[0] = name
+            status, e = Client(s).call(f"/api/{name}?{ask}")
+            got[name] = (status, e.get("detail"))
+    refused = (400, "cannot execute INSERT in a read-only transaction")
+    check(
+        f"{label}: a route that tries no change runs READ ONLY: a write in it is refused, in the database's words",
+        all(got[n] == refused for n in ASKS if n not in tries),
+        got,
+    )
+    if tries:
+        check(
+            f"{label}: why and the access diff, which try changes, may write: answered",
+            all(got[n][0] == 200 for n in tries),
+            got,
+        )
+    kept = psql(db, "SELECT string_agg(route, ' ') FROM public.studio_marks")
+    psql(db, "DROP TABLE public.studio_marks")
+    check(f"{label}: ... and nothing any route wrote stays", kept == "", kept)
 
 
 def pump(a: socket.socket, b: socket.socket) -> None:
@@ -283,8 +426,7 @@ class Between:
 
 def main() -> None:
     db = sys.argv[sys.argv.index("--db") + 1] if "--db" in sys.argv else "authz_studio"
-    subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
-    subprocess.run(["createdb", db], check=True)
+    scratch_db(db)
     subprocess.run(
         ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", os.path.join(ROOT, "example", "app_schema.sql")],
         check=True,
@@ -418,7 +560,7 @@ def main() -> None:
 
     print("-- Studio, read-only")
     dsn = f"dbname={db}"
-    ro = studio.Studio(dsn, None, policy, writable=False, port=0, read_policy=rowstile_cli.read_policy)
+    ro = studio.Studio(dsn, policy, writable=False, port=0, read_policy=rowstile_cli.read_policy)
     ro.start()
     c = Client(ro)
     try:
@@ -476,16 +618,25 @@ def main() -> None:
             "a token that isn't ASCII is a wrong token",
             Client(ro, token="caf\u00e9".encode().decode("latin-1")).call("/api/overview")[0] == 401,
         )
+        guards(ro, "read-only", db)
+        read_only(ro, db, "read-only", ())
         status, o = c.call("/api/overview")
         check(
-            "the overview: the database, the types, the tables",
+            "the overview: the database, the types and their tables",
             status == 200
             and not o["writable"]
-            and "app.folders" in o["tables"]
+            and [(t["name"], t["table"]) for t in o["types"]]
+            == [
+                ("user", "app.users"),
+                ("org", "app.orgs"),
+                ("team", "app.teams"),
+                ("folder", "app.folders"),
+                ("file", "app.files"),
+            ]
             and any(t["name"] == "folder" and any(p["name"] == "edit" for p in t["perms"]) for t in o["types"]),
             o,
         )
-        status, r = c.call("/api/rows?table=app.folders&as=user:2")
+        status, r = c.call("/api/rows?type=folder&as=user:2")
         hidden = [x for x in r["rows"] if not x["visible"]]
         check(
             "the rows as bob: some hidden, each with his permissions",
@@ -496,11 +647,22 @@ def main() -> None:
             and any("view" in x["perms"] for x in r["rows"] if x["visible"]),
             r,
         )
-        status, r2 = c.call("/api/rows?table=app.folders&as=anyone")
+        check(
+            "... in their key's order, the type's and the table's: folder 20 after 6, not after 2",
+            [x["id"] for x in r["rows"]] == ["1", "2", "3", "4", "5", "6", "20", "21"]
+            and (r["type"], r["table"], r["offset"], r["limit"], r["more"]) == ("folder", "app.folders", 0, 50, False),
+            r,
+        )
+        status, r2 = c.call("/api/rows?type=folder&as=anyone")
         check("... and as nobody", status == 200 and r2["visible_total"] < r["visible_total"], r2)
-        status, same = c.call("/api/rows?table=app.folders&as=2")
+        status, same = c.call("/api/rows?type=folder&as=2")
         check("someone written without a type is a user: as=2 sees what user:2 sees", status == 200 and same == r, same)
-        check("only tables the policy governs", c.call("/api/rows?table=pg_catalog.pg_authid&as=user:2")[0] == 404)
+        check(
+            "only the policy's types: 404, and says so",
+            c.call("/api/rows?type=pg_catalog.pg_authid&as=user:2")
+            == (404, {"title": "Problem", "status": 404, "detail": "no type 'pg_catalog.pg_authid' in the policy"}),
+            c.call("/api/rows?type=pg_catalog.pg_authid&as=user:2"),
+        )
         before = shares()
         status, w = c.call("/api/why?as=user:3&type=folder&id=3&perm=edit")
         check(
@@ -681,7 +843,7 @@ def main() -> None:
         )
         # what a page asks wrongly is answered with a problem: its status, and words that say what to change
         for label, path, want, words in (
-            ("someone to view as, written wrongly", "/api/rows?table=app.folders&as=user:", 400, "as whom? 'user:'"),
+            ("someone to view as, written wrongly", "/api/rows?type=folder&as=user:", 400, "as whom? 'user:'"),
             ("why for nobody", "/api/why?as=anyone&type=folder&id=3&perm=edit", 400, "why for nobody"),
             (
                 "why on a type the policy doesn't have",
@@ -739,7 +901,7 @@ def main() -> None:
                     "  can edit  = share or editor or viewer or (parent.edit and {inherit})",
                 )
             )
-        s = studio.Studio(dsn, None, changed, writable=False, port=0, read_policy=rowstile_cli.read_policy)
+        s = studio.Studio(dsn, changed, writable=False, port=0, read_policy=rowstile_cli.read_policy)
         s.start()
         try:
             status, d = Client(s).call("/api/diff")
@@ -750,7 +912,7 @@ def main() -> None:
             )
         finally:
             s.stop()
-        s = studio.Studio(dsn, None, changed, writable=True, port=0, read_policy=rowstile_cli.read_policy)
+        s = studio.Studio(dsn, changed, writable=True, port=0, read_policy=rowstile_cli.read_policy)
         s.start()
         try:
             before = psql(db, "SELECT count(*) FROM authz.policy_versions")
@@ -806,7 +968,7 @@ def main() -> None:
                 "",
             ),
         ):
-            s = studio.Studio(dsn, None, path, writable=writable, port=0, read_policy=rowstile_cli.read_policy)
+            s = studio.Studio(dsn, path, writable=writable, port=0, read_policy=rowstile_cli.read_policy)
             s.start()
             try:
                 status, d = Client(s).call("/api/diff")
@@ -821,10 +983,13 @@ def main() -> None:
                 s.stop()
 
     print("-- Studio, able to write (rowstile dev, or --write)")
-    rw = studio.Studio(dsn, None, policy, writable=True, port=0, read_policy=rowstile_cli.read_policy)
+    rw = studio.Studio(dsn, policy, writable=True, port=0, read_policy=rowstile_cli.read_policy)
     rw.start()
     c = Client(rw)
     try:
+        guards(rw, "able to write", db)
+        # why and the access diff try changes: rolled back whole, whatever each change's savepoint does
+        read_only(rw, db, "able to write", ("why", "diff"))
         before = shares()
         status, w = c.call("/api/why?as=user:3&type=folder&id=3&perm=edit")
         check(
@@ -874,7 +1039,7 @@ def main() -> None:
             ),
             (
                 "an offset that isn't a number",
-                "/api/rows?table=app.folders&as=user:1&offset=two",
+                "/api/rows?type=folder&as=user:1&offset=two",
                 None,
                 "invalid literal for int() with base 10: 'two'",
             ),
@@ -930,7 +1095,7 @@ def main() -> None:
             (status, e),
         )
         status, _ = c.call("/api/share", {**body, "as": "user:1"})
-        _, r = c.call("/api/rows?table=app.folders&as=user:3")
+        _, r = c.call("/api/rows?type=folder&as=user:3")
         check(
             "a share as the folder's owner, and carol can edit it",
             status == 200 and any(x["id"] == "3" and "edit" in x["perms"] for x in r["rows"]),
@@ -938,16 +1103,6 @@ def main() -> None:
         )
         status, _ = c.call("/api/unshare", {**body, "as": "user:1"})
         check("... and unsharing it", status == 200 and shares() == before)
-        # a link's share, as authz.list_shares gives it: its subject is (link), which no share has
-        link = {**body, "subject_type": "link", "subject_id": "(link)", "as": "user:1"}
-        status, e = c.call("/api/unshare", link)
-        check(
-            "unsharing a share link: refused, saying what turns it off (not a Done that leaves it on)",
-            status == 400
-            and e["detail"]
-            == "a share link isn't unshared: authz.revoke_link turns it off, by the id authz.list_links gives",
-            (status, e),
-        )
         # a body's size: the changes the page sends are a few hundred bytes. One over the cap is refused unread, one
         # that doesn't come whole is given up on, and either way the thread is let go
         json_head = {"Content-Type": "application/json"}
@@ -1047,18 +1202,36 @@ def main() -> None:
         )
         psql(
             db,
-            "SELECT authz.act_as('user', '2'); SELECT authz.request_access('folder', '5', 'viewer', 'for the audit')",
+            "SELECT authz.act_as('user', '2'); "
+            "SELECT authz.request_access('folder', '5', 'viewer', 'for the audit', interval '7 days')",
         )
         status, sh = c.call("/api/shares")
         req = [x for x in sh["requests"] if x["object_id"] == "5"]
-        check("a pending access request", status == 200 and req and req[0]["requester"] == "2", sh)
-        status, e = c.call("/api/decide", {"as": "user:2", "request": req[0]["id"], "approve": True})
-        check("deciding your own request is refused", status == 403, e)
-        status, _ = c.call("/api/decide", {"as": "user:5", "request": req[0]["id"], "approve": True})
         check(
-            "... the owner approves it, and it is a share",
+            "a pending access request, for how long",
             status == 200
-            and psql(db, "SELECT count(*) FROM authz.shares WHERE object_id = '5' AND subject_id = '2'") == "1",
+            and [(x["requester"], x["relation"], x["reason"], x["duration"]) for x in req]
+            == [("2", "viewer", "for the audit", "7 days")],
+            sh,
+        )
+        status, e = c.call("/api/decide", {"as": "user:2", "request": req[0]["id"], "approve": True})
+        check(
+            "deciding your own request is refused, in the database's words",
+            (status, e.get("detail")) == (403, "you cannot decide your own request"),
+            (status, e),
+        )
+        status, _ = c.call("/api/decide", {"as": "user:5", "request": req[0]["id"], "approve": True})
+        # the share the request asked for, until the decision's time and the request's duration
+        made = psql(
+            db,
+            "SELECT s.relation, s.subject_type, s.expires_at = r.decided_at + r.duration, r.status, r.decided_by "
+            "FROM authz.shares s JOIN authz.requests r ON (r.object_type, r.object_id, r.requester) = "
+            "(s.object_type, s.object_id, s.subject_id) WHERE s.object_id = '5' AND s.subject_id = '2'",
+        )
+        check(
+            "... the owner approves it, and it is a share: the relation asked for, for the 7 days asked",
+            status == 200 and made == "viewer|user|t|approved|5",
+            (status, made),
         )
     finally:
         rw.stop()
@@ -1071,7 +1244,7 @@ def main() -> None:
         'UPDATE app.folders SET tags = \'{plans,"q3 review"}\', meta = \'{"color": "red"}\', '
         "size = 12345678901234567.89 WHERE id = 5",
     )
-    s = studio.Studio(dsn, None, policy, writable=False, port=0, read_policy=rowstile_cli.read_policy)
+    s = studio.Studio(dsn, policy, writable=False, port=0, read_policy=rowstile_cli.read_policy)
     s.start()
     try:
         # Secrets doesn't inherit, where the column's default does: the policy reads the row's value
@@ -1162,6 +1335,11 @@ def main() -> None:
     # (roles are the server's, not a database's: named after this run's database, so two runs side by side differ)
     login = f"{db}_login"
     psql(db, f"DROP ROLE IF EXISTS {login}; CREATE ROLE {login} LOGIN")
+    atexit.register(
+        subprocess.run,
+        ["psql", "-X", "-q", "-d", "postgres", "-c", f"DROP ROLE IF EXISTS {login}"],
+        capture_output=True,
+    )
     rc, out = command(f"dbname={db} user={login}", "studio", "--port", str(free_port()))
     psql(db, f"DROP ROLE {login}")
     check(
@@ -1171,9 +1349,7 @@ def main() -> None:
     )
 
     print("-- Studio when the database can't be reached")
-    gone = studio.Studio(
-        "host=/nowhere dbname=x", None, None, writable=False, port=0, read_policy=rowstile_cli.read_policy
-    )
+    gone = studio.Studio("host=/nowhere dbname=x", None, writable=False, port=0, read_policy=rowstile_cli.read_policy)
     gone.start()
     try:
         status, e = Client(gone).call("/api/overview")
@@ -1189,7 +1365,7 @@ def main() -> None:
     print("-- Studio losing the database as a request waits")
     terminate: Callable[[str], object] = lambda pid: psql(db, f"SELECT pg_terminate_backend({pid})")
     lost = "lost the database: terminating connection due to administrator command"
-    ro = studio.Studio(dsn, None, policy, writable=False, port=0, read_policy=rowstile_cli.read_policy)
+    ro = studio.Studio(dsn, policy, writable=False, port=0, read_policy=rowstile_cli.read_policy)
     ro.start()
     try:
         status, e, logged = waiting(db, ro, "/api/overview", None, "authz.policy_versions", terminate)
@@ -1202,7 +1378,7 @@ def main() -> None:
         check("... and the next request connects again", Client(ro).call("/api/overview")[0] == 200)
     finally:
         ro.stop()
-    rw = studio.Studio(dsn, None, policy, writable=True, port=0, read_policy=rowstile_cli.read_policy)
+    rw = studio.Studio(dsn, policy, writable=True, port=0, read_policy=rowstile_cli.read_policy)
     rw.start()
     try:
         body = {"type": "folder", "id": "3", "relation": "editor", "subject_type": "user", "subject_id": "3"}
@@ -1229,7 +1405,6 @@ def main() -> None:
     between = Between()
     via = studio.Studio(
         f"host=127.0.0.1 port={between.port} dbname={db}",
-        None,
         policy,
         writable=False,
         port=0,
@@ -1274,15 +1449,15 @@ def main() -> None:
     rc, out = cli(db, "remove", "--yes")
     if rc:
         raise SystemExit(out)
-    ro = studio.Studio(dsn, None, policy, writable=False, port=0, read_policy=rowstile_cli.read_policy)
-    rw = studio.Studio(dsn, None, policy, writable=True, port=0, read_policy=rowstile_cli.read_policy)
+    ro = studio.Studio(dsn, policy, writable=False, port=0, read_policy=rowstile_cli.read_policy)
+    rw = studio.Studio(dsn, policy, writable=True, port=0, read_policy=rowstile_cli.read_policy)
     ro.start()
     rw.start()
     try:
         for label, s, path in (
             ("the overview", ro, "/api/overview"),
             ("the graph", ro, "/api/graph"),
-            ("the rows", ro, "/api/rows?table=app.folders&as=user:2"),
+            ("the rows", ro, "/api/rows?type=folder&as=user:2"),
             ("the shares and requests", ro, "/api/shares"),
             ("why", ro, "/api/why?as=user:3&type=folder&id=3&perm=edit"),
             ("why, trying changes", rw, "/api/why?as=user:3&type=folder&id=3&perm=edit"),
@@ -1307,8 +1482,7 @@ def main() -> None:
 
     print("-- Studio on a table with a masked column (tests/multi.authz: mask body : edit)")
     masks = f"{db}_masks"
-    subprocess.run(["dropdb", "--if-exists", masks], capture_output=True)
-    subprocess.run(["createdb", masks], check=True)
+    scratch_db(masks)
     subprocess.run(
         ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", masks, "-f", os.path.join(HERE, "multi_schema.sql")],
         check=True,
@@ -1328,7 +1502,6 @@ def main() -> None:
     psql(masks, f"SELECT authz.act_as('user', '{lead}'); SELECT authz.share('project', '1', 'viewer', 'user', '{bob}')")
     ms = studio.Studio(
         f"dbname={masks}",
-        None,
         os.path.join(HERE, "multi.authz"),
         writable=False,
         port=0,
@@ -1339,7 +1512,7 @@ def main() -> None:
     try:
 
         def docs(who: str) -> tuple[int, Answer, dict[str, Answer]]:
-            status, r = c.call(f"/api/rows?table=mt.docs&as={who}")
+            status, r = c.call(f"/api/rows?type=doc&as={who}")
             return status, r, {x["id"]: x for x in r["rows"]} if status == 200 else {}
 
         status, r, by = docs(f"user:{lead}")
@@ -1412,8 +1585,7 @@ def main() -> None:
 
     print("-- a test on a key of several columns, and on text in a key (tests/composite.authz)")
     keys = f"{db}_keys"
-    subprocess.run(["dropdb", "--if-exists", keys], capture_output=True)
-    subprocess.run(["createdb", keys], check=True)
+    scratch_db(keys)
     subprocess.run(
         ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", keys, "-f", os.path.join(HERE, "composite_schema.sql")],
         check=True,
@@ -1429,7 +1601,7 @@ def main() -> None:
     if rc:
         raise SystemExit(out)
     ks = studio.Studio(
-        f"dbname={keys}", None, os.path.join(HERE, "composite.authz"), port=0, read_policy=rowstile_cli.read_policy
+        f"dbname={keys}", os.path.join(HERE, "composite.authz"), port=0, read_policy=rowstile_cli.read_policy
     )
     ks.start()
     try:
@@ -1468,8 +1640,7 @@ def main() -> None:
 
     print("-- a test on tables named with capitals, as Prisma names them (tests/prisma.authz)")
     caps = f"{db}_caps"
-    subprocess.run(["dropdb", "--if-exists", caps], capture_output=True)
-    subprocess.run(["createdb", caps], check=True)
+    scratch_db(caps)
     subprocess.run(
         ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", caps, "-f", os.path.join(HERE, "prisma_schema.sql")],
         check=True,
@@ -1480,7 +1651,7 @@ def main() -> None:
     if rc:
         raise SystemExit(out)
     s = studio.Studio(
-        f"dbname={caps}", None, os.path.join(HERE, "prisma.authz"), port=0, read_policy=rowstile_cli.read_policy
+        f"dbname={caps}", os.path.join(HERE, "prisma.authz"), port=0, read_policy=rowstile_cli.read_policy
     )
     s.start()
     try:
@@ -1513,9 +1684,12 @@ def main() -> None:
     # since PostgreSQL 16 a role that makes another gets ADMIN on it, not SET (the suites' owner has
     # createrole_self_grant, which would hide it): as on managed Postgres until the owner grants itself the role
     plain, app = f"{db}_plain", f"{db}_plain_app"
-    subprocess.run(["dropdb", "--if-exists", plain], capture_output=True)
     psql("postgres", f"DROP ROLE IF EXISTS {app}")
-    subprocess.run(["createdb", plain], check=True)
+    # the role is the server's: dropped once its database is, however the suite ends
+    atexit.register(
+        subprocess.run, ["psql", "-X", "-q", "-d", "postgres", "-c", f"DROP ROLE IF EXISTS {app}"], capture_output=True
+    )
+    scratch_db(plain)
     subprocess.run(
         [
             "psql",
@@ -1562,15 +1736,15 @@ def main() -> None:
             rc, out = cli(plain, "apply", path)
             if rc:
                 raise SystemExit(out)
-            s = studio.Studio(f"dbname={plain}", None, path, port=0, read_policy=rowstile_cli.read_policy)
+            s = studio.Studio(f"dbname={plain}", path, port=0, read_policy=rowstile_cli.read_policy)
             s.start()
             try:
-                status, e = Client(s).call("/api/rows?table=app.notes&as=user:1")
+                status, e = Client(s).call("/api/rows?type=note&as=user:1")
                 check(f"{label} ({want})", status == want and e.get("detail") == said, (status, e))
             finally:
                 s.stop()
         # its users are keyed by text: a test as someone whose id isn't one word
-        s = studio.Studio(f"dbname={plain}", None, path, port=0, read_policy=rowstile_cli.read_policy)
+        s = studio.Studio(f"dbname={plain}", path, port=0, read_policy=rowstile_cli.read_policy)
         s.start()
         try:
             status, t = Client(s).call("/api/test?as=user:o%27brien&type=note&id=1&perm=edit&expect=cannot")
@@ -1594,8 +1768,7 @@ def main() -> None:
 
     print("-- rowstile why through a table that names its rows' type (tests/cross.authz: a project's backers)")
     cross = db + "_cross"
-    subprocess.run(["dropdb", "--if-exists", cross], capture_output=True)
-    subprocess.run(["createdb", cross], check=True)
+    scratch_db(cross)
     subprocess.run(
         [
             "psql",
@@ -1637,11 +1810,143 @@ def main() -> None:
     check("... and nothing of it stays", psql(cross, "SELECT chief_id FROM cx.regions WHERE id = 2") == "2")
     subprocess.run(["dropdb", "--if-exists", cross], capture_output=True)
 
+    grid(db + "_grid")
     corners(db + "_why")
 
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
     print("studio: all passed" if not fails else f"studio: {fails} failed")
     sys.exit(1 if fails else 0)
+
+
+GRID_SCHEMA = """
+CREATE SCHEMA gr;
+CREATE TABLE gr.users (id bigint PRIMARY KEY);
+CREATE TABLE gr.notes (id bigint PRIMARY KEY, owner_id bigint NOT NULL REFERENCES gr.users);
+CREATE TABLE gr.items (id bigint PRIMARY KEY, owner_id bigint REFERENCES gr.users);
+GRANT USAGE ON SCHEMA gr TO app_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA gr TO app_user;
+-- 120 notes, made last first: ann's (1) the odd ones, bo's (2) the even ones; items 1 (ann's) and 2 (bo's)
+INSERT INTO gr.users VALUES (1), (2);
+INSERT INTO gr.notes SELECT g, 2 - g % 2 FROM generate_series(120, 1, -1) g;
+INSERT INTO gr.items VALUES (1, 1), (2, 2);
+"""
+# two types over one table: a table with no rules may be read as several types (one with rules is one type's: AZ401)
+GRID_POLICY = """app role app_user
+
+type user = gr.users
+
+type note = gr.notes
+  owner  : user = owner_id
+  reader : user, link shared
+  can share = owner
+  can edit  = owner
+  can read  = edit or reader
+
+type task = gr.items
+  owner : user = owner_id
+  can finish = owner
+
+type chore = gr.items
+  owner : user = owner_id
+  can sweep = owner
+
+rules gr.notes
+  select : edit
+"""
+
+
+def grid(db: str) -> None:
+    print("-- Studio's grid: a type's rows page by page, and two types over one table")
+    scratch_db(db)
+    psql(db, GRID_SCHEMA)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "grid.authz")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(GRID_POLICY)
+        rc, out = cli(db, "apply", path)
+    if rc:
+        raise SystemExit(out)
+    s = studio.Studio(f"dbname={db}", None, port=0)
+    s.start()
+    c = Client(s)
+    try:
+        # Next, as the page asks it: the offset after the page, by the page's size the answer gives
+        pages: list[Answer] = []
+        offset = 0
+        while len(pages) < 5:
+            status, r = c.call(f"/api/rows?type=note&as=user:1&offset={offset}")
+            pages.append(r)
+            if status != 200 or not r["more"]:
+                break
+            offset += r["limit"]
+        ids = [x["id"] for p in pages for x in p.get("rows", [])]
+        check(
+            "a type's rows in its key's order, page after page: 1 to 120, not 1, 10, 100, 101",
+            ids == [str(n) for n in range(1, 121)],
+            ids,
+        )
+        check(
+            "... 50 to a page, and more said until the last",
+            [(p.get("offset"), p.get("limit"), len(p.get("rows", [])), p.get("more")) for p in pages]
+            == [(0, 50, 50, True), (50, 50, 50, True), (100, 50, 20, False)],
+            pages,
+        )
+        check(
+            "... on each, ann sees her own notes, the odd ones, and holds what an owner holds on them",
+            all(x["visible"] == (int(x["id"]) % 2 == 1) for p in pages for x in p.get("rows", []))
+            and all(
+                sorted(x["perms"]) == (["edit", "read", "share"] if x["visible"] else [])
+                for p in pages
+                for x in p.get("rows", [])
+            )
+            and pages[0].get("visible_total") == 60,
+            pages[0],
+        )
+        status, o = c.call("/api/overview")
+        check(
+            "two types over one table: each in the overview, with its table",
+            status == 200 and [t["name"] for t in o["types"] if t["table"] == "gr.items"] == ["task", "chore"],
+            o,
+        )
+        rows: dict[str, Answer] = {}
+        for t in ("task", "chore"):
+            status, rows[t] = c.call(f"/api/rows?type={t}&as=user:1")
+        check(
+            "... and each type's rows with its own permissions: ann may finish task 1, and sweep chore 1",
+            [(r.get("type"), r.get("table"), [(x["id"], x["perms"]) for x in r.get("rows", [])]) for r in rows.values()]
+            == [
+                ("task", "gr.items", [("1", ["finish"]), ("2", [])]),
+                ("chore", "gr.items", [("1", ["sweep"]), ("2", [])]),
+            ],
+            rows,
+        )
+    finally:
+        s.stop()
+    # a share link, as /api/shares lists it (authz.list_shares: its subject is (link), which no share has), sent back
+    # to unshare as the page would send any share's row
+    psql(db, "SELECT authz.act_as('user', '1'); SELECT authz.create_link('note', '1', 'reader')")
+    s = studio.Studio(f"dbname={db}", None, writable=True, port=0)
+    s.start()
+    c = Client(s)
+    try:
+        links = lambda: [x for x in c.call("/api/shares?type=note&id=1")[1]["shares"] if x["subject_type"] == "link"]
+        listed = links()
+        sent = (
+            {k: listed[0][k] for k in ("relation", "subject_type", "subject_id", "subject_relation")} if listed else {}
+        )
+        status, e = c.call("/api/unshare", {"type": "note", "id": "1", **sent, "as": "user:1"})
+        check(
+            "unsharing a share link: refused, saying what turns it off (not a Done that leaves it on)",
+            len(listed) == 1
+            and sent["subject_id"] == "(link)"
+            and (status, e.get("detail"))
+            == (400, "a share link isn't unshared: authz.revoke_link turns it off, by the id authz.list_links gives")
+            and links() == listed,
+            (listed, status, e),
+        )
+    finally:
+        s.stop()
+    subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
 
 
 # rowstile why on what the docs example doesn't have: groups in groups through a permission, a table naming its
@@ -1824,8 +2129,7 @@ type crate = cn.crates
 
 def corners(db: str) -> None:
     print("-- rowstile why on the shapes the docs example doesn't have")
-    subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
-    subprocess.run(["createdb", db], check=True)
+    scratch_db(db)
     psql(db, WHY_SCHEMA)
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "why.authz")
@@ -2217,7 +2521,7 @@ def corners(db: str) -> None:
             said,
         )
     # Studio, where it may write: the changes the database refused to try, said as the command says them
-    s = studio.Studio(f"dbname={db}", None, None, writable=True, port=0)
+    s = studio.Studio(f"dbname={db}", None, writable=True, port=0)
     s.start()
     try:
         status, w = Client(s).call("/api/why?as=user:3&type=shelf&id=2&perm=use")
@@ -2286,7 +2590,7 @@ def corners(db: str) -> None:
     finally:
         s.stop()
     # read-only, the same answer, the changes listed and none tried
-    s = studio.Studio(f"dbname={db}", None, None, port=0)
+    s = studio.Studio(f"dbname={db}", None, port=0)
     s.start()
     try:
         status, w = Client(s).call("/api/why?as=user:3&type=doc&id=999&perm=view")
@@ -2354,8 +2658,7 @@ def corners(db: str) -> None:
     # a condition this session can't read: its function is on the search path the policy was applied with, not on
     # this one. Why goes on with the changes, as where nothing stops it
     other = db + "_path"
-    subprocess.run(["dropdb", "--if-exists", other], capture_output=True)
-    subprocess.run(["createdb", other], check=True)
+    scratch_db(other)
     psql(
         other,
         "CREATE SCHEMA px; CREATE SCHEMA fx; "

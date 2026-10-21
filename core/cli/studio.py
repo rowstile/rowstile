@@ -28,7 +28,7 @@ import time
 import traceback
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 from urllib.parse import parse_qs, urlparse
 
 import pgwire
@@ -39,17 +39,22 @@ from authzlib.sqlutil import POLICY_MARKS, lit, qt
 from authzlib.sqlutil import q as quoted
 
 if TYPE_CHECKING:
-    from rowstile_cli import Config, Db
+    from rowstile_cli import Db
 
 T = TypeVar("T")
 Message = dict[str, Json]
 Query = dict[str, str]  # the request's query parameters
 Who = tuple[str | None, str | None]  # (principal type, id); (None, None): nobody
 PolicyReader = Callable[[str], tuple[str, dict[str, str]]]
+# what a request's transaction may do: read (READ ONLY), try changes and undo them all (why, the access diff), or
+# make a change (a share, an unshare, a decision)
+Mode = Literal["read", "try", "change"]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "studio")
-ROWS = 50
+ROWS = 50  # a page of the grid: the answer says it (limit), for the page's Previous and Next
+# the changes the page posts (only with --write)
+CHANGES = ("share", "unshare", "decide")
 # a change's body: the page sends a few hundred bytes (a share's names and ids). A longer one is refused before a
 # byte of it is read (413)
 BODY_LIMIT = 64 * 1024
@@ -118,14 +123,13 @@ class Studio:
     def __init__(
         self,
         dsn: str | None,
-        cfg: Config | None = None,
         policy_path: str | None = None,
         writable: bool = False,
         port: int = 4983,
         token: str | None = None,
         read_policy: PolicyReader | None = None,
     ) -> None:
-        self.dsn, self.cfg, self.policy_path, self.writable = dsn, cfg, policy_path, writable
+        self.dsn, self.policy_path, self.writable = dsn, policy_path, writable
         self.port, self.token = port, token or secrets.token_urlsafe(18)
         self.read_policy = read_policy  # path -> (text, files): the command's reader (includes from disk)
         # the policy in force, compiled once: (its text and files, the compiler)
@@ -143,21 +147,23 @@ class Studio:
         except (ValueError, OSError, pgwire.PgError, pgwire.ProtocolError) as e:
             raise Problem(cant_connect(e, self.dsn), 503) from None
 
-    def work(self, fn: Callable[[Db], T], write: bool = False) -> T:
-        """fn(db) in one transaction: READ ONLY and rolled back, unless this is a write Studio may make. A session
-        the server ends, or a connection that closes under it, is said as the command says it (503); each request
-        connects again."""
+    def work(self, fn: Callable[[Db], T], mode: Mode = "read") -> T:
+        """fn(db) in one transaction: READ ONLY and rolled back, unless Studio may write. Then "try" (why, the
+        access diff) may write and is rolled back all the same, so nothing it tries stays whatever its savepoints
+        do, and only "change" (a share, an unshare, a decision) is committed. A session the server ends, or a
+        connection that closes under it, is said as the command says it (503); each request connects again."""
         from rowstile_cli import Db, abandon
 
+        writes = self.writable and mode != "read"
         conn = self.connect()
         try:
-            conn.execute("BEGIN" if (self.writable and write) else "BEGIN READ ONLY")
+            conn.execute("BEGIN" if writes else "BEGIN READ ONLY")
             try:
                 out = fn(Db(conn))
             except BaseException:
                 abandon(conn)  # on a connection that is gone, nothing more: what ended the request is what is said
                 raise
-            conn.execute("COMMIT" if (self.writable and write) else "ROLLBACK")
+            conn.execute("COMMIT" if writes and mode == "change" else "ROLLBACK")
             return out
         except pgwire.PgError as e:
             if e.fields.get("S") not in ("FATAL", "PANIC"):
@@ -222,14 +228,14 @@ class Studio:
                         "line": str(t.loc),
                     }
                 )
-            tables = sorted({r.table for r in c.pol.rules} | {t.table for t in c.types.values()})
             principals: list[Json] = [t.name for t in c.types.values() if t.principal]
+            # the grid lists the types, each with its table: two types may share a table (one with no rules), and
+            # each shows its own permissions
             return {
                 "database": name["d"],
                 "as": name["u"],
                 "writable": self.writable,
                 "types": types,
-                "tables": list[Json](tables),
                 "principals": principals,
                 "policy_file": shown(self.policy_path) if self.policy_path else None,
             }
@@ -237,22 +243,25 @@ class Studio:
         return self.work(run)
 
     def rows(self, q: Query) -> Message:
-        table = q.get("table", "")
+        type_name = q.get("type", "")
         who = principal(q.get("as"))
         offset = max(0, int(q.get("offset", "0") or 0))
 
         def run(db: Db) -> Message:
             c = self.compiler(db)
-            # a table the policy governs is a type's: rules for any other are refused (AZ401)
-            t = next((t for t in c.types.values() if t.table == table), None)
+            # a type's table: rules are only for a table one type maps to (AZ401)
+            t = c.types.get(type_name)
             if t is None:
-                raise Problem(f"{table!r} is not a table the policy governs", 404)
+                raise Problem(f"no type {type_name!r} in the policy", 404)
+            table = t.table
             view = c.pol.views.get(table)
             masked = sorted({col for r in c.pol.rules if r.table == table and r.command == "mask" for col in r.columns})
             key = f"({c.key(t, 'r')})::text"
+            # in the key's own order (ids 1, 2, ... 10, not 1, 10, 2), column by column
+            order = ", ".join(f"r.{quoted(col)}" for col, _ in t.key)
             data = db.rows(
                 f"SELECT r.ctid::text AS authz_ctid, {key} AS authz_id, to_jsonb(r) AS authz_row "
-                f"FROM {qt(table)} r ORDER BY {key} LIMIT {ROWS + 1} OFFSET {offset}"
+                f"FROM {qt(table)} r ORDER BY {order} LIMIT {ROWS + 1} OFFSET {offset}"
             )
             more, data = len(data) > ROWS, data[:ROWS]
             total = db.rows(f"SELECT count(*) AS n FROM {qt(table)}")[0]["n"]
@@ -317,6 +326,7 @@ class Studio:
                 "columns": columns,
                 "rows": out,
                 "offset": offset,
+                "limit": ROWS,
                 "more": more,
                 "total": total,
                 "visible_total": seen_total,
@@ -376,7 +386,7 @@ class Studio:
                 ],
             }
 
-        return self.work(run, write=True)  # each change is undone in its savepoint either way
+        return self.work(run, "try")  # each change undone in its savepoint, and the whole rolled back
 
     def graph(self, q: Query) -> Message:
         return self.work(lambda db: {"mermaid": database.graph(*database.applied(db))})
@@ -419,7 +429,7 @@ class Studio:
             shown: list[Json] = [dict(r) for r in rows[:500]]
             return {"same_text": in_force == text, "summary": summary, "rows": shown, "truncated": len(rows) > 500}
 
-        return self.work(run, write=True)  # the diff undoes itself (a savepoint)
+        return self.work(run, "try")  # the diff undoes itself (a savepoint), and the whole is rolled back
 
     def shares(self, q: Query) -> Message:
         def run(db: Db) -> Message:
@@ -490,7 +500,7 @@ class Studio:
                 )
             return {"ok": True}
 
-        return self.work(run, write=True)
+        return self.work(run, "change")
 
     def test(self, q: Query) -> Message:
         """A test that says what should hold: a check on the data there now (the policy's test section), and a
@@ -589,18 +599,23 @@ class Studio:
         ::1 first, where Studio doesn't listen (a page opened at localhost by hand is still answered)."""
         return f"http://127.0.0.1:{self.port}/?token={self.token}"
 
+    def routes(self) -> dict[str, Callable[[Query], Message]]:
+        """What the page asks with GET, /api/<name>: each runs READ ONLY, but why and the access diff where Studio
+        may write (they try changes, and roll back). The changes it posts are CHANGES."""
+        return {
+            "overview": self.overview,
+            "rows": self.rows,
+            "why": self.why,
+            "graph": self.graph,
+            "diff": self.diff,
+            "shares": self.shares,
+            "test": self.test,
+        }
+
     def start(self) -> str:
         """Serves in a thread of its own, which ends with the command; the address with the token."""
         studio = self
-        gets: dict[str, Callable[[Query], Message]] = {
-            "overview": studio.overview,
-            "rows": studio.rows,
-            "why": studio.why,
-            "graph": studio.graph,
-            "diff": studio.diff,
-            "shares": studio.shares,
-            "test": studio.test,
-        }
+        gets = self.routes()
 
         class Handler(BaseHTTPRequestHandler):
             read_whole = True  # a POST's body, read whole: else what the client still sends is let go first
@@ -650,7 +665,7 @@ class Studio:
                 try:
                     if method == "GET" and name in gets:
                         return self.send(200, gets[name](q))
-                    if method == "POST" and name in ("share", "unshare", "decide"):
+                    if method == "POST" and name in CHANGES:
                         studio.may_change()  # read-only: refused before the body is read
                         try:
                             body = as_object(json.loads(self.body(self.length()) or b"{}"))
@@ -767,10 +782,8 @@ def as_object(value: Json) -> Message:
     return got if isinstance(got, dict) else {}
 
 
-def serve(
-    dsn: str | None, cfg: Config, policy_path: str | None, writable: bool, port: int, read_policy: PolicyReader
-) -> None:
-    studio = Studio(dsn, cfg, policy_path, writable, port, read_policy=read_policy)
+def serve(dsn: str | None, policy_path: str | None, writable: bool, port: int, read_policy: PolicyReader) -> None:
+    studio = Studio(dsn, policy_path, writable, port, read_policy=read_policy)
     try:
         studio.work(lambda db: database.applied(db))
     except Problem as e:  # the database can't be reached: said as the other commands say it
@@ -790,7 +803,7 @@ def serve(
         sys.exit(1)
     try:
         url = studio.start()
-    except (OSError, OverflowError) as e:  # a port another program listens on, or one there can't be
+    except OSError as e:  # a port another program listens on (one there can't be, the command refuses before)
         print(f"Studio didn't start ({e}): rowstile studio --port N for another port", file=sys.stderr)
         sys.exit(2)
     print(

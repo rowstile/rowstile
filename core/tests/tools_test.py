@@ -7,6 +7,7 @@ Needs only the standard library (the Python client talks to Postgres with cli/pg
 the TypeScript client is type-checked when tsc is installed.
 """
 
+import atexit
 import importlib
 import json
 import os
@@ -104,6 +105,8 @@ def main() -> None:
     port = int(os.environ.get("PGPORT", "5432"))
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
     subprocess.run(["createdb", db], check=True)
+    # dropped when the suite ends, however it ends (a check that raises, a psql that fails)
+    atexit.register(subprocess.run, ["dropdb", "--if-exists", db], capture_output=True)
     policy = os.path.join(ROOT, "example", "docs.authz")
     compiler = compile_policy.load(policy)
     sql = compiler.compile(policy)
@@ -139,6 +142,7 @@ def main() -> None:
 
     print("-- the Python client (--client py)")
     tmp = tempfile.mkdtemp()
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)
     with open(os.path.join(tmp, "authz_client.py"), "w", encoding="utf-8") as fh:
         fh.write(compiler.client("py", "docs.authz"))
     sys.path.insert(0, tmp)
