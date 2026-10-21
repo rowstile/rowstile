@@ -3,19 +3,22 @@
 environment of its own, for tests/upgrade.sh to make a database with.
 
     python3 tests/previous_release.py DIR            # prints the version it installed, as the command writes it
-    python3 tests/previous_release.py DIR VERSION    # that release (0.1.0-alpha.2, or as PyPI writes it: 0.1.0a2)
+    python3 tests/previous_release.py DIR VERSION    # that release (0.1.0-beta.1, or as PyPI writes it: 0.1.0b1)
     python3 tests/previous_release.py --list         # every release older than this version, oldest first
 
-The release before is the newest version PyPI has that is older than this checkout's (authzlib.__version__). A
-version's alphas come before its betas, its betas before its candidates, and those before the version itself
-(authzlib/versions.py); a build of main (X.Y.Z-dev) is on its way to X.Y.Z, after each alpha, beta and candidate of
-it that is out. Its wheel is checked against the SHA-256 PyPI's
+The release before is the newest version PyPI has that is older than this checkout's (authzlib.__version__), from
+FIRST on: the beta started afresh, and a database an alpha before it made is applied from scratch, never upgraded,
+so those alphas are never the release before. A version's alphas come before its betas, its betas before its
+candidates, and those before the version itself (authzlib/versions.py); a build of main (X.Y.Z-dev) is on its way
+to X.Y.Z, after each alpha, beta and candidate of it that is out. Its wheel is checked against the SHA-256 PyPI's
 index gives, and its files are put in DIR, a virtual environment made without pip: a wheel of pure Python is its
 files, and the image the suites run in has no pip. `DIR/bin/python -m rowstile` is then that release's command.
 
-Exit 0: installed, and its version printed (--list: the versions, one a line). Exit 2: nothing to upgrade from
-here, and why (PyPI can't be reached, or has no release before this one): the suite says so and skips. Exit 1: anything else (PyPI answered something
-this doesn't read, or a wheel that isn't the one the index names).
+Exit 0: installed, and its version printed (--list: the versions, one a line). Exit 2: PyPI can't be reached from
+here, and why: the suite says so and skips. Exit 3: PyPI has no release from FIRST on that is older than this
+version: there is nothing to upgrade from, which the suite says and skips. Exit 1: anything else (PyPI answered
+something this doesn't read, a wheel that isn't the one the index names, a release asked for by name that is older
+than FIRST).
 """
 
 from __future__ import annotations
@@ -39,6 +42,9 @@ from authzlib import __version__
 from authzlib.versions import PYPI, STAGES, VERSION, stage
 from authzlib.versions import spelled as ours
 
+# the first release anything upgrades from: the beta started afresh (a database the alphas before it made is
+# applied from scratch); tests/docs_app.py records each release's docs app from it on
+FIRST = "0.1.0-beta.1"
 # PyPI's index of the package, as JSON (PEP 691): each file with its hashes
 INDEX = "https://pypi.org/simple/rowstile/"
 INDEX_JSON = "application/vnd.pypi.simple.v1+json"
@@ -148,7 +154,7 @@ def older(mine: str, released: Iterable[str]) -> list[str]:
 
 
 def named(version: str, released: Iterable[str]) -> str:
-    """The released version a name means, written either way (0.1.0-alpha.2 or 0.1.0a2)."""
+    """The released version a name means, written either way (0.1.0-beta.1 or 0.1.0b1)."""
     want = key(version)
     match = [v for v in released if want is not None and key(v) == want]
     if not match:
@@ -156,23 +162,39 @@ def named(version: str, released: Iterable[str]) -> str:
     return match[0]
 
 
+def from_first(version: str) -> bool:
+    """Whether a released version is one this upgrades from: FIRST or a later one, never an alpha before it."""
+    k, first = key(version), key(FIRST)
+    return k is not None and first is not None and k >= first
+
+
+def nothing_before(mine: str) -> str:
+    """What the suite says when no release from FIRST on is older than mine."""
+    return (
+        f"PyPI has no release of rowstile from {FIRST} on that is older than {mine}: there is nothing to upgrade "
+        f"from (a database an alpha before {FIRST} made is applied from scratch, never upgraded)"
+    )
+
+
 def main(argv: list[str]) -> int:
     if len(argv) not in (1, 2) or (argv[0] == "--list" and len(argv) != 1):
         print("usage: python3 tests/previous_release.py DIR [VERSION] | --list", file=sys.stderr)
         return 1
     try:
-        found = wheels(json.loads(fetch(INDEX, INDEX_JSON)))
+        if len(argv) == 2 and key(argv[1]) is not None and not from_first(argv[1]):
+            raise Wrong(f"{argv[1]} is older than {FIRST}, the first release anything upgrades from")
+        found = {v: f for v, f in wheels(json.loads(fetch(INDEX, INDEX_JSON))).items() if from_first(v)}
         if argv[0] == "--list":
             every = older(__version__, found)
             if not every:
-                print(f"PyPI has no release of rowstile before {__version__}: there is nothing to upgrade from")
-                return 2
+                print(nothing_before(__version__))
+                return 3
             print("\n".join(spelled(v) for v in every))
             return 0
         old = named(argv[1], found) if len(argv) == 2 else before(__version__, found)
         if old is None:
-            print(f"PyPI has no release of rowstile before {__version__}: there is nothing to upgrade from")
-            return 2
+            print(nothing_before(__version__))
+            return 3
         install(argv[0], *found[old])
     except Unreachable as e:
         print(f"PyPI can't be reached from here ({e}): there is nothing to upgrade from")

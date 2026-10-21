@@ -88,8 +88,13 @@ is for development databases.
    it makes the same, there is nothing to write, and `rowstile migrate --check` passes as before.
    (Databases that don't take migrations: `rowstile reapply`.)
 
-The tests (`core/tests/upgrade.sh`) install the release before this one and make databases with it, then
-upgrade them: with the next migration, with `rowstile reapply`, with `rowstile apply`, and with `rowstile push`
+This holds from 0.1.0-beta.1 on: the beta started afresh. A database an alpha (0.1.0-alpha.9 or earlier) made
+is not upgraded: apply the policy from scratch, on a new database, or on the same one after
+`rowstile remove --yes` (shares and history stay), then `rowstile apply`. Then upgrade from release to release
+as above.
+
+The tests (`core/tests/upgrade.sh`) install the release before this one (from the beta on) and make databases
+with it, then upgrade them: with the next migration, with `rowstile reapply`, with `rowstile apply`, and with `rowstile push`
 for a development database. Each then holds what this version makes on a new database, and the shares, API keys
 and requests made before still work.
 

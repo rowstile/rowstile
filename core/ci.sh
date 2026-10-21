@@ -7,7 +7,8 @@
 #   SOAK_SEED=N core/ci.sh --soak 16   # the random checks, long, with a new seed (run_tests.sh --soak; SMALL_SLICE too)
 #   ROWSTILE_PART=command core/ci.sh 16   # one part of a run (run_tests.sh names them): CI runs the parts side by side
 #   ROWSTILE_LANES=1 core/ci.sh 16      # each step after the other (run_tests.sh runs a part's steps in lanes)
-#   ROWSTILE_UPGRADES=every core/ci.sh 16   # upgrades from every release on PyPI, not only the one before (nightly)
+#   ROWSTILE_UPGRADES=every core/ci.sh 16   # upgrades from every release on PyPI from the beta on, not only the one
+#                                           # before (nightly)
 #   core/ci.sh --coverage 16   # (before the others) and measure what the suites run, in the image built with
 #                              # COVERAGE=1: .ci/coverage-16 holds the data, and the report (tests/coverage_report.py)
 #   core/ci.sh --statements 16 # --coverage, and each statement and branch of rowstile's PL/pgSQL the suites run

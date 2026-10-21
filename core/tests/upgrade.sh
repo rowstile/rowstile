@@ -1,13 +1,16 @@
 #!/bin/bash
 # upgrade.sh: databases the release before this one made, upgraded by this checkout's command. The release before
-# (the newest on PyPI older than this version: tests/previous_release.py installs it) makes the docs app's database
+# (the newest on PyPI older than this version, from 0.1.0-beta.1 on: tests/previous_release.py installs it; the beta
+# started afresh, and a database an alpha before it made is applied from scratch) makes the docs app's database
 # the ways an app keeps one: a development database it pushes to, as rowstile dev does; databases it applies the
 # policy to, for an app without migrations (two: one for each way docs/operations.md upgrades them); and one the
 # migrations and lock file its rowstile migrate writes set up. Under it the app shares, makes an API key and asks
 # for access. Then this checkout's command upgrades each as the app would: push; apply, or reapply (the policy the
 # database holds); and the next migration from the old lock file. Each database then holds what applying this
 # version on a new one leaves, the policy's tests and the docs scenario pass, and what the app made before is still
-# there and still in force. Where PyPI can't be reached, it says so and skips.
+# there and still in force. Where PyPI can't be reached, it says so and skips; where PyPI has no release from the
+# beta on that is older than this version (until 0.1.0-beta.1 is out, and on the beta's own commit), it says so too,
+# and skips with a last line of its own, which run_tests.sh records under a name of its own: no checks to count.
 # Right after a release this version makes just what the release before made (a new version alone is no
 # migration): then migrate has nothing to write, and that database stays as the release before's migrations left
 # it, which must still be what this version leaves on a new one. The checks are as many either way.
@@ -19,7 +22,8 @@
 # and by the next migration, and each then answers every user, object and permission as the reference evaluator
 # does and as a new database does, with this version applied whole on the same rows, and holds what that one holds.
 # --every: from each release PyPI has that is older than this version (--from V --world for each, oldest first);
-# each upgrades with as many checks, and the last line says so. Nightly; it needs PyPI too, and skips without it.
+# each upgrades with as many checks, and the last line says so. Nightly; it needs PyPI too, and skips without it, or
+# without a release from the beta on before this version.
 #   PGHOST=... PGUSER=... tests/upgrade.sh [--from VERSION] [--world] | --every
 set -u
 cd "$(dirname "$0")/.."
@@ -35,6 +39,7 @@ done
 if [ -n "${EVERY:-}" ]; then
   out=$(python3 tests/previous_release.py --list 2>&1); rc=$?
   if [ $rc -eq 2 ]; then echo "skip  $out"; echo "upgrade: skipped"; exit 0; fi
+  if [ $rc -eq 3 ]; then echo "skip  $out"; echo "upgrade: skipped, nothing to upgrade from"; exit 0; fi
   [ $rc -eq 0 ] || { echo "FAIL  the releases on PyPI: $out"; echo "upgrade: 1 failed"; exit 1; }
   failed=() counts=()
   for v in $out; do
@@ -69,6 +74,7 @@ if [ -n "$FROM" ]; then BEFORE="the older release"; else BEFORE="the release bef
 echo "-- ${FROM:-the release before this one}, from PyPI"
 out=$(python3 tests/previous_release.py "$T/old" $FROM 2>&1); rc=$?
 if [ $rc -eq 2 ]; then echo "skip  $out"; echo "upgrade: skipped"; exit 0; fi
+if [ $rc -eq 3 ]; then echo "skip  $out"; echo "upgrade: skipped, nothing to upgrade from"; exit 0; fi
 [ $rc -eq 0 ] || { bad "$BEFORE, from PyPI" "$out"; echo "upgrade: 1 failed"; exit 1; }
 OLD_VERSION=$out
 NEW_VERSION=$(python3 -c 'import authzlib; print(authzlib.__version__)')
@@ -167,12 +173,12 @@ if [ -n "$WORLD" ]; then
   declare -A WORLD_ROWS
   for w in reapply migrate; do
     db="${DB}_world_$w"
-    out=$(python3 tests/upgrade_world.py fill "$db" 1 2>&1)
+    out=$(python3 tests/upgrade_world.py fill "$db" 1 2>&1); rc=$?
     WORLD_ROWS[$w]=$(PSQL "$db" -c "$KEPT_ROWS")
     states=$(PSQL "$db" -c "$STATES")
-    [ -z "$out" ] && [ "$(PSQL "$db" -c "SELECT authz.verify()")" = t ] && ! echo " $states" | grep -q " 0" &&
+    [ $rc -eq 0 ] && [ -z "$out" ] && [ "$(PSQL "$db" -c "SELECT authz.verify()")" = t ] && ! echo " $states" | grep -q " 0" &&
       ok "world, $w: under $BEFORE, the world's rows, shares in every state, some made by authz.share, and 40 changes; the inheritance tables match a rebuild" ||
-      bad "world, $w: the world under $BEFORE" "$out (shares live, until tomorrow, expired, not started, to groups, by authz.share: $states)"
+      bad "world, $w: the world under $BEFORE" "exit $rc, $out (shares live, until tomorrow, expired, not started, to groups, by authz.share: $states)"
   done
 fi
 
@@ -276,11 +282,14 @@ if [ -n "$WORLD" ]; then
     starts_at IS NULL, created_by) FROM authz.shares) t(t)"
   [ "$(PSQL "${DB}_world_migrate" -c "$ROWS")" = "$(PSQL "${DB}_world_reapply" -c "$ROWS")" ] &&
     ok "world: its two databases hold the same rows and shares" || bad "world: the two databases' rows differ"
-  out=$(python3 tests/upgrade_world.py compare "${DB}_world_fresh" "${DB}_world_reapply" "${DB}_world_migrate" 2>&1)
+  # judged by its exit status as well as by its lines: one that dies after some `ok` lines fails here
+  out=$(python3 tests/upgrade_world.py compare "${DB}_world_fresh" "${DB}_world_reapply" "${DB}_world_migrate" 2>&1); rc=$?
   echo "$out" | grep -v '^ok'
   echo "$out" | grep '^ok'
+  failed=$(echo "$out" | grep -c '^FAIL')
+  fails=$((fails + failed))
   echo "$out" | grep -q '^ok' || bad "world: the answers" "$out"
-  fails=$((fails + $(echo "$out" | grep -c '^FAIL')))
+  [ $rc -eq 0 ] || [ "$failed" -gt 0 ] || bad "world: the answers: tests/upgrade_world.py compare stopped, exit $rc" "$(echo "$out" | tail -n 5)"
   for w in reapply migrate; do
     out=$(differs "${DB}_world_$w" "${DB}_world_fresh" 2>&1)
     n=$(echo "$out" | head -n 1)

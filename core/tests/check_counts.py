@@ -12,6 +12,8 @@ doesn't have (a part of the run, a shorter mode) isn't asked. The random ones (d
 invariance, the conditions, the parser fuzzer, the stress test) check as many things as their seeds draw: they
 aren't counted (the invariance of the fixed policies is, but not the full run's answers to them). Nor
 are the upgrades from every release (nightly), as many as PyPI has releases: that suite checks each passes as many.
+An upgrade with nothing to upgrade from (no release from the beta on is older than this version yet) checks nothing:
+run_tests.sh records it under a name of its own, which check_counts.txt doesn't name.
 """
 
 from __future__ import annotations

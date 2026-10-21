@@ -11697,6 +11697,26 @@ class CheckCounts(unittest.TestCase):
         self.assertEqual(sorted(k for k in written if not self.c.FIXED.match(k)), [])  # random ones aren't counted
         self.assertNotIn(0, written.values())
 
+    def test_an_upgrade_with_nothing_to_upgrade_from(self) -> None:
+        # until a release from the beta on is older than this version, tests/upgrade.sh says so and checks nothing:
+        # run_tests.sh records it under a name of its own, which check_counts.txt doesn't count. The upgrade it
+        # records when it runs keeps its count, and one that checks nothing under that name (PyPI out of reach) falls
+        # short of it
+        skipped = "skip  PyPI has no release ...\nupgrade: skipped, nothing to upgrade from\n"
+        log = f"{skipped}--- passed: upgrade, skipped: nothing to upgrade from (3s)\n"
+        self.assertEqual(self.c.differences(self.c.counted(log), self.c.expected()), [])
+        self.assertGreater(self.c.expected()["upgrade"], 0)
+        self.assertEqual(
+            self.c.differences(self.c.counted("upgrade: skipped\n--- passed: upgrade (3s)\n"), self.c.expected()),
+            [f"upgrade passed 0 checks, check_counts.txt says {self.c.expected()['upgrade']}"],
+        )
+        with open(os.path.join(ROOT, "run_tests.sh"), encoding="utf-8") as fh:
+            run = fh.read()
+        recorded = '= "upgrade: skipped, nothing to upgrade from" ]; then\n  record $rc "upgrade, skipped: nothing to upgrade from"'
+        self.assertTrue(recorded in run, "run_tests.sh records no skipped upgrade under a name of its own")
+        with open(os.path.join(ROOT, "tests", "upgrade.sh"), encoding="utf-8") as fh:
+            self.assertEqual(fh.read().count('echo "upgrade: skipped, nothing to upgrade from"; exit 0'), 2)
+
 
 class Lanes(unittest.TestCase):
     """tests/lanes.sh, which run_tests.sh's steps run in: a part's units side by side, each step's output printed
@@ -11896,6 +11916,66 @@ class PreviousRelease(unittest.TestCase):
         with self.assertRaises(self.p.Wrong):
             self.p.wheels({"meta": {}})
 
+    def run_on(self, published: list[str], *argv: str) -> tuple[int, str, list[str]]:
+        """main(argv) against a made-up PyPI that has these versions' wheels, for 0.1.0-dev: its exit status, what
+        it printed, and the versions it installed (nothing is downloaded)."""
+        index = {
+            "files": [
+                {
+                    "filename": f"rowstile-{v}-py3-none-any.whl",
+                    "url": f"https://files.example/{v}",
+                    "hashes": {"sha256": "ab" * 32},
+                }
+                for v in published
+            ]
+        }
+        import contextlib
+
+        installed: list[str] = []
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(self.p, "__version__", "0.1.0-dev"),
+            mock.patch.object(self.p, "fetch", return_value=json.dumps(index).encode()),
+            mock.patch.object(self.p, "install", side_effect=lambda _dir, url, _sha: installed.append(url)),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = self.p.main(list(argv))
+        return rc, out.getvalue() + err.getvalue(), installed
+
+    def test_the_alphas_are_never_the_release_before(self) -> None:
+        # the beta started afresh: a database an alpha made is applied from scratch, so PyPI's alphas are nothing
+        # to upgrade from. Until 0.1.0b1 is out the suite says so and skips (exit 3), the nightly's list too
+        alphas = ["0.1.0a2", "0.1.0a7", "0.1.0a9"]
+        nothing = (
+            "PyPI has no release of rowstile from 0.1.0-beta.1 on that is older than 0.1.0-dev: there is nothing to "
+            "upgrade from (a database an alpha before 0.1.0-beta.1 made is applied from scratch, never upgraded)\n"
+        )
+        self.assertEqual(self.p.FIRST, "0.1.0-beta.1")
+        self.assertEqual(self.run_on(alphas, "DIR"), (3, nothing, []))
+        self.assertEqual(self.run_on(alphas, "--list"), (3, nothing, []))
+        self.assertEqual(self.run_on([], "DIR"), (3, nothing, []))
+        # once the beta is out it is the release before, and the first the nightly upgrades from
+        self.assertEqual(
+            self.run_on([*alphas, "0.1.0b1"], "DIR"), (0, "0.1.0-beta.1\n", ["https://files.example/0.1.0b1"])
+        )
+        self.assertEqual(
+            self.run_on([*alphas, "0.1.0b1", "0.1.0b2"], "--list"), (0, "0.1.0-beta.1\n0.1.0-beta.2\n", [])
+        )
+        # an alpha asked for by name is refused, not installed
+        self.assertEqual(
+            self.run_on([*alphas, "0.1.0b1"], "DIR", "0.1.0-alpha.9"),
+            (
+                1,
+                "previous_release: 0.1.0-alpha.9 is older than 0.1.0-beta.1, the first release anything upgrades from\n",
+                [],
+            ),
+        )
+        self.assertEqual(self.run_on([*alphas, "0.1.0b1"], "DIR", "0.1.0b1")[0], 0)
+        # a later version's alphas are releases like any other
+        self.assertTrue(all(self.p.from_first(v) for v in ("0.1.0b1", "0.1.0rc1", "0.1.0", "0.2.0a1")))
+        self.assertFalse(any(self.p.from_first(v) for v in ("0.1.0a9", "0.1.0-alpha.9", "0.0.9", "nonsense")))
+
 
 class DocsApps(unittest.TestCase):
     """tests/docs_app.py: upgrade.sh upgrades each release with the docs app it was released with, a copy in
@@ -11909,7 +11989,12 @@ class DocsApps(unittest.TestCase):
     def test_each_release_is_upgraded_with_its_own(self) -> None:
         d = self.d
         record, main = d.recorded(), d.digest_of(d.files())
-        self.assertIn(d.FIRST, record)
+        # from the beta on: nothing upgrades from an alpha before it, so none is recorded (none is, until the beta's
+        # own commit records it)
+        self.assertEqual(d.FIRST, "0.1.0-beta.1")
+        first = d.key(d.FIRST)
+        assert first is not None
+        self.assertEqual([v for v in record if (d.key(v) or ()) < first], [])
         for version, sha in record.items():
             used = d.files(version)
             # a copy where the release's docs app differs from this checkout's, none where it is the same: when
@@ -11928,13 +12013,14 @@ class DocsApps(unittest.TestCase):
         # release from the first on PyPI is recorded, as its tag has its docs app, and the release this checkout is
         # (its own commit records it, before its tag is made); after that commit and before its tag, one more
         tags = self.d.tags()
-        if tags:
+        if tags is not None:
             recorded, want = list(self.d.recorded()), self.d.expected()
             self.assertEqual(recorded[: len(want)], want, "a release not recorded: python3 tests/docs_app.py --sync")
             later = recorded[len(want) :]
-            newest = self.d.key(want[-1])
-            assert newest is not None
-            self.assertTrue(len(later) <= 1 and all((self.d.key(v) or ()) > newest for v in later), later)
+            newest = self.d.key(want[-1]) if want else None
+            self.assertTrue(
+                len(later) <= 1 and all(newest is None or (self.d.key(v) or ()) > newest for v in later), later
+            )
             for version in tags:
                 self.assertEqual(self.d.digest(self.d.tagged(version)), self.d.recorded()[version], version)
 
@@ -11950,8 +12036,25 @@ class DocsApps(unittest.TestCase):
                 with mock.patch.object(d, "CORE", core), mock.patch.object(d, "tags", return_value=["0.1.0"]):
                     self.assertEqual(d.expected(), want, version)
                     self.assertEqual(d.releasing(), None if version.endswith("-dev") else version)
-            with mock.patch.object(d, "CORE", core), mock.patch.object(d, "tags", return_value=[]):
+            # no tags at all (CI's checkouts): nothing to hold releases.txt to
+            with mock.patch.object(d, "CORE", core), mock.patch.object(d, "tags", return_value=None):
                 self.assertEqual(d.expected(), [])
+            # the beta's own commit, where the only tags are the alphas before it (tags() leaves them out): it
+            # records itself, the first release anything upgrades from
+            with open(os.path.join(core, "authzlib", "__init__.py"), "w", encoding="utf-8") as fh:
+                fh.write('__version__ = "0.1.0-beta.1"\n')
+            with mock.patch.object(d, "CORE", core), mock.patch.object(d, "tags", return_value=[]):
+                self.assertEqual(d.expected(), ["0.1.0-beta.1"])
+
+    def test_the_alphas_tags_are_left_out(self) -> None:
+        d = self.d
+        tags = "v0.1.0-alpha.2\nv0.1.0-alpha.9\nv0.1.0-beta.2\nv0.1.0-beta.1\n"
+        with mock.patch.object(d, "git", return_value=subprocess.CompletedProcess([], 0, tags.encode(), b"")):
+            self.assertEqual(d.tags(), ["0.1.0-beta.1", "0.1.0-beta.2"])
+        with mock.patch.object(d, "git", return_value=subprocess.CompletedProcess([], 0, b"v0.1.0-alpha.9\n", b"")):
+            self.assertEqual(d.tags(), [])
+        with mock.patch.object(d, "git", return_value=subprocess.CompletedProcess([], 0, b"", b"")):
+            self.assertIsNone(d.tags())
 
     def test_a_release_whose_docs_app_differs(self) -> None:
         # the docs app changed after 1.0.0: 1.0.0 is upgraded with its copy, 1.1.0 with this checkout's

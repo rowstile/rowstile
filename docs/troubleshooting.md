@@ -8,8 +8,8 @@ messenger. A mistake in a policy ends with its code (`[AZ203]`): its page in `do
 
 The npm package brings its own Python, inside `node_modules`, about 65 characters below your project. Windows
 loads files whose path is up to 259 characters long, so in a deep folder that Python can't start. The command
-then runs on a Python 3.11 or later from your `PATH` if there is one, and says so plainly if there is none
-(earlier versions stopped with Python's own traceback). The ways out: a shorter path for the project,
+then runs on a Python 3.11 or later from your `PATH` if there is one, and says so plainly if there is none.
+The ways out: a shorter path for the project,
 long paths turned on in Windows (`LongPathsEnabled`), or a Python of your own (`pip install --pre rowstile`
 gives the same command).
 
@@ -140,8 +140,6 @@ would make, so the migration stops. So does one that ran here before. Don't run 
 migration tool it is applied (Prisma: `prisma migrate resolve --applied <its folder>`, which also clears
 the failed migration Prisma kept; Alembic: `alembic stamp head`), or make the database again from the
 migrations, or keep using `push` there and leave the migrations to the other databases.
-
-Migrations written by 0.1.0-alpha.6 or earlier say it in the words of the next section.
 
 ## "rowstile: this migration changes the policy the migration before it left (...), but the database has ..."
 

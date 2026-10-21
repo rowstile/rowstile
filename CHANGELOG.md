@@ -4,7 +4,8 @@ What changed in each release, newest first. An alpha (`0.1.0-alpha.1`) is for tr
 still change before that version is released. A beta (`0.1.0-beta.1`) is the version complete enough to use
 before it is released: it may still change where using it shows a need. Before 1.0, a minor release (0.2.0) may change the policy
 language, the `authz.*` functions, the SDKs and the file formats: what to do about it is under **Upgrading**.
-Each release upgrades from the one before it. How releases are numbered and made: [RELEASING.md](RELEASING.md).
+Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases are numbered and made:
+[RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
@@ -17,6 +18,10 @@ Each release upgrades from the one before it. How releases are numbered and made
 
 ### Changed
 
+- The beta starts afresh: a database an alpha (0.1.0-alpha.9 or earlier) made is not upgraded to it. Apply the
+  policy from scratch, on a new database, or on the same one after `rowstile remove --yes` (shares and history
+  stay), then `rowstile apply`. Each release from the beta on upgrades from the one before it, and the upgrade
+  tests start from the beta.
 - `rowstile init` drafts a team inside a team as nested membership: the members of the teams inside count as
   members of the team above (`member : team#member = app.teams(parent_id -> id)`), where the draft passed the
   team above's view down. A comment says the other reading. For teams, groups, orgs, departments and the like;

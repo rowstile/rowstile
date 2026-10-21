@@ -104,7 +104,7 @@ ORACLES: dict[str, str] = {
     "rewrites.py": "the database's answers, for the review's verdict on rewritten permissions",
     "interleave.py": "a rebuild and the reference evaluator, after every order of two writes",
     "interrupt.py": "the answers before, after a cut after each statement",
-    "upgrade_world.py": "a new database with the same rows, after an upgrade from each release",
+    "upgrade_world.py": "a new database with the same rows, after an upgrade from each release from the beta on",
     "migrate_test.py": "the policy applied whole, after each kind of change",
     "conditions_test.py": "Postgres's answer, for each condition the evaluator reads itself",
     "stress.sh": "a rebuild, after sixteen clients write one tree",
@@ -433,12 +433,13 @@ FEATURES: list[Feature] = [
     Feature(
         "cli.upgrade",
         1,
-        "Upgrading rowstile: `rowstile reapply`, migrations from an older release",
+        "Upgrading rowstile: `rowstile reapply`, migrations from an older release (from the beta on)",
         ("cli.reapply", "err.AZ616"),
         Doc(MIGR, "Upgrading rowstile"),
         (
             T("upgrade.sh", "it holds what applying this version on a new database leaves"),
             T("upgrade.sh", "the API key made before still signs dave in"),
+            T("unit_test.py", "test_the_alphas_are_never_the_release_before"),
             T("apply.sh", "a policy a newer version applied is refused, naming both versions"),
         ),
         (T("upgrade_world.py", "answers as on a new database"),),
