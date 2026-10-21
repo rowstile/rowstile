@@ -15,7 +15,7 @@ from .sqlutil import lit
 from .statements import WORD, split
 
 FN = "pg_temp.authz_policy_tests"
-VAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)(?!\$)")  # $name, not a $tag$ dollar quote
+VAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\b(?!\$)")  # $name, not a $tag$ dollar quote
 WRITES = ("insert", "update", "delete", "merge")
 COVERAGE = "authz:coverage"  # the test name of coverage rows (tests_function_sql(coverage=True))
 SQL_NL = "E'\\n'"  # a newline in SQL (Python 3.11 allows no backslash inside an f-string's braces)

@@ -6394,6 +6394,13 @@ class TestFiles(unittest.TestCase):
                 c.add_test_files({"t.authz": body})
                 c.check_scenarios()
 
+    def test_a_dollar_quote_is_no_name(self) -> None:
+        # (the parser refuses a dollar quote's tag in a test's braces, AZ110: this asks the function itself)
+        self.assertEqual(
+            Compiler.statement_sql("SELECT $ann, $body$x$body$", {"ann": "v_ann"}),
+            "'SELECT ' || quote_nullable(v_ann) || ', $body$x$body$'",
+        )
+
 
 class CompilePolicy(unittest.TestCase):
     """compile_policy.py, the suites' compiler without a database: one mode at a time, a flag it doesn't know or
