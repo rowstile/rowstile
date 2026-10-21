@@ -19,6 +19,8 @@ says what a change does, in plain words, for the pull request:
   "Meaning unchanged", and how far the listing got: "every one of up to 3 rows of each type", with "at most 2
   links" where it stopped there, and, where columns read together take more than 4,096 combinations of values,
   that only the first of them were tried. <!-- checked: tests/review.sh "a refactor: meaning unchanged, checked in small worlds"; tests/unit_test.py "test_a_refactor_is_checked_in_small_worlds"; tests/unit_test.py "test_the_listing_says_where_it_took_some_values_only"; tests/unit_test.py "test_a_long_and_of_links_widened_is_found"; tests/unit_test.py "test_a_chain_deeper_than_the_drawn_worlds_is_found" -->
+  If one world grants otherwise, the review names what differs, for whom and on what, and the comment shows
+  that world too. <!-- checked: tests/unit_test.py "test_the_comment_shows_why_it_is_no_refactor" -->
   Worlds that are bigger, or hold custom roles, are only drawn: for them it is a search, not a proof. <!-- unchecked: a limit, said so that no more is expected of it -->
   Formatting and comments are "unchanged" too; text inside quotes is not formatting. <!-- checked: tests/unit_test.py "test_comments_only"; tests/unit_test.py "test_text_in_quotes_is_compared_as_written" -->
   A
@@ -34,7 +36,10 @@ says what a change does, in plain words, for the pull request:
   permission or a rule (`select` too) that allows more than before, with an example: because its own line
   changed, because it is new on a table that had rules, through a relation that changed (another column, a
   `where` taken off a link table), or because a type's `where` changed; a mask, a column rule or an invariant
-  removed; a scope changed. <!-- checked: tests/unit_test.py "test_risk_flags"; tests/unit_test.py "test_each_change_the_review_warns_of"; tests/unit_test.py "test_a_widening_is_flagged_however_it_is_made"; tests/review.sh "Risk: the permission widened, with an example" -->
+  removed; a `shared if` removed or changed (who a share may name); a caveat changed (what every share made
+  with it is held to); a scope changed. <!-- checked: tests/unit_test.py "test_risk_flags"; tests/unit_test.py "test_each_change_the_review_warns_of"; tests/unit_test.py "test_a_widening_is_flagged_however_it_is_made"; tests/unit_test.py "test_a_rule_that_reads_a_relation_it_follows_changes_through_it"; tests/unit_test.py "test_who_a_share_may_name_widened_is_flagged"; tests/unit_test.py "test_a_caveat_changed_is_flagged"; tests/review.sh "Risk: the permission widened, with an example" -->
+  A plain `update after` is compared with the `update` rule that checks in its place: one added that lets more
+  rows through after an update, or one removed where `update` lets more through, is flagged. <!-- checked: tests/unit_test.py "test_the_rule_after_an_update_is_no_column_rule" -->
   A `where` added to a link table, or one that holds for fewer of its rows, allows less, and isn't flagged. <!-- checked: tests/unit_test.py "test_a_where_on_a_link_table_narrows_or_widens_as_it_reads" -->
   Each names its policy line; `--annotations` writes them for GitHub, on the file
   the line is in. <!-- checked: tests/review.sh "on the policy line, its path from the repository's top folder"; tests/unit_test.py "test_a_flag_in_an_included_file_is_annotated_there" -->
@@ -51,6 +56,8 @@ says what a change does, in plain words, for the pull request:
 - **Deploy**: the migrations the change needs (from the base branch's lock file), their statements, the
   app tables they lock and in which mode, the inheritance tables they rebuild or build beside; with
   `--db`, how long they took on the review data. <!-- checked: tests/review.sh "Deploy: two migrations, the tree built beside, applied on the review data" -->
+  Deploy also names, in words and with the mode it locks them in, the tables a migration finds only as it runs:
+  those an inheritance condition reads, and the partitions and child tables of the tables it governs. <!-- checked: tests/unit_test.py "test_deploy_names_the_tables_found_as_it_runs"; tests/unit_test.py "test_what_changes_through_it" -->
   A lock file behind the policy is called out. With no lock
   file on either side, the project applies its policy (`rowstile apply`) and keeps no migrations: Deploy says so. <!-- checked: tests/unit_test.py "test_no_lock_file_is_no_migration"; tests/review.sh "a project without migrations: the policy applied whole on the review data, its tests run there, all undone" -->
 

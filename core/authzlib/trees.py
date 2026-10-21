@@ -81,6 +81,7 @@ END $imm$;"""
 
     def deps_sql(self, name: str, conds_view: str, own_tables: list[str], first_line: Loc, on_deps: str) -> str:
         return f"""-- find the tables the conditions read and watch them
+-- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read ({first_line})
 DO $dep$
 DECLARE d record;
 BEGIN

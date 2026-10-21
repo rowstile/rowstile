@@ -2666,6 +2666,7 @@ CREATE VIEW authz_int."folder__never__1" AS
 ALTER TABLE "app"."folders" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN
@@ -2886,6 +2887,7 @@ COMMENT ON POLICY "authz_delete" ON "app"."folders" IS 'rowstile';
 ALTER TABLE "app"."files" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN

@@ -2634,6 +2634,7 @@ class Review(unittest.TestCase):
         self.assertEqual(
             self.review.summary(r)["Deploy"],
             '2 migrations. Locks `"app"."files"`, `"app"."folder_links"`, `"app"."folders"` while it runs. '
+            "It also locks the partitions and child tables of the tables rowstile watches. "
             f"Builds {tree} beside the tables in use, then swaps in.",
         )
 
@@ -3480,17 +3481,194 @@ rules app.folders
             ],
             "users_in_data": 1,
         }
-        r["tests"]["run"] = {"checks": 1, "failed": [{"test": "a test", "line": None, "detail": None}]}
+        r["tests"]["run"] = {
+            "checks": 3,
+            "failed": [
+                {"test": "a test", "line": None, "detail": None},
+                {"test": "another", "line": "tests/a.authz line 3", "detail": "user 1 can view file 2: no\nmore"},
+            ],
+        }
         self.assertEqual(
             self.review.summary(r)["Access"],
             "1 user gains `view` on 1 file; 1 user gains `edit` on 2 files; 1 user gains `share` on 3 files. "
             "1 user loses `view` on 5 files.",
         )
-        self.assertIn("- fails: a test : ``", self.review.tests_details(r))
+        # its line and the first line of its detail where it has them, and no empty code quotes where it hasn't
+        failed = [x for x in self.review.tests_details(r) if x.startswith("- fails: ")]
+        self.assertEqual(
+            failed, ["- fails: a test", "- fails: another (tests/a.authz line 3): `user 1 can view file 2: no`"]
+        )
         sql = "ALTER TABLE app.docs ENABLE ROW LEVEL SECURITY;\nDROP TRIGGER t ON app.docs;\n"
         self.assertEqual(
             self.review.table_locks(sql), {"app.docs": ("ACCESS EXCLUSIVE", "row-level security turned on")}
         )
+
+    # a rule that reads a relation's permission itself, a share condition, a caveat and a plain `update after`
+    WATCHED = """app role app_user
+type user = app.users where {active}
+type folder = app.folders
+  owner  : user = owner_id
+  viewer : user shared if {subject_id <> '0'}
+  can share = owner
+  can edit = owner
+  can view = edit or viewer
+type file = app.files
+  folder : folder = folder_id
+  can view = folder.view
+caveat hours = {authz.ctx('mode') = 'business'}
+rules app.files
+  select : view
+  insert : folder.edit
+  update : view
+  update after : folder.edit
+"""
+
+    def watched(self, old: str, new: str, base: str | None = None) -> Review:
+        base = base or self.WATCHED
+        self.assertIn(old, base)
+        return self.review.review((base, {}, {}), (base.replace(old, new), {}, {}), worlds=50)
+
+    def test_a_rule_that_reads_a_relation_it_follows_changes_through_it(self) -> None:
+        # `insert : folder.edit` reads file.folder as much as `select : view` does: another column there changes
+        # both, and who may insert is flagged with an example
+        r = self.watched("folder : folder = folder_id", "folder : folder = other_id")
+        through = {t["what"]: t["via"] for t in r["meaning"]["through"]}
+        for rule in ("insert", "update after"):
+            self.assertEqual(through.get(f"rule app.files {rule}"), ["file.folder"], rule)
+        flags = {f["flag"].split(" (e.g.")[0]: f["why"] for f in r["risk"]}
+        for rule in ("insert", "update after"):
+            self.assertEqual(
+                flags.get(f"`app.files {rule}` allows more than before through `file.folder`"),
+                "a rule loosened through what it uses",
+                rule,
+            )
+
+    def test_who_a_share_may_name_widened_is_flagged(self) -> None:
+        cond = "shared if {subject_id <> '0'}"
+        r = self.watched(cond, "shared")
+        self.assertEqual(
+            [(f["flag"], f["why"], f["line"]) for f in r["risk"]],
+            [
+                (
+                    "`folder.viewer`: its share condition is removed (was `{subject_id <> '0'}`)",
+                    "a share condition removed or changed",
+                    "line 5",
+                )
+            ],
+        )
+        r = self.watched(cond, "shared if {subject_id <> '1'}")
+        self.assertEqual(
+            [f["flag"] for f in r["risk"]],
+            ["`folder.viewer`: its share condition changed: `{subject_id <> '0'}` -> `{subject_id <> '1'}`"],
+        )
+        # one added, or the same one written another way, only narrows or says the same: nothing flagged
+        open_ = self.WATCHED.replace(cond, "shared")
+        self.assertEqual(self.watched("user shared\n", f"user {cond}\n", base=open_)["risk"], [])
+        self.assertNotIn(
+            "a share condition removed or changed",
+            {f["why"] for f in self.watched(cond, "shared if {subject_id  <>  '0'}")["risk"]},
+        )
+
+    def test_a_caveat_changed_is_flagged(self) -> None:
+        r = self.watched("{authz.ctx('mode') = 'business'}", "{true}")
+        self.assertEqual(
+            [(f["flag"], f["why"], f["line"]) for f in r["risk"]],
+            [
+                (
+                    "`caveat hours` changed: `caveat hours = {authz.ctx('mode') = 'business'}` -> "
+                    "`caveat hours = {true}`",
+                    "a caveat changed",
+                    "line 12",
+                )
+            ],
+        )
+
+    def test_the_rule_after_an_update_is_no_column_rule(self) -> None:
+        # taken out, `update` checks the rows after an update too: here it lets more through (view is wider)
+        r = self.watched("  update after : folder.edit\n", "")
+        self.assertEqual(
+            [(f["flag"].split(" (e.g.")[0], f["why"], f["line"]) for f in r["risk"]],
+            [
+                (
+                    "`app.files update after` is removed, and `update` lets more rows through after an update "
+                    "than it did",
+                    "a write rule loosened",
+                    "line 16",
+                )
+            ],
+        )
+        # one new on a table that had rules checks the rows after an update instead of `update`: wider, flagged
+        narrow = self.WATCHED.replace("  update : view\n  update after : folder.edit\n", "  update : folder.edit\n")
+        r = self.watched("  update : folder.edit\n", "  update : folder.edit\n  update after : view\n", base=narrow)
+        self.assertEqual(
+            [(f["flag"].split(" (e.g.")[0], f["why"]) for f in r["risk"]],
+            [
+                (
+                    "`app.files update after` is new, and lets more rows through after an update than `update` did",
+                    "a write rule loosened",
+                )
+            ],
+        )
+        # narrower than `update`, or taken out where `update` is narrower: nothing flagged
+        self.assertEqual(
+            self.watched(
+                "  update : folder.edit\n",
+                "  update : folder.edit\n  update after : folder.edit and {done}\n",
+                base=narrow,
+            )["risk"],
+            [],
+        )
+        wide_after = self.WATCHED.replace("  update : view\n  update after : folder.edit\n",
+                                          "  update : folder.edit\n  update after : view\n")  # fmt: skip
+        self.assertEqual(self.watched("  update after : view\n", "", base=wide_after)["risk"], [])
+        # taken out with the `update` rule: no update is allowed, nothing checks the rows after one, nothing flagged
+        self.assertEqual(self.watched("  update : view\n  update after : folder.edit\n", "")["risk"], [])
+
+    def test_deploy_names_the_tables_found_as_it_runs(self) -> None:
+        # a trigger on each table an inheritance condition reads, row-level security on the partitions: the DO
+        # blocks find those tables in the database, and say what they lock
+        from authzlib import migrate
+
+        policy = (
+            "app role app_user\ntype user = app.users\ntype folder = app.folders\n  parent : folder = parent_id\n"
+            "  owner  : user = owner_id\n"
+            "  can view = owner or (parent.view and {exists (select 1 from app.settings s where s.folder_id = this.id)})\n"
+            "rules app.folders\n  select : view\n"
+        )
+        lock = migrate.lock_of(database.migratable(policy, {})[1])
+        r = self.review.review(None, (policy, {}, {}), None, lock, None, worlds=10)
+        [m] = r["deploy"]["migrations"]
+        self.assertEqual(
+            m["found_locks"],
+            [
+                {"what": "the tables the inheritance conditions read (line 6)", "mode": "SHARE ROW EXCLUSIVE"},
+                {
+                    "what": "the partitions and child tables of the tables it turns row-level security on for",
+                    "mode": "ACCESS EXCLUSIVE",
+                },
+            ],
+        )
+        self.assertIn(
+            '1 migration. Locks `"app"."folders"`, `"app"."users"` while it runs. It also locks the tables '
+            "the inheritance conditions read (line 6), and the partitions and child tables of the tables it turns "
+            "row-level security on for. ",
+            self.review.summary(r)["Deploy"],
+        )
+        md = self.review.markdown(r)
+        self.assertIn("  - the tables the inheritance conditions read (line 6): SHARE ROW EXCLUSIVE\n", md)
+        self.assertIn("- every migration also gives rowstile's triggers to the partitions and child tables", md)
+
+    def test_the_comment_shows_why_it_is_no_refactor(self) -> None:
+        # a narrowing: Risk flags nothing, so the example is all the comment has to show what changed
+        r = self.small("can view = edit or viewer", "can view = edit")
+        self.assertEqual(r["risk"], [])
+        ce = r["meaning"].get("counterexample")
+        assert ce is not None
+        md = self.review.markdown(r)
+        said = f"Not a refactor: {self.review.differs(ce, code=True)} (the base grants it, this change doesn't), in this world:"
+        self.assertRegex(said, r"^Not a refactor: `folder\.view` differs for user \S+ on folder \S+ \(")
+        self.assertIn(said + "\n\n```\n" + "\n".join(ce["world"]) + "\n```\n", md)
+        self.assertIn(f"  not a refactor: {self.review.differs(ce)}\n", self.review.text(r))
 
 
 class Graph(unittest.TestCase):

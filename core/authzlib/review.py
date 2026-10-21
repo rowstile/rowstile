@@ -133,10 +133,17 @@ class Lock(TypedDict):
     why: str
 
 
+class FoundLock(TypedDict):
+    what: str  # the tables, in words: 'the tables the inheritance conditions read (line 6)'
+    mode: str
+
+
 class DeployMigration(TypedDict):
     statements: int
     bytes: int
     locks: dict[str, Lock]
+    # the app tables it locks that only the database knows: those its DO blocks find as they run
+    found_locks: list[FoundLock]
     rebuilds: list[str]
     builds_beside: list[str]
     swaps_in: list[str]
@@ -281,31 +288,33 @@ def entities(policy: str, files: dict[str, str] | None, pol: Policy) -> dict[str
     return out
 
 
+def reads(pol: Policy, t: Type, node: Expr, out: set[tuple[str, str]]) -> None:
+    """Adds to out what an expression on type t reads: the relations and permissions it names, and for `rel.perm`
+    the relation it follows and the permission on each type that relation reaches."""
+    match node:
+        case Ref(name):
+            out.add((t.name, name))
+        case Arrow(rel, perm):
+            out.add((t.name, rel))
+            for st, sr in t.relations[rel].subjects():
+                assert sr is None and st in pol.types, FOLLOWS
+                out.add((st, perm))
+        case Not(item):
+            reads(pol, t, item, out)
+        case And(items) | Or(items):
+            for x in items:
+                reads(pol, t, x, out)
+
+
 def uses(pol: Policy) -> dict[tuple[str, str], set[tuple[str, str]]]:
     """{(type, name): {(type, name) it reads}}: what each relation and permission is computed from."""
     graph: dict[tuple[str, str], set[tuple[str, str]]] = {}
     for t in pol.types.values():
         for name in list(t.relations) + list(t.perms):
             graph[(t.name, name)] = set()
-
-    def walk(t: Type, node: Expr, out: set[tuple[str, str]]) -> None:
-        match node:
-            case Ref(name):
-                out.add((t.name, name))
-            case Arrow(rel, perm):
-                out.add((t.name, rel))
-                for st, sr in t.relations[rel].subjects():
-                    assert sr is None and st in pol.types, FOLLOWS
-                    out.add((st, perm))
-            case Not(item):
-                walk(t, item, out)
-            case And(items) | Or(items):
-                for x in items:
-                    walk(t, x, out)
-
     for t in pol.types.values():
         for p in t.perms.values():
-            walk(t, p.expr, graph[(t.name, p.name)])
+            reads(pol, t, p.expr, graph[(t.name, p.name)])
         for r in t.relations.values():
             for src in r.sources:
                 for st, sr in src.subjects:
@@ -572,10 +581,10 @@ def meaning(b: Side, h: Side, worlds: int, refactor: bool = True) -> Meaning:
         if any(c["what"] == key for c in changed):
             continue
         t = governing[r.table]
-        reads: set[tuple[str, str]] = set()
-        _walk_rule(t, r.expr, reads, h.pol)
+        read: set[tuple[str, str]] = set()
+        reads(h.pol, t, r.expr, read)
         hit: set[tuple[str, str]] = set()
-        for x in reads:
+        for x in read:
             hit |= ({x} | closure(graph, x)) & direct
         if hit:
             out["through"].append({"what": key, "via": sorted(f"{a}.{n}" for a, n in hit), "line": str(r.loc)})
@@ -600,21 +609,6 @@ def rule_head(r: Rule) -> str:
     return f"{cmd}{cols}{' after' if r.command == 'update after' else ''}"
 
 
-def _walk_rule(t: Type, node: Expr, out: set[tuple[str, str]], pol: Policy) -> None:
-    match node:
-        case Ref(name):
-            out.add((t.name, name))
-        case Arrow(rel, perm):
-            for st, sr in t.relations[rel].subjects():
-                assert sr is None and st in pol.types, FOLLOWS
-                out.add((st, perm))
-        case Not(item):
-            _walk_rule(t, item, out, pol)
-        case And(items) | Or(items):
-            for x in items:
-                _walk_rule(t, x, out, pol)
-
-
 # --- risk --------------------------------------------------------------------------------------------
 def subjects_of(pol: Policy) -> dict[tuple[str, str], set[tuple[str, str | None, str, str | None]]]:
     """{(type, relation): {(subject type, subject relation, source kind, the permission sharing needs)}}."""
@@ -626,6 +620,18 @@ def subjects_of(pol: Policy) -> dict[tuple[str, str], set[tuple[str, str | None,
                     out.setdefault((t.name, r.name), set()).add(
                         (st, sr, src.kind, (src.shared_by or "share") if src.kind == "shared" else None)
                     )
+    return out
+
+
+def share_conditions(pol: Policy) -> dict[tuple[str, str], set[str | None]]:
+    """{(type, relation): {each `shared if` condition its shares must meet, None for shares without one}}, for each
+    relation that may be shared."""
+    out: dict[tuple[str, str], set[str | None]] = {}
+    for t in pol.types.values():
+        for r in t.relations.values():
+            for src in r.sources:
+                if src.kind == "shared":
+                    out.setdefault((t.name, r.name), set()).add(squeeze(src.shared_if) if src.shared_if else None)
     return out
 
 
@@ -669,6 +675,12 @@ def grants_more(base: Policy, head: Policy, whats: list[str], worlds: int) -> di
     ref_b, ref_h = Reference(base), Reference(head)
     rules_b = {f"rule {r.table} {rule_head(r)}": r for r in base.rules}
     rules_h = {f"rule {r.table} {rule_head(r)}": r for r in head.rules}
+
+    def checking(rules: dict[str, Rule], what: str) -> Rule | None:
+        # the rule that checks what `what` checks: itself, or where a plain `update after` isn't there, the
+        # `update` rule (it then checks the rows after an update too)
+        return rules.get(what) or (rules.get(what.removesuffix(" after")) if what.endswith(" update after") else None)
+
     left = list(whats)
     found: dict[str, tuple[str, str]] = {}
     for w in worlds_to_try((base, head), worlds, "risk"):
@@ -679,7 +691,10 @@ def grants_more(base: Policy, head: Policy, whats: list[str], worlds: int) -> di
             sb, sh = ref_b.evaluate(db_, user, ("tok1",)), ref_h.evaluate(dh, user, ("tok1",))
             for what in list(left):
                 if what.startswith("rule "):
-                    rh, rb = rules_h[what], rules_b.get(what)
+                    rh, rb = checking(rules_h, what), checking(rules_b, what)
+                    if rh is None:  # (an `update after` taken out with the `update` rule: no update is allowed)
+                        left.remove(what)
+                        continue
                     more = ref_h.rule(sh, rh) - (ref_b.rule(sb, rb) if rb else set())
                     tname = ref_h.type_of_table(rh.table).name
                 else:
@@ -745,8 +760,8 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
     def line(key: str) -> str | None:
         return str(h.entities[key][1]) if key in h.entities else None
 
-    def flag(text: str, key: str, why: str) -> None:
-        flags.append({"flag": text, "line": line(key), "what": key, "why": why})
+    def flag(text: str, key: str, why: str, at: str | None = None) -> None:
+        flags.append({"flag": text, "line": line(at or key), "what": key, "why": why})
 
     sb, sh = subjects_of(b.pol), subjects_of(h.pol)
     for key, subs in sorted(sh.items()):
@@ -772,6 +787,21 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
             reached = {st for (tn, _), s in sb.items() if tn == key[0] for st, sr, _, _ in s if sr is None}
             for st in sorted(targets - reached):
                 flag(f"`{name}` is a new way from {key[0]} to {st}", name, "a new way to reach a type")
+    # who a share may name: a `shared if` taken off or rewritten (one added only narrows)
+    cb, ch = share_conditions(b.pol), share_conditions(h.pol)
+    for key, now in sorted(ch.items()):
+        was = cb.get(key, {None})
+        name = f"{key[0]}.{key[1]}"
+        said = ", ".join(f"`{{{x}}}`" for x in sorted(c for c in was if c))
+        if None in now and None not in was:
+            flag(f"`{name}`: its share condition is removed (was {said})", name, "a share condition removed or changed")
+        elif None not in was and now - was:
+            changed_to = ", ".join(f"`{{{x}}}`" for x in sorted(c for c in now if c))
+            flag(
+                f"`{name}`: its share condition changed: {said} -> {changed_to}",
+                name,
+                "a share condition removed or changed",
+            )
     for t in h.pol.types.values():
         bt = b.pol.types.get(t.name)
         for p in t.perms.values():
@@ -793,8 +823,13 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
     for c in changed:
         what = c["what"]
         is_rule = what.startswith("rule ") and " mask " not in f" {what} "
+        # a plain `update after` (no columns): where it isn't there, the `update` rule checks the rows after an update
+        rule = declared(b.pol if c["kind"] == "removed" else h.pol, what)
+        after = isinstance(rule, Rule) and rule.command == "update after" and not rule.columns
         if c["kind"] == "removed":
-            if what.startswith("rule ") and (not is_rule or re.search(r"rule \S+ update \w", what)):
+            if after:
+                own.append(what)
+            elif what.startswith("rule ") and (not is_rule or (isinstance(rule, Rule) and rule.columns)):
                 flag(
                     f"{'the mask' if not is_rule else 'the column rule'} `{what[5:]}` is removed",
                     what,
@@ -814,12 +849,15 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
         if (
             c["kind"] == "added"
             and is_rule
-            and len(what.split()) == 3
+            and (len(what.split()) == 3 or after)
             and any(r.table == what.split()[1] and r.command != "mask" for r in b.pol.rules)
         ):
             own.append(what)
         if c["kind"] == "changed" and what.startswith("scope "):
             flag(f"`{what}` changed: `{c['before']}` -> `{c['after']}`", what, "a scope changed")
+        if c["kind"] == "changed" and what.startswith("caveat "):
+            # what every share made with it is held to
+            flag(f"`{what}` changed: `{c['before']}` -> `{c['after']}`", what, "a caveat changed")
         if c["kind"] == "changed" and what.startswith("rule ") and not is_rule:
             flag(f"the mask `{what[5:]}` changed", what, "a mask changed")
     through = {t["what"]: t["via"] for t in meaning(b, h, 0, refactor=False)["through"]} if changed else {}
@@ -860,6 +898,23 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
         if what not in more:
             continue
         who, where = more[what]
+        if what.endswith(" update after") and kinds[what] == "added":
+            flag(
+                f"`{what[5:]}` is new, and lets more rows through after an update than `update` did "
+                f"(e.g. {who} on {where})",
+                what,
+                "a write rule loosened",
+            )
+            continue
+        if what.endswith(" update after") and kinds[what] == "removed":
+            flag(
+                f"`{what[5:]}` is removed, and `update` lets more rows through after an update than it did "
+                f"(e.g. {who} on {where})",
+                what,
+                "a write rule loosened",
+                at=what.removesuffix(" after"),
+            )
+            continue
         if kinds[what] == "added":
             flag(f"`{what[5:]}` is new: nobody could, now some can (e.g. {who} on {where})", what, "a rule added")
             continue
@@ -1046,6 +1101,21 @@ def table_locks(sql: str) -> dict[str, tuple[str, str]]:
     return out
 
 
+# a DO block that finds app tables and locks them says so in a comment: -- @locks SHARE ROW EXCLUSIVE: the tables ...
+LOCKS_MARK = re.compile(r"(?m)^--\s*@locks\s+([A-Z][A-Z ]*[A-Z]):\s*(.+?)\s*$")
+
+
+def found_locks(sql: str) -> list[FoundLock]:
+    """The app tables a migration's DO blocks find and lock as they run, as their comments say, in order (one
+    of each)."""
+    out: dict[str, str] = {}
+    for comments, _ in split(sql):
+        for mode, what in LOCKS_MARK.findall(comments):
+            if STRENGTH[mode] > STRENGTH.get(out.get(what, ""), 0):
+                out[what] = mode
+    return [{"what": what, "mode": mode} for what, mode in out.items()]
+
+
 def deploy(b: Side, h: Side, base_lock: str | None, head_lock: str | None) -> Deploy:
     out: Deploy = {"migrations": [], "lock_current": None}
     if base_lock is None and head_lock is None:
@@ -1065,6 +1135,7 @@ def deploy(b: Side, h: Side, base_lock: str | None, head_lock: str | None) -> De
                 "statements": len(stmts),
                 "bytes": len(m.sql),
                 "locks": {t: {"mode": mode, "why": why} for t, (mode, why) in sorted(table_locks(m.sql).items())},
+                "found_locks": found_locks(m.sql),
                 "rebuilds": m.rebuilt if (len(ms) == 1 or i == len(ms) - 1) and not (len(ms) == 2 and i == 1) else [],
                 "builds_beside": m.rebuilt if len(ms) == 2 and i == 0 else [],
                 "swaps_in": ms[0].rebuilt if len(ms) == 2 and i == 1 else [],
@@ -1240,10 +1311,14 @@ def summary(r: Review) -> dict[str, str]:
         lines["Deploy"] = "no migration: nothing the database holds changes."
     else:
         locks = sorted({t for m in d["migrations"] for t in m["locks"]})
+        found = list(dict.fromkeys(x["what"] for m in d["migrations"] for x in m["found_locks"]))
         rebuilds = [x for m in d["migrations"] for x in m["rebuilds"]]
         beside = [x for m in d["migrations"] for x in m["builds_beside"]]
         text = plural(len(d["migrations"]), "migration") + ". "
-        text += f"Locks {', '.join(f'`{x}`' for x in locks)} while it runs. " if locks else "No table locks. "
+        text += f"Locks {', '.join(f'`{x}`' for x in locks)} while it runs. " if locks else ""
+        # the tables its DO blocks find as they run: named in words
+        text += f"{'It also locks' if locks else 'Locks'} {', and '.join(found)}. " if found else ""
+        text += "" if locks or found else "No table locks. "
         text += f"Builds {', '.join(beside)} beside the tables in use, then swaps in. " if beside else ""
         text += (
             f"Rebuilds {', '.join(rebuilds)} under lock."
@@ -1268,6 +1343,14 @@ def mistake_note(r: Review) -> str | None:
     return f"The policy at the base has a mistake ({said}), so the review reads this one as new."
 
 
+def differs(ce: Difference, code: bool = False) -> str:
+    """Meaning's example of a difference, in words: 'folder.view differs for user 1 on folder 2' (code: what differs
+    as code, for Markdown). As the risks name their examples: a rule's object is a row of its table."""
+    kind = ce["what"].split(".")[0] if re.fullmatch(r"\w+\.\w+", ce["what"]) else "row"
+    what = f"`{ce['what']}`" if code else ce["what"]
+    return f"{what} differs for {named(ce['user'])} on {kind} {ce['object']}"
+
+
 def markdown(r: Review, title: str = "rowstile: what this pull request changes") -> str:
     s = summary(r)
     out = [MARK, f"### {title}", ""]
@@ -1289,6 +1372,19 @@ def markdown(r: Review, title: str = "rowstile: what this pull request changes")
         out.append(f"| `{c['what']}` ({c['kind']}) | {cell(c['before'])} | {cell(c['after'])} | {c['line'] or ''} |")
     for t in m["through"]:
         out.append(f"| `{t['what']}` | | changes through {', '.join(f'`{v}`' for v in t['via'])} | {t['line'] or ''} |")
+    ce = m.get("counterexample")
+    if ce:
+        grants = (
+            "the base grants it, this change doesn't" if ce["before"] else "this change grants it, the base doesn't"
+        )
+        out += [
+            "",
+            f"Not a refactor: {differs(ce, code=True)} ({grants}), in this world:",
+            "",
+            "```",
+            *ce["world"],
+            "```",
+        ]
     out += ["", "</details>"]
     a = r["access"]
     if a and not a.get("error") and a["groups"]:
@@ -1317,12 +1413,18 @@ def markdown(r: Review, title: str = "rowstile: what this pull request changes")
             out.append(f"- migration {i}: {mg['statements']} statements ({mg['bytes'] // 1024} KB)")
             for tbl, lk in mg["locks"].items():
                 out.append(f"  - `{tbl}`: {lk['mode']} ({lk['why']})")
+            for fl in mg["found_locks"]:
+                out.append(f"  - {fl['what']}: {fl['mode']}")
             for x in mg["builds_beside"]:
                 out.append(f"  - builds `{x}` beside the one in use; the app keeps reading and writing")
             for x in mg["swaps_in"]:
                 out.append(f"  - swaps `{x}` in, and does again what changed since")
             for x in mg["rebuilds"]:
                 out.append(f"  - rebuilds `{x}`, its tables locked meanwhile")
+        out.append(
+            "- every migration also gives rowstile's triggers to the partitions and child tables made since the last "
+            "one: SHARE ROW EXCLUSIVE on each"
+        )
         out.append("- rolling back: change the policy back and write the next migration")
         out += ["", "</details>"]
     return "\n".join(out) + "\n"
@@ -1354,10 +1456,14 @@ def tests_details(r: Review) -> list[str]:
     out += [f"- removed from {x['test']}: `{x['check']}`" for x in t["removed"]]
     out += [f'- renamed: "{n["before"]}" is now "{n["after"]}"' for n in t["renamed"]]
     out += [f"- no test names `{x['what']}` ({x['line']})" for x in t["untested"]]
-    out += [
-        f"- fails: {x['test']} {x['line'] or ''}: `{(x['detail'] or '').splitlines()[0] if x['detail'] else ''}`"
-        for x in (t.get("run") or {}).get("failed", [])
-    ]
+    for x in (t.get("run") or {}).get("failed", []):
+        # its line and the first line of what it says, where it has them
+        detail = (x["detail"] or "").strip()
+        out.append(
+            f"- fails: {x['test']}"
+            + (f" ({x['line']})" if x["line"] else "")
+            + (f": `{detail.splitlines()[0]}`" if detail else "")
+        )
     return [*out, "", "</details>"]
 
 
@@ -1379,9 +1485,7 @@ def text(r: Review) -> str:
             out.append(f"  through  {t['what']}: uses {', '.join(t['via'])}")
         ce = m.get("counterexample")
         if ce:
-            # as the risks name their examples: user 1 on note 1 (a rule's object is a row of its table)
-            kind = ce["what"].split(".")[0] if re.fullmatch(r"\w+\.\w+", ce["what"]) else "row"
-            out.append(f"  not a refactor: {ce['what']} differs for {named(ce['user'])} on {kind} {ce['object']}")
+            out.append(f"  not a refactor: {differs(ce)}")
         if m.get("unreadable"):
             out.append(
                 f"  can't tell: {', '.join(m.get('unreadable', []))} changed only in conditions the review "
