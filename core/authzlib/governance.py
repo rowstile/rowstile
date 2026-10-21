@@ -413,13 +413,6 @@ BEGIN
   IF authz_int.caller_is_admin() THEN RETURN true; END IF;
   RETURN v_perm IS NOT NULL AND EXISTS (SELECT 1 FROM authz.principal()) AND coalesce(authz.can(p_type, p_id, v_perm), false);
 END $f$;
--- The subject key of a share (as the policy writes it: user, team#member, user:*, anyone, link)
-CREATE FUNCTION authz_int.subject_key(p_type text, p_id text, p_relation text) RETURNS text
-LANGUAGE sql IMMUTABLE AS $f$
-  SELECT CASE WHEN p_type IN ('anyone', 'link') THEN p_type
-              WHEN p_id = '*' AND p_relation = '' THEN p_type || ':*'
-              WHEN p_relation <> '' THEN p_type || '#' || p_relation
-              ELSE p_type END $f$;
 
 -- Ask for access: SELECT authz.request_access('folder', '3', 'viewer', 'for the audit', '7 days')
 CREATE FUNCTION authz.request_access(p_type text, p_id text, p_relation text, p_reason text,

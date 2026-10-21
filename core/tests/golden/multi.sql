@@ -647,6 +647,14 @@ INSERT INTO authz_int.trees VALUES
   ('folder_project__parent__tree', '8bdb5df2d761f92aa31cf1d66236b20d', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[]),
   ('folder_project__parent__tree2', 'a9da5f1b4e70bf90d481302444de6fcd', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[]);
 
+-- The subject key of a share (as the policy writes it: user, team#member, user:*, anyone, link)
+CREATE FUNCTION authz_int.subject_key(p_type text, p_id text, p_relation text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $f$
+  SELECT CASE WHEN p_type IN ('anyone', 'link') THEN p_type
+              WHEN p_id = '*' AND p_relation = '' THEN p_type || ':*'
+              WHEN p_relation <> '' THEN p_type || '#' || p_relation
+              ELSE p_type END $f$;
+
 CREATE TABLE authz_int.shared_relations (object_type text, relation text, subject text, shared_by text, required text[], loc text, PRIMARY KEY (object_type, relation, subject));
 
 INSERT INTO authz_int.shared_relations VALUES
@@ -668,10 +676,7 @@ DECLARE n bigint;
 BEGIN
   SELECT count(*) INTO n FROM authz.shares g WHERE g.relation NOT LIKE 'role:%' AND NOT EXISTS (
     SELECT 1 FROM authz_int.shared_relations s WHERE s.object_type = g.object_type AND s.relation = g.relation
-      AND s.subject = CASE WHEN g.subject_type IN ('anyone', 'link') THEN g.subject_type
-                           WHEN g.subject_id = '*' AND g.subject_relation = '' THEN g.subject_type || ':*'
-                           WHEN g.subject_relation <> '' THEN g.subject_type || '#' || g.subject_relation
-                           ELSE g.subject_type END);
+      AND s.subject = authz_int.subject_key(g.subject_type, g.subject_id, g.subject_relation));
   IF n > 0 THEN
     RAISE WARNING '% shares are for relations this policy does not declare as shared; they are kept, but grant nothing', n;
   END IF;
@@ -3461,10 +3466,7 @@ BEGIN
   IF NOT v_found THEN
     RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
-  v_key := CASE WHEN p_subject_type IN ('anyone', 'link') THEN p_subject_type
-                WHEN p_subject_id = '*' AND p_subject_relation = '' THEN p_subject_type || ':*'
-                WHEN p_subject_relation <> '' THEN p_subject_type || '#' || p_subject_relation
-                ELSE p_subject_type END;
+  v_key := authz_int.subject_key(p_subject_type, p_subject_id, p_subject_relation);
   -- the subject must exist (and is locked, like the object)
   IF v_key NOT LIKE '%:*' AND v_key NOT IN ('anyone', 'link') THEN
     SELECT t.tbl, t.find INTO v_tbl, v_find FROM authz_int.types t WHERE t.name = p_subject_type;
@@ -5606,13 +5608,6 @@ BEGIN
   IF authz_int.caller_is_admin() THEN RETURN true; END IF;
   RETURN v_perm IS NOT NULL AND EXISTS (SELECT 1 FROM authz.principal()) AND coalesce(authz.can(p_type, p_id, v_perm), false);
 END $f$;
--- The subject key of a share (as the policy writes it: user, team#member, user:*, anyone, link)
-CREATE FUNCTION authz_int.subject_key(p_type text, p_id text, p_relation text) RETURNS text
-LANGUAGE sql IMMUTABLE AS $f$
-  SELECT CASE WHEN p_type IN ('anyone', 'link') THEN p_type
-              WHEN p_id = '*' AND p_relation = '' THEN p_type || ':*'
-              WHEN p_relation <> '' THEN p_type || '#' || p_relation
-              ELSE p_type END $f$;
 
 -- Ask for access: SELECT authz.request_access('folder', '3', 'viewer', 'for the audit', '7 days')
 CREATE OR REPLACE FUNCTION authz.request_access(p_type text, p_id text, p_relation text, p_reason text,
