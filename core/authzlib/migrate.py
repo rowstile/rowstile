@@ -12,8 +12,10 @@ only what changed:
   view) stays
 - a table whose columns are the same: its rows written again
 - anything else that changed or went: dropped first, with everything that needs it, then made again
-- an inheritance tree whose definition is the same is not touched; one that changed is rebuilt
-- steps (the base tables, checks, sweeps) run when their SQL changed, some (grants) every time
+- an inheritance tree whose definition is the same keeps its rows: only its functions that changed (a message, an
+  error code) are replaced in place; one whose definition changed is rebuilt
+- steps (the base tables, checks, sweeps, grants) run when their SQL changed, the grants also when anything was
+  made, some every time
 
 A new version of rowstile is a migration only when it makes something different: the lock holds a hash of
 the steps every migration runs, beside everything else, and not the version it was written by.
@@ -386,6 +388,25 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
         )
 
     refill: set[str] = set()
+
+    def replaceable(o: Obj, prev: LockObject) -> bool:
+        # an atomic body's old version may need what goes: those are made again, not replaced
+        return o.kind == "function" and prev["shape"] == o.shape and not o.atomic and not prev["atomic"]
+
+    for t in trees:
+        if t.name in rebuild:
+            continue
+        # a tree whose definition is the same (its hash leaves line numbers, messages and error codes out) keeps its
+        # rows, and its functions that changed all the same (a message) are replaced in place. Its other objects
+        # can differ only in what the checks run as they are made say (a line number): nothing of that stays
+        if {k for k, info in old.objects.items() if info["tree"] == t.name} != {o.ident for o in t.objs}:
+            rebuild.add(t.name)
+            continue
+        changed_fns = [o for o in t.objs if o.kind == "function" and old.objects[o.ident]["hash"] != o.hash]
+        if all(replaceable(o, old.objects[o.ident]) for o in changed_fns):
+            replace |= {o.ident for o in changed_fns}
+        else:
+            rebuild.add(t.name)
     for o in c.objects():
         if o.tree:
             continue
@@ -393,8 +414,7 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
         if prev is None:
             create.add(o.ident)
         elif prev["hash"] != o.hash:
-            # an atomic body's old version may need what goes: those are made again, not replaced
-            if o.kind == "function" and prev["shape"] == o.shape and not o.atomic and not prev["atomic"]:
+            if replaceable(o, prev):
                 replace.add(o.ident)
             elif in_place(o):
                 restub.add(o.ident)
@@ -407,8 +427,9 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
                 create.add(o.ident)
     removed = {k for k, info in old.objects.items() if k not in objs or (info["tree"] in rebuild)}
     removed |= {k for k, info in old.objects.items() if info["tree"] and info["tree"] not in {t.name for t in trees}}
+    # (a step every migration runs is in the always hash; the others run when their SQL changed, the grants too)
     steps = {
-        it.name for it in c.items if isinstance(it, Step) and it.when == "changed" and old.steps.get(it.name) != it.hash
+        it.name for it in c.items if isinstance(it, Step) and it.when != "always" and old.steps.get(it.name) != it.hash
     }
     changed = drop or create or replace or restub or removed or rebuild or steps or refill - {SOFT}
     same_steps = old.always == always_hash(c)
@@ -468,6 +489,27 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
 
     # what is made, in the compiled policy's order; steps that grant on what was made run if anything was
     made_any = bool(create or rebuild)
+
+    def made_again(o: Obj) -> str:
+        stmts = list(o.stmts)
+        if o.ident in replace:
+            stmts[0] = (
+                stmts[0][0],
+                re.sub(
+                    r"^(\s*)CREATE\s+FUNCTION",
+                    r"\1CREATE OR REPLACE FUNCTION",
+                    stmts[0][1],
+                    count=1,
+                    flags=re.IGNORECASE,
+                ),
+            )
+        if o.ident in restub:  # (a masked view's own statement replaces it in place already)
+            stmts[0] = (
+                stmts[0][0],
+                re.sub(r"^(\s*)CREATE\s+VIEW", r"\1CREATE OR REPLACE VIEW", stmts[0][1], count=1, flags=re.IGNORECASE),
+            )
+        return statements_sql(stmts)
+
     body: list[str] = []
     for it in c.items:
         if isinstance(it, Step):
@@ -476,27 +518,10 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
         elif isinstance(it, Tree):
             if it.name in rebuild:
                 body.append(it.sql)
+            else:
+                body += [made_again(o) for o in it.objs if o.ident in replace]
         elif it.ident in create or it.ident in replace or it.ident in restub:
-            stmts = list(it.stmts)
-            if it.ident in replace:
-                stmts[0] = (
-                    stmts[0][0],
-                    re.sub(
-                        r"^(\s*)CREATE\s+FUNCTION",
-                        r"\1CREATE OR REPLACE FUNCTION",
-                        stmts[0][1],
-                        count=1,
-                        flags=re.IGNORECASE,
-                    ),
-                )
-            if it.ident in restub:  # (a masked view's own statement replaces it in place already)
-                stmts[0] = (
-                    stmts[0][0],
-                    re.sub(
-                        r"^(\s*)CREATE\s+VIEW", r"\1CREATE OR REPLACE VIEW", stmts[0][1], count=1, flags=re.IGNORECASE
-                    ),
-                )
-            body.append(statements_sql(stmts))
+            body.append(made_again(it))
         elif it.ident in refill:
             rows = [(cm, s) for cm, s in it.stmts[1:] if re.match(r"\s*(INSERT|DO)\b", s, re.IGNORECASE)]
             # The lock rows stay: a tree write that waits on one while the migration runs must find the same row

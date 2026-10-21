@@ -2463,6 +2463,27 @@ class Migrations(unittest.TestCase):
             self.migrate.always_hash(database.migratable(self.text, {})[1]),
         )
 
+    def test_a_changed_grant_alone_is_a_migration(self) -> None:
+        # a new version that grants the app role another function, and changes nothing else
+        lock = self.lock(self.text)
+        older = re.sub(r"(?m)^step grant_api \| \w+$", "step grant_api | 000000000000", lock)
+        self.assertNotEqual(older, lock)
+        m = database.migration(self.text, {}, older)
+        self.assertRegex(m.sql, r"GRANT EXECUTE ON FUNCTION\n  authz\.uid\(\),")
+        self.assertEqual(m.lock, lock)
+
+    def test_a_tree_function_changed_alone_is_replaced_in_place(self) -> None:
+        # a new version that changes a message of an inheritance tree's function: the tree keeps its rows
+        lock = self.lock(self.text)
+        line = r'(?m)^(function authz_int\."folder__parent__tree_check_loops"\(p_ids bigint\[\]\) \| )\w+'
+        older = re.sub(line, r"\g<1>000000000000", lock)
+        self.assertNotEqual(older, lock)
+        m = database.migration(self.text, {}, older)
+        self.assertIn('CREATE OR REPLACE FUNCTION authz_int."folder__parent__tree_check_loops"(p_ids bigint[])', m.sql)
+        self.assertEqual(m.rebuilt, [])
+        self.assertNotIn("_rebuild", m.sql)
+        self.assertEqual(m.lock, lock)
+
     def test_a_lock_without_those_steps_runs_them(self) -> None:
         # every lock rowstile migrate writes has the line; without it (cut by hand), nothing says the steps are the
         # same: the migration runs them, and writes the line

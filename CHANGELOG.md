@@ -140,6 +140,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   beside the deny; the error codes' index says that an error the app meets at run time carries its code in its
   HINT, not at the end of the message. AZ502 names the types that sign in without "one of" a list of one, and
   messages no longer say "a org".
+- A new version of rowstile that changes only what the app role is granted, or only an inheritance tree's
+  functions (a message, an error code), is the next migration. Before, `rowstile migrate --check` said there was
+  nothing to do, and a database set up by its migrations kept the old grants or messages. A tree's functions are
+  replaced in place: the tree keeps its rows.
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed

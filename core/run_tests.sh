@@ -318,7 +318,7 @@ step "a migration leaves what applying the new policy whole leaves (each kind of
 python3 tests/migrate_test.py | quiet_ok
 record "${PIPESTATUS[0]}" "migrate vs apply"
 }
-unit command 95 migrate_vs_apply
+unit command 130 migrate_vs_apply
 fi
 fi
 if part policy; then
