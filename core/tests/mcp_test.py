@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """mcp_test: the MCP server (`rowstile mcp`) over its protocol, as a coding agent's client would use it: the
 handshake and the tools, then each tool in a project folder (rowstile.toml, a policy, tests) on a scratch
-database: check, prove, push, test, why, lint.
+database: check, prove, push, test, why, review, lint.
 
     PGHOST=... PGUSER=... python3 tests/mcp_test.py [--db authz_mcp]     (--no-db: only what needs none)
 """
@@ -10,7 +10,6 @@ import contextlib
 import json
 import os
 import queue
-import re
 import shutil
 import signal
 import subprocess
@@ -18,7 +17,8 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any
+from collections.abc import Callable, Iterator
+from typing import Any, NamedTuple
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +26,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "cli"))
 import mcp  # noqa: E402
+import pgwire  # noqa: E402
 
 fails = 0
 # an answer from the server: its shape is what the checks check
@@ -60,10 +61,13 @@ class Client:
         self.n = 0
         # the server's lines as they come, so that a server that doesn't answer fails the suite instead of hanging it
         self.lines: queue.Queue[bytes] = queue.Queue()
-        threading.Thread(target=self.pump, daemon=True).start()
+        self.heard: list[bytes] = []  # every line the server wrote, in order
+        self.pumping = threading.Thread(target=self.pump, daemon=True)
+        self.pumping.start()
 
     def pump(self) -> None:
         for line in self.stdout:
+            self.heard.append(line)
             self.lines.put(line)
         self.lines.put(b"")  # the server's output ended
 
@@ -134,6 +138,17 @@ class Client:
         return self.p.wait(timeout=10)
 
 
+def refused(r: Answer) -> str | None:
+    """What a tool said in refusing a call's arguments, None for any other answer. A refusal is the tool's failed
+    call, as one the command refuses (isError, exit code 2, the reason in its text), which a client shows the agent
+    so that it corrects the call (MCP 2025-11-25: input validation errors are tool execution errors), not a
+    protocol error, which a client may keep from it."""
+    if not isinstance(r, dict) or r.get("isError") is not True or not r.get("content"):
+        return None
+    text = r["content"][0]["text"]
+    return text if r.get("structuredContent") == {"ok": False, "exit_code": 2, "output": text} else None
+
+
 def protocol(folder: str) -> None:
     print("-- the protocol")
     c = Client(folder)
@@ -170,12 +185,31 @@ def protocol(folder: str) -> None:
     )
     r = c.request("tools/call", {"name": "fly", "arguments": {}})
     check(
-        "an unknown tool: an error naming the tools",
-        r["error"]["code"] == -32602 and "check" in r["error"]["message"],
+        "an unknown tool: a protocol error naming the tools",
+        r.get("error") == {"code": -32602, "message": 'no tool "fly": check, prove, review, test, why, lint, push'},
+        r,
+    )
+    r = c.request("tools/call", {"name": "check", "arguments": ["db/policy.authz"]})
+    check(
+        "arguments that aren't an object: a protocol error saying so, and the tool not run",
+        r.get("error")
+        == {"code": -32602, "message": 'check: arguments is an object (names and values), not ["db/policy.authz"]'},
+        r,
+    )
+    r = c.request("tools/call", {"name": "check", "arguments": None})
+    check(
+        "... arguments that are null: none, as when none are given",
+        r.get("result", {}).get("structuredContent", {}).get("ok") is True,
         r,
     )
     r = c.request("tools/call", {"name": "why", "arguments": {"as": "user:1"}})
-    check("a missing argument: named", r["error"]["code"] == -32602 and "type" in r["error"]["message"], r)
+    check(
+        "missing arguments: the tool's failed call, naming them, which the agent sees",
+        refused(r.get("result")) == "why: missing arguments type, id, perm",
+        r,
+    )
+    r = c.request("tools/call", {"name": "why", "arguments": {"as": "user:1", "type": "folder", "id": "3"}})
+    check("... one missing argument: named", refused(r.get("result")) == "why: missing argument perm", r)
     r = c.request("resources/list")
     check("a method it doesn't have: -32601", r["error"]["code"] == -32601, r)
     c.send("{not json")
@@ -233,22 +267,12 @@ def protocol(folder: str) -> None:
         r["error"]["code"] == -32602 and r["error"]["message"].startswith("tools/call: params is an object"),
         r,
     )
-    r = c.request("tools/call", {"name": "test", "arguments": {"files": "db/tests/docs.authz"}})
-    check(
-        "test's files as one string, not a list: refused",
-        r["error"]["code"] == -32602 and r["error"]["message"] == "test: files: a list of file names",
-        r,
-    )
-    r = c.request(
-        "tools/call", {"name": "why", "arguments": {"as": "user:1", "type": "folder", "id": None, "perm": "view"}}
-    )
-    check(
-        "an id that is null: refused, not run as the id 'None'",
-        r.get("error", {}).get("message") == "why: id: a string, not null",
-        r,
-    )
-    r = c.request("tools/call", {"name": "why", "arguments": {"as": "user:1", "type": "folder", "id": 3, "perm": True}})
-    check("... nor a permission that is true", r.get("error", {}).get("message") == "why: perm: a string, not true", r)
+    r = c.tool("test", files="db/tests/docs.authz")
+    check("test's files as one string, not a list: refused", refused(r) == "test: files: a list of file names", r)
+    r = c.tool("why", **{"as": "user:1", "type": "folder", "id": None, "perm": "view"})
+    check("an id that is null: refused, not run as the id 'None'", refused(r) == "why: id: a string, not null", r)
+    r = c.tool("why", **{"as": "user:1", "type": "folder", "id": 3, "perm": True})
+    check("... nor a permission that is true", refused(r) == "why: perm: a string, not true", r)
     # an argument longer than a process may be given (Linux takes 128 kB): the call fails, and the server carries on
     r = c.request("tools/call", {"name": "check", "arguments": {"policy": "p" * 300000}})
     check(
@@ -325,16 +349,15 @@ def stopping() -> None:
 
 def cancelling(folder: str) -> None:
     print("-- a call cancelled, and the messages that come while a call runs")
-    # a policy whose invariant holds: prove tries every world it is asked for (some ten thousand: half a minute)
-    with open(os.path.join(folder, "db", "policy.authz"), encoding="utf-8") as fh:
-        holds = re.sub(r"(?m)^  never folder: .*$", "  never folder: share and not view", fh.read())
-    with open(os.path.join(folder, "db", "holds.authz"), "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(holds)
+    # a call whose command runs until it is stopped, however fast the command is: a check of a policy file that is a
+    # pipe nobody writes to (it waits to read it)
+    pipe = os.path.join(folder, "db", "waits.authz")
+    os.mkfifo(pipe)
     c = Client(folder, log=True)
     c.request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}})
     c.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-    prove = {"name": "prove", "arguments": {"policy": "db/holds.authz", "worlds": 10000}}
-    c.send({"jsonrpc": "2.0", "id": "long", "method": "tools/call", "params": prove})
+    waits = {"name": "check", "arguments": {"policy": "db/waits.authz"}}
+    c.send({"jsonrpc": "2.0", "id": "long", "method": "tools/call", "params": waits})
     pid = c.command()
     c.send({"jsonrpc": "2.0", "id": "p1", "method": "ping"})
     got = c.until("p1", 5)
@@ -353,7 +376,6 @@ def cancelling(folder: str) -> None:
         pid is not None and c.ended(pid, 15),
         [pid, c.children()],
     )
-    time.sleep(0.5)  # an answer the server would still send comes before the ping's
     c.send({"jsonrpc": "2.0", "id": "p2", "method": "ping"})
     got = c.until("p2", 60)
     check(
@@ -372,9 +394,9 @@ def cancelling(folder: str) -> None:
         r,
     )
     # two calls at once: each answered, the quick one first
-    c.send({"jsonrpc": "2.0", "id": "slow", "method": "tools/call", "params": prove})
+    c.send({"jsonrpc": "2.0", "id": "slow", "method": "tools/call", "params": waits})
     pid = c.command()
-    c.send({"jsonrpc": "2.0", "id": "slow", "method": "tools/call", "params": prove})
+    c.send({"jsonrpc": "2.0", "id": "slow", "method": "tools/call", "params": waits})
     c.send({"jsonrpc": "2.0", "id": "quick", "method": "tools/call", "params": {"name": "check", "arguments": {}}})
     got = c.until("quick", 30)
     check(
@@ -394,6 +416,16 @@ def cancelling(folder: str) -> None:
         "the end of the input with a call running: answered, then the server ends",
         len(got) == 1 and got[0]["result"]["structuredContent"]["ok"] and c.p.wait(timeout=30) == 0,
         got,
+    )
+    os.remove(pipe)
+    # all the server wrote, now that it has ended (each call's thread ended before it): an answer to a cancelled call
+    # would be among it, however late it came
+    c.pumping.join(timeout=10)
+    late = [a for a in map(json.loads, c.heard) if isinstance(a, dict) and a.get("id") in ("long", "slow")]
+    check(
+        "... and the calls cancelled never answered, however late",
+        not c.pumping.is_alive() and [a.get("error", {}).get("code") for a in late] == [-32600],
+        late,
     )
     said = c.p.stderr.read().decode() if c.p.stderr else ""
     check(
@@ -545,6 +577,7 @@ def with_db(folder: str, db: str) -> None:
     )
     r = c.tool("lint")
     check("lint: the example leaves nothing open", r["structuredContent"]["ok"], r)
+    review(folder, c)
     cancelled_push(folder, db, c)
     stopped_push(folder, db)
     # a database with a policy that nobody marked as a development database (applied, as production is)
@@ -586,7 +619,7 @@ def with_db(folder: str, db: str) -> None:
         r = c2.tool("push", policy=flag)
         check(
             f"push with {flag} as the policy: not an option the agent may pass",
-            "starts with '-'" in str(r.get("message")),
+            refused(r) == f"push: policy: '{flag}' starts with '-': a name or a value, not an option",
             r,
         )
     r = c2.tool("push")
@@ -596,9 +629,13 @@ def with_db(folder: str, db: str) -> None:
         r,
     )
     r = c2.tool("review", base="--output=x")
-    check("review's base can't be an option either", "starts with '-'" in str(r.get("message")), r)
+    check(
+        "review's base can't be an option either",
+        refused(r) == "review: base: '--output=x' starts with '-': a name or a value, not an option",
+        r,
+    )
     r = c2.tool("why", **{"as": "user:3", "type": "folder", "id": "--development", "perm": "edit"})
-    check("... nor why's id", "starts with '--'" in str(r.get("message")), r)
+    check("... nor why's id", refused(r) == "why: id: '--development' starts with '--': an id, not an option", r)
     c2.close()
     subprocess.run(["dropdb", "--if-exists", other], capture_output=True)
     subprocess.run(
@@ -628,12 +665,49 @@ def with_db(folder: str, db: str) -> None:
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
 
 
-def cancelled_push(folder: str, db: str, c: Client) -> None:
-    """A push the agent cancels while it waits for a lock on app.files (another session holds it): the command
-    stopped as Ctrl-C stops it, its statement ended on the server at once (not left waiting for the lock), and
-    nothing of it kept."""
-    import pgwire
+def review(folder: str, c: Client) -> None:
+    """The review tool in a git repository, as an agent asks it before a pull request: what the policy change since
+    a ref does, as the pull request's comment."""
+    git = ["git", "-C", folder, "-c", "user.email=t@example.com", "-c", "user.name=t"]
+    # no upkeep git starts in the background: a process left to this one (adopt) would read as a server's stray
+    upkeep = (["config", "gc.auto", "0"], ["config", "maintenance.auto", "false"])
+    for step in (["init", "-q", "-b", "main"], *upkeep, ["add", "-A"], ["commit", "-q", "-m", "base"]):
+        subprocess.run([*git, *step], check=True, capture_output=True)
+    policy = os.path.join(folder, "db", "policy.authz")
+    with open(policy, encoding="utf-8") as fh:
+        before = fh.read()
+    with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(before.replace("viewer or (parent.view and {inherit})", "viewer or parent.view", 1))
+    try:
+        r = c.tool("review", base="main")
+    finally:
+        with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(before)
+    s = r["structuredContent"]
+    check(
+        "review: what the change since main does, as the pull request's comment",
+        not r["isError"]
+        and s["ok"]
+        and s["output"].startswith("<!-- rowstile review -->")
+        and "| `folder.view` (changed) |" in s["output"]
+        and "<details><summary>Access</summary>" in s["output"],
+        r,
+    )
 
+
+class Waiting(NamedTuple):
+    """A push the agent asked for, waiting for a lock on app.files that another session, the holder, holds."""
+
+    holder: pgwire.Connection
+    waiting: list[tuple[pgwire.Value, ...]]  # the sessions waiting for the lock (the push's one)
+    versions: list[tuple[pgwire.Value, ...]]  # the policy in force before
+    others: Callable[[], list[tuple[pgwire.Value, ...]]]  # the other sessions on the database, as they are now
+
+
+@contextlib.contextmanager
+def push_waiting(folder: str, db: str, c: Client) -> Iterator[Waiting]:
+    """A change to the policy (delete takes share), and a push of it sent to the server c while the holder locks
+    app.files: yielded once the push waits for the lock. The holder's session closed after, and the policy put back."""
     policy = os.path.join(folder, "db", "policy.authz")
     with open(policy, encoding="utf-8") as fh:
         before = fh.read()
@@ -659,36 +733,50 @@ def cancelled_push(folder: str, db: str, c: Client) -> None:
         while time.monotonic() < end and not waiting:
             waiting = [r for r in others() if r[1] == "Lock"]
             time.sleep(0.05)
-        pid = c.children()
-        c.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": "push"}})
-        end, left = time.monotonic() + 10, others()
-        while time.monotonic() < end and left:
-            time.sleep(0.05)
-            left = others()
-        check(
-            "push cancelled while it waits for a lock: its command stopped, and its session with it, at once",
-            len(waiting) == 1 and len(pid) == 1 and c.ended(pid[0], 15) and left == [],
-            [waiting, pid, left],
-        )
-        holder.execute("ROLLBACK")
-        if pid:
-            c.ended(pid[0], 40)  # a push that went on (the lock is free now) has ended, and committed, by then
-        kept = holder.query(IN_FORCE)
+        yield Waiting(holder, waiting, versions, others)
     finally:
         holder.close()
-    c.send({"jsonrpc": "2.0", "id": "after", "method": "ping"})
-    got = c.until("after", 60)
-    r = c.tool("push")
-    check(
-        "... no answer for it, and nothing of it kept: the next push applies the change",
-        kept == versions
-        and got == [{"jsonrpc": "2.0", "id": "after", "result": {}}]
-        and r["structuredContent"]["ok"]
-        and "unchanged" not in r["content"][0]["text"],
-        [versions, kept, got, r],
-    )
-    with open(policy, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(before)
+        with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(before)
+
+
+def gone(others: Callable[[], list[tuple[pgwire.Value, ...]]]) -> list[tuple[pgwire.Value, ...]]:
+    """The other sessions left on the database once they have had ten seconds to end."""
+    end, left = time.monotonic() + 10, others()
+    while time.monotonic() < end and left:
+        time.sleep(0.05)
+        left = others()
+    return left
+
+
+def cancelled_push(folder: str, db: str, c: Client) -> None:
+    """A push the agent cancels while it waits for a lock on app.files (another session holds it): the command
+    stopped as Ctrl-C stops it, its statement ended on the server at once (not left waiting for the lock), and
+    nothing of it kept."""
+    with push_waiting(folder, db, c) as p:
+        pid = c.children()
+        c.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": "push"}})
+        left = gone(p.others)
+        check(
+            "push cancelled while it waits for a lock: its command stopped, and its session with it, at once",
+            len(p.waiting) == 1 and len(pid) == 1 and c.ended(pid[0], 15) and left == [],
+            [p.waiting, pid, left],
+        )
+        p.holder.execute("ROLLBACK")
+        if pid:
+            c.ended(pid[0], 40)  # a push that went on (the lock is free now) has ended, and committed, by then
+        kept = p.holder.query(IN_FORCE)
+        c.send({"jsonrpc": "2.0", "id": "after", "method": "ping"})
+        got = c.until("after", 60)
+        r = c.tool("push")
+        check(
+            "... no answer for it, and nothing of it kept: the next push applies the change",
+            kept == p.versions
+            and got == [{"jsonrpc": "2.0", "id": "after", "result": {}}]
+            and r["structuredContent"]["ok"]
+            and "unchanged" not in r["content"][0]["text"],
+            [p.versions, kept, got, r],
+        )
     check("... and back", c.tool("push")["structuredContent"]["ok"])
 
 
@@ -714,33 +802,8 @@ def stopped_push(folder: str, db: str) -> None:
     """The server stopped (SIGTERM, as an MCP client stops one) while a push waits for a lock another session
     holds: the push stopped as Ctrl-C stops it, its session ended on the server at once, nothing kept, and the
     server ended after it, leaving nothing running."""
-    import pgwire
-
-    policy = os.path.join(folder, "db", "policy.authz")
-    with open(policy, encoding="utf-8") as fh:
-        before = fh.read()
-    rule = "  delete                            : edit\n"
-    with open(policy, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(before.replace(rule, rule.replace("edit", "share"), 1))
     c = Client(folder, "--db", f"dbname={db}", log=True)
-    holder = pgwire.connect(**pgwire.parse_dsn(f"dbname={db}"))
-    try:
-        versions = holder.query(IN_FORCE)
-        holder.execute("BEGIN")
-        holder.execute("LOCK TABLE app.files IN ACCESS EXCLUSIVE MODE")
-        me = holder.query("SELECT pg_backend_pid()")[0][0]
-
-        def others() -> list[tuple[pgwire.Value, ...]]:
-            holder.query("SELECT pg_stat_clear_snapshot()")
-            return holder.query(
-                f"SELECT pid, wait_event_type FROM pg_stat_activity WHERE datname = '{db}' AND pid <> {me}"
-            )
-
-        c.send({"jsonrpc": "2.0", "id": "push", "method": "tools/call", "params": {"name": "push", "arguments": {}}})
-        end, waiting = time.monotonic() + 30, []
-        while time.monotonic() < end and not waiting:
-            waiting = [r for r in others() if r[1] == "Lock"]
-            time.sleep(0.05)
+    with push_waiting(folder, db, c) as p:
         began = time.monotonic()
         c.p.send_signal(signal.SIGTERM)
         try:
@@ -748,30 +811,23 @@ def stopped_push(folder: str, db: str) -> None:
         except subprocess.TimeoutExpired:
             code = None
         took = time.monotonic() - began
-        end, left = time.monotonic() + 10, others()
-        while time.monotonic() < end and left:
-            time.sleep(0.05)
-            left = others()
+        left = gone(p.others)
         stray = strays()
         check(
             "SIGTERM while a push waits for a lock: its session ended at once, the server after it, nothing left",
-            len(waiting) == 1 and code == 128 + signal.SIGTERM and took < 5 and left == [] and stray == [],
-            [waiting, code, f"{took:.1f} s", left, stray],
+            len(p.waiting) == 1 and code == 128 + signal.SIGTERM and took < 5 and left == [] and stray == [],
+            [p.waiting, code, f"{took:.1f} s", left, stray],
         )
-        holder.execute("ROLLBACK")
+        p.holder.execute("ROLLBACK")
         for pid in stray:  # a push left running goes on now the lock is free: this process is its parent
             os.waitpid(pid, 0)
-        kept = holder.query(IN_FORCE)
-    finally:
-        holder.close()
+        kept = p.holder.query(IN_FORCE)
     said = c.p.stderr.read().decode() if c.p.stderr else ""
     check(
         "... nothing of it kept, and the server's log says why it stopped",
-        kept == versions and "rowstile mcp: stopped (signal 15): the commands running are stopped first" in said,
-        [kept == versions, said],
+        kept == p.versions and "rowstile mcp: stopped (signal 15): the commands running are stopped first" in said,
+        [kept == p.versions, said],
     )
-    with open(policy, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(before)
 
 
 def project() -> str:

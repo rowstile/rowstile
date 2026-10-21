@@ -265,11 +265,19 @@ def run(dsn: str | None, args: list[str], running: Running | None = None) -> tup
     return code, out.decode("utf-8", "replace").replace("\r\n", "\n")
 
 
-def call(dsn: str | None, name: Json, arguments: Json, running: Running | None = None) -> Message:
-    if not isinstance(name, str) or name not in TOOLS:
-        raise KeyError(name)
-    args = TOOLS[name].command(arguments if isinstance(arguments, dict) else {})
-    code, out = run(dsn, args, running)
+def call(dsn: str | None, name: str, arguments: Message, running: Running | None = None) -> Message:
+    """A tool's answer. Arguments the tool refuses (one missing, null, an option) are a failed call too, as one the
+    command refuses (exit code 2), with the reason in its text: MCP 2025-11-25 makes input validation errors tool
+    execution errors, which a client shows the agent so that it can correct the call (a protocol error it may not)."""
+    tool = TOOLS[name]
+    try:
+        if missing := [k for k in tool.required if k not in arguments]:
+            raise ValueError(f"missing {'argument' if len(missing) == 1 else 'arguments'} {', '.join(missing)}")
+        args = tool.command(arguments)
+    except ValueError as e:
+        code, out = 2, f"{name}: {e}"
+    else:
+        code, out = run(dsn, args, running)
     result: Message = {"ok": code == 0, "exit_code": code, "output": out}
     if name == "check" and code != 0:
         from authzlib import errors
@@ -370,21 +378,24 @@ class Server:
         if method == "tools/list":
             return ok(mid, {"tools": tool_list()})
         if method == "tools/call":
+            # what MCP's tools/call can't be (an unknown tool, arguments that aren't an object) is a protocol error;
+            # what the tool refuses in its arguments is the tool's answer (call)
+            name, arguments = params.get("name"), params.get("arguments")
+            arguments = {} if arguments is None else arguments  # none given, or null: none
+            if not isinstance(name, str) or name not in TOOLS:
+                return error(mid, -32602, f"no tool {json.dumps(name)}: {', '.join(TOOLS)}")
+            if not isinstance(arguments, dict):
+                said = json.dumps(arguments)[:40]
+                return error(mid, -32602, f"{name}: arguments is an object (names and values), not {said}")
             key, running = json.dumps(mid), Running()
             with self.lock:
                 if key in self.running:  # its cancellation would stop both
                     return error(mid, -32600, f"request {key} is running already: each request has an id of its own")
                 self.running[key] = running
             try:
-                return ok(mid, call(self.dsn, params.get("name"), params.get("arguments"), running))
+                return ok(mid, call(self.dsn, name, arguments, running))
             except Cancelled:
                 return None
-            except KeyError as e:
-                if e.args and e.args[0] == params.get("name"):
-                    return error(mid, -32602, f"no tool {params.get('name')!r}: {', '.join(TOOLS)}")
-                return error(mid, -32602, f"{params.get('name')}: missing argument {e}")
-            except ValueError as e:
-                return error(mid, -32602, f"{params.get('name')}: {e}")
             finally:
                 with self.lock:
                     del self.running[key]
