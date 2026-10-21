@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('user__manager__tree', '9dca59dfcab03fd043d2d150189e5205', ARRAY[to_regclass('"cx"."users"')::oid]::oid[], 'user__manager__tree'), ('folder_project__folder_parent__tree', '4e1fe3b69388a0226ee27f0543c3c10b', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__folder_parent__tree'), ('folder__parent__tree', '34349abe809796fda58fc8662be8ce55', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree')) n(name, hash, oids, rel)
+           JOIN (VALUES ('user__manager__tree', '9dca59dfcab03fd043d2d150189e5205', ARRAY[to_regclass('"cx"."users"')::oid]::oid[], 'user__manager__tree'), ('folder_project__folder_parent__tree', 'fb91e60a448afea0ad0d652434d05867', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__folder_parent__tree'), ('folder__parent__tree', '34349abe809796fda58fc8662be8ce55', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -813,7 +813,7 @@ CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oi
 
 INSERT INTO authz_int.trees VALUES
   ('user__manager__tree', '9dca59dfcab03fd043d2d150189e5205', ARRAY[to_regclass('"cx"."users"')::oid]::oid[]),
-  ('folder_project__folder_parent__tree', '4e1fe3b69388a0226ee27f0543c3c10b', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
+  ('folder_project__folder_parent__tree', 'fb91e60a448afea0ad0d652434d05867', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
   ('folder__parent__tree', '34349abe809796fda58fc8662be8ce55', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[]);
 
 CREATE TABLE authz_int.shared_relations (object_type text, relation text, subject text, shared_by text, required text[], loc text, PRIMARY KEY (object_type, relation, subject));
@@ -1590,14 +1590,15 @@ CREATE FUNCTION authz_int."folder_project__folder_parent__tree_on_links1"() RETU
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
-  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+  -- one refresh for old and new links together: each refresh expects the rest to be current
+  IF TG_OP = 'INSERT' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'folder'::text AS t, (CASE WHEN (x."org_id", x."child_id") IS NOT NULL THEN ROW(x."org_id"::bigint, x."child_id"::bigint)::text END) AS i FROM new_rows x) y;
-    PERFORM authz_int."folder_project__folder_parent__tree_refresh"(a_t, a_i);
-  END IF;
-  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+  ELSIF TG_OP = 'DELETE' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'folder'::text AS t, (CASE WHEN (x."org_id", x."child_id") IS NOT NULL THEN ROW(x."org_id"::bigint, x."child_id"::bigint)::text END) AS i FROM old_rows x) y;
-    PERFORM authz_int."folder_project__folder_parent__tree_refresh"(a_t, a_i);
+  ELSE
+    SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'folder'::text AS t, (CASE WHEN (x."org_id", x."child_id") IS NOT NULL THEN ROW(x."org_id"::bigint, x."child_id"::bigint)::text END) AS i FROM new_rows x UNION SELECT 'folder'::text AS t, (CASE WHEN (x."org_id", x."child_id") IS NOT NULL THEN ROW(x."org_id"::bigint, x."child_id"::bigint)::text END) AS i FROM old_rows x) y;
   END IF;
+  PERFORM authz_int."folder_project__folder_parent__tree_refresh"(a_t, a_i);
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_folder_project__folder_parent__tree_on_links1_ins" AFTER INSERT ON "cx"."folder_links"

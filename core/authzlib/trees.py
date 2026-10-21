@@ -35,6 +35,20 @@ Namer = Callable[[str], str]
 Where = tuple[str, str, Loc]
 
 
+def recheck_own_sql(f: Namer) -> str:
+    """After a statement on a tree's own table that wrote a row: if a condition reads that table through a query
+    (deps_sql noted it), every row is checked again. An UPDATE says whether it wrote one in `wrote`; for an
+    INSERT or a DELETE, `ids` holds every row it wrote."""
+    return f"""
+  -- a condition that reads this table through a query may hold differently on other rows now
+  IF coalesce(wrote, cardinality(ids) > 0) AND EXISTS (SELECT 1 FROM {f("_reads")} WHERE rel = TG_RELID::regclass) THEN
+    PERFORM {f("_recheck")}();
+  END IF;"""
+
+
+WROTE = "\n    wrote := EXISTS (SELECT 1 FROM new_rows);"
+
+
 class TreeMixin(Core):
     # --- shared pieces ----------------------------------------------------
     def lock_sql(self, types: list[str]) -> str:
@@ -81,25 +95,51 @@ BEGIN
   END LOOP;
 END $imm$;"""
 
-    def deps_sql(self, name: str, conds_view: str, own_tables: list[str], first_line: Loc, on_deps: str) -> str:
-        return f"""-- find the tables the conditions read and watch them
+    def deps_sql(
+        self,
+        name: str,
+        tracked: list[tuple[str, list[str]]],
+        tables: list[str],
+        first_line: Loc,
+        on_deps: str,
+        own: str,
+    ) -> str:
+        """Watch the tables the conditions read (tracked: a table of the tree with its conditions). The tree's own
+        tables have triggers already: those a condition reads through a query (another row's columns) are only
+        noted in `own`, and a write there re-checks every row."""
+        probes = [(f"authz_reads{i + 1}", tb, cs) for i, (tb, cs) in enumerate(tracked)]
+        on_probes = "\n    UNION ALL ".join(
+            f"SELECT coalesce(({on_row(c, 'r')}), false) AS v FROM pg_temp.{p} r"
+            for p, _, cs in probes
+            for c in dict.fromkeys(cs)
+        )
+        return f"""-- find the tables the conditions read and watch them; for the tree's own tables, only note those read
 -- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read ({first_line})
 DO $dep$
 DECLARE d record;
 BEGIN
+  -- the conditions over an empty copy of each table, so that the row itself isn't among what they read
+  {chr(10).join(f"CREATE TEMP TABLE {p} (LIKE {qt(tb)});" for p, tb, _ in probes).replace(chr(10), chr(10) + "  ")}
+  CREATE TEMP VIEW authz_reads AS
+    {on_probes};
   FOR d IN SELECT DISTINCT c.oid::regclass AS rel, c.relkind
            FROM pg_depend dep
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_class c ON c.oid = dep.refobjid AND dep.refclassid = 'pg_class'::regclass
-           WHERE w.ev_class = {lit(conds_view)}::regclass
-             AND c.oid NOT IN (w.ev_class, {", ".join(f"{lit(tb)}::regclass" for tb in own_tables)}) LOOP
+           WHERE w.ev_class = 'pg_temp.authz_reads'::regclass
+             AND c.oid NOT IN (w.ev_class, {", ".join(f"'pg_temp.{p}'::regclass" for p, _, _ in probes)}) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
       RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
         {lit(first_line)}, d.rel;
+    ELSIF d.rel IN ({", ".join(f"{lit(qt(tb))}::regclass" for tb in tables)}) THEN
+      INSERT INTO {own} VALUES (d.rel);
+    ELSE
+      EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
+                     'FOR EACH STATEMENT EXECUTE FUNCTION {on_deps}()', {lit(dep_trigger(name))}, d.rel);
     END IF;
-    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
-                   'FOR EACH STATEMENT EXECUTE FUNCTION {on_deps}()', {lit(dep_trigger(name))}, d.rel);
   END LOOP;
+  DROP VIEW pg_temp.authz_reads;
+  DROP TABLE {", ".join(f"pg_temp.{p}" for p, _, _ in probes)};
 END $dep$;"""
 
     def collect_edges(self, edge_list: list[Edge]) -> tuple[list[Where], list[tuple[str, str, str]]]:
@@ -380,7 +420,9 @@ CREATE VIEW {f("_conds")} AS
         )
         if reads:
             sql.append(f"""-- ...as last applied (they read other rows or tables, so changes there are re-checked)
-CREATE TABLE {f("_cond_cache")} (id {pkt} PRIMARY KEY, v boolean[] NOT NULL);""")
+CREATE TABLE {f("_cond_cache")} (id {pkt} PRIMARY KEY, v boolean[] NOT NULL);
+-- the tree's own table, if a condition reads it through a query (found when applied)
+CREATE TABLE {f("_reads")} (rel regclass PRIMARY KEY);""")
         cache_refresh = (
             f"""
   DELETE FROM {f("_cond_cache")} WHERE id = ANY (affected);
@@ -541,7 +583,7 @@ END $f$;
 CREATE FUNCTION {f("_on_deps")}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} AS $f$
 BEGIN PERFORM {f("_recheck")}(); RETURN NULL; END $f$;""")
-            sql.append(self.deps_sql(name, f("_conds"), [tbl], first_line, f("_on_deps")))
+            sql.append(self.deps_sql(name, [(t.table, tracked)], [t.table], first_line, f("_on_deps"), f("_reads")))
 
         cycle_check = ""
         if parents:
@@ -567,11 +609,11 @@ END $f$;""")
         sql.append(f"""-- rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION {f("_on_rows")}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} AS $f$
-DECLARE ids {pkt}[]; shift boolean := false;
+DECLARE ids {pkt}[]; shift boolean := false;{" wrote boolean;" if reads else ""}
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT {key("n")} FROM new_rows n);
-  ELSIF TG_OP = 'UPDATE' THEN
+  ELSIF TG_OP = 'UPDATE' THEN{WROTE if reads else ""}
     -- rows whose id changed: the old id disappears and the new one appears
     ids := ARRAY(
       SELECT {key("o")} FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE {key("n")} = {key("o")})
@@ -587,7 +629,7 @@ BEGIN
   IF cardinality(ids) > 0 THEN
     {lock}{cycle_check}
     PERFORM {f("_refresh")}(ids, shift);
-  END IF;{f"{chr(10)}  PERFORM {f('_recheck')}();" if reads else ""}
+  END IF;{recheck_own_sql(f) if reads else ""}
   RETURN NULL;
 END $f$;
 CREATE TRIGGER {trig("_ins")} AFTER INSERT ON {tbl}
@@ -883,7 +925,9 @@ CREATE VIEW {f("_conds")} AS
             ]
             sql.append(self.tree_checks(conds_list, link_wheres, views, first_line))
         if reads:
-            sql.append(f"CREATE TABLE {f('_cond_cache')} (t text, id text, v boolean[] NOT NULL, PRIMARY KEY (t, id));")
+            sql.append(f"""CREATE TABLE {f("_cond_cache")} (t text, id text, v boolean[] NOT NULL, PRIMARY KEY (t, id));
+-- the tree's own tables a condition reads through a query (found when applied)
+CREATE TABLE {f("_reads")} (rel regclass PRIMARY KEY);""")
         cache_refresh = (
             f"""
   DELETE FROM {f("_cond_cache")} k WHERE (k.t, k.id) IN (SELECT * FROM unnest(a_t, a_i));
@@ -978,7 +1022,16 @@ END $f$;
 CREATE FUNCTION {f("_on_deps")}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} AS $f$
 BEGIN PERFORM {f("_recheck")}(); RETURN NULL; END $f$;""")
-            sql.append(self.deps_sql(name, f("_conds"), [qt(t.table) for t in types], first_line, f("_on_deps")))
+            sql.append(
+                self.deps_sql(
+                    name,
+                    [(t.table, tracked[t.name]) for t in types if tracked[t.name]],
+                    [t.table for t in types],
+                    first_line,
+                    f("_on_deps"),
+                    f("_reads"),
+                )
+            )
 
         if loop_steps:
             sql.append(f"""-- the types' own columns may not loop (links through tables may: they add nothing)
@@ -1019,11 +1072,11 @@ END $f$;""")
             sql.append(f"""-- {t.name} rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION {f(sfx)}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} AS $f$
-DECLARE ids text[];
+DECLARE ids text[];{" wrote boolean;" if reads else ""}
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT {kt("n")} FROM new_rows n);
-  ELSIF TG_OP = 'UPDATE' THEN
+  ELSIF TG_OP = 'UPDATE' THEN{WROTE if reads else ""}
     ids := ARRAY(
       SELECT {kt("n")} FROM new_rows n JOIN old_rows o ON {key("o")} = {key("n")}
       WHERE {changed}
@@ -1035,7 +1088,7 @@ BEGIN
   IF cardinality(ids) > 0 THEN
     {lock}{loops}
     PERFORM {f("_refresh")}(array_fill({lit(t.name)}::text, ARRAY[cardinality(ids)]), ids);
-  END IF;{f"{chr(10)}  PERFORM {f('_recheck')}();" if reads else ""}
+  END IF;{recheck_own_sql(f) if reads else ""}
   RETURN NULL;
 END $f$;
 CREATE TRIGGER {trig(sfx + "_ins")} AFTER INSERT ON {qt(t.table)}
@@ -1058,14 +1111,15 @@ CREATE FUNCTION {f(sfx)}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
-  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+  -- one refresh for old and new links together: each refresh expects the rest to be current
+  IF TG_OP = 'INSERT' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM ({sel("new_rows")}) y;
-    PERFORM {f("_refresh")}(a_t, a_i);
-  END IF;
-  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+  ELSIF TG_OP = 'DELETE' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM ({sel("old_rows")}) y;
-    PERFORM {f("_refresh")}(a_t, a_i);
+  ELSE
+    SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM ({sel("new_rows")} UNION {sel("old_rows")}) y;
   END IF;
+  PERFORM {f("_refresh")}(a_t, a_i);
   RETURN NULL;
 END $f$;
 CREATE TRIGGER {trig(sfx + "_ins")} AFTER INSERT ON {qt(ltable)}

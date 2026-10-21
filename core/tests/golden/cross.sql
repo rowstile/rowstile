@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder_project__host_inside_parent__tree2', '582fd7f13f138fa4714f98996f2ea8b9', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree'), ('folder_project__backer_parent__tree', '68d2d5fc8183e8be25c3fbf7557c98f8', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
+           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'a03d7137306c5c469c7eeb752c233ecb', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree'), ('folder_project__backer_parent__tree', '62e062aff05e87fea46f9609402dd7fc', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -638,9 +638,9 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder_project__host_inside_parent__tree2', '582fd7f13f138fa4714f98996f2ea8b9', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
+  ('folder_project__host_inside_parent__tree2', 'a03d7137306c5c469c7eeb752c233ecb', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
   ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[]),
-  ('folder_project__backer_parent__tree', '68d2d5fc8183e8be25c3fbf7557c98f8', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]);
+  ('folder_project__backer_parent__tree', '62e062aff05e87fea46f9609402dd7fc', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]);
 
 CREATE TABLE authz_int.shared_relations (object_type text, relation text, subject text, shared_by text, required text[], loc text, PRIMARY KEY (object_type, relation, subject));
 
@@ -1079,6 +1079,8 @@ BEGIN
 END $imm$;
 
 CREATE TABLE authz_int."folder_project__host_inside_parent__tree_cond_cache" (t text, id text, v boolean[] NOT NULL, PRIMARY KEY (t, id));
+-- the tree's own tables a condition reads through a query (found when applied)
+CREATE TABLE authz_int."folder_project__host_inside_parent__tree_reads" (rel regclass PRIMARY KEY);
 
 -- recompute the given nodes and everything linked below them
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_refresh"(p_types text[], p_ids text[]) RETURNS void
@@ -1159,24 +1161,34 @@ CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_deps"() R
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN PERFORM authz_int."folder_project__host_inside_parent__tree_recheck"(); RETURN NULL; END $f$;
 
--- find the tables the conditions read and watch them
+-- find the tables the conditions read and watch them; for the tree's own tables, only note those read
 -- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read (line 15)
 DO $dep$
 DECLARE d record;
 BEGIN
+  -- the conditions over an empty copy of each table, so that the row itself isn't among what they read
+  CREATE TEMP TABLE authz_reads1 (LIKE "cx"."folders");
+  CREATE TEMP VIEW authz_reads AS
+    SELECT coalesce((not exists (select 1 from cx.frozen "z""s" where "z""s".folder_id = r.id)), false) AS v FROM pg_temp.authz_reads1 r
+    UNION ALL SELECT coalesce((not archived), false) AS v FROM pg_temp.authz_reads1 r;
   FOR d IN SELECT DISTINCT c.oid::regclass AS rel, c.relkind
            FROM pg_depend dep
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_class c ON c.oid = dep.refobjid AND dep.refclassid = 'pg_class'::regclass
-           WHERE w.ev_class = 'authz_int."folder_project__host_inside_parent__tree_conds"'::regclass
-             AND c.oid NOT IN (w.ev_class, '"cx"."folders"'::regclass, '"cx"."projects"'::regclass) LOOP
+           WHERE w.ev_class = 'pg_temp.authz_reads'::regclass
+             AND c.oid NOT IN (w.ev_class, 'pg_temp.authz_reads1'::regclass) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
       RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
         'line 15', d.rel;
+    ELSIF d.rel IN ('"cx"."folders"'::regclass, '"cx"."projects"'::regclass) THEN
+      INSERT INTO authz_int."folder_project__host_inside_parent__tree_reads" VALUES (d.rel);
+    ELSE
+      EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
+                     'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_deps"()', 'authz_folder_project__host_inside_parent__tree_dep', d.rel);
     END IF;
-    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
-                   'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_deps"()', 'authz_folder_project__host_inside_parent__tree_dep', d.rel);
   END LOOP;
+  DROP VIEW pg_temp.authz_reads;
+  DROP TABLE pg_temp.authz_reads1;
 END $dep$;
 
 -- the types' own columns may not loop (links through tables may: they add nothing)
@@ -1200,11 +1212,12 @@ END $f$;
 -- folder rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_rows_folder"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE ids text[];
+DECLARE ids text[]; wrote boolean;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT n."id"::text FROM new_rows n);
   ELSIF TG_OP = 'UPDATE' THEN
+    wrote := EXISTS (SELECT 1 FROM new_rows);
     ids := ARRAY(
       SELECT n."id"::text FROM new_rows n JOIN old_rows o ON o."id" = n."id"
       WHERE n."parent_id" IS DISTINCT FROM o."parent_id"
@@ -1221,7 +1234,10 @@ BEGIN
     IF TG_OP <> 'DELETE' THEN PERFORM authz_int."folder_project__host_inside_parent__tree_check_loops"(array_fill('folder'::text, ARRAY[cardinality(ids)]), ids); END IF;
     PERFORM authz_int."folder_project__host_inside_parent__tree_refresh"(array_fill('folder'::text, ARRAY[cardinality(ids)]), ids);
   END IF;
-  PERFORM authz_int."folder_project__host_inside_parent__tree_recheck"();
+  -- a condition that reads this table through a query may hold differently on other rows now
+  IF coalesce(wrote, cardinality(ids) > 0) AND EXISTS (SELECT 1 FROM authz_int."folder_project__host_inside_parent__tree_reads" WHERE rel = TG_RELID::regclass) THEN
+    PERFORM authz_int."folder_project__host_inside_parent__tree_recheck"();
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_rows_folder_ins" AFTER INSERT ON "cx"."folders"
@@ -1236,11 +1252,12 @@ CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_rows_fo_605054e5"
 -- project rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_rows_project"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE ids text[];
+DECLARE ids text[]; wrote boolean;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT n."id"::text FROM new_rows n);
   ELSIF TG_OP = 'UPDATE' THEN
+    wrote := EXISTS (SELECT 1 FROM new_rows);
     ids := ARRAY(
       SELECT n."id"::text FROM new_rows n JOIN old_rows o ON o."id" = n."id"
       WHERE false
@@ -1254,7 +1271,10 @@ BEGIN
     IF TG_OP <> 'DELETE' THEN PERFORM authz_int."folder_project__host_inside_parent__tree_check_loops"(array_fill('project'::text, ARRAY[cardinality(ids)]), ids); END IF;
     PERFORM authz_int."folder_project__host_inside_parent__tree_refresh"(array_fill('project'::text, ARRAY[cardinality(ids)]), ids);
   END IF;
-  PERFORM authz_int."folder_project__host_inside_parent__tree_recheck"();
+  -- a condition that reads this table through a query may hold differently on other rows now
+  IF coalesce(wrote, cardinality(ids) > 0) AND EXISTS (SELECT 1 FROM authz_int."folder_project__host_inside_parent__tree_reads" WHERE rel = TG_RELID::regclass) THEN
+    PERFORM authz_int."folder_project__host_inside_parent__tree_recheck"();
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_rows_project_ins" AFTER INSERT ON "cx"."projects"
@@ -1271,14 +1291,15 @@ CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_links1"()
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
-  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+  -- one refresh for old and new links together: each refresh expects the rest to be current
+  IF TG_OP = 'INSERT' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'project'::text AS t, x."project_id"::text AS i FROM new_rows x) y;
-    PERFORM authz_int."folder_project__host_inside_parent__tree_refresh"(a_t, a_i);
-  END IF;
-  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+  ELSIF TG_OP = 'DELETE' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'project'::text AS t, x."project_id"::text AS i FROM old_rows x) y;
-    PERFORM authz_int."folder_project__host_inside_parent__tree_refresh"(a_t, a_i);
+  ELSE
+    SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'project'::text AS t, x."project_id"::text AS i FROM new_rows x UNION SELECT 'project'::text AS t, x."project_id"::text AS i FROM old_rows x) y;
   END IF;
+  PERFORM authz_int."folder_project__host_inside_parent__tree_refresh"(a_t, a_i);
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_on_links1_ins" AFTER INSERT ON "cx"."placements"
@@ -1555,14 +1576,15 @@ CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_links1"(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
-  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+  -- one refresh for old and new links together: each refresh expects the rest to be current
+  IF TG_OP = 'INSERT' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'project'::text AS t, x."project_id"::text AS i FROM new_rows x) y;
-    PERFORM authz_int."folder_project__host_inside_parent__tree2_refresh"(a_t, a_i);
-  END IF;
-  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+  ELSIF TG_OP = 'DELETE' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'project'::text AS t, x."project_id"::text AS i FROM old_rows x) y;
-    PERFORM authz_int."folder_project__host_inside_parent__tree2_refresh"(a_t, a_i);
+  ELSE
+    SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'project'::text AS t, x."project_id"::text AS i FROM new_rows x UNION SELECT 'project'::text AS t, x."project_id"::text AS i FROM old_rows x) y;
   END IF;
+  PERFORM authz_int."folder_project__host_inside_parent__tree2_refresh"(a_t, a_i);
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_on_links1_ins" AFTER INSERT ON "cx"."placements"
@@ -2024,14 +2046,15 @@ CREATE FUNCTION authz_int."folder_project__backer_parent__tree_on_links1"() RETU
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
-  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+  -- one refresh for old and new links together: each refresh expects the rest to be current
+  IF TG_OP = 'INSERT' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'project'::text AS t, x."project_id"::text AS i FROM new_rows x) y;
-    PERFORM authz_int."folder_project__backer_parent__tree_refresh"(a_t, a_i);
-  END IF;
-  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+  ELSIF TG_OP = 'DELETE' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'project'::text AS t, x."project_id"::text AS i FROM old_rows x) y;
-    PERFORM authz_int."folder_project__backer_parent__tree_refresh"(a_t, a_i);
+  ELSE
+    SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'project'::text AS t, x."project_id"::text AS i FROM new_rows x UNION SELECT 'project'::text AS t, x."project_id"::text AS i FROM old_rows x) y;
   END IF;
+  PERFORM authz_int."folder_project__backer_parent__tree_refresh"(a_t, a_i);
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_folder_project__backer_parent__tree_on_links1_ins" AFTER INSERT ON "cx"."backings"
@@ -2118,6 +2141,8 @@ BEGIN
 END $imm$;
 
 CREATE TABLE authz_int."region_site__over__tree_cond_cache" (t text, id text, v boolean[] NOT NULL, PRIMARY KEY (t, id));
+-- the tree's own tables a condition reads through a query (found when applied)
+CREATE TABLE authz_int."region_site__over__tree_reads" (rel regclass PRIMARY KEY);
 
 -- recompute the given nodes and everything linked below them
 CREATE FUNCTION authz_int."region_site__over__tree_refresh"(p_types text[], p_ids text[]) RETURNS void
@@ -2198,34 +2223,44 @@ CREATE FUNCTION authz_int."region_site__over__tree_on_deps"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN PERFORM authz_int."region_site__over__tree_recheck"(); RETURN NULL; END $f$;
 
--- find the tables the conditions read and watch them
+-- find the tables the conditions read and watch them; for the tree's own tables, only note those read
 -- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read (line 39)
 DO $dep$
 DECLARE d record;
 BEGIN
+  -- the conditions over an empty copy of each table, so that the row itself isn't among what they read
+  CREATE TEMP TABLE authz_reads1 (LIKE "cx"."sites");
+  CREATE TEMP VIEW authz_reads AS
+    SELECT coalesce((not exists (select 1 from cx.closed c where c.site_id = r.id)), false) AS v FROM pg_temp.authz_reads1 r;
   FOR d IN SELECT DISTINCT c.oid::regclass AS rel, c.relkind
            FROM pg_depend dep
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_class c ON c.oid = dep.refobjid AND dep.refclassid = 'pg_class'::regclass
-           WHERE w.ev_class = 'authz_int."region_site__over__tree_conds"'::regclass
-             AND c.oid NOT IN (w.ev_class, '"cx"."regions"'::regclass, '"cx"."sites"'::regclass) LOOP
+           WHERE w.ev_class = 'pg_temp.authz_reads'::regclass
+             AND c.oid NOT IN (w.ev_class, 'pg_temp.authz_reads1'::regclass) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
       RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
         'line 39', d.rel;
+    ELSIF d.rel IN ('"cx"."regions"'::regclass, '"cx"."sites"'::regclass) THEN
+      INSERT INTO authz_int."region_site__over__tree_reads" VALUES (d.rel);
+    ELSE
+      EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
+                     'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_deps"()', 'authz_region_site__over__tree_dep', d.rel);
     END IF;
-    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
-                   'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_deps"()', 'authz_region_site__over__tree_dep', d.rel);
   END LOOP;
+  DROP VIEW pg_temp.authz_reads;
+  DROP TABLE pg_temp.authz_reads1;
 END $dep$;
 
 -- region rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."region_site__over__tree_rows_region"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE ids text[];
+DECLARE ids text[]; wrote boolean;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT n."id"::text FROM new_rows n);
   ELSIF TG_OP = 'UPDATE' THEN
+    wrote := EXISTS (SELECT 1 FROM new_rows);
     ids := ARRAY(
       SELECT n."id"::text FROM new_rows n JOIN old_rows o ON o."id" = n."id"
       WHERE false
@@ -2238,7 +2273,10 @@ BEGIN
     UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('region', 'site');
     PERFORM authz_int."region_site__over__tree_refresh"(array_fill('region'::text, ARRAY[cardinality(ids)]), ids);
   END IF;
-  PERFORM authz_int."region_site__over__tree_recheck"();
+  -- a condition that reads this table through a query may hold differently on other rows now
+  IF coalesce(wrote, cardinality(ids) > 0) AND EXISTS (SELECT 1 FROM authz_int."region_site__over__tree_reads" WHERE rel = TG_RELID::regclass) THEN
+    PERFORM authz_int."region_site__over__tree_recheck"();
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_region_site__over__tree_rows_region_ins" AFTER INSERT ON "cx"."regions"
@@ -2253,11 +2291,12 @@ CREATE TRIGGER "authz_region_site__over__tree_rows_region_trunc" AFTER TRUNCATE 
 -- site rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."region_site__over__tree_rows_site"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE ids text[];
+DECLARE ids text[]; wrote boolean;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     ids := ARRAY(SELECT n."id"::text FROM new_rows n);
   ELSIF TG_OP = 'UPDATE' THEN
+    wrote := EXISTS (SELECT 1 FROM new_rows);
     ids := ARRAY(
       SELECT n."id"::text FROM new_rows n JOIN old_rows o ON o."id" = n."id"
       WHERE (SELECT coalesce((not exists (select 1 from cx.closed c where c.site_id = r.id)), false) FROM (SELECT n.*) r) IS DISTINCT FROM (SELECT coalesce((not exists (select 1 from cx.closed c where c.site_id = r.id)), false) FROM (SELECT o.*) r)
@@ -2270,7 +2309,10 @@ BEGIN
     UPDATE authz_int.locks SET n = n + 1 WHERE type IN ('region', 'site');
     PERFORM authz_int."region_site__over__tree_refresh"(array_fill('site'::text, ARRAY[cardinality(ids)]), ids);
   END IF;
-  PERFORM authz_int."region_site__over__tree_recheck"();
+  -- a condition that reads this table through a query may hold differently on other rows now
+  IF coalesce(wrote, cardinality(ids) > 0) AND EXISTS (SELECT 1 FROM authz_int."region_site__over__tree_reads" WHERE rel = TG_RELID::regclass) THEN
+    PERFORM authz_int."region_site__over__tree_recheck"();
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_region_site__over__tree_rows_site_ins" AFTER INSERT ON "cx"."sites"
@@ -2287,14 +2329,15 @@ CREATE FUNCTION authz_int."region_site__over__tree_on_links1"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
-  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+  -- one refresh for old and new links together: each refresh expects the rest to be current
+  IF TG_OP = 'INSERT' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'region'::text AS t, x."region_id"::text AS i FROM new_rows x) y;
-    PERFORM authz_int."region_site__over__tree_refresh"(a_t, a_i);
-  END IF;
-  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+  ELSIF TG_OP = 'DELETE' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'region'::text AS t, x."region_id"::text AS i FROM old_rows x) y;
-    PERFORM authz_int."region_site__over__tree_refresh"(a_t, a_i);
+  ELSE
+    SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'region'::text AS t, x."region_id"::text AS i FROM new_rows x UNION SELECT 'region'::text AS t, x."region_id"::text AS i FROM old_rows x) y;
   END IF;
+  PERFORM authz_int."region_site__over__tree_refresh"(a_t, a_i);
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_region_site__over__tree_on_links1_ins" AFTER INSERT ON "cx"."region_links"
@@ -2311,14 +2354,15 @@ CREATE FUNCTION authz_int."region_site__over__tree_on_links2"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
-  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+  -- one refresh for old and new links together: each refresh expects the rest to be current
+  IF TG_OP = 'INSERT' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'region'::text AS t, x."region_id"::text AS i FROM new_rows x) y;
-    PERFORM authz_int."region_site__over__tree_refresh"(a_t, a_i);
-  END IF;
-  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+  ELSIF TG_OP = 'DELETE' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'region'::text AS t, x."region_id"::text AS i FROM old_rows x) y;
-    PERFORM authz_int."region_site__over__tree_refresh"(a_t, a_i);
+  ELSE
+    SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'region'::text AS t, x."region_id"::text AS i FROM new_rows x UNION SELECT 'region'::text AS t, x."region_id"::text AS i FROM old_rows x) y;
   END IF;
+  PERFORM authz_int."region_site__over__tree_refresh"(a_t, a_i);
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_region_site__over__tree_on_links2_ins" AFTER INSERT ON "cx"."site_links"
@@ -2335,14 +2379,15 @@ CREATE FUNCTION authz_int."region_site__over__tree_on_links3"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
-  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+  -- one refresh for old and new links together: each refresh expects the rest to be current
+  IF TG_OP = 'INSERT' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'site'::text AS t, x."site_id"::text AS i FROM new_rows x) y;
-    PERFORM authz_int."region_site__over__tree_refresh"(a_t, a_i);
-  END IF;
-  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+  ELSIF TG_OP = 'DELETE' THEN
     SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'site'::text AS t, x."site_id"::text AS i FROM old_rows x) y;
-    PERFORM authz_int."region_site__over__tree_refresh"(a_t, a_i);
+  ELSE
+    SELECT array_agg(t), array_agg(i) INTO a_t, a_i FROM (SELECT 'site'::text AS t, x."site_id"::text AS i FROM new_rows x UNION SELECT 'site'::text AS t, x."site_id"::text AS i FROM old_rows x) y;
   END IF;
+  PERFORM authz_int."region_site__over__tree_refresh"(a_t, a_i);
   RETURN NULL;
 END $f$;
 CREATE TRIGGER "authz_region_site__over__tree_on_links3_ins" AFTER INSERT ON "cx"."site_regions"
