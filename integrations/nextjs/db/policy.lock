@@ -268,6 +268,7 @@ function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
 function authz_int.visible(p_type text, p_id text) | d9071acb6af6 shape=e14964bd
 function authz_int.writable() | dce4bbfe1638 shape=2260a03a
+index "folder__parent__tree_ancestor_idx" | 1dad3d19b931 tree=folder__parent__tree
 policy "authz_delete" ON "app"."notes" | 8490e7495c32
 policy "authz_insert" ON "app"."feedback" | d112cde61f14
 policy "authz_insert" ON "app"."inbox" | 9b20de154c03
@@ -296,7 +297,7 @@ step share_indexes | aac0ff5a6ad4
 step sweep | 5e1e5e051948
 step tables | 87b3cdf40fc5
 table authz_gen.policy_lines | eca60ad437ca shape=dcfedc96
-table authz_int."folder__parent__tree" | 3a4897c643a7 shape=f0e9471f tree=folder__parent__tree
+table authz_int."folder__parent__tree" | 0761ea300228 shape=0761ea30 tree=folder__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | 071ac50eef94 shape=1779df2c
 table authz_int.masked_columns | 2067eb678926 shape=2067eb67
@@ -307,9 +308,9 @@ table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | dffe2b4a1b68 shape=c57707aa
-table authz_int.trees | 6c113563ec03 shape=02db6ec7
+table authz_int.trees | 7cb63ff3e520 shape=02db6ec7
 table authz_int.types | 70df2fecf22a shape=b6d5b497
-tree folder__parent__tree | 4a060eb4d2df88b4eb42d84faa2128d0
+tree folder__parent__tree | f05470e3dca75486eb74ba15e293140c
 trigger "authz_feedback_col_audit_del" ON "app"."feedback" | 22c146672f12
 trigger "authz_feedback_col_audit_ins" ON "app"."feedback" | 0c35ac42f34f
 trigger "authz_feedback_col_audit_row" ON "app"."feedback" | d6580acace9e

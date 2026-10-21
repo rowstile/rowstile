@@ -399,6 +399,8 @@ function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
 function authz_int.visible(p_type text, p_id text) | 1fa463ebe3bb shape=e14964bd
 function authz_int.writable() | dce4bbfe1638 shape=2260a03a
+index "folder__parent__tree_ancestor_idx" | 1dad3d19b931 tree=folder__parent__tree
+index "group__parent__tree_ancestor_idx" | 0a2142469de2 tree=group__parent__tree
 policy "authz_delete" ON "fm"."file_versions" | 57da50e43a13
 policy "authz_delete" ON "fm"."files" | f89b699001d2
 policy "authz_delete" ON "fm"."folders" | efee753aa681
@@ -436,8 +438,8 @@ step share_indexes | 06f2a06178e6
 step sweep | a91797a846f7
 step tables | 18cd4343afd0
 table authz_gen.policy_lines | b376721cc044 shape=dcfedc96
-table authz_int."folder__parent__tree" | ed1e6e6e5460 shape=a79ecf82 tree=folder__parent__tree
-table authz_int."group__parent__tree" | 730afd9fb786 shape=6d14ac6d tree=group__parent__tree
+table authz_int."folder__parent__tree" | 533ed647de51 shape=533ed647 tree=folder__parent__tree
+table authz_int."group__parent__tree" | f4724b0f333d shape=f4724b0f tree=group__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | 447d595fea98 shape=1779df2c
 table authz_int.masked_columns | 2067eb678926 shape=2067eb67
@@ -448,10 +450,10 @@ table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 3cb4c312e1d3 shape=c57707aa
-table authz_int.trees | 59be77f23acd shape=02db6ec7
+table authz_int.trees | 5fc5e8f3d75f shape=02db6ec7
 table authz_int.types | 393e14ce70e0 shape=b6d5b497
-tree folder__parent__tree | 8e07c42d47425898e0c888c9702ee596
-tree group__parent__tree | 7234bd29660f6bacdc6d6986adddd20e
+tree folder__parent__tree | 684220d0da9308655601a7930610a9f5
+tree group__parent__tree | dc72cd93a1787dbbd09f76bad93f9c6d
 trigger "authz_file_col_audit_del" ON "fm"."files" | dadfa6377624
 trigger "authz_file_col_audit_ins" ON "fm"."files" | a5f3298a0bd5
 trigger "authz_file_col_audit_row" ON "fm"."files" | e2989202f739
