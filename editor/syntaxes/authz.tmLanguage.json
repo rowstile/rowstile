@@ -146,10 +146,6 @@
         "2": {
           "patterns": [
             {
-              "match": "\\bcheck\\b",
-              "name": "keyword.control.check.authz"
-            },
-            {
               "match": "[A-Za-z_][A-Za-z0-9_]*",
               "name": "variable.other.column.authz"
             }

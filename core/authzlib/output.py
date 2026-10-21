@@ -233,7 +233,7 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
 
     # --- rules on changed columns (RLS can't compare old and new rows) ----
     def column_rule_sql(self, t: Type, alias: str, rule: Rule) -> str:
-        new = rule.command == "update check"
+        new = rule.command == "update after"
         row = "NEW" if new else "OLD"
         cond = self.rule_sql(t, alias, rule, point=True, invoker=True)
         cols = ", ".join(rule.columns)
@@ -1087,7 +1087,7 @@ END $kv$;"""
             for r in rules:
                 if r.command == "mask":
                     continue
-                if r.command == "update check" or r.columns:
+                if r.command == "update after" or r.columns:
                     if "update" not in cmds:
                         fail(r.loc, f"'{rule_name(r)}' refines updates, so {table} needs an 'update' rule too", "AZ403")
                     if r.columns:
@@ -1105,8 +1105,8 @@ END $kv$;"""
                         f"{head}CREATE POLICY {name} ON {qt(table)} FOR INSERT TO {self.role}\n"
                         f"  WITH CHECK ({sql}\n    OR {refuse['insert']});"
                     )
-                elif r.command == "update" and "update check" in cmds:
-                    c = cmds["update check"]
+                elif r.command == "update" and "update after" in cmds:
+                    c = cmds["update after"]
                     # the scope's word on updates, as in USING: a scope without them refuses the row after too
                     check = (
                         f"((SELECT authz_int.scope_cmd({lit(table)}, 'update')) AND "
@@ -1115,7 +1115,7 @@ END $kv$;"""
                     head += f"-- {table} update after ({c.loc}): {c.src}\n"
                     policies.append(
                         f"{head}CREATE POLICY {name} ON {qt(table)} FOR UPDATE TO {self.role}\n"
-                        f"  USING ({sql})\n  WITH CHECK ({check}\n    OR {refuse['update check']});"
+                        f"  USING ({sql})\n  WITH CHECK ({check}\n    OR {refuse['update after']});"
                     )
                 elif r.command == "update":
                     # the new row is checked as Postgres would anyway (with USING), then refused with the reason

@@ -66,7 +66,7 @@ CODES = {
         "(`(subject_type, subject_id)`), or a link table: `app.folder_editors(folder_id -> user_id)`, or "
         "`app.grants(object: folder_id, subject: (kind, who))`.\n\n"
         "Custom roles are `roles : subjects [from relation]`, and `roles` in each permission a role may give "
-        "(`can edit = editor or roles`). They were once written `roles : subjects grant perm1, perm2`.",
+        "(`can edit = editor or roles`).",
         "type folder = app.folders\n  owner user = owner_id\n  can view = owner\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\n",
     ),
@@ -81,7 +81,7 @@ CODES = {
         "Under `rules schema.table`, each line is a command and an expression: `select : view`, "
         "`insert : edit`, `update : edit`, `delete : owner`. Only update rules name columns or say when they are "
         "checked: `update owner_id : share` (who may change that column), `update after : edit` (checked on the "
-        "row after the change; `check` was its old name). A plain `update` rule is checked on the row before and "
+        "row after the change). A plain `update` rule is checked on the row before and "
         "after the change, so `update before :` is refused. A column named `before` or `after` says when it is "
         "checked: `update after after : edit`. Masks are `mask col1, col2 : expression`.",
         "type folder = app.folders\n  owner : user = owner_id\n  can edit = owner\nrules app.folders\n"

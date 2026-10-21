@@ -29,6 +29,14 @@ Each release upgrades from the one before it. How releases are numbered and made
 - TypeScript: `Problem`, what `problemOf(e)` returns, types its fields (`table`, `command`, `why`, `code`
   besides `status`, `type`, `title`, `detail`), so a field it hasn't, such as `p.body`, is a type error.
 
+### Removed
+
+- The parser no longer knows `update cols check :`, the old way to write `update cols after :`. A column named
+  `check` is now a column like any other: `update check : seal` is a rule on it (it was refused, with advice to
+  write `update after :`). The review and the error pages no longer speak of `role x`, `roles : ... grant` or
+  `check`. In VS Code, `check` in a rule is no longer coloured as a word of the language, and an `app role` line
+  typed under an indented one moves back to the margin, as a `type` line does.
+
 ### Fixed
 
 - Where the SDKs write the sign-in into the statement (Python: the asyncpg adapter, SQLAlchemy with a driver of

@@ -257,8 +257,8 @@ def entities(policy: str, files: dict[str, str] | None, pol: Policy) -> dict[str
             m = re.match(r"(scope|caveat)\s+([\w:-]+)", s)
             if m:
                 out[f"{m.group(1)} {m.group(2)}"] = (s, loc)
-            else:  # the parser takes no other line here (`role x`: how a policy said it before `app role`)
-                assert s.startswith(("app role ", "role ")), s
+            else:  # the parser takes no other line here
+                assert s.startswith("app role "), s
                 out["app role"] = ("app role " + s.split()[-1], loc)
             continue
         if skip or block is None:
@@ -272,8 +272,6 @@ def entities(policy: str, files: dict[str, str] | None, pol: Policy) -> dict[str
             m = re.match(r"(\w+)\s*:\s*(.*)$", s)
             assert m, s  # (the parser reads every other line of a type as a relation, roles too: name : ...)
             key, said = f"{name}.{m.group(1)}", m.group(2)
-            if m.group(1) == "roles":  # (`roles : user grant view, edit`: before `roles` in the permissions)
-                said = re.sub(r"\s+grant\s+.*?(?=\s+from\s+\w+$|$)", "", said)
             prev = out.get(key)
             out[key] = ((prev[0] + "; " if prev else "") + said, prev[1] if prev else loc)
         elif kind == "rules":
@@ -545,7 +543,7 @@ def meaning(b: Side, h: Side, worlds: int, refactor: bool = True) -> Meaning:
             out["equivalent"] = f"{worlds} small worlds and {listing.said()}"
             return out
         if found is not None:
-            # a rule named as the policy writes it (compare says `update check` for `after`)
+            # a rule named as the policy writes it (compare says `update after cols` for `update cols after`)
             names = {
                 f"rule {r.table} {r.command}" + (f" {', '.join(r.columns)}" if r.columns else ""): (
                     f"rule {r.table} {rule_head(r)}"
@@ -597,9 +595,9 @@ def entity_kind(key: str, *pols: Policy) -> str:
 
 
 def rule_head(r: Rule) -> str:
-    cmd = "update" if r.command == "update check" else r.command
+    cmd = "update" if r.command == "update after" else r.command
     cols = (" " + ", ".join(r.columns)) if r.columns else ""
-    return f"{cmd}{cols}{' after' if r.command == 'update check' else ''}"
+    return f"{cmd}{cols}{' after' if r.command == 'update after' else ''}"
 
 
 def _walk_rule(t: Type, node: Expr, out: set[tuple[str, str]], pol: Policy) -> None:

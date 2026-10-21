@@ -306,10 +306,16 @@ COMPILE = [
         10,
     ),
     (
-        "the old 'check' keyword",
+        "a word after an update rule's column that is neither before nor after",
         "  can view = owner\nrules alt.docs\n  select : view\n  update : view\n  update up check : view\n",
-        "write 'after' instead of 'check' (checked on the row after the change): update up after : ...",
+        "write column rules as: update col1, col2 : expression   (or: update col after : expression)",
         14,
+    ),
+    (
+        "custom roles with grant after their subjects: a subject that isn't one",
+        "  roles : user grant view\n  can view = owner or roles\n",
+        "bad subject 'user grant view'",
+        10,
     ),
     (
         "before or after on a command other than update",
@@ -721,6 +727,13 @@ COMPILE = [
 WHOLE = [
     ("no app role", "type user = alt.users\n", "name the app role, the Postgres role your app connects as", 1),
     ("PUBLIC as the app role", "app role public\ntype user = alt.users\n", "not PUBLIC", 1),
+    (
+        "the app role named without app",
+        "role app_user\ntype user = alt.users\n",
+        "expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', 'test \"name\"' or 'include', "
+        "got: role app_user",
+        1,
+    ),
 ]
 
 APPLY = [
@@ -820,6 +833,18 @@ APPLY_OK = [
         {},
     ),
     ("an empty search_path while applying", "  can view = owner\n", {"PGOPTIONS": "-c search_path="}),
+    (
+        "a column named check, in a rule on it: an editor may change the body, not check",
+        "type note = alt.notes\n  owner : user = owner_id\n  editor : user = editor_id\n  can edit = owner or editor\n"
+        "  can seal = owner\nrules alt.notes\n  select : edit\n  update : edit\n  update check : seal\n",
+        {},
+        "INSERT INTO alt.users VALUES (1), (2); INSERT INTO alt.notes VALUES (1, 1, 2, 'open', 'a');"
+        "SET ROLE app_user; SET authz.user_id = '2'; UPDATE alt.notes SET body = 'b';"
+        "DO $$ BEGIN BEGIN UPDATE alt.notes SET \"check\" = 'sealed';"
+        " EXCEPTION WHEN insufficient_privilege THEN"
+        "  IF SQLERRM = 'changing check of alt.notes 1 needs: seal' THEN RETURN; END IF; RAISE; END;"
+        " RAISE EXCEPTION 'an editor changed check'; END $$;",
+    ),
     (
         "a table named with a reserved word",
         "type grp2 = alt.group (gid)\n  owner : user = owner_id\n  can see = owner\nrules alt.group\n  select : see\n",
@@ -998,7 +1023,9 @@ CREATE TABLE alt.tdocs (id text PRIMARY KEY, owner_id text REFERENCES alt.tusers
 CREATE TABLE alt.spaces (org bigint, id bigint, keeper_id bigint, PRIMARY KEY (org, id));
 CREATE TABLE alt.rooms (org bigint, id bigint, keeper_id bigint, PRIMARY KEY (org, id));
 CREATE TABLE alt.pins (doc_no bigint REFERENCES alt.docs, kind text, org bigint, ref bigint);
+CREATE TABLE alt.notes (id bigint PRIMARY KEY, owner_id bigint, editor_id bigint, "check" text, body text);
 GRANT SELECT ON alt.proj_links, alt.tusers, alt.tdocs, alt.spaces, alt.rooms, alt.pins TO app_user;
+GRANT SELECT, UPDATE ON alt.notes TO app_user;
 """
 
 

@@ -602,7 +602,7 @@ def unchanged(db: Db, policy: str, files: Files) -> bool:
             {
                 (qt(r.table), "authz_" + r.command)
                 for r in rules
-                if r.command not in ("mask", "update check") and not r.columns
+                if r.command not in ("mask", "update after") and not r.columns
             }
         )
         compiler = Compiler(parse_policy(policy, None, files=files))
