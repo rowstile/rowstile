@@ -198,7 +198,9 @@ CREATE TABLE authz_int.scope_items (scope text, kind text, qual text, word text)
 INSERT INTO authz_int.scope_items VALUES
   {values};
 
--- the scopes this transaction is limited to (NULL: not limited); believed only if signed, like the user
+-- the scopes this transaction is limited to (NULL: not limited); believed only if signed, like the user. (session_ok()
+-- raises for a session that isn't signed rather than say false: the first branch is only what one would get if it
+-- ever did, no scope at all)
 CREATE FUNCTION authz_int.scopes_active() RETURNS text[]
 LANGUAGE sql STABLE {DEF} AS $f$
   SELECT CASE WHEN NOT {SESSION_OK} THEN ARRAY[]::text[]
