@@ -51,6 +51,7 @@
   A user whose id holds `:` or is `nobody` is named `user:<id>` there, as in the audit trail. <!-- checked: tests/principals.sh "the preview names them the same way"; tests/principals.sh "and the users asked for are named so: user:service:1 is that user alone" -->
 - **Decision log**: `SET authz_debug.log_decisions = on` writes every `authz.can`
   decision to the server log (for debugging: the app role can turn it on and off). <!-- checked: tests/governance.sh "each decision is logged when asked" -->
+  Each line names who asked as the audit trail does (`42`, `service:7`). <!-- checked: tests/principals.sh "the decision log names it as the audit trail does" -->
 
 ## Checking the database
 

@@ -1260,6 +1260,18 @@ class Core:
         """The variables dispatch_type converts an id into, one per key type."""
         return "".join(f" v_{pt} {pt};" for pt in sorted({t.pktype for t in self.types.values()}))
 
+    def id_types(self) -> list[str]:
+        """The types an id may be given as besides text: each type's key but text (a composite key's id is text).
+        Every authz.* function taking an id has an overload for each: authz.share('doc', some_uuid, ...) as
+        authz.can('doc', some_uuid, 'view')."""
+        return sorted({t.pktype for t in self.types.values()} - {"text"})
+
+    def id_pairs(self) -> list[tuple[str, str]]:
+        """The (object id, subject id) types of the overloads of a function taking both (authz.share): text or an
+        id type each, but both text, which is the function itself."""
+        types = ["text", *self.id_types()]
+        return [(o, s) for o in types for s in types if (o, s) != ("text", "text")]
+
     def dispatch_type(self, per_type: Callable[[Type], str], missing_type: str = NO_SUCH_TYPE) -> str:
         """CASE over types, with p_id checked and converted to the type's key in v_<pktype>."""
         branches = []

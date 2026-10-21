@@ -79,7 +79,6 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
     def api_signatures(self) -> list[str]:
         """The authz.* functions the app role may execute (the policy grants them): everything else there is
         for administrators."""
-        typed = [t for t in self.types.values() if t.pktype != "text"]
         executes = [
             "authz.uid()",
             "authz.principal()",
@@ -95,21 +94,14 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
                 "authz.perms(text, text)",
                 "authz.perms_of(text, text[])",
                 "authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)",
-                "authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)",
-                "authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)",
                 "authz.unshare(text, text, text, text, text, text)",
-                "authz.unshare(text, bigint, text, text, bigint, text)",
-                "authz.unshare(text, bigint, text, text, text, text)",
                 "authz.create_link(text, text, text, timestamptz)",
-                "authz.create_link(text, bigint, text, timestamptz)",
                 "authz.list_links(text, text)",
                 "authz.revoke_link(text, text, text)",
                 "authz.create_role(text, text, text, text, text[])",
-                "authz.create_role(text, bigint, text, text, text[])",
                 "authz.set_role_permissions(bigint, text[])",
                 "authz.delete_role(bigint)",
                 "authz.roles_of(text, text)",
-                "authz.roles_of(text, bigint)",
                 "authz.who(text, text, text)",
                 "authz.explain(text, text, text, text)",
                 "authz.list_shares(text, text)",
@@ -125,32 +117,41 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
             "authz.login_jwt(text)",
             "authz.view_as(text, text)",
             "authz.request_access(text, text, text, text, interval)",
-            "authz.request_access(text, bigint, text, text, interval)",
             "authz.pending_requests()",
             "authz.decide_request(bigint, boolean, text)",
             "authz.cancel_request(bigint)",
             "authz.break_glass(text, text, text, text, interval)",
-            "authz.break_glass(text, bigint, text, text, interval)",
             "authz.start_review(text, text, timestamptz)",
-            "authz.start_review(text, bigint, timestamptz)",
             "authz.review_items(bigint)",
             "authz.review_decide(bigint, integer, boolean)",
             "authz.close_review(bigint, boolean)",
         ]
+        # the overloads taking an id as the key's type
         executes += [
             f"authz.{fn}(text, {pt}{args})"
-            for pt in sorted({t.pktype for t in typed})
+            for pt in self.id_types()
             for fn, args in (
                 ("who", ", text"),
                 ("explain", ", text, text"),
                 ("list_shares", ""),
                 ("list_links", ""),
                 ("revoke_link", ", text"),
+                ("create_link", ", text, timestamptz"),
+                ("create_role", ", text, text, text[]"),
+                ("roles_of", ""),
+                ("request_access", ", text, text, interval"),
+                ("break_glass", ", text, text, interval"),
+                ("start_review", ", timestamptz"),
             )
         ]
-        executes += [f"authz.can(text, {pt}, text)" for pt in sorted({t.pktype for t in typed})]
-        executes += [f"authz.who_among(text, {pt}, text, text[], text)" for pt in sorted({t.pktype for t in typed})]
-        executes += [f"authz.perms(text, {pt})" for pt in sorted({t.pktype for t in typed})]
+        executes += [f"authz.can(text, {pt}, text)" for pt in self.id_types()]
+        executes += [f"authz.who_among(text, {pt}, text, text[], text)" for pt in self.id_types()]
+        executes += [f"authz.perms(text, {pt})" for pt in self.id_types()]
+        executes += [
+            f"authz.{fn}(text, {o}, text, text, {s}, text{args})"
+            for o, s in self.id_pairs()
+            for fn, args in (("share", ", timestamptz, timestamptz, text, jsonb"), ("unshare", ""))
+        ]
         return executes
 
     def lint_sql(self) -> str:

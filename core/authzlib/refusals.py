@@ -302,7 +302,7 @@ BEGIN
 END $f$;"""
 
     def who_among_sql(self) -> str:
-        typed = sorted({t.pktype for t in self.types.values()} - {"text"})
+        typed = self.id_types()
         overloads = "\n".join(
             f"CREATE FUNCTION authz.who_among(p_type text, p_id {pt}, p_perm text, p_users text[], "
             f"p_principal_type text DEFAULT 'user') RETURNS SETOF text LANGUAGE sql VOLATILE AS\n"

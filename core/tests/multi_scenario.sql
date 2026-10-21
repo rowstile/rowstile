@@ -150,6 +150,27 @@ SELECT test.ok('a share names a caveat the policy has',
 SELECT test.ok('shares the policy does not declare are refused (anyone on folders)',
   test.error($$SELECT authz.share('folder', '1', 'viewer', 'anyone', '*')$$)
     = 'P0001: the policy does not allow sharing folder.viewer with anyone');
+-- ids as their keys' types, as authz.can takes them: a bigint folder shared with a uuid user, and unshared
+SELECT test.ok('ids may be given as their keys'' types: alice shares folder 1::bigint with dave''s uuid',
+  test.try($$SELECT authz.share('folder', 1::bigint, 'viewer', 'user', '00000000-0000-4000-8000-000000000004'::uuid)$$) = 'ok');
+SELECT test.ok('... and dave is a viewer of folder 1',
+  (SELECT count(*) FROM authz.list_shares('folder', 1::bigint)
+   WHERE relation = 'viewer' AND subject_id = '00000000-0000-4000-8000-000000000004') = 1);
+SELECT test.ok('... until she unshares it the same way',
+  test.try($$SELECT authz.unshare('folder', 1::bigint, 'viewer', 'user', '00000000-0000-4000-8000-000000000004'::uuid)$$) = 'ok');
+SELECT test.ok('... and dave is no viewer of folder 1 any more',
+  (SELECT count(*) FROM authz.list_shares('folder', 1::bigint)
+   WHERE subject_id = '00000000-0000-4000-8000-000000000004') = 0);
+-- (act_as signs in whoever a session or token names, explain_rule asks about a table's row, sync_members is for
+-- administrators: they take text)
+SELECT test.ok('every function taking an object''s or a subject''s id takes it as each key type too (bigint, uuid)',
+  (SELECT coalesce(string_agg(DISTINCT format('%s(%s %s)', f.proname, f.proargnames[i + 1], k), ', '), 'none')
+   FROM pg_proc f CROSS JOIN generate_series(0, f.pronargs - 1) i CROSS JOIN unnest(ARRAY['bigint', 'uuid']::regtype[]) k
+   WHERE f.pronamespace = 'authz'::regnamespace AND f.proargtypes[i] = 'text'::regtype
+     AND f.proargnames[i + 1] IN ('p_id', 'p_owner_id', 'p_subject_id')
+     AND f.proname NOT IN ('act_as', 'explain_rule', 'sync_members')
+     AND NOT EXISTS (SELECT 1 FROM pg_proc o WHERE o.pronamespace = f.pronamespace AND o.proname = f.proname
+                     AND o.pronargs = f.pronargs AND o.proargtypes[i] = k)) = 'none');
 
 -- every signed-in user; anyone at all
 SELECT test.ok('alice shares folder 2 with every signed-in user',
@@ -296,6 +317,9 @@ SELECT test.ok('... and there are none for a type without custom roles, even gra
   AND test.error($$SELECT authz.create_role('org', '1', 'foldr', 'reviewer', ARRAY['view'])$$)
     = 'P0001: no custom roles on foldr in the policy');
 SELECT test.ok('Acme''s roles are listed for Acme members', (SELECT count(*) FROM authz.roles_of('org', '1')) = 2);
+SELECT test.ok('... with its id written ''01'' or given as a bigint too, as authz.can reads them',
+  (SELECT string_agg(name, ', ' ORDER BY id) FROM authz.roles_of('org', '01')) = 'reviewer, writer'
+  AND (SELECT string_agg(name, ', ' ORDER BY id) FROM authz.roles_of('org', 1::bigint)) = 'reviewer, writer');
 SELECT set_config('test.reviewer', (SELECT id::text FROM authz.roles_of('org', '1') WHERE name = 'reviewer'), false);
 SELECT set_config('test.writer', (SELECT id::text FROM authz.roles_of('org', '1') WHERE name = 'writer'), false);
 SELECT test.as(3);

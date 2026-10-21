@@ -605,7 +605,7 @@ END $f$;
 """ + "\n".join(
             f"CREATE FUNCTION authz.{fn}(p_type text, p_id {pt}{extra}) RETURNS {ret} LANGUAGE sql STABLE AS\n"
             f"  $$ SELECT * FROM authz.{fn}(p_type, p_id::text{args}) $$;"
-            for pt in sorted({t.pktype for t in self.types.values()} - {"text"})
+            for pt in self.id_types()
             for fn, extra, args, ret in (
                 ("who", ", p_perm text", ", p_perm", "SETOF text"),
                 ("explain", ", p_perm text, p_user text DEFAULT NULL", ", p_perm, p_user", "SETOF text"),

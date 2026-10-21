@@ -27,9 +27,9 @@ mcp 70
 migrate vs apply 77
 migrations 71
 moves 23
-multi scenario 93
+multi scenario 99
 policy errors 228
-principals 126
+principals 128
 reference 17
 review 58
 scenario 100
