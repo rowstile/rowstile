@@ -266,7 +266,7 @@ test "sharing, then a refusal"
   as anyone refused {DELETE FROM app.folders}
   as bot $b sees 2 {SELECT FROM app.folders WHERE data @> '{"a": {"b": 1}}'}
   user $ann with scope read cannot edit file 11
-  as user $ann with scope read, files refused {DELETE FROM app.folders}
+  as user $ann with scope read, files:write refused {DELETE FROM app.folders}
 
 --------------------------------------------------------------------------------
 
@@ -318,7 +318,8 @@ test "sharing, then a refusal"
       principal: (identifier)
       who: (variable)
       (limited
-        scope: (identifier))
+        scope: (scope_name
+          (identifier)))
       permission: (identifier)
       type: (identifier)
       object: (value))
@@ -326,8 +327,11 @@ test "sharing, then a refusal"
       principal: (identifier)
       who: (variable)
       (limited
-        scope: (identifier)
-        scope: (identifier))
+        scope: (scope_name
+          (identifier))
+        scope: (scope_name
+          (identifier)
+          (identifier)))
       (sql
         (sql_text)))))
 
