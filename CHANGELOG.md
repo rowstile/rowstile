@@ -103,6 +103,18 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   rowstile applied, without the function as this command calls it, is said with that version's name and
   `rowstile reapply` (AZ626, new), or "upgrade the rowstile command" when that version is newer (AZ616). A name
   rowstile doesn't make, or arguments no function takes (a typo in `rowstile sql`), is said in Postgres's words.
+- The language server checks an open test file again when the policy changes: renaming a permission in the
+  policy marks the test lines that still name it, where they kept their old diagnostics until the test file
+  itself changed. A mistake in the policy, seen from a test file, is said on the test file's first line with the
+  policy's file and line (`policy.authz line 7: ...`), where it sat on the test file at the policy's line.
+- The language server clears a closed file's diagnostics, which an editor kept showing, and checks the open files
+  again when the policy's file is closed with changes not saved.
+- The language server counts columns as editors do (UTF-16 code units): after an emoji on a line, hover,
+  completion, go to definition and the underlined words were one column off.
+- A message the language server can't read (a body that isn't JSON, a `Content-Length` that isn't a number) is
+  answered with a parse error, and the server goes on. It ended, and the editor lost errors and completion.
+- Find references in the editor searches the policy's included files and the open test files, not only the file
+  it is asked in.
 - `rowstile why` and Studio listed a change both as the best way to grant a permission and as "could not be
   tried", when the change grants it but counting what else it gives failed (a condition that fails on another
   row, say). It is now listed only as not tried, with the database's reason: what else it gives was never counted.

@@ -8,7 +8,10 @@ tried again later), a column inside { } as SQL names it.
 rowstile.toml is read again at each message, so that a change to it is taken at once. A mistake in it is shown on
 it (and in a message), and the server goes on without its settings until the mistake is fixed.
 
-A file of named tests (no types, only `test "..."` blocks) is checked against the policy rowstile.toml names.
+A file of named tests (no types, only `test "..."` blocks) is checked against the policy rowstile.toml names, and
+again each time the policy changes. Find references searches the policy's files and the open test files.
+
+Columns are counted as the protocol counts them, in UTF-16 code units.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ import re
 import sys
 import time
 import urllib.parse
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
@@ -281,6 +284,7 @@ class Server:
         path, text = uri_path(uri), self.docs[uri]
         diags: dict[str, list[Diagnostic]] = {uri: []}
         main: str | None = None
+        against: str | None = None  # for a test file, the policy it is checked against, once it is read
         part = self.included_by(path)
         if part is not None:
             # a file the policy includes is checked as the part of the policy it is: its mistakes land on it
@@ -297,10 +301,11 @@ class Server:
                 except OSError as e:
                     named = self.cfg.setting(None, "policy") if self.cfg else policy
                     raise PolicyError(f'line 1: rowstile.toml: policy = "{named}": {e.strerror or e}') from None
-                c = Compiler(parse_policy(ptext, None, files=self.includes(policy, ptext)))
+                against, files = policy, self.includes(policy, ptext)
+                c = Compiler(parse_policy(ptext, None, files=files))
                 c.add_test_files({THIS: text})
                 c.tests_function_sql()
-                self.models[uri] = (c.pol, {}, policy)
+                self.models[uri] = (c.pol, files, policy)
             else:
                 files = self.includes(path, text)
                 pol = parse_policy(text, None, files=files)
@@ -315,7 +320,13 @@ class Server:
                     (m.group(1), int(m.group(2)), m.group(3)) if m else (None, 1, split_code(str(mistake))[0])
                 )
                 target = uri if main is None else self.uri_of(main)
-                if name and name != THIS:
+                span = mistake.span
+                if against is not None and name != THIS:
+                    # the policy's own mistake, seen from its test file: said on the test file's first line, with
+                    # the policy's file and line (the policy, when it is open, shows it where it is)
+                    msg = f"{name or os.path.basename(against)} line {line}: {msg}"
+                    line, span = 1, None
+                elif name and name != THIS:
                     target = self.uri_of(os.path.join(os.path.dirname(path), *name.split("/")))
                     diags.setdefault(target, [])
                 lines = (self.docs.get(target) or "").split("\n")
@@ -323,10 +334,10 @@ class Server:
                 indent = len(lines[line - 1]) - len(lines[line - 1].lstrip()) if 0 < line <= len(lines) else 0
                 # the words the mistake is about when the parser knows them, else the line
                 where = rng(line - 1, indent, line - 1, width)
-                if mistake.span:
-                    where = rng(mistake.span[0] - 1, mistake.span[1], mistake.span[2] - 1, mistake.span[3])
+                if span:
+                    where = rng(span[0] - 1, span[1], span[2] - 1, span[3])
                 diag: Diagnostic = {
-                    "range": where,
+                    "range": encoded(lines, where),
                     "severity": 1,
                     "source": "rowstile",
                     "message": msg,
@@ -350,10 +361,42 @@ class Server:
         for target, items in diags.items():
             self.notify("textDocument/publishDiagnostics", {"uri": target, "diagnostics": cast(Json, items)})
 
+    def feeds_tests(self, uri: str) -> bool:
+        """Whether the file is the policy rowstile.toml names, or a part of it: what test files are checked against."""
+        try:
+            policy = self.named_policy()
+        except PolicyError:
+            return False
+        if not policy:
+            return False
+        path = uri_path(uri)
+        return same_file(policy) == same_file(path) or self.included_by(path) is not None
+
+    def check_with_tests(self, uri: str) -> None:
+        """The file checked, and the open test files with it when they are checked against it."""
+        self.check(uri)
+        tests = [other for other, body in self.docs.items() if self.is_test_file(body)]
+        if tests and self.feeds_tests(uri):
+            for other in tests:
+                self.check(other)
+
+    def close(self, uri: str) -> None:
+        """A file closed: what its checks marked, and no other open file's did, is cleared (an editor keeps the
+        last diagnostics it was sent); the open files are checked again if the policy was read from it."""
+        self.docs.pop(uri, None)
+        self.open.pop(same_file(uri_path(uri)), None)
+        self.models.pop(uri, None)
+        marked = self.sent.pop(uri, set()) | {uri}
+        for target in marked - set().union(*self.sent.values()):
+            self.notify("textDocument/publishDiagnostics", {"uri": target, "diagnostics": []})
+        if self.feeds_tests(uri):
+            for other in list(self.docs):
+                self.check(other)
+
     # --- understanding a position -----------------------------------------------------------------
-    def block(self, uri: str, line: int) -> tuple[str, str] | tuple[None, None]:
+    @staticmethod
+    def block(lines: list[str], line: int) -> tuple[str, str] | tuple[None, None]:
         """('type', type) / ('rules', table) / ('test', None) / (None, None) for the block around a line."""
-        lines = self.docs[uri].split("\n")
         for i in range(min(line, len(lines) - 1), -1, -1):
             s = lines[i]
             if not s.strip() or s.lstrip().startswith("--") or s[:1].isspace():
@@ -373,9 +416,9 @@ class Server:
         got = self.models.get(uri)
         return got[0] if got else None
 
-    def home_type(self, uri: str, line: int) -> Type | None:
-        pol = self.model(uri)
-        kind, name = self.block(uri, line)
+    @staticmethod
+    def home_type(pol: Policy | None, lines: list[str], line: int) -> Type | None:
+        kind, name = Server.block(lines, line)
         if not pol:
             return None
         if kind == "type" and name:
@@ -391,8 +434,8 @@ class Server:
             return []
         return [pol.types[st] for st, _ in r.subjects() if st in pol.types]
 
-    def word_at(self, uri: str, line: int, col: int) -> tuple[list[str] | None, int, str]:
-        lines = self.docs[uri].split("\n")
+    @staticmethod
+    def word_at(lines: list[str], line: int, col: int) -> tuple[list[str] | None, int, str]:
         if line >= len(lines):
             return None, 0, ""
         s = lines[line]
@@ -405,13 +448,16 @@ class Server:
 
     def resolve(self, uri: str, line: int, col: int) -> Symbol | None:
         """What the name under the cursor is: a type, one of its members, or None."""
-        pol = self.model(uri)
-        parts, i, s = self.word_at(uri, line, col)
+        return self.meaning(self.model(uri), self.docs[uri].split("\n"), line, col)
+
+    def meaning(self, pol: Policy | None, lines: list[str], line: int, col: int) -> Symbol | None:
+        """What the name at a place in these lines is, in this policy."""
+        parts, i, s = self.word_at(lines, line, col)
         if not pol or not parts:
             return None
         if len(parts) == 2:
             # a relation followed by a permission, or schema.table
-            t = self.home_type(uri, line)
+            t = self.home_type(pol, lines, line)
             if t and parts[0] in t.relations:
                 if i == 0:
                     return Symbol(t, parts[0])
@@ -430,7 +476,7 @@ class Server:
             r"(?:anyone|\S+\s+\S+(?:\s+with\s+scope\s+[\w:-]+(?:\s*,\s*[\w:-]+)*)?)\s+(?:can|cannot)\s+(\w+)\s+(\w+)",
             stripped,
         )
-        if m and self.block(uri, line)[0] == "test" and name in (m.group(1), m.group(2)):
+        if m and self.block(lines, line)[0] == "test" and name in (m.group(1), m.group(2)):
             t = pol.types.get(m.group(2))
             if name == m.group(2) and t:
                 return Symbol(t)
@@ -439,11 +485,11 @@ class Server:
         if re.match(r"type\s+" + re.escape(name) + r"\b", stripped) or (
             name in pol.types
             and not stripped.startswith(("can ",))
-            and self.block(uri, line)[0] != "rules"
-            and self.home_type(uri, line) is None
+            and self.block(lines, line)[0] != "rules"
+            and self.home_type(pol, lines, line) is None
         ):
             return Symbol(pol.types[name]) if name in pol.types else None
-        t = self.home_type(uri, line)
+        t = self.home_type(pol, lines, line)
         if t and (name in t.perms or name in t.relations):
             return Symbol(t, name)
         if name in pol.types:
@@ -517,20 +563,34 @@ class Server:
         return self.location(uri, perm.loc if perm else t.relations[name].loc)
 
     def references(self, uri: str, line: int, col: int) -> list[Location]:
+        """Where the name under the cursor is used: in the policy's files (open, or as saved) and its open test
+        files."""
         sym = self.resolve(uri, line, col)
         if not sym:
             return []
         key = (sym.type.name, sym.member)
+        pol, files, main = self.models[uri]
+        paths = [main] + [os.path.join(os.path.dirname(main), *name.split("/")) for name in files]
+        uris = [self.uri_of(path) for path in paths]
+        for other, body in self.docs.items():
+            got = self.models.get(other)
+            if got and self.is_test_file(body) and same_file(got[2]) == same_file(main):
+                uris.append(other)
         out: list[Location] = []
-        for n, s in enumerate(self.docs[uri].split("\n")):
-            code = s.split("--")[0]
-            for m in WORD.finditer(code):
-                start = m.start()
-                for part in m.group(0).split("."):
-                    other = self.resolve(uri, n, start + 1) if part else None
-                    if other and (other.type.name, other.member) == key:
-                        out.append({"uri": uri, "range": rng(n, start, n, start + len(part))})
-                    start += len(part) + 1
+        for target in uris:
+            try:
+                lines = self.text_of(uri_path(target)).split("\n")
+            except OSError:  # a file it included, gone since: none there
+                continue
+            for n, s in enumerate(lines):
+                code = s.split("--")[0]
+                for m in WORD.finditer(code):
+                    start = m.start()
+                    for part in m.group(0).split("."):
+                        other = self.meaning(pol, lines, n, start + 1) if part else None
+                        if other and (other.type.name, other.member) == key:
+                            out.append({"uri": target, "range": encoded(lines, rng(n, start, n, start + len(part)))})
+                        start += len(part) + 1
         return out
 
     def symbols(self, uri: str) -> list[Symbol_]:
@@ -548,8 +608,8 @@ class Server:
                         {
                             "name": m.group(1) or "test",
                             "kind": KIND_METHOD,
-                            "range": rng(n, 0, n, len(s)),
-                            "selectionRange": rng(n, 0, n, len(s)),
+                            "range": rng(n, 0, n, units(s)),
+                            "selectionRange": rng(n, 0, n, units(s)),
                         }
                     )
             return out
@@ -596,15 +656,15 @@ class Server:
                     {
                         "name": "rules " + m.group(1),
                         "kind": KIND_NAMESPACE,
-                        "range": rng(n, 0, n, len(s)),
-                        "selectionRange": rng(n, 0, n, len(s)),
+                        "range": rng(n, 0, n, units(s)),
+                        "selectionRange": rng(n, 0, n, units(s)),
                     }
                 )
         return out
 
     def completion(self, uri: str, line: int, col: int) -> list[Completion]:
-        pol = self.model(uri)
-        s = self.docs[uri].split("\n")[line] if line < len(self.docs[uri].split("\n")) else ""
+        pol, lines = self.model(uri), self.docs[uri].split("\n")
+        s = lines[line] if line < len(lines) else ""
         before = s[:col]
         items: list[Completion] = []
 
@@ -612,7 +672,7 @@ class Server:
             for n in names:
                 items.append({"label": n, "kind": kind, "detail": detail})
 
-        if not before.strip() and not before:
+        if not before:
             add(TOP_WORDS, C_KEYWORD)
             return items
         if strip_comment(before) != before:
@@ -621,7 +681,7 @@ class Server:
         in_braces = before.count("{") > before.count("}")
         if m and not in_braces:
             first = m.group(1)
-            t = self.home_type(uri, line) if pol else None
+            t = self.home_type(pol, lines, line)
             if t and pol and first in t.relations:
                 for target in self.targets(pol, t, first):
                     add([p for p, x in target.perms.items() if not x.hidden], C_METHOD, f"{target.name} permission")
@@ -641,11 +701,11 @@ class Server:
                 add(self.tables().get(link.group(1), []), C_FIELD, f"column of {link.group(1)}")
             elif re.search(r"\bshared\b.*\bif\s*$", ahead):
                 add(SHARE_FIELDS, C_FIELD, "of the share being made")
-            elif t := self.home_type(uri, line):
+            elif t := self.home_type(pol, lines, line):
                 add(self.tables().get(t.table, []), C_FIELD, f"column of {t.table}")
             add(["authz.uid()", "authz.ctx('')", "now()"], C_KEYWORD)
             return items
-        kind, _ = self.block(uri, line)
+        kind, _ = self.block(lines, line)
         if not s[:1].isspace():
             # a line that begins a block: its first word, then the table after `type x =` and `rules`
             if re.match(r"(type\s+\w+\s*=|rules\s)\s*\S*$", before):
@@ -656,7 +716,7 @@ class Server:
         if kind == "rules" and re.match(r"\s+cascade\s+from\s+\S*$", before):
             add(self.tables(), C_MODULE, "table")  # the table a foreign key points to
             return items
-        t = self.home_type(uri, line)
+        t = self.home_type(pol, lines, line)
         if t:
             add([r for r, x in t.relations.items() if not x.synthetic], C_FIELD, "relation")
             add([p for p, x in t.perms.items() if not x.hidden], C_METHOD, "permission")
@@ -734,6 +794,7 @@ class Server:
         if method == "initialize":
             result = {
                 "capabilities": {
+                    "positionEncoding": "utf-16",  # the protocol's own: columns are turned into characters
                     "textDocumentSync": 1,
                     "hoverProvider": True,
                     "definitionProvider": True,
@@ -752,19 +813,17 @@ class Server:
             doc = obj(params.get("textDocument"))
             self.docs[text(doc, "uri")] = text(doc, "text")
             self.open[same_file(uri_path(text(doc, "uri")))] = text(doc, "uri")
-            self.check(text(doc, "uri"))
+            self.check_with_tests(text(doc, "uri"))
         elif method == "textDocument/didChange":
             uri = text(obj(params.get("textDocument")), "uri")
             changes = params.get("contentChanges")
             if isinstance(changes, list) and changes:
                 self.docs[uri] = text(obj(changes[-1]), "text")
-            self.check(uri)
+            self.check_with_tests(uri)
         elif method == "textDocument/didSave":
-            self.check(text(obj(params.get("textDocument")), "uri"))
+            self.check_with_tests(text(obj(params.get("textDocument")), "uri"))
         elif method == "textDocument/didClose":
-            closed = text(obj(params.get("textDocument")), "uri")
-            self.docs.pop(closed, None)
-            self.open.pop(same_file(uri_path(closed)), None)
+            self.close(text(obj(params.get("textDocument")), "uri"))
         elif method in (
             "textDocument/hover",
             "textDocument/definition",
@@ -773,7 +832,9 @@ class Server:
         ):
             uri, pos = text(obj(params.get("textDocument")), "uri"), obj(params.get("position"))
             if uri in self.docs:
-                line, col = number(pos, "line"), number(pos, "character")
+                line = number(pos, "line")
+                lines = self.docs[uri].split("\n")
+                col = char_index(lines[line] if 0 <= line < len(lines) else "", number(pos, "character"))
                 if method == "textDocument/hover":
                     shown = self.hover(uri, line, col)
                     result = {"contents": {"kind": "markdown", "value": shown}} if shown else None
@@ -849,11 +910,34 @@ def settings_line(path: str, words: str) -> tuple[int, int]:
             elif section == table and re.match(rf'\s*"?{re.escape(key)}"?\s*=', line):
                 found = n
                 break
-    return found, max(1, len(lines[found]))
+    return found, max(1, units(lines[found]))
 
 
 def rng(l1: int, c1: int, l2: int, c2: int) -> Range:
     return {"start": {"line": l1, "character": c1}, "end": {"line": l2, "character": c2}}
+
+
+# The protocol counts a line's columns in UTF-16 code units (a character past U+FFFF, an emoji, is two); the server
+# counts characters. Columns are turned into characters as they come, and back as they go.
+def units(s: str) -> int:
+    """How long s is as the protocol counts columns."""
+    return len(s.encode("utf-16-le")) // 2
+
+
+def char_index(s: str, col: int) -> int:
+    """The index in s of a column as the protocol counts it (past its end: as far past)."""
+    code = s.encode("utf-16-le")
+    return len(code[: 2 * col].decode("utf-16-le", "ignore")) + max(0, col - len(code) // 2)
+
+
+def encoded(lines: Sequence[str], r: Range) -> Range:
+    """A range on these lines, its columns counted in characters, as the protocol counts them."""
+
+    def at(p: Position) -> Position:
+        s = lines[p["line"]] if 0 <= p["line"] < len(lines) else ""
+        return {"line": p["line"], "character": units(s[: p["character"]]) + max(0, p["character"] - len(s))}
+
+    return {"start": at(r["start"]), "end": at(r["end"])}
 
 
 def send(message: Message) -> None:
@@ -863,19 +947,32 @@ def send(message: Message) -> None:
 
 
 def read() -> Message | None:
-    length: int | None = None
+    """The next message; None at the end of the input. One that can't be read (a Content-Length that isn't a number,
+    a body that isn't JSON) is answered with a parse error, as JSON-RPC says, and the next one is read."""
     while True:
-        line = sys.stdin.buffer.readline()
+        headers: dict[str, str] = {}
+        while line := sys.stdin.buffer.readline():
+            if not line.strip():
+                break
+            k, _, v = line.decode("latin-1").partition(":")
+            headers[k.strip().lower()] = v.strip()
         if not line:
             return None
-        line = line.strip()
-        if not line:
-            break
-        k, _, v = line.decode().partition(":")
-        if k.lower() == "content-length":
-            length = int(v)
-    got = json.loads(sys.stdin.buffer.read(length)) if length else {}
-    return {str(k): v for k, v in got.items()} if isinstance(got, dict) else {}
+        length = headers.get("content-length", "0")
+        if not re.fullmatch("[0-9]+", length):
+            unread("Content-Length is not a number")
+            continue
+        size = int(length)
+        try:
+            got = json.loads(sys.stdin.buffer.read(size)) if size else {}
+        except (ValueError, RecursionError):  # (nested too deep to read is no JSON this server takes either)
+            unread("not JSON")
+            continue
+        return {str(k): v for k, v in got.items()} if isinstance(got, dict) else {}
+
+
+def unread(why: str) -> None:
+    send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": why}})
 
 
 def serve(settings: Callable[[], Config]) -> None:

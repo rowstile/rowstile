@@ -3,18 +3,22 @@
 No database needed; where one is (createdb works: the PG* variables), also the completion of its tables and
 columns.   python3 tests/lsp_test.py"""
 
+import contextlib
 import json
 import os
+import queue
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 fails = 0
+WAIT = 120.0  # seconds an answer may take: a server that stops answering fails the check that waits, not the run
 # an answer from the server: its shape is what the checks check
 Answer = Any
 
@@ -41,28 +45,46 @@ class Client:
         self.stdin, self.stdout, self.stderr = self.p.stdin, self.p.stdout, self.p.stderr
         self.n = 0
         self.notes: list[Answer] = []
+        # the server's messages as they come (None once its output ends), so that a server that stops answering
+        # fails the check that waits for it instead of hanging the suite
+        self.messages: queue.Queue[Answer] = queue.Queue()
+        threading.Thread(target=self.pump, daemon=True).start()
+
+    def pump(self) -> None:
+        while True:
+            length = -1
+            while line := self.stdout.readline():
+                if not line.strip():
+                    break
+                if line.lower().startswith(b"content-length:"):
+                    length = int(line.split(b":")[1])
+            if not line:
+                self.messages.put(None)
+                return
+            self.messages.put(json.loads(self.stdout.read(length)))
 
     def send(self, obj: object, headers: bytes = b"") -> None:
         body = json.dumps(obj).encode()
+        self.raw(headers + b"Content-Length: %d\r\n\r\n" % len(body) + body)
+
+    def raw(self, data: bytes) -> None:
+        """Bytes as they are, a message or not."""
         try:
-            self.stdin.write(headers + b"Content-Length: %d\r\n\r\n" % len(body) + body)
+            self.stdin.write(data)
             self.stdin.flush()
         except OSError:
             pass  # the server ended: the answer that doesn't come says so
 
     def read(self) -> Answer:
         """The next message, None once the server has ended (then poll() says so)."""
-        length = -1
-        while True:
-            line = self.stdout.readline()
-            if not line:
-                self.p.wait(timeout=10)
-                return None
-            if not line.strip():
-                break
-            if line.lower().startswith(b"content-length:"):
-                length = int(line.split(b":")[1])
-        return json.loads(self.stdout.read(length))
+        try:
+            msg = self.messages.get(timeout=WAIT)
+        except queue.Empty:
+            raise AssertionError(f"no answer from the language server in {WAIT:g} s") from None
+        if msg is None:
+            self.messages.put(None)  # the end, for the next read too
+            self.p.wait(timeout=10)
+        return msg
 
     def request(self, method: str, params: object, headers: bytes = b"") -> Answer:
         self.n += 1
@@ -94,6 +116,12 @@ class Client:
             self.notify("exit", None)
             self.p.wait(timeout=10)
         return self.stderr.read().decode()
+
+
+def clean(what: str, c: Client, u: str) -> None:
+    """A check that the next diagnostics published for u are none (what they are, when they aren't)."""
+    got = c.diagnostics(u)
+    ok(what, got == [], got)
 
 
 def rng(l1: int, c1: int, l2: int, c2: int) -> Answer:
@@ -140,6 +168,16 @@ class Editor:
         return labels_of(self.ask("textDocument/completion", text, needle, offset, nth))
 
 
+def flushed(c: Client, u: str) -> tuple[dict[str, Answer], list[Answer]]:
+    """What the server sent since the last question, once it has answered one: the last diagnostics for each file,
+    and its messages (window/showMessage)."""
+    c.request("textDocument/documentSymbol", {"textDocument": {"uri": u}})
+    diags = {m["params"]["uri"]: m["params"]["diagnostics"] for m in c.notes if m.get("method").endswith("Diagnostics")}
+    shown = [m["params"] for m in c.notes if m.get("method") == "window/showMessage"]
+    c.notes.clear()
+    return diags, shown
+
+
 def value(hover: Answer) -> str:
     return hover["contents"]["value"] if isinstance(hover, dict) and "contents" in hover else ""
 
@@ -161,7 +199,7 @@ with tempfile.TemporaryDirectory() as d:
         caps,
     )
     c.notify("textDocument/didOpen", {"textDocument": {"uri": u, "languageId": "authz", "version": 1, "text": policy}})
-    ok("a good policy has no errors", c.diagnostics(u) == [], c.diagnostics(u))
+    clean("a good policy has no errors", c, u)
 
     broken = policy.replace("can edit  = share or editor", "can edit  = share or edtor", 1)
     c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 2}, "contentChanges": [{"text": broken}]})
@@ -196,7 +234,7 @@ with tempfile.TemporaryDirectory() as d:
         d2,
     )
     c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 3}, "contentChanges": [{"text": policy}]})
-    ok("... and goes away when fixed", c.diagnostics(u) == [])
+    clean("... and goes away when fixed", c, u)
     tested = policy + "\ntest\n  user 1 can view widget 1\n"
     c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 4}, "contentChanges": [{"text": tested}]})
     d3 = c.diagnostics(u)
@@ -208,7 +246,7 @@ with tempfile.TemporaryDirectory() as d:
         d3,
     )
     c.notify("textDocument/didChange", {"textDocument": {"uri": u, "version": 5}, "contentChanges": [{"text": policy}]})
-    ok("... and goes away when fixed", c.diagnostics(u) == [])
+    clean("... and goes away when fixed", c, u)
 
     def at(needle: str, offset: int = 1, nth: int = 0) -> dict[str, object]:
         return {"textDocument": {"uri": u}, "position": pos(policy, needle, offset, nth)}
@@ -265,8 +303,25 @@ with tempfile.TemporaryDirectory() as d:
     c.diagnostics(u)
 
     refs = c.request("textDocument/references", at("can share = owner or org.admin", 5))
-    lines = sorted({r["range"]["start"]["line"] for r in refs or []})
-    ok("references of folder.share include parent.share and the rules", len(lines) >= 4, refs)
+    spots = [
+        ("can share = owner or org.admin", 4),
+        ("parent.share and", 7),
+        ("can edit  = share or editor", 12),
+        ("or folder.share", 10),
+        ("is null} and share", 13),
+        ("org_id, inherit : share", 18),
+        ("delete                               : share", 39),
+    ]
+    places = sorted((p["line"], p["character"], p["character"] + 5) for p in (pos(policy, s, n) for s, n in spots))
+    found = sorted(
+        (r["range"]["start"]["line"], r["range"]["start"]["character"], r["range"]["end"]["character"])
+        for r in refs or []
+    )
+    ok(
+        "references of folder.share: its line, parent.share, a permission's, file's folder.share and the rules'",
+        found == places and {r["uri"] for r in refs or []} == {u},
+        [found, places],
+    )
 
     line = pos(policy, "  can edit  = share or editor")["line"]
     comp = c.request(
@@ -300,7 +355,7 @@ with tempfile.TemporaryDirectory() as d:
     good = "test \"owner\"\n  given ann = {INSERT INTO app.users (id, name) VALUES (1, 'Ann') RETURNING id}\n  user $ann cannot view file 1\n"
     tu = uri(tests)
     c.notify("textDocument/didOpen", {"textDocument": {"uri": tu, "languageId": "authz", "version": 1, "text": good}})
-    ok("a test file is checked against the policy in rowstile.toml", c.diagnostics(tu) == [], c.diagnostics(tu))
+    clean("a test file is checked against the policy in rowstile.toml", c, tu)
     bad = good.replace("cannot view file", "cannot vew file")
     c.notify("textDocument/didChange", {"textDocument": {"uri": tu, "version": 2}, "contentChanges": [{"text": bad}]})
     d2 = c.diagnostics(tu)
@@ -309,6 +364,56 @@ with tempfile.TemporaryDirectory() as d:
         d2 and d2[0]["range"]["start"]["line"] == 2 and "vew" in d2[0]["message"],
         d2,
     )
+
+    # the policy changes while its test file is open: the test file is checked again, untouched
+    def policy_now(text: str, version: int) -> dict[str, Answer]:
+        change = {"textDocument": {"uri": u, "version": version}, "contentChanges": [{"text": text}]}
+        c.notify("textDocument/didChange", change)
+        return flushed(c, u)[0]
+
+    def vew_on_line_2(diags: dict[str, Answer]) -> bool:
+        return [(x["range"]["start"]["line"], "'vew'" in x["message"]) for x in diags.get(tu, [])] == [(2, True)]
+
+    vew = policy.replace(
+        "  can edit  = share or folder.edit\n", "  can edit  = share or folder.edit\n  can vew   = view\n"
+    )
+    diags = policy_now(vew, 8)
+    ok(
+        "the policy gains the permission its open test file names: the test file's mistake cleared",
+        diags.get(tu) == [],
+        diags,
+    )
+    diags = policy_now(broken, 9)
+    note = {
+        "range": rng(0, 0, 0, len('test "owner"')),
+        "severity": 1,
+        "source": "rowstile",
+        "message": f"policy.authz line {pos(broken, 'edtor')['line'] + 1}: {d1[0]['message']}",
+        "code": "AZ203",
+    }
+    ok(
+        "a mistake in the policy, seen from its test file: on the policy, and on the test file's first line with the "
+        "policy's file and line",
+        diags.get(tu) == [note] and diags.get(u) == d1,
+        [diags, note],
+    )
+    diags = policy_now(policy, 10)
+    ok(
+        "... fixed: the test file checked again, its own mistake shown",
+        vew_on_line_2(diags) and diags.get(u) == [],
+        diags,
+    )
+    policy_now(broken, 11)
+    c.notify("textDocument/didClose", {"textDocument": {"uri": u}})
+    diags = flushed(c, tu)[0]
+    ok(
+        "the policy closed with a mistake not saved: its mistake cleared, its test file checked against the file saved",
+        diags.get(u) == [] and vew_on_line_2(diags),
+        diags,
+    )
+    c.notify("textDocument/didClose", {"textDocument": {"uri": tu}})
+    diags = flushed(c, tu)[0]
+    ok("the test file closed: its mistake cleared", diags == {tu: []}, diags)
     c.close()
 
     # rowstile.toml names a variable for the database that the editor's environment doesn't have, a database the
@@ -368,16 +473,6 @@ with tempfile.TemporaryDirectory() as d:
             [said, f"waited {waited:.1f}s"],
         )
     silent.close()
-
-
-def flushed(c: Client, u: str) -> tuple[dict[str, Answer], list[Answer]]:
-    """What the server sent since the last question, once it has answered one: the last diagnostics for each file,
-    and its messages (window/showMessage)."""
-    c.request("textDocument/documentSymbol", {"textDocument": {"uri": u}})
-    diags = {m["params"]["uri"]: m["params"]["diagnostics"] for m in c.notes if m.get("method").endswith("Diagnostics")}
-    shown = [m["params"] for m in c.notes if m.get("method") == "window/showMessage"]
-    c.notes.clear()
-    return diags, shown
 
 
 # a mistake in rowstile.toml: the server starts all the same, shows it on rowstile.toml (its line) and in a message,
@@ -491,7 +586,7 @@ with tempfile.TemporaryDirectory() as d:
         "rules app.docs\n  select : view\n"
     )
     org_text = "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n  can see = member\n"
-    tests_text = 'test "first"\n  user 1 can view doc 1\n\ntest "second"\n  user 1 can view doc 1\n'
+    tests_text = 'test "first"\n  user 1 can view doc 1\n\ntest "second \U0001f600"\n  user 1 can view doc 1\n'
     for name, body in (
         ("policy.authz", main_text),
         ("org.authz", org_text),
@@ -520,11 +615,7 @@ with tempfile.TemporaryDirectory() as d:
         )
 
     opened(ou, org_text)
-    ok(
-        "an included file opened alone is checked as part of its policy: no mistake",
-        c.diagnostics(ou) == [],
-        c.diagnostics(ou),
-    )
+    clean("an included file opened alone is checked as part of its policy: no mistake", c, ou)
     opened(pu, main_text)
     changed(ou, org_text.replace("can see = member", "can see = nosuch"))
     found = c.diagnostics(ou)
@@ -543,7 +634,7 @@ with tempfile.TemporaryDirectory() as d:
         found,
     )
     changed(ou, org_text)
-    ok("fixed: its mistake is cleared", c.diagnostics(ou) == [], c.diagnostics(ou))
+    clean("fixed: its mistake is cleared", c, ou)
     c.notify("textDocument/didClose", {"textDocument": {"uri": ou}})
     with open(os.path.join(d, "org.authz"), "w", encoding="utf-8") as fh:
         fh.write(org_text.replace("can see = member", "can see = nosuch"))
@@ -558,18 +649,48 @@ with tempfile.TemporaryDirectory() as d:
     with open(os.path.join(d, "org.authz"), "w", encoding="utf-8") as fh:
         fh.write(org_text)
     changed(pu, main_text + "\n")
-    ok("... and cleared when the file is fixed", c.diagnostics(on_disk) == [], c.diagnostics(on_disk))
+    clean("... and cleared when the file is fixed", c, on_disk)
     opened(tu, tests_text)
     syms = c.request("textDocument/documentSymbol", {"textDocument": {"uri": tu}})
     ok(
         "a test file's outline is its tests",
-        [(s["name"], s["range"]["start"]["line"]) for s in syms] == [("first", 0), ("second", 3)],
+        [(s["name"], s["range"]["start"]["line"]) for s in syms] == [("first", 0), ("second \U0001f600", 3)],
         syms,
+    )
+    ok(
+        "... each test's line, to its end as the editor counts it (U+1F600 is two UTF-16 code units)",
+        [s["range"]["end"]["character"] for s in syms] == [len('test "first"'), len('test "second \U0001f600"') + 1],
+        syms,
+    )
+
+    def references(u: str, text: str, needle: str, offset: int) -> list[tuple[str, int, int, int]]:
+        refs = c.request("textDocument/references", {"textDocument": {"uri": u}, "position": pos(text, needle, offset)})
+        if not isinstance(refs, list):
+            return [(f"no list: {refs}", 0, 0, 0)]
+        return sorted(
+            (r["uri"], r["range"]["start"]["line"], r["range"]["start"]["character"], r["range"]["end"]["character"])
+            for r in refs
+        )
+
+    found = references(pu, main_text, "or org.see", len("or org.s"))
+    ok(
+        "references of org.see, asked in the policy: in the file it includes too",
+        found == [(on_disk, 2, 6, 9), (pu, 6, 26, 29)],
+        found,
+    )
+    found = references(tu, tests_text, "can view doc", len("can v"))
+    ok(
+        "references of doc.view, asked in a test file: in the policy and in the open test files",
+        found == [(pu, 6, 6, 10), (pu, 9, 11, 15), (tu, 1, 13, 17), (tu, 4, 13, 17)],
+        found,
     )
     h = c.request(
         "textDocument/hover", {"textDocument": {"uri": pu}, "position": pos(main_text, "can edit = owner and", 5)}
     )
     ok("'is not null' in a condition is no deny", h and "has a deny" not in h["contents"]["value"], h)
+    os.remove(os.path.join(d, "org.authz"))
+    found = references(pu, main_text, "or org.see", len("or org.s"))
+    ok("... a file it included, deleted since: the references in the others", found == [(pu, 6, 26, 29)], found)
     c.close()
 
 # what the compiler makes of a policy, a custom role's relation (roles:view) and a deny's hidden inheritance
@@ -590,7 +711,7 @@ with tempfile.TemporaryDirectory() as d:
     c = Client(d)
     c.request("initialize", {"capabilities": {}})
     e = Editor(c, path, made)
-    ok("a policy with custom roles and a deny has no errors", c.diagnostics(e.u) == [], c.diagnostics(e.u))
+    clean("a policy with custom roles and a deny has no errors", c, e.u)
     inside = set(e.offered(made, "  can denied", 2))
     ok(
         "completion inside a type offers the relations and permissions written, not the compiler's",
@@ -607,7 +728,7 @@ with tempfile.TemporaryDirectory() as d:
     ok("... and hover on the type", "`owner`" in h and "roles:view" not in h and "view__base" not in h, h)
     body = 'test "first"\n  user 1 can view folder 1\n'
     t = Editor(c, os.path.join(d, "policy.test.authz"), body)
-    ok("its test file has no errors", c.diagnostics(t.u) == [], c.diagnostics(t.u))
+    clean("its test file has no errors", c, t.u)
     h = value(t.ask("textDocument/hover", body, "folder 1", 1))
     ok("... and hover on a type there leaves them out too", "`owner`" in h and "roles:view" not in h, h)
     c.close()
@@ -631,7 +752,7 @@ with tempfile.TemporaryDirectory() as d:
     c = Client(d)
     c.request("initialize", {"capabilities": {}})
     c.notify("textDocument/didOpen", {"textDocument": {"uri": u, "languageId": "authz", "version": 1, "text": small}})
-    ok("a policy with a type's where and a deny has no errors", c.diagnostics(u) == [], c.diagnostics(u))
+    clean("a policy with a type's where and a deny has no errors", c, u)
     blank = {"textDocument": {"uri": u}, "position": {"line": 2, "character": 0}}  # the empty line
 
     def where(needle: str, offset: int) -> dict[str, object]:
@@ -671,7 +792,7 @@ with tempfile.TemporaryDirectory() as d:
     )
 
     c.notify("textDocument/didSave", {"textDocument": {"uri": u}})
-    ok("saving checks the file again", c.diagnostics(u) == [])
+    clean("saving checks the file again", c, u)
     e = c.request("textDocument/rename", {"textDocument": {"uri": u}})
     ok("a request it doesn't know is answered: not supported", e and e.get("code") == -32601, e)
     e = c.request("textDocument/hover", {"textDocument": {"uri": 5}, "position": {"line": 0, "character": 0}})
@@ -679,6 +800,37 @@ with tempfile.TemporaryDirectory() as d:
     e = c.request("textDocument/hover", {"textDocument": {"uri": u}, "position": {"line": "0", "character": 0}})
     ok("... and a position that isn't a number", e and "a number expected" in e.get("message", ""), e)
     ok("... and the server goes on", c.request("textDocument/hover", where("type doc", 6)) is not None)
+
+    # a character past U+FFFF before a name on its line (in a condition's string): two columns as the editor counts
+    # them (UTF-16 code units, the protocol's), one in the server's own text
+    def now(text: str) -> Answer:
+        c.notify(
+            "textDocument/didChange", {"textDocument": {"uri": u, "version": 9}, "contentChanges": [{"text": text}]}
+        )
+        return c.diagnostics(u)
+
+    face = small.replace("not banned\n", "not banned\n  can look = {note <> '\U0001f600'} or ownr\n")
+    got = now(face)
+    there = pos(face, "ownr")
+    ok(
+        "a mistake after U+1F600 on its line: the name it is about underlined, where the editor counts it",
+        got and got[0]["range"] == rng(there["line"], there["character"] + 1, there["line"], there["character"] + 5),
+        got,
+    )
+    fixed = face.replace("or ownr", "or owner")
+    now(fixed)
+    end = pos(fixed, "or owner", len("or owner"))
+    just_after = {"line": end["line"], "character": end["character"] + 1}  # the name's end, as the editor counts
+    h = c.request("textDocument/hover", {"textDocument": {"uri": u}, "position": just_after})
+    ok("... hover just after a name there: the name's", value(h).startswith("**doc.owner**: relation to user"), h)
+    refs = c.request("textDocument/references", {"textDocument": {"uri": u}, "position": just_after})
+    ok(
+        "... and its references, where the editor counts them",
+        [r["range"] for r in refs or [] if r["range"]["start"]["line"] == end["line"]]
+        == [rng(end["line"], end["character"] - 4, end["line"], end["character"] + 1)],
+        refs,
+    )
+    now(small)
 
     tests = os.path.join(d, "t.authz")
     tu = uri(tests)
@@ -691,10 +843,27 @@ with tempfile.TemporaryDirectory() as d:
         d3,
     )
     c.notify("textDocument/didClose", {"textDocument": {"uri": tu}})
+    outline = c.request("textDocument/documentSymbol", {"textDocument": {"uri": tu}})
+    cleared = [m["params"] for m in c.notes if m.get("method") == "textDocument/publishDiagnostics"]
+    c.notes.clear()
     ok(
-        "a closed file's outline is empty",
-        c.request("textDocument/documentSymbol", {"textDocument": {"uri": tu}}) == [],
+        "a closed file's outline is empty, and its mistake cleared (an editor keeps the last it was sent)",
+        outline == [] and cleared == [{"uri": tu, "diagnostics": []}],
+        [outline, cleared],
     )
+    # a policy split in two, both open (rowstile.toml names none here): its part closed with the mistake it has as
+    # saved stays marked, as the policy's check found it there
+    whole = 'app role app_user\ninclude "part.authz"\ntype user = app.users\n'
+    part = "type thing = app.things\n  can see = nosuch\n"
+    for name, body in (("whole.authz", whole), ("part.authz", part)):
+        with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+            fh.write(body)
+    policy_editor = Editor(c, os.path.join(d, "whole.authz"), whole)
+    part_editor = Editor(c, os.path.join(d, "part.authz"), part)
+    flushed(c, policy_editor.u)
+    c.notify("textDocument/didClose", {"textDocument": {"uri": part_editor.u}})
+    diags = flushed(c, policy_editor.u)[0]
+    ok("a file closed whose mistake an open file's check finds there: left marked", diags == {}, diags)
     said = c.close()
     ok("with no database in rowstile.toml it tries none (not the PG* variables): nothing in its log", said == "", said)
 
@@ -912,7 +1081,30 @@ with tempfile.TemporaryDirectory() as d:
         got is None and c.notes == [] and c.p.poll() is None,
         [got, c.notes],
     )
-    c.stdin.close()
+    # what a client with a bug may send: a body that isn't JSON, a Content-Length that isn't a number (or is
+    # negative): a parse error with no id, as JSON-RPC says, and the next message read
+    errors = []
+    for message in (
+        b"Content-Length: 9\r\n\r\n{not json",
+        b"Content-Length: nine\r\n\r\n",
+        b"Content-Length: -1\r\n\r\n",
+    ):
+        c.raw(message)
+        errors.append(c.read())
+    parse_error = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "not JSON"}}
+    length_error = {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": -32700, "message": "Content-Length is not a number"},
+    }
+    got = c.request("textDocument/documentSymbol", {"textDocument": {"uri": missing}})
+    ok(
+        "a message it can't read is answered with a parse error, and the server goes on",
+        errors == [parse_error, length_error, length_error] and got == [],
+        [errors, got],
+    )
+    with contextlib.suppress(OSError):  # (a server that ended already: the check above says why)
+        c.stdin.close()
     try:
         code = c.p.wait(timeout=10)
     except subprocess.TimeoutExpired:
