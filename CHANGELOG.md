@@ -91,6 +91,15 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 - An empty `--db` (a script's `--db "$DATABASE_URL"` with the variable unset) stopped with a Python traceback.
   It now says `--db is empty`, exit 2, as an empty value of any option does.
+- The review's GitHub action passes on a pull request from a fork. GitHub gives such a pull request a read-only
+  token, so the comment was refused and the job failed. Now the review is in the run's summary, and a notice
+  says so.
+- A review longer than a comment may be is cut, and the comment says where the whole review is: the run's
+  summary on GitHub, the job's artifact on GitLab. GitHub refused a comment over 65,536 characters, and the
+  GitLab job failed ("Argument list too long") on a review over 128 KiB.
+- The GitLab template's header said a top-level `ROWSTILE_VERSION` picks another release. GitLab gives the job's
+  own variables first, so it was ignored. It now shows how to set it, and the stage, in the job, and says to set
+  `ROWSTILE_REVIEW_TOKEN` in the CI/CD settings, not in the file.
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed

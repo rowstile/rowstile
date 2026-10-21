@@ -68,7 +68,7 @@ it says first that the base has a mistake, with its line there and its code, in 
 annotations (`--json`: `base_mistake`, with `line`, `message` and `code`), then reviews the policy as new. <!-- checked: tests/review.sh "a base whose policy has a mistake: said first, with its line there and its code, and the policy reviewed as new, exit 0"; tests/review.sh "json: base_mistake, its line, message and code"; tests/review.sh "markdown: said at the top of the comment"; tests/review.sh "annotations: on the policy file, first"; tests/unit_test.py "test_a_base_with_a_mistake_is_said_and_the_head_reviewed_as_new" -->
 
 [`review-ci/github/action.yml`](../../review-ci/github/action.yml) runs it on each pull request and keeps one comment up to date (and the annotations);
-[`review-ci/gitlab/rowstile-review.gitlab-ci.yml`](../../review-ci/gitlab/rowstile-review.gitlab-ci.yml) does the same for merge requests. <!-- unchecked: the action runs on this repository's pull requests (the review job in ci.yml), but no check asks what it does with the comment; the GitLab template runs on no CI here -->
+[`review-ci/gitlab/rowstile-review.gitlab-ci.yml`](../../review-ci/gitlab/rowstile-review.gitlab-ci.yml) does the same for merge requests. <!-- checked: tests/unit_test.py "test_the_comment_is_posted_then_updated_in_place"; tests/unit_test.py "test_gitlab_posts_a_long_review_from_a_file_then_updates_it" -->
 `rowstile fmt --check` in CI
 keeps text diffs to real changes. <!-- checked: tests/review.sh "exit 1, and which file"; tests/unit_test.py "test_the_repositorys_policies_are_laid_out_as_fmt_writes_them" -->
 On GitHub, the workflow may post the comment once it has
@@ -86,6 +86,15 @@ jobs:
         with: {fetch-depth: 0}
       - uses: rowstile/rowstile/review-ci/github@v0.1.0-dev   # the release you use
 ```
+
+A pull request from a fork gets a read-only token, whatever the workflow asks for: the review is then in
+the run's summary, a notice says so, and the job passes. <!-- checked: tests/unit_test.py "test_a_pull_request_from_a_fork_gets_the_summary_and_passes" -->
+Run it on `pull_request` all the same, not on `pull_request_target` ([the threat model](../threat-model.md)
+says why). A review longer than a comment may be is cut, and the comment says the whole review is in the run's
+summary; on GitLab, in the job's artifact, `review.md`. <!-- checked: tests/unit_test.py "test_a_review_longer_than_a_comment_is_cut_and_says_where_the_rest_is"; tests/unit_test.py "test_gitlab_cuts_a_review_longer_than_a_note" -->
+On GitLab the note is written with `ROWSTILE_REVIEW_TOKEN`, set in the project's CI/CD settings. Another release
+(`ROWSTILE_VERSION`) or another stage than `test` is set in the job, by its name in the including file: the
+template's header shows how. <!-- checked: tests/unit_test.py "test_gitlabs_header_sets_the_jobs_variables_in_the_job" -->
 
 The review reads the base's policy, the files it includes, its tests and its lock file with git. A file the
 base doesn't have is new: a policy, or a test file added since. <!-- checked: tests/review.sh "the pull request that adds the policy: each declaration added"; tests/review.sh "a test file the base doesn't have: its checks are added, and the review goes on" -->

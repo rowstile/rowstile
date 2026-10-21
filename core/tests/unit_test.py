@@ -12606,6 +12606,264 @@ class Delivery(unittest.TestCase):
         self.assertEqual(changelog.section("0.2.0-beta.2", beta), "- older\n")
 
 
+class ReviewInCI(unittest.TestCase):
+    """The review for CI (review-ci/), its scripts run as the action and the template have them: the action's comment
+    step against a stand-in for GitHub's API, the template's script with stand-ins for rowstile and curl."""
+
+    REPO = os.path.dirname(ROOT)
+    ACTION = os.path.join(REPO, "review-ci", "github", "action.yml")
+    TEMPLATE = os.path.join(REPO, "review-ci", "gitlab", "rowstile-review.gitlab-ci.yml")
+    MARK = "<!-- rowstile review -->"
+
+    def review(self, size: int) -> str:
+        """A comment of about `size` characters, a table in a <details> as review.markdown writes them."""
+        rows = "".join(
+            f"| `doc.perm{i}` (permission) | `viewer` | `viewer or editor` | line {i} |\n" for i in range(size // 70)
+        )
+        return f"{self.MARK}\n### rowstile\n\n<details><summary>Meaning</summary>\n\n| | before | after | line |\n{rows}\n</details>\n"
+
+    def comment_step(self) -> tuple[str, list[str], str]:
+        """(shell, the names its env sets, run) of the action's step named comment."""
+        with open(self.ACTION, encoding="utf-8") as fh:
+            text = fh.read()
+        step = re.split(r"\n    - ", text.split("\n    - name: comment\n", 1)[1])[0]
+        shell = re.search(r"^      shell: (\S+)$", step, re.M)
+        env = re.search(r"^      env:\n((?:        .*\n)+)", step + "\n", re.M)
+        block = re.search(r"^      run: \|\n((?:        .*\n|\n)+)", step + "\n", re.M)
+        line = re.search(r"^      run: (?!\|)(.+)$", step, re.M)
+        assert shell and env and (block or line), "the comment step's shell, env and run aren't found"
+        run = "\n".join(x[8:] for x in block.group(1).split("\n")) if block else line.group(1) if line else ""
+        names = re.findall(r"^        ([A-Z_]+):", env.group(1), re.M)
+        return shell.group(1), names, run
+
+    def comment(
+        self, review: str, fork: bool, readonly: bool, posted: list[dict[str, str]]
+    ) -> tuple[int, str, list[str]]:
+        """Runs the comment step on `review` against a stand-in for GitHub's API, which refuses a read-only token's
+        writes (403) and a comment over 65,536 characters (422), as GitHub does. `posted` is the pull request's
+        comments, as the stand-in keeps them. (exit status, output, each request's method)."""
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        calls: list[str] = []
+
+        class GitHub(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+            def reply(self, code: int, body: object) -> None:
+                data = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self) -> None:
+                calls.append("GET")
+                self.reply(200, [{"id": i + 1, "body": c["body"]} for i, c in enumerate(posted)])
+
+            def write(self) -> None:
+                calls.append(self.command)
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))["body"]
+                if readonly:
+                    return self.reply(403, {"message": "Resource not accessible by integration"})
+                if len(body) > 65536:
+                    return self.reply(422, {"message": "Validation Failed"})
+                if self.command == "POST":
+                    posted.append({"body": body})
+                else:
+                    posted[int(self.path.rsplit("/", 1)[1]) - 1] = {"body": body}
+                self.reply(200, {"id": 1, "body": body})
+
+            do_POST = write
+            do_PATCH = write
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), GitHub)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        shell, names, run = self.comment_step()
+        given = {"TOKEN": "t", "PR": "7", "REPO": "owner/app", "FORK": "true" if fork else "false"}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with open(os.path.join(tmp, "rowstile-review.md"), "w", encoding="utf-8") as fh:
+                    fh.write(review)
+                env = {
+                    **os.environ,
+                    **{k: given[k] for k in names},
+                    "GITHUB_API_URL": f"http://127.0.0.1:{server.server_port}",
+                    "GITHUB_SERVER_URL": "https://github.com",
+                    "GITHUB_RUN_ID": "42",
+                    "GITHUB_ACTION_PATH": os.path.dirname(self.ACTION),
+                    "RUNNER_TEMP": tmp,
+                }
+                # as the runner runs a step: python {0}, or bash --noprofile --norc -eo pipefail {0}
+                cmd = (
+                    [sys.executable, "-c", run]
+                    if shell == "python"
+                    else ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", run]
+                )
+                p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
+        finally:
+            server.shutdown()
+            server.server_close()
+        return p.returncode, p.stdout + p.stderr, calls
+
+    def test_the_comment_is_posted_then_updated_in_place(self) -> None:
+        posted: list[dict[str, str]] = [{"body": "a person's comment"}]
+        status, out, calls = self.comment(self.review(1000), fork=False, readonly=False, posted=posted)
+        self.assertEqual((status, calls), (0, ["GET", "POST"]), out)
+        status, out, calls = self.comment(self.review(1000) + "again\n", fork=False, readonly=False, posted=posted)
+        self.assertEqual((status, calls), (0, ["GET", "PATCH"]), out)
+        self.assertEqual([c["body"] for c in posted], ["a person's comment", self.review(1000) + "again\n"])
+
+    def test_a_pull_request_from_a_fork_gets_the_summary_and_passes(self) -> None:
+        # GitHub gives a fork's pull request a read-only token, whatever the workflow's permissions ask for
+        status, out, calls = self.comment(self.review(1000), fork=True, readonly=True, posted=[])
+        self.assertEqual(status, 0, out)
+        self.assertIn(
+            "::notice title=rowstile review::This pull request comes from a fork, and GitHub gives its workflow a "
+            "read-only token: the review is in the run's summary, not in a comment.",
+            out,
+        )
+        self.assertEqual(calls, ["GET", "POST"])
+        # elsewhere a refusal is the workflow's permissions: the step fails, and says what to give it
+        status, out, _ = self.comment(self.review(1000), fork=False, readonly=True, posted=[])
+        self.assertEqual(status, 1, out)
+        self.assertIn(
+            "::error title=rowstile review::GitHub refused the comment (HTTP 403: Resource not accessible by "
+            "integration). The job needs permissions: {pull-requests: write} to post it (or comment: false).",
+            out,
+        )
+
+    def test_a_review_longer_than_a_comment_is_cut_and_says_where_the_rest_is(self) -> None:
+        posted: list[dict[str, str]] = []
+        review = self.review(200_000)
+        status, out, _ = self.comment(review, fork=False, readonly=False, posted=posted)
+        self.assertEqual(status, 0, out)
+        body = posted[0]["body"]
+        self.assertLessEqual(len(body), 65536)
+        self.assertTrue(review.startswith(body.split("\n\n</details>\n\n**The review")[0]), body[-300:])
+        self.assertTrue(
+            body.endswith(
+                "\n\n</details>\n\n**The review is longer than a comment may be. The rest is in [the run's summary]"
+                "(https://github.com/owner/app/actions/runs/42).**\n"
+            ),
+            body[-300:],
+        )
+        # one that fits is posted whole
+        posted.clear()
+        self.assertEqual(self.comment(self.review(50_000), fork=False, readonly=False, posted=posted)[0], 0)
+        self.assertEqual(posted, [{"body": self.review(50_000)}])
+
+    def gitlab(self, review: str, notes: list[dict[str, object]]) -> tuple[int, str, list[dict[str, object]]]:
+        """Runs the template's script as GitLab runs it (bash, -eo pipefail), with a rowstile that writes `review`
+        and a curl that answers the notes `notes` and keeps what it was asked. (status, output, each call)."""
+        with open(self.TEMPLATE, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        items: list[str] = []
+        for line in lines[lines.index("  script:") + 1 :]:
+            if line.startswith("    - "):
+                items.append(line[6:])
+            elif line.startswith("      ") or not line.strip():
+                items[-1] += "\n" + line[6:]
+            else:
+                break
+        script = "\n".join(x[2:] if x.startswith("|\n") else x for x in items)
+        with tempfile.TemporaryDirectory() as tmp:
+            stubs = os.path.join(tmp, "bin")
+            os.mkdir(stubs)
+            with open(os.path.join(tmp, "given.md"), "w", encoding="utf-8") as fh:
+                fh.write(review)
+            with open(os.path.join(tmp, "notes.json"), "w", encoding="utf-8") as fh:
+                json.dump(notes, fh)
+            with open(os.path.join(stubs, "rowstile"), "w", encoding="utf-8") as fh:
+                fh.write(f"#!/bin/sh\ncat {tmp}/given.md\n")
+            with open(os.path.join(stubs, "curl"), "w", encoding="utf-8") as fh:
+                fh.write(
+                    f"#!{sys.executable}\nimport json, sys\nargs = sys.argv[1:]\n"
+                    "data = None\n"
+                    "for flag in ('-d', '--data', '--data-binary'):\n"
+                    "    if flag in args:\n"
+                    "        data = args[args.index(flag) + 1]\n"
+                    "        if data.startswith('@'):\n"
+                    "            data = open(data[1:], encoding='utf-8').read()\n"
+                    f"with open({tmp + '/calls'!r}, 'a', encoding='utf-8') as fh:\n"
+                    "    fh.write(json.dumps({'args': [a for a in args if len(a) < 4096], 'long': max(map(len, args)), "
+                    "'data': data and json.loads(data)}) + '\\n')\n"
+                    f"if '-X' not in args:\n    print(open({tmp + '/notes.json'!r}).read())\n"
+                )
+            for name in ("rowstile", "curl"):
+                os.chmod(os.path.join(stubs, name), 0o755)
+            env = {
+                **os.environ,
+                "PATH": stubs + os.pathsep + os.environ["PATH"],
+                "ROWSTILE_REVIEW_TOKEN": "t",
+                "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                "CI_PROJECT_ID": "3",
+                "CI_MERGE_REQUEST_IID": "5",
+                "CI_MERGE_REQUEST_DIFF_BASE_SHA": "abc",
+                "CI_JOB_URL": "https://gitlab.example/team/app/-/jobs/9",
+            }
+            work = os.path.join(tmp, "work")
+            os.mkdir(work)
+            p = subprocess.run(
+                ["bash", "-eo", "pipefail", "-c", script], cwd=work, env=env, capture_output=True, text=True, timeout=60
+            )
+            calls: list[dict[str, object]] = []
+            if os.path.exists(os.path.join(tmp, "calls")):
+                with open(os.path.join(tmp, "calls"), encoding="utf-8") as fh:
+                    calls = [json.loads(x) for x in fh.read().splitlines()]
+        return p.returncode, p.stdout[-2000:] + p.stderr, calls
+
+    def test_gitlab_posts_a_long_review_from_a_file_then_updates_it(self) -> None:
+        # one argument holds 128 KiB at most on Linux: the note goes in a file
+        review = self.review(200_000)
+        status, out, calls = self.gitlab(review, [{"id": 8, "body": "a person's note"}])
+        self.assertEqual(status, 0, out)
+        self.assertEqual(len(calls), 2, calls)
+        self.assertIn("POST", cast(list[str], calls[1]["args"]))
+        self.assertIn("--data-binary", cast(list[str], calls[1]["args"]))
+        self.assertLess(cast(int, calls[1]["long"]), 4096)
+        self.assertEqual(calls[1]["data"], {"body": review})
+        # the note posted before is updated in place
+        status, out, calls = self.gitlab(review, [{"id": 8, "body": "a person's note"}, {"id": 9, "body": review}])
+        self.assertEqual(status, 0, out)
+        self.assertIn("PUT", cast(list[str], calls[1]["args"]))
+        self.assertTrue(cast(list[str], calls[1]["args"])[-1].endswith("/merge_requests/5/notes/9"))
+
+    def test_gitlab_cuts_a_review_longer_than_a_note(self) -> None:
+        review = self.review(1_100_000)
+        status, out, calls = self.gitlab(review, [])
+        self.assertEqual(status, 0, out)
+        body = cast(dict[str, str], calls[1]["data"])["body"]
+        self.assertLessEqual(len(body), 1_000_000)
+        self.assertTrue(review.startswith(body.split("\n\n</details>\n\n**The review")[0]), body[-300:])
+        self.assertTrue(
+            body.endswith(
+                "\n\n</details>\n\n**The review is longer than a note may be. The rest is in [review.md]"
+                "(https://gitlab.example/team/app/-/jobs/9/artifacts/file/review.md).**\n"
+            ),
+            body[-300:],
+        )
+
+    def test_gitlabs_header_sets_the_jobs_variables_in_the_job(self) -> None:
+        # a job's own variables come before the pipeline's: a top-level ROWSTILE_VERSION would be ignored
+        with open(self.TEMPLATE, encoding="utf-8") as fh:
+            text = fh.read()
+        header = [x[2:] for x in text.split("\nrowstile-review:\n")[0].split("\n") if x.startswith("#  ")]
+        job = re.search(r"^  variables:\n((?:    .*\n)+)", text, re.M)
+        assert job
+        own = set(re.findall(r"^    ([A-Z_]+):", job.group(1), re.M))
+        self.assertLessEqual({"ROWSTILE_VERSION", "ROWSTILE_PACKAGE"}, own)
+        top = header[header.index("  variables:") + 1 :] if "  variables:" in header else []
+        top = list(itertools.takewhile(lambda x: x.startswith("    "), top))
+        self.assertEqual([x for x in top if x.split(":")[0].strip() in own], [], "set at the top level, ignored")
+        # nor a token in the file: GitLab masks only a variable of the CI/CD settings
+        self.assertNotIn("ROWSTILE_REVIEW_TOKEN:", "\n".join(header))
+        # and how to set them: in the job, by its name, as its stage
+        shown = "\n".join(header)
+        self.assertIn("  rowstile-review:\n    stage: verify\n    variables:\n      ROWSTILE_VERSION: X.Y.Z", shown)
+
+
 class Mutants(unittest.TestCase):
     """The mutation sweep's parts that need no database (core/mutants): the mutants and their ids, the shards,
     what carries over between runs, the survivors file, the report, and the workflow that runs it."""

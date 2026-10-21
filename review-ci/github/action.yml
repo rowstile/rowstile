@@ -18,6 +18,10 @@
 # data); prepare one in the steps before (a Postgres service, your migration tool) and pass its URL. Without
 # one, the review says what changes in meaning, risk, tests and deploy, and leaves Access out.
 #
+# On a pull request from a fork, GitHub gives the workflow a read-only token, whatever its permissions ask for: the
+# review is then in the run's summary, with a notice, and not in a comment. A review longer than a comment may be is
+# cut, and the comment says the rest is in the run's summary.
+#
 # The command comes from PyPI, the release the action's tag names; `version` picks another.
 name: rowstile review
 description: Says in the pull request what a rowstile policy change does
@@ -72,32 +76,11 @@ runs:
         cat "$RUNNER_TEMP/rowstile-review.md" >> "$GITHUB_STEP_SUMMARY"
     - name: comment
       if: inputs.comment == 'true' && github.event.pull_request.number
-      shell: python
+      shell: bash
       env:
         TOKEN: ${{ inputs.github-token }}
         PR: ${{ github.event.pull_request.number }}
         REPO: ${{ github.repository }}
-      # the standard library only: a self-hosted runner may not have the GitHub CLI
-      run: |
-        import json, os, urllib.request
-        api = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['REPO']}/issues"
-        def call(method, url, body=None):
-            req = urllib.request.Request(url, method=method, data=None if body is None else json.dumps(body).encode(),
-                                         headers={"Authorization": f"Bearer {os.environ['TOKEN']}",
-                                                  "Accept": "application/vnd.github+json"})
-            with urllib.request.urlopen(req) as res:
-                return json.load(res)
-        with open(os.path.join(os.environ["RUNNER_TEMP"], "rowstile-review.md"), encoding="utf-8") as fh:
-            body = {"body": fh.read()}
-        # one comment, updated in place: the one that starts with the review's marker
-        found, page = None, 1
-        while found is None:
-            comments = call("GET", f"{api}/{os.environ['PR']}/comments?per_page=100&page={page}")
-            found = next((c["id"] for c in comments if c["body"].startswith("<!-- rowstile review -->")), None)
-            if len(comments) < 100:
-                break
-            page += 1
-        if found is None:
-            call("POST", f"{api}/{os.environ['PR']}/comments", body)
-        else:
-            call("PATCH", f"{api}/comments/{found}", body)
+        # a pull request from a fork gets a read-only token: the review stays in the run's summary
+        FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+      run: python3 "$GITHUB_ACTION_PATH/comment.py"
