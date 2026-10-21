@@ -3,7 +3,8 @@
 -- row shows) can't. Two ids with the same answers (the profile; an id no row has is one more) must be both in a view
 -- or both out, and a function must answer the same for both (a row function: for the row of one with the other's
 -- id, the row as stored, its flags flipped, and the user as its owner). Conditions that read other tables
--- (<type>__check_<hash>) are left out: they answer for any row (a known limit), and are listed.
+-- (<type>__check_<hash>) are in authz_int, which the app role can't name: one found here is skipped and named in the
+-- summary, which adversarial.sh asks to say "skipped: none".
 -- psql -v users='1 2 3' -f tests/own_ids.sql   (as the tables' owner, on a policy whose keys are bigint; prints one
 -- line per breach, then a summary) (tests/adversarial.sh)
 \set ON_ERROR_STOP on
