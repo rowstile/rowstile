@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, TypeAlias, TypedDict
 
 from .connection import Db, Value, text
 from .parse import Loc, Type, cols
-from .sqlutil import POLICY_MARKS, lit, q, qt
+from .sqlutil import POLICY_MARKS, ident, lit, q, qt
 
 if TYPE_CHECKING:
     from . import Compiler
@@ -186,8 +186,9 @@ def missing_indexes(db: Db, c: Compiler) -> list[Missing]:
 
 
 def index_name(table: str, columns: Sequence[str]) -> str:
-    """The name advice gives the index: the table's, its columns', _idx (as Prisma names one)."""
-    return f"{table.split('.')[-1]}_{'_'.join(columns)}_idx"
+    """The name advice gives the index: the table's, its columns', _idx (as Prisma names one); shortened with a
+    hash past 63 bytes, as every generated name, so that it is the name Postgres keeps."""
+    return ident(f"{table.split('.')[-1]}_{'_'.join(columns)}_idx")
 
 
 def advice(table: str, columns: Sequence[str], tool: str | None, partitioned: bool = False) -> str:

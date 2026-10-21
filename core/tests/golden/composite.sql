@@ -89,11 +89,11 @@ DO $keep$
 DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
-  FOR r IN SELECT t.name FROM authz_int.trees t
-           JOIN (VALUES ('user__manager__tree', '910b88e27c075917d2bcbbb66bbf455d', ARRAY[to_regclass('"cx"."users"')::oid]::oid[]), ('folder_project__folder_parent__tree', '4e1fe3b69388a0226ee27f0543c3c10b', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]), ('folder__parent__tree', 'e16c8b0241a244551175f6a9a45b0914', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])) n(name, hash, oids)
+  FOR r IN SELECT n.rel FROM authz_int.trees t
+           JOIN (VALUES ('user__manager__tree', 'f2d818d8a04585f78f1308eae53d60b6', ARRAY[to_regclass('"cx"."users"')::oid]::oid[], 'user__manager__tree'), ('folder_project__folder_parent__tree', '4e1fe3b69388a0226ee27f0543c3c10b', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__folder_parent__tree'), ('folder__parent__tree', '3d50c501916142beffc3e76e523084ae', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
-           WHERE to_regclass(format('authz_int.%I', t.name)) IS NOT NULL LOOP
-    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name);
+           WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
+    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
   END LOOP;
 END $keep$;
 
@@ -742,9 +742,9 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('user__manager__tree', '910b88e27c075917d2bcbbb66bbf455d', ARRAY[to_regclass('"cx"."users"')::oid]::oid[]),
+  ('user__manager__tree', 'f2d818d8a04585f78f1308eae53d60b6', ARRAY[to_regclass('"cx"."users"')::oid]::oid[]),
   ('folder_project__folder_parent__tree', '4e1fe3b69388a0226ee27f0543c3c10b', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
-  ('folder__parent__tree', 'e16c8b0241a244551175f6a9a45b0914', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[]);
+  ('folder__parent__tree', '3d50c501916142beffc3e76e523084ae', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[]);
 
 CREATE TABLE authz_int.shared_relations (object_type text, relation text, subject text, shared_by text, required text[], loc text, PRIMARY KEY (object_type, relation, subject));
 
@@ -1117,8 +1117,8 @@ END $f$;
 
 -- user: each row with every ancestor it inherits from, through manager
 CREATE TABLE authz_int."user__manager__tree" (descendant bigint NOT NULL, ancestor bigint NOT NULL,
-  PRIMARY KEY (descendant, ancestor));
-CREATE INDEX ON authz_int."user__manager__tree" (ancestor);
+  CONSTRAINT "user__manager__tree_pkey" PRIMARY KEY (descendant, ancestor));
+CREATE INDEX "user__manager__tree_ancestor_idx" ON authz_int."user__manager__tree" (ancestor);
 INSERT INTO authz_int.locks VALUES ('user', 0) ON CONFLICT DO NOTHING;
 -- kept from the last apply if its definition is the same: its rows are current
 DO $k$ BEGIN
@@ -1547,8 +1547,8 @@ END $b$;
 
 -- folder: each row with every ancestor it inherits from, through parent
 CREATE TABLE authz_int."folder__parent__tree" (descendant text NOT NULL, ancestor text NOT NULL,
-  PRIMARY KEY (descendant, ancestor));
-CREATE INDEX ON authz_int."folder__parent__tree" (ancestor);
+  CONSTRAINT "folder__parent__tree_pkey" PRIMARY KEY (descendant, ancestor));
+CREATE INDEX "folder__parent__tree_ancestor_idx" ON authz_int."folder__parent__tree" (ancestor);
 INSERT INTO authz_int.locks VALUES ('folder', 0) ON CONFLICT DO NOTHING;
 -- kept from the last apply if its definition is the same: its rows are current
 DO $k$ BEGIN

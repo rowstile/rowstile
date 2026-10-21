@@ -142,6 +142,12 @@ def ident(name: str) -> str:
     return name
 
 
+def dep_trigger(tree: str) -> str:
+    """The name of the triggers a tree puts on the tables its conditions read (trees.deps_sql), which a migration
+    that rebuilds the tree drops (migrate.py): shortened as every other generated name."""
+    return ident("authz_" + tree + "_dep")
+
+
 def q(name: str) -> str:
     """Quote an identifier."""
     name = ident(name)

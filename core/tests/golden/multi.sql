@@ -89,11 +89,11 @@ DO $keep$
 DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
-  FOR r IN SELECT t.name FROM authz_int.trees t
-           JOIN (VALUES ('folder_project__parent__tree', '91d8e2495a18ab01c7a20732f0778a07', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[]), ('folder_project__parent__tree2', 'ad7466ce934f4d7055dbc09ac7c692f7', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[])) n(name, hash, oids)
+  FOR r IN SELECT n.rel FROM authz_int.trees t
+           JOIN (VALUES ('folder_project__parent__tree', '91d8e2495a18ab01c7a20732f0778a07', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[], 'folder_project__parent__tree'), ('folder_project__parent__tree2', 'ad7466ce934f4d7055dbc09ac7c692f7', ARRAY[to_regclass('"mt"."folders"')::oid, to_regclass('"mt"."projects"')::oid]::oid[], 'folder_project__parent__tree2')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
-           WHERE to_regclass(format('authz_int.%I', t.name)) IS NOT NULL LOOP
-    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name);
+           WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
+    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
   END LOOP;
 END $keep$;
 

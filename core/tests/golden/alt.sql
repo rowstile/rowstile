@@ -89,11 +89,11 @@ DO $keep$
 DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
-  FOR r IN SELECT t.name FROM authz_int.trees t
-           JOIN (VALUES ('doc__parent_shortcut__tree2', 'cffed92c1440b6f6d34b734e7c9a98a6', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[])) n(name, hash, oids)
+  FOR r IN SELECT n.rel FROM authz_int.trees t
+           JOIN (VALUES ('doc__parent_shortcut__tree2', '1400ba45110128364c9f57cbb95609a6', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[], 'doc__parent_shortcut__tree2')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
-           WHERE to_regclass(format('authz_int.%I', t.name)) IS NOT NULL LOOP
-    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name);
+           WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
+    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
   END LOOP;
 END $keep$;
 
@@ -555,7 +555,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('doc__parent_shortcut__tree2', 'cffed92c1440b6f6d34b734e7c9a98a6', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[]);
+  ('doc__parent_shortcut__tree2', '1400ba45110128364c9f57cbb95609a6', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[]);
 
 CREATE TABLE authz_int.shared_relations (object_type text, relation text, subject text, shared_by text, required text[], loc text, PRIMARY KEY (object_type, relation, subject));
 
@@ -928,8 +928,8 @@ END $f$;
 
 -- doc: each row with every ancestor it inherits from, through parent while {coalesce((not locked), false) AND coalesce((NOT coalesce((exists (select 1 from alt.holds h where h.target = this.up)), false)), false)}
 CREATE TABLE authz_int."doc__parent__tree" (descendant bigint NOT NULL, ancestor bigint NOT NULL,
-  PRIMARY KEY (descendant, ancestor));
-CREATE INDEX ON authz_int."doc__parent__tree" (ancestor);
+  CONSTRAINT "doc__parent__tree_pkey" PRIMARY KEY (descendant, ancestor));
+CREATE INDEX "doc__parent__tree_ancestor_idx" ON authz_int."doc__parent__tree" (ancestor);
 INSERT INTO authz_int.locks VALUES ('doc', 0) ON CONFLICT DO NOTHING;
 -- kept from the last apply if its definition is the same: its rows are current
 DO $k$ BEGIN
@@ -1170,8 +1170,8 @@ END $b$;
 
 -- doc: each row with every ancestor it inherits from, through parent while {not exists (select 1 from alt.holds h where h.target = this.doc_no)}, shortcut
 CREATE TABLE authz_int."doc__parent_shortcut__tree" (descendant bigint NOT NULL, ancestor bigint NOT NULL,
-  PRIMARY KEY (descendant, ancestor));
-CREATE INDEX ON authz_int."doc__parent_shortcut__tree" (ancestor);
+  CONSTRAINT "doc__parent_shortcut__tree_pkey" PRIMARY KEY (descendant, ancestor));
+CREATE INDEX "doc__parent_shortcut__tree_ancestor_idx" ON authz_int."doc__parent_shortcut__tree" (ancestor);
 INSERT INTO authz_int.locks VALUES ('doc', 0) ON CONFLICT DO NOTHING;
 -- kept from the last apply if its definition is the same: its rows are current
 DO $k$ BEGIN
@@ -1458,8 +1458,8 @@ END $b$;
 
 -- doc: each row with every ancestor it inherits from, through parent, shortcut
 CREATE TABLE authz_int."doc__parent_shortcut__tree2" (descendant bigint NOT NULL, ancestor bigint NOT NULL,
-  PRIMARY KEY (descendant, ancestor));
-CREATE INDEX ON authz_int."doc__parent_shortcut__tree2" (ancestor);
+  CONSTRAINT "doc__parent_shortcut__tree2_pkey" PRIMARY KEY (descendant, ancestor));
+CREATE INDEX "doc__parent_shortcut__tree2_ancestor_idx" ON authz_int."doc__parent_shortcut__tree2" (ancestor);
 INSERT INTO authz_int.locks VALUES ('doc', 0) ON CONFLICT DO NOTHING;
 -- kept from the last apply if its definition is the same: its rows are current
 DO $k$ BEGIN

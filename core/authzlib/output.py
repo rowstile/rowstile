@@ -1528,7 +1528,11 @@ END $an$;"""
     def keep_sql(self) -> str:
         """Inheritance tables of the last apply whose definition and tables are the same now: moved aside
         before the schema is dropped, then back in place of their new, empty tables (trees.swap_in_kept)."""
-        rows = ", ".join(f"({lit(n)}, {lit(h)}, {self.oids_sql(tables)})" for n, (h, tables) in self.tree_keep.items())
+        # (each with its table's name, shortened as the tree's SQL shortens it, q)
+        rows = ", ".join(
+            f"({lit(n)}, {lit(h)}, {self.oids_sql(tables)}, {lit(ident(n))})"
+            for n, (h, tables) in self.tree_keep.items()
+        )
         return f"""-- Inheritance tables that don't change keep their rows: moved aside now, back after the schema is recreated
 DROP TABLE IF EXISTS pg_temp.authz_kept;
 CREATE TEMP TABLE authz_kept (name text PRIMARY KEY) ON COMMIT DROP;
@@ -1538,11 +1542,11 @@ DO $keep$
 DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
-  FOR r IN SELECT t.name FROM authz_int.trees t
-           JOIN (VALUES {rows or "(NULL::text, NULL::text, NULL::oid[])"}) n(name, hash, oids)
+  FOR r IN SELECT n.rel FROM authz_int.trees t
+           JOIN (VALUES {rows or "(NULL::text, NULL::text, NULL::oid[], NULL::text)"}) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
-           WHERE to_regclass(format('authz_int.%I', t.name)) IS NOT NULL LOOP
-    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name);
+           WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
+    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
   END LOOP;
 END $keep$;"""
 

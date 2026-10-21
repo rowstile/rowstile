@@ -472,6 +472,35 @@ def main() -> None:
         "DROP INDEX app.team_members_user_id_idx",
         "CREATE INDEX team_members_user_id_idx ON app.team_members (user_id)",
     )
+    # a name longer than Postgres keeps (63 bytes): the advice shortens it as every generated name, the same in every
+    # line, so that a build of it that failed is found under it
+    long = "labels_kept_for_each_organisation_and_its_departments"
+    sql(
+        f"CREATE TABLE app.{long} (org_id bigint NOT NULL, name text NOT NULL, owner_id bigint)",
+        f"INSERT INTO app.{long} VALUES (1, 'a', 1), (1, 'a', 1)",
+        f'CREATE UNIQUE INDEX CONCURRENTLY "{perf.index_name(f"app.{long}", ("org_id", "name"))}" '
+        f"ON app.{long} (org_id, name)",
+    )
+
+    def long_names(d: Db) -> str:
+        text, files = database.applied(d)
+        c = database.policy_compiler(
+            text + f"\ntype label = app.{long} (org_id, name text)\n  owner : user = owner_id\n  can edit = owner\n",
+            files,
+        )
+        return perf.describe_missing(perf.missing_indexes(d, c), "sql")
+
+    said = work(long_names)
+    short = "labels_kept_for_each_organisation_and_its_departments__b60b61c0"
+    check(
+        "a name too long for Postgres: shortened in the line to add, and a build of it left unfinished is dropped first",
+        f"\n  first, drop what a CREATE INDEX CONCURRENTLY that failed left unfinished: DROP INDEX CONCURRENTLY "
+        f'app.{short};\n  add: CREATE INDEX CONCURRENTLY "{short}" ON "app"."{long}" ("org_id", "name");'
+        in said
+        and perf.advice(f"app.{long}", ("org_id", "name"), "drizzle").startswith(f"index('{short}')"),
+        said,
+    )
+    sql(f"DROP TABLE app.{long}")
 
     def capitals(d: Db) -> list[tuple[str, ...]]:
         # names with capital letters, as Prisma writes them: the table is looked up by its quoted name

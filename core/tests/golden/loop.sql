@@ -89,11 +89,11 @@ DO $keep$
 DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
-  FOR r IN SELECT t.name FROM authz_int.trees t
-           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', 'c3c7221fdf7b32c3a02a51dfac930db2', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[])) n(name, hash, oids)
+  FOR r IN SELECT n.rel FROM authz_int.trees t
+           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', 'c3c7221fdf7b32c3a02a51dfac930db2', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[], 'domain_email_org_setting__domain_email_org_settings__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
-           WHERE to_regclass(format('authz_int.%I', t.name)) IS NOT NULL LOOP
-    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name);
+           WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
+    EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
   END LOOP;
 END $keep$;
 
