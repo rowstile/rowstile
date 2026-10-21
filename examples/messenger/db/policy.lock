@@ -117,7 +117,7 @@ function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9f
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 4b6752808717 shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | 935f0ec6d2fd shape=1223ad2f
-function authz.lint() | ce1ff714cbe9 shape=54cb1505
+function authz.lint() | 83428db6dfb2 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | b00f8ce2d600 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
