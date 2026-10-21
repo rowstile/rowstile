@@ -778,10 +778,7 @@ def project() -> str:
     """A project folder: rowstile.toml, the docs example's policy and its named tests."""
     folder = tempfile.mkdtemp(prefix="rowstile_mcp_")
     os.makedirs(os.path.join(folder, "db", "tests"))
-    with open(os.path.join(ROOT, "example", "docs.authz"), encoding="utf-8") as fh:
-        policy = fh.read().split("\ntest\n")[0] + "\n"  # its test section needs the scenario's data
-    with open(os.path.join(folder, "db", "policy.authz"), "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(policy)
+    shutil.copy(os.path.join(ROOT, "example", "docs.authz"), os.path.join(folder, "db", "policy.authz"))
     shutil.copy(os.path.join(ROOT, "example", "docs.test.authz"), os.path.join(folder, "db", "tests", "docs.authz"))
     with open(os.path.join(folder, "rowstile.toml"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write('policy = "db/policy.authz"\ntests = ["db/tests/docs.authz"]\n')

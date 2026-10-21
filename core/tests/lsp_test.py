@@ -768,7 +768,7 @@ with tempfile.TemporaryDirectory() as d:
     typo = policy.replace(
         "can edit  = share or editor or (parent.edit and {inherit})",
         "can edit  = share or editor or (parent.edt and {inherit}) or nosuch.view",
-    ).replace("  user 3 can view file 11", "  user 3 can vew file 11")
+    ).replace("  user 1 can edit file 11", "  user 1 can edt file 11")
     got = e.ask("textDocument/hover", typo, "parent.edt", len("parent.e"))
     ok("hover on a permission misspelled after rel.: none", got is None and c.p.poll() is None, got)
     h = e.ask("textDocument/hover", typo, "can edit  = share or editor or (parent.edt", len("can e"))
@@ -777,7 +777,7 @@ with tempfile.TemporaryDirectory() as d:
         "or nosuch.view" in value(h) and "inherits through `parent`: as deep" in value(h),
         h,
     )
-    got = e.ask("textDocument/hover", typo, "user 3 can vew file 11", len("user 3 can v"))
+    got = e.ask("textDocument/hover", typo, "user 1 can edt file 11", len("user 1 can e"))
     ok("hover on a permission a test misspells: none", got is None and c.p.poll() is None, got)
     stray = policy.replace("app role app_user", "  owner : user = owner_id\napp role app_user")
     got = e.offered(stray, "  owner : user = owner_id", len("  owner : "))
@@ -802,7 +802,7 @@ with tempfile.TemporaryDirectory() as d:
         "**file.viewer**: relation to user, team#member" in value(h) and c.p.poll() is None,
         h,
     )
-    got = e.offered(policy, "  user 3 can view file 11", len("  user 3 can "))
+    got = e.offered(policy, "  user 1 can edit file 11", len("  user 1 can "))
     ok(
         "in a test: a test's words, no type's relations",
         {"given", "allowed", "refused", "sees"} <= set(got) and "parent" not in got,

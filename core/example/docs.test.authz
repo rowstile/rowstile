@@ -24,3 +24,13 @@ test "turning inheritance off stops it there"
   given sub = {INSERT INTO app.folders (org_id, parent_id, name, inherit) VALUES ($acme, $top, 'Private', false) RETURNING id}
   user $ann can view folder $top
   user $ann cannot view folder $sub
+
+test "what erin's shares give: Company to Acme's members, offer-letter.pdf to dave"
+  as user 5 allowed {SELECT authz.share('folder', 1, 'viewer', 'org', 1, 'member')}
+  as user 5 allowed {SELECT authz.share('file', 13, 'viewer', 'user', 4)}
+  user 3 can view file 11     -- carol: Acme members can view Company and below
+  user 3 cannot view file 12  -- ...but Secrets breaks inheritance
+  user 3 cannot view file 14  -- ...and confidential files need edit rights
+  user 3 can view file 16     -- ...and Joint project is linked into Company
+  user 4 can view file 13     -- dave: shared with him directly
+  user 4 cannot view file 11

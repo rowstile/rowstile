@@ -16,7 +16,8 @@ page is for working on them.
 
 From this folder:
 
-    cli/rowstile migrate example/docs.authz --tool sql       # the next migration, from the lock file
+    cp example/docs.authz /tmp/docs.authz                    # a copy: migrate writes its lock file beside the policy
+    cli/rowstile migrate /tmp/docs.authz --tool sql --dir /tmp/migrations  # the next migration, from the lock file
     cli/rowstile --db "dbname=mydb" push example/docs.authz  # a development database, straight away
     ./run_tests.sh                                           # every test, from scratch (needs Postgres)
     ./ci.sh                                                  # ... on 16, 17 and 18, each in Docker
