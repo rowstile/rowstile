@@ -1,5 +1,6 @@
 -- answer: conditions-sql
--- A condition is any SQL on the row: columns, now(), authz.uid(), and the request's context the app sets.
+-- A condition is any SQL on the row: columns, now(), authz.uid(), and the request's context the app sets. A string
+-- is what it says, even one that names authz.uid().
 app role app_user
 
 type user = app.users
@@ -8,12 +9,15 @@ type folder = app.folders
   can edit  = owner and {authz.ctx('mfa') = 'yes'}
   can fresh = owner and {created_at > now() - interval '1 day'}
   can mine  = {owner_id = authz.uid()}
+  can noted = owner and {name <> 'set by authz.uid()'}
 
 test "conditions on the row and the request"
   given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
   given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
   given f   = {INSERT INTO app.folders (owner_id, created_at) VALUES ($ann, now() - interval '2 days') RETURNING id}
   given g   = {INSERT INTO app.folders (owner_id) VALUES ($ann) RETURNING id}
+  given h   = {INSERT INTO app.folders (owner_id, name) VALUES ($ann, 'set by (SELECT authz.uid())') RETURNING id}
+  given i   = {INSERT INTO app.folders (owner_id, name) VALUES ($ann, 'set by authz.uid()') RETURNING id}
   user $ann cannot edit folder $f
   given {SELECT set_config('authz_ctx.mfa', 'yes', true)}
   user $ann can edit folder $f
@@ -23,3 +27,6 @@ test "conditions on the row and the request"
   user $ann cannot fresh folder $f
   user $ann can mine folder $f
   user $bo cannot mine folder $f
+  user $ann can noted folder $h
+  user $ann cannot noted folder $i
+  as user $ann sees 1 {SELECT x FROM authz.list('folder', 'noted') x WHERE x = $h::text}

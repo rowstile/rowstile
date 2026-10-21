@@ -437,9 +437,15 @@ STUB_COLUMNS = """(SELECT string_agg(format('NULL::%s%s AS %I', pg_catalog.forma
       WHERE a.attrelid = VIEW AND a.attnum > 0 AND NOT a.attisdropped)"""
 
 
+UID_CALL = re.compile(rf"{NOT_AFTER_NAME}authz\s*\.\s*uid\s*\(\s*\)")
+
+
 def with_uid(sql: str) -> str:
-    """authz.uid() inside conditions runs once per query, not once per row."""
-    return re.sub(r"\bauthz\s*\.\s*uid\s*\(\s*\)", "(SELECT authz.uid())", sql)
+    """authz.uid() inside conditions runs once per query, not once per row. Only in the condition's code: a string
+    or a comment that names it stays as written ({note <> 'set by authz.uid()'})."""
+    if "uid" not in sql:
+        return sql
+    return "".join(UID_CALL.sub("(SELECT authz.uid())", text) if code else text for code, text in sql_code(sql))
 
 
 def name_start(c: str) -> bool:
@@ -598,17 +604,20 @@ def on_row(sql: str, alias: str) -> str:
         return sql
     name = alias[1:-1].replace('""', '"') if alias.startswith('"') else alias
     hidden = reads_tables(sql) and name.lower() in names_in(sql)
-    out, last, cols = [], 0, []
+    # each column once, as Postgres names it: this.ID, this.id and this."id" are one column (taken twice, the
+    # condition's authz__this.id would be ambiguous)
+    out, last, cols = [], 0, dict[str, str]()
     for start, end in spans:
         m = QUOTED_RE.match(sql, end) or IDENT_RE.match(sql, end)
-        if m and m.group(0) not in cols:
-            cols.append(m.group(0))
+        if m:
+            col = m.group(0)
+            cols.setdefault(col[1:-1].replace('""', '"') if col.startswith('"') else fold(col), col)
         out += [sql[last:start], (ROW_ALIAS if hidden else alias) + "."]
         last = end
     cond = "".join(out) + sql[last:]
     if not hidden:
         return cond
-    return f"(SELECT ({cond}) FROM (SELECT {', '.join(f'{alias}.{c}' for c in cols)}) AS {ROW_ALIAS})"
+    return f"(SELECT ({cond}) FROM (SELECT {', '.join(f'{alias}.{c}' for c in cols.values())}) AS {ROW_ALIAS})"
 
 
 def row_cond(sql: str, alias: str) -> str:
@@ -616,15 +625,45 @@ def row_cond(sql: str, alias: str) -> str:
     return with_uid(on_row(sql, alias))
 
 
-# Conditions whose result is stored (inheritance) must give the same answer for
-# everyone at any time.
-UNSTABLE = re.compile(
-    r"\b(now|current_timestamp|current_date|current_time|localtime|localtimestamp|"
-    r"clock_timestamp|statement_timestamp|transaction_timestamp|timeofday|random|"
-    r"current_setting|current_user|session_user|current_role|user|"
-    r"authz\s*\.\s*(uid|ctx|me))\b",
-    re.IGNORECASE,
+# Conditions whose result is stored (inheritance) must give the same answer for everyone at any time: what they
+# can't read, as the language's reference and AZ305's page name it (tests/unit_test.py holds the three the same).
+# The clock, chance, who asks and the session: functions (called: a column may be named now) and the SQL words
+# that read them without parentheses (not after a dot: t.user is a column). age(x) with one argument counts from
+# today (its own check, check_stable_condition). Applying asks Postgres about the rest (tree_checks): the app's
+# functions, and in a condition that reads no other table, anything that isn't IMMUTABLE.
+UNSTABLE_CALLS = (
+    *("now", "clock_timestamp", "statement_timestamp", "transaction_timestamp", "timeofday"),
+    *("random", "random_normal", "gen_random_uuid", "uuidv4", "uuidv7"),
+    *("authz.uid", "authz.ctx", "authz.principal", "current_setting", "current_database", "pg_backend_pid"),
+    *("txid_current", "pg_current_xact_id"),
 )
+UNSTABLE_WORDS = (
+    *("current_timestamp", "current_date", "current_time", "localtime", "localtimestamp"),
+    *("current_user", "current_role", "session_user", "user", "system_user", "current_schema", "current_catalog"),
+)
+UNSTABLE_CALL = "|".join(n.replace(".", r"\s*\.\s*") for n in UNSTABLE_CALLS)
+UNSTABLE = re.compile(
+    rf"{NOT_AFTER_NAME}(?:({UNSTABLE_CALL})\s*\(|(?<!\.)({'|'.join(UNSTABLE_WORDS)}){NOT_BEFORE_NAME})",
+    re.IGNORECASE | re.ASCII,
+)
+# age(x), where x is the one argument: it counts from today (age(x, y) counts from y)
+AGE = re.compile(rf"{NOT_AFTER_NAME}age\s*\(", re.IGNORECASE | re.ASCII)
+
+
+def one_argument(code: str, start: int) -> bool:
+    """Whether the call whose arguments start at code[start] (after its parenthesis) has only one: no comma at its
+    own depth."""
+    depth = 0
+    for c in code[start:]:
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            if not depth:
+                return True
+            depth -= 1
+        elif c == "," and not depth:
+            return False
+    return True
 
 
 # the text of a date or time literal that means the current time ('now', 'today', ...)
@@ -653,11 +692,14 @@ def check_stable_condition(cond: str, loc: Loc, what: str = "limit inheritance")
             f"rights are stored, so the condition must give the same answer for every user at any time",
             "AZ305",
         )
-    m = UNSTABLE.search(strip_literals(cond))
-    if m:
+    code = strip_literals(cond)
+    m = UNSTABLE.search(code)
+    age = next((a for a in AGE.finditer(code) if one_argument(code, a.end())), None)
+    if m or age:
+        on = (m.group(1) or m.group(2)) if m else "age() with one argument, which counts from today"
         fail(
             loc,
-            f"{{{cond}}} can't {what}: it depends on {m.group(0)}, but inherited "
+            f"{{{cond}}} can't {what}: it depends on {on}, but inherited "
             f"rights are stored, so the condition must give the same answer for every user "
             f"at any time",
             "AZ305",

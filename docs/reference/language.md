@@ -134,6 +134,17 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
 - **Inheritance**: `or rel.perm` back to the same type (or across types, like projects
   and folders inside each other) inherits as deep as it goes, through any mix of
   sources; `and {condition}` says where it stops. <!-- answer: inheritance -->
+  What inheritance holds is worked out once and stored, so a condition that limits it (and a link table's or a
+  type's `where` that decides it) must give the same answer for everyone at any time. It can't read the clock
+  (`now()`, `current_timestamp`, `current_date`, `current_time`, `localtime`, `localtimestamp`,
+  `clock_timestamp()`, `statement_timestamp()`, `transaction_timestamp()`, `timeofday()`, `age(x)` with one
+  argument, a date or time written `'now'`, `'today'`, `'tomorrow'` or `'yesterday'`), chance (`random()`,
+  `random_normal()`, `gen_random_uuid()`, `uuidv4()`, `uuidv7()`), who asks or the session (`authz.uid()`,
+  `authz.ctx()`, `authz.principal()`, `current_user`, `current_role`, `session_user`, `user`, `system_user`,
+  `current_setting()`, `current_schema`, `current_catalog`, `current_database()`, `pg_backend_pid()`,
+  `txid_current()`, `pg_current_xact_id()`): that is refused (AZ305). <!-- checked: tests/unit_test.py "test_what_inheritance_cant_read_is_named_where_it_is_refused"; tests/policy_errors.py "inheritance that depends on the time" -->
+  Applying then asks Postgres, which refuses a function of the app's that isn't IMMUTABLE and, in a condition
+  that reads no other table, anything else that isn't (a cast that depends on the time zone) (AZ603). <!-- checked: tests/policy_errors.py "inheritance calling a function that isn't IMMUTABLE"; tests/policy_errors.py "inheritance limited by a time-zone dependent expression" -->
 - **Denies**: `can view = (viewer or parent.view) and not hidden` takes `view` away on a
   hidden folder and everything below it, even from people who hold it higher up. The deny
   must inherit the same way (`can hidden = blocked or parent.hidden`), so it covers

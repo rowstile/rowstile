@@ -325,6 +325,68 @@ class ThisRow(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "it depends on now"):
             check_stable_condition("titré$$ <> $é$it's$é$ and créé > now()", Loc(None, 1))
 
+    def test_rewrites_touch_only_the_conditions_code(self) -> None:
+        """authz.uid() is asked once per query only where the condition calls it: a string or a comment that names
+        it stays as written. A column `this.` names in two cases is one column, as Postgres folds names: taken
+        twice where the row's columns are taken first, the condition's name for it would be ambiguous."""
+        from authzlib.sqlutil import on_row, with_uid
+
+        self.assertEqual(
+            with_uid("note <> 'set by authz.uid()' and owner_id = authz.uid() /* authz.uid() */"),
+            "note <> 'set by authz.uid()' and owner_id = (SELECT authz.uid()) /* authz.uid() */",
+        )
+        self.assertEqual(
+            with_uid('x = $$authz.uid()$$ and "authz.uid()" = 1'), 'x = $$authz.uid()$$ and "authz.uid()" = 1'
+        )
+        self.assertEqual(
+            on_row('exists (select 1 from app.m o where o.r = this.ID and o.s = this.id and o.t = this."id")', "o"),
+            "(SELECT (exists (select 1 from app.m o where o.r = authz__this.ID and o.s = authz__this.id and "
+            'o.t = authz__this."id")) FROM (SELECT o.ID) AS authz__this)',
+        )
+        # a quoted name in capitals is another column, and only ASCII letters fold (É is not é)
+        self.assertEqual(
+            on_row('exists (select 1 from app.m o where o.r = this."ID" and o.s = this.id and this.É = this.é)', "o"),
+            '(SELECT (exists (select 1 from app.m o where o.r = authz__this."ID" and o.s = authz__this.id and '
+            'authz__this.É = authz__this.é)) FROM (SELECT o."ID", o.id, o.É, o.é) AS authz__this)',
+        )
+        # text no policy gets past the parser with (a quoted name left open, a call with no closing parenthesis):
+        # read without a failure all the same
+        from authzlib.sqlutil import one_argument
+
+        self.assertEqual(on_row('this."open', "d"), 'd."open')
+        self.assertEqual((one_argument("x", 0), one_argument("x, y", 0), one_argument("(x, y", 0)), (True, False, True))
+
+    def test_what_inheritance_cant_read_is_named_where_it_is_refused(self) -> None:
+        """The language's reference and AZ305's page name what a condition that limits inheritance can't read, and
+        the check refuses each, as the page writes it, and nothing else: no name of its own is missing there."""
+        from authzlib.errors import CODES
+        from authzlib.parse import Loc, PolicyError
+        from authzlib.sqlutil import TIME_WORDS, UNSTABLE_CALLS, UNSTABLE_WORDS, check_stable_condition
+
+        with open(os.path.join(os.path.dirname(ROOT), "docs", "reference", "language.md"), encoding="utf-8") as fh:
+            page = " ".join(line.strip() for line in fh)
+        listed = {
+            "the language's reference": re.search(r"It can't read the clock (.*?) is refused \(AZ305\)", page),
+            "AZ305's page": re.search(r"They can't read the clock (.*?)and a link table", CODES["AZ305"].text),
+        }
+        code = {*UNSTABLE_CALLS, *UNSTABLE_WORDS, "age", "now", "today", "tomorrow", "yesterday"}
+        for where, found in listed.items():
+            assert found, where
+            written = re.findall(r"`([^`]+)`", found.group(1))
+            names = {re.sub(r"\(.*", "", w).strip("'") for w in written}
+            self.assertEqual(names, code, where)
+            for w in written:
+                cond = f"x = {w}" if w.startswith("'") else f"{w} = x"
+                with self.assertRaisesRegex(PolicyError, "AZ305", msg=f"{where}: {w}"):
+                    check_stable_condition(cond, Loc(None, 1))
+        self.assertTrue(all(TIME_WORDS.fullmatch(w) for w in ("now", "today", "tomorrow", "yesterday")))
+        # age(x, y) counts from y; a column named like a function, or a word after a dot, is a column
+        for cond in ("age(a, b) > interval '1 day'", "age(coalesce(a, b), c) > x", "now and random", "t.user = 1"):
+            check_stable_condition(cond, Loc(None, 1))
+        for cond in ("age(coalesce(a, b)) > x", "AGE (ARRAY[1, 2][1]) > x", "pg_catalog.now() > x", "AUTHZ.UID() = 1"):
+            with self.assertRaisesRegex(PolicyError, "AZ305", msg=cond):
+                check_stable_condition(cond, Loc(None, 1))
+
 
 class Golden(unittest.TestCase):
     """The generated SQL is what it was; after an intended change, run with --update and read the diff."""
