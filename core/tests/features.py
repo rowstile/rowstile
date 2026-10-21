@@ -429,6 +429,8 @@ FEATURES: list[Feature] = [
             T("migrations.sh", "a migration run a statement at a time is refused (AZ615), and changes nothing"),
             T("migrations.sh", "the same migration again is refused: the database holds it already"),
             T("unit_test.py", "test_lines_that_only_move_need_no_migration"),
+            T("unit_test.py", "test_file_names"),
+            T("migration_tools.sh", "numbered after them"),
         ),
         (
             T("migrate_test.py", "applying whole"),
@@ -601,6 +603,8 @@ FEATURES: list[Feature] = [
             T("devx.sh", "a users table keyed by two columns: says what it lacks"),
             T("devx.sh", "init --out outside the folder, by a $k path: refused, exit 2, nothing written"),
             T("unit_test.py", "test_a_user_table_the_draft_leaves_out_is_said"),
+            T("unit_test.py", "test_stack_of_sql_migrations"),
+            T("devx.sh", "init finds dbmate from its files"),
         ),
     ),
     # --- the servers ------------------------------------------------------------------------------------

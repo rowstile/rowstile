@@ -115,6 +115,18 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   answered with a parse error, and the server goes on. It ended, and the editor lost errors and completion.
 - Find references in the editor searches the policy's included files and the open test files, not only the file
   it is asked in.
+- `rowstile migrate` for goose, dbmate and Flyway names its file with the number after the folder's last when
+  that one is numbered (`00003_`, `003_`, `V3__`), as it did for plain SQL. It used the time, and the app's next
+  migration, numbered after its own, then came below one applied already: goose, Flyway and `dbmate --strict`
+  refused it. Plain SQL files take the time after a folder whose last file starts with the time.
+- `rowstile init` finds goose, dbmate and Flyway: their markers in a migrations folder's files, Flyway's names
+  (`V1__init.sql`), or the folder `flyway.toml` or `flyway.conf` names. It took them for plain SQL, and the
+  files `rowstile migrate` then wrote were refused or skipped. Files named for a tool rowstile writes none for
+  (`1_init.up.sql`) leave `[migrations]` out of `rowstile.toml`, and init says so.
+- `rowstile init` read Drizzle's `out: "../shared/drizzle"` as `shared/drizzle`, another folder, and a key
+  ending in `out` (`layout:`) as `out`.
+- A migrations folder that is `rowstile.toml`'s own folder was marked `./*_authz_*` in `.gitattributes`, which
+  git matches to nothing: it is `/*_authz_*`.
 - `rowstile why` and Studio listed a change both as the best way to grant a permission and as "could not be
   tried", when the change grants it but counting what else it gives failed (a condition that fails on another
   row, say). It is now listed only as not tried, with the database's reason: what else it gives was never counted.

@@ -176,7 +176,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   (`--proofs`) on each version, the soak (new seeds each night, one version in turn, in five parts side by side;
   by hand, several at once on the three versions: `gh workflow run
   nightly.yml -f only=soak -f soaks=7`), the conformance suites on 17 and 18 and on 16
-  through PgBouncer (`integrations/pooler.sh`), then
+  through PgBouncer (`integrations/pooler.sh`), the migrations `rowstile migrate` writes run by goose,
+  dbmate and Flyway (`tests/migration_tools.sh`), then
   the benchmark check, last (`gh workflow run nightly.yml -f only=bench` runs it alone; it judges speed against
   the runners' own baseline, not the gate's limits). On self-hosted runners sharing one machine, jobs with fixed container
   names or ports hold a `flock` of their own, and `ci.sh` writes its logs where `ROWSTILE_CI_LOGS` says

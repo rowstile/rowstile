@@ -1817,6 +1817,9 @@ class Command(unittest.TestCase):
             migrations.generated_patterns("sql", None, "db/policy.lock"), ["db/policy.lock linguist-generated=true"]
         )
         self.assertEqual(migrations.generated_patterns("sql", None, None), [])
+        # a migrations folder that is rowstile.toml's own: git takes no pattern starting with ./
+        self.assertEqual(migrations.generated_patterns("goose", ".", None), ["/*_authz_* linguist-generated=true"])
+        self.assertEqual(migrations.generated_patterns("prisma", ".", None), ["/*_authz_*/** linguist-generated=true"])
 
     def test_review_names_files_from_this_folder_not_from_the_top_folders_path(self) -> None:
         # git names the top folder by its resolved path; through a subst drive or a junction (Windows) this
@@ -1953,6 +1956,84 @@ class Command(unittest.TestCase):
         self.assertIn('"devDependencies"', text)
         self.assertEqual(stack.add_npm(d, ["@rowstile/next"], "1.2.3"), [])
         self.assertEqual(stack.add_npm(at({}), ["@rowstile/pg"], "1.2.3"), [])  # no package.json: nothing to add to
+
+    def test_stack_of_sql_migrations(self) -> None:
+        """The tool of an app whose migrations are SQL files: goose's and dbmate's first lines, Flyway's names or its
+        config file's locations; files named for a tool rowstile writes none for leave [migrations] out, saying so.
+        And the folder a config names, as written, from the project's folder."""
+        import stack
+
+        def detect(files: dict[str, str]) -> stack.Stack:
+            d = tempfile.mkdtemp()
+            for name, body in files.items():
+                os.makedirs(os.path.dirname(os.path.join(d, name)) or d, exist_ok=True)
+                with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                    fh.write(body)
+            return stack.detect(d)
+
+        def tool(files: dict[str, str]) -> tuple[list[str], str, str, list[str]]:
+            s = detect(files)
+            return s.found, s.tool, s.migrations_dir, s.notes
+
+        flyway_dir = ["Flyway (flyway.toml)"], "flyway", "db/flyway", []
+        for files, found in (
+            ({"migrations/00001_init.sql": "-- +goose Up\nCREATE TABLE t ();\n"}, (["goose (migrations)"], "goose")),
+            ({"migrations/00001_init.sql": "-- +goose up\n"}, (["goose (migrations)"], "goose")),
+            (
+                {"db/migrations/1_a.sql": "-- migrate:up\nCREATE TABLE t ();\n-- migrate:down\n"},
+                (["dbmate (db/migrations)"], "dbmate"),
+            ),
+            ({"sql/migrations/V1__init.sql": "CREATE TABLE t ();"}, (["Flyway (sql/migrations)"], "flyway")),
+            ({"migrations/0001_init.sql": "CREATE TABLE t ();"}, (["SQL migrations (migrations)"], "sql")),
+            # a folder with no SQL file is none: the next one is looked at
+            ({"db/migrations/README.md": "", "migrations/1.sql": ""}, (["SQL migrations (migrations)"], "sql")),
+        ):
+            s = detect(files)
+            self.assertEqual((s.found, s.tool), found, files)
+            self.assertEqual(s.migrations_dir, found[0][0].split("(")[1].rstrip(")"))
+        self.assertEqual(tool({"README.md": ""}), ([], "", "", []))
+        # golang-migrate's names: a file rowstile writes would be skipped
+        self.assertEqual(
+            tool({"migrations/000001_init.up.sql": "", "migrations/000001_init.down.sql": ""}),
+            (
+                ["SQL migrations (migrations)"],
+                "",
+                "",
+                [
+                    "migrations holds migrations named <n>_<name>.up.sql, for a tool rowstile writes no files for (it "
+                    "would skip rowstile's): rowstile.toml has no [migrations]"
+                ],
+            ),
+        )
+        # Flyway's config file: its first filesystem: location, from the project's folder
+        self.assertEqual(tool({"flyway.toml": '[flyway]\nlocations = ["filesystem:./db/flyway"]\n'}), flyway_dir)
+        self.assertEqual(
+            tool({"flyway.conf": "flyway.url=jdbc:postgresql:app\nflyway.locations=classpath:db/x, filesystem:sql\n"}),
+            (["Flyway (flyway.conf)"], "flyway", "sql", []),
+        )
+        # ... one naming none (or not TOML): its names in the usual folders say
+        for config in ({"flyway.toml": "[flyway]\n"}, {"flyway.toml": "[flyway\n"}, {"flyway.conf": "flyway.user=x\n"}):
+            self.assertEqual(
+                tool({**config, "migrations/V1__a.sql": ""}), (["Flyway (migrations)"], "flyway", "migrations", [])
+            )
+        # Drizzle's out: as written, ../ kept (another folder than the one stripped of it); a key ending in out isn't it
+        for config, folder in (
+            ('export default { out: "../shared/drizzle" }', "../shared/drizzle"),
+            ('export default { layout: "x", out: "./db/drizzle" }', "db/drizzle"),
+            ('export default { out: "./" }', "."),
+        ):
+            s = detect({"package.json": '{"dependencies": {"drizzle-orm": "1"}}', "drizzle.config.ts": config})
+            self.assertEqual((s.tool, s.migrations_dir), ("drizzle", folder))
+        # Prisma's: beside a schema at the top, or where its config says, ../ kept
+        s = detect({"package.json": '{"dependencies": {"prisma": "7"}}', "schema.prisma": ""})
+        self.assertEqual((s.tool, s.migrations_dir), ("prisma", "migrations"))
+        s = detect(
+            {
+                "package.json": '{"dependencies": {"prisma": "7"}}',
+                "prisma.config.ts": 'export default { migrations: { path: "../db/migrations" } }',
+            }
+        )
+        self.assertEqual((s.tool, s.migrations_dir), ("prisma", "../db/migrations"))
 
     def test_stack_as_apps_write_their_files(self) -> None:
         """What init finds in the files apps have: requirements with comments, extras and markers, Poetry's
@@ -2836,10 +2917,34 @@ class Migrations(unittest.TestCase):
         import migrations
 
         self.assertEqual(migrations.slug("File comment!"), "authz_file_comment")
-        with tempfile.TemporaryDirectory() as d:
-            self.assertRegex(migrations.sql_file_name(d, "authz_x", "20260101000000"), r"^20260101000000_authz_x\.sql$")
-            open(os.path.join(d, "0004_schema.sql"), "w", encoding="utf-8").close()
-            self.assertEqual(migrations.sql_file_name(d, "authz_x", "20260101000000"), "0005_authz_x.sql")
+        now = 1767225600  # 2026-01-01 00:00:00
+
+        def written(tool: str, *names: str) -> list[str]:
+            """The files written for tool in a folder holding these."""
+            with tempfile.TemporaryDirectory() as d:
+                for name in names:
+                    open(os.path.join(d, name), "w", encoding="utf-8").close()
+                paths = migrations.write_migration(tool, d, "x", "SELECT 1;\n", now=now)
+                return [os.path.relpath(f, d).replace(os.sep, "/") for f in paths]
+
+        # the time in an empty folder, or after a time; after a number, the next number, as wide: the app's next
+        # migration, numbered after it, then comes after it (goose, Flyway and dbmate --strict refuse one that doesn't)
+        for tool, before, after in (
+            ("sql", [], "20260101000000_authz_x.sql"),
+            ("sql", ["0004_schema.sql"], "0005_authz_x.sql"),
+            ("sql", ["0004_schema.sql", "20250101000000_authz_y.sql"], "20260101000000_authz_x.sql"),
+            ("goose", ["00001_init.sql", "00002_seed.go", "README.md"], "00003_authz_x.sql"),
+            ("goose", ["00009_init.sql"], "00010_authz_x.sql"),
+            ("dbmate", ["001_init.sql", "002_users.sql"], "003_authz_x.sql"),
+            ("dbmate", ["20250101000000_init.sql"], "20260101000000_authz_x.sql"),
+            ("flyway", ["V1__init.sql", "V2__users.sql", "R__views.sql"], "V3__authz_x.sql"),
+            ("flyway", ["V1__init.sql", "V1.9__a.sql", "V1_10__b.sql"], "V1_11__authz_x.sql"),
+            ("flyway", ["V20250101000000__init.sql", "V3__a.sql"], "V20260101000000__authz_x.sql"),
+        ):
+            self.assertEqual(written(tool, *before)[0], after, (tool, before))
+        self.assertEqual(written("flyway", "V007__a.sql"), ["V008__authz_x.sql", "V008__authz_x.sql.conf"])
+        # Prisma's folders always start with the time
+        self.assertEqual(written("prisma", "0001_init"), ["20260101000000_authz_x/migration.sql"])
 
     def test_what_a_tool_is_refused_for(self) -> None:
         import migrations

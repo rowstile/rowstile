@@ -369,6 +369,26 @@ grep -q 'tool = "prisma"' "$T/k/rowstile.toml" && grep -q 'dir  = "prisma/migrat
 # ...and that the app's client takes a URL of its own, not Prisma's, which is the owner's
 case "$out" in *"process.env.ROWSTILE_APP_URL"*"never the one this command uses"*) ok "... and that the app connects with its own URL, as the app role";;
   *) bad "init: the app's connection" "$out";; esac
+# in a dbmate app (its files say so, in its default folder): rowstile.toml names dbmate, and migrate numbers after them
+mkdir -p "$T/dbm/db/migrations"
+printf -- '-- migrate:up\nCREATE TABLE t (id int);\n\n-- migrate:down\n' > "$T/dbm/db/migrations/001_init.sql"
+out=$(cd "$T/dbm" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1) &&
+  out+=$(cd "$T/dbm" && python3 "$OLDPWD/cli/rowstile_cli.py" migrate --name first 2>&1)
+case "$out" in *"found   dbmate (db/migrations), Postgres"*"wrote db/migrations/002_authz_first.sql"*)
+  grep -q '^tool = "dbmate"$' "$T/dbm/rowstile.toml" && grep -q '^dir  = "db/migrations"$' "$T/dbm/rowstile.toml" &&
+    [ "$(head -1 "$T/dbm/db/migrations/002_authz_first.sql")" = "-- migrate:up" ] &&
+    ok "init finds dbmate from its files; rowstile.toml names it, and migrate writes the next number, for dbmate" ||
+    bad "init in a dbmate app: the files" "$(cat "$T/dbm/rowstile.toml"; ls "$T/dbm/db/migrations")";;
+  *) bad "init in a dbmate app" "$out";; esac
+# files named for a tool rowstile writes none for (golang-migrate's): no [migrations], and init says why
+mkdir -p "$T/gm/migrations"
+printf 'CREATE TABLE t (id int);\n' > "$T/gm/migrations/000001_init.up.sql"
+out=$(cd "$T/gm" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
+case "$out" in *"found   SQL migrations (migrations), Postgres"*"
+note    migrations holds migrations named <n>_<name>.up.sql, for a tool rowstile writes no files for (it would skip rowstile's): rowstile.toml has no [migrations]
+"*) grep -q '^\[migrations\]' "$T/gm/rowstile.toml" && bad "init with golang-migrate's files wrote [migrations]" "$(cat "$T/gm/rowstile.toml")" ||
+    ok "... and in an app whose files are named for another tool (.up.sql), no [migrations], saying why";;
+  *) bad "init with golang-migrate's files" "$out";; esac
 # --db the owner's, and DATABASE_URL another (the app's): rowstile.toml doesn't read DATABASE_URL, and says which
 mkdir -p "$T/dburl"
 out=$(cd "$T/dburl" && DATABASE_URL="postgresql://app_user@localhost/$DB" python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)

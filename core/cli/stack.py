@@ -1,12 +1,14 @@
 """The app's stack, as `rowstile init` finds it: the web framework, the ORM and the migration tool, from the files
-in the project folder (package.json, pyproject.toml, requirements*.txt, prisma/, drizzle.config.*, alembic.ini).
-What init does with it: rowstile.toml's [migrations] and [clients], the SDK packages to add, and the one line of
-setup to change. Reads files only; changes nothing."""
+in the project folder (package.json, pyproject.toml, requirements*.txt, prisma/, drizzle.config.*, alembic.ini,
+flyway.toml or flyway.conf, and the SQL files in a migrations folder: goose's and dbmate's first lines, Flyway's
+names). What init does with it: rowstile.toml's [migrations] and [clients], the SDK packages to add, and the one
+line of setup to change. Reads files only; changes nothing."""
 
 from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 from dataclasses import dataclass, field
 
@@ -20,8 +22,9 @@ class Stack:
     found: list[str] = field(
         default_factory=list
     )  # what was found, in words: "Next.js", "Prisma (prisma/schema.prisma)"
-    tool: str = ""  # the migration tool: prisma, drizzle, alembic, sql, or "" (unknown)
+    tool: str = ""  # the migration tool: prisma, drizzle, alembic, goose, dbmate, flyway, sql, or "" (unknown)
     migrations_dir: str = ""
+    notes: list[str] = field(default_factory=list)  # what init says it couldn't settle
     clients: dict[str, str] = field(default_factory=dict)  # {"ts": "src/authz.gen.ts"} or {"py": "app/authz_types.py"}
     npm: list[str] = field(default_factory=list)  # @rowstile/* packages to add
     npm_maybe: list[str] = field(default_factory=list)  # ... and those the app may want, named, not added
@@ -129,9 +132,9 @@ def detect(root: str = ".") -> Stack:
         s.found.append(f"Prisma ({prisma_schema})" if prisma_schema else "Prisma")
         s.tool = "prisma"
         m = re.search(r"migrations\s*:\s*\{[^}]*path\s*:\s*[\"']([^\"']+)[\"']", cfg)
-        s.migrations_dir = (m.group(1) if m else os.path.dirname(prisma_schema or "prisma/x") + "/migrations").lstrip(
-            "./"
-        ) or "prisma/migrations"
+        s.migrations_dir = posixpath.normpath(
+            m.group(1) if m else posixpath.join(posixpath.dirname(prisma_schema or "prisma/x"), "migrations")
+        )
     elif "drizzle-orm" in js or "drizzle-kit" in js:
         config = next(
             (c for c in ("drizzle.config.ts", "drizzle.config.js", "drizzle.config.mjs") if _read(root, c) is not None),
@@ -139,8 +142,9 @@ def detect(root: str = ".") -> Stack:
         )
         s.found.append(f"Drizzle ({config})" if config else "Drizzle")
         s.tool = "drizzle"
-        m = re.search(r"out\s*:\s*[\"']([^\"']+)[\"']", _read(root, config) or "") if config else None
-        s.migrations_dir = (m.group(1) if m else "drizzle").lstrip("./") or "drizzle"
+        m = re.search(r"\bout\s*:\s*[\"']([^\"']+)[\"']", _read(root, config) or "") if config else None
+        # from this folder, as rowstile.toml names it: ../shared/drizzle stays outside it
+        s.migrations_dir = posixpath.normpath(m.group(1)) if m else "drizzle"
     elif _read(root, "alembic.ini") is not None or "alembic" in py:
         ini = _read(root, "alembic.ini") or ""
         m = re.search(r"(?m)^script_location\s*=\s*(\S+)", ini)
@@ -148,13 +152,7 @@ def detect(root: str = ".") -> Stack:
         s.found.append("Alembic")
         s.tool, s.migrations_dir = "alembic", f"{loc}/versions"
     else:
-        for d in ("db/migrations", "migrations", "sql/migrations"):
-            if os.path.isdir(os.path.join(root, d)) and any(
-                f.endswith(".sql") for f in os.listdir(os.path.join(root, d))
-            ):
-                s.found.append(f"SQL migrations ({d})")
-                s.tool, s.migrations_dir = "sql", d
-                break
+        sql_migrations(root, s)
 
     user_ts = "async () => (await auth())?.user.id"  # the app's own session: next-auth's auth(), or yours
     if js:
@@ -196,7 +194,7 @@ def detect(root: str = ".") -> Stack:
         if "vitest" in js and "@rowstile/vitest" not in js:
             s.npm_maybe.append("@rowstile/vitest")
         if s.npm:
-            s.clients["ts"] = f"{ts_dir}/authz.gen.ts".lstrip("./")
+            s.clients["ts"] = f"{ts_dir}/authz.gen.ts".removeprefix("./")
             if "next" in js and s.setup:
                 s.setup.insert(0, 'import "@rowstile/next";               // signed-in reads stay out of caches')
     if py and not s.npm:
@@ -212,7 +210,7 @@ def detect(root: str = ".") -> Stack:
         s.pip = "rowstile" + (f"[{','.join(extras)}]" if extras else "")
         s.pip_there = "rowstile" in py
         pkg_dir = next((d for d in ("app", "src", "backend/app") if os.path.isdir(os.path.join(root, d))), ".")
-        s.clients["py"] = f"{pkg_dir}/authz_types.py".lstrip("./")
+        s.clients["py"] = f"{pkg_dir}/authz_types.py".removeprefix("./")
         if "fastapi" in py:
             s.setup_file = _find(root, (".py",), r"=\s*FastAPI\(")
             s.setup = [
@@ -231,6 +229,76 @@ def detect(root: str = ".") -> Stack:
                 "from rowstile.alembic import include_name, include_object",
             ]
     return s
+
+
+# the folders the tools that run SQL files keep them in: dbmate's default, and goose's and the plain ones' usual ones
+SQL_DIRS = ("db/migrations", "migrations", "sql/migrations")
+NAMES = {"goose": "goose", "dbmate": "dbmate", "flyway": "Flyway", "sql": "SQL migrations"}
+
+
+def flyway_config(root: str) -> tuple[str, str] | None:
+    """Flyway's config file in the project folder, and the folder its locations name first (a filesystem: one; ""
+    for none). None when there is no config file."""
+    text = _read(root, "flyway.toml")
+    if text is not None:
+        import tomllib
+
+        try:
+            said = _object(tomllib.loads(text).get("flyway")).get("locations")
+        except tomllib.TOMLDecodeError:
+            said = None
+        name, locations = "flyway.toml", [str(x) for x in said] if isinstance(said, list) else []
+    else:
+        text = _read(root, "flyway.conf")
+        if text is None:
+            return None
+        m = re.search(r"(?m)^\s*flyway\.locations\s*=(.*)$", text)
+        name, locations = "flyway.conf", m.group(1).split(",") if m else []
+    folders = [x.strip().removeprefix("filesystem:") for x in locations if x.strip().startswith("filesystem:")]
+    return name, posixpath.normpath(folders[0]) if folders else ""
+
+
+def sql_tool(root: str, folder: str) -> str:
+    """The tool a folder of SQL migrations is for, from its files: Flyway's names (V1__name.sql), goose's and
+    dbmate's first lines; "other" for names another tool needs (1_name.up.sql, golang-migrate's), which rowstile's
+    files don't have; "sql" for plain files; "" for no SQL file."""
+    names = sorted(f for f in os.listdir(os.path.join(root, folder)) if f.endswith(".sql"))
+    if not names:
+        return ""
+    if any(re.match(r"V\d+(?:[._]\d+)*__", n) for n in names):
+        return "flyway"
+    text = "\n".join(_read(root, f"{folder}/{n}") or "" for n in names[-20:])
+    if re.search(r"(?im)^--\s*\+goose\s+up\b", text):
+        return "goose"
+    if re.search(r"(?m)^--\s*migrate:up\b", text):
+        return "dbmate"
+    if any(n.endswith((".up.sql", ".down.sql")) for n in names):
+        return "other"
+    return "sql"
+
+
+def sql_migrations(root: str, s: Stack) -> None:
+    """The tool of an app whose migrations are SQL files: Flyway's config file says where they are; else the first
+    of the usual folders holding some, its files saying for which tool. Files named for a tool rowstile writes none
+    for leave [migrations] out, and init says so: rowstile migrate would write files that tool doesn't run."""
+    flyway = flyway_config(root)
+    if flyway and flyway[1]:
+        s.found.append(f"Flyway ({flyway[0]})")
+        s.tool, s.migrations_dir = "flyway", flyway[1]
+        return
+    for d in SQL_DIRS:
+        tool = sql_tool(root, d) if os.path.isdir(os.path.join(root, d)) else ""
+        if tool == "other":
+            s.found.append(f"SQL migrations ({d})")
+            s.notes.append(
+                f"{d} holds migrations named <n>_<name>.up.sql, for a tool rowstile writes no files for (it would "
+                "skip rowstile's): rowstile.toml has no [migrations]"
+            )
+            return
+        if tool:
+            s.found.append(f"{NAMES[tool]} ({d})")
+            s.tool, s.migrations_dir = tool, d
+            return
 
 
 def config_lines(s: Stack) -> list[str]:

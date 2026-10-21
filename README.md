@@ -83,8 +83,8 @@ image runs as root unless told otherwise: `-u` makes the files it writes yours. 
 has the rest: pre-releases, the extras, the repository.
 
 From this repository, put `core/cli` on `PATH`. `rowstile init` then finds the stack (Next.js, Prisma,
-Drizzle, FastAPI, SQLAlchemy, Alembic), writes `rowstile.toml` for its migration tool, adds the SDK's
-packages to `package.json` (for Python, names the one to add) and says which line to change.
+Drizzle, FastAPI, SQLAlchemy, Alembic, goose, dbmate, Flyway), writes `rowstile.toml` for its migration tool,
+adds the SDK's packages to `package.json` (for Python, names the one to add) and says which line to change.
 
 ## Docs
 
