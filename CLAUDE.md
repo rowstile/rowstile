@@ -352,10 +352,11 @@ For one suite, start a container and run it inside:
   on a column is checked in its trigger's `WHEN`. Never name `authz_int` in text read at run time as the app role
   (a plpgsql body, dynamic SQL). `tests/own_ids.sql` (`adversarial.sh`) checks that nothing the app role may name
   tells apart two objects the API can't.
-- Refused writes: every `WITH CHECK` is `check OR authz_gen."<table>:<cmd>:refuse"(ROW(t.*)::table)`;
-  the explaining functions are BEGIN ATOMIC in `authz_gen`, run as the app role, answer only for a new row or one
-  the user may select (`authz_int."<table>:seen"`), and must never leak what `authz.explain` wouldn't. Anything that evaluates a policy's
-  `with_check` text on rows (difftest) must drop the refuse call (`without_refusals`).
+- Refused writes: every `WITH CHECK` is `check OR authz_gen."<table>:<cmd>:refuse"((t.*)::table)` (a whole-row
+  value: it names no column, so a column no rule reads can be dropped); the explaining functions are BEGIN ATOMIC in
+  `authz_gen`, run as the app role, answer only for a new row or one the user may select
+  (`authz_int."<table>:seen"`), and must never leak what `authz.explain` wouldn't. Anything that evaluates a
+  policy's `with_check` text on rows (difftest) must drop the refuse call (`without_refusals`).
 - Named tests never run on `apply` (they write); each runs in a subtransaction that always rolls back. New test
   syntax gets a case in `tests/policy_errors.py` and the grammars: `editor/syntaxes/` (TextMate) and
   `editor/tree-sitter-authz/` (Tree-sitter: `grammar.js`, then `npx tree-sitter generate`, a corpus case).
