@@ -16,7 +16,7 @@ devx 141
 docs 11
 governance 223
 hand answers 276
-identity 84
+identity 86
 interleavings 324
 interleavings (read committed) 36
 invariance of the fixed policies 27
@@ -29,7 +29,7 @@ migrations 71
 moves 23
 multi scenario 99
 policy errors 242
-principals 128
+principals 129
 reference 17
 review 58
 scenario 95

@@ -23,6 +23,27 @@ expect_code() {  # $1 label, $2 expected "SQLSTATE: the message's words" (or ok)
   got=${got#ERROR:  }; got=${got:-ok}
   if agrees "$label" "$want" "$got"; then echo "ok    $label"; else echo "FAIL  $label: expected $want, got $got"; fails=$((fails + 1)); fi
 }
+# $1 label, $2 the sign-in, $3 a call that fails after it switched who is signed in, $4 its error ("SQLSTATE: words"):
+# caught at a savepoint, the transaction goes on signed in exactly as before (Postgres undoes what the call set)
+SETTINGS="concat_ws('|', current_setting('authz.user_id', true), current_setting('authz.principal_type', true),
+  current_setting('authz.scopes', true), current_setting('authz.acting_user', true), current_setting('authz.session', true))"
+caught() {
+  local out err
+  out=$(psql -X -q -At -d "$DB" -v VERBOSITY=verbose 2>&1 <<SQL
+BEGIN;
+$2;
+SELECT $SETTINGS AS before \gset
+SAVEPOINT s;
+$3;
+ROLLBACK TO SAVEPOINT s;
+SELECT ($SETTINGS) = :'before' AND authz.uid() IS NOT NULL;
+COMMIT;
+SQL
+)
+  err=$(printf '%s\n' "$out" | grep '^ERROR:  ' | head -n 1)
+  if agrees "$1" "$4" "${err#ERROR:  }" && [ "$(printf '%s\n' "$out" | tail -n 1)" = t ]; then echo "ok    $1"
+  else echo "FAIL  $1: $out"; fails=$((fails + 1)); fi
+}
 AS_SVC="SET authz.user_id = '7'; SET authz.principal_type = 'service';"
 AS_USER="SET authz.user_id = '1'; SET authz.principal_type = '';"
 
@@ -267,6 +288,8 @@ KEY9=$(state -c "$AS_USER" -c "SELECT authz.create_api_key('old', '', NULL, 'ser
 PSQL -c "UPDATE ps.services SET active = false WHERE id = 9" >/dev/null
 check "a key was made while it was active" "ak_" "SELECT left('$KEY9', 3);"
 expect_code "a key of an inactive service doesn't sign in" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$KEY9')"
+caught "... caught at a savepoint: who was signed in before still is" "SELECT authz.act_as('user', '1')" \
+  "SELECT authz.login_key('$KEY9')" "28000: invalid API key"
 KID=$(state -c "$AS_USER" -c "SELECT id FROM authz.list_api_keys('service', '7')")
 PSQL -c "SET ROLE app_user; $AS_USER SELECT authz.revoke_api_key($KID)" >/dev/null
 expect_code "the owner revoked it" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$KEY')"

@@ -324,15 +324,10 @@ BEGIN
     RAISE EXCEPTION 'authz.who_among() signs people in, which a session limited by scopes or view-as may not'
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;
-  BEGIN
-    FOREACH v_u IN ARRAY coalesce(p_users, '{{}}') LOOP
-      PERFORM authz.act_as(p_principal_type, v_u);
-      IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_u; END IF;
-    END LOOP;
-  EXCEPTION WHEN OTHERS THEN
-    PERFORM authz.act_as(v_pt, v_me);
-    RAISE;
-  END;
+  FOREACH v_u IN ARRAY coalesce(p_users, '{{}}') LOOP
+    PERFORM authz.act_as(p_principal_type, v_u);
+    IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_u; END IF;
+  END LOOP;
   PERFORM authz.act_as(v_pt, v_me);
 END $f$;
 {overloads}"""

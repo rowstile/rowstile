@@ -524,17 +524,11 @@ BEGIN
   IF NOT authz_int.may_inspect(p_type, p_id) OR NOT authz_int.scope_perm(p_type, p_perm) THEN
     RAISE EXCEPTION 'you cannot see who has access to % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
-  BEGIN
-    PERFORM set_config('authz.scopes', '', true);   -- each candidate is checked with full rights
-    PERFORM set_config('authz.principal_type', '', true);   -- candidates are users
-  {who_body}
-  EXCEPTION WHEN OTHERS THEN
-    PERFORM set_config('authz.user_id', v_me, true);
-    PERFORM set_config('authz.principal_type', v_pt, true);
-    PERFORM set_config('authz.scopes', v_scopes, true);
-    PERFORM authz_int.sign();
-    RAISE;
-  END;
+  -- (the caller's settings are put back below; an error needs nothing put back: Postgres undoes these settings with
+  -- the transaction, or the savepoint the error is caught at, as for explain, check_invariants and the logins)
+  PERFORM set_config('authz.scopes', '', true);   -- each candidate is checked with full rights
+  PERFORM set_config('authz.principal_type', '', true);   -- candidates are users
+{who_body}
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);
@@ -562,24 +556,16 @@ BEGIN
     RETURN NEXT 'no   you have no access to ' || p_type || ' ' || p_id;
     RETURN;
   END IF;
-  BEGIN
-    IF p_user IS NOT NULL THEN
-      PERFORM set_config('authz.user_id', p_user, true);
-      PERFORM set_config('authz.principal_type', '', true);
-      PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
-      PERFORM authz_int.sign();
-    END IF;
-    v_ok := authz.can(p_type, p_id, p_perm);
-    RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
-      || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
-  {why_body}
-  EXCEPTION WHEN OTHERS THEN
-    PERFORM set_config('authz.user_id', v_me, true);
-    PERFORM set_config('authz.principal_type', v_pt, true);
-    PERFORM set_config('authz.scopes', v_scopes, true);
+  IF p_user IS NOT NULL THEN
+    PERFORM set_config('authz.user_id', p_user, true);
+    PERFORM set_config('authz.principal_type', '', true);
+    PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
     PERFORM authz_int.sign();
-    RAISE;
-  END;
+  END IF;
+  v_ok := authz.can(p_type, p_id, p_perm);
+  RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
+    || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
+{why_body}
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);

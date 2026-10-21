@@ -22,6 +22,27 @@ expect_code() {  # $1 label, $2 expected "SQLSTATE: the message's words" (or ok)
   got=${got#ERROR:  }; got=${got:-ok}
   if agrees "$label" "$want" "$got"; then echo "ok    $label"; else echo "FAIL  $label: expected $want, got $got"; fails=$((fails + 1)); fi
 }
+# $1 label, $2 the sign-in, $3 a call that fails after it switched who is signed in, $4 its error ("SQLSTATE: words"):
+# caught at a savepoint, the transaction goes on signed in exactly as before (Postgres undoes what the call set)
+SETTINGS="concat_ws('|', current_setting('authz.user_id', true), current_setting('authz.principal_type', true),
+  current_setting('authz.scopes', true), current_setting('authz.acting_user', true), current_setting('authz.session', true))"
+caught() {
+  local out err
+  out=$(psql -X -q -At -d "$DB" -v VERBOSITY=verbose 2>&1 <<SQL
+BEGIN;
+$2;
+SELECT $SETTINGS AS before \gset
+SAVEPOINT s;
+$3;
+ROLLBACK TO SAVEPOINT s;
+SELECT ($SETTINGS) = :'before' AND authz.uid() IS NOT NULL;
+COMMIT;
+SQL
+)
+  err=$(printf '%s\n' "$out" | grep '^ERROR:  ' | head -n 1)
+  if agrees "$1" "$4" "${err#ERROR:  }" && [ "$(printf '%s\n' "$out" | tail -n 1)" = t ]; then echo "ok    $1"
+  else echo "FAIL  $1: $out"; fails=$((fails + 1)); fi
+}
 
 python3 compile_policy.py example/docs.authz > /tmp/authz_identity.sql || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null &&
@@ -159,6 +180,8 @@ check "valid since an hour (nbf in the past)" "2" \
   "BEGIN; SELECT authz.login_jwt('$(jwt s3cret-for-tests 2 300 "{\"nbf\": $(( $(date +%s) - 3600 ))}")'); COMMIT;"
 expect_code "a valid token for a user the database doesn't have" "28000: the token names no active user" -c "BEGIN" \
   -c "SELECT authz.login_jwt('$(jwt s3cret-for-tests 999 300 '{}')')"
+caught "... caught at a savepoint: who was signed in before still is" "SELECT authz.act_as('user', '1')" \
+  "SELECT authz.login_jwt('$(jwt s3cret-for-tests 999 300 '{}')')" "28000: the token names no active user"
 # an audience, once the setting names one: a string or a list holding it
 PSQL -c "INSERT INTO authz.settings VALUES ('jwt_audience', 'docs-api')" >/dev/null
 expect_code "a token for no audience, once one is asked" "28000: token for another audience" -c "BEGIN" -c "SELECT authz.login_jwt('$T_OK')"
@@ -222,6 +245,8 @@ expect_code "one view-as at a time" "42501: already viewing as someone" -c "BEGI
   -c "SELECT authz.view_as('3', 'ticket 42')" -c "SELECT authz.view_as('4', 'ticket 43')"
 expect_code "an administrator views as a user the database doesn't have" "P0001: there is no active user 999" -c "RESET ROLE" \
   -c "SELECT authz.view_as('999', 'ticket 44')"
+caught "... caught at a savepoint: who was signed in before still is" "SELECT authz.act_as('user', '1')" \
+  "SELECT authz.view_as('999', 'ticket 44')" "P0001: there is no active user 999"
 
 echo "-- group sync (administrators)"
 check "sync Engineering to alice and carol" "1|0" \

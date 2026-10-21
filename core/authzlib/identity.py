@@ -428,8 +428,6 @@ BEGIN
   PERFORM set_config('authz.acting_user', '', true);
   PERFORM authz_int.sign();
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) THEN
-    PERFORM set_config('authz.user_id', '', true);
-    PERFORM set_config('authz.principal_type', '', true);
     RAISE EXCEPTION 'invalid API key' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703';
   END IF;
   -- when it was last used, to the minute: never waiting on another request with the key (the row they
@@ -519,8 +517,6 @@ BEGIN
   END IF;
   PERFORM authz_int.sign();
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) THEN
-    PERFORM set_config('authz.user_id', '', true);
-    PERFORM set_config('authz.principal_type', '', true);
     RAISE EXCEPTION 'the token names no active user' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703';
   END IF;
   PERFORM authz_int.jit_off();
@@ -531,8 +527,7 @@ END $f$;
 -- SELECT authz.view_as('42', 'ticket 1234'){"" if imp else "  (the user type has no impersonate permission: administrators only)"}
 CREATE FUNCTION authz.view_as(p_user text, p_reason text) RETURNS void
 LANGUAGE plpgsql {DEF} AS $f$
-DECLARE v_me text := nullif(current_setting('authz.user_id', true), '');
-        v_pt text := coalesce(current_setting('authz.principal_type', true), ''); v_actor text := authz_int.actor();
+DECLARE v_actor text := authz_int.actor();
 BEGIN
   PERFORM authz_int.users_only('authz.view_as');
   IF coalesce(current_setting('authz.acting_user', true), '') <> '' THEN
@@ -549,9 +544,6 @@ BEGIN
   PERFORM set_config('authz.principal_type', '', true);
   PERFORM authz_int.sign();
   IF authz.uid() IS NULL THEN
-    PERFORM set_config('authz.user_id', coalesce(v_me, ''), true);
-    PERFORM set_config('authz.principal_type', v_pt, true);
-    PERFORM authz_int.sign();
     RAISE EXCEPTION 'there is no active user %', p_user USING HINT = 'rowstile help AZ708';
   END IF;
   PERFORM set_config('authz.acting_user', coalesce(v_actor, authz_int.caller_role()), true);

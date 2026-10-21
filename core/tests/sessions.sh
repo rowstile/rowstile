@@ -125,8 +125,8 @@ echo "-- ... and when they fail half way, signed in as someone else, who is sign
 # A policy whose condition fails for user 3 (as one reading a broken row would): who, explain, who_among and
 # check_invariants, asked as user 3 after others, fail with its error, in the middle of switching users. Caught (a
 # savepoint, an exception block), the transaction goes on signed in exactly as before: the same settings and
-# signature, the same rows seen and changed. Their own handlers restore it; Postgres also undoes what a failed
-# block set, so this holds of the whole, not of the handlers alone.
+# signature, the same rows seen and changed. They have no handler of their own: Postgres undoes what was set
+# since the savepoint or the block, the settings and the signature among it.
 H=${DB}_half
 dropdb --if-exists "$H" 2>/dev/null; createdb "$H" || exit 1
 PGOPTIONS="-c client_min_messages=warning" psql -X -q -v ON_ERROR_STOP=1 -d "$H" >/dev/null <<'SQL' || exit 1
