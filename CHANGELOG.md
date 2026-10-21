@@ -86,6 +86,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Fixed
 
+- `rowstile why` and Studio listed a change both as the best way to grant a permission and as "could not be
+  tried", when the change grants it but counting what else it gives failed (a condition that fails on another
+  row, say). It is now listed only as not tried, with the database's reason: what else it gives was never counted.
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch

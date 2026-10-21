@@ -1723,6 +1723,10 @@ INSERT INTO cn.desks VALUES (1, 1);
 INSERT INTO cn.chairs VALUES (1, 1), (2, 1);
 -- hall 1 is ann's; its ushers are shared with a team's members or a person, the team first
 INSERT INTO cn.halls VALUES (1, 1);
+-- crate 1 is ann's and weighs 10; crate 2 weighs nothing: who may weigh it can't be worked out (division by zero)
+CREATE TABLE cn.crates (id bigint PRIMARY KEY, owner_id bigint REFERENCES cn.users, weight int NOT NULL);
+GRANT SELECT ON cn.crates TO app_user;
+INSERT INTO cn.crates VALUES (1, 1, 10), (2, NULL, 0);
 """
 WHY_POLICY = """app role app_user
 
@@ -1810,6 +1814,11 @@ type hall = cn.halls
   usher : team#member, user shared
   can share = owner
   can enter = owner or usher
+
+type crate = cn.crates
+  owner : user = owner_id
+  can open  = owner
+  can weigh = owner or {100 / weight > 50}
 """
 
 
@@ -2178,6 +2187,19 @@ def corners(db: str) -> None:
             ),
             said,
         )
+    # a change that grants it, where counting what else it gives fails (weigh can't be listed: crate 2's condition
+    # divides by zero): not offered as a way, since what else it gives wasn't counted, only said as not tried
+    rc, said, ways, _ = why("--as", "user:2", "crate", "1", "open")
+    check(
+        "a change whose other effects can't be counted is said once, as not tried, never as a way that grants it",
+        rc == 0
+        and said.endswith(
+            "open = owner  (line 90)\nno single change that could be tried grants it\n"
+            "could not be tried: set owner_id of crate 1 to 2 (division by zero)\n"
+        )
+        and ways == [],
+        said,
+    )
     # what isn't a permission of the policy (a type it doesn't have, a permission, a relation, one the compiler made
     # for a deny): refused as authz.can and authz.explain refuse it
     for question in (
@@ -2228,6 +2250,15 @@ def corners(db: str) -> None:
                 )
                 for n in (5, 4, 3, 2)
             ],
+            (status, w),
+        )
+        status, w = Client(s).call("/api/why?as=user:2&type=crate&id=1&perm=open")
+        check(
+            "... and a change whose other effects can't be counted only among them, as the command says it",
+            status == 200
+            and w["ways"] == []
+            and [(u["text"], u["error"]) for u in w["untried"]]
+            == [("set owner_id of crate 1 to 2", "division by zero")],
             (status, w),
         )
         status, w = Client(s).call("/api/why?as=user:2&type=room&id=1&perm=enter")
