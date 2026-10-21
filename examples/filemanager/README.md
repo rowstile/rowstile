@@ -13,14 +13,17 @@ that, and CI runs it against the rowstile image built from the same commit.
     docker compose up -d --build        # Postgres + rowstile, RustFS, the app: http://localhost:8000
 
 Create an account on the sign-in page (open sign-up is on by default: `FM_OPEN_SIGNUP=false` turns it
-off). To work on it:
+off). To work on it, the services in Docker and the rest on the host:
 
-    docker compose up -d db storage     # the services only (Postgres on 25432, RustFS on 29000)
-    cd backend && FM_ADMIN_URL=postgresql://postgres:postgres@localhost:25432/filemanager FM_APP_PASSWORD=fm_app \
-      uv run python ../db/migrate.py --client
-    FM_DATABASE_URL=postgresql://fm_app:fm_app@localhost:25432/filemanager FM_S3_ENDPOINT=http://localhost:29000 \
-      uv run uvicorn app.main:app --reload
-    cd frontend && npm install && npm run dev   # http://localhost:5173, /api goes to the backend
+    docker compose up -d --wait db storage      # the services only (Postgres on 25432, RustFS on 29000)
+    export FM_ADMIN_URL=postgresql://postgres:postgres@localhost:25432/filemanager FM_APP_PASSWORD=fm_app
+    export FM_DATABASE_URL=postgresql://fm_app:fm_app@localhost:25432/filemanager FM_S3_ENDPOINT=http://localhost:29000
+    cd backend
+    uv run python ../db/migrate.py --client     # the migrations, as the tables' owner, and the client
+    uv run uvicorn app.main:app --reload        # the API on http://localhost:8000, as fm_app
+
+and in another terminal, `cd frontend && npm ci && npm run dev`: the web app on `http://localhost:5173`, which
+sends `/api` to the backend. The tests, from this folder:
 
     ./test.sh                           # the tests: public surface, client up to date, API against the real services
 
@@ -28,9 +31,9 @@ off). To work on it:
 
 | | |
 |---|---|
-| `db/migrations/` | the tables (`fm.users`, `fm.groups`, `fm.folders`, `fm.files`, ...) and the app role's grants |
+| `db/migrations/` | the tables (`fm.users`, `fm.groups`, `fm.folders`, `fm.files`, ...), the app role's grants, and the policy's migrations, which `rowstile migrate` writes from `db/policy.authz` |
 | `db/policy.authz` | who may do what: folders nest and pass access down unless a folder stops it; sharing with people and groups (nested), with expiry; support staff may break the glass |
-| `db/migrate.py` | runs the migrations, applies the policy when it changed (`rowstile apply`), writes `backend/app/authz_client.py` (`rowstile client py`) |
+| `db/migrate.py` | runs the migrations not run yet, and with `--client` rewrites `backend/app/authz_client.py` (`rowstile client py`) |
 | `backend/app/main.py` | the HTTP API. Every call runs in a transaction signed in as the user (`authz.user_id`), so row-level security decides what it sees and changes; the backend adds no permission checks of its own (one exception: listing and revoking share links, a table of the app's, ask `authz.can` first). At start it refuses a connection that skips row-level security (`authz.connection_check()`) |
 | `backend/app/storage.py` | file contents in RustFS. A download link is signed only after the file's row was read through row-level security, and lives 10 minutes. A browser uploads to a place of its own; confirming the upload moves the bytes to the file's object, so the upload link can't change a confirmed file |
 | `frontend/` | the web app (see Features) |

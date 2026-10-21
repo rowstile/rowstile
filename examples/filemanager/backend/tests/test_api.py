@@ -5,8 +5,12 @@ the authz.* functions decide, end to end.
 """
 
 import os
+import shutil
+import subprocess
+import sys
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, LiteralString, TypedDict
 
 import httpx
@@ -497,6 +501,26 @@ def test_lint_has_nothing_new_to_say() -> None:
 def test_an_unknown_api_path_is_not_the_web_page() -> None:
     r = person("zed").get("/api/no-such-thing")
     assert r.status_code == 404, r.text
+
+
+def test_migrate_runs_outside_this_repository(tmp_path: Path) -> None:
+    """db/migrate.py copied into an app of its own: no rowstile checkout above it, the command the one installed."""
+    db_dir = Path(__file__).resolve().parents[2] / "db"
+    shutil.copytree(db_dir, tmp_path / "db")
+    (tmp_path / "backend" / "app").mkdir(parents=True)
+    (tmp_path / "bin").mkdir()
+    installed = tmp_path / "bin" / "rowstile"
+    installed.write_text('#!/bin/sh\necho "# written by rowstile $*"\n', encoding="utf-8")
+    installed.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+    # each migration was applied already: there is nothing to run, and with --client only the client to write
+    for args, said in (([], ""), (["--client"], "wrote backend/app/authz_client.py\n")):
+        p = subprocess.run(
+            [sys.executable, str(tmp_path / "db" / "migrate.py"), *args], env=env, capture_output=True, text=True
+        )
+        assert (p.returncode, p.stderr, p.stdout) == (0, "", said)
+    client = (tmp_path / "backend" / "app" / "authz_client.py").read_text(encoding="utf-8")
+    assert client == f"# written by rowstile client py {tmp_path / 'db' / 'policy.authz'}\n"
 
 
 def test_the_app_does_not_start_as_the_tables_owner(monkeypatch: pytest.MonkeyPatch) -> None:

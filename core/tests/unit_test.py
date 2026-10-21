@@ -12098,31 +12098,37 @@ echo "failed: ${failed[*]}"
         self.assertNotIn('step "', outside)
 
 
+def run_example_test_script(name: str, uv: int, keep: str = "") -> tuple[int, list[str], str]:
+    """examples/<name>/test.sh run with docker, uv and python3 that only say what was asked of them, and a git that
+    finds the generated client unchanged (a checkout's owner may not be who runs this, as on CI): its exit status,
+    docker's calls (each from its folder, the app's written <app>), and what it printed."""
+    app = os.path.join(os.path.dirname(ROOT), "examples", name)
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "log")
+        for cmd, body in (
+            ("docker", f'echo "$(pwd) docker $*" >> "{log}"'),
+            ("uv", f"exit {uv}"),
+            ("python3", ""),
+            ("git", ""),
+        ):
+            with open(os.path.join(d, cmd), "w", encoding="utf-8") as fh:
+                fh.write(f"#!/bin/sh\n{body}\n")
+            os.chmod(os.path.join(d, cmd), 0o755)
+        env = {**os.environ, "PATH": d + os.pathsep + os.environ["PATH"], "KEEP": keep}
+        p = subprocess.run(["bash", os.path.join(app, "test.sh")], env=env, capture_output=True, text=True, timeout=60)
+        with open(log, encoding="utf-8") as fh:
+            calls = [line.replace(app, "<app>") for line in fh.read().splitlines()]
+    return p.returncode, calls, p.stdout + p.stderr
+
+
 class MessengerTestScript(unittest.TestCase):
     """examples/messenger/test.sh takes its database down however the run ends, a step that stops it early too
-    (KEEP=1 leaves it running). Run here with docker, uv and python3 that only say what was asked of them."""
+    (KEEP=1 leaves it running)."""
 
     UP = ("<app> docker compose down -v", "<app> docker compose up -d --build --wait db")  # a new database, started
 
     def run_script(self, uv: int, keep: str = "") -> tuple[int, list[str], str]:
-        app = os.path.join(os.path.dirname(ROOT), "examples", "messenger")
-        with tempfile.TemporaryDirectory() as d:
-            log = os.path.join(d, "log")
-            for name, body in (
-                ("docker", f'echo "$(pwd) docker $*" >> "{log}"'),
-                ("uv", f"exit {uv}"),
-                ("python3", ""),
-            ):
-                with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
-                    fh.write(f"#!/bin/sh\n{body}\n")
-                os.chmod(os.path.join(d, name), 0o755)
-            env = {**os.environ, "PATH": d + os.pathsep + os.environ["PATH"], "KEEP": keep}
-            p = subprocess.run(
-                ["bash", os.path.join(app, "test.sh")], env=env, capture_output=True, text=True, timeout=60
-            )
-            with open(log, encoding="utf-8") as fh:
-                calls = [line.replace(app, "<app>") for line in fh.read().splitlines()]
-        return p.returncode, calls, p.stdout + p.stderr
+        return run_example_test_script("messenger", uv, keep)
 
     def test_a_run_that_stops_early_takes_the_database_down(self) -> None:
         rc, calls, out = self.run_script(uv=1)  # migrate.py fails: the script exits right after starting the database
@@ -12135,6 +12141,22 @@ class MessengerTestScript(unittest.TestCase):
         self.assertIn("README.md says another number of checks than rowstile test ran ()", out)
         self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down"]), out)
         self.assertEqual(self.run_script(uv=1, keep="1")[:2], (1, [*self.UP]))
+
+
+class FilemanagerTestScript(unittest.TestCase):
+    """examples/filemanager/test.sh takes its database and storage down however the run ends, a step that stops it
+    early too (KEEP=1 leaves them running)."""
+
+    UP = ("<app> docker compose down -v", "<app> docker compose up -d --build --wait db storage")
+
+    def test_a_run_that_stops_early_takes_the_services_down(self) -> None:
+        rc, calls, out = run_example_test_script("filemanager", uv=1)  # migrate.py fails: it exits right there
+        self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down"]), out)
+
+    def test_a_run_to_its_end_takes_them_down_and_keep_leaves_them(self) -> None:
+        rc, calls, out = run_example_test_script("filemanager", uv=0)  # every step passes
+        self.assertEqual((rc, calls), (0, [*self.UP, "<app> docker compose down"]), out)
+        self.assertEqual(run_example_test_script("filemanager", uv=1, keep="1")[:2], (1, [*self.UP]))
 
 
 class PreviousRelease(unittest.TestCase):
