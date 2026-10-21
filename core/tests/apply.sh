@@ -866,5 +866,27 @@ case "$out" in *"tags_rules.authz: applied"*"app.tags has no rules any more, and
   ok "re-applying warns of a table that lost the only rule there was";; *) bad "a table that lost the only rule" "$out";; esac
 dropdb "$KDB"
 
+echo "-- shares for subjects a policy no longer shares with"
+# a share's subject is the policy's word for it (user, team#member, user:*, anyone): authz.share asks for it, and
+# applying counts the shares no shared relation takes any more
+SDB="${DB}_shared"
+fresh "$SDB"
+quiet -d "$SDB" -f example/app_schema.sql >/dev/null || exit 1
+sed 's/^\(  viewer      : user, team#member, org#member\) shared/\1, user:*, anyone shared/' example/docs.authz > "$T/wide.authz"
+SQ() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$SDB" -c "SET authz.user_id = '5'" "$@"; }
+out=$(python3 cli/rowstile_cli.py --db "dbname=$SDB" apply "$T/wide.authz" 2>&1) &&
+  SQ -c "SELECT authz.share('folder', '1', 'viewer', 'user', '2')" -c "SELECT authz.share('folder', '1', 'viewer', 'team', '10', 'member')" \
+     -c "SELECT authz.share('folder', '1', 'viewer', 'user', '*')" -c "SELECT authz.share('folder', '1', 'viewer', 'anyone', '')" >/dev/null ||
+  bad "sharing with user:* and anyone" "$out"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$SDB" apply example/docs.authz 2>&1)
+[ "$out" = "WARNING: 2 shares are for relations this policy does not declare as shared; they are kept, but grant nothing
+example/docs.authz: applied" ] && ok "applying warns of the shares with user:* and anyone a policy no longer takes, not of a user's or a team's" ||
+  bad "shares no relation takes" "$out"
+refused() { SQ -c "SELECT authz.share('folder', '1', 'viewer', $1)" 2>&1 | head -1; }
+got="$(refused "'user', '*'") / $(refused "'anyone', ''") / $(refused "'team', '10', 'admin'")"
+[ "$got" = "ERROR:  the policy does not allow sharing folder.viewer with user:* / ERROR:  the policy does not allow sharing folder.viewer with anyone / ERROR:  the policy does not allow sharing folder.viewer with team#admin" ] &&
+  ok "authz.share names the subject it refuses as the policy would: user:*, anyone, team#admin" || bad "a refused subject's name" "$got"
+dropdb "$SDB"
+
 rm -rf "$T"
 if [ $fails -eq 0 ]; then echo "apply: all passed"; else echo "apply: $fails failed"; exit 1; fi
