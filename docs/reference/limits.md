@@ -149,7 +149,8 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
 
 ## What a 0.x release promises
 
-rowstile is a preview until 1.0. A minor release (0.1 to 0.2) may change the policy language, the `authz.*`
+rowstile 0.1.0 is in beta: complete enough to use before it is released, and it may still change where using
+it shows a need. Until 1.0, a minor release (0.1 to 0.2) may change the policy language, the `authz.*`
 functions, the SDKs, the error codes and the file formats (`rowstile.toml`, the lock file). What it does keep:
 
 - **Each release upgrades from the one before it**: a database applied by 0.1 is migrated by 0.2, and the
@@ -158,6 +159,7 @@ functions, the SDKs, the error codes and the file formats (`rowstile.toml`, the 
 - **The changelog says what changed**, and its **Upgrading** says what to do: a policy line to rewrite, a call
   to rename, a migration to make.
 - **A patch (0.1.1) only fixes.** <!-- unchecked: how releases are made (RELEASING.md), which no test can hold --> Nothing to do when upgrading.
-- **Security fixes go into the latest release only** ([SECURITY.md](../../SECURITY.md)). <!-- unchecked: how fixes are released (SECURITY.md), which no test can hold -->
+- **Security fixes go into the newest version only**: the next pre-release while no final release exists, a
+  patch after that ([SECURITY.md](../../SECURITY.md)). <!-- unchecked: how fixes are released (SECURITY.md), which no test can hold -->
 
 What 1.0 promises is decided before 1.0, and this section is replaced by it.

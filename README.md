@@ -58,12 +58,13 @@ It doesn't when:
 - a browser reads the tables through Supabase's Data API (its roles are not the app role: a backend has to
   sign in);
 - one tree takes many moves and links a second (they wait for each other);
-- you need an outside audit or a vendor behind it today: rowstile is a 0.x preview with one maintainer.
+- you need an outside audit or a vendor behind it today: rowstile is in beta, with one maintainer.
 
 ## Status
 
-rowstile is a 0.x preview. Until 1.0, a minor release may change the language, the `authz.*` functions, the
-SDKs and the file formats; each release still upgrades a database from the one before it, and the changelog
+rowstile 0.1.0 is in beta: complete enough to use before it is released, and it may still change where using
+it shows a need. Until 1.0, a minor release may change the language, the `authz.*` functions, the SDKs and the
+file formats; from the beta on, each release upgrades a database from the one before it, and the changelog
 says what to do. [What a 0.x release promises](docs/reference/limits.md#what-a-0x-release-promises).
 
 rowstile was called rowfence until 0.1.0-alpha.1; another product had the name first. The
@@ -71,7 +72,7 @@ rowstile was called rowfence until 0.1.0-alpha.1; another product had the name f
 
 ## Installing
 
-Only an alpha is published so far, 0.1.0-alpha.9: ask for it.
+Only pre-releases are published so far: ask for the newest.
 
     npm i -D rowstile@next         # the command with its own Python: a TypeScript app needs none
     pip install --pre rowstile     # the command and the Python SDK: rowstile[fastapi], [sqlalchemy], ...
@@ -79,7 +80,7 @@ Only an alpha is published so far, 0.1.0-alpha.9: ask for it.
 
 `npm` brings the Python for Linux (glibc and musl, x64 and arm64), macOS (x64 and arm64) and Windows x64. The
 image runs as root unless told otherwise: `-u` makes the files it writes yours. [Installing](docs/installing.md)
-has the rest: alphas, betas and release candidates, the extras, the repository.
+has the rest: pre-releases, the extras, the repository.
 
 From this repository, put `core/cli` on `PATH`. `rowstile init` then finds the stack (Next.js, Prisma,
 Drizzle, FastAPI, SQLAlchemy, Alembic), writes `rowstile.toml` for its migration tool, adds the SDK's

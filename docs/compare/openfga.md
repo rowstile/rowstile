@@ -152,7 +152,7 @@ MySQL and SQLite as storage engines, beside one in memory. rowstile leaves SQL i
 - **One type takes many structural writes a second.** In rowstile, moves and links in a tree wait for each
   other ([Speed and limits](../reference/limits.md)).
 - **You need an organisation behind it.** OpenFGA is "a Cloud Native Computing Foundation incubating
-  project" ([openfga.dev](https://openfga.dev/)). rowstile is a 0.x preview with one maintainer, and nobody
+  project" ([openfga.dev](https://openfga.dev/)). rowstile is in beta, with one maintainer, and nobody
   outside has audited it ([how it is checked](../how-it-is-checked.md)).
 
 ## Try the same model

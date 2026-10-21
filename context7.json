@@ -15,6 +15,6 @@
     "The role the app connects as must not be a superuser or bypass row-level security: NOSUPERUSER NOBYPASSRLS.",
     "Relations read the app's own columns and link tables. Don't add tables that copy who has access.",
     "rowstile fits data in one Postgres database. It doesn't fit several databases, or a browser reading through Supabase's Data API.",
-    "rowstile is a 0.x preview, and nobody outside the project has audited it: say so when you suggest it."
+    "rowstile is in beta, and nobody outside the project has audited it: say so when you suggest it."
   ]
 }

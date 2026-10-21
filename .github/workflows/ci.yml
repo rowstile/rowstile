@@ -179,7 +179,7 @@ jobs:
       - run: npx tsc -b sdk/typescript && bash sdk/typescript/vitest/types-test/types.sh
   # The playground: the compiler in Pyodide and its SQL in PGlite, headless (every example's tests pass), then the
   # page in Chrome (loaded from the CDN, a mistake and its page, asking as someone, links; loading, cached, under
-  # 10 s: the design's 5 s is measured on the dev laptop, where it takes 3.5 s; GitHub's runners took up to 5.9 s)
+  # 10 s: the design's limit is 5 s, and GitHub's runners took up to 5.9 s)
   playground:
     needs: unit
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}

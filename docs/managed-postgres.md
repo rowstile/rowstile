@@ -3,7 +3,7 @@
 rowstile needs no extension and no superuser, so it runs on a managed Postgres as it does on your own. This
 page is what we found running it on Neon and Supabase: the command, both SDKs' conformance suites (the
 [FastAPI](stacks/fastapi.md) and [Next.js](stacks/nextjs.md) apps), direct and through each service's pooler.
-The other services (RDS, Cloud SQL, Azure) have not been tried yet; the first part applies to them too.
+We haven't run it on the other services (RDS, Cloud SQL, Azure); the first part applies to them too.
 
 ## On any service
 

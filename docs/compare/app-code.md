@@ -74,7 +74,7 @@ rules app.notes
 - **A rule change is a migration**, not a deploy of code alone.
 - **Rules about something other than rows** (who may call an endpoint that touches no table, a rate limit, a
   feature flag) stay in app code. rowstile doesn't replace those checks.
-- **A new tool**, in a 0.x preview with one maintainer, which nobody outside has audited
+- **A new tool**, in beta, with one maintainer, which nobody outside has audited
   ([how it is checked](../how-it-is-checked.md)).
 
 ## When checks in app code are the better choice

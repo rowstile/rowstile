@@ -21,7 +21,7 @@ in CI already there.
 ```sh
 # Prisma 7 and its Postgres adapter, if the app doesn't have them yet
 npm install @prisma/client@7 @prisma/adapter-pg@7 pg && npm install --save-dev prisma@7
-# @next on each while only an alpha is published: a plain install gets an older one
+# @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
 npm install @rowstile/client@next @rowstile/prisma@next @rowstile/next@next @rowstile/react@next
 npm install --save-dev rowstile@next @rowstile/vitest@next
 npx rowstile init        # a first policy from your tables, a test file, rowstile.toml

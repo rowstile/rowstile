@@ -64,9 +64,13 @@ _Avoid_: API (alone)
 The name of one kind of mistake (`AZ201`), at the end of its message, with a page saying what it means and how to fix it.
 _Avoid_: error number, error ID
 
+**Beta**:
+A version complete enough to use before it is released (`0.1.0-beta.1`): it may still change where using it shows a need. Said of a release, never of a feature.
+_Avoid_: preview (for a release)
+
 **Preview**:
-Shipped and tested, but outside the public surface; it may change in any release.
-_Avoid_: beta, experimental
+Shipped and tested, but outside the public surface; it may change in any release. Said of a feature, never of a release.
+_Avoid_: beta (a release's stage), experimental
 
 ### Deployment
 

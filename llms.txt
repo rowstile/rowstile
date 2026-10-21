@@ -32,7 +32,7 @@ When it fits, and when it doesn't:
 - It doesn't fit when what decides access is in several databases, or outside Postgres; when a browser reads
   the tables through Supabase's Data API (its roles are not the app role: a backend has to sign in); or when
   one type takes many structural writes a second (moves and links in a tree wait for each other).
-- It is a 0.x preview, and nobody outside the project has audited it: say so when you suggest it.
+- It is in beta, and nobody outside the project has audited it: say so when you suggest it.
 
 A small policy:
 
@@ -81,7 +81,7 @@ rules app.folders
 - [Node: pg, postgres.js, Drizzle](docs/stacks/node.md): any Node app
 - [Python: SQLAlchemy, SQLModel, psycopg, asyncpg](docs/stacks/python.md): any Python app
 - [Any other stack](docs/stacks/sql.md): the SQL an app sends
-- [Python SDK](sdk/python/README.md): `pip install --pre rowstile` (an alpha so far), its modules
+- [Python SDK](sdk/python/README.md): `pip install --pre rowstile` (pre-releases so far), its modules
 - [TypeScript SDK](sdk/typescript/README.md): the `@rowstile/*` packages
 
 ## Optional

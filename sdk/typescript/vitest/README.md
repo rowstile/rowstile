@@ -10,7 +10,7 @@ and `toBeNotFound` say what a write should have been. `asUser(who, fn)` runs cod
 that write don't meet each other.
 
 ```sh
-# @next on each while only an alpha is published: a plain install gets an older one
+# @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
 npm install --save-dev @rowstile/vitest@next rowstile@next
 ```
 
@@ -62,4 +62,4 @@ The other packages:
 | [`@rowstile/next`](https://www.npmjs.com/package/@rowstile/next) | Next.js: route handlers, server actions, caches |
 | [`@rowstile/react`](https://www.npmjs.com/package/@rowstile/react) | React: hooks and a share dialog |
 
-rowstile is a 0.x preview: names may still change before 1.0. Apache-2.0.
+rowstile is in beta: names may still change before 1.0. Apache-2.0.

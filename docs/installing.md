@@ -6,16 +6,16 @@ the command writes migrations, and your migration tool runs them as the owner of
 
 ## The command
 
-Only an alpha is published so far, 0.1.0-alpha.9. Ask for it by name:
+Only pre-releases are published so far. Ask for the newest:
 
     npm i -D rowstile@next         # the command with its own Python: a TypeScript app needs none
     pip install --pre rowstile     # the command and the Python SDK: rowstile[fastapi], [sqlalchemy], ...
     docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-alpha.9 migrate
 
 Once 0.1.0 is out, the plain `npm i -D rowstile`, `pip install rowstile` and `ghcr.io/rowstile/rowstile` get
-it. Until then the two registries differ: a plain `pip install rowstile` takes the newest alpha (pip takes a
-version that isn't final when no final one exists), and a plain `npm i rowstile` may get an older alpha (npm's
-`latest` doesn't move with versions that aren't final). The lines above get the newest on both.
+it. Until then a plain `npm i -D rowstile` and `pip install rowstile` get the newest pre-release too (npm's
+`latest` follows `next` while no final release exists, and pip takes a version that isn't final when no final
+one exists), but the image has no `latest` tag: name its version.
 
 - **npm**: the package brings a Python of its own, built for your machine: Linux (glibc and musl, x64 and
   arm64), macOS (x64 and arm64) and Windows x64. Run it as `npx rowstile`, or from a script in `package.json`.
@@ -48,8 +48,8 @@ Each package says where it was built, signed through Sigstore by the release wor
 its provenance on the package's page (`npm audit signatures` checks it), and PyPI its attestations. The files
 on a [GitHub release](https://github.com/rowstile/rowstile/releases) (the wheel, the sdist, the launcher, the
 editor extension) come with `rowstile-<version>.intoto.jsonl`, from 0.1.0-alpha.9 on.
-The GitHub CLI checks a file against it (the wheel's name writes the version as Python does: `0.1.0a9` for
-`0.1.0-alpha.9`):
+The GitHub CLI checks a file against it (the wheel's name writes the version as Python does: `0.1.0b1` for
+`0.1.0-beta.1`):
 
     gh attestation verify rowstile-<version>-py3-none-any.whl --repo rowstile/rowstile
 

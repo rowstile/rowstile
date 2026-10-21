@@ -30,5 +30,6 @@ npx serve dist                         # or any static host
 ```
 
 Pyodide and PGlite load from jsDelivr, at the versions `package.json` pins (`test.mjs` checks the page asks for
-the same ones), and mermaid (the graph) at the one `playground.mjs` names. Loading takes about 3.5 s once they are cached, measured in headless
-Chrome on the development laptop (the design's limit is 5 s); the first time also downloads about 12 MB.
+the same ones), and mermaid (the graph) at the one `playground.mjs` names. Once they are cached, `browser_test.mjs` asks that the
+page load within 5 s in headless Chrome (CI's runners, which are slower, within 10 s); the first time also
+downloads about 12 MB.
