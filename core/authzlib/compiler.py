@@ -295,10 +295,8 @@ class Core:
         self.recursive: dict[Name, SccKey] = {}  # (type, perm) -> scc key
         self.scc_members: dict[SccKey, list[Name]] = {}  # scc key -> [(type, perm)]
         self.denies: dict[Name, list[Expr]] = {}  # (type, perm) with a deny -> its `not` items
-        self._invalid = "NULL"  # what dispatch_type's functions return for an id that isn't one
         # the compiled policy in parts, (mode, name, SQL): what a migration does with each (output.compile)
         self.parts: list[tuple[str, str, str]] = []
-        self._list_cases = ""  # authz.list's branches (output.list_cases_sql)
         if "user" not in self.types:
             fail(1, "declare the user type, e.g.: type user = app.users", "AZ202")
         for t in self.types.values():
@@ -1272,14 +1270,16 @@ class Core:
         types = ["text", *self.id_types()]
         return [(o, s) for o in types for s in types if (o, s) != ("text", "text")]
 
-    def dispatch_type(self, per_type: Callable[[Type], str], missing_type: str = NO_SUCH_TYPE) -> str:
-        """CASE over types, with p_id checked and converted to the type's key in v_<pktype>."""
+    def dispatch_type(self, per_type: Callable[[Type], str], invalid: str, missing_type: str = NO_SUCH_TYPE) -> str:
+        """CASE over types, with p_id checked and converted to the type's key in v_<pktype>. invalid: the statement
+        that returns for an id that isn't one of the type's (`RETURN false;`, or `RETURN;` in a function that
+        returns a set)."""
         branches = []
         for t in self.types.values():
             body = per_type(t)
             branches.append(
                 f"    WHEN {lit(t.name)} THEN\n"
-                f"      IF NOT pg_catalog.pg_input_is_valid(p_id, {lit(t.keytype)}) THEN RETURN {self._invalid}; END IF;\n"
+                f"      IF NOT pg_catalog.pg_input_is_valid(p_id, {lit(t.keytype)}) THEN {invalid} END IF;\n"
                 f"      v_{t.pktype} := p_id::{t.keytype}{'::text' if t.composite else ''};\n{body}"
             )
         return (
