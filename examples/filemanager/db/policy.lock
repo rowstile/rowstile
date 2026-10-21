@@ -69,6 +69,7 @@
 > rules fm.group_members: update group_id after : manage
 > rules fm.group_members: update id, user_id : nobody
 > rules fm.group_members: delete : manage or person
+> rules fm.group_members: cascade from fm.users
 
 always | b702b01c2993
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
@@ -429,14 +430,14 @@ rls "fm"."groups" | 406eec0a030a
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | f7d2efdcef9f
-step cascades | f5a2f66fb7bc
+step cascades | 4b3dc6c5499f
 step grant_api | 704aab13a2b7
 step grant_functions | 74383e5368be
 step grant_views | f5e06792b144
 step mask_privileges | 0f76f9d7c5d3
 step share_indexes | 06f2a06178e6
 step sweep | a91797a846f7
-step tables | 18cd4343afd0
+step tables | 88fb2d1d9f4b
 table authz_gen.policy_lines | b376721cc044 shape=dcfedc96
 table authz_int."folder__parent__tree" | 533ed647de51 shape=533ed647 tree=folder__parent__tree
 table authz_int."group__parent__tree" | f4724b0f333d shape=f4724b0f tree=group__parent__tree
