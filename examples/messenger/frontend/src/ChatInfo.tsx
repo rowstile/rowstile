@@ -43,7 +43,7 @@ export function ChatInfo({ chat, me, onChanged, onClose, onLeft }: Props) {
         </section>}
 
         {chat.kind === "group" && <Bots chat={chat} manage={manage} run={run} />}
-        {chat.perms.includes("invite") && <InviteLink chatId={chat.id} />}
+        {chat.perms.includes("invite") && <InviteLink chatId={chat.id} run={run} />}
 
         {error && <div className="refusal"><span>{error}</span>{why.length > 0 && <pre>{why.join("\n")}</pre>}</div>}
 
@@ -86,7 +86,9 @@ function AddMember({ onAdd }: { onAdd: (userId: string) => void }) {
   const [phone, setPhone] = useState(""), [note, setNote] = useState("");
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    const people = await api.findPerson(phone);
+    let people: User[];
+    try { people = await api.findPerson(phone); }
+    catch (err) { setNote(err instanceof Error ? err.message : String(err)); return; }
     if (people.length === 0) { setNote("Nobody with that number"); return; }
     setNote(""); setPhone(""); onAdd(people[0]!.id);
   };
@@ -117,7 +119,8 @@ function Bots({ chat, manage, run }: { chat: Chat; manage: boolean; run: (fn: ()
   );
 }
 
-function InviteLink({ chatId }: { chatId: number }) {
+/** Making a link and turning one off go through run: a refusal shows with the others, its why below it. */
+function InviteLink({ chatId, run }: { chatId: number; run: (fn: () => Promise<unknown>) => void }) {
   const [link, setLink] = useState("");
   const [invites, setInvites] = useState<Invite[]>([]);
   const load = () => api.invites(chatId).then(setInvites, () => setInvites([]));
@@ -127,13 +130,14 @@ function InviteLink({ chatId }: { chatId: number }) {
       <h3>Invite link</h3>
       {link ? <><input readOnly value={link} onFocus={(e) => e.target.select()} />
                 <p className="hint">Anyone with this link can join until it expires: the list below says when. Only a hash of it is stored.</p></>
-        : <button className="link" onClick={async () => { setLink(`${location.origin}/join/${(await api.invite(chatId)).token}`); load(); }}>
+        : <button className="link" onClick={() => run(async () => {
+            setLink(`${location.origin}/join/${(await api.invite(chatId)).token}?chat=${chatId}`); load(); })}>
             Create an invite link</button>}
       <ul className="people">
         {invites.map((i) => (
           <li key={i.id}><div className="grow hint">Link made by {i.created_by ?? "someone"} on {new Date(i.created_at).toLocaleDateString()}
               {i.expires_at ? `, until ${new Date(i.expires_at).toLocaleDateString()}` : ""}</div>
-            <button className="link danger" onClick={async () => { await api.turnOffInvite(chatId, i.id); load(); }}>turn off</button></li>))}
+            <button className="link danger" onClick={() => run(async () => { await api.turnOffInvite(chatId, i.id); load(); })}>turn off</button></li>))}
       </ul>
     </section>
   );

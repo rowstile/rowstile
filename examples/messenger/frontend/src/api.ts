@@ -4,13 +4,13 @@
 export type User = { id: string; phone: string; name: string; about: string };
 
 export type ChatSummary = {
-  id: number; kind: "direct" | "group"; name: string; admins_only: boolean; role: string;
+  id: number; kind: "direct" | "group"; name: string | null; admins_only: boolean; role: string;
   last_read_seq: number; last_seq: number | null; last_body: string | null; last_deleted: boolean | null;
   last_at: string | null; last_sender: string | null; last_sender_id: string | null; unread: number;
 };
 
 export type Member = { user_id: string; role: "owner" | "admin" | "member"; name: string; phone: string; about: string;
-  joined_at: string; last_read_seq: number };
+  last_read_seq: number };
 
 export type Chat = {
   id: number; kind: "direct" | "group"; title: string; about: string; admins_only: boolean; last_seq: number;
@@ -83,8 +83,10 @@ export const api = {
   invite: (id: number) => post<{ token: string; expires_at: string }>(`/api/chats/${id}/invite`),
   invites: (id: number) => get<Invite[]>(`/api/chats/${id}/invites`),
   turnOffInvite: (id: number, linkId: string) => del(`/api/chats/${id}/invites/${linkId}`),
-  joinPreview: (token: string) => get<{ id: number; title: string; about: string; member: boolean }>(`/api/join/${token}`),
-  join: (token: string) => post<{ id: number }>(`/api/join/${token}`),
+  // an invite link is /join/<token>?chat=<id>: the token lets you in; the chat answers for its admins, who need none
+  joinPreview: (token: string, chat: string | null) =>
+    get<{ id: number; title: string; about: string; member: boolean }>(`/api/join/${token}${chat ? `?chat=${chat}` : ""}`),
+  join: (token: string, chat: string | null) => post<{ id: number }>(`/api/join/${token}${chat ? `?chat=${chat}` : ""}`),
 
   blocks: () => get<User[]>("/api/blocks"),
   block: (userId: string) => post("/api/blocks", { user_id: userId }),

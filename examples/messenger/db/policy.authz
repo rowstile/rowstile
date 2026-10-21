@@ -95,7 +95,7 @@ rules ms.members
   update role after                              : {role <> 'owner'}                              -- nor makes another
   update last_read_seq                           : person
   update chat_id, user_id, joined_at, joined_seq : nobody
-  delete                                         : person or (chat.manage and {role <> 'owner'})  -- leave, or be removed
+  delete                                         : (person or chat.manage) and {role <> 'owner'}  -- leave, or be removed; never the owner
   -- a group deleted by its owner takes every membership in it; an account deleted, its memberships
   cascade from ms.chats
   cascade from ms.users
@@ -107,6 +107,7 @@ rules ms.messages
   update body after                                  : (edit and {not deleted}) or {deleted and body = ''}
   update deleted                                     : remove
   update deleted after                               : {deleted}  -- no undelete
+  update edited_at                                   : edit       -- marked edited only while it may be edited
   update chat_id, seq, sender_id, bot_id, created_at : nobody
   delete                                             : nobody     -- messages are deleted for everyone, not removed
   -- a group deleted by its owner takes its messages, which no rule removes; a deleted account's or bot's

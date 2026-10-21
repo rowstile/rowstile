@@ -410,6 +410,18 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   repository (it looked for the repository's command as it started, and stopped with a `StopIteration`): it
   needs the command only for `--client`, and outside the repository it runs the one installed. The app's image
   no longer copies the command, and `test.sh` takes the database down when a step stops the run early.
+- The messenger example's rules: a group's owner could leave it through the API (the web app hid the button),
+  and the group, without an owner, could never be deleted; the owner now stays, and deletes the group instead.
+  Marking a message "edited" without editing it is refused: only the sender, within the 15 minutes, marks it.
+  An admin who opened their own group's invite link was told it didn't work: the link the web app makes names
+  its chat (`/join/<token>?chat=7`), which answers for the chat's admins.
+- The messenger example's routes: a negative `limit`, or a number past bigint's range, answered 500; they answer
+  422 or 400. The chat list read every unread message to count it, each checked by the read rule's function
+  (5.5 s for 100,000 unread messages); it counts them from the messages' numbers. A direct chat whose other person
+  left disappeared from the list. A button whose request failed (signing out, joining with a link, invite links,
+  earlier messages, "why?", the settings) said nothing; it says why. Its database is published on 127.0.0.1
+  only, and its migrations, policy and tests run as the tables' owner (`ms_owner`, `db/owner.sql`), not the
+  superuser.
 - `rowstile review` flags more of what widens access. A rule that reads a relation's permission itself
   (`insert : folder.edit`) changes through that relation, as `select : view` does: repointing `file.folder` to
   another column now flags who may insert. A `shared if` removed or changed, and a caveat changed, are flagged.

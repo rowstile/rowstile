@@ -63,8 +63,13 @@ export function SettingsDialog({ me, onMe, onClose }: { me: User; onMe: (u: User
   const [name, setName] = useState(me.name), [about, setAbout] = useState(me.about);
   const [bots, setBots] = useState<Bot[]>([]), [blocked, setBlocked] = useState<User[]>([]);
   const [botName, setBotName] = useState(""), [newKey, setNewKey] = useState<Bot | null>(null);
-  const load = () => { api.bots().then(setBots); api.blocks().then(setBlocked); };
-  useEffect(load, []);
+  const [error, setError] = useState("");
+  const guard = async (fn: () => Promise<void>) => {
+    setError("");
+    try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+  const load = () => guard(async () => { const [b, u] = await Promise.all([api.bots(), api.blocks()]); setBots(b); setBlocked(u); });
+  useEffect(() => { load(); }, []);
   return (
     <Modal title="Settings" onClose={onClose}>
       <section>
@@ -72,14 +77,14 @@ export function SettingsDialog({ me, onMe, onClose }: { me: User; onMe: (u: User
         <input value={name} onChange={(e) => setName(e.target.value)} />
         <input value={about} onChange={(e) => setAbout(e.target.value)} />
         <p className="hint">{me.phone}</p>
-        {(name !== me.name || about !== me.about) && <button onClick={async () => onMe(await api.editProfile({ name, about }))}>Save</button>}
+        {(name !== me.name || about !== me.about) && <button onClick={() => guard(async () => onMe(await api.editProfile({ name, about })))}>Save</button>}
       </section>
       <section>
         <h3>Bots</h3>
         <p className="hint">A bot signs in with its own API key and posts in the groups you add it to, as itself.</p>
         <ul className="members">{bots.map((b) => <li key={b.id}><div className="grow">🤖 {b.name}</div>
           <span className="hint">#{b.id}{b.active ? "" : " (off)"}</span></li>)}</ul>
-        <form className="inline" onSubmit={async (e) => { e.preventDefault(); setNewKey(await api.newBot(botName)); setBotName(""); load(); }}>
+        <form className="inline" onSubmit={(e) => { e.preventDefault(); guard(async () => { setNewKey(await api.newBot(botName)); setBotName(""); await load(); }); }}>
           <input placeholder="New bot's name" value={botName} onChange={(e) => setBotName(e.target.value)} />
           <button type="submit" disabled={!botName.trim()}>Create</button>
         </form>
@@ -95,8 +100,9 @@ export function SettingsDialog({ me, onMe, onClose }: { me: User; onMe: (u: User
         <h3>Blocked</h3>
         {blocked.length === 0 && <p className="hint">Nobody.</p>}
         <ul className="members">{blocked.map((u) => <li key={u.id}><div className="grow">{u.name} <span className="hint">{u.phone}</span></div>
-          <button className="link" onClick={async () => { await api.unblock(u.id); load(); }}>unblock</button></li>)}</ul>
+          <button className="link" onClick={() => guard(async () => { await api.unblock(u.id); await load(); })}>unblock</button></li>)}</ul>
       </section>
+      {error && <p className="error">{error}</p>}
     </Modal>
   );
 }

@@ -173,6 +173,9 @@ def test_group_roles() -> None:
     assert ben.delete(f"/api/chats/{g}/members/{cat.me['id']}").status_code == 204
     assert bodies(cat, g) == 404
     assert dan.delete(f"/api/chats/{g}/members/{dan.me['id']}").status_code == 204
+    # the owner doesn't leave either: a group without one could never be deleted. They delete it instead
+    r = ann.delete(f"/api/chats/{g}/members/{ann.me['id']}")
+    assert r.status_code == 403 and "the owner stays" in r.json()["detail"] and r.json()["why"], r.text
     # only the owner deletes the group
     assert ben.delete(f"/api/chats/{g}").status_code == 403
     assert ann.delete(f"/api/chats/{g}").status_code == 204
@@ -186,6 +189,8 @@ def test_new_members_read_from_when_they_joined() -> None:
     say(ben, g, "welcome Cat")
     assert bodies(cat, g) == ["welcome Cat"]
     assert bodies(ben, g) == ["before Cat", "welcome Cat"]
+    # what was said before she joined is not unread for her either
+    assert [c["unread"] for c in cat.get("/api/chats").json()] == [1]
 
 
 def test_a_clock_that_steps_back_refuses_nothing() -> None:
@@ -286,7 +291,6 @@ def test_editing_and_deleting() -> None:
     assert ann.patch(f"/api/chats/{g}/messages/{seq}", json={"body": "my plan"}).status_code == 403
     assert bodies(ann, g) == ["the plan"]
     # after 15 minutes, no more editing
-    admin("UPDATE ms.members SET joined_at = joined_at - interval '1 day' WHERE chat_id = %s", (g,))
     admin("UPDATE ms.messages SET created_at = now() - interval '1 hour' WHERE chat_id = %s AND seq = %s", (g, seq))
     r = ben.patch(f"/api/chats/{g}/messages/{seq}", json={"body": "the real plan"})
     assert r.status_code == 403 and r.json()["why"]
@@ -303,6 +307,13 @@ def test_invite_links() -> None:
     g = group(ann, ben, title="Book club")
     assert ben.post(f"/api/chats/{g}/invite").status_code == 403  # not an admin
     token = ann.post(f"/api/chats/{g}/invite").json()["token"]
+    # its maker, an admin, may join without it: the chat the link names (?chat=, as the web app writes it) answers
+    assert ann.get(f"/api/join/{token}").status_code == 404
+    mine = ann.get(f"/api/join/{token}", params={"chat": g}).json()
+    assert (mine["id"], mine["title"], mine["member"]) == (g, "Book club", True)
+    assert ann.post(f"/api/join/{token}", params={"chat": g}).json() == {"id": g}
+    assert ben.get(f"/api/join/{token}").json()["member"] is True  # a member who isn't an admin needs no name
+    assert cat.get("/api/join/not-a-token", params={"chat": g}).status_code == 404  # it names a chat, nothing more
     assert cat.get(f"/api/join/{token}").json()["title"] == "Book club"  # the link shows the group...
     assert bodies(cat, g) == 404  # ...not its messages
     assert cat.get("/api/join/not-a-token").status_code == 404
@@ -333,6 +344,83 @@ def test_read_receipts() -> None:
     assert ben.get("/api/chats").json()[0]["unread"] == 0
     seen = {m["name"]: m["last_read_seq"] for m in ann.get(f"/api/chats/{chat}").json()["members"]}
     assert seen["Ben"] == seq
+
+
+def test_the_chat_list_counts_unread_without_reading_them() -> None:
+    """Unread is a difference of numbers: the chat list reads one message a chat (the last), not every unread one,
+    each of which the read rule would check with a call of its own."""
+    from app import db
+    from app.main import CHAT_LIST
+
+    ann, ben = person("Ann"), person("Ben")
+    g = group(ann, ben)
+    for i in range(30):
+        say(ann, g, f"news {i}")
+    assert [c["unread"] for c in ben.get("/api/chats").json()] == [30]
+    assert [c["unread"] for c in ann.get("/api/chats").json()] == [0]  # what you post is read: your mark moves past it
+    with db.as_user(ben.me["id"]) as tx:
+        plan = tx.rows("EXPLAIN (ANALYZE, FORMAT JSON) " + CHAT_LIST, {"me": ben.me["id"]})[0]["QUERY PLAN"]
+
+    def read(node: Answer) -> int:
+        """The rows of ms.messages a plan node and those under it read."""
+        own = node.get("Actual Rows", 0) * node.get("Actual Loops", 1) if node.get("Relation Name") == "messages" else 0
+        return own + sum(read(n) for n in node.get("Plans", []))
+
+    assert read(plan[0]["Plan"]) == 1
+    say(ben, g, "mine")
+    say(ann, g, "more news")
+    assert [c["unread"] for c in ben.get("/api/chats").json()] == [1]
+
+
+def test_numbers_out_of_range_are_the_requests_fault() -> None:
+    """A number the database can't take answers 422 (the API's bounds) or 400 (the database's words), never 500."""
+    ann, ben = person("Ann"), person("Ben")
+    g = group(ann, ben)
+    for params in ({"limit": -1}, {"limit": 0}, {"limit": 201}, {"before": 2**63}, {"after": -1}):
+        assert ann.get(f"/api/chats/{g}/messages", params=params).status_code == 422, params
+    assert ann.post(f"/api/chats/{g}/read", json={"seq": 2**63}).status_code == 422
+    assert ann.post(f"/api/chats/{g}/read", json={"seq": -1}).status_code == 422
+    r = ann.post(f"/api/chats/{g}/bots", json={"bot_id": 2**63})
+    assert (r.status_code, r.json()) == (400, {"detail": "bigint out of range"})
+
+
+def test_message_pages() -> None:
+    ann, ben = person("Ann"), person("Ben")
+    chat = direct(ann, ben)
+    seqs = [say(ann, chat, f"m{i}").json()["seq"] for i in range(4)]
+    page = ben.get(f"/api/chats/{chat}/messages", params={"limit": 2}).json()
+    assert [m["body"] for m in page] == ["m2", "m3"]  # the latest, oldest first
+    page = ben.get(f"/api/chats/{chat}/messages", params={"before": seqs[2]}).json()
+    assert [m["body"] for m in page] == ["m0", "m1"]
+    page = ben.get(f"/api/chats/{chat}/messages", params={"after": seqs[1]}).json()
+    assert [m["body"] for m in page] == ["m2", "m3"]
+
+
+def test_why_says_what_is_missing() -> None:
+    """What the web app's "why?" under a closed composer asks: the database's explanation (authz.explain)."""
+    ann, ben, cat = person("Ann"), person("Ben"), person("Cat")
+    g = group(ann, ben, title="News")
+    assert ann.patch(f"/api/chats/{g}", json={"admins_only": True}).status_code == 200
+    why = ben.get(f"/api/chats/{g}/why/post").json()
+    assert why[0].startswith("no ") and any("admins_only" in line for line in why), why
+    assert ann.get(f"/api/chats/{g}/why/post").json()[0].startswith("yes "), "the admin posts"
+    assert cat.get(f"/api/chats/{g}/why/post").status_code == 404  # not in it: it doesn't exist
+    assert ben.get(f"/api/chats/{g}/why/delete").status_code == 422  # not a permission the API explains
+
+
+def test_profile_and_blocked_people() -> None:
+    ann, ben = person("Ann"), person("Ben")
+    r = ann.patch("/api/me", json={"about": "on holiday"})
+    assert (r.status_code, r.json()["name"], r.json()["about"]) == (200, "Ann", "on holiday")
+    assert ann.patch("/api/me", json={"name": "Annie"}).json()["about"] == "on holiday"  # what isn't sent stays
+    assert ann.get("/api/me").json()["name"] == "Annie"
+    assert ann.patch("/api/me", json={"name": ""}).status_code == 422
+    assert ann.get("/api/blocks").json() == []
+    ann.post("/api/blocks", json={"user_id": ben.me["id"]})
+    assert [u["name"] for u in ann.get("/api/blocks").json()] == ["Ben"]
+    assert ben.get("/api/blocks").json() == []  # only your own: Ben doesn't learn that Ann blocked him
+    assert ann.delete(f"/api/blocks/{ben.me['id']}").status_code == 204
+    assert ann.get("/api/blocks").json() == []
 
 
 def test_marking_read_what_was_read_tells_nobody() -> None:
@@ -377,6 +465,14 @@ def test_bots() -> None:
     assert c.post(f"/api/bot/chats/{other}/messages", headers=key, json={"body": "hi"}).status_code == 404
     last = ben.get(f"/api/chats/{g}/messages").json()[-1]
     assert (last["body"], last["bot_name"], last["sender_id"]) == ("deployed v42", "Deploy bot", None)
+    after = c.get(f"/api/bot/chats/{g}/messages", headers=key, params={"after": last["seq"] - 1}).json()
+    assert [m["body"] for m in after] == ["deployed v42"]  # only what came after that number
+    # a member doesn't take the bot out; an admin does, and it no longer sees the group
+    r = ben.delete(f"/api/chats/{g}/bots/{bot['id']}")
+    assert r.status_code == 403 and r.json()["detail"] == "you can't remove this bot", r.text
+    assert ann.delete(f"/api/chats/{g}/bots/{bot['id']}").status_code == 204
+    assert c.get("/api/bot/chats", headers=key).json() == []
+    assert c.post(f"/api/bot/chats/{g}/messages", headers=key, json={"body": "still here?"}).status_code == 404
     assert c.get("/api/bot/chats", headers={"Authorization": "Bearer ak_nope"}).status_code == 401
     # a switched-off bot's key signs in as nobody
     admin("UPDATE ms.bots SET active = false WHERE id = %s", (bot["id"],))
@@ -426,3 +522,25 @@ def test_live_updates_only_reach_readers() -> None:
     other = direct(cat, ann)
     u.join(10)
     assert got.get("cat") == [{"chat": other}]
+
+
+def test_someone_removed_hears_of_it() -> None:
+    """Live updates reach only readers, and the person a membership change is about: removed, Ben may no longer read
+    the group, but his web app hears of it and closes it."""
+    ann, ben = person("Ann"), person("Ben")
+    g = group(ann, ben)
+    got: list[Answer] = []
+    ready = threading.Event()
+
+    def listen() -> None:
+        with ben.websocket_connect("/api/events") as ws:
+            ready.set()
+            got.append(json.loads(ws.receive_text()))
+
+    t = threading.Thread(target=listen, daemon=True)
+    t.start()
+    ready.wait(5)
+    assert ann.delete(f"/api/chats/{g}/members/{ben.me['id']}").status_code == 204
+    t.join(10)
+    assert got == [{"chat": g}]
+    assert bodies(ben, g) == 404

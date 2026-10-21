@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal, LiteralString
+from typing import Annotated, Literal, LiteralString
 from uuid import UUID
 
 import psycopg
@@ -22,6 +22,7 @@ from fastapi import (
     Depends,
     FastAPI,
     HTTPException,
+    Query,
     Request,
     Response,
     WebSocket,
@@ -71,7 +72,7 @@ WORDS: dict[tuple[str | None, str | None], str] = {
     ("ms.messages", "update"): "you may edit your own messages for 15 minutes, and delete them (admins: anyone's)",
     ("ms.members", "insert"): "you can't add this person here",
     ("ms.members", "update"): "only admins change roles, and nobody the owner's",
-    ("ms.members", "delete"): "you can't remove this person",
+    ("ms.members", "delete"): "you can't remove this person (the owner stays: they delete the group instead)",
     ("ms.chats", "update"): "only the group's admins may change it",
     ("ms.chats", "delete"): "only the group's owner may delete it",
     ("ms.chat_bots", "insert"): "admins add their own bots to groups",
@@ -103,9 +104,14 @@ async def database_error(request: Request, e: psycopg.Error) -> JSONResponse:
         return JSONResponse({"detail": "no such person or chat"}, 404)
     if isinstance(e, errors.InvalidAuthorizationSpecification):  # a bot's key that doesn't work
         return JSONResponse({"detail": "invalid API key"}, 401)
-    if isinstance(e, (errors.CheckViolation, errors.RaiseException, errors.InvalidTextRepresentation)):
+    # a value the database can't take (a number past bigint's range, text that isn't one) is the request's fault
+    if isinstance(e, (errors.CheckViolation, errors.RaiseException, psycopg.DataError)):
         return JSONResponse({"detail": message}, 400)
     raise e
+
+
+# a message's number, as the API takes it: what a bigint column holds, so a bad one is the request's fault (422)
+Seq = Annotated[int, Field(ge=0, le=2**63 - 1)]
 
 
 def found(row: DictRow | None, what: str = "not found") -> DictRow:
@@ -207,8 +213,7 @@ SELECT c.id, c.kind, c.admins_only, m.role, m.last_read_seq,
        CASE WHEN c.kind = 'group' THEN c.title ELSE p.name END AS name, p.id AS peer_id,
        l.seq AS last_seq, l.body AS last_body, l.deleted AS last_deleted, l.created_at AS last_at,
        coalesce(ls.name, lb.name) AS last_sender, l.sender_id AS last_sender_id,
-       (SELECT count(*) FROM ms.messages x WHERE x.chat_id = c.id AND x.seq > m.last_read_seq
-          AND x.sender_id IS DISTINCT FROM %(me)s) AS unread
+       greatest(c.last_seq - greatest(m.last_read_seq, m.joined_seq), 0) AS unread
 FROM ms.chats c
 JOIN ms.members m ON m.chat_id = c.id AND m.user_id = %(me)s
 LEFT JOIN LATERAL (SELECT u.id, u.name FROM ms.members o JOIN ms.users u ON u.id = o.user_id
@@ -223,7 +228,9 @@ ORDER BY coalesce(l.created_at, c.created_at) DESC, c.id DESC"""
 @app.get("/api/chats")
 def chats(user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
     """Your chats, the latest first: what row-level security lets you read (the join on ms.members only
-    picks your own row, for your role and how far you have read)."""
+    picks your own row, for your role and how far you have read). Unread is a difference of numbers: messages are
+    numbered one by one in each chat, and your mark moves past what you post, so no unread message is read to count
+    it (each would be checked against the read rule, which costs a function call a message)."""
     with db.as_user(user["id"]) as tx:
         return tx.rows(CHAT_LIST, {"me": user["id"]})
 
@@ -288,7 +295,7 @@ def chat(chat_id: int, user: DictRow = Depends(auth.current_user)) -> DictRow:
             )
         )
         c["members"] = tx.rows(
-            "SELECT m.user_id, m.role, m.joined_at, m.last_read_seq, u.name, u.phone, u.about "
+            "SELECT m.user_id, m.role, m.last_read_seq, u.name, u.phone, u.about "
             "FROM ms.members m JOIN ms.users u ON u.id = m.user_id WHERE m.chat_id = %s "
             "ORDER BY array_position(ARRAY['owner', 'admin', 'member'], m.role), u.name",
             (chat_id,),
@@ -361,9 +368,9 @@ ORDER BY x.seq DESC LIMIT %s"""
 @app.get("/api/chats/{chat_id}/messages")
 def messages(
     chat_id: int,
-    before: int | None = None,
-    after: int | None = None,
-    limit: int = 50,
+    before: Annotated[Seq | None, Query()] = None,
+    after: Annotated[Seq | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
     user: DictRow = Depends(auth.current_user),
 ) -> list[DictRow]:
     """The latest messages (or those before or after a number), oldest first. Messages from before you
@@ -371,7 +378,7 @@ def messages(
     authz.can on the message, whose id is (chat_id, seq)."""
     with db.as_user(user["id"]) as tx:
         found(tx.row("SELECT 1 FROM ms.chats WHERE id = %s", (chat_id,)))
-        rows = tx.rows(MESSAGES, (chat_id, before, before, after, after, min(limit, 200)))
+        rows = tx.rows(MESSAGES, (chat_id, before, before, after, after, limit))
     return rows[::-1]
 
 
@@ -432,7 +439,7 @@ def delete_for_everyone(chat_id: int, seq: int, user: DictRow = Depends(auth.cur
 
 
 class Read(BaseModel):
-    seq: int
+    seq: Seq
 
 
 @app.post("/api/chats/{chat_id}/read")
@@ -521,12 +528,16 @@ def turn_off_invite(chat_id: int, link_id: str, user: DictRow = Depends(auth.cur
         tx.authz.revoke_link("chat", chat_id, link_id)
 
 
-def linked_chat(user_id: str, token: str) -> DictRow:
-    """The group the link lets you join: the chats you may join holding it, less those you may without it."""
+def linked_chat(user_id: str, token: str, chat_id: int | None) -> DictRow:
+    """The group the link lets you join: the chats you may join holding it, less those you may without it. Admins
+    may join their groups without a link (they may make one), so for them that leaves nothing: the chat the link's
+    address names (`?chat=`, as the web app writes it) answers, when it is one of theirs."""
     with db.as_user(user_id) as tx:
         without = set(tx.authz.list("chat", "join"))
     with db.as_user(user_id, links=[token]) as tx:
         given = [c for c in tx.authz.list("chat", "join") if c not in without]
+        if not given and str(chat_id) in without:
+            given = [str(chat_id)]
         if not given:
             raise HTTPException(404, "this invite link doesn't work (any more)")
         return found(
@@ -539,17 +550,17 @@ def linked_chat(user_id: str, token: str) -> DictRow:
 
 
 @app.get("/api/join/{token}")
-def join_preview(token: str, user: DictRow = Depends(auth.current_user)) -> DictRow:
-    return linked_chat(user["id"], token)
+def join_preview(token: str, chat: int | None = None, user: DictRow = Depends(auth.current_user)) -> DictRow:
+    return linked_chat(user["id"], token, chat)
 
 
 @app.post("/api/join/{token}")
-def join(token: str, user: DictRow = Depends(auth.current_user)) -> dict[str, int]:
-    chat = linked_chat(user["id"], token)
-    if not chat["member"]:
+def join(token: str, chat: int | None = None, user: DictRow = Depends(auth.current_user)) -> dict[str, int]:
+    linked = linked_chat(user["id"], token, chat)
+    if not linked["member"]:
         with db.as_user(user["id"], links=[token]) as tx:
-            tx.run("INSERT INTO ms.members (chat_id, user_id) VALUES (%s, %s)", (chat["id"], user["id"]))
-    return {"id": chat["id"]}
+            tx.run("INSERT INTO ms.members (chat_id, user_id) VALUES (%s, %s)", (linked["id"], user["id"]))
+    return {"id": linked["id"]}
 
 
 # --- blocking ----------------------------------------------------------------------------------
@@ -633,7 +644,7 @@ def bot_chats(key: str = Depends(auth.bot_key)) -> list[DictRow]:
 
 
 @app.get("/api/bot/chats/{chat_id}/messages")
-def bot_messages(chat_id: int, after: int = 0, key: str = Depends(auth.bot_key)) -> list[DictRow]:
+def bot_messages(chat_id: int, after: Annotated[Seq, Query()] = 0, key: str = Depends(auth.bot_key)) -> list[DictRow]:
     with db.as_bot(key) as tx:
         found(tx.row("SELECT 1 FROM ms.chats WHERE id = %s", (chat_id,)))
         return tx.rows(

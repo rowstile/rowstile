@@ -47,6 +47,7 @@ function Main({ me, onMe }: { me: User; onMe: (u: User | null) => void }) {
   const [version, setVersion] = useState<Record<number, number>>({});
   const [dialog, setDialog] = useState<"new" | "settings" | null>(null);
   const [filter, setFilter] = useState("");
+  const [error, setError] = useState("");
   const refresh = useCallback(() => api.chats().then(setChats, () => undefined), []);
   // one function for as long as Main lives: the open conversation reloads when it changes
   const close = useCallback(() => { setOpen(null); refresh(); }, [refresh]);
@@ -59,7 +60,13 @@ function Main({ me, onMe }: { me: User; onMe: (u: User | null) => void }) {
   }), [refresh]);
   useEffect(() => { history.replaceState(null, "", open ? `/?chat=${open}` : "/"); }, [open]);
 
-  const shown = chats.filter((c) => c.name?.toLowerCase().includes(filter.toLowerCase()));
+  // a direct chat whose other person left has no name: it stays in the list (as "(unknown)")
+  const shown = chats.filter((c) => (c.name ?? "").toLowerCase().includes(filter.toLowerCase()));
+  const signOut = async () => {
+    setError("");
+    try { await api.logOut(); onMe(null); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
   return (
     <div className="app">
       <aside className="sidebar">
@@ -68,8 +75,9 @@ function Main({ me, onMe }: { me: User; onMe: (u: User | null) => void }) {
           <span className="grow" />
           <button className="icon" title="New chat" onClick={() => setDialog("new")}>✎</button>
           <button className="icon" title="Settings" onClick={() => setDialog("settings")}>⚙</button>
-          <button className="icon" title="Sign out" onClick={async () => { await api.logOut(); onMe(null); }}>⎋</button>
+          <button className="icon" title="Sign out" onClick={signOut}>⎋</button>
         </header>
+        {error && <p className="error">{error}</p>}
         <input className="search" placeholder="Search chats" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <ul className="chats">
           {shown.map((c) => (
@@ -106,8 +114,14 @@ function Main({ me, onMe }: { me: User; onMe: (u: User | null) => void }) {
 function JoinPage({ token }: { token: string }) {
   const [chat, setChat] = useState<{ id: number; title: string; about: string; member: boolean } | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => { api.joinPreview(token).then(setChat, (e: ApiError) => setError(e.message)); }, [token]);
+  const named = new URLSearchParams(location.search).get("chat");
+  useEffect(() => { api.joinPreview(token, named).then(setChat, (e: ApiError) => setError(e.message)); }, [token, named]);
   const go = (id: number) => { location.href = `/?chat=${id}`; };
+  const join = async () => {
+    setError("");
+    try { go((await api.join(token, named)).id); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
   return (
     <div className="login"><div className="box">
       <h1>Messenger</h1>
@@ -117,7 +131,7 @@ function JoinPage({ token }: { token: string }) {
         <h2>{chat.title}</h2>
         {chat.about && <p className="hint">{chat.about}</p>}
         {chat.member ? <button onClick={() => go(chat.id)}>You are in it: open it</button>
-          : <button onClick={async () => go((await api.join(token)).id)}>Join the group</button>}
+          : <button onClick={join}>Join the group</button>}
       </>}
       <button className="link" onClick={() => { location.href = "/"; }}>Back to my chats</button>
     </div></div>

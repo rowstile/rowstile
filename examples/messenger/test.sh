@@ -3,7 +3,7 @@
 #   examples/messenger/test.sh [pytest args]     KEEP=1 leaves the database running
 set -u
 cd "$(dirname "$0")"
-export MS_ADMIN_URL=postgresql://postgres:postgres@localhost:25433/messenger MS_APP_PASSWORD=ms_app
+export MS_ADMIN_URL=postgresql://ms_owner:ms_owner@localhost:25433/messenger MS_APP_PASSWORD=ms_app
 export MS_DATABASE_URL=postgresql://ms_app:ms_app@localhost:25433/messenger
 python3 check_public_surface.py || exit 1
 # every change to db/policy.authz has its migration (rowstile migrate writes it)
