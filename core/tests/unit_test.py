@@ -9156,6 +9156,104 @@ class BlogPosts(unittest.TestCase):
             self.assertIn('ERROR:  infinite recursion detected in policy for relation "folders"', run)
             self.assertIn("Parallel Index Only Scan using files_folder_id_idx on files", run.split("\n=== 4.")[1])
 
+    def test_the_second_articles_numbers_are_its_runs(self) -> None:
+        """The post on parallel workers: each cell of its tables is the middle one of the three timings its run holds
+        for that policy and that query, with the workers those plans launched; which policies get workers is the
+        same on 16, 17 and 18 but where the post says it isn't; and the figures its text gives are the runs' too."""
+        import statistics
+
+        folder = os.path.join(self.REPO, "docs", "blog")
+        with open(os.path.join(folder, "2026-10-20-row-level-security-on-one-cpu.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        flat = " ".join(text.split())
+        runs: dict[int, dict[str, str]] = {}
+        settings: dict[int, str] = {}
+        for version in (16, 17, 18):
+            with open(
+                os.path.join(folder, "row-level-security-on-one-cpu", f"run-{version}.txt"), encoding="utf-8"
+            ) as fh:
+                run = fh.read()
+            self.assertIn(f"PostgreSQL {version}.", run)
+            settings[version] = re.split(r"\n=== ", run)[0]
+            runs[version] = {s.split(".", 1)[0]: s for s in re.split(r"\n=== ", run)[1:]}
+            self.assertEqual(list(runs[version]), [str(n) for n in range(8)], f"run-{version}.txt")
+
+        def timed(section: str) -> list[tuple[str, float]]:
+            """Each query's workers ("2", or "none") and its time, three runs of a query after another."""
+            plans = [p for p in section.split("QUERY PLAN")[1:] if "Execution Time:" in p]
+            out: list[tuple[str, float]] = []
+            for plan in plans:
+                workers = re.search(r"Workers Launched: (\d+)", plan)
+                out.append(
+                    (workers.group(1) if workers else "none", float(search(r"Execution Time: ([\d.]+)", plan).group(1)))
+                )
+            return out
+
+        def middles(section: str) -> list[tuple[str, str]]:
+            out = timed(section)
+            self.assertEqual(len(out) % 3, 0, section[:40])
+            groups = [out[i : i + 3] for i in range(0, len(out), 3)]
+            for g in groups:
+                self.assertEqual(len({w for w, _ in g}), 1, f"three runs, one plan: {section[:40]!r}")
+            return [(g[0][0], self.shown(statistics.median(t for _, t in g))) for g in groups]
+
+        # the table, on 18: the counts' workers, then user 7's count, user 1000's, one file
+        table = search(r"\| PostgreSQL 18 \|[^\n]*\n\|[-|]+\|\n((?:\|[^\n]*\n){6})", text).group(1)
+        rows = [[c.strip() for c in row.strip("|").split("|")] for row in table.strip().split("\n")]
+        on18 = runs[18]
+        for n, row in zip("123456", rows, strict=True):
+            self.assertTrue(row[0].startswith(f"{n}. "), row)
+            (w7, t7), (w1000, t1000), (wone, tone) = middles(on18[n])
+            self.assertEqual((w7, wone), (w1000, "none"), row)
+            self.assertEqual(row[1:], [w7, t7, t1000, tone], row[0])
+        self.assertIn(f"the count takes {middles(on18['0'])[0][1]} with two workers", flat)
+        # which policies get workers: the same on each version, but section 5 on 16
+        for version, sections in runs.items():
+            for n, expected in zip(
+                "123456", ("2", "none", "2", "none", "none" if version == 16 else "2", "2"), strict=True
+            ):
+                self.assertEqual(middles(sections[n])[0][0], expected, f"{version}: section {n}")
+        table = search(r"\| user 7's count \| 16 \| 17 \| 18 \|\n\|[-|]+\|\n((?:\|[^\n]*\n){3})", text).group(1)
+        rows = [[c.strip() for c in row.strip("|").split("|")] for row in table.strip().split("\n")]
+        for n, row in zip("356", rows, strict=True):
+            self.assertTrue(row[0].startswith(f"{n}. "), row)
+            said = []
+            for version in (16, 17, 18):
+                workers, time = middles(runs[version][n])[0]
+                said.append(f"{workers} workers, {time}" if workers != "none" else f"none, {time}")
+            self.assertEqual(row[1:], said, row[0])
+        # the auditor: through IN, no hash and cancelled on every version; through EXISTS, timed on 18
+        for version, sections in runs.items():
+            auditor = sections["7"]
+            through_in = auditor.split("ERROR:")[0]  # the plan, not hashed (16 and 17 print it differently)
+            self.assertIn("SubPlan 1", through_in, version)
+            self.assertNotIn("hashed", through_in, version)
+            self.assertIn("->  Materialize", through_in, version)
+            self.assertIn("Workers Planned: 2", through_in, version)
+            self.assertIn("ERROR:  canceling statement due to statement timeout", auditor, version)
+            self.assertRegex(auditor, r"files_user_1001_sees \n-+\n\s+400000\n")
+            self.assertRegex(sections["1"], r"files_user_7_sees \n-+\n\s+2501\n")
+            self.assertRegex(sections["1"], r"files_user_1000_sees \n-+\n\s+42000\n")
+            self.assertIn("(actual rows=40000", sections["3"])
+            # max_parallel_workers_per_gather, work_mem and hash_mem_multiplier: the defaults
+            self.assertRegex(settings[version], r"\|\s+2\s+\|\s+4MB\s+\|\s+2\n")
+        (_, count), (_, one) = middles(runs[18]["7"])
+        self.assertIn(f"the same count takes {count} in one process", flat)
+        self.assertIn(f"opening one file {one}", flat)
+        exists_one, in_one = middles(on18["4"])[2][1], middles(on18["3"])[2][1]
+        self.assertIn(f"{exists_one} against {in_one.removesuffix(' ms')}.", flat)
+        for said in ("2,501 files", "42,000", "40,000 of them", "400,000 shares", "about 262,000 rows"):
+            self.assertIn(said, flat)
+        self.assertEqual(8 * 1024 * 1024 // 32, 262144)  # 4 MB times 2, at 32 bytes a row
+        # "twice as long", "about half the time": what the table's own cells say
+        cell = {n: statistics.median(t for _, t in timed(on18[n])[:3]) for n in "12356"}
+        self.assertTrue(1.8 < cell["2"] / cell["1"] < 2.2)
+        self.assertTrue(all(0.4 < cell[n] / cell["3"] < 0.65 for n in "56"))
+        with open(os.path.join(folder, "row-level-security-on-one-cpu", "runner.txt"), encoding="utf-8") as fh:
+            runner = fh.read()
+        self.assertEqual(re.findall(r"CPU\(s\):\s+(\d+)", runner), ["4", "4", "4"])
+        self.assertTrue(all(15000 < int(m) < 17000 for m in re.findall(r"Mem:\s+(\d+)", runner)))
+
 
 class SdkPackages(unittest.TestCase):
     """sdk/typescript/<package>/README.md: each package's own page on npm. It names its package, links nothing

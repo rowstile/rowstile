@@ -1,0 +1,18 @@
+The machine of each run: a GitHub-hosted runner (ubuntu-latest), one for each version. Printed by
+nproc, lscpu and free -m before the run.
+
+PostgreSQL 16:
+CPU(s):                                  4
+Model name:                              AMD EPYC 7763 64-Core Processor
+Mem:           15989        1165       12106          57        3110       14823
+
+PostgreSQL 17:
+CPU(s):                                  4
+Model name:                              Intel(R) Xeon(R) 6973P-C
+CPU(s) scaling MHz:                      143%
+Mem:           15988        1369       11911          59        3101       14619
+
+PostgreSQL 18:
+CPU(s):                                  4
+Model name:                              AMD EPYC 9V45 96-Core Processor
+Mem:           15983        1319       11955          61        3106       14664
