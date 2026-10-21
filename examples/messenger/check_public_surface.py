@@ -18,8 +18,8 @@ FILES = [
     if p.suffix in (".py", ".sql", ".ts", ".tsx", ".authz")
     and not {"node_modules", ".venv", "dist"} & set(p.parts)
     and p.name != Path(__file__).name
-    # the migrations rowstile migrate writes are rowstile's own SQL, not the app's (the older ones say
-    # rowfence: rowstile's name before)
+    # the migrations rowstile migrate writes are rowstile's own SQL, not the app's (those written before the
+    # rename say rowfence: they go when the app's rowstile migrations are made again as one)
     and not p.read_text(encoding="utf-8").startswith(("-- rowstile ", "-- rowfence "))
 ]
 PRIVATE = re.compile(r"\bauthz_(gen|int)\b")

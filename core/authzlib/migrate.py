@@ -272,7 +272,7 @@ def parse_lock(text: str | None) -> Lock:
     merge's conflict marker, say)."""
     lock = Lock(text=text or "")
     for n, line in enumerate((text or "").split("\n"), 1):
-        if line.startswith(("# rowstile ", "# rowfence ", "# authzc ")):  # rowstile's names before, too
+        if line.startswith("# rowstile "):
             lock.version = line.split()[2].rstrip(":")
         if not line or line.startswith("#"):
             continue

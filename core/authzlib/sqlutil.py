@@ -6,11 +6,10 @@ import re
 
 from .parse import Loc, fail
 
-# The comments that mark rowstile's own RLS policies ('rowstile') and masked views ('rowstile masked view'), and
-# the marks older versions wrote, still recognized until the next migration marks them anew: rowstile was called
-# rowfence, and authzc before that
-POLICY_MARKS = "('rowstile', 'rowfence', 'authzc')"
-VIEW_MARKS = "('rowstile masked view', 'rowfence masked view', 'authzc masked view')"
+# The comments that mark rowstile's own RLS policies and masked views: applying, removing and lint know them by
+# these alone
+POLICY_MARKS = "('rowstile')"
+VIEW_MARKS = "('rowstile masked view')"
 # ... and the triggers given to the tables under a table rowstile watches (CHILD_TRIGGERS below)
 CHILD_TRIGGER_MARK = "rowstile: the trigger of the table above, for the rows stored here"
 # In a comment before a DO block that makes a trigger (-- @object trigger ...): the trigger is there only where

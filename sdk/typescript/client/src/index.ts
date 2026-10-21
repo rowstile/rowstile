@@ -287,8 +287,8 @@ export function dbError(e: unknown): DbError | null {
 export function errorCode(e: unknown): string | undefined {
   const err = dbError(e);
   for (const text of [err?.hint, err?.message]) {
-    const m = /(?:rowstile|rowfence) help (AZ\d{3})|\[(AZ\d{3})\]/.exec(text ?? "");
-    if (m) return m[1] ?? m[2];
+    const m = /rowstile help (AZ\d{3})/.exec(text ?? "");
+    if (m) return m[1];
   }
   return undefined;
 }

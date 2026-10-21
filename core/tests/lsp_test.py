@@ -461,19 +461,6 @@ with tempfile.TemporaryDirectory() as d:
     )
     said = c.close()
     ok("... and the server's log has nothing of it", said == "", said)
-    # the old name, read for now: the note the command gives, in the server's log, once
-    os.rename(toml, os.path.join(d, "rowfence.toml"))
-    c = Client(d)
-    c.request("initialize", {"capabilities": {}})
-    c.notify("initialized", {})
-    c.notify("textDocument/didOpen", {"textDocument": {"uri": tu, "languageId": "authz", "version": 1, "text": good}})
-    diags, shown = flushed(c, u)
-    said = c.close()
-    ok(
-        "rowfence.toml (the old name): read, and its log says to rename it, once",
-        diags.get(tu) == [] and shown == [] and said.count("rowfence.toml: rowstile was called rowfence") == 1,
-        [diags, shown, said],
-    )
 
 # a policy split into files: the included file is a part of the policy, opened alone or not
 with tempfile.TemporaryDirectory() as d:

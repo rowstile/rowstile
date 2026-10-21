@@ -90,20 +90,6 @@ out=$(PGDATABASE="${DB}_other" python3 cli/rowstile_cli.py lint --db "dbname=$DB
 case "$out" in *"no policy is applied"*) bad "--db after the command is not read: the default database was used" "$out";; *) ok "--db after the command names the database";; esac
 out=$(PGDATABASE="${DB}_other" python3 cli/rowstile_cli.py apply "$T/main.authz" --db "dbname=$DB" 2>&1); rc=$?
 [ $rc -eq 0 ] && [ "$out" = "$T/main.authz: unchanged" ] && ok "... and after the policy file too" || bad "--db last" "$rc $out"
-# a database rowfence applied (rowstile's name before) marks its policies 'rowfence': they are still its own
-remark() { PSQL <<SQL
-DO \$m\$ DECLARE r record; BEGIN
-  FOR r IN SELECT p.polname, p.polrelid::regclass AS t FROM pg_policy p JOIN pg_description d
-           ON d.objoid = p.oid AND d.classoid = 'pg_policy'::regclass WHERE d.description = '$1' LOOP
-    EXECUTE format('COMMENT ON POLICY %I ON %s IS %L', r.polname, r.t, '$2');
-  END LOOP;
-END \$m\$;
-SQL
-}
-remark rowstile rowfence
-run apply "$T/main.authz"
-[ $rc -eq 0 ] && [ "$out" = "$T/main.authz: unchanged" ] && ok "policies rowfence marked are still rowstile's: the policy is unchanged" || bad "rowfence's marks" "$rc $out"
-remark rowfence rowstile
 out=$(PGDATABASE="$DB" python3 cli/rowstile_cli.py remove --yes --db "dbname=${DB}_other" 2>&1); rc=$?
 [ "$(PSQL -c "SELECT count(*) FROM pg_namespace WHERE nspname = 'authz_int'")" = 1 ] && case "$out" in *"no policy is applied"*) true;; *) false;; esac &&
   ok "remove --yes --db X leaves the default database alone" || bad "remove --db removed the wrong database's policy" "$out"
@@ -256,10 +242,6 @@ toml 'policy = "db/link.authz"\n' check
 [ $rc -eq 2 ] && case "$out" in *"outside the folder"*) true;; *) false;; esac && ok "... nor through a link out of it" || bad "policy link" "$rc $out"
 toml 'policy = "db/policy.authz"\ntests = ["/etc/pass*"]\n' test
 [ $rc -eq 2 ] && case "$out" in *"outside the folder"*) true;; *) false;; esac && ok "... nor test files" || bad "tests outside" "$rc ${out:0:200}"
-rm -f "$P/rowstile.toml"; printf 'policy = "db/policy.authz"\n' > "$P/rowfence.toml"
-out=$(TOML check 2>&1); rc=$?; rm -f "$P/rowfence.toml"
-[ $rc -eq 0 ] && case "$out" in *"rowfence.toml: rowstile was called rowfence; rename this file rowstile.toml"*) true;; *) false;; esac &&
-  ok "rowfence.toml (the file's name before) is read, and the rename is asked for" || bad "rowfence.toml" "$rc ${out:0:300}"
 
 echo "-- .env beside rowstile.toml"
 # where a Next.js or Prisma app keeps its database's URL: read for what the environment doesn't set, .env.local first

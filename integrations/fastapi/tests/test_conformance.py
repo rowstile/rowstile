@@ -635,13 +635,20 @@ def test_refused_means_the_database_said_no() -> None:
     assert rowstile.key_text(("a,b", 1)) == '("a,b","1")' and rowstile.key_text((7,)) == "7"
 
 
-# a database rowfence applied (rowstile's name before) says `rowfence help` in its hints: the code still reads
-def test_the_code_in_a_hint_rowfence_wrote() -> None:
-    class Old(Exception):
-        sqlstate = "28000"
-        hint = "sign in with authz.act_as(); rowfence help AZ701"
+# the code is read where the runtime puts it, `rowstile help AZnnn`; an applying error's `[AZ612]` is no answer
+def test_the_code_is_what_rowstile_help_names() -> None:
+    class Raised(Exception):
+        sqlstate = "P0001"
+        hint = "rowstile help AZ612"
 
-    assert rowstile.error_code(Old("sign in first")) == "AZ701"
+    class Applying(Exception):
+        sqlstate = "P0001"
+        hint = None
+
+    assert [rowstile.error_code(Raised("no")), rowstile.error_code(Applying("a check said no [AZ612]"))] == [
+        "AZ612",
+        None,
+    ]
 
 
 # a refusal carries the database's own code, and names the table as the policy does
