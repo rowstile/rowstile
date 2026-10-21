@@ -13,6 +13,7 @@ import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from types import MappingProxyType
+from typing import LiteralString
 from unittest import mock
 
 import asyncpg
@@ -421,6 +422,43 @@ async def test_a_database_error_that_isnt_a_refusal(app: FastAPI) -> None:
                 await c.get("/denied", headers={"x-user": "1"})
     finally:
         await autocommit.dispose()
+
+
+# Postgres's own words, where no rule's refusal speaks first, read for what refused: an update after which the row
+# would be hidden is the select rule's, and no read back; an upsert of a row the user may not change is the update
+# rule's; MERGE's names no command, since Postgres doesn't say whether the update rule or the delete rule
+def test_postgres_own_refusals_name_the_rule() -> None:
+    with psycopg.connect(libpq(SYNC)) as conn:  # cy (3): author of note 4 in project 1, a member there
+
+        def refused(sql: LiteralString) -> Refused | None:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege) as e, pgp.transaction(conn, 3):
+                conn.execute(sql)
+            return rowstile.refusal(e.value)
+
+        hidden = refused("UPDATE app.notes SET project_id = 2 WHERE id = 4")  # into bo's project
+        upsert = refused(
+            "INSERT INTO app.notes (id, project_id, author_id, body) VALUES (1, 1, 3, 'x') "
+            "ON CONFLICT (id) DO UPDATE SET body = 'x'",  # note 1 is ann's
+        )
+        merge = refused(
+            "MERGE INTO app.notes n USING (VALUES (1)) s(id) ON n.id = s.id WHEN MATCHED THEN UPDATE SET body = 'x'"
+        )
+    assert hidden and (hidden.table, hidden.command, hidden.why) == ("notes", "select", []), vars(hidden)
+    assert hidden.message == (
+        'new row violates row-level security policy for table "notes": this user may not see the row as written '
+        "(the select rule). An insert that reads it back (RETURNING), an upsert, and an update with a WHERE need to "
+        "see it."
+    )
+    assert upsert and (upsert.table, upsert.command, upsert.why) == ("notes", "update", []), vars(upsert)
+    assert upsert.message == (
+        'new row violates row-level security policy (USING expression) for table "notes": the row is there already, '
+        "and the update rule (or the select rule) doesn't let this user change it (ON CONFLICT DO UPDATE)"
+    )
+    assert merge and (merge.table, merge.command, merge.why) == ("notes", None, []), vars(merge)
+    assert merge.message == (
+        'target row violates row-level security policy (USING expression) for table "notes": MERGE matched a row '
+        "the update or delete rule doesn't let this user change"
+    )
 
 
 async def test_an_update_the_rules_allow_that_matched_nothing_is_404(app: FastAPI) -> None:

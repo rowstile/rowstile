@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import enum
+import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, LiteralString, ParamSpec, TypeAlias, TypeVar, cast
@@ -299,6 +300,12 @@ def sqlstate(exc: BaseException) -> str | None:
     return _field(err, "sqlstate", "pgcode")
 
 
+_UNSEEN = (
+    "this user may not see the row as written (the select rule). An insert that reads it back (RETURNING), "
+    "an upsert, and an update with a WHERE need to see it."
+)
+
+
 def refusal(exc: BaseException) -> Refused | None:
     """A Refused for an error that is the database refusing a write (SQLSTATE 42501, raised by rowstile's
     policies with the rule and why), else None. psycopg, psycopg2 and asyncpg, bare or in SQLAlchemy's.
@@ -308,26 +315,36 @@ def refusal(exc: BaseException) -> Refused | None:
         return None
     message = _field(err, "message_primary", "message") or str(err[-1]).split("\n")[0]
     code = error_code(exc)
-    if code is None and not message.startswith("new row violates row-level security policy"):
+    # Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
+    # without its schema, and sets no field for it
+    generic = re.match(
+        r'(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"', message
+    )
+    if code is None and not generic:
         return None
     if code in _CALL_PROBLEMS:  # sign in first (AZ714) is a 42501 too, but no refusal: a 401
         return None
+    if generic:
+        row, existing, name = generic.groups()
+        if row == "target":
+            # MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
+            return Refused(
+                f"{message}: MERGE matched a row the update or delete rule doesn't let this user change", name
+            )
+        if existing:
+            # an upsert (INSERT ... ON CONFLICT DO UPDATE) whose existing row this user may not update, or not see
+            return Refused(
+                f"{message}: the row is there already, and the update rule (or the select rule) doesn't let this "
+                "user change it (ON CONFLICT DO UPDATE)",
+                name,
+                "update",
+            )
+        # the select rule, on the row as written: an insert that reads it back (RETURNING, or an ORM that reads the
+        # new row), an upsert, or an update after which the row would be out of this user's sight
+        return Refused(f"{message}: {_UNSEEN}", name, "select")
     detail = _field(err, "message_detail", "detail") or ""
     schema, table = _field(err, "schema_name"), _field(err, "table_name")
     constraint = _field(err, "constraint_name") or ""
-    if message.startswith("new row violates row-level security policy"):
-        # Postgres's own words, not rowstile's: the row was allowed in, but may not be read back
-        # (INSERT ... RETURNING, or an ORM that reads the new row), which the select rule decides
-        import re
-
-        m = re.search(r'for table "([^"]+)"', message)
-        return Refused(
-            f"{message}: the write was allowed, but the select rule doesn't let this user read the row "
-            f"back (RETURNING); read it back only if the select rule allows it",
-            m.group(1) if m else table,
-            "select",
-            [],
-        )
     return Refused(
         message,
         f"{schema}.{table}" if schema and table else table,

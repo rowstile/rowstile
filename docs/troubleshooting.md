@@ -115,6 +115,12 @@ That is Postgres's own message, not rowstile's (whose refusals say which rule, a
 - A policy on the table that rowstile didn't make. `authz.lint()` lists them: a restrictive one as a note, a
   permissive one as an error, since Postgres joins it to the rules with OR and it lets through what they don't.
 
+With `(USING expression)` before `for table`, it comes from an upsert (`INSERT ... ON CONFLICT DO UPDATE`) that
+met a row the user may not update or may not see. MERGE says `target row violates row-level security policy
+(USING expression)` when it matched a row the update or delete rule doesn't let the user change. The SDKs answer
+all three with a 403: `Refused` names the select rule for the first, the update rule for an upsert, and no
+command for MERGE, whose words don't say which rule.
+
 ## Your app's role sees everything
 
 Row-level security doesn't apply to superusers, roles with `BYPASSRLS`, or a table's owner, who may also turn

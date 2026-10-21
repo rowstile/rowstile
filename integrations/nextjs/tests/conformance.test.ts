@@ -221,7 +221,7 @@ test("8: insert, then read back", async () => {
   const why = await unreadable.json();
   expect(why.command).toBe("select");
   expect(why.table).toBe("app.inbox");
-  expect(why.detail).toContain("read the row back");
+  expect(why.detail).toContain("may not see the row as written");
   expect(quiet.status).toBe(202);
   // a model with no @@map, in the app schema (feedback, which only the project's owner reads): its table, as the
   // policy names it, is its name with the schema
