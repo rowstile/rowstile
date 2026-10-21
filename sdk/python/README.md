@@ -32,8 +32,9 @@ Rowstile(app, engine, user=current_user)     # current_user(request): its user's
 Who a transaction acts for: `42` or `"42"` (a user), `("service", 3)` (another principal type of the policy),
 or `None` (nobody: only what `anyone` may see; `None` given to a call is nobody too, whoever the code around
 it acts for). A plain id is always a user's, whatever it holds: `"service:3"` is the user with that id, so an
-id from outside (a username, an identity provider's subject) can't name a service. `Principal.parse("service:3")`
-reads back what `str()` wrote, for text your own code wrote. Every transaction signs in, even when nobody is signed in, and nothing
+id from outside (a username, an identity provider's subject) can't name a service. `Principal.parse(text)`
+reads back what `str()` wrote, for text your own code wrote (a job's argument): `str()` writes a user
+whose id holds `:` or is `nobody` as `user:<id>` (`user:service:3`), so every principal reads back as itself. Every transaction signs in, even when nobody is signed in, and nothing
 uses a session-level `SET`, so pools and poolers in transaction mode are safe; behind one that keeps no prepared
 statements, turn the driver's off ([Behind a pooler](../../docs/operations.md#behind-a-pooler)).
 

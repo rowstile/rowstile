@@ -43,7 +43,9 @@ export const PATCH = route(async (req: Request, { params }: { params: Promise<{ 
 Who a transaction acts for: `42` or `"42"` (a user), `["service", 3]` (another principal type of the policy),
 or `null` (nobody: only what `anyone` may see). A plain id is always a user's, whatever it holds: `"service:3"`
 is the user with that id, so an id from outside (a username, an identity provider's subject) can't name a
-service. `parsePrincipal("service:3")` reads back what `describe()` wrote, for text your own code wrote. Whoever the code acts for (`actingAs`, a `job`)
+service. `parsePrincipal(text)` reads back what `describe()` wrote, for text your own code wrote (a job's
+argument): `describe()` writes a user whose id holds `:` or is `nobody` as `user:<id>` (`user:service:3`), so
+every principal reads back as itself. Whoever the code acts for (`actingAs`, a `job`)
 comes first, else the `user` function, else nobody; a `who` given to one call (`transaction(fn, who)`) comes
 before all, and `null` there is nobody. Every transaction signs in, even as nobody, and nothing uses a
 session-level `SET`, so pools and poolers in transaction mode are safe; the change feed needs its own connection

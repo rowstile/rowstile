@@ -83,8 +83,8 @@ export function principal(who: Who): Principal {
   return Object.freeze({ type: "user", id: String(who) });
 }
 
-/** What describe() wrote, read back: "service:3" is service 3, "42" user 42, "nobody" nobody. For text your own
- *  code wrote (a job's argument, the audit trail's `by`), not for an id that came from outside. */
+/** What describe() wrote, read back: "service:3" is service 3, "42" and "user:42" user 42, "nobody" nobody.
+ *  For text your own code wrote (a job's argument), not for an id that came from outside. */
 export function parsePrincipal(text: string): Principal {
   if (text === "nobody") return NOBODY;
   const colon = text.indexOf(":");
@@ -92,9 +92,12 @@ export function parsePrincipal(text: string): Principal {
   return Object.freeze({ type: "user", id: text });
 }
 
-/** "42", "service:3" or "nobody". */
+/** "42", "service:3" or "nobody". A user whose id holds ":" or is "nobody" is "user:<id>" ("user:a:b"), so that
+ *  parsePrincipal() reads every principal back as itself. */
 export function describe(p: Principal): string {
-  return p.id === null ? "nobody" : p.type === "user" ? p.id : `${p.type}:${p.id}`;
+  if (p.id === null) return "nobody";
+  if (p.type !== "user") return `${p.type}:${p.id}`;
+  return p.id.includes(":") || p.id === "nobody" ? `user:${p.id}` : p.id;
 }
 
 // One store for the process, even if bundlers load this module more than once (Next.js bundles per route).

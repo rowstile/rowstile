@@ -59,8 +59,8 @@ class Principal:
 
     @classmethod
     def parse(cls, text: str) -> Principal:
-        """What str() wrote, read back: 'service:3' is service 3, '42' user 42, 'nobody' nobody. For text your
-        own code wrote (a job's argument, the audit trail's `by`), not for an id that came from outside."""
+        """What str() wrote, read back: 'service:3' is service 3, '42' and 'user:42' user 42, 'nobody' nobody.
+        For text your own code wrote (a job's argument), not for an id that came from outside."""
         if text == "nobody":
             return NOBODY
         if ":" in text and not text.startswith("("):
@@ -69,7 +69,13 @@ class Principal:
         return cls("user", text)
 
     def __str__(self) -> str:
-        return "nobody" if self.id is None else (self.id if self.type == "user" else f"{self.type}:{self.id}")
+        """'42', 'service:3' or 'nobody'. A user whose id holds ':' or is 'nobody' is 'user:<id>' ('user:a:b'),
+        so that parse() reads every principal back as itself."""
+        if self.id is None:
+            return "nobody"
+        if self.type != "user":
+            return f"{self.type}:{self.id}"
+        return f"user:{self.id}" if ":" in self.id or self.id == "nobody" else self.id
 
 
 NOBODY = Principal("user", None)
