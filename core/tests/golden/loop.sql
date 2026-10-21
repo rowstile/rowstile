@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', 'c3c7221fdf7b32c3a02a51dfac930db2', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[], 'domain_email_org_setting__domain_email_org_settings__tree')) n(name, hash, oids, rel)
+           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', '9bf514bc866b5abd1bb5609916931dd1', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[], 'domain_email_org_setting__domain_email_org_settings__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -275,85 +275,101 @@ CREATE OR REPLACE FUNCTION authz.link_hashes() RETURNS text[] LANGUAGE sql STABL
 DO $chk$
 DECLARE missing text := ''; v_oid oid; v_type text; v_n int;
 BEGIN
-  IF to_regclass('"lp"."users"') IS NULL THEN missing := missing || E'\n  line 7: table lp.users not found [AZ601]';
+  IF to_regclass('"lp"."users"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 7: table lp.users not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."users"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 7: column id not found in lp.users [AZ601]';
+    missing := missing || E'\n  ' || 'line 7: column id not found in lp.users [AZ601]';
   END IF;
-  IF to_regclass('"lp"."orgs"') IS NULL THEN missing := missing || E'\n  line 9: table lp.orgs not found [AZ601]';
+  IF to_regclass('"lp"."orgs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 9: table lp.orgs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."orgs"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 9: column id not found in lp.orgs [AZ601]';
+    missing := missing || E'\n  ' || 'line 9: column id not found in lp.orgs [AZ601]';
   END IF;
-  IF to_regclass('"lp"."orgs"') IS NULL THEN missing := missing || E'\n  line 10: table lp.orgs not found [AZ601]';
+  IF to_regclass('"lp"."orgs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 10: table lp.orgs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."orgs"')
                     AND attname = 'owner_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 10: column owner_id not found in lp.orgs [AZ601]';
+    missing := missing || E'\n  ' || 'line 10: column owner_id not found in lp.orgs [AZ601]';
   END IF;
-  IF to_regclass('"lp"."orgs"') IS NULL THEN missing := missing || E'\n  line 11: table lp.orgs not found [AZ601]';
+  IF to_regclass('"lp"."orgs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 11: table lp.orgs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."orgs"')
                     AND attname = 'settings_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 11: column settings_id not found in lp.orgs [AZ601]';
+    missing := missing || E'\n  ' || 'line 11: column settings_id not found in lp.orgs [AZ601]';
   END IF;
-  IF to_regclass('"lp"."settings"') IS NULL THEN missing := missing || E'\n  line 15: table lp.settings not found [AZ601]';
+  IF to_regclass('"lp"."settings"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 15: table lp.settings not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."settings"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 15: column id not found in lp.settings [AZ601]';
+    missing := missing || E'\n  ' || 'line 15: column id not found in lp.settings [AZ601]';
   END IF;
-  IF to_regclass('"lp"."settings"') IS NULL THEN missing := missing || E'\n  line 16: table lp.settings not found [AZ601]';
+  IF to_regclass('"lp"."settings"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 16: table lp.settings not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."settings"')
                     AND attname = 'email_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 16: column email_id not found in lp.settings [AZ601]';
+    missing := missing || E'\n  ' || 'line 16: column email_id not found in lp.settings [AZ601]';
   END IF;
-  IF to_regclass('"lp"."emails"') IS NULL THEN missing := missing || E'\n  line 20: table lp.emails not found [AZ601]';
+  IF to_regclass('"lp"."emails"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 20: table lp.emails not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."emails"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 20: column id not found in lp.emails [AZ601]';
+    missing := missing || E'\n  ' || 'line 20: column id not found in lp.emails [AZ601]';
   END IF;
-  IF to_regclass('"lp"."emails"') IS NULL THEN missing := missing || E'\n  line 21: table lp.emails not found [AZ601]';
+  IF to_regclass('"lp"."emails"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 21: table lp.emails not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."emails"')
                     AND attname = 'domain_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 21: column domain_id not found in lp.emails [AZ601]';
+    missing := missing || E'\n  ' || 'line 21: column domain_id not found in lp.emails [AZ601]';
   END IF;
-  IF to_regclass('"lp"."domains"') IS NULL THEN missing := missing || E'\n  line 24: table lp.domains not found [AZ601]';
+  IF to_regclass('"lp"."domains"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 24: table lp.domains not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."domains"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 24: column id not found in lp.domains [AZ601]';
+    missing := missing || E'\n  ' || 'line 24: column id not found in lp.domains [AZ601]';
   END IF;
-  IF to_regclass('"lp"."domains"') IS NULL THEN missing := missing || E'\n  line 25: table lp.domains not found [AZ601]';
+  IF to_regclass('"lp"."domains"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 25: table lp.domains not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."domains"')
                     AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 25: column org_id not found in lp.domains [AZ601]';
+    missing := missing || E'\n  ' || 'line 25: column org_id not found in lp.domains [AZ601]';
   END IF;
-  IF to_regclass('"lp"."domains"') IS NULL THEN missing := missing || E'\n  line 42: table lp.domains not found [AZ601]';
+  IF to_regclass('"lp"."domains"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 42: table lp.domains not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"lp"."domains"')
                     AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 42: column org_id not found in lp.domains [AZ601]';
+    missing := missing || E'\n  ' || 'line 42: column org_id not found in lp.domains [AZ601]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"lp"."users"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 7: lp.users.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 7: lp.users.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"lp"."orgs"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 9: lp.orgs.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 9: lp.orgs.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"lp"."settings"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 15: lp.settings.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 15: lp.settings.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"lp"."emails"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 20: lp.emails.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 20: lp.emails.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"lp"."domains"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 24: lp.domains.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 24: lp.domains.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;
 END $chk$;
@@ -521,7 +537,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('domain_email_org_setting__domain_email_org_settings__tree', 'c3c7221fdf7b32c3a02a51dfac930db2', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[]);
+  ('domain_email_org_setting__domain_email_org_settings__tree', '9bf514bc866b5abd1bb5609916931dd1', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[]);
 
 CREATE TABLE authz_int.shared_relations (object_type text, relation text, subject text, shared_by text, required text[], loc text, PRIMARY KEY (object_type, relation, subject));
 
@@ -932,7 +948,8 @@ BEGIN
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((verified), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 22: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 22', SQLERRM;
   END;
   DROP TABLE authz_probe;
   FOR d IN SELECT DISTINCT p.oid::regprocedure AS fn
@@ -940,7 +957,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."domain_email_org_setting__domain_email_org_settings__tree_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 22: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 22', d.fn;
   END LOOP;
 END $imm$;
 
@@ -1288,7 +1306,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."orgs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_org_col_audit_ins" AFTER INSERT ON "lp"."orgs" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"lp"."orgs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."orgs"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."org__col_audit_upd"() RETURNS trigger
@@ -1319,7 +1337,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."orgs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_org_col_audit_upd" AFTER UPDATE ON "lp"."orgs" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"lp"."orgs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."orgs"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."org__col_audit_del"() RETURNS trigger
@@ -1333,7 +1351,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."orgs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_org_col_audit_del" AFTER DELETE ON "lp"."orgs" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"lp"."orgs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."orgs"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."org__col_audit_trunc"() RETURNS trigger
@@ -1348,7 +1366,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."orgs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_org_col_audit_trunc" AFTER TRUNCATE ON "lp"."orgs" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"lp"."orgs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."orgs"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -1370,7 +1388,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."orgs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_org_col_audit_row" AFTER UPDATE ON "lp"."orgs" FOR EACH ROW WHEN (OLD."owner_id" IS DISTINCT FROM NEW."owner_id" OR OLD."settings_id" IS DISTINCT FROM NEW."settings_id") EXECUTE FUNCTION authz_int."org__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"lp"."orgs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."orgs"';
   END IF;
 END $tr$;
 
@@ -1386,7 +1404,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."settings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_setting_col_audit_ins" AFTER INSERT ON "lp"."settings" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."setting__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"lp"."settings" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."settings"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."setting__col_audit_upd"() RETURNS trigger
@@ -1410,7 +1428,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."settings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_setting_col_audit_upd" AFTER UPDATE ON "lp"."settings" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."setting__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"lp"."settings" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."settings"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."setting__col_audit_del"() RETURNS trigger
@@ -1424,7 +1442,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."settings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_setting_col_audit_del" AFTER DELETE ON "lp"."settings" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."setting__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"lp"."settings" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."settings"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."setting__col_audit_trunc"() RETURNS trigger
@@ -1439,7 +1457,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."settings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_setting_col_audit_trunc" AFTER TRUNCATE ON "lp"."settings" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."setting__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"lp"."settings" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."settings"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -1457,7 +1475,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."settings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_setting_col_audit_row" AFTER UPDATE ON "lp"."settings" FOR EACH ROW WHEN (OLD."email_id" IS DISTINCT FROM NEW."email_id") EXECUTE FUNCTION authz_int."setting__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"lp"."settings" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."settings"';
   END IF;
 END $tr$;
 
@@ -1473,7 +1491,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."emails"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_email_col_audit_ins" AFTER INSERT ON "lp"."emails" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."email__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"lp"."emails" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."emails"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."email__col_audit_upd"() RETURNS trigger
@@ -1497,7 +1515,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."emails"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_email_col_audit_upd" AFTER UPDATE ON "lp"."emails" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."email__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"lp"."emails" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."emails"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."email__col_audit_del"() RETURNS trigger
@@ -1511,7 +1529,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."emails"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_email_col_audit_del" AFTER DELETE ON "lp"."emails" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."email__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"lp"."emails" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."emails"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."email__col_audit_trunc"() RETURNS trigger
@@ -1526,7 +1544,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."emails"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_email_col_audit_trunc" AFTER TRUNCATE ON "lp"."emails" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."email__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"lp"."emails" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."emails"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -1544,7 +1562,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."emails"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_email_col_audit_row" AFTER UPDATE ON "lp"."emails" FOR EACH ROW WHEN (OLD."domain_id" IS DISTINCT FROM NEW."domain_id") EXECUTE FUNCTION authz_int."email__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"lp"."emails" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."emails"';
   END IF;
 END $tr$;
 
@@ -1560,7 +1578,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."domains"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_domain_col_audit_ins" AFTER INSERT ON "lp"."domains" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."domain__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"lp"."domains" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."domains"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."domain__col_audit_upd"() RETURNS trigger
@@ -1584,7 +1602,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."domains"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_domain_col_audit_upd" AFTER UPDATE ON "lp"."domains" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."domain__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"lp"."domains" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."domains"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."domain__col_audit_del"() RETURNS trigger
@@ -1598,7 +1616,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."domains"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_domain_col_audit_del" AFTER DELETE ON "lp"."domains" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."domain__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"lp"."domains" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."domains"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."domain__col_audit_trunc"() RETURNS trigger
@@ -1613,7 +1631,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."domains"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_domain_col_audit_trunc" AFTER TRUNCATE ON "lp"."domains" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."domain__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"lp"."domains" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."domains"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -1631,7 +1649,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."domains"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_domain_col_audit_row" AFTER UPDATE ON "lp"."domains" FOR EACH ROW WHEN (OLD."org_id" IS DISTINCT FROM NEW."org_id") EXECUTE FUNCTION authz_int."domain__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"lp"."domains" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."domains"';
   END IF;
 END $tr$;
 

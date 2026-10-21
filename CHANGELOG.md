@@ -135,6 +135,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   that only the end-to-end scenario made. Those checks are now a named test in `docs.test.authz` that makes the
   shares itself, so `rowstile test example/docs.test.authz` passes as its header says, and the playground's
   docs example shows the policy's tests too.
+- A policy that includes a file named with an apostrophe (`include "o'brien.authz"`) failed to apply with
+  a bare syntax error. It applies, and the messages that name the file's lines say its name as written, a `%` in
+  it too. A file whose name holds a dollar quote's tag (`$f$`) can't be included: the include line is refused,
+  saying to rename the file (AZ108).
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch

@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder__parent__tree', '06a68fa1885f1df3fa0d1cf873145787', ARRAY[to_regclass('"app"."folders"')::oid]::oid[], 'folder__parent__tree'), ('folder__linked_into_parent__tree', '28565cd53cad0b8d6f816945feed16f1', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[], 'folder__linked_into_parent__tree')) n(name, hash, oids, rel)
+           JOIN (VALUES ('folder__parent__tree', '31465d7501489ac28e1dc13512f36a63', ARRAY[to_regclass('"app"."folders"')::oid]::oid[], 'folder__parent__tree'), ('folder__linked_into_parent__tree', '05dbf48bde5beebda8f7cfdc6def5e69', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[], 'folder__linked_into_parent__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -275,195 +275,233 @@ CREATE OR REPLACE FUNCTION authz.link_hashes() RETURNS text[] LANGUAGE sql STABL
 DO $chk$
 DECLARE missing text := ''; v_oid oid; v_type text; v_n int;
 BEGIN
-  IF to_regclass('"app"."users"') IS NULL THEN missing := missing || E'\n  line 25: table app.users not found [AZ601]';
+  IF to_regclass('"app"."users"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 25: table app.users not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."users"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 25: column id not found in app.users [AZ601]';
+    missing := missing || E'\n  ' || 'line 25: column id not found in app.users [AZ601]';
   END IF;
-  IF to_regclass('"app"."orgs"') IS NULL THEN missing := missing || E'\n  line 30: table app.orgs not found [AZ601]';
+  IF to_regclass('"app"."orgs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 30: table app.orgs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."orgs"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 30: column id not found in app.orgs [AZ601]';
+    missing := missing || E'\n  ' || 'line 30: column id not found in app.orgs [AZ601]';
   END IF;
-  IF to_regclass('"app"."org_members"') IS NULL THEN missing := missing || E'\n  line 31: table app.org_members not found [AZ601]';
+  IF to_regclass('"app"."org_members"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 31: table app.org_members not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."org_members"')
                     AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 31: column org_id not found in app.org_members [AZ601]';
+    missing := missing || E'\n  ' || 'line 31: column org_id not found in app.org_members [AZ601]';
   END IF;
-  IF to_regclass('"app"."org_members"') IS NULL THEN missing := missing || E'\n  line 31: table app.org_members not found [AZ601]';
+  IF to_regclass('"app"."org_members"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 31: table app.org_members not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."org_members"')
                     AND attname = 'user_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 31: column user_id not found in app.org_members [AZ601]';
+    missing := missing || E'\n  ' || 'line 31: column user_id not found in app.org_members [AZ601]';
   END IF;
-  IF to_regclass('"app"."org_members"') IS NULL THEN missing := missing || E'\n  line 32: table app.org_members not found [AZ601]';
+  IF to_regclass('"app"."org_members"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 32: table app.org_members not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."org_members"')
                     AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 32: column org_id not found in app.org_members [AZ601]';
+    missing := missing || E'\n  ' || 'line 32: column org_id not found in app.org_members [AZ601]';
   END IF;
-  IF to_regclass('"app"."org_members"') IS NULL THEN missing := missing || E'\n  line 32: table app.org_members not found [AZ601]';
+  IF to_regclass('"app"."org_members"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 32: table app.org_members not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."org_members"')
                     AND attname = 'user_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 32: column user_id not found in app.org_members [AZ601]';
+    missing := missing || E'\n  ' || 'line 32: column user_id not found in app.org_members [AZ601]';
   END IF;
-  IF to_regclass('"app"."teams"') IS NULL THEN missing := missing || E'\n  line 34: table app.teams not found [AZ601]';
+  IF to_regclass('"app"."teams"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 34: table app.teams not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."teams"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 34: column id not found in app.teams [AZ601]';
+    missing := missing || E'\n  ' || 'line 34: column id not found in app.teams [AZ601]';
   END IF;
-  IF to_regclass('"app"."team_members"') IS NULL THEN missing := missing || E'\n  line 35: table app.team_members not found [AZ601]';
+  IF to_regclass('"app"."team_members"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 35: table app.team_members not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."team_members"')
                     AND attname = 'team_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 35: column team_id not found in app.team_members [AZ601]';
+    missing := missing || E'\n  ' || 'line 35: column team_id not found in app.team_members [AZ601]';
   END IF;
-  IF to_regclass('"app"."team_members"') IS NULL THEN missing := missing || E'\n  line 35: table app.team_members not found [AZ601]';
+  IF to_regclass('"app"."team_members"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 35: table app.team_members not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."team_members"')
                     AND attname = 'user_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 35: column user_id not found in app.team_members [AZ601]';
+    missing := missing || E'\n  ' || 'line 35: column user_id not found in app.team_members [AZ601]';
   END IF;
-  IF to_regclass('"app"."teams"') IS NULL THEN missing := missing || E'\n  line 36: table app.teams not found [AZ601]';
+  IF to_regclass('"app"."teams"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 36: table app.teams not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."teams"')
                     AND attname = 'parent_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 36: column parent_id not found in app.teams [AZ601]';
+    missing := missing || E'\n  ' || 'line 36: column parent_id not found in app.teams [AZ601]';
   END IF;
-  IF to_regclass('"app"."teams"') IS NULL THEN missing := missing || E'\n  line 36: table app.teams not found [AZ601]';
+  IF to_regclass('"app"."teams"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 36: table app.teams not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."teams"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 36: column id not found in app.teams [AZ601]';
+    missing := missing || E'\n  ' || 'line 36: column id not found in app.teams [AZ601]';
   END IF;
-  IF to_regclass('"app"."folders"') IS NULL THEN missing := missing || E'\n  line 38: table app.folders not found [AZ601]';
+  IF to_regclass('"app"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 38: table app.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 38: column id not found in app.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 38: column id not found in app.folders [AZ601]';
   END IF;
-  IF to_regclass('"app"."folders"') IS NULL THEN missing := missing || E'\n  line 39: table app.folders not found [AZ601]';
+  IF to_regclass('"app"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 39: table app.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"')
                     AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 39: column org_id not found in app.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 39: column org_id not found in app.folders [AZ601]';
   END IF;
-  IF to_regclass('"app"."folders"') IS NULL THEN missing := missing || E'\n  line 40: table app.folders not found [AZ601]';
+  IF to_regclass('"app"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 40: table app.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"')
                     AND attname = 'parent_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 40: column parent_id not found in app.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 40: column parent_id not found in app.folders [AZ601]';
   END IF;
-  IF to_regclass('"app"."folder_links"') IS NULL THEN missing := missing || E'\n  line 41: table app.folder_links not found [AZ601]';
+  IF to_regclass('"app"."folder_links"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 41: table app.folder_links not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folder_links"')
                     AND attname = 'folder_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 41: column folder_id not found in app.folder_links [AZ601]';
+    missing := missing || E'\n  ' || 'line 41: column folder_id not found in app.folder_links [AZ601]';
   END IF;
-  IF to_regclass('"app"."folder_links"') IS NULL THEN missing := missing || E'\n  line 41: table app.folder_links not found [AZ601]';
+  IF to_regclass('"app"."folder_links"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 41: table app.folder_links not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folder_links"')
                     AND attname = 'parent_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 41: column parent_id not found in app.folder_links [AZ601]';
+    missing := missing || E'\n  ' || 'line 41: column parent_id not found in app.folder_links [AZ601]';
   END IF;
-  IF to_regclass('"app"."folders"') IS NULL THEN missing := missing || E'\n  line 42: table app.folders not found [AZ601]';
+  IF to_regclass('"app"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 42: table app.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"')
                     AND attname = 'owner_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 42: column owner_id not found in app.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 42: column owner_id not found in app.folders [AZ601]';
   END IF;
-  IF to_regclass('"app"."folder_team_access"') IS NULL THEN missing := missing || E'\n  line 44: table app.folder_team_access not found [AZ601]';
+  IF to_regclass('"app"."folder_team_access"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 44: table app.folder_team_access not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folder_team_access"')
                     AND attname = 'folder_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 44: column folder_id not found in app.folder_team_access [AZ601]';
+    missing := missing || E'\n  ' || 'line 44: column folder_id not found in app.folder_team_access [AZ601]';
   END IF;
-  IF to_regclass('"app"."folder_team_access"') IS NULL THEN missing := missing || E'\n  line 44: table app.folder_team_access not found [AZ601]';
+  IF to_regclass('"app"."folder_team_access"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 44: table app.folder_team_access not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folder_team_access"')
                     AND attname = 'team_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 44: column team_id not found in app.folder_team_access [AZ601]';
+    missing := missing || E'\n  ' || 'line 44: column team_id not found in app.folder_team_access [AZ601]';
   END IF;
-  IF to_regclass('"app"."folder_team_access"') IS NULL THEN missing := missing || E'\n  line 46: table app.folder_team_access not found [AZ601]';
+  IF to_regclass('"app"."folder_team_access"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 46: table app.folder_team_access not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folder_team_access"')
                     AND attname = 'folder_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 46: column folder_id not found in app.folder_team_access [AZ601]';
+    missing := missing || E'\n  ' || 'line 46: column folder_id not found in app.folder_team_access [AZ601]';
   END IF;
-  IF to_regclass('"app"."folder_team_access"') IS NULL THEN missing := missing || E'\n  line 46: table app.folder_team_access not found [AZ601]';
+  IF to_regclass('"app"."folder_team_access"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 46: table app.folder_team_access not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folder_team_access"')
                     AND attname = 'team_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 46: column team_id not found in app.folder_team_access [AZ601]';
+    missing := missing || E'\n  ' || 'line 46: column team_id not found in app.folder_team_access [AZ601]';
   END IF;
-  IF to_regclass('"app"."files"') IS NULL THEN missing := missing || E'\n  line 56: table app.files not found [AZ601]';
+  IF to_regclass('"app"."files"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 56: table app.files not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 56: column id not found in app.files [AZ601]';
+    missing := missing || E'\n  ' || 'line 56: column id not found in app.files [AZ601]';
   END IF;
-  IF to_regclass('"app"."files"') IS NULL THEN missing := missing || E'\n  line 57: table app.files not found [AZ601]';
+  IF to_regclass('"app"."files"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 57: table app.files not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"')
                     AND attname = 'folder_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 57: column folder_id not found in app.files [AZ601]';
+    missing := missing || E'\n  ' || 'line 57: column folder_id not found in app.files [AZ601]';
   END IF;
-  IF to_regclass('"app"."files"') IS NULL THEN missing := missing || E'\n  line 58: table app.files not found [AZ601]';
+  IF to_regclass('"app"."files"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 58: table app.files not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"')
                     AND attname = 'owner_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 58: column owner_id not found in app.files [AZ601]';
+    missing := missing || E'\n  ' || 'line 58: column owner_id not found in app.files [AZ601]';
   END IF;
-  IF to_regclass('"app"."folders"') IS NULL THEN missing := missing || E'\n  line 74: table app.folders not found [AZ601]';
+  IF to_regclass('"app"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 74: table app.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"')
                     AND attname = 'parent_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 74: column parent_id not found in app.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 74: column parent_id not found in app.folders [AZ601]';
   END IF;
-  IF to_regclass('"app"."folders"') IS NULL THEN missing := missing || E'\n  line 75: table app.folders not found [AZ601]';
+  IF to_regclass('"app"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 75: table app.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 75: column id not found in app.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 75: column id not found in app.folders [AZ601]';
   END IF;
-  IF to_regclass('"app"."folders"') IS NULL THEN missing := missing || E'\n  line 75: table app.folders not found [AZ601]';
+  IF to_regclass('"app"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 75: table app.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"')
                     AND attname = 'owner_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 75: column owner_id not found in app.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 75: column owner_id not found in app.folders [AZ601]';
   END IF;
-  IF to_regclass('"app"."folders"') IS NULL THEN missing := missing || E'\n  line 75: table app.folders not found [AZ601]';
+  IF to_regclass('"app"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 75: table app.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"')
                     AND attname = 'org_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 75: column org_id not found in app.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 75: column org_id not found in app.folders [AZ601]';
   END IF;
-  IF to_regclass('"app"."folders"') IS NULL THEN missing := missing || E'\n  line 75: table app.folders not found [AZ601]';
+  IF to_regclass('"app"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 75: table app.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"')
                     AND attname = 'inherit' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 75: column inherit not found in app.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 75: column inherit not found in app.folders [AZ601]';
   END IF;
-  IF to_regclass('"app"."files"') IS NULL THEN missing := missing || E'\n  line 82: table app.files not found [AZ601]';
+  IF to_regclass('"app"."files"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 82: table app.files not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"')
                     AND attname = 'folder_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 82: column folder_id not found in app.files [AZ601]';
+    missing := missing || E'\n  ' || 'line 82: column folder_id not found in app.files [AZ601]';
   END IF;
-  IF to_regclass('"app"."files"') IS NULL THEN missing := missing || E'\n  line 83: table app.files not found [AZ601]';
+  IF to_regclass('"app"."files"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 83: table app.files not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 83: column id not found in app.files [AZ601]';
+    missing := missing || E'\n  ' || 'line 83: column id not found in app.files [AZ601]';
   END IF;
-  IF to_regclass('"app"."files"') IS NULL THEN missing := missing || E'\n  line 83: table app.files not found [AZ601]';
+  IF to_regclass('"app"."files"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 83: table app.files not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"')
                     AND attname = 'owner_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 83: column owner_id not found in app.files [AZ601]';
+    missing := missing || E'\n  ' || 'line 83: column owner_id not found in app.files [AZ601]';
   END IF;
-  IF to_regclass('"app"."files"') IS NULL THEN missing := missing || E'\n  line 83: table app.files not found [AZ601]';
+  IF to_regclass('"app"."files"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 83: table app.files not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"')
                     AND attname = 'confidential' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 83: column confidential not found in app.files [AZ601]';
+    missing := missing || E'\n  ' || 'line 83: column confidential not found in app.files [AZ601]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."users"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 25: app.users.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 25: app.users.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."orgs"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 30: app.orgs.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 30: app.orgs.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."teams"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 34: app.teams.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 34: app.teams.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."folders"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 38: app.folders.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 38: app.folders.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"app"."files"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 56: app.files.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 56: app.files.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;
 END $chk$;
@@ -634,8 +672,8 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder__parent__tree', '06a68fa1885f1df3fa0d1cf873145787', ARRAY[to_regclass('"app"."folders"')::oid]::oid[]),
-  ('folder__linked_into_parent__tree', '28565cd53cad0b8d6f816945feed16f1', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[]);
+  ('folder__parent__tree', '31465d7501489ac28e1dc13512f36a63', ARRAY[to_regclass('"app"."folders"')::oid]::oid[]),
+  ('folder__linked_into_parent__tree', '05dbf48bde5beebda8f7cfdc6def5e69', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[]);
 
 CREATE TABLE authz_int.shared_relations (object_type text, relation text, subject text, shared_by text, required text[], loc text, PRIMARY KEY (object_type, relation, subject));
 
@@ -1058,7 +1096,8 @@ BEGIN
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((inherit), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 48: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 48', SQLERRM;
   END;
   DROP TABLE authz_probe;
   FOR d IN SELECT DISTINCT p.oid::regprocedure AS fn
@@ -1066,7 +1105,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."folder__parent__tree_links"'::regclass, 'authz_int."folder__parent__tree_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 48: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 48', d.fn;
   END LOOP;
 END $imm$;
 
@@ -1298,7 +1338,8 @@ BEGIN
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((inherit), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 48: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 48', SQLERRM;
   END;
   DROP TABLE authz_probe;
   FOR d IN SELECT DISTINCT p.oid::regprocedure AS fn
@@ -1306,7 +1347,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."folder__linked_into_parent__tree_links"'::regclass, 'authz_int."folder__linked_into_parent__tree_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 48: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 48', d.fn;
   END LOOP;
 END $imm$;
 
@@ -1826,7 +1868,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folder_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_ins" AFTER INSERT ON "app"."folder_links" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_ins"()';
   ELSE
-    RAISE NOTICE '"app"."folder_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folder_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_upd"() RETURNS trigger
@@ -1855,7 +1897,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folder_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_upd" AFTER UPDATE ON "app"."folder_links" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_upd"()';
   ELSE
-    RAISE NOTICE '"app"."folder_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folder_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_del"() RETURNS trigger
@@ -1875,7 +1917,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folder_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_del" AFTER DELETE ON "app"."folder_links" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_del"()';
   ELSE
-    RAISE NOTICE '"app"."folder_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folder_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_trunc"() RETURNS trigger
@@ -1890,7 +1932,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folder_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_trunc" AFTER TRUNCATE ON "app"."folder_links" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_trunc"()';
   ELSE
-    RAISE NOTICE '"app"."folder_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folder_links"';
   END IF;
 END $tr$;
 
@@ -1912,7 +1954,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folder_team_access"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_ins" AFTER INSERT ON "app"."folder_team_access" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_ins"()';
   ELSE
-    RAISE NOTICE '"app"."folder_team_access" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folder_team_access"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_upd"() RETURNS trigger
@@ -1941,7 +1983,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folder_team_access"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_upd" AFTER UPDATE ON "app"."folder_team_access" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_upd"()';
   ELSE
-    RAISE NOTICE '"app"."folder_team_access" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folder_team_access"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_del"() RETURNS trigger
@@ -1961,7 +2003,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folder_team_access"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_del" AFTER DELETE ON "app"."folder_team_access" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_del"()';
   ELSE
-    RAISE NOTICE '"app"."folder_team_access" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folder_team_access"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_trunc"() RETURNS trigger
@@ -1976,7 +2018,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folder_team_access"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_trunc" AFTER TRUNCATE ON "app"."folder_team_access" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_trunc"()';
   ELSE
-    RAISE NOTICE '"app"."folder_team_access" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folder_team_access"';
   END IF;
 END $tr$;
 
@@ -1998,7 +2040,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."org_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_ins" AFTER INSERT ON "app"."org_members" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_ins"()';
   ELSE
-    RAISE NOTICE '"app"."org_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."org_members"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_upd"() RETURNS trigger
@@ -2027,7 +2069,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."org_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_upd" AFTER UPDATE ON "app"."org_members" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_upd"()';
   ELSE
-    RAISE NOTICE '"app"."org_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."org_members"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_del"() RETURNS trigger
@@ -2047,7 +2089,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."org_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_del" AFTER DELETE ON "app"."org_members" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_del"()';
   ELSE
-    RAISE NOTICE '"app"."org_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."org_members"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_trunc"() RETURNS trigger
@@ -2062,7 +2104,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."org_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_trunc" AFTER TRUNCATE ON "app"."org_members" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_trunc"()';
   ELSE
-    RAISE NOTICE '"app"."org_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."org_members"';
   END IF;
 END $tr$;
 
@@ -2084,7 +2126,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."team_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_ins" AFTER INSERT ON "app"."team_members" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_ins"()';
   ELSE
-    RAISE NOTICE '"app"."team_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."team_members"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_upd"() RETURNS trigger
@@ -2113,7 +2155,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."team_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_upd" AFTER UPDATE ON "app"."team_members" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_upd"()';
   ELSE
-    RAISE NOTICE '"app"."team_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."team_members"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_del"() RETURNS trigger
@@ -2133,7 +2175,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."team_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_del" AFTER DELETE ON "app"."team_members" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_del"()';
   ELSE
-    RAISE NOTICE '"app"."team_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."team_members"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_trunc"() RETURNS trigger
@@ -2148,7 +2190,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."team_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_trunc" AFTER TRUNCATE ON "app"."team_members" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_trunc"()';
   ELSE
-    RAISE NOTICE '"app"."team_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."team_members"';
   END IF;
 END $tr$;
 
@@ -2170,7 +2212,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."teams"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_5_ins" AFTER INSERT ON "app"."teams" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_5_ins"()';
   ELSE
-    RAISE NOTICE '"app"."teams" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."teams"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_5_upd"() RETURNS trigger
@@ -2199,7 +2241,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."teams"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_5_upd" AFTER UPDATE ON "app"."teams" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_5_upd"()';
   ELSE
-    RAISE NOTICE '"app"."teams" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."teams"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_5_del"() RETURNS trigger
@@ -2219,7 +2261,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."teams"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_5_del" AFTER DELETE ON "app"."teams" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_5_del"()';
   ELSE
-    RAISE NOTICE '"app"."teams" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."teams"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_5_trunc"() RETURNS trigger
@@ -2234,7 +2276,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."teams"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_5_trunc" AFTER TRUNCATE ON "app"."teams" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_5_trunc"()';
   ELSE
-    RAISE NOTICE '"app"."teams" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."teams"';
   END IF;
 END $tr$;
 
@@ -2250,7 +2292,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_ins" AFTER INSERT ON "app"."folders" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"app"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folders"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."folder__col_audit_upd"() RETURNS trigger
@@ -2288,7 +2330,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_upd" AFTER UPDATE ON "app"."folders" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"app"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folders"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."folder__col_audit_del"() RETURNS trigger
@@ -2302,7 +2344,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_del" AFTER DELETE ON "app"."folders" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"app"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folders"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."folder__col_audit_trunc"() RETURNS trigger
@@ -2317,7 +2359,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_trunc" AFTER TRUNCATE ON "app"."folders" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"app"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folders"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -2343,7 +2385,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_row" AFTER UPDATE ON "app"."folders" FOR EACH ROW WHEN (OLD."org_id" IS DISTINCT FROM NEW."org_id" OR OLD."parent_id" IS DISTINCT FROM NEW."parent_id" OR OLD."owner_id" IS DISTINCT FROM NEW."owner_id") EXECUTE FUNCTION authz_int."folder__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"app"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."folders"';
   END IF;
 END $tr$;
 
@@ -2359,7 +2401,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."files"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_file_col_audit_ins" AFTER INSERT ON "app"."files" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."file__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"app"."files" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."files"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."file__col_audit_upd"() RETURNS trigger
@@ -2390,7 +2432,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."files"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_file_col_audit_upd" AFTER UPDATE ON "app"."files" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."file__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"app"."files" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."files"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."file__col_audit_del"() RETURNS trigger
@@ -2404,7 +2446,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."files"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_file_col_audit_del" AFTER DELETE ON "app"."files" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."file__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"app"."files" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."files"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."file__col_audit_trunc"() RETURNS trigger
@@ -2419,7 +2461,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."files"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_file_col_audit_trunc" AFTER TRUNCATE ON "app"."files" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."file__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"app"."files" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."files"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -2441,7 +2483,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"app"."files"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_file_col_audit_row" AFTER UPDATE ON "app"."files" FOR EACH ROW WHEN (OLD."folder_id" IS DISTINCT FROM NEW."folder_id" OR OLD."owner_id" IS DISTINCT FROM NEW."owner_id") EXECUTE FUNCTION authz_int."file__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"app"."files" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"app"."files"';
   END IF;
 END $tr$;
 

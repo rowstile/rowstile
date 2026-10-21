@@ -126,7 +126,8 @@ CODES = {
         "file it looked for, from the policy's folder: put the file there, or correct the name. A file can be "
         "included only once, and never by itself. It is in the policy's folder or below it: named with `/`, "
         "without `..` out of the folder, a drive or a `/` at the start (the review runs on a pull request's "
-        "files, and must not read others).",
+        "files, and must not read others). Its name can't hold a dollar quote's tag (`$f$`): the generated functions "
+        "name the file in their messages, and the tag would end one.",
         'include "team.authz"\ntype folder = app.folders\n  owner : user = owner_id\n  can view = owner\n',
         'include "teams.authz"\ntype folder = app.folders\n  owner : user = owner_id\n  can view = owner\n',
         files=(

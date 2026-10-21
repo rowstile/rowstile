@@ -59,7 +59,8 @@ class TreeMixin(Core):
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce(({on_row(c, "authz_probe")}), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION '{loc!s}: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      {lit(loc)}, SQLERRM;
   END;
   DROP TABLE authz_probe;"""
             for tb, c, loc in conds + link_wheres
@@ -75,7 +76,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ({", ".join(f"{lit(v)}::regclass" for v in views)}) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION '{first_line}: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      {lit(first_line)}, d.fn;
   END LOOP;
 END $imm$;"""
 
@@ -92,7 +94,8 @@ BEGIN
            WHERE w.ev_class = {lit(conds_view)}::regclass
              AND c.oid NOT IN (w.ev_class, {", ".join(f"{lit(tb)}::regclass" for tb in own_tables)}) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
-      RAISE EXCEPTION '{first_line}: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]', d.rel;
+      RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
+        {lit(first_line)}, d.rel;
     END IF;
     EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
                    'FOR EACH STATEMENT EXECUTE FUNCTION {on_deps}()', {lit(dep_trigger(name))}, d.rel);
