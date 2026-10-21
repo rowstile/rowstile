@@ -32,10 +32,13 @@ rules app.folders
 
 ## Tested
 
+Ann owns the top folder. `$own` is inside it, says `inherit = false`, and is Bo's:
+
 ```authz
 test "what you may do in a folder, you may do below it, until one says stop"
   user $ann can edit folder $low
   user $ann cannot view folder $own
+  user $bo can edit folder $own
   user $bo cannot view folder $sub
   as user $ann refused {INSERT INTO app.folders (parent_id, owner_id, name) VALUES ($own, $ann, 'Notes')}
   as user $bo allowed {INSERT INTO app.folders (owner_id, name) VALUES ($bo, 'A tree of my own')}
@@ -46,17 +49,17 @@ test "what you may do in a folder, you may do below it, until one says stop"
 
 ## Try it
 
-[Open it in the playground](https://rowstile.dev/playground/#e=folders-that-inherit): the tables, the policy and the
-test, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/folders-that-inherit/`](folders-that-inherit/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+[Open it in the playground](https://rowstile.dev/playground/#e=folders-that-inherit): the tables, the policy and
+the test, in your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/folders-that-inherit/`](folders-that-inherit/). CI takes them on every change
+(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
 
 ## What it costs
 
 Reads stay fast however deep the tree: rowstile keeps who is above whom in a table of its own, maintained by
-triggers. Writes pay for it. A move rewrites a row for each folder below the one moved, and structural writes
-to one type wait for each other. [Speed and limits](../reference/limits.md) has the numbers, at a million
+triggers. Writes pay for it. A move rewrites a row for each folder below the one moved, and tree writes
+(moves, new and deleted folders) to one type wait for each other. [Speed and limits](../reference/limits.md) has the numbers, at a million
 folders.
 
 More: [inheritance](../reference/language.md), [hiding a subtree](deny-that-inherits.md),

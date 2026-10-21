@@ -27,6 +27,8 @@ type document = app.documents
   as user $ann allowed {SELECT authz.share('document', $d, 'viewer', 'user', $bo, '', now() + interval '1 week', now() + interval '1 day')}
 ```
 
+The end comes first, then the start: the last share holds from tomorrow until a week from now.
+
 - `authz.create_link('document', 7, 'viewer')` returns a token. A request that carries it sets
   `authz_ctx.links` to it for its transaction, and holds what the link gives
   ([using it from app code](../reference/app-code.md)).
@@ -44,20 +46,26 @@ test "sharing with a person and with a team"
   as user $cy refused {DELETE FROM app.documents WHERE id = $d}
 ```
 
+Ann's link line also presents the token, as a request that carries it would (`set_config(..., true)` lasts
+until the test ends):
+
 ```authz
 test "a share that starts later, and a link"
   user $bo cannot view document $d
-  as user $ann allowed {SELECT authz.create_link('document', $d, 'viewer')}
+  as user $ann sees 1 {SELECT FROM authz.list_shares('document', $d) WHERE starts_at = now() + interval '1 day' AND expires_at = now() + interval '1 week'}
   as user $bo refused {SELECT authz.create_link('document', $d, 'viewer')}
+  as user $ann allowed {SELECT set_config('authz_ctx.links', authz.create_link('document', $d, 'viewer'), true)}
+  user $bo can view document $d
+  anyone can view document $d
 ```
 
 ## Try it
 
 [Open it in the playground](https://rowstile.dev/playground/#e=sharing-and-links): the tables, the policy and the
-test, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/sharing-and-links/`](sharing-and-links/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+tests, in your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/sharing-and-links/`](sharing-and-links/). CI takes them on every change (`core/tests/cookbook.sh`),
+and checks that every line of policy and tests shown here is in those files.
 
 More: [shares](../reference/language.md), [listing and taking back shares and links](../reference/app-code.md),
 [the other recipes](../cookbook.md).

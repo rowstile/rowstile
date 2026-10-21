@@ -1,0 +1,3 @@
+# rowstile dev and rowstile test read this: docs/cookbook.md says how to try the recipe on a database
+policy = "policy.authz"
+tests  = ["tests.authz"]

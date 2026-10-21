@@ -15,3 +15,9 @@ test "ask, and whoever may share decides"
   as user $ann allowed {SELECT authz.decide_request(r.id, true, 'ok') FROM authz.pending_requests() r}
   user $bo can view document $d
   user $cy cannot view document $d
+  as user $ann sees 1 {SELECT FROM authz.list_shares('document', $d) WHERE expires_at = now() + interval '7 days'}
+  as user $ann allowed {SELECT authz.request_access('document', $d, 'viewer', 'a second look', '1 day')}
+  as user $ann refused {SELECT authz.decide_request(r.id, true, 'mine') FROM authz.pending_requests() r WHERE r.mine}
+  as user $cy allowed {SELECT authz.request_access('document', $d, 'viewer', 'for the audit', '7 days')}
+  as user $cy allowed {SELECT authz.request_access('document', 999999, 'viewer', 'for the audit', '7 days')}
+  as user $cy sees 2 {SELECT FROM authz.pending_requests() WHERE mine}

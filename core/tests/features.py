@@ -927,7 +927,7 @@ FEATURES: list[Feature] = [
             T("devx.sh", "a failing check names its file and line, and explains itself"),
             T("devx.sh", "with scope: a line is checked as a key limited to those scopes, and the next line is not"),
             T("unit_test.py", "class TestFiles("),
-            T("cookbook.sh", "every line its page shows is in its tested policy or tests"),
+            T("cookbook.sh", "every line of policy and tests its page shows is in its files"),
         ),
         hand=("tests-refused", "tests-scope"),
         grammar=("Tests: checks, and named tests with their own data",),

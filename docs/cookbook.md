@@ -1,10 +1,11 @@
 # Cookbook
 
 Recipes for common access rules. Each has a page of its own, with the policy lines, what each does and a
-test, and a folder under `docs/cookbook/` with its own small tables (`schema.sql`), policy (`policy.authz`)
-and tests (`tests.authz`). CI applies and tests every one, and every line a page shows is in those files
-(`core/tests/cookbook.sh` checks it). Each page links to the playground, where the recipe runs in your
-browser; or copy the folder's files and run `rowstile dev`.
+test, and a folder under `docs/cookbook/` with its own small tables (`schema.sql`), a few rows (`rows.sql`),
+policy (`policy.authz`), tests (`tests.authz`) and `rowstile.toml`. CI applies and tests every one, and checks
+that every line of policy and tests a page shows is in those files (`core/tests/cookbook.sh`). Each page links
+to the playground, where the recipe runs in your browser, or
+[try it on a database of your own](#trying-a-recipe-on-your-own-database).
 
 The language in one breath: a **type** is a table; a **relation** says who or what a row is linked to (a
 column, a link table, or shares people make); a **permission** combines relations with `or`, `and`, `not`,
@@ -78,3 +79,23 @@ Checking a password reads a table before anyone is signed in. Keep credentials i
 govern, and read them through a `SECURITY DEFINER` function the app role may call
 (`examples/messenger/db/migrations/0001_schema.sql`: `ms.credentials_for`). `authz.lint()` notes such functions:
 check each only reads what it must.
+
+## Trying a recipe on your own database
+
+Each recipe's folder has a `rowstile.toml` that names its policy and its tests, so `rowstile dev` finds them.
+In a copy of the folder, with [rowstile installed](installing.md):
+
+```sh
+createdb owner_only
+psql -d owner_only -f schema.sql -f rows.sql
+DATABASE_URL=postgresql://localhost/owner_only rowstile dev
+```
+
+- `schema.sql` makes the recipe's tables, in the schema `app`, and the app role, `app_user`, that the app connects as.
+  Run it as a Postgres user that may create roles. That user owns the tables, and `rowstile dev` connects as
+  it too. Each recipe wants a database of its own.
+- `rows.sql` adds a few rows to ask about, the ones the playground shows. The tests bring their own.
+- `rowstile dev` applies the policy and runs the tests, then does it again each time you save one of them.
+  `rowstile dev --once` does it once and stops.
+
+CI takes these steps for every recipe, with `--once` (`core/tests/cookbook.sh`).

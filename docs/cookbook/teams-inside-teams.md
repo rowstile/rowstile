@@ -35,13 +35,25 @@ test "what a team may read, its sub-teams' members may read"
   user $cy cannot view document $d
 ```
 
+Dee is in Design, inside Web, inside Engineering: three levels. Bo is in Engineering, above Design, so what
+Design reads he doesn't, until Engineering is put inside Design. The loop changes nothing for Dee:
+
+```authz
+test "to any depth, loops included"
+  user $dee can view document $plans
+  user $bo cannot view document $sketch
+  given {UPDATE app.teams SET parent_id = $ui WHERE id = $eng}
+  user $bo can view document $sketch
+  user $dee can view document $plans
+```
+
 ## Try it
 
 [Open it in the playground](https://rowstile.dev/playground/#e=teams-inside-teams): the tables, the policy and the
-test, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/teams-inside-teams/`](teams-inside-teams/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+tests, in your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/teams-inside-teams/`](teams-inside-teams/). CI takes them on every change
+(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
 
 ## What it costs
 

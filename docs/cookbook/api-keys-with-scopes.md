@@ -45,6 +45,7 @@ SELECT authz.create_api_key('inbox script', 'inbox');
 
 A request that brings a key starts its transaction with it, in place of `authz.act_as`:
 
+<!-- not run: ak_... stands for a key the lines above made; the test below checks lines as such a key would run them -->
 ```sql
 SELECT authz.login_key('ak_...');
 INSERT INTO app.notes (project_id, author_id, body) VALUES (1, 1, 'from a script');
@@ -75,11 +76,12 @@ The last line is Bo, who isn't in the project: his key is refused where he would
 
 ## Try it
 
-[Open it in the playground](https://rowstile.dev/playground/#e=api-keys-with-scopes): the tables, the policy and the
-test, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/api-keys-with-scopes/`](api-keys-with-scopes/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+[Open it in the playground](https://rowstile.dev/playground/#e=api-keys-with-scopes): the tables, the policy and
+the test, in your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/api-keys-with-scopes/`](api-keys-with-scopes/). CI takes them on every change
+(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files, and that
+the SQL that makes the keys runs.
 
 More: [API keys, scopes and JWTs](../reference/identity.md),
 [keys for services and bots](bots-and-services.md), [the other recipes](../cookbook.md).

@@ -21,5 +21,10 @@ test "anyone with the link"
   given bo = {INSERT INTO app.users VALUES (902, 'Bo') RETURNING id}
   given d = {INSERT INTO app.documents (owner_id, title) VALUES ($ann, 'Plans') RETURNING id}
   as user $bo refused {SELECT authz.create_link('document', $d, 'viewer')}
-  as user $ann allowed {SELECT authz.create_link('document', $d, 'viewer')}
+  user $bo cannot view document $d
+  as user $ann allowed {SELECT set_config('authz_ctx.links', authz.create_link('document', $d, 'viewer'), true)}
   as user $ann sees 1 {SELECT FROM authz.list_links('document', $d)}
+  user $bo can view document $d
+  as user $bo sees 1 {SELECT FROM app.documents WHERE id = $d}
+  user $bo cannot edit document $d
+  anyone can view document $d
