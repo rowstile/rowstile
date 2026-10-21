@@ -7429,9 +7429,9 @@ class Plans(unittest.TestCase):
         p: perf.Plans = {
             "as": "user:7",
             "tables": [
-                {"table": "app.docs", "ms": 3.5, "rows": 2, "warnings": []},
-                {"table": "app.files", "ms": 9.0, "rows": 1, "warnings": ["a", "b"]},
-                {"table": "app.notes", "ms": None, "rows": None, "warnings": ["failed: x"]},
+                {"table": "app.docs", "ms": 3.5, "warnings": []},
+                {"table": "app.files", "ms": 9.0, "warnings": ["a", "b"]},
+                {"table": "app.notes", "ms": None, "warnings": ["failed: x"]},
             ],
         }
         self.assertEqual(
