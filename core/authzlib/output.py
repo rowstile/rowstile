@@ -251,7 +251,7 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
         msg = f"changing {cols} of {rule.table} ".replace("%", "%%") + "%" + f" needs: {rule.src}".replace("%", "%%")
         # the explanation, as for refused inserts and updates (refusals.py)
         why = self.rule_fn(rule.table, name, "why")
-        holds = self.rule_fn(rule.table, name, "holds")
+        holds = f"authz_int.{q(f'{rule.table}:{name}:holds')}"
         schema, table = rule.table.split(".")
         tbl = f"{lit(qt(rule.table))}::pg_catalog.regclass"
         return f"""{self.rule_items_sql(t, rule.table, alias, rule, name)}
@@ -259,38 +259,55 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
 {self.rule_why_sql(t, rule.table, alias, rule, name)}
 
 -- {rule.table} update {cols}{" after" if new else ""} ({rule.loc}): {rule.src}
--- Whether the rule holds for a row. BEGIN ATOMIC, as the refusals' functions are: the trigger below runs as the app
--- role, which can't name what is in authz_int in text read at run time (the signed-in service, authz_int."<type>__me")
+-- Whether the rule holds for a row: called by the trigger's WHEN, which is kept parsed, as a policy is, so the app
+-- role uses it without naming it (authz_int)
 CREATE FUNCTION {holds}(p_row {qt(rule.table)}) RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT coalesce({cond}, false) FROM (SELECT (p_row).*) AS {alias};
 END;
--- checked on the row {"after" if new else "before"} the change, for roles that row-level security applies to on the
--- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too)
+-- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $f$
 DECLARE v_lines text; v_row {qt(rule.table)};
 BEGIN
-  IF pg_catalog.row_security_active({tbl}) THEN
-    -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
-    IF TG_RELID = {tbl} THEN v_row := {row};
-    ELSE v_row := pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb({row})); END IF;
-    IF NOT {holds}(v_row) THEN
-      BEGIN
-        v_lines := (SELECT string_agg(l, E'\\n') FROM {why}(v_row) l);
-      EXCEPTION WHEN OTHERS THEN
-        v_lines := 'no explanation: ' || SQLERRM;
-      END;
-      RAISE EXCEPTION {lit(msg)}, {self.key(t, "OLD")} USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
-        SCHEMA = {lit(schema)}, TABLE = {lit(table)}, CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
-    END IF;
-  END IF;
-  RETURN NEW;
+  -- the row as the table's own: a partition's columns may be in another order, a table that inherits may have more
+  IF TG_RELID = {tbl} THEN v_row := {row};
+  ELSE v_row := pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb({row})); END IF;
+  BEGIN
+    v_lines := (SELECT string_agg(l, E'\\n') FROM {why}(v_row) l);
+  EXCEPTION WHEN OTHERS THEN
+    v_lines := 'no explanation: ' || SQLERRM;
+  END;
+  RAISE EXCEPTION {lit(msg)}, {self.key(t, "OLD")} USING ERRCODE = 'insufficient_privilege', DETAIL = v_lines,
+    SCHEMA = {lit(schema)}, TABLE = {lit(table)}, CONSTRAINT = 'authz_update', HINT = 'rowstile help AZ709';
 END $f$;
+-- checked on the row {"after" if new else "before"} the change, for roles that row-level security applies to on the
+-- table (not on TG_RELID: on a partition made since the policy was applied, where it is not on yet, this runs too),
+-- the row as the table's own
 CREATE TRIGGER {q(trigger)} BEFORE UPDATE ON {qt(rule.table)} FOR EACH ROW
-  WHEN ({when})
+  WHEN (({when})
+    AND pg_catalog.row_security_active({tbl})
+    AND NOT {holds}(pg_catalog.jsonb_populate_record(NULL::{qt(rule.table)}, pg_catalog.to_jsonb({row}))))
   EXECUTE FUNCTION {fn}();"""
+
+    def seen_sql(self, t: Type, table: str, alias: str) -> str:
+        """authz_int."<table>:seen"(id): no row has the id, or the user may select the one that has it. The functions
+        the app role may call by name that check a rule's parts on a row (refusals.rule_items_sql) answer only then:
+        for any other row, they would tell what the rules hide (a share of a row the user can't see)."""
+        sel = next((r for r in self.rules if r.table == table and r.command == "select" and not r.columns), None)
+        shows = (
+            f"\n      OR EXISTS (SELECT 1 FROM {qt(table)} {alias} WHERE {self.key_is(t, alias, 'p_id')}\n"
+            f"        AND (SELECT authz_int.scope_cmd({lit(table)}, 'select')) AND {self.rule_sql(t, alias, sel, point=True)})"
+            if sel
+            else ""
+        )
+        return (
+            f"-- {table}: no row has the id, or the user may select it (what the rules' explanations answer for)\n"
+            f"CREATE FUNCTION authz_int.{q(table + ':seen')}(p_id {t.pktype}) RETURNS boolean\n"
+            f"LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
+            f"BEGIN\n  RETURN NOT EXISTS (SELECT 1 FROM {qt(table)} o WHERE {self.key_is(t, 'o', 'p_id')}){shows};\nEND $f$;"
+        )
 
     # --- identity -----------------------------------------------------------
     def uid_sql(self) -> str:
@@ -1082,6 +1099,7 @@ END $kv$;"""
                 f"ALTER TABLE {qt(table)} ENABLE ROW LEVEL SECURITY;\n"
                 + DESCENDANTS_RLS.replace("{table}", lit(qt(table)))
             )
+            policies.append(self.seen_sql(t, table, alias))
             # refused writes raise with the rule and why (refusals.py); an allowed write never calls these
             explaining, refuse = self.refusal_sql(t, table, alias, rules)
             policies += explaining
@@ -1337,9 +1355,25 @@ END $w$;"""
         # what the app role reads in authz_gen: the views its rules look up (row-level security, the refusals' and
         # column rules' functions run as the app role), not every view made. The others list what parts of a rule
         # hold (folder.view, before `and not {confidential}`), which the app role has no need to read
-        read = {n for sql in policies + column_rules for n in re.findall(r'\bauthz_gen\.("(?:[^"]|"")+")', sql)}
-        self.app_views = sorted(v for v in self.public_views if q(v) in read)
-        grant_views = ", ".join(["authz_gen.policy_lines", *(f"authz_gen.{q(v)}" for v in self.app_views)])
+        read = {n for sql in policies + column_rules for n in re.findall(r'\bauthz_int\.("(?:[^"]|"")+")(?!\()', sql)}
+        self.app_views = sorted(v for v in self.views if q(v) in read)
+        grant_views = ", ".join(["authz_gen.policy_lines", *(f"authz_int.{q(v)}" for v in self.app_views)])
+        # ... and in authz_gen, the functions it may call by name: the rules' own (refusals, explanations, column rules)
+        self.app_functions = sorted(
+            {
+                n
+                for sql in policies + column_rules
+                for n in re.findall(r'CREATE FUNCTION authz_gen\.("(?:[^"]|"")+")', sql)
+            }
+        )
+        grant_functions = (
+            "DO $gf$\nDECLARE f regprocedure;\nBEGIN\n"
+            "  FOR f IN SELECT p.oid::regprocedure FROM pg_proc p WHERE p.pronamespace = 'authz_gen'::regnamespace\n"
+            "           AND '\"' || replace(p.proname, '\"', '\"\"') || '\"' = ANY (ARRAY["
+            + ", ".join(lit(n) for n in self.app_functions)
+            + f"]::text[]) LOOP\n    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', f, {lit(self.role)});\n"
+            "  END LOOP;\nEND $gf$;"
+        )
         # What the migrations (migrate.py) do with each part: 'full', only in the whole script (it recreates
         # everything); 'always', in every migration; 'changed', when its SQL changed; 'created', also when
         # anything was made; 'objects', what changed of its functions, views, tables, triggers and policies;
@@ -1433,14 +1467,14 @@ END $w$;"""
             (
                 "created",
                 "grant_views",
-                f"REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen FROM {self.role};\n"
+                f"REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM {self.role};\n"
                 f"GRANT SELECT ON {grant_views} TO {self.role};",
             ),
             ("always", "revoke", self.revoke_sql()),
             ("always", "revoke", "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;"),
             ("always", "grant_usage", f"GRANT USAGE ON SCHEMA authz, authz_gen TO {self.role};"),
             ("always", "revoke", "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz_gen FROM PUBLIC;"),
-            ("created", "grant_functions", f"GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA authz_gen TO {self.role};"),
+            ("created", "grant_functions", grant_functions),
             ("created", "grant_api", "GRANT EXECUTE ON FUNCTION\n  " + ",\n  ".join(executes) + f"\n  TO {self.role};"),
             ("always", "analyze", self.analyze_sql()),
             ("full", "commit", "COMMIT;" if transaction else ""),

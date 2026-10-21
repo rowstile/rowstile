@@ -355,7 +355,10 @@ SELECT 'function ' || p.oid::regprocedure::text || E'\n' || pg_get_functiondef(p
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname IN ('authz', 'authz_int', 'authz_gen') AND p.prokind = 'f'
 UNION ALL
-SELECT 'view ' || c.oid::regclass::text || E'\n' || pg_get_viewdef(c.oid) || E'\nacl ' || coalesce(c.relacl::text, '')
+-- (a view's privileges as its owner's alone, written out, are what none written says: a grant to the app role taken
+-- back leaves them written)
+SELECT 'view ' || c.oid::regclass::text || E'\n' || pg_get_viewdef(c.oid) || E'\nacl '
+       || coalesce(nullif(c.relacl, acldefault('r', c.relowner))::text, '')
        || E'\ncomment ' || coalesce(obj_description(c.oid, 'pg_class'), '')
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind = 'v' AND (n.nspname IN ('authz_int', 'authz_gen') OR obj_description(c.oid, 'pg_class') = 'rowstile masked view')

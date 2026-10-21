@@ -1,6 +1,6 @@
 -- catalog.sql: what rowstile made in authz, authz_gen and authz_int, against the rules (tests/adversarial.sh).
 --   psql -At -v role=<app role> -v api='<the GRANT EXECUTE list, one signature per |>' \
---     -v views='<the authz_gen relations GRANT SELECT names, one per |>' -f tests/catalog.sql
+--     -v views='<the relations GRANT SELECT names: policy_lines, the views the rules read; one per |>' -f tests/catalog.sql
 -- Prints one line per object that breaks a rule, nothing when all hold.
 WITH o AS (SELECT nspowner AS owner FROM pg_namespace WHERE nspname = 'authz_int'),
 fns AS (SELECT p.oid, p.oid::regprocedure::text AS name, n.nspname AS nsp, p.proowner, p.prosecdef, p.proconfig,
@@ -10,7 +10,7 @@ rels AS (SELECT c.oid, c.oid::regclass::text AS name, n.nspname AS nsp, c.relown
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname IN ('authz', 'authz_gen', 'authz_int') AND c.relkind IN ('r', 'v', 'm', 'S', 'p', 'f')),
 api AS (SELECT x::regprocedure AS oid FROM unnest(string_to_array(:'api', '|')) x),
--- what the app role may read in authz_gen: the views its rules look up, and policy_lines
+-- what the app role may read: policy_lines, and the views its rules look up (in authz_int: only its rules can name them)
 views AS (SELECT x::regclass AS oid FROM unnest(string_to_array(:'views', '|')) x)
 SELECT problem || ': ' || name FROM (
   SELECT 'a definer function without its own search_path' AS problem, name FROM fns
@@ -31,12 +31,16 @@ SELECT problem || ': ' || name FROM (
     WHERE a.grantee NOT IN (0, proowner, :'role'::regrole)
   UNION ALL SELECT 'the app role may execute it, but it is not in the API', name FROM fns
     WHERE nsp = 'authz' AND has_function_privilege(:'role', oid, 'EXECUTE') AND oid NOT IN (SELECT oid FROM api)
+  -- in authz_gen: the rules' own functions (refusals, explanations), named <table>:<what>; what the rules look up
+  -- is in authz_int, which the app role can't name
+  UNION ALL SELECT 'the app role may execute it, but it is not a rule''s', name FROM fns
+    WHERE nsp = 'authz_gen' AND has_function_privilege(:'role', oid, 'EXECUTE') AND name !~ '^authz_gen\."[^"]*:'
   UNION ALL SELECT 'in the API, but the app role may not execute it', a.oid::text FROM api a
     WHERE NOT has_function_privilege(:'role', a.oid, 'EXECUTE')
   UNION ALL SELECT 'owned by ' || relowner::regrole, name FROM rels WHERE relowner <> (SELECT owner FROM o)
   UNION ALL SELECT a.privilege_type || ' to ' || CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END, name
     FROM rels, aclexplode(relacl) a
-    WHERE a.grantee <> relowner AND NOT (nsp = 'authz_gen' AND a.grantee = :'role'::regrole AND a.privilege_type = 'SELECT'
+    WHERE a.grantee <> relowner AND NOT (a.grantee = :'role'::regrole AND a.privilege_type = 'SELECT'
                                          AND oid IN (SELECT oid FROM views))
   UNION ALL SELECT 'its rules read it, but the app role may not', v.oid::regclass::text FROM views v
     WHERE NOT has_table_privilege(:'role', v.oid, 'SELECT')

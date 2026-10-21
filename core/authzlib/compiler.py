@@ -270,8 +270,9 @@ class Core:
         self.made_from: dict[str, str] = {}
         self.making: set[str] = set()  # views begun and not yet added: one asked for again depends on itself
         self.view_sql: list[str] = []  # CREATE VIEW / FUNCTION statements, dependency order
-        self.public_views: list[str] = []  # the views made in authz_gen too (add_view)
-        self.app_views: list[str] = []  # those the app role's rules read: all it may read (output.compile)
+        self.views: list[str] = []  # the views made, in authz_int (add_view)
+        self.app_views: list[str] = []  # those the app role's rules read, through them alone (output.compile)
+        self.app_functions: list[str] = []  # the authz_gen functions it may call by name, quoted (output.compile)
         self.trees: dict[TreeKey, str] = {}  # tree key -> tree name
         # tree name -> (hash of its definition, tables it reads): kept across applies
         self.tree_keep: dict[str, tuple[str, list[str]]] = {}
@@ -1126,25 +1127,17 @@ class Core:
         """sql (a query of ids of t) without the ids that fail the type's where."""
         return f"SELECT x.id FROM (\n  {sql}) x\n  WHERE {self.where_holds(t, 'x.id')}" if t.where else sql
 
-    # Every relation and permission becomes a plain view in authz_int, which the
-    # planner can flatten and push lookups into, plus a security-barrier view in
-    # authz_gen with the same name, which only returns ids the current user holds:
-    # the app role may read those its rules look up (app_views), and no other.
-    def add_view(self, name: str, sql: str, header: str, t: Type, public: bool = True) -> None:
+    # Every relation and permission becomes a view in authz_int, which the planner can flatten and push lookups
+    # into. The rules read them there: Postgres keeps a policy parsed and checks a schema only when a name is looked
+    # up, so the app role, which may not use authz_int, can't name them. It may read those its rules look up
+    # (app_views), through its rules alone.
+    def add_view(self, name: str, sql: str, header: str, t: Type) -> None:
         sql = self.where_kept(t, sql)
         assert name not in self.made_from, f"the view {name} is made twice"
         self.making.discard(name)
         self.made_from[name] = sql
-        if public:
-            self.public_views.append(name)
-        self.view_sql.append(
-            f"{header}CREATE VIEW authz_int.{q(name)} AS\n  {sql};"
-            + (
-                f"\nCREATE VIEW authz_gen.{q(name)} WITH (security_barrier) AS SELECT id FROM authz_int.{q(name)};"
-                if public
-                else ""
-            )
-        )
+        self.views.append(name)
+        self.view_sql.append(f"{header}CREATE VIEW authz_int.{q(name)} AS\n  {sql};")
 
     def begin_view(self, name: str, loc: Loc, what: str) -> bool:
         """Whether the view `name` is still to be made: it is then being made until add_view adds it, and asked
@@ -1179,22 +1172,22 @@ class Core:
         checks of one row at a time (writes, authz.can): recursive permissions then test that one
         object's ancestors (its __has function) instead of every object the user starts from."""
         if point and view in self.point_checks:
-            return f"authz_gen.{q(self.point_checks[view])}({expr})"
+            return f"authz_int.{q(self.point_checks[view])}({expr})"
         if view in self.direct_checks:
             # what the object's own columns give first: one index lookup, where most users who reach a
             # lot (an org admin: every folder) stop, instead of building every object they start from
             return (
-                f"(EXISTS (SELECT 1 FROM authz_gen.{q(self.direct_checks[view])} v WHERE v.id = {expr})"
-                f"\n    OR EXISTS (SELECT 1 FROM authz_gen.{q(view)} v WHERE v.id = {expr}))"
+                f"(EXISTS (SELECT 1 FROM authz_int.{q(self.direct_checks[view])} v WHERE v.id = {expr})"
+                f"\n    OR EXISTS (SELECT 1 FROM authz_int.{q(view)} v WHERE v.id = {expr}))"
             )
         if view in self.nested:
             # a user's memberships are few: work them out once per query
             return f"coalesce({expr} = ANY ({self.group_ids(view)}), false)"
-        return f"EXISTS (SELECT 1 FROM authz_gen.{q(view)} v WHERE v.id = {expr})"
+        return f"EXISTS (SELECT 1 FROM authz_int.{q(view)} v WHERE v.id = {expr})"
 
     def group_ids(self, view: str, text: bool = False) -> str:
         """A user's nested groups as an array, worked out once per statement (a scalar subquery)."""
-        return f"(SELECT authz_gen.{q(view + '__ids')}())::{'text' if text else self.nested[view]}[]"
+        return f"(SELECT authz_int.{q(view + '__ids')}())::{'text' if text else self.nested[view]}[]"
 
     def ids_in(self, view: str, text: bool = False) -> str:
         """A match for 'is one of the ids in this view'."""
@@ -1537,7 +1530,7 @@ class Core:
             # recursive walk, whose estimate would make JIT compile every read that uses groups
             self.view_sql.append(
                 f"-- {t.name}.{label} for the user signed in, as an array (reads ask once per statement)\n"
-                f"CREATE FUNCTION authz_gen.{q(name + '__ids')}() RETURNS {t.pktype}[]\n"
+                f"CREATE FUNCTION authz_int.{q(name + '__ids')}() RETURNS {t.pktype}[]\n"
                 f"LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
                 f"BEGIN\n  RETURN ARRAY(SELECT id FROM authz_int.{q(name)});\nEND $f$;"
             )
@@ -1690,14 +1683,14 @@ class Core:
         """t.perm for one object: its ancestors (and itself) tested against the starting points, one index
         lookup each. The view builds every starting point first, which is right for lists and slow for
         one object when the user starts from many (an org admin: every folder). PL/pgSQL, so its plan
-        is made once per session. In authz_gen, since the app role calls it (rules and their triggers)."""
+        is made once per session. The app role calls it through its rules alone (authz_int: add_view)."""
         name = f"{t.name}__{perm.name}__has"
         self.point_checks[f"{t.name}__{perm.name}"] = name
         # like every view (add_view): an object failing its type's where holds nothing
         where = f"\n    AND {self.where_holds(t, 'p_id')}" if t.where else ""
         self.view_sql.append(
             f"-- {t.name}.{perm.name} for one object (checks of single rows and authz.can)\n"
-            f"CREATE FUNCTION authz_gen.{q(name)}(p_id {t.pktype}) RETURNS boolean\n"
+            f"CREATE FUNCTION authz_int.{q(name)}(p_id {t.pktype}) RETURNS boolean\n"
             f"LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
             f"BEGIN\n"
             f"  RETURN EXISTS (SELECT 1 FROM authz_int.{q(tree)} c\n"
@@ -1921,7 +1914,8 @@ class Core:
     # links to), so INSERT ... RETURNING works before the new row is in any view.
     # invoker: the SQL runs as the app role (row-level security, column rules' triggers, refusals). There
     # nothing reads another table itself: what the policy reads, it reads with its own rights, in views and
-    # functions that run as the owner, so a permission means the same wherever it is checked.
+    # functions that run as the owner, so a permission means the same wherever it is checked. Those are in
+    # authz_int, which the app role can't name: it uses them through the rules, parsed when the owner made them.
     def row_sql(
         self,
         t: Type,
@@ -1968,7 +1962,7 @@ class Core:
         """A condition that reads more than its row's columns, where the app role checks it: a call of a function
         that runs it as the owner on the row, as the views and authz.can do, so it sees what the policy sees."""
         name = f"{t.name}__check_{hashlib.sha1(sql.encode(), usedforsecurity=False).hexdigest()[:10]}"
-        fn = f"authz_gen.{q(name)}"
+        fn = f"authz_int.{q(name)}"
         if self.first_time(name, sql):
             bare = q(t.table.split(".")[1])
             self.view_sql.append(
@@ -1990,7 +1984,7 @@ class Core:
                 check = checks[st]
                 if src.kind == "column" or (st, None) not in src.subjects or check is None:
                     continue
-                fn = f"authz_gen.{q(check)}"
+                fn = f"authz_int.{q(check)}"
                 if src.kind == "table":
                     assert src.table is not None and src.obj_col is not None
                     extra = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
@@ -2012,7 +2006,7 @@ class Core:
         neither authz.shares nor, maybe, the link tables), on the row's id."""
         suffix = "" if names == [st for st, _ in r.subjects()] else "__on_" + "_".join(names)
         name = f"{t.name}__{r.name}__{perm_name}{suffix}__links"
-        fn = f"authz_gen.{q(name)}"
+        fn = f"authz_int.{q(name)}"
         body = or_join(self.link_checks(t, r, names, checks, "p_id"))
         if self.first_time(name, body):
             self.view_sql.append(

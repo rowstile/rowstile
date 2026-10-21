@@ -57,9 +57,13 @@ class RefusalMixin(Core):
             for node in [item, *kids]:
                 exprs.append(self.row_sql(t, alias, node, rule.loc, point=True, invoker=True))
         body = ",\n    ".join(f"coalesce({e}, false)" for e in exprs)
+        # the app role may call this by name, on any row it builds: it answers for a new row or one the user may
+        # select (output.seen_sql), and says no to everything for the rest
         return (
             f"CREATE FUNCTION {self.rule_fn(table, name or rule.command, 'items')}(p_row {qt(table)}) RETURNS boolean[]\n"
-            f"LANGUAGE sql STABLE\nBEGIN ATOMIC\n  SELECT ARRAY[\n    {body}]\n"
+            f"LANGUAGE sql STABLE\nBEGIN ATOMIC\n"
+            f"  SELECT CASE WHEN authz_int.{q(table + ':seen')}({self.key(t, alias)}) THEN ARRAY[\n    {body}]\n"
+            f"    ELSE pg_catalog.array_fill(false, ARRAY[{len(exprs)}]) END\n"
             f"  FROM (SELECT (p_row).*) AS {alias};\nEND;"
         )
 

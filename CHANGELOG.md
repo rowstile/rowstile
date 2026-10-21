@@ -103,11 +103,18 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   they were, so users kept seeing what the move took away. Applying the policy again (or the next migration)
   gives each partition and table that inherits the triggers; `authz.lint()` names one made since, and the app
   role's TRUNCATE on a partition of any table rowstile watches.
-- The app role reads only the `authz_gen` views its rules look up. It could read every view the policy made, and
-  some list rows the rules hide: with `can view = folder.view and not {confidential}` on files, the view of
-  `folder.view` on files listed the confidential files in the folders a user may view. Code that read such a view
-  now gets `permission denied`: `authz.list` answers what it asked. Applying the policy again (or the next
-  migration) brings it in.
+- The app role reads none of rowstile's views, and of the rules' functions it calls only those that explain them.
+  It could read views and call functions that told what the rules hide: with `can view = folder.view and not
+  {confidential}` on files, the view of `folder.view` on files listed the confidential files in the folders a user
+  may view; with a deny inside inheritance (`(viewer or parent.view) and not hidden`), the view of what the
+  permission gives before the deny listed the hidden folders shared with the user, and its function answered for
+  any folder; a condition that reads another table answered for any row the caller made up. The views and functions
+  the rules use are now in `authz_int`: the rules use them, and the app role can't name them (Postgres keeps a rule
+  as it was read when the policy was applied, and checks a schema's privilege only when a name is looked up). The
+  rules' explanations (`authz.explain_rule`, the message of a refused write) answer for a new row or one the user
+  may select, and say no to all of it for any other. A rule on a column is checked in its trigger's `WHEN`. Code
+  that read an `authz_gen` view now gets `permission denied`: `authz.list` answers what it asked. Applying the
+  policy again (or the next migration) brings it in.
 - `@rowstile/react` works in a Next.js server component, such as `app/layout.tsx`: the package is a client
   module (`"use client"`). Rendering `<AuthzProvider>` or `<Can>` there failed the build, which asked for
   `"use client"` in a file of the app.
