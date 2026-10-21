@@ -19,6 +19,7 @@ from .sqlutil import (
     LOST_RULES,
     STUB_COLUMNS,
     VIEW_MARKS,
+    from_row,
     ident,
     lit,
     on_row,
@@ -264,7 +265,7 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON
 CREATE FUNCTION {holds}(p_row {qt(rule.table)}) RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT coalesce({cond}, false) FROM (SELECT (p_row).*) AS {alias};
+  SELECT coalesce({cond}, false) FROM {from_row("p_row", alias)};
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION {fn}() RETURNS trigger

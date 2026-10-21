@@ -120,6 +120,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   from the app's session (`auth()` in Next.js, the app's own `session_user` in FastAPI). The Next.js page's
   install line has `@rowstile/pg`, which its live updates import, and the FastAPI page's code imports `os`
   and `rowstile`, which it uses.
+- A schema migration can drop a column no rule reads from a table with write rules. After the policy was applied,
+  Postgres refused to drop any column of such a table ("cannot drop column ... because other objects depend on
+  it"), and its hint, `CASCADE`, would have dropped the table's insert and update policies. The functions that
+  explain a refused write, and the policies that call them, named every column of the row; now they pass the
+  whole row and name only the columns the rules read. A column a rule reads still can't be dropped before the
+  policy stops reading it.
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed

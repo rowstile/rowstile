@@ -2725,7 +2725,7 @@ BEGIN ATOMIC
     OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
     OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "docs";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "docs";
 END;
 
 CREATE FUNCTION authz_gen."mt.docs:update:why"(p_row "mt"."docs", p_stored boolean) RETURNS SETOF text
@@ -2796,7 +2796,7 @@ CREATE POLICY "authz_update" ON "mt"."docs" FOR UPDATE TO app_user
     OR EXISTS (SELECT 1 FROM authz_int."doc__roles:edit" v WHERE v.id = "docs"."id")
     OR (("docs"."container_type" = 'folder' AND EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'folder' THEN "docs"."container_id" END)::bigint))
     OR ("docs"."container_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "docs"."container_type" = 'project' THEN "docs"."container_id" END)::bigint)))))
-    OR authz_gen."mt.docs:update:refuse"(ROW("docs".*)::"mt"."docs"));
+    OR authz_gen."mt.docs:update:refuse"(("docs".*)::"mt"."docs"));
 
 COMMENT ON POLICY "authz_update" ON "mt"."docs" IS 'rowstile';
 

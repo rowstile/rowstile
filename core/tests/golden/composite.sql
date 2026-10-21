@@ -3495,7 +3495,7 @@ BEGIN ATOMIC
     coalesce(authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END)), false),
     coalesce(coalesce((owner_id = (SELECT authz.uid())), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM (SELECT (p_row).*) AS "files";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 
 CREATE FUNCTION authz_gen."cx.files:insert:why"(p_row "cx"."files") RETURNS SETOF text
@@ -3542,7 +3542,7 @@ BEGIN ATOMIC
     OR coalesce("files"."uploaded_by" = (SELECT authz_int."bot__me"()), false)
     OR authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "files";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 
 CREATE FUNCTION authz_gen."cx.files:update:why"(p_row "cx"."files", p_stored boolean) RETURNS SETOF text
@@ -3586,7 +3586,7 @@ BEGIN ATOMIC
     OR coalesce("files"."uploaded_by" = (SELECT authz_int."bot__me"()), false)
     OR authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "files";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 
 CREATE FUNCTION authz_gen."cx.files:delete:why"(p_row "cx"."files") RETURNS SETOF text
@@ -3637,7 +3637,7 @@ COMMENT ON POLICY "authz_select" ON "cx"."files" IS 'rowstile';
 CREATE POLICY "authz_insert" ON "cx"."files" FOR INSERT TO app_user
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.files', 'insert')) AND (coalesce((owner_id = (SELECT authz.uid())), false)
     AND authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END))))
-    OR authz_gen."cx.files:insert:refuse"(ROW("files".*)::"cx"."files"));
+    OR authz_gen."cx.files:insert:refuse"(("files".*)::"cx"."files"));
 
 COMMENT ON POLICY "authz_insert" ON "cx"."files" IS 'rowstile';
 
@@ -3649,7 +3649,7 @@ CREATE POLICY "authz_update" ON "cx"."files" FOR UPDATE TO app_user
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.files', 'update')) AND (coalesce("files"."owner_id" = (SELECT authz.uid()), false)
     OR coalesce("files"."uploaded_by" = (SELECT authz_int."bot__me"()), false)
     OR authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END))))
-    OR authz_gen."cx.files:update:refuse"(ROW("files".*)::"cx"."files"));
+    OR authz_gen."cx.files:update:refuse"(("files".*)::"cx"."files"));
 
 COMMENT ON POLICY "authz_update" ON "cx"."files" IS 'rowstile';
 
@@ -3710,7 +3710,7 @@ BEGIN ATOMIC
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN (CASE WHEN ("folders"."org_id", "folders"."parent_id") IS NOT NULL THEN ROW("folders"."org_id"::bigint, "folders"."parent_id"::bigint)::text END) END)))
     OR EXISTS (SELECT 1 FROM authz_int."folder__parent__edit__ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text))), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "folders";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 
 CREATE FUNCTION authz_gen."cx.folders:update:why"(p_row "cx"."folders", p_stored boolean) RETURNS SETOF text
@@ -3788,7 +3788,7 @@ CREATE POLICY "authz_update" ON "cx"."folders" FOR UPDATE TO app_user
     OR (("folders"."parent_type" = 'folder' AND authz_int."folder__edit__has"((CASE WHEN "folders"."parent_type" = 'folder' THEN (CASE WHEN ("folders"."org_id", "folders"."parent_id") IS NOT NULL THEN ROW("folders"."org_id"::bigint, "folders"."parent_id"::bigint)::text END) END)))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN (CASE WHEN ("folders"."org_id", "folders"."parent_id") IS NOT NULL THEN ROW("folders"."org_id"::bigint, "folders"."parent_id"::bigint)::text END) END)))
     OR EXISTS (SELECT 1 FROM authz_int."folder__parent__edit__ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text))))
-    OR authz_gen."cx.folders:update:refuse"(ROW("folders".*)::"cx"."folders"));
+    OR authz_gen."cx.folders:update:refuse"(("folders".*)::"cx"."folders"));
 
 COMMENT ON POLICY "authz_update" ON "cx"."folders" IS 'rowstile';
 
@@ -3801,7 +3801,7 @@ BEGIN ATOMIC
     coalesce(true, false),
     coalesce(authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END)), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
-  FROM (SELECT (p_row).*) AS "files";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 
 CREATE FUNCTION authz_gen."cx.files:column folder_id after:why"(p_row "cx"."files") RETURNS SETOF text
@@ -3825,7 +3825,7 @@ END $f$;
 CREATE FUNCTION authz_int."cx.files:column folder_id after:holds"(p_row "cx"."files") RETURNS boolean
 LANGUAGE sql STABLE
 BEGIN ATOMIC
-  SELECT coalesce(authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END)), false) FROM (SELECT (p_row).*) AS "files";
+  SELECT coalesce(authz_int."folder__edit__has"((CASE WHEN ("files"."org_id", "files"."folder_id") IS NOT NULL THEN ROW("files"."org_id"::bigint, "files"."folder_id"::bigint)::text END)), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "files";
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."cx.files:column folder_id after"() RETURNS trigger
@@ -3867,7 +3867,7 @@ BEGIN ATOMIC
     OR EXISTS (SELECT 1 FROM authz_int."folder__parent__edit__ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text)), false),
     coalesce(coalesce((parent_id is null), false), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[5]) END
-  FROM (SELECT (p_row).*) AS "folders";
+  FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 
 CREATE FUNCTION authz_gen."cx.folders:column parent_type, parent_id after:why"(p_row "cx"."folders") RETURNS SETOF text
@@ -3901,7 +3901,7 @@ BEGIN ATOMIC
   SELECT coalesce((coalesce((parent_id is null), false)
     OR (("folders"."parent_type" = 'folder' AND authz_int."folder__edit__has"((CASE WHEN "folders"."parent_type" = 'folder' THEN (CASE WHEN ("folders"."org_id", "folders"."parent_id") IS NOT NULL THEN ROW("folders"."org_id"::bigint, "folders"."parent_id"::bigint)::text END) END)))
     OR ("folders"."parent_type" = 'project' AND EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = (CASE WHEN "folders"."parent_type" = 'project' THEN (CASE WHEN ("folders"."org_id", "folders"."parent_id") IS NOT NULL THEN ROW("folders"."org_id"::bigint, "folders"."parent_id"::bigint)::text END) END)))
-    OR EXISTS (SELECT 1 FROM authz_int."folder__parent__edit__ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text))), false) FROM (SELECT (p_row).*) AS "folders";
+    OR EXISTS (SELECT 1 FROM authz_int."folder__parent__edit__ext" v WHERE v.id = ROW("folders"."org_id"::bigint, "folders"."id"::bigint)::text))), false) FROM pg_catalog.unnest(ARRAY[p_row]) AS "folders";
 END;
 -- refused: says why. The rule is checked in the trigger's WHEN below
 CREATE FUNCTION authz_int."cx.folders:column parent_type, parent_id after"() RETURNS trigger
