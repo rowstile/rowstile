@@ -26,11 +26,13 @@
 | `rowstile sql --as user:42 "SELECT ..."` | a statement as the app role, signed in as someone; rolled back |
 | `rowstile lsp` | the language server: errors while typing, hover, go to definition, references, outline, completion (of tables and columns too, with `database` in `rowstile.toml`: not `--db`, `DATABASE_URL` or the `PG*` variables; a database it can't reach yet is tried again some seconds later <!-- checked: tests/lsp_test.py "a database not there at the first completion: its tables some seconds later, in the same server" -->). It reads `rowstile.toml` again when it changes; a mistake in it is shown on it, and the policy is checked without it until it is fixed <!-- checked: tests/lsp_test.py "... the mistake shown on rowstile.toml, on its line, and in a message"; tests/lsp_test.py "rowstile.toml fixed: its mistake cleared at the next message, and its settings taken (the test file checks)" --> |
 | `rowstile mcp` | the MCP server, for coding agents (see below) |
-| `rowstile graph [p.authz]`, `rowstile client py\|ts [p.authz]` | diagram and typed helpers |
+| `rowstile graph [p.authz]`, `rowstile client py\|ts [p.authz]` | diagram and typed helpers: of the file, else of the policy `rowstile.toml` names, else of the policy in force; with `--db`, of the policy in force on that database, and `--db` beside a file is refused <!-- checked: tests/cli.sh "reads the policy in force, though rowstile.toml names a file"; tests/cli.sh "and on a graph of a file" --> |
 | `rowstile reapply [--force]`, `rowstile remove --yes` | the policy in force again, after an upgrade (`--force`: and every inheritance table computed again); to take the policy out |
 | [`editor/`](../../editor/README.md) | the VS Code and Zed extensions: highlighting (SQL inside `{ }` too) and the language server; a Tree-sitter grammar for Helix and Neovim; other editors start `rowstile lsp` themselves |
 
-`rowstile <command> --help` prints that command's own lines, and `rowstile --help` all of them.
+`rowstile <command> --help` prints that command's own lines, and `rowstile --help` all of them, on stdout.
+A command refuses an option it doesn't take, another command's too, with exit 2, rather than ignore it: `rowstile
+check --db URL` says that check reads no database. <!-- checked: tests/cli.sh "an option of another command is refused, exit 2"; tests/cli.sh "on a command that reads no database is refused, saying so" -->
 
 Commands without a policy file read `rowstile.toml`, found in the current folder or a folder above it:
 

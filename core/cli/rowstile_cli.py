@@ -66,7 +66,7 @@
     rowstile explain --as WHO TYPE ID PERM         why, or what is missing
     rowstile perms   --as WHO TYPE ID              every permission WHO holds on it
     rowstile list    --as WHO TYPE PERM            every id WHO holds PERM on
-    rowstile who     TYPE ID PERM                  everyone who holds PERM on it
+    rowstile who     [--as WHO] TYPE ID PERM       everyone who holds PERM on it
     rowstile why     --as WHO TYPE ID PERM         yes and why; or no, why not, and the smallest changes that
                                                    would grant it (each tried and undone)
     rowstile explain-rule --as WHO TABLE insert|update|delete [ID] [--row JSON]
@@ -111,7 +111,7 @@ import re
 import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import NoReturn, TypeVar
+from typing import NamedTuple, NoReturn, TypeVar
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -121,6 +121,7 @@ from authzlib import database  # noqa: E402
 from authzlib.connection import Row, Value  # noqa: E402
 from authzlib.parse import collect_includes, disk_reader, within  # noqa: E402
 from authzlib.sqlutil import POLICY_MARKS  # noqa: E402
+from authzlib.sqlutil import q as quote_ident  # noqa: E402
 
 T = TypeVar("T")
 
@@ -433,7 +434,7 @@ class Config:
         out: dict[str, str] = {}
         for lang, p in self.section("clients").items():
             assert isinstance(p, str), "check_settings refuses a client that isn't a path"
-            out["ts-sdk" if lang in ("ts", "typescript") and self.uses_ts_sdk() else lang] = self.file(p)
+            out["ts-sdk" if lang == "ts" and self.uses_ts_sdk() else lang] = self.file(p)
         return out
 
     @property
@@ -493,7 +494,7 @@ class Config:
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
-    "clients": {"py": "text", "python": "text", "ts": "text", "typescript": "text", "ts-sdk": "text"},
+    "clients": {"py": "text", "ts": "text"},
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
 }
@@ -533,10 +534,8 @@ def load_config() -> Config:
     while True:
         path = os.path.join(d, CONFIG)
         if os.path.exists(path):
-            try:
-                import tomllib
-            except ImportError:
-                fail(f"{path}: reading it needs Python 3.11 or newer (tomllib)", 2)
+            import tomllib
+
             try:
                 with open(path, "rb") as fh:
                     data = tomllib.loads(fh.read().decode("utf-8-sig"))  # a byte order mark is skipped
@@ -593,7 +592,7 @@ def database_stopped(e: pgwire.PgError | pgwire.ProtocolError | OSError) -> NoRe
 # --- asking as someone ---------------------------------------------------------------------------
 def principal(who: str) -> tuple[str, str]:
     """'user:42' -> ('user', '42'); 'anyone' -> ('user', '')."""
-    if who in ("anyone", "nobody", ""):
+    if who == "anyone":
         return "user", ""
     kind, sep, ident = who.partition(":")
     if not sep or not ident:
@@ -949,52 +948,85 @@ class Dev:
 
 
 # --- main ----------------------------------------------------------------------------------------
-# each command, and how many arguments it takes at most (None: any number)
-ARGUMENTS: dict[str, int | None] = {
-    "dev": 1,
-    "studio": 0,
-    "migrate": 1,
-    "review": 1,
-    "fmt": None,
-    "push": 1,
-    "apply": 1,
-    "check": 1,
-    "prove": 1,
-    "diff": 1,
-    "test": None,
-    "graph": 1,
-    "lint": 0,
-    "indexes": 0,
-    "plans": 0,
-    "bench": 0,
-    "snapshot": 0,
-    "client": 2,
-    "init": 0,
-    "lsp": 0,
-    "mcp": 0,
-    "can": 3,
-    "explain": 3,
-    "perms": 2,
-    "list": 2,
-    "who": 3,
-    "why": 3,
-    "explain-rule": 3,
-    "sql": 1,
-    "reapply": 0,
-    "remove": 0,
+class Takes(NamedTuple):
+    """What a command takes: how many arguments (fewest, most; None: any number), and its options besides --help.
+    Any other option is refused: one it would ignore (`check --db URL`, `apply --check`) would say nothing."""
+
+    fewest: int
+    most: int | None
+    options: str = ""  # the options, one space between
+
+
+# each command, and what it takes
+ARGUMENTS: dict[str, Takes] = {
+    "dev": Takes(0, 1, "--db --once --no-studio --studio-port"),
+    "studio": Takes(0, 0, "--db --port --write"),
+    "migrate": Takes(0, 1, "--name --check --tool --dir --one-phase --downgrade"),
+    "review": Takes(0, 1, "--db --base --markdown --json --annotations"),
+    "fmt": Takes(0, None, "--check"),
+    "push": Takes(0, 1, "--db --development --downgrade"),
+    "apply": Takes(0, 1, "--db --force --downgrade"),
+    "check": Takes(0, 1),
+    "prove": Takes(0, 1, "--worlds"),
+    "diff": Takes(0, 1, "--db --users --limit"),
+    "test": Takes(0, None, "--db --coverage"),
+    "graph": Takes(0, 1, "--db"),
+    "lint": Takes(0, 0, "--db"),
+    "indexes": Takes(0, 0, "--db --check"),
+    "plans": Takes(0, 0, "--db --as"),
+    "bench": Takes(0, 0, "--db --people --rounds"),
+    "snapshot": Takes(0, 0, "--db --check --out"),
+    "client": Takes(0, 2, "--db"),
+    "init": Takes(0, 0, "--db --schema --users --role --out"),
+    "lsp": Takes(0, 0),
+    "mcp": Takes(0, 0, "--db"),
+    "can": Takes(3, 3, "--db --as"),
+    "explain": Takes(3, 3, "--db --as"),
+    "perms": Takes(2, 2, "--db --as"),
+    "list": Takes(2, 2, "--db --as"),
+    "who": Takes(3, 3, "--db --as"),
+    "why": Takes(3, 3, "--db --as"),
+    "explain-rule": Takes(2, 3, "--db --as --row"),
+    "sql": Takes(1, 1, "--db --as"),
+    "reapply": Takes(0, 0, "--db --force"),
+    "remove": Takes(0, 0, "--db --yes"),
 }
+# the options that take a value (the others are flags)
+VALUED = (
+    "--db",
+    "--users",
+    "--limit",
+    "--as",
+    "--row",
+    "--schema",
+    "--role",
+    "--out",
+    "--name",
+    "--tool",
+    "--dir",
+    "--base",
+    "--port",
+    "--studio-port",
+    "--worlds",
+    "--people",
+    "--rounds",
+)
 
 
 def command_help(cmd: str) -> str:
     """What `rowstile CMD --help` prints: that command's lines of the usage, and where the database comes from."""
     assert __doc__ is not None
-    # its line of the usage and the lines indented under it: each command has one (tests/unit_test.py asks)
+    where = __doc__[__doc__.index("\nThe database is ") + 1 :].splitlines()[:3]  # ... and that .env may hold them
+    return "\n".join([*usage_lines(cmd), "", *where, "rowstile --help: every command, and rowstile.toml"])
+
+
+def usage_lines(cmd: str) -> list[str]:
+    """A command's lines of the usage: its line and the lines indented under it (each command has one:
+    tests/unit_test.py asks)."""
+    assert __doc__ is not None
     own = re.search(rf"^    rowstile {re.escape(cmd)}(?: .*)?\n(?:     .*\n)*", __doc__, re.M)
     assert own is not None, cmd
-    where = __doc__[__doc__.index("\nThe database is ") + 1 :].splitlines()[:3]  # ... and that .env may hold them
-    return "\n".join(
-        [line[4:] for line in own[0].splitlines()] + ["", *where, "rowstile --help: every command, and rowstile.toml"]
-    )
+    return [line[4:] for line in own[0].splitlines()]
 
 
 def check_row(text: str) -> None:
@@ -1027,6 +1059,11 @@ def utf8_output() -> None:
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
+def is_option(word: str) -> bool:
+    """Whether a word of the command line is an option: it starts with -, and isn't a negative number (an id)."""
+    return word.startswith("-") and word != "-" and not re.fullmatch(r"-\d+(\.\d+)?", word)
+
+
 def main(argv: list[str]) -> None:
     utf8_output()
     dsn: str | None = None
@@ -1037,100 +1074,80 @@ def main(argv: list[str]) -> None:
     def options() -> list[str]:
         return argv[:-1] if "sql" in argv else argv
 
-    for flag in (
-        "--db",
-        "-d",
-        "--users",
-        "--limit",
-        "--as",
-        "--row",
-        "--schema",
-        "--role",
-        "--out",
-        "--name",
-        "--tool",
-        "--dir",
-        "--base",
-        "--port",
-        "--studio-port",
-        "--worlds",
-        "--people",
-        "--rounds",
-    ):
+    written: list[str] = []  # the options on the line, in its order
+    for i, word in enumerate(options()):
+        if is_option(word) and word not in ("--help", "-h") and (i == 0 or argv[i - 1] not in VALUED):
+            written.append(word)
+    for flag in VALUED:
         if flag in options():
             i = argv.index(flag)
             if i + 1 >= len(argv):
                 fail(f"{flag} needs a value", 2)
+            if not argv[i + 1]:  # a script's --db "$DATABASE_URL", with the variable unset
+                fail(f"{flag} is empty", 2)
             opts[flag] = argv[i + 1]
             del argv[i : i + 2]
             if flag in options():
                 fail(f"{flag} is given twice", 2)
-    if "--db" in opts or "-d" in opts:
-        dsn = opts.pop("--db", None) or opts.pop("-d")
+    if "--db" in opts:
+        dsn = opts.pop("--db")
     for flag in ("--limit", "--port", "--studio-port", "--worlds", "--people", "--rounds"):
         if flag in opts and not (opts[flag].isdigit() and int(opts[flag]) > 0):
             fail(f"{flag} needs a whole number above 0, not {opts[flag]!r}", 2)
     for flag in ("--port", "--studio-port"):
         if flag in opts and int(opts[flag]) > 65535:
             fail(f"{flag} needs a port, a whole number from 1 to 65535, not {opts[flag]!r}", 2)
-    flags = {
-        a
-        for a in argv
-        if a
-        in (
-            "--yes",
-            "--force",
-            "--once",
-            "--check",
-            "--one-phase",
-            "--markdown",
-            "--json",
-            "--annotations",
-            "--write",
-            "--no-studio",
-            "--coverage",
-            "--development",
-            "--downgrade",
-        )
-    }
-    argv = [a for a in argv if a not in flags]
-    if argv[:1] == ["help"] and argv[1:]:
-        from authzlib import errors
-
-        code = argv[1].upper()
-        if code in errors.CODES:
-            print(errors.page(code))
-        elif code in ("ERRORS", "CODES"):
-            sys.stdout.write(errors.index())
-        else:
-            fail(f"rowstile help: no code {argv[1]} (rowstile help errors lists them)", 2)
-        return
-    if argv and argv[0] in ARGUMENTS and ("--help" in argv or "-h" in argv):
-        print(command_help(argv[0]))
-        return
-    if not argv or argv[0] in ("-h", "--help", "help") or "--help" in argv:
-        fail(__doc__, 0 if argv else 2)
-    if argv[0] in ("--version", "version"):
+    if argv == ["--version"]:
         from authzlib import __version__
 
         print(f"rowstile {__version__} (Python {sys.version.split()[0]})")
         return
+    asked = "--help" in argv or "-h" in argv
+    flags = {a for a in options() if is_option(a) and a not in ("--help", "-h")}
+    argv = [a for a in argv if a not in flags and a not in ("--help", "-h")]
+    if argv[:1] == ["help"] and argv[1:]:
+        from authzlib import errors
+
+        if argv[2:]:
+            fail("rowstile help takes one code: rowstile help AZ201 (rowstile help errors lists them)", 2)
+        code = argv[1].upper()
+        if code in errors.CODES:
+            print(errors.page(code))
+        elif code == "ERRORS":
+            sys.stdout.write(errors.index())
+        else:
+            fail(f"rowstile help: no code {argv[1]} (rowstile help errors lists them)", 2)
+        return
+    if argv and argv[0] in ARGUMENTS and asked:
+        print(command_help(argv[0]))
+        return
+    if argv[:1] == ["help"] or (asked and not argv):
+        print(__doc__)  # asked for: on stdout, for a pager or grep
+        return
+    if not argv:
+        fail(__doc__, 2)
     cmd, args = argv[0], argv[1:]
     if cmd not in ARGUMENTS:
         fail(f"unknown command '{cmd}'\n\n{__doc__}", 2)
-    most = ARGUMENTS[cmd]
-    unknown = [a for a in args if a.startswith("--")] if cmd != "sql" else []
-    if unknown:
-        fail(f"rowstile {cmd}: {unknown[0]} is not an option it has (rowstile --help)", 2)
-    if most is not None and len(args) > most:
+    takes = ARGUMENTS[cmd]
+    for option in written:
+        if option in takes.options.split():
+            continue
+        if option == "--db" and cmd == "lsp":  # the editor's folder says where its database is
+            fail("rowstile lsp: --db is not an option it has: it reads the database rowstile.toml names", 2)
+        if option == "--db":
+            fail(f"rowstile {cmd}: --db is not an option it has: it reads no database", 2)
+        fail(f"rowstile {cmd}: {option} is not an option it has (rowstile {cmd} --help)", 2)
+    if takes.most is not None and len(args) > takes.most:
         fail(
-            f"rowstile {cmd} takes {most or 'no'} argument{'' if most == 1 else 's'}: what is "
-            f"{' '.join(args[most:])}? (rowstile --help)",
+            f"rowstile {cmd} takes {takes.most or 'no'} argument{'' if takes.most == 1 else 's'}: what is "
+            f"{' '.join(args[takes.most :])}? (rowstile {cmd} --help)",
             2,
         )
+    if len(args) < takes.fewest:
+        counts = f"{takes.fewest}" if takes.most == takes.fewest else f"{takes.fewest} or {takes.most}"
+        fail(f"rowstile {cmd} takes {counts} arguments, not {len(args)}:\n" + "\n".join(usage_lines(cmd)), 2)
     if cmd == "lsp":
-        if dsn is not None:  # the editor's folder says where its database is: --db would be ignored
-            fail("rowstile lsp: --db is not an option it has: it reads the database rowstile.toml names", 2)
         from lsp import serve
 
         serve(lsp_settings)  # it reads rowstile.toml itself: a mistake in it is the editor's to show
@@ -1154,7 +1171,9 @@ def main(argv: list[str]) -> None:
             fail(f"{path}: {e.strerror}", 2)
         return path, text, files
 
-    # without a database: the compiler alone
+    # without a database: the compiler alone (graph and client read the policy file, or with --db the database's)
+    if cmd in ("graph", "client") and dsn is not None and len(args) > (cmd == "client"):
+        fail(f"rowstile {cmd}: --db or a policy file, not both: a file is read without a database", 2)
     try:
         if cmd == "check":
             path, text, files = policy_arg()
@@ -1163,7 +1182,7 @@ def main(argv: list[str]) -> None:
                 fail(f"{path}: {msg.removeprefix('policy ')}")
             print(f"{path}: ok")
             return
-        if cmd == "graph" and (args or cfg.policy):
+        if cmd == "graph" and (args or (cfg.policy and dsn is None)):
             _, text, files = policy_arg()
             sys.stdout.write(database.graph(text, files))
             return
@@ -1200,7 +1219,7 @@ def main(argv: list[str]) -> None:
                     cfg, path, text, files, opts, "--check" in flags, "--one-phase" in flags, "--downgrade" in flags
                 )
             )
-        if cmd == "client" and not args and cfg.clients and cfg.policy:
+        if cmd == "client" and not args and cfg.clients and cfg.policy and dsn is None:
             _, text, files = policy_arg()
             write_clients(cfg, text, files)
             for path in cfg.clients.values():
@@ -1238,8 +1257,7 @@ def main(argv: list[str]) -> None:
     if cmd == "studio":
         import studio
 
-        target = dsn if dsn is not None else (cfg.database or os.environ.get("DATABASE_URL") or "")
-        studio.serve(target, cfg, cfg.policy, "--write" in flags, int(opts.get("--port", "4983")), read_policy)
+        studio.serve(dsn or "", cfg, cfg.policy, "--write" in flags, int(opts.get("--port", "4983")), read_policy)
         return
 
     try:
@@ -1368,7 +1386,7 @@ def main(argv: list[str]) -> None:
                 fail("rowstile client: which language, py or ts?", 2)
             sys.stdout.write(database.client(args[0], text, files))
         elif cmd == "why":
-            if len(args) != 3 or not opts.get("--as"):
+            if not opts.get("--as"):
                 fail("rowstile why --as user:42 TYPE ID PERM", 2)
             from authzlib import grant
 
@@ -1689,7 +1707,7 @@ def migrate_cmd(
     except FileNotFoundError:
         old = ""
     try:
-        ms = database.migrations(text, files, old, opts.get("--name") or "policy", not one_phase, downgrade)
+        ms = database.migrations(text, files, old, opts.get("--name") or migration_name, not one_phase, downgrade)
     except database.Error as e:
         fail(f"{path}: {str(e).removeprefix('policy ')}" + (f"\nHINT: {e.hint}" if e.hint else ""))
     if all(m.empty for m in ms):
@@ -1701,7 +1719,6 @@ def migrate_cmd(
         print_changes(summary)
         return 1
     name = opts.get("--name") or migration_name(summary)
-    ms = database.migrations(text, files, old, name, not one_phase, downgrade)
     written: list[str] = []
     now = time.time()
     try:
@@ -1749,9 +1766,6 @@ def take_app_role(conn: pgwire.Connection) -> None:
 def ask(conn: pgwire.Connection, cmd: str, args: list[str], opts: dict[str, str]) -> None:
     """One question to the database, as someone, in a transaction that is rolled back."""
     q = conn.query
-    need = {"can": 3, "explain": 3, "perms": 2, "list": 2, "who": 3, "sql": 1}
-    if cmd in need and len(args) != need[cmd]:
-        fail(f"rowstile {cmd}: see rowstile --help", 2)
     who = opts.get("--as")
     if who is None and cmd not in ("who",):
         fail(f"rowstile {cmd}: as whom? --as user:42 (or bot:7, or anyone)", 2)
@@ -1775,8 +1789,6 @@ def ask(conn: pgwire.Connection, cmd: str, args: list[str], opts: dict[str, str]
             for (x,) in q("SELECT x FROM authz.who($1, $2, $3) x", args):
                 print(x)
         elif cmd == "explain-rule":
-            if len(args) not in (2, 3):
-                fail("rowstile explain-rule --as WHO TABLE insert|update|delete [ID] [--row JSON]", 2)
             row = opts.get("--row")
             if row is not None:
                 check_row(row)
@@ -1845,10 +1857,6 @@ def snapshot_cmd(conn: pgwire.Connection, cfg: Config, opts: dict[str, str], che
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
     print(f"wrote {relative(path)} ({len(lines)} lines)")
-
-
-def quote_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
 
 
 if __name__ == "__main__":

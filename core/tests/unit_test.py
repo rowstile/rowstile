@@ -1910,6 +1910,22 @@ class Command(unittest.TestCase):
         self.assertRegex(review, r"\n +\(exit 0 whatever it finds: test and migrate --check gate\)\n\n")
         self.assertIn("\nWithout --db, those variables may be in .env.local or .env beside rowstile.toml", review)
 
+    def test_each_command_takes_the_options_its_usage_names(self) -> None:
+        # the options the command takes (it refuses the others) are those its usage names, and --db where it reads a
+        # database; --downgrade on push and migrate is named once, under apply
+        import features
+        import mcp
+
+        listed = features.usage()
+        for cmd, takes in rowstile_cli.ARGUMENTS.items():
+            options = set(takes.options.split())
+            named = listed[cmd] | ({"--downgrade"} if cmd in ("push", "migrate") else set())
+            self.assertEqual(options - {"--db"}, named - {"--db"}, cmd)  # (review names --db: its access part)
+        # the MCP server passes its --db to the commands that read a database, and to no other
+        for tool in features.mcp_tools():
+            name = tool.removeprefix("mcp.")
+            self.assertEqual(name in mcp.NO_DATABASE, "--db" not in rowstile_cli.ARGUMENTS[name].options, name)
+
     def test_an_env_file_that_isnt_utf8_is_said(self) -> None:
         # a .env saved in another encoding (an accent in a comment) isn't read: nothing of it reaches the
         # environment, and a connection that fails says why
@@ -1933,32 +1949,6 @@ class Command(unittest.TestCase):
         self.assertEqual(config({"migrations": {"tool": "sql"}}).write_after, 300)
         self.assertEqual(config({"migrations": {"write_after": 5}}).write_after, 5)
         self.assertEqual(config({"migrations": {"write_after": 0}}).write_after, 0)
-
-    def test_rowstile_toml_needs_tomllib(self) -> None:
-        # Python 3.10 has no tomllib: the command runs there until it reads rowstile.toml, then says what it needs
-        # (tried on 3.10 itself; here the module is hidden)
-        import contextlib
-        import io
-
-        before = os.getcwd()
-        with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "rowstile.toml"), "w", encoding="utf-8") as fh:
-                fh.write('policy = "db/policy.authz"\n')
-            err = io.StringIO()
-            os.chdir(d)
-            try:
-                with (
-                    mock.patch.dict(sys.modules, {"tomllib": None}),
-                    contextlib.redirect_stderr(err),
-                    self.assertRaises(SystemExit) as stop,
-                ):
-                    rowstile_cli.load_config()
-            finally:
-                os.chdir(before)
-        self.assertEqual(stop.exception.code, 2)
-        self.assertTrue(
-            err.getvalue().endswith("rowstile.toml: reading it needs Python 3.11 or newer (tomllib)\n"), err.getvalue()
-        )
 
     def test_migrate_says_what_stops_the_tool_and_how_much_changed(self) -> None:
         # Alembic with two heads (two branches each added a revision): said, and nothing written; a migration of

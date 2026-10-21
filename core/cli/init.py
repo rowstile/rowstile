@@ -8,10 +8,11 @@ import os
 import re
 from typing import TYPE_CHECKING
 
+from rowstile_cli import CONFIG
+
 if TYPE_CHECKING:
     from rowstile_cli import Config
 
-CONFIG = "rowstile.toml"
 AGENTS = "AGENTS.md"  # the file coding agents read in a repository
 BEGIN, END = "<!-- rowstile:begin -->", "<!-- rowstile:end -->"
 

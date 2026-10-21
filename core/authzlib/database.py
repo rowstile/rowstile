@@ -416,19 +416,24 @@ def migrations(
     policy: str,
     files: Mapping[str, object] | str | None,
     lock_text: str | None,
-    name: str = "policy",
+    name: str | Callable[[list[str]], str] = "policy",
     two_phase: bool = True,
     downgrade: bool = False,
 ) -> list[migrate.Migration]:
     """The migrations from the lock file's text to this policy: one, or two when inheritance trees are
-    built beside the ones in use first (migrate.migrations). Refused when a newer version wrote the lock."""
+    built beside the ones in use first (migrate.migrations). Refused when a newer version wrote the lock.
+    The name may come from what changed: a function of the last migration's summary (the policy compiled once)."""
     from . import migrate
 
     lock = lock_file(lock_text)
     if not downgrade:
         refuse_older(lock.version, "the lock file")
     sql, comp, _ = migratable(policy, files)
-    return migrate.migrations(sql, comp, lock, name, two_phase)
+    if isinstance(name, str):
+        return migrate.migrations(sql, comp, lock, name, two_phase)
+    ms = migrate.migrations(sql, comp, lock, "policy", two_phase)
+    named = name(ms[-1].summary)
+    return ms if named == "policy" else migrate.migrations(sql, comp, lock, named, two_phase)
 
 
 def lock_hash(comp: migrate.Compiled) -> str:
@@ -947,7 +952,8 @@ def graph(policy: str, files: Mapping[str, object] | str | None = None) -> str:
 
 
 def client(lang: str, policy: str, files: Mapping[str, object] | str | None = None) -> str:
-    """The client in a language the command takes: py or ts, and python, typescript or ts-sdk in rowstile.toml."""
+    """The client in a language the command takes, py or ts; or ts-sdk, the names alone (rowstile.toml's ts, for
+    an app on the TypeScript SDK)."""
 
     def make(c: Compiler) -> str:
         c.compile("the policy", transaction=False)
