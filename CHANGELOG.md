@@ -58,6 +58,8 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `rowstile --help`, `-h` and `help` print the usage on stdout, for a pager or `grep`; `--help` after a command
   that doesn't exist says so, exit 2. A command short of an argument says how many it takes, and shows its
   usage.
+- The generated Python client's `share` takes `caveat_args` as a dict, `{"ip": "10.0.0.7"}`, as the TypeScript
+  client's `caveatArgs` and `explain_rule`'s row do (it took JSON text). Regenerate the client.
 
 ### Removed
 
@@ -89,6 +91,14 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `rowstile why` and Studio listed a change both as the best way to grant a permission and as "could not be
   tried", when the change grants it but counting what else it gives failed (a condition that fails on another
   row, say). It is now listed only as not tried, with the database's reason: what else it gives was never counted.
+- The generated Python client named each type's permissions with its name in lower case after the first letter:
+  `orgUnit` gave `OrgunitPermission`, and two types whose names differ only in case, `doc` and `Doc`, both gave
+  `DocPermission`, the second replacing the first. A type's alias now keeps its name as written
+  (`OrgUnitPermission`), and two types that would get the same one get none, with a comment that says why.
+- The reference's list of the generated Python client's calls left out `sign_in_as`, `principal`,
+  `connection_check` and the API key calls, and it said the TypeScript client had the same calls, which it
+  doesn't quite (no `principal`, signing in with `asUser`). It now lists each client's calls, and which calls the
+  TypeScript SDK has. Its table of functions names `authz.perms_of` and `authz.connection_check`.
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch

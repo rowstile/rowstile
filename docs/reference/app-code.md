@@ -8,6 +8,10 @@ transaction in, and a client extension), `/pg`, `/postgres` (postgres.js), `/dri
 kept out of caches, 403 and 404 from route handlers and server actions), `/react` (`usePerms`, `<Can>`, a
 headless share dialog, live updates) and `/vitest`; `integrations/nextjs` is their conformance suite, and
 `rowstile client` writes only the policy's names for them (`src/authz.gen.ts`). <!-- checked: tests/unit_test.py "test_typescript_sdk_gets_only_the_names" -->
+The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
+`listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
+`ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,
+requests, reviews, keys), call the `authz.*` function in SQL.
 Underneath, and for every
 other stack:
 
@@ -20,6 +24,7 @@ column that needs quoting), and the generated clients take a tuple or array.
 | task | function |
 |---|---|
 | check, list, all permissions | `authz.can('file', 11, 'edit')`, `authz.list('folder', 'edit')`, `authz.perms('file', 11)` |
+| all permissions on many objects (a list's buttons) | `authz.perms_of('file', ARRAY['10', '11'])`: a row per id, `id` and `perms` |
 | list in pages, in key order | `authz.list('file', 'view', NULL, 1000)`, then `authz.list('file', 'view', '<last id>', 1000)` (a NULL size: no limit; a cursor that isn't an id, or a negative size: AZ710) |
 | who has access (for people who may share it) | `authz.who('folder', 3, 'view')` |
 | why, or what is missing | `authz.explain('file', 11, 'edit')`; for someone else (people who may share it, as for `who`): `..., 'edit', '7')` |
@@ -32,6 +37,7 @@ column that needs quoting), and the generated clients take a tuple or array.
 | custom roles | `authz.create_role('org', 1, 'folder', 'reviewer', ARRAY['view'])` returns the role's id (needs `manage_roles` on the org); share it as `authz.share('folder', 3, 'role:<id>', 'user', 7)`; `authz.set_role_permissions(id, ARRAY[...])`, `authz.delete_role(id)`, `authz.roles_of('org', 1)`; for users, not services (AZ715) <!-- checked: tests/principals.sh "authz.create_role is for users: a service is told so"; tests/principals.sh "authz.set_role_permissions is for users: a service is told so"; tests/principals.sh "authz.delete_role is for users: a service is told so"; tests/principals.sh "authz.roles_of is for users: a service is told so" --> |
 | API keys | `authz.create_api_key('laptop', 'read')` (shown once), `authz.list_api_keys()`, `authz.revoke_api_key(id)`; a service's keys are made by a user holding `manage_keys` on it ([Identity](identity.md)), and a service making its own is refused (AZ715) <!-- checked: tests/principals.sh "authz.create_api_key for oneself is for users: a service is told so"; tests/principals.sh "its owner makes service 7 a key" --> |
 | sign in | `authz.login_key('ak_...')`, `authz.login_jwt('eyJ...')` (HS256; settings in `authz.settings`) |
+| the app's connection, at start-up | `authz.connection_check()`: a row per problem, `severity` and `problem` ([Checking the database](governance.md#checking-the-database)) |
 | support "view as" | `authz.view_as('42', 'ticket 1234')`: read-only, audited, needs `can impersonate` on the user; for users, not services (AZ715) <!-- checked: tests/principals.sh "authz.view_as is for users: a service is told so"; tests/identity.sh "and cannot change anything"; tests/identity.sh "the audit trail has the reason"; tests/identity.sh "carol cannot view as erin" --> |
 | ask for access | `authz.request_access('folder', 3, 'viewer', 'for the audit', '7 days')`, `authz.cancel_request(id)`; for users, not services (AZ715) <!-- checked: tests/principals.sh "authz.request_access is for users: a service is told so"; tests/principals.sh "authz.cancel_request is for users: a service is told so" --> |
 | decide requests | `authz.pending_requests()`, `authz.decide_request(id, true, 'ok')`: approving makes a share that ends after the requested time; for users, not services (AZ715) <!-- checked: tests/principals.sh "authz.pending_requests is for users: a service is told so"; tests/principals.sh "authz.decide_request is for users: a service is told so" --> |
@@ -56,13 +62,16 @@ compile error: `rowstile client py > authz_client.py`
 anything with `query(text, params)`). Generate it from the policy in force and commit it next to
 your code; regenerate when the policy changes (the file manager's tests fail when it is stale).
 
-- **Python: supported.** Part of the 1.0 surface: `sign_in`, `can`, `list` (with `after` and
-  `limit` for pages), `perms`, `who`, `explain`, `share`, `unshare`, `list_shares`,
-  `create_link`, `list_links`, `revoke_link`, `use_links`, `request_access`, `decide_request`, `cancel_request`,
-  `pending_requests`, `break_glass`, `start_review`, `review_items`, `review_decide`,
-  `close_review`, `login_key`, `login_jwt`, `explain_rule`, `expect`, `who_among`, and the errors
+- **Python: supported.** Part of the 1.0 surface: `Authz(conn)`, with `sign_in`, `sign_in_as` (a principal
+  other than a user), `principal`, `connection_check`, `can`, `list` (with `after` and `limit` for pages), `perms`,
+  `who`, `explain`, `share` (its `caveat_args` a dict), `unshare`, `list_shares`, `create_link`, `list_links`,
+  `revoke_link`, `use_links`, `request_access`, `decide_request`, `cancel_request`, `pending_requests`,
+  `break_glass`, `start_review`, `review_items`, `review_decide`, `close_review`, `login_key`, `login_jwt`,
+  `create_api_key`, `list_api_keys`, `revoke_api_key`, `explain_rule`, `expect` and `who_among`; the errors
   `Refused` (`.table`, `.command`, `.why`) and `NotFound`, with `refusal(error)` turning a driver's
-  error into a `Refused`. Rows come back as dicts. The file manager and the messenger use it.
+  error into a `Refused`; and the policy's names as types: `ObjectType`, `Permission`, and each type's own,
+  `FilePermission` for `file` (the type's name with a capital first letter; two types that would get the same
+  name, `doc` and `Doc`, get none). Rows come back as dicts. The file manager and the messenger use it.
 
 **Refusals say why.** A write the rules refuse raises SQLSTATE 42501 with the rule and what is
 missing, as the signed-in user may know it (nothing about rows they can't see): <!-- checked: tests/devx.sh "a refused insert says which rule, and which part of it"; tests/devx.sh "and says nothing about a folder the user can't see"; tests/adversarial.sh "a write refused in a hidden folder explains as for a missing one"; tests/reference.sh "the refusal app-code.md shows is the docs app's, word for word" -->
@@ -83,4 +92,12 @@ and deletes the rules don't allow change no rows instead (row-level security lea
 answer, worded like the refused insert above: `permission denied: user 3 may not update row 11 of
 app.files`. <!-- checked: tests/adversarial.sh "updating a hidden row changes nothing"; tests/tools_test.py "expect, a row the user may not change: Refused, with why"; tests/tools_test.py "worded as the database words a refused insert: who, the command, the row, the table" -->
 A key of several columns is written as the database writes it, `(1,2)`. <!-- checked: tests/tools_test.py "a key in a message is as the database writes it: quoted only where Postgres would" -->
-- **TypeScript: preview.** The same calls in camelCase; may change before it is supported.
+- **TypeScript: preview.** `asUser(db, id, fn)` and `asPrincipal(db, type, id, fn)` run `fn` in a transaction
+  signed in (Python's `sign_in` and `sign_in_as`). `authz(db)` has `can`, `connectionCheck`, `list`, `perms`,
+  `who`, `explain`, `share` (its options in an object: `subjectRelation`, `expiresAt`, `startsAt`, `caveat`,
+  `caveatArgs`), `unshare`, `listShares`, `createLink`, `listLinks`, `revokeLink`, `useLinks`, `requestAccess`,
+  `decideRequest`, `cancelRequest`, `pendingRequests`, `breakGlass`, `startReview`, `reviewItems`,
+  `reviewDecide`, `closeReview`, `loginKey`, `loginJwt`, `createApiKey`, `listApiKeys`, `revokeApiKey`,
+  `explainRule`, `expect` and `whoAmong`: Python's calls in camelCase, except `principal`. It also has
+  `Refused`, `NotFound` and `refusal(e)`, and the types `ObjectType` and `Permission<T>`. It may change before
+  it is supported.
