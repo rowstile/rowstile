@@ -31,7 +31,6 @@ export function bundle() {
     if (f.endsWith(".py")) compiler[f] = read("core", "authzlib", f);
   }
   const guide = read("docs", "getting-started.md");
-  const docsPolicy = read("core", "example", "docs.authz");
   /** @type {Example[]} */
   const examples = [
     {
@@ -47,7 +46,7 @@ export function bundle() {
       name: "Folders and files: inheritance, teams, denies",
       source: "core/example/docs.authz",
       data: read("core", "example", "app_schema.sql"),
-      policy: docsPolicy.split("\ntest\n")[0] + "\n",       // its test section needs the scenario's shares
+      policy: read("core", "example", "docs.authz"),
       tests: read("core", "example", "docs.test.authz"),
       as: "user:1",
       ask: "SELECT f.id, f.name, f.folder_id FROM app.files f ORDER BY f.id",

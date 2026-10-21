@@ -235,7 +235,7 @@ case "$out" in *"Tests    "*" checks pass, 1 fail. 1 check changed what it expec
 printf 'test "broken"\n  user 3 can nosuch file 11\n' > "$P/db/tests/nosuch.authz"
 printf 'test "unread"\n  user 3 frobs file 11\n' > "$P/db/tests/frobs.authz"
 out=$(CLI --db "dbname=$DB" review --base main 2>&1); rc=$?
-case "$out" in *"Tests    9 checks pass, 1 fail. 1 check changed what it expects. 2 test files can't be read, so their checks aren't compared."*"Deploy   no migration"*"can't read: db/tests/frobs.authz line 2: a test's lines are: "*" [AZ106]"*"can't read: db/tests/nosuch.authz line 2: file has no permission 'nosuch' (it has: share, edit, view) [AZ203]"*)
+case "$out" in *"Tests    17 checks pass, 1 fail. 1 check changed what it expects. 2 test files can't be read, so their checks aren't compared."*"Deploy   no migration"*"can't read: db/tests/frobs.authz line 2: a test's lines are: "*" [AZ106]"*"can't read: db/tests/nosuch.authz line 2: file has no permission 'nosuch' (it has: share, edit, view) [AZ203]"*)
   [ $rc -eq 0 ] && ok "test files rowstile test would refuse: each named with its mistake under Tests, the others run, the review goes on (exit 0)" ||
     bad "test files it would refuse: exit" "$rc";; *) bad "test files it would refuse" "$out";; esac
 rm "$P/db/tests/nosuch.authz" "$P/db/tests/frobs.authz"
@@ -248,7 +248,7 @@ printf 'policy = "db/policy.authz"\ntests = ["db/tests/*.authz"]\n' > "$N/rowsti
   git -C "$N" add -A && git -C "$N" commit -q -m base; } || bad "setting up a repository without migrations"
 sed -i 's/can view  = edit or viewer or (parent.view and {inherit})/can view  = edit or viewer or parent.view/' "$N/db/policy.authz"
 out=$( (cd "$N" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" review --base main) 2>&1)
-case "$out" in *"Tests    9 checks pass, 1 fail."*"Deploy   no lock file, so no migrations"*)
+case "$out" in *"Tests    16 checks pass, 2 fail."*"Deploy   no lock file, so no migrations"*)
   [ "$(PSQL -c "SELECT count(*) || '/' || max(lock) FROM authz.policy_versions")" = "$before" ] &&
   ok "a project without migrations: the policy applied whole on the review data, its tests run there, all undone" ||
   bad "a project without migrations: the database changed";; *) bad "a project without migrations" "$out";; esac

@@ -202,7 +202,7 @@ def main() -> None:
         capture_output=True,
     )
     policy = os.path.join(ROOT, "example", "docs.authz")
-    # the policy without its test section (it needs the scenario's data): coverage counts this file's tests only
+    # the policy without its test section: coverage counts this file's tests only
     with open(policy, encoding="utf-8") as fh:
         bare = re.sub(r"\ntest\n(  .*\n)+", "\n", fh.read())
     tmp_policy = os.path.join(tempfile.mkdtemp(), "docs.authz")

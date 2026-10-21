@@ -15,7 +15,7 @@ run() { out=$(CLI "$@" 2>&1); rc=$?; }
 # a statement as the app role, signed in as user $1: its error (message and detail), or 'ok'
 as() { psql -X -q -At -d "$DB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "SET authz.user_id = '$1'" -c "$2" 2>&1; }
 # the rows of a test run of these named test files (tab-separated: test, line, ok, detail), without the
-# policy's own test section (it needs the example scenario's shares)
+# policy's own test section
 rows() { python3 tests/test_rows.py "dbname=$DB" "$@" | awk -F'\t' '$1 != "test section"'; }
 
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
@@ -546,7 +546,7 @@ dropdb --if-exists "${DB}_apps" 2>/dev/null
 
 echo "-- the rowstile command"
 mkdir -p "$T/p/tests"
-sed '/^test$/,$d' example/docs.authz > "$T/p/policy.authz"     # its old test section needs the scenario's shares
+sed '/^test$/,$d' example/docs.authz > "$T/p/policy.authz"     # without its test section: the checks below change the policy
 cp example/docs.test.authz "$T/p/tests/docs.authz"
 printf 'policy = "policy.authz"\ntests = ["tests/*.authz"]\ndatabase = "dbname=%s"\n[clients]\npy = "out/authz_client.py"\n' "$DB" > "$T/p/rowstile.toml"
 ( cd "$T/p" && python3 "$OLDPWD/cli/rowstile_cli.py" dev --once ) > "$T/dev.log" 2>&1; rc=$?
@@ -601,7 +601,8 @@ case "$out" in *'  ok   no tests yet (rowstile.toml: tests = ["db/tests/*.authz"
 dropdb --if-exists "${DB}_plain"
 # who gains and loses what, said before each push: permissions on objects, and rows by table
 cp "$T/p/policy.authz" "$T/policy.keep"
-sed -i 's/^           or (folder.view and not {confidential})$//' "$T/p/policy.authz"
+# teams no longer view the folders the app gives them (the Backend team, Secrets): the named tests still pass
+sed -i '/^  viewer      : team#member = app.folder_team_access(folder_id -> team_id)$/d' "$T/p/policy.authz"
 devonce
 [ $rc -eq 0 ] && grep -q "^  ~    access:$" "$T/dev.log" &&
   grep -qE "^       [1-9][0-9]* user\(s\) lose rows readable in app\.files \([1-9][0-9]* rows?\)$" "$T/dev.log" &&

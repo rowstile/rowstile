@@ -137,8 +137,8 @@ for w in $WAYS; do
     [ "$(PSQL "$db" -c "SELECT authz.verify()")" = t ] &&
     ok "$w: $BEFORE made the database: it records its version, and its inheritance tables match a rebuild" ||
     bad "$w: what $BEFORE made" "$(PSQL "$db" -c "SELECT version FROM authz.policy_versions ORDER BY id DESC LIMIT 1" 2>&1)"
-  # what the app does under it: erin shares Company with Acme's members and offer-letter.pdf with dave (the two
-  # shares the policy's tests count on), dave makes an API key and asks frank for a look at Globex
+  # what the app does under it: erin shares Company with Acme's members and offer-letter.pdf with dave, dave
+  # makes an API key and asks frank for a look at Globex
   out=$(psql -X -q -At -v ON_ERROR_STOP=1 -d "$db" -c "SET ROLE app_user" -c "SET authz.user_id = 5" \
           -c "SELECT authz.share('folder', 1, 'viewer', 'org', 1, 'member')" \
           -c "SELECT authz.share('file', 13, 'viewer', 'user', 4, '', now() + interval '1 day')" 2>&1) || bad "$w: erin's shares" "$out"

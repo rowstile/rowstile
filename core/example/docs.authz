@@ -87,9 +87,6 @@ invariants
   never folder: share and not org.member  -- only members of its org manage a folder
 
 test
-  user 3 can view file 11      -- carol: Acme members can view Company and below
-  user 3 cannot view file 12   -- ...but Secrets breaks inheritance
-  user 3 cannot view file 14   -- ...and confidential files need edit rights
   user 1 can edit file 11      -- alice owns Engineering
   user 1 cannot view file 13   -- alice's ownership stops at Secrets
   user 2 can view file 12      -- bob: the Backend team can view Secrets
@@ -100,10 +97,8 @@ test
   user 7 cannot view file 10
   user 5 can edit file 12      -- erin is an Acme admin: every Acme folder
   user 5 can view file 14
-  user 4 can view file 13      -- dave: shared with him directly
-  user 4 cannot view file 11
   user 6 cannot view folder 1  -- frank is in Globex
   user 6 can view file 15
   user 6 can edit file 16
-  user 3 can view file 16      -- carol: Joint project is linked into Company
+  user 5 can view file 16      -- erin: Joint project is linked into Company
   user 5 cannot edit file 16   -- links pass on view rights only

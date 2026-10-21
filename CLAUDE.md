@@ -70,8 +70,10 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
     SCRAM, notices, URLs, `script()` for many statements)
   - `compile_policy.py` — the compiler without a database: SQL for psql (`--check|--tests|--diff`; argparse, `options()` typed);
     used by the tests, the editor task and the benchmark
-  - `example/` — docs app: `app_schema.sql`, `docs.authz`, `docs.test.authz` (the reference's running example,
-    the playground's, and what most suites set up); nothing generated is kept there
+  - `example/` — docs app: `app_schema.sql`, `docs.authz`, `docs.test.authz` (what most suites set up, and one of
+    the playground's examples; the reference uses its rows in places, but its opening policy is another, larger
+    one); its own tests pass on its own data (the shares they need, a named test makes); nothing generated is
+    kept there
   - `tests/` — all suites; `run_tests.sh` runs them, `ci.sh` runs them on PG 16/17/18 in Docker;
     `tests/golden/` holds the expected generated SQL; `scenario.sql` is the docs app end to end (psql, with
     `-v docs_tests=` the compiled policy tests)

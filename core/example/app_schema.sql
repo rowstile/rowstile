@@ -93,12 +93,12 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA app TO app_user;
 --          └── Backend (bob)
 --              └── Platform (gina)
 --
---   Company              shared with all Acme members (added via authz.share)
+--   Company              erin shares it with all Acme members (authz.share, in docs.test.authz)
 --   ├── Handbook         handbook.pdf, salaries.xlsx (confidential)
 --   └── Engineering      owner alice, Engineering team: edit (app table)
 --       ├── Design docs  architecture.md
 --       └── Secrets      BREAKS INHERITANCE, Backend team: view (app table)
---           │            offer-letter.pdf (shared with dave)
+--           │            offer-letter.pdf (erin shares it with dave, in the same test)
 --           └── Keys     prod-keys.txt
 --   Globex               globex-plan.md
 --   └── Joint project    joint-plan.md, ALSO LINKED INTO Company (app.folder_links)

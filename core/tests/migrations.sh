@@ -15,7 +15,7 @@ fresh() { dropdb --if-exists "$1" 2>/dev/null; createdb "$1" || exit 1
 T=$(mktemp -d)
 P="$T/p"
 mkdir -p "$P/db"
-sed '/^test$/,$d' example/docs.authz > "$P/db/policy.authz"     # its test section needs the scenario's shares
+sed '/^test$/,$d' example/docs.authz > "$P/db/policy.authz"     # without its test section: the checks below change the policy
 printf 'policy = "db/policy.authz"\ndatabase = "dbname=%s"\n[migrations]\ntool = "sql"\ndir = "db/migrations"\n' "$DB" > "$P/rowstile.toml"
 CLI() { ( cd "$P" && python3 "$OLDPWD/cli/rowstile_cli.py" "$@" ); }
 # every migration in the folder not applied yet, in order, each in its own transaction (as the tools do)

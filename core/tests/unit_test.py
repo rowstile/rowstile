@@ -2982,7 +2982,7 @@ class Review(unittest.TestCase):
         self.assertIn("  test     can't read: tests/b.authz line 2: ", self.review.text(r))
         self.assertIn("- can't read: tests/b.authz line 2: ", self.review.markdown(r))
         same = self.run_review(self.text, {"tests/a.authz": good}, {"tests/a.authz": good})
-        self.assertEqual((same["tests"]["unread"], same["tests"]["flipped"], same["tests"]["count"]), ([], [], 21))
+        self.assertEqual((same["tests"]["unread"], same["tests"]["flipped"], same["tests"]["count"]), ([], [], 16))
 
     def test_a_test_file_the_policy_refuses_is_said(self) -> None:
         # it parses, but names a permission the type doesn't have, or a test another file names: `rowstile test`
@@ -3002,7 +3002,7 @@ class Review(unittest.TestCase):
                 "tests/c.authz line 1: there is already a test named 'owners' [AZ109]",
             ],
         )
-        self.assertEqual((t["flipped"], t["removed"], t["added"], t["count"]), ([], [], [], 21))
+        self.assertEqual((t["flipped"], t["removed"], t["added"], t["count"]), ([], [], [], 16))
         self.assertIn("2 test files can't be read, so their checks aren't compared.", self.review.text(r))
 
     def test_risk_flags(self) -> None:

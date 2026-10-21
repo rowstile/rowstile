@@ -65,13 +65,11 @@ PSQL -c "BEGIN" -c "CREATE TABLE public.undone (id int)" \
 run diff "$T/main.authz"; case "$out" in *"0 changes (nobody gains"*) ok "... and after many diffs undone, their policies dead in the catalog";; *) bad "diff after many undone" "$out";; esac
 
 echo "-- test"
-# the policy's tests expect the two shares the example scenario makes first
-PSQL -c "SET ROLE app_user" -c "SET authz.user_id = 5" -c "SELECT authz.share('folder', 1, 'viewer', 'org', 1, 'member')" \
-     -c "SELECT authz.share('file', 13, 'viewer', 'user', 4, '', now() + interval '1 day')" >/dev/null
+# the docs app's own tests hold on its data as app_schema.sql makes it: no share made first
 run test; [ $rc -eq 0 ] && echo "$out" | grep -q "policy tests passed" && ok "test passes and shows each check ($(echo "$out" | grep -c 'ok '))" || bad "test" "$out"
-sed 's/user 3 can view file 11/user 3 cannot view file 11/' example/docs.authz > "$T/parts/all.authz"
+sed 's/user 1 can edit file 11/user 1 cannot edit file 11/' example/docs.authz > "$T/parts/all.authz"
 CLI apply "$T/main.authz" >/dev/null 2>&1
-run test; case "$out" in *"FAIL  parts/all.authz line 90: user 3 cannot view file 11"*"1 policy test(s) failed"*) [ $rc -eq 1 ] && ok "a failing test fails the command, exit 1" || bad "test exit" "$rc";; *) bad "failing test" "$out";; esac
+run test; case "$out" in *"FAIL  parts/all.authz line 90: user 1 cannot edit file 11"*"1 policy test(s) failed"*) [ $rc -eq 1 ] && ok "a failing test fails the command, exit 1" || bad "test exit" "$rc";; *) bad "failing test" "$out";; esac
 cp example/docs.authz "$T/parts/all.authz"; CLI apply "$T/main.authz" >/dev/null 2>&1
 
 echo "-- graph and client"

@@ -131,6 +131,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `INSERT` of three rows writes all three. The limits page says so now, and what to use instead (a unique index,
   or a trigger). The messenger example relied on such counts: one `INSERT` could put three people in a direct
   chat, or two owners in a new group. Its schema now holds both.
+- The docs app's own tests (`core/example`) failed 3 of their checks on its own data: they needed two shares
+  that only the end-to-end scenario made. Those checks are now a named test in `docs.test.authz` that makes the
+  shares itself, so `rowstile test example/docs.test.authz` passes as its header says, and the playground's
+  docs example shows the policy's tests too.
 - `authz.decide_request()` with nobody signed in (a backend that forgot to sign in, an operator in psql) said
   "you cannot decide your own request". It now says "sign in to decide a request" (AZ714, a 401 in the SDKs).
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch

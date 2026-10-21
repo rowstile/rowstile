@@ -272,15 +272,15 @@ fresh "$TDB"
 quiet -d "$TDB" -f example/app_schema.sql >/dev/null || exit 1
 TCLI() { python3 cli/rowstile_cli.py --db "dbname=$TDB" "$@"; }
 TCLI apply example/docs.authz >/dev/null 2>&1
-psql -X -q -d "$TDB" -c "SET ROLE app_user" -c "SET authz.user_id = 5" -c "SELECT authz.share('folder', 1, 'viewer', 'org', 1, 'member')" \
-     -c "SELECT authz.share('file', 13, 'viewer', 'user', 4, '', now() + interval '1 day')" >/dev/null
-out=$(TCLI test 2>&1); rc=$?
-[ $rc -eq 0 ] && echo "$out" | grep -q "policy tests passed" && ok "rowstile test passes ($(echo "$out" | grep -c 'ok '))" || bad "test" "$out"
-sed 's/user 3 can view file 11/user 3 cannot view file 11/' example/docs.authz > "$T/failing.authz"
-printf '\ntest "one that fails too"\n  user 3 cannot view file 11\n' >> "$T/failing.authz"
+# the run docs.test.authz's header gives, on the data app_schema.sql makes: no share made first
+out=$(TCLI test example/docs.test.authz 2>&1); rc=$?
+[ $rc -eq 0 ] && echo "$out" | grep -q "policy tests passed" &&
+  ok "rowstile test example/docs.test.authz passes on the example's own data ($(echo "$out" | grep -c 'ok '))" || bad "test" "$out"
+sed 's/user 1 can edit file 11/user 1 cannot edit file 11/' example/docs.authz > "$T/failing.authz"
+printf '\ntest "one that fails too"\n  user 1 cannot edit file 11\n' >> "$T/failing.authz"
 applied=$(TCLI apply "$T/failing.authz" 2>&1); arc=$?
 out=$(TCLI test 2>&1); rc=$?
-case "$out" in *"FAIL"*"user 3 cannot view file 11"*) [ $rc -eq 1 ] && ok "... and a failing test fails it" || bad "test exit" "$rc";; *) bad "failing test" "$out";; esac
+case "$out" in *"FAIL"*"user 1 cannot edit file 11"*) [ $rc -eq 1 ] && ok "... and a failing test fails it" || bad "test exit" "$rc";; *) bad "failing test" "$out";; esac
 # applying runs none of a policy's tests (named ones write): the one whose tests fail above applied
 [ $arc -eq 0 ] && [ "$applied" = "$T/failing.authz: applied" ] &&
   ok "apply runs no test: that policy applied, its tests failing (the section's and a named one)" || bad "applying a policy whose tests fail" "$applied"
@@ -683,8 +683,6 @@ rc=$?; n=$(grep -c 'ok  ' /tmp/authz_apply_owner.log)
 dropdb "$DB"
 owned "$TDB"
 OWNER "$TDB" apply example/docs.authz >/dev/null 2>&1
-psql -X -q -d "$TDB" -c "SET ROLE app_user" -c "SET authz.user_id = 5" -c "SELECT authz.share('folder', 1, 'viewer', 'org', 1, 'member')" \
-     -c "SELECT authz.share('file', 13, 'viewer', 'user', 4, '', now() + interval '1 day')" >/dev/null
 out=$(OWNER "$TDB" test 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "the owner runs the policy's tests" || bad "owner test" "$(echo "$out" | grep -A 3 FAIL | head -12)"
 out=$(OWNER "$TDB" remove --yes 2>&1); rc=$?
