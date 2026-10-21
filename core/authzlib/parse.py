@@ -842,15 +842,32 @@ def read_lines(
     return out
 
 
+def spaced(line: str) -> str:
+    """A line read with one space for each run of whitespace, except inside quotes ('a   b' is not 'a b')."""
+    if QUOTE_OR_COMMENT.search(line) is None:  # most lines: no quote, so no space that counts
+        return " ".join(line.split())
+    out: list[str] = []
+    space = False  # whitespace outside quotes since the last character kept
+    for c, m in zip(line, Scanner().marks(line), strict=True):
+        if c.isspace() and not m.quoted:
+            space = True
+            continue
+        if space and out:
+            out.append(" ")
+        space = False
+        out.append(c)
+    return "".join(out)
+
+
 def meaning_lines(policy: str, files: dict[str, str] | None) -> list[str]:
-    """The policy's declarations, one per line, whitespace and comments aside; lines in a block say
+    """The policy's declarations, one per line, whitespace (outside quotes) and comments aside; lines in a block say
     which block ('type folder: can edit = owner or parent.edit'). Tests are left out: they make nothing.
     What the lock file holds (migrate.py), and what rowstile fmt must not change (here: fmt imports no compiler)."""
     out: list[str] = []
     block: str | None = None
     skip = False
     for _, indent, s in read_lines(None, policy, files=files or {}):
-        s = " ".join(s.split())
+        s = spaced(s)
         if indent == 0:
             skip = s == "test" or s.startswith("test ")
             m = re.match(r"(type\s+\w+|rules\s+\S+|invariants)", s)
