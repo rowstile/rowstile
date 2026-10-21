@@ -70,7 +70,7 @@
 > rules fm.group_members: update id, user_id : nobody
 > rules fm.group_members: delete : manage or person
 
-always | 052680274e94
+always | e187b3b9d961
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 3315536bdd05 shape=77f3e79f
@@ -93,7 +93,7 @@ function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9f
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 09328ee77eed shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | b916646bf293 shape=1223ad2f
-function authz.lint() | 826d1e5caf4b shape=54cb1505
+function authz.lint() | 02616e9fb2b1 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 2d98cf289241 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
@@ -425,7 +425,7 @@ step base | 65f0fce9c06c
 step cascades | f5a2f66fb7bc
 step grant_api | 05b4ca474c81
 step grant_functions | 0bdcd3141a7e
-step grant_views | f4794998fcf8
+step grant_views | 4b34c639e7f2
 step mask_privileges | 0f76f9d7c5d3
 step share_indexes | 7e58d4b05066
 step sweep | a91797a846f7
