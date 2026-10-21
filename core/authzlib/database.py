@@ -383,14 +383,23 @@ def record(
     )
 
 
-def migratable(policy: str, files: Mapping[str, object] | str | None) -> tuple[str, migrate.Compiled, Compiler]:
-    """(the whole compiled policy, the policy as migrate.py reads it, the compiler): what migrations start from."""
-    from . import migrate
+def whole(policy: str, files: Mapping[str, object] | str | None) -> tuple[str, Compiler]:
+    """(the whole compiled policy, the compiler). A mistake in the policy is an Error."""
 
     def make(c: Compiler) -> tuple[str, Compiler]:
         return c.compile("the policy", transaction=False), c  # compiling finds mistakes too: inside compiled()
 
-    sql, c = compiled(policy, files, make)
+    return compiled(policy, files, make)
+
+
+def migratable(
+    policy: str, files: Mapping[str, object] | str | None, made: tuple[str, Compiler] | None = None
+) -> tuple[str, migrate.Compiled, Compiler]:
+    """(the whole compiled policy, the policy as migrate.py reads it, the compiler): what migrations start from.
+    made: whole(policy, files), when the caller has it already."""
+    from . import migrate
+
+    sql, c = made or whole(policy, files)
     return sql, migrate.read(c, policy, files_map(files)), c
 
 
@@ -525,11 +534,15 @@ def apply(
     Refused when a newer version of rowstile last changed the database, unless downgrade."""
     files = files_map(files)
     one_at_a_time(db)
-    if only_if_changed and unchanged(db, policy, files):
-        return "unchanged"
+    made = None
+    if only_if_changed and recorded(db, policy, files):
+        with contextlib.suppress(Error):  # (a record this command can't compile isn't one: applying says why)
+            made = whole(policy, files)
+        if made and intact(db, *made):
+            return "unchanged"
     if not downgrade:
         refuse_newer_database(db)
-    sql, comp, c = migratable(policy, files)
+    sql, comp, c = migratable(policy, files, made)
     run_policy(db, sql, policy, files)
     if rebuild:
         rebuild_trees(db)
@@ -596,13 +609,16 @@ def _push(db: Db, policy: str, files: Files, downgrade: bool = False) -> str:
     lock = text_or_none(last, "lock") if last else None
     if last and last["action"] == "apply" and last["version"] == BUILD and lock:
         last_policy, last_files = text(last, "policy"), files_map(text_or_none(last, "files") or "{}")
-        # the policy in force with what it made (unchanged() compiles it: a record this command can't compile isn't
-        # one), as the migrations so far left it
-        before = migratable(last_policy, last_files)[1] if unchanged(db, last_policy, last_files) else None
-        if before is not None and lock_hash(before) == lock:
-            sql, comp, c = migratable(policy, files)
-            m = migrate.migration(sql, comp, migrate.parse_lock(migrate.lock_of(before)), "push", lines=True)
-            if m.empty and (last_policy, last_files) == (policy, files):
+        # the policy in force (a record this command can't compile isn't one), with what it made, as the migrations
+        # so far left it
+        made = None
+        with contextlib.suppress(Error):
+            made = migratable(last_policy, last_files)
+        if made and lock_hash(made[1]) == lock and intact(db, made[0], made[2]):
+            same = (last_policy, last_files) == (policy, files)
+            sql, comp, c = made if same else migratable(policy, files)
+            m = migrate.migration(sql, comp, migrate.parse_lock(migrate.lock_of(made[1])), "push", lines=True)
+            if m.empty and same:
                 return "unchanged"
             if m.empty:  # the same objects (comments, tests): the new text is the one in force
                 record(db, "apply", policy, files, lock)
@@ -615,14 +631,9 @@ def _push(db: Db, policy: str, files: Files, downgrade: bool = False) -> str:
     return "applied"
 
 
-def unchanged(db: Db, policy: str, files: Files) -> bool:
-    """The policy in force is this one (text and files), applied by this version of rowstile, and what it
-    made is still there: its schemas, each row-level security policy its rules make, row-level security on
-    each table with rules and on what is under it (partitions, tables that inherit), each trigger it makes
-    (enabled; on the tables that inherit too), no privilege on its schemas that the policy doesn't give, and each
-    condition only a PL/pgSQL function holds still runs (a signing-in type's where on a column the app dropped
-    since: applying again refuses it, AZ613, where the app's every query fails)."""
-    from . import BUILD, Compiler, statements
+def recorded(db: Db, policy: str, files: Files) -> bool:
+    """The policy in force is this one (text and files), applied by this version of rowstile."""
+    from . import BUILD
 
     if not there(db, "authz.policy_versions"):
         return False
@@ -631,22 +642,27 @@ def unchanged(db: Db, policy: str, files: Files) -> bool:
     )
     if not rows or rows[0]["action"] != "apply" or rows[0]["version"] != BUILD or rows[0]["policy"] != policy:
         return False
-    if files_map(text_or_none(rows[0], "files") or "{}") != files:
-        return False
-    try:
-        rules = parse_policy(policy, None, files=files).rules
-        # each rule on a whole row is a policy named authz_<command> (output.compile)
-        made = sorted(
-            {
-                (qt(r.table), "authz_" + r.command)
-                for r in rules
-                if r.command not in ("mask", "update after") and not r.columns
-            }
-        )
-        compiler = Compiler(parse_policy(policy, None, files=files))
-        sql = compiler.compile("the policy", transaction=False)
-    except PolicyError:
-        return False
+    return files_map(text_or_none(rows[0], "files") or "{}") == files
+
+
+def intact(db: Db, sql: str, compiler: Compiler) -> bool:
+    """What the policy in force made (sql, as compiler compiled it) is still there: its schemas, each row-level
+    security policy its rules make, row-level security on each table with rules and on what is under it
+    (partitions, tables that inherit), each trigger it makes (enabled; on the tables that inherit too), no privilege
+    on its schemas that the policy doesn't give, and each condition only a PL/pgSQL function holds still runs (a
+    signing-in type's where on a column the app dropped since: applying again refuses it, AZ613, where the app's
+    every query fails)."""
+    from . import statements
+
+    rules = compiler.rules
+    # each rule on a whole row is a policy named authz_<command> (output.compile)
+    made = sorted(
+        {
+            (qt(r.table), "authz_" + r.command)
+            for r in rules
+            if r.command not in ("mask", "update after") and not r.columns
+        }
+    )
     if not all(reads(db, rows) for rows, _, _ in compiler.late_conditions()):
         return False
     # (table, name, only where the table is partitioned)

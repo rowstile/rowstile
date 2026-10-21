@@ -25,7 +25,7 @@ language server 122
 masks 32
 mcp 75
 migrate vs apply 77
-migrations 71
+migrations 72
 moves 23
 multi scenario 99
 policy errors 242
