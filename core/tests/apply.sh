@@ -130,13 +130,20 @@ nshares=$(PSQL -c "SELECT count(*) FROM authz.shares")
 CLI reapply >/dev/null 2>&1; CLI reapply >/dev/null 2>&1
 [ "$(PSQL -c "SELECT count(*) FROM authz.shares")" = "$nshares" ] && [ "$(PSQL -c "SELECT authz.verify()")" = t ] &&
   ok "applying again keeps the $nshares shares and the trees stay consistent" || bad "reapply"
-# applying again warns of what the policy can't make safe: a foreign key that deletes rows of a governed table by
-# cascade (which skips row-level security), and a table that lost its rules (its row-level security stays on)
-PSQL -c "ALTER TABLE app.files ADD CONSTRAINT files_folder_cascade FOREIGN KEY (folder_id) REFERENCES app.folders ON DELETE CASCADE" >/dev/null
+# applying again warns of what the policy can't make safe: a foreign key that deletes or changes rows of a governed
+# table (its actions skip row-level security), and a table that lost its rules (its row-level security stays on).
+# ON UPDATE CASCADE is no warning: the docs app's files.folder_id has it, and the first apply above says nothing
+PSQL -c "ALTER TABLE app.files ADD CONSTRAINT files_folder_cascade FOREIGN KEY (folder_id) REFERENCES app.folders ON DELETE CASCADE" \
+     -c "ALTER TABLE app.files ADD CONSTRAINT files_owner_null FOREIGN KEY (owner_id) REFERENCES app.users ON DELETE SET NULL" \
+     -c "ALTER TABLE app.files ADD CONSTRAINT files_owner_default FOREIGN KEY (owner_id) REFERENCES app.users ON UPDATE SET DEFAULT" >/dev/null
 run apply "$T/docs.authz" --force
-case "$out" in *"foreign key files_folder_cascade on app.files is ON DELETE CASCADE: deleting a row of app.folders also deletes rows of app.files, and cascades skip row-level security"*"$T/docs.authz: applied")
+case "$out" in *"foreign key files_folder_cascade on app.files is ON DELETE CASCADE: deleting a row of app.folders also deletes rows of app.files. Foreign key actions skip row-level security, so a user could delete rows the policy doesn't let them delete. Use RESTRICT unless that is intended."*"$T/docs.authz: applied")
   ok "re-applying warns of a foreign key that deletes a governed table's rows by cascade";; *) bad "a cascading foreign key" "$out";; esac
-PSQL -c "ALTER TABLE app.files DROP CONSTRAINT files_folder_cascade" >/dev/null
+case "$out" in *"foreign key files_owner_null on app.files is ON DELETE SET NULL: deleting a row of app.users also changes rows of app.files. Foreign key actions skip row-level security, so a user could change rows the policy doesn't let them change."*)
+  ok "... and of one that changes them when a row it names is deleted (ON DELETE SET NULL)";; *) bad "ON DELETE SET NULL" "$out";; esac
+case "$out" in *"foreign key files_owner_default on app.files is ON UPDATE SET DEFAULT: changing the key of a row of app.users also changes rows of app.files."*)
+  ok "... or when that row's key changes (ON UPDATE SET DEFAULT)";; *) bad "ON UPDATE SET DEFAULT" "$out";; esac
+PSQL -c "ALTER TABLE app.files DROP CONSTRAINT files_folder_cascade, DROP CONSTRAINT files_owner_null, DROP CONSTRAINT files_owner_default" >/dev/null
 sed '/^rules app.files$/,/^$/d' "$T/docs.authz" > "$T/nofiles.authz"
 run apply "$T/nofiles.authz"
 case "$out" in *"app.files has no rules any more, and row-level security is still on, so the app role sees none of its rows"*"$T/nofiles.authz: applied")

@@ -53,8 +53,8 @@
   shared, or decide your own access request. <!-- checked: tests/adversarial.sh "sharing what she may only view"; tests/principals.sh "a viewer may share helper, but not grant assist, which they don't hold"; tests/adversarial.sh "sharing a relation the policy doesn't share"; tests/adversarial.sh "approving her own request" -->
 - **Mistakes are reported with line numbers**, at compile time or when applying. <!-- checked: tests/fuzz_parser.py "refused without a line number"; tests/apply.sh "a condition that doesn't run names its line" -->
 - **Re-applying replaces the old version**, keeps shares, removes access for roles the
-  policy no longer names, and warns about cascading foreign keys and tables that lost
-  their rules. <!-- checked: tests/apply.sh "a changed text is applied"; tests/apply.sh "shares and the trees stay consistent"; tests/apply.sh "takes the old one's access away"; tests/apply.sh "deletes a governed table's rows by cascade"; tests/apply.sh "warns of a table that lost its rules" -->
+  policy no longer names, and warns about foreign keys that delete or change a governed
+  table's rows and tables that lost their rules. <!-- checked: tests/apply.sh "a changed text is applied"; tests/apply.sh "shares and the trees stay consistent"; tests/apply.sh "takes the old one's access away"; tests/apply.sh "deletes a governed table's rows by cascade"; tests/apply.sh "(ON DELETE SET NULL)"; tests/apply.sh "warns of a table that lost its rules" -->
   Inheritance tables whose definition didn't change are kept, not rebuilt:
   a new permission or rule applies in about 0.1 s with 50k folders. <!-- checked: tests/keep.sh "a new permission keeps every inheritance table" --> <!-- unchecked: the time was measured by hand; no benchmark measures it again -->
 

@@ -3389,15 +3389,25 @@ CREATE TRIGGER "authz_update_after up" BEFORE UPDATE ON "alt"."docs" FOR EACH RO
     AND NOT authz_int."alt.docs:column up after:holds"(pg_catalog.jsonb_populate_record(NULL::"alt"."docs", pg_catalog.to_jsonb(NEW))))
   EXECUTE FUNCTION authz_int."alt.docs:column up after"();
 
--- Foreign keys that delete governed rows skip row-level security
+-- Foreign keys that delete or change governed rows skip row-level security. ON UPDATE CASCADE is left
+-- out: it changes a row's reference to follow the key it names, so the row still names the same row.
 DO $fk$
 DECLARE c record;
 BEGIN
-  FOR c IN SELECT con.conname, con.conrelid::regclass AS child, con.confrelid::regclass AS parent
+  FOR c IN SELECT con.conname, con.conrelid::regclass AS child,
+                  concat_ws(' ', CASE con.confdeltype WHEN 'c' THEN 'ON DELETE CASCADE' WHEN 'n' THEN 'ON DELETE SET NULL'
+                                                      WHEN 'd' THEN 'ON DELETE SET DEFAULT' END,
+                                 CASE con.confupdtype WHEN 'n' THEN 'ON UPDATE SET NULL' WHEN 'd' THEN 'ON UPDATE SET DEFAULT' END) AS actions,
+                  concat_ws(', and ',
+                    CASE WHEN con.confdeltype IN ('c', 'n', 'd') THEN format('deleting a row of %s also %s rows of %s', con.confrelid::regclass,
+                      CASE con.confdeltype WHEN 'c' THEN 'deletes' ELSE 'changes' END, con.conrelid::regclass) END,
+                    CASE WHEN con.confupdtype IN ('n', 'd') THEN format('changing the key of a row of %s also changes rows of %s', con.confrelid::regclass, con.conrelid::regclass) END) AS effects,
+                  CASE WHEN con.confdeltype <> 'c' THEN 'change' WHEN con.confupdtype IN ('n', 'd') THEN 'delete or change' ELSE 'delete' END AS verb
            FROM pg_constraint con
-           WHERE con.contype = 'f' AND con.confdeltype = 'c' AND con.conrelid IN ('"alt"."docs"'::regclass) LOOP
-    RAISE WARNING 'foreign key % on % is ON DELETE CASCADE: deleting a row of % also deletes rows of %, and cascades skip row-level security, so a user could remove rows they cannot see. Use ON DELETE RESTRICT unless that is intended.',
-      c.conname, c.child, c.parent, c.child;
+           WHERE con.contype = 'f' AND (con.confdeltype IN ('c', 'n', 'd') OR con.confupdtype IN ('n', 'd'))
+             AND con.conrelid IN ('"alt"."docs"'::regclass) LOOP
+    RAISE WARNING 'foreign key % on % is %: %. Foreign key actions skip row-level security, so a user could % rows the policy doesn''t let them %. Use RESTRICT unless that is intended.',
+      c.conname, c.child, c.actions, c.effects, c.verb, c.verb;
   END LOOP;
 END $fk$;
 
