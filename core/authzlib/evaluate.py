@@ -1116,6 +1116,17 @@ def cone(pols: Sequence[Policy]) -> Cone | None:
     return out
 
 
+def counts_up_to(n: int, total: int) -> Iterator[tuple[int, ...]]:
+    """Every n counts of rows, each MOST_ROWS at most, whose sum is total at most, in order: those of
+    itertools.product(range(MOST_ROWS + 1), repeat=n) that are, without going through the others."""
+    if n == 0:
+        yield ()
+        return
+    for first in range(min(MOST_ROWS, total) + 1):
+        for rest in counts_up_to(n - 1, total - first):
+            yield (first, *rest)
+
+
 class Listing:
     """Every world of up to MOST_ROWS rows of each type that policies may be told apart in, the smallest first:
     those with no link, then those with one, then two, and so on. A world holds the rows its links name, numbered
@@ -1266,16 +1277,15 @@ class Listing:
         """The listed worlds, those with fewer links first, and of those, fewer rows first; up to STEPS steps of
         looking for links."""
         types = sorted(self.types)
+        # only the rows of a type some link may name vary: no link names a row of another type, so it has none
+        named_types = sorted({t for c in self.candidates for t, _ in self.ends(c)})
         for k in range(len(self.candidates) + 1):
             # the rows of each type the links name (0: none, a row of its own); each link names two at most
-            counts = sorted(
-                (v for v in itertools.product(range(MOST_ROWS + 1), repeat=len(types)) if sum(v) <= 2 * k),
-                key=sum,
-            )
-            for v in counts:
+            for v in sorted(counts_up_to(len(named_types), 2 * k), key=sum):
                 if k > 0 and not any(v):
                     continue
-                rows = dict(zip(types, v, strict=True))
+                said = dict(zip(named_types, v, strict=True))
+                rows = {t: said.get(t, 0) for t in types}
                 named = self.named(rows)
                 cands = [c for c in self.candidates if self.ends(c) <= named]
                 for combo in self.covering(cands, k, named):

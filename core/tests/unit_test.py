@@ -6616,6 +6616,31 @@ class Confidence(unittest.TestCase):
         self.assertIsNone(evaluate.compare(a, b, worlds=10, listing=listing))
         self.assertEqual(listing.said(), "2,049 listed: every one of up to 3 rows of each type with at most 1 link")
 
+    def test_the_types_a_change_doesnt_read_cost_the_listing_nothing(self) -> None:
+        # only the rows of a type some link may name vary: here user and doc. Each count of rows of all 14 types
+        # was gone through (4^14 of them, for each number of links): minutes, and the steps spent on worlds no
+        # link could make left it at fewer links
+        import time
+
+        from authzlib import evaluate
+
+        doc = self.HEAD + "type doc = app.docs\n  owner : user = owner_id\n  can view = "
+        others = "".join(f"type t{i} = app.t{i}\n  owner : user = owner_id\n  can see = owner\n" for i in range(12))
+        a, b = parse_policy(doc + "owner\n" + others, "a.authz"), parse_policy(doc + "owner or owner\n" + others, "b")
+        self.assertEqual(len(a.types), 14)
+        start = time.monotonic()
+        listing = evaluate.Listing((a, b))
+        self.assertIsNone(evaluate.compare(a, b, listing=listing))
+        self.assertLess(time.monotonic() - start, 20)
+        self.assertEqual(listing.said(), "7 listed: every one of up to 3 rows of each type")
+        # the counts it goes through: those of the whole product whose sum is small enough, in its order
+        for n, total in ((0, 0), (1, 2), (3, 4), (4, 12)):
+            self.assertEqual(
+                list(evaluate.counts_up_to(n, total)),
+                [v for v in itertools.product(range(evaluate.MOST_ROWS + 1), repeat=n) if sum(v) <= total],
+                (n, total),
+            )
+
     def test_a_listed_world_shares_with_everyone_and_by_link(self) -> None:
         # a share names a row of its subject's type, or `*` (every user, anyone), or a link's token: the one asked with
         from authzlib import evaluate

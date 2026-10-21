@@ -138,6 +138,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - The comment `rowstile review --markdown` writes shows Meaning's example when a change thought a refactor isn't
   one: what differs, for whom, on what, and the world that shows it, as the text output says. A failed test
   without a line or a detail reads `- fails: a test`, not `- fails: a test : ` and two backquotes.
+- `rowstile review` checks a change that looks like a refactor in seconds on a policy with many types. The small
+  worlds it lists counted rows of every type, also those the change doesn't read: with 14 types, a permission
+  rewritten as `owner or owner` took almost four minutes, and each more type about four times as long. Only the
+  types the change reads vary now, and the listing gets further in the same number of worlds.
 
 ## 0.1.0 (alpha)
 
