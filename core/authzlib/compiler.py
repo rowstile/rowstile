@@ -1972,7 +1972,6 @@ class Core:
         alias: str,
         node: Expr,
         loc: Loc,
-        stack: tuple[Name, ...] = (),
         point: bool = False,
         invoker: bool = False,
     ) -> str:
@@ -1983,7 +1982,7 @@ class Core:
                 return f"coalesce(({row_cond(sql, alias)}), false)"
             case Not(inner_node):
                 # NULL (a NULL column, or no user) must mean "not held", as it does in the views
-                inner = self.row_sql(t, alias, inner_node, loc, stack, point, invoker)
+                inner = self.row_sql(t, alias, inner_node, loc, point, invoker)
                 return f"NOT {inner}" if isinstance(inner_node, Cond) else f"NOT coalesce({inner}, false)"
             case And(items) | Or(items):
                 # cheapest first: Postgres evaluates AND and OR from the left and stops once the answer is known
@@ -1991,8 +1990,7 @@ class Core:
                 return (
                     "("
                     + joiner.join(
-                        self.row_sql(t, alias, x, loc, stack, point, invoker)
-                        for x in self.cheapest_first(t, once(items))
+                        self.row_sql(t, alias, x, loc, point, invoker) for x in self.cheapest_first(t, once(items))
                     )
                     + ")"
                 )
@@ -2003,7 +2001,7 @@ class Core:
                 if name in t.relations:
                     return self.row_relation(t, t.relations[name], alias, loc, point)
                 perm = t.perms[name]
-                items = self.cheapest_first(t, self.prune(t, self.flat_items(t, perm, stack)))
+                items = self.cheapest_first(t, self.prune(t, self.flat_items(t, perm)))
                 return or_join([self.row_sql(t, alias, item, perm.loc, point=point, invoker=invoker) for item in items])
             case _:
                 assert_never(node)
