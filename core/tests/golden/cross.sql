@@ -1115,6 +1115,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN PERFORM authz_int."folder_project__host_inside_parent__tree_recheck"(); RETURN NULL; END $f$;
 
 -- find the tables the conditions read and watch them
+-- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read (line 15)
 DO $dep$
 DECLARE d record;
 BEGIN
@@ -2141,6 +2142,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN PERFORM authz_int."region_site__over__tree_recheck"(); RETURN NULL; END $f$;
 
 -- find the tables the conditions read and watch them
+-- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read (line 39)
 DO $dep$
 DECLARE d record;
 BEGIN
@@ -3810,6 +3812,7 @@ CREATE VIEW authz_int."folder__parent__fund" AS
 ALTER TABLE "cx"."notes" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN
@@ -3896,6 +3899,7 @@ COMMENT ON POLICY "authz_insert" ON "cx"."notes" IS 'rowstile';
 ALTER TABLE "cx"."folders" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN
@@ -4067,6 +4071,7 @@ COMMENT ON POLICY "authz_delete" ON "cx"."folders" IS 'rowstile';
 ALTER TABLE "cx"."regions" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN
@@ -4173,6 +4178,7 @@ COMMENT ON POLICY "authz_update" ON "cx"."regions" IS 'rowstile';
 ALTER TABLE "cx"."sites" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN
@@ -4281,6 +4287,7 @@ COMMENT ON POLICY "authz_update" ON "cx"."sites" IS 'rowstile';
 ALTER TABLE "cx"."projects" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN

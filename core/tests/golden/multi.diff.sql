@@ -2686,6 +2686,7 @@ CREATE VIEW authz_int."folder__parent__view" AS
 ALTER TABLE "mt"."docs" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN

@@ -62,6 +62,7 @@ BEGIN
 END $ch$;"""
 # ... and before a migration drops what they call (they are made again by CHILD_TRIGGERS, which every one runs)
 DROP_CHILD_TRIGGERS = f"""-- the triggers given to the tables under others: made again below, on what this migration makes
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables rowstile watches
 DO $authz_ch$
 DECLARE r record;
 BEGIN

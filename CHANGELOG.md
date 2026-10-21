@@ -126,6 +126,18 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   repository (it looked for the repository's command as it started, and stopped with a `StopIteration`): it
   needs the command only for `--client`, and outside the repository it runs the one installed. The app's image
   no longer copies the command, and `test.sh` takes the database down when a step stops the run early.
+- `rowstile review` flags more of what widens access. A rule that reads a relation's permission itself
+  (`insert : folder.edit`) changes through that relation, as `select : view` does: repointing `file.folder` to
+  another column now flags who may insert. A `shared if` removed or changed, and a caveat changed, are flagged.
+  A plain `update after` removed is no longer called a column rule: it is flagged where the `update` rule, which
+  then checks in its place, lets more rows through; a new one is flagged where it lets more through than
+  `update` did.
+- `rowstile review`'s Deploy names the tables a migration finds only as it runs, and the mode it locks them in:
+  the tables an inheritance condition reads, and the partitions and child tables of the governed ones. It said
+  "Locks `app.folders`" while the migration also locked `app.settings`, which a condition read.
+- The comment `rowstile review --markdown` writes shows Meaning's example when a change thought a refactor isn't
+  one: what differs, for whom, on what, and the world that shows it, as the text output says. A failed test
+  without a line or a detail reads `- fails: a test`, not `- fails: a test : ` and two backquotes.
 
 ## 0.1.0 (alpha)
 

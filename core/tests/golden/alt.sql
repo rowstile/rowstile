@@ -1067,6 +1067,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN PERFORM authz_int."doc__parent__tree_recheck"(); RETURN NULL; END $f$;
 
 -- find the tables the conditions read and watch them
+-- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read (line 33)
 DO $dep$
 DECLARE d record;
 BEGIN
@@ -1312,6 +1313,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN PERFORM authz_int."doc__parent_shortcut__tree_recheck"(); RETURN NULL; END $f$;
 
 -- find the tables the conditions read and watch them
+-- @locks SHARE ROW EXCLUSIVE: the tables the inheritance conditions read (line 36)
 DO $dep$
 DECLARE d record;
 BEGIN
@@ -2956,6 +2958,7 @@ CREATE VIEW authz_int."doc__parent__edit__ext" AS
 ALTER TABLE "alt"."docs" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN

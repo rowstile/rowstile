@@ -1734,6 +1734,7 @@ CREATE VIEW authz_int."domain__org__edit" AS
 ALTER TABLE "lp"."orgs" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN
@@ -1838,6 +1839,7 @@ COMMENT ON POLICY "authz_update" ON "lp"."orgs" IS 'rowstile';
 ALTER TABLE "lp"."settings" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN
@@ -1942,6 +1944,7 @@ COMMENT ON POLICY "authz_update" ON "lp"."settings" IS 'rowstile';
 ALTER TABLE "lp"."emails" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN
@@ -1994,6 +1997,7 @@ COMMENT ON POLICY "authz_select" ON "lp"."emails" IS 'rowstile';
 ALTER TABLE "lp"."domains" ENABLE ROW LEVEL SECURITY;
 -- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
 -- so they are read and written through it only (read directly, they would skip its rules and triggers)
+-- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
 DO $rls$
 DECLARE c regclass;
 BEGIN
