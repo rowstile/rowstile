@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import posixpath
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Literal, NamedTuple, NoReturn, TypeAlias, TypeVar
 
@@ -149,6 +149,23 @@ class ArrowOn:
 
 
 Expr: TypeAlias = "Or | And | Not | Cond | Ref | Arrow | ArrowOn"
+# what an expression reads, once its and, or and not are taken apart
+Leaf: TypeAlias = "Cond | Ref | Arrow | ArrowOn"
+
+
+def leaves(node: Expr, nots: int = 0) -> Iterator[tuple[Leaf, int]]:
+    """Each condition, name and arrow an expression reads, with the number of `not`s it is under (odd: it is
+    denied). The one walk through and, or and not: a new kind of expression is taken apart here."""
+    match node:
+        case Not(item):
+            yield from leaves(item, nots + 1)
+        case And(items) | Or(items):
+            for x in items:
+                yield from leaves(x, nots)
+        case _:
+            yield node, nots
+
+
 # a source's column: one, or the columns of a composite key
 Cols: TypeAlias = "str | tuple[str, ...]"
 # who a relation links to: (type, relation or None); ('user', '*') is any principal of the type, and

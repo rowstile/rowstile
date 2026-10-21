@@ -521,6 +521,24 @@ class Walks(unittest.TestCase):
             self.assertIn("CROSS JOIN LATERAL", sql)
 
 
+class Leaves(unittest.TestCase):
+    def test_what_an_expression_reads_and_under_how_many_nots(self) -> None:
+        """parse.leaves is the one walk through and, or and not that the evaluator and the review take: each
+        condition, name and arrow (one the compiler narrows to some types too), with the nots above it."""
+        on = parse.ArrowOn("parent", "view", ("folder",))
+        expr = parse.Or(
+            [
+                parse.Ref("owner"),
+                parse.Not(parse.And([parse.Cond("archived"), parse.Not(parse.Arrow("org", "member"))])),
+                on,
+            ]
+        )
+        self.assertEqual(
+            list(parse.leaves(expr)),
+            [(parse.Ref("owner"), 0), (parse.Cond("archived"), 1), (parse.Arrow("org", "member"), 2), (on, 0)],
+        )
+
+
 class Loops(unittest.TestCase):
     LOOP = (
         "type org = app.orgs\n  owner : user = owner_id\n  settings : setting = settings_id\n  can edit = {start}settings.edit\n"

@@ -252,7 +252,7 @@ class Reference(evaluate.Reference):
         """The custom roles given on t that include p to st#sr, for the shares g `when` holds of: (object, subject,
         the role's owner when it is of the type `from rel` names, '' otherwise: it never counts)."""
         owner = (
-            f"CASE WHEN ro.owner_type = {lit(self.role_owner_type(t))} THEN ro.owner_id ELSE '' END"
+            f"CASE WHEN ro.owner_type = {lit(evaluate.role_owner_type(t))} THEN ro.owner_id ELSE '' END"
             if t.roles_from
             else "''"
         )
@@ -956,7 +956,7 @@ class Checker:
 
         for owner in self.role_owners:
             for tname, perms in self.role_perms.items():
-                from_type = self.ref.role_owner_type(self.types[tname])
+                from_type = evaluate.role_owner_type(self.types[tname])
                 for i, got in snap.get((u, "create_role", tname, owner), []):
                     service = users_only("create_role")
                     if service:
