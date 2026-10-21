@@ -14,8 +14,10 @@ T=$(mktemp -d)
 apply() { printf '%s\n' "$1" > "$T/p.authz"
           out=$(python3 cli/rowstile_cli.py --db "dbname=$DB" apply "$T/p.authz" --force 2>&1) || { bad "apply" "$out"; exit 1; }; }
 # the inheritance tables, by oid: the same oid after an apply means the table (and its rows) was kept
+# (found by their columns: a name too long for Postgres is shortened with a hash, and loses its __tree)
 trees() { PSQL -c "SELECT string_agg(c.relname || '=' || c.oid, ' ' ORDER BY c.relname) FROM pg_class c
-                   WHERE c.relnamespace = 'authz_int'::regnamespace AND c.relkind = 'r' AND c.relname LIKE '%\_\_tree%'"; }
+                   WHERE c.relnamespace = 'authz_int'::regnamespace AND c.relkind = 'r'
+                     AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname IN ('ancestor', 'aid'))"; }
 verify() { [ "$(PSQL -c 'SELECT authz.verify()')" = "t" ]; }
 
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
@@ -69,6 +71,15 @@ PSQL -c "CREATE INDEX shares_obj_ghost_bigint ON authz.shares ((object_id::bigin
 apply "$DOCS"
 [ "$(PSQL -c "SELECT to_regclass('authz.shares_obj_ghost_bigint') IS NULL, to_regclass('authz.shares_obj_folder_bigint') IS NOT NULL")" = "t|t" ] &&
   ok "applying drops an index on share ids no type of the policy has, and keeps the policy's own" || bad "share indexes after apply"
+
+# a tree whose name is longer than Postgres's names (63 bytes): its table is named with a hash, and kept all the same
+LONG=$(echo "$DOCS" | sed 's/linked_into/also_shown_inside_these_other_folders_of_the_org/g')
+apply "$LONG"
+BEFORE=$(trees)
+case "$BEFORE" in *"folder__also_shown_inside_these_other_folders_of_the_o_"*) ;; *) bad "no tree with a long name" "$BEFORE" ;; esac
+apply "$(echo "$LONG" | sed 's/^  can break_glass = org.member$/  can break_glass = org.member\n  can peek = view/')"
+[ "$(trees)" = "$BEFORE" ] && verify && ok "a new permission keeps a tree whose name is too long for Postgres" ||
+  bad "a long name kept" "$BEFORE -> $(trees)"
 
 rm -r "$T"
 dropdb "$DB"

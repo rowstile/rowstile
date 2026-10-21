@@ -15,7 +15,7 @@ from .compiler import Core, Edge, Edges, NextTree, SccKey
 from .parse import Cols, Loc, Relation, Source, Type, cols, fail
 from .sqlutil import (
     check_stable_condition,
-    ident,
+    dep_trigger,
     lit,
     on_row,
     q,
@@ -95,7 +95,7 @@ BEGIN
       RAISE EXCEPTION '{first_line}: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]', d.rel;
     END IF;
     EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
-                   'FOR EACH STATEMENT EXECUTE FUNCTION {on_deps}()', {lit(ident("authz_" + name + "_dep"))}, d.rel);
+                   'FOR EACH STATEMENT EXECUTE FUNCTION {on_deps}()', {lit(dep_trigger(name))}, d.rel);
   END LOOP;
 END $dep$;"""
 
@@ -323,10 +323,12 @@ END $k$;"""
         locs = [self.cond_lines.get((t.name, c), t.loc) for c in conds] + ([t.loc] if t.where else [])
         first_line = min(locs + [ln for _, _, ln in link_wheres]) if (locs or link_wheres) else t.loc
 
-        def table_sql(g: Namer) -> str:
-            return f"""CREATE TABLE {g("")} (descendant {pkt} NOT NULL, ancestor {pkt} NOT NULL,
-  PRIMARY KEY (descendant, ancestor));
-CREATE INDEX ON {g("")} (ancestor);"""
+        # (its indexes are named as Postgres would name them, and shortened as every generated name: the one built
+        # beside, stem + "__next", has its indexes renamed when it is swapped in, migrate.swap_sql)
+        def table_sql(stem: str) -> str:
+            return f"""CREATE TABLE authz_int.{q(stem)} (descendant {pkt} NOT NULL, ancestor {pkt} NOT NULL,
+  CONSTRAINT {q(stem + "_pkey")} PRIMARY KEY (descendant, ancestor));
+CREATE INDEX {q(stem + "_ancestor_idx")} ON authz_int.{q(stem)} (ancestor);"""
 
         def compute_sql(g: Namer) -> str:
             return f"""CREATE FUNCTION {g("_compute")}(p_ids {pkt}[]) RETURNS TABLE (o_descendant {pkt}, o_ancestor {pkt})
@@ -348,7 +350,7 @@ $f$;"""
 
         sql = [
             f"""-- {t.name}: each row with every ancestor it inherits from, through {described}
-{table_sql(f)}
+{table_sql(name)}
 INSERT INTO authz_int.locks VALUES ({lit(t.name)}, 0) ON CONFLICT DO NOTHING;
 {self.swap_in_kept(name)}
 
@@ -642,7 +644,7 @@ CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
         t: Type,
         name: str,
         f: Namer,
-        table_sql: Callable[[Namer], str],
+        table_sql: Callable[[str], str],
         compute_sql: Callable[[Namer], str],
         link_tables: list[str],
         batches: str,
@@ -678,8 +680,9 @@ CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
             "next": g(""),
             "next_name": q(name + "__next"),
             "table": q(name),
+            "indexes": [(q(name + "__next" + i), q(name + i)) for i in ("_pkey", "_ancestor_idx")],
             "objects": [("table", g("")), ("function", f"{g('_compute')}(p_ids {pkt}[])")],
-            "build": f"""{table_sql(g)}
+            "build": f"""{table_sql(name + "__next")}
 {compute_sql(g)}
 DO $authz_build$
 DECLARE batch {pkt}[];

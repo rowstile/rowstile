@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, TypedDict
 from . import BUILD, __version__
 from .compiler import NextTree
 from .parse import meaning_lines
-from .sqlutil import DROP_CHILD_TRIGGERS, STUB_COLUMNS
+from .sqlutil import DROP_CHILD_TRIGGERS, STUB_COLUMNS, dep_trigger
 from .statements import drop_sql, made, references, split, unquoted
 
 if TYPE_CHECKING:
@@ -464,7 +464,7 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
         if old.objects[k]["kind"] == "rls" and k not in objs:
             lost_rules.append(old.objects[k]["key"])
     # dynamic triggers a rebuilt tree made on the tables its conditions read
-    dyn = [f"authz_{t}_dep" for t in sorted(rebuild)]
+    dyn = [dep_trigger(t) for t in sorted(rebuild)]
 
     # what is made, in the compiled policy's order; steps that grant on what was made run if anything was
     made_any = bool(create or rebuild)
@@ -567,14 +567,8 @@ def swap_sql(t: Tree) -> str:
     n = t.next
     assert n is not None, f"{t.name} can't be built beside"
     return (
-        f"ALTER TABLE {n['next']} SET SCHEMA authz_keep;\n"
-        f"ALTER TABLE authz_keep.{n['next_name']} RENAME TO {n['table']};\n"
-        f"DO $authz_swap$\nDECLARE r record;\nBEGIN\n"
-        f"  FOR r IN SELECT c.relname FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid\n"
-        f"           WHERE i.indrelid = to_regclass({sql_lit('authz_keep.' + n['table'])}) LOOP\n"
-        f"    EXECUTE format('ALTER INDEX authz_keep.%I RENAME TO %I', r.relname,\n"
-        f"                   replace(r.relname, {sql_lit(t.name + '__next')}, {sql_lit(t.name)}));\n"
-        f"  END LOOP;\nEND $authz_swap$;"
+        f"ALTER TABLE {n['next']} SET SCHEMA authz_keep;\nALTER TABLE authz_keep.{n['next_name']} RENAME TO {n['table']};"
+        + "".join(f"\nALTER INDEX authz_keep.{built} RENAME TO {kept};" for built, kept in n["indexes"])
     )
 
 

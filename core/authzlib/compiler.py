@@ -90,6 +90,7 @@ class NextTree(TypedDict):
     next: str  # the table built beside
     next_name: str
     table: str  # the tree's table, quoted
+    indexes: list[tuple[str, str]]  # (the index built beside, its name in the tree), quoted
     objects: list[tuple[str, str]]  # (kind, key) of what the first migration makes
     build: str  # the first migration's SQL
     catch_up: str  # the second's: what changed since the first one's snapshot

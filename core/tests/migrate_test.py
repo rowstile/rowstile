@@ -38,6 +38,10 @@ def edit(text: str, *pairs: tuple[str, str]) -> str:
 
 DOCS, MULTI, COMPOSITE = read("example/docs.authz"), read("tests/multi.authz"), read("tests/composite.authz")
 CHILDREN = read("tests/children.authz")
+# the docs app with a relation whose name makes the tree of view's links longer than Postgres's names (63 bytes):
+# its tables, functions, triggers and indexes are named with a hash
+LONG = DOCS.replace("linked_into", "also_shown_inside_these_other_folders_of_the_org")
+FROZEN = "{not exists (select 1 from app.files x where x.folder_id = this.id and x.confidential)}"
 SCHEMAS = {
     "docs": "example/app_schema.sql",
     "multi": "tests/multi_schema.sql",
@@ -93,6 +97,22 @@ CASES: list[tuple[str, str, str, str]] = [
         edit(
             DOCS,
             ("can view  = edit or viewer or (parent.view and {inherit})", "can view  = edit or viewer or parent.view"),
+        ),
+    ),
+    (
+        "inheritance that changes, in a tree whose name is too long (built beside, swapped in)",
+        "docs",
+        LONG,
+        edit(LONG, ("(parent.view and {inherit})", "parent.view")),
+    ),
+    # its conditions read another table: the tree is rebuilt, and the triggers it made on that table go first
+    (
+        "a condition that reads another table changes, in a tree whose name is too long",
+        "docs",
+        edit(LONG, ("(parent.view and {inherit})", f"(parent.view and {FROZEN})")),
+        edit(
+            LONG,
+            ("(parent.view and {inherit})", f"(parent.view and {FROZEN.replace('x.confidential', 'x.body IS NULL')})"),
         ),
     ),
     (

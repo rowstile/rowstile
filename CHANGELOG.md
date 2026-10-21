@@ -191,6 +191,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `@rowstile/react` works in a Next.js server component, such as `app/layout.tsx`: the package is a client
   module (`"use client"`). Rendering `<AuthzProvider>` or `<Can>` there failed the build, which asked for
   `"use client"` in a file of the app.
+- Inheritance trees whose names are longer than Postgres keeps (63 bytes; the tree is named after its types and
+  relations) work like the others. A migration that rebuilt one whose conditions read another table failed
+  ("cannot drop desired object(s) because other objects depend on them"), and one that swapped in a tree built
+  beside failed ("already exists"). Applying rebuilt such a tree each time, under its lock, where it keeps the
+  others that didn't change. And `rowstile indexes` advises a name Postgres keeps for an index on long names, so
+  it finds, and says to drop first, what a failed `CREATE INDEX CONCURRENTLY` of it left unfinished.
 - The messenger example: an open chat loaded its messages again and again, without stopping, and each load
   marked the chat read, which told every member's browser to load it too. The chat now loads once per change,
   and marking read what was read already changes nothing and tells nobody.

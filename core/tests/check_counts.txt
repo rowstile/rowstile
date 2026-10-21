@@ -7,7 +7,7 @@ capitals 98
 children 100
 cli 151
 concurrency 28
-confidence 62
+confidence 63
 cookbook 102
 cuts half way 28
 cuts half way, every statement 31
@@ -20,11 +20,11 @@ identity 80
 interleavings 324
 interleavings (read committed) 36
 invariance of the fixed policies 27
-keep unchanged trees 8
+keep unchanged trees 9
 language server 105
 masks 32
 mcp 70
-migrate vs apply 54
+migrate vs apply 58
 migrations 71
 moves 23
 multi scenario 93
