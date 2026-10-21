@@ -78,11 +78,11 @@ class ReviewRun(TypedDict):
 
 
 class Error(Exception):
-    """A mistake the caller has to fix, with the SQLSTATE the old SQL functions raised."""
+    """A mistake the caller has to fix: what the command says, and a hint of what to do."""
 
-    def __init__(self, message: str, sqlstate: str = "P0001", hint: str | None = None) -> None:
+    def __init__(self, message: str, hint: str | None = None) -> None:
         super().__init__(message)
-        self.sqlstate, self.hint = sqlstate, hint
+        self.hint = hint
 
 
 def older_than(mine: str, theirs: str | None) -> bool:
@@ -111,7 +111,6 @@ def refuse_older(theirs: str | None, what: str) -> None:
         raise Error(
             f"{what} was last written by rowstile {theirs}, which is newer than this command "
             f"({__version__}): going on would put this older version's work back [AZ616]",
-            "55000",
             hint="upgrade the rowstile command; to go back to this version on purpose, add --downgrade",
         )
 
@@ -137,7 +136,7 @@ def compiled(policy: str, files: Mapping[str, object] | str | None, make: Callab
     try:
         return build(policy, files, make)
     except PolicyError as e:
-        raise Error(f"policy {e}", "42P17") from None
+        raise Error(f"policy {e}") from None
 
 
 def check(policy: str, files: Mapping[str, object] | str | None = None) -> str | None:
@@ -192,7 +191,6 @@ def may_take(db: Db, role: str | None) -> None:
         raise Error(
             f"{me} may not switch to the app role {role} (SET ROLE), and this looks at the data as the app "
             f"does [AZ618]",
-            "42501",
             hint=f"once, as {me} if it made {role}, else as the role that did or a superuser: "
             f"GRANT {q(role)} TO {q(me)}",
         )
@@ -276,7 +274,7 @@ def failing_condition(db: Db, err: Exception, policy: str, files: Files) -> Erro
     c = Compiler(parse_policy(policy, None, files=files))  # it compiled a moment ago
     return next(
         (
-            Error(f"policy {loc}: the condition {{{cond}}} doesn't run: {said} [AZ613]", code)
+            Error(f"policy {loc}: the condition {{{cond}}} doesn't run: {said} [AZ613]")
             for table, cond, loc in row_conditions(c)
             if said and fails_alike(db, table, cond, said, code)
         ),
@@ -349,7 +347,6 @@ def condition_error(err: Exception, sql: str, policy: str, files: Files) -> Erro
         )
     return Error(
         f"policy {loc}: the condition {{{cond}}} doesn't run: {got.get('M', str(err))} [AZ613]",
-        got.get("C", "42P17"),
         hint=hint,
     )
 
@@ -402,7 +399,6 @@ def lock_file(lock_text: str | None) -> migrate.Lock:
         raise Error(
             f"{e}: a merge left both branches' lines in it? Keep the lock file and the migrations of the branch merged "
             "into, then run rowstile migrate again [AZ619]",
-            "22023",
         ) from None
 
 
@@ -454,7 +450,7 @@ def applied(db: Db) -> tuple[str, Files]:
             "SELECT action, policy, files::text AS files FROM authz.policy_versions ORDER BY id DESC LIMIT 1"
         )
     if not rows or rows[0]["action"] != "apply":
-        raise Error("no policy is applied [AZ609]", "55000", hint="rowstile apply db/policy.authz")
+        raise Error("no policy is applied [AZ609]", hint="rowstile apply db/policy.authz")
     return text(rows[0], "policy"), files_map(text_or_none(rows[0], "files") or "{}")
 
 
@@ -531,7 +527,6 @@ def push(
         raise Error(
             f"this database {what} and isn't marked as a development database, so push won't change "
             "it: production takes migrations (rowstile migrate) [AZ610]",
-            "55000",
             hint="if it is a development database, mark it once: rowstile push --development",
         )
     state = _push(db, policy, files, downgrade)
@@ -861,13 +856,13 @@ def draft(db: Db, schemas: Sequence[str] | None = None, users: str | None = None
     rows = db.rows(CATALOG_SQL, [text_array(schemas) if schemas else None])
     tables = [table_of(r) for r in rows]
     if not tables:
-        raise Error("no tables to draft a policy from" + (f" in {', '.join(schemas)}" if schemas else ""), "22023")
+        raise Error("no tables to draft a policy from" + (f" in {', '.join(schemas)}" if schemas else ""))
     try:
         return make_draft(
             tables, users, role or "app_user", schemas or sorted({t["name"].split(".")[0] for t in tables})
         )
     except DraftError as e:
-        raise Error(str(e), "22023") from None
+        raise Error(str(e)) from None
 
 
 def reapply(db: Db, rebuild: bool = False) -> str:
@@ -1042,9 +1037,7 @@ def snapshot(db: Db, limit: int = 500) -> list[str]:
             ]
             principals += [(t.name, i) for i in ids]
     if len(principals) > limit:
-        raise Error(
-            f"{len(principals)} people and principals: a snapshot is for small review data (at most {limit})", "54000"
-        )
+        raise Error(f"{len(principals)} people and principals: a snapshot is for small review data (at most {limit})")
     held: dict[tuple[str, str, str], list[str]] = {}
     perms = [(t.name, p) for t in c.types.values() for p in c.public_perms(t)]
     for ptype, pid in principals + [(None, None)]:

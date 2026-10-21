@@ -101,7 +101,7 @@ END $dep$;"""
     def collect_edges(self, edge_list: list[Edge]) -> tuple[list[Where], list[tuple[str, str, str]]]:
         """Per edge: its sources, plus link tables, shares, and conditions to check."""
         link_wheres: list[Where] = []
-        grant_keys: list[tuple[str, str, str]] = []
+        share_keys: list[tuple[str, str, str]] = []
         for ct, rel, _cond, pt in edge_list:
             t = self.T(ct)
             r = t.relations[rel]
@@ -120,15 +120,15 @@ END $dep$;"""
                     assert src.table is not None
                     link_wheres.append((src.table, src.where, src.loc))
                 if src.kind == "shared":
-                    grant_keys.append((ct, rel, pt))
-        return link_wheres, grant_keys
+                    share_keys.append((ct, rel, pt))
+        return link_wheres, share_keys
 
     def shares_guard_sql(
         self,
         name: str,
         f: Namer,
         trig: Namer,
-        grant_keys: list[tuple[str, str, str]],
+        share_keys: list[tuple[str, str, str]],
         refresh_call: Callable[[str], str],
     ) -> str:
         """Shares that are inheritance links: refresh on change; they can't expire,
@@ -136,12 +136,12 @@ END $dep$;"""
         match = " OR ".join(
             f"(x.object_type = {lit(c)} AND x.relation = {lit(r)} AND x.subject_type = {lit(p)} "
             f"AND x.subject_relation = '')"
-            for c, r, p in sorted(set(grant_keys))
+            for c, r, p in sorted(set(share_keys))
         )
         when = match.replace("x.", "NEW.")
-        described = ", ".join(sorted({f"{c}.{r}" for c, r, _ in grant_keys}))
+        described = ", ".join(sorted({f"{c}.{r}" for c, r, _ in share_keys}))
         return f"""-- links people make with authz.share(); they can't expire, since the closure is stored
-CREATE FUNCTION {f("_on_grants")}() RETURNS trigger
+CREATE FUNCTION {f("_on_shares")}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} AS $f$
 DECLARE a_t text[]; a_i text[];
 BEGIN
@@ -180,11 +180,11 @@ BEGIN
     NEW.object_type, NEW.relation USING ERRCODE = 'check_violation', HINT = 'rowstile help AZ605';
 END $f$;
 CREATE TRIGGER {trig("_shares_ins")} AFTER INSERT ON authz.shares
-  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_grants")}();
+  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_shares")}();
 CREATE TRIGGER {trig("_shares_upd")} AFTER UPDATE ON authz.shares
-  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_grants")}();
+  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_shares")}();
 CREATE TRIGGER {trig("_shares_del")} AFTER DELETE ON authz.shares
-  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_grants")}();
+  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_shares")}();
 CREATE TRIGGER {trig("_shares_trunc")} AFTER TRUNCATE ON authz.shares
   FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();
 CREATE TRIGGER {trig("_shares_expiry")} BEFORE INSERT OR UPDATE ON authz.shares FOR EACH ROW
@@ -270,7 +270,7 @@ END $k$;"""
         def parent_sql(r: Relation, src: Source, match: tuple[str, str] | None = None) -> str:
             return self.pair_sql(t, r, src, t.name, "", "_child", "_parent", match=match)
 
-        link_wheres, grant_keys = self.collect_edges(edge_list)
+        link_wheres, share_keys = self.collect_edges(edge_list)
         for i, (_, rel, cond, _) in enumerate(edge_list):
             r = t.relations[rel]
             for src in r.sources:
@@ -374,8 +374,7 @@ CREATE VIEW {f("_conds")} AS
         )
         if reads:
             sql.append(f"""-- ...as last applied (they read other rows or tables, so changes there are re-checked)
-CREATE TABLE {f("_cond_cache")} (id {pkt} PRIMARY KEY, v boolean[] NOT NULL);
-{self.swap_in_kept(name + "_cond_cache")}""")
+CREATE TABLE {f("_cond_cache")} (id {pkt} PRIMARY KEY, v boolean[] NOT NULL);""")
         cache_refresh = (
             f"""
   DELETE FROM {f("_cond_cache")} WHERE id = ANY (affected);
@@ -623,14 +622,14 @@ CREATE TRIGGER {trig(sfx + "_del")} AFTER DELETE ON {qt(ltable)}
 CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
   FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();""")
 
-        if grant_keys:
+        if share_keys:
             refresh = lambda rows: (
                 f"PERFORM {f('_refresh')}(ARRAY(SELECT y.object_id::{pkt} FROM ({rows}) y), {shift_lit});"
             )
-            sql.append(self.shares_guard_sql(name, f, trig, grant_keys, refresh))
+            sql.append(self.shares_guard_sql(name, f, trig, share_keys, refresh))
 
-        self.remember_tree(name, sql, [t.table, *link_tables] + (["authz.shares"] if grant_keys else []), bool(reads))
-        if not reads and not grant_keys:
+        self.remember_tree(name, sql, [t.table, *link_tables] + (["authz.shares"] if share_keys else []), bool(reads))
+        if not reads and not share_keys:
             self.tree_next[name] = self.next_tree(t, name, f, table_sql, compute_sql, sorted(link_tables), batches)
         sql.append(self.backfill_sql(name, f))
         self.tree_sql.append("\n\n".join(sql))
@@ -724,7 +723,7 @@ END $authz_catch_up$;""",
         for t in types:
             if t.where:
                 check_stable_condition(t.where, t.loc, "decide who inherits (the type's where)")
-        link_wheres, grant_keys = self.collect_edges(edge_list)
+        link_wheres, share_keys = self.collect_edges(edge_list)
 
         def typed(expr_text: tuple[str, str], t: Type) -> str:
             """The text id in expr_text as t's key; NULL unless it is a t node."""
@@ -877,10 +876,7 @@ CREATE VIEW {f("_conds")} AS
             ]
             sql.append(self.tree_checks(conds_list, link_wheres, views, first_line))
         if reads:
-            sql.append(
-                f"CREATE TABLE {f('_cond_cache')} (t text, id text, v boolean[] NOT NULL, PRIMARY KEY (t, id));\n"
-                + self.swap_in_kept(name + "_cond_cache")
-            )
+            sql.append(f"CREATE TABLE {f('_cond_cache')} (t text, id text, v boolean[] NOT NULL, PRIMARY KEY (t, id));")
         cache_refresh = (
             f"""
   DELETE FROM {f("_cond_cache")} k WHERE (k.t, k.id) IN (SELECT * FROM unnest(a_t, a_i));
@@ -1074,15 +1070,15 @@ CREATE TRIGGER {trig(sfx + "_del")} AFTER DELETE ON {qt(ltable)}
 CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
   FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();""")
 
-        if grant_keys:
+        if share_keys:
             refresh = lambda rows: (
                 f"SELECT array_agg(y.object_type), array_agg(y.object_id) INTO a_t, a_i "
                 f"FROM ({rows}) y;\n    PERFORM {f('_refresh')}(a_t, a_i);"
             )
-            sql.append(self.shares_guard_sql(name, f, trig, grant_keys, refresh))
+            sql.append(self.shares_guard_sql(name, f, trig, share_keys, refresh))
 
         self.remember_tree(
-            name, sql, [t.table for t in types] + list(link_tables) + (["authz.shares"] if grant_keys else []), reads
+            name, sql, [t.table for t in types] + list(link_tables) + (["authz.shares"] if share_keys else []), reads
         )
         sql.append(self.backfill_sql(name, f))
         self.tree_sql.append("\n\n".join(sql))

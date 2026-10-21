@@ -150,9 +150,6 @@ BEGIN
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', t.name)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name);
-    IF to_regclass(format('authz_int.%I', r.name || '_cond_cache')) IS NOT NULL THEN
-      EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.name || '_cond_cache');
-    END IF;
   END LOOP;
 END $keep$;
 
@@ -164,7 +161,7 @@ DO $g$
 DECLARE f record; kept text := '';
 BEGIN
   FOR f IN SELECT p.oid, p.ctid, p.oid::regprocedure AS name FROM pg_proc p WHERE p.pronamespace = to_regnamespace('authz')
-           AND p.proname = ANY (ARRAY['act_as', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'list_links', 'revoke_link']) LOOP
+           AND p.proname = ANY (ARRAY['act_as', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'list_links', 'revoke_link']) LOOP
     BEGIN
       EXECUTE format('DROP FUNCTION %s', f.name);
     EXCEPTION WHEN dependent_objects_still_exist THEN
@@ -885,7 +882,7 @@ CREATE TRIGGER authz_audit_no_truncate BEFORE TRUNCATE ON authz.audit
 ALTER TABLE authz.audit ENABLE ALWAYS TRIGGER authz_audit_no_truncate;
 
 -- shares and role assignments
-CREATE FUNCTION authz_int.on_grant() RETURNS trigger
+CREATE FUNCTION authz_int.on_share() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE r authz.shares;
 BEGIN
@@ -901,8 +898,8 @@ BEGIN
   END IF;
   RETURN NULL;
 END $f$;
-CREATE TRIGGER authz_grant_audit AFTER INSERT OR UPDATE OR DELETE ON authz.shares
-  FOR EACH ROW EXECUTE FUNCTION authz_int.on_grant();
+CREATE TRIGGER authz_share_audit AFTER INSERT OR UPDATE OR DELETE ON authz.shares
+  FOR EACH ROW EXECUTE FUNCTION authz_int.on_share();
 CREATE FUNCTION authz_int.on_role() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from .compiler import Core, only_on
 from .parse import KEYWORDS, And, Arrow, ArrowOn, Cond, Expr, Not, Or, Ref, Relation, Source, Type
 from .sqlutil import lit, q, qt, row_cond, union
@@ -11,9 +9,6 @@ from .sqlutil import lit, q, qt, row_cond, union
 DEFINER_FROM_CURRENT = "SECURITY DEFINER SET search_path FROM CURRENT"
 # a condition the policy wrote as a word (signed_in, anyone, nobody), said as that word
 WORD_OF = {sql: word for word, sql in KEYWORDS.items()}
-USER_DEPENDENT = re.compile(
-    r"\bauthz\s*\.\s*(uid|me|ctx)\b|\bcurrent_setting\b|\bcurrent_user\b|\bsession_user\b", re.IGNORECASE
-)
 
 
 def expr_text(node: Expr) -> str:

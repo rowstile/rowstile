@@ -312,6 +312,14 @@ class Golden(unittest.TestCase):
         c = Compiler(parse_policy(read(POLICIES["multi"]), POLICIES["multi"]))
         self.check("multi.diff.sql", c.compile_diff(POLICIES["multi"], ["1", "2"]))
 
+    def test_the_functions_each_apply_makes_again(self) -> None:
+        # base.GENERATED_FUNCTIONS (dropped whatever their signature, then made again) names what compiling makes in
+        # authz, but the base's own (made or replaced, never dropped) and uid (its type is checked first)
+        from authzlib.base import GENERATED_FUNCTIONS
+
+        made = set(re.findall(r"(?m)^CREATE (?:OR REPLACE )?FUNCTION authz\.(\w+)\(", compiled("docs")))
+        self.assertEqual(made - {"ctx", "link_hashes", "uid"}, set(GENERATED_FUNCTIONS))
+
 
 class Compiling(unittest.TestCase):
     def test_the_policy_compiled_stays_as_parsed(self) -> None:
