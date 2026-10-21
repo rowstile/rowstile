@@ -9,6 +9,6 @@
   "surroundingPairs": [["{", "}"], ["(", ")"], ["'", "'"]],
   "indentationRules": {
     "increaseIndentPattern": "^(type|rules|test|invariants)\\b.*$",
-    "decreaseIndentPattern": "^(type|rules|test|invariants|role|scope|caveat|include)\\b"
+    "decreaseIndentPattern": "^(type|rules|test|invariants|app|scope|caveat|include)\\b"
   }
 }

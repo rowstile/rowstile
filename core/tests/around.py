@@ -1083,8 +1083,8 @@ def write_problems(checker: AroundChecker, direct: bool = True) -> list[str]:
             may = {"update": rule_set(checker, state, table, "update") & seen}
             may["delete"] = rule_set(checker, state, table, "delete") & seen
             # `update after`: what must hold on the row as changed (here, as it was), else a refusal
-            after = any(r.table == table and r.command == "update check" and not r.columns for r in checker.rules)
-            held_after = rule_set(checker, state, table, "update check") if after else may["update"]
+            after = any(r.table == table and r.command == "update after" and not r.columns for r in checker.rules)
+            held_after = rule_set(checker, state, table, "update after") if after else may["update"]
             for cmd in ("update", "delete"):
                 for row, outcome in got[(u, cmd, table)]:
                     if cmd == "update" and row in may[cmd] and row not in held_after:

@@ -3033,6 +3033,29 @@ rules app.folders
             "roles.authz line 3",
         )
 
+    def test_a_base_in_forms_the_language_does_not_have_is_a_base_with_a_mistake(self) -> None:
+        """`role x` for the app role, `roles : user grant view` for custom roles, a word after an update rule's
+        columns: the parser refuses each, and the review reads no such form itself. The head is reviewed as new."""
+        for old, new, mistake in (
+            ("app role app_user\n", "role app_user\n", ("line 1", "AZ101", "expected 'app role', 'type', ")),
+            (
+                "  viewer : user shared by edit\n",
+                "  roles : user grant view\n",
+                ("line 11", "AZ103", "bad subject 'user grant view'"),
+            ),
+            (
+                "  update : edit\n",
+                "  update : edit\n  update org_id check : edit\n",
+                ("line 19", "AZ105", "write column rules as: update col1, col2 : expression"),
+            ),
+        ):
+            r = self.review.review((replaced(self.SMALL, old, new), {}, {}), (self.SMALL, {}, {}), worlds=10)
+            said = r.get("base_mistake")
+            assert said is not None, new
+            self.assertEqual((said["line"], said["code"]), mistake[:2], said)
+            self.assertTrue(said["message"].startswith(mistake[2]), said)
+            self.assertEqual({c["kind"] for c in r["meaning"]["changed"]}, {"added"})
+
     def test_the_details_are_written_when_the_meaning_is_unchanged(self) -> None:
         before = {"t.authz": 'test "carol"\n  user 3 can view file 11\n  user 3 cannot view file 12\n'}
         after = {"t.authz": 'test "carol"\n  user 3 cannot view file 11\n'}
@@ -3093,8 +3116,8 @@ rules app.folders
         """A small world draws the rows a condition it can't read holds for by the condition's text, so a reworded one
         holds for other rows there whatever it says, and what reads it differed there too: a permission that only
         reordered its `or` around one was said to allow more, with a made-up example; one that only read it was
-        named as the difference that makes it no refactor (when its name came first); an `after` rule too, as
-        `update check`, a word the language refuses."""
+        named as the difference that makes it no refactor (when its name came first); an `after` rule too, by a
+        name the policy doesn't write."""
         lock = "{exists (select 1 from app.locks l where l.folder_id = this.id)}"
         member = "{exists (select 1 from app.org_members m where m.org_id = this.org_id)}"
         base = replaced(

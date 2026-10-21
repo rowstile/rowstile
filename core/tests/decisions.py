@@ -106,7 +106,7 @@ def scope_items(pol: Policy, name: str) -> list[ScopeItem]:
 
 def rule_name(r: Rule) -> str:
     """A rule, as its line starts: 'rules app.folders update parent_id after'."""
-    command, after = ("update", ["after"]) if r.command == "update check" else (r.command, [])
+    command, after = ("update", ["after"]) if r.command == "update after" else (r.command, [])
     return " ".join(["rules", r.table, command, *([", ".join(r.columns)] if r.columns else []), *after])
 
 
@@ -814,7 +814,7 @@ class Decisions:
         commands: dict[tuple[str, str], frozenset[str]] = {}
         for n, r in enumerate(self.pol.rules):
             if not r.columns and r.command != "mask":  # (the rules that are row-level security's policies)
-                k = (r.table, "update" if r.command == "update check" else r.command)
+                k = (r.table, "update" if r.command == "update after" else r.command)
                 commands[k] = commands.get(k, frozenset()) | asked.answers[("rule", n)]
         asks += [("cmd", table, cmd, ids) for (table, cmd), ids in commands.items()]
         who = asked.user or "nobody"

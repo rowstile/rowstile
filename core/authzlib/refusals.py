@@ -32,7 +32,7 @@ def parts(node: Expr) -> list[Expr]:
 
 class RefusalMixin(Core):
     def rule_fn(self, table: str, command: str, what: str) -> str:
-        return f"authz_gen.{q(table + ':' + command.replace('update check', 'update_after') + ':' + what)}"
+        return f"authz_gen.{q(table + ':' + command.replace('update after', 'update_after') + ':' + what)}"
 
     def rule_nodes(self, rule: Rule) -> list[tuple[Expr, list[Expr]]]:
         """What to say yes or no about: the rule's items, and the items of those that are and/or."""
@@ -40,7 +40,7 @@ class RefusalMixin(Core):
 
     def rule_items_sql(self, t: Type, table: str, alias: str, rule: Rule, name: str | None = None) -> str:
         """A BEGIN ATOMIC function returning, for a row: [the whole rule, scopes, the type's where, each node]."""
-        cmd = "update" if rule.command == "update check" else rule.command
+        cmd = "update" if rule.command == "update after" else rule.command
         where = "true"
         if t.where:
             where = (
@@ -99,7 +99,7 @@ class RefusalMixin(Core):
         `after` rule: the row isn't stored as it is checked, and authz.explain reads the row as stored). A plain
         update rule is checked on both rows: its function takes p_stored, false for the row after the change, which
         then has no such explain either."""
-        cmd = "update" if rule.command == "update check" else rule.command
+        cmd = "update" if rule.command == "update after" else rule.command
         both = self.checked_on_both(rule)
         head = f"{lit(rule_name(rule) + ' : ' + rule.src + '  (')} || {self.line_sql(f'rule {table} {rule_name(rule)}', rule.loc)} || ')'"
         code = [
@@ -116,7 +116,7 @@ class RefusalMixin(Core):
             match node:
                 case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                     return arrow(node, rel, perm, idx, pad)
-                case Ref(name) if cmd != "insert" and rule.command != "update check" and name in self.public_perms(t):
+                case Ref(name) if cmd != "insert" and rule.command != "update after" and name in self.public_perms(t):
                     return (
                         f"  IF NOT v[{idx}]{' AND p_stored' if both else ''} THEN\n"
                         f"    RETURN QUERY SELECT {lit(pad)} || l FROM authz.explain("
@@ -204,11 +204,11 @@ END $f$;"""
         out: list[str] = []
         refuse: dict[str, str] = {}
         by_cmd = {
-            r.command: r for r in rules if not r.columns and r.command in ("insert", "update", "update check", "delete")
+            r.command: r for r in rules if not r.columns and r.command in ("insert", "update", "update after", "delete")
         }
         for r in by_cmd.values():
             out += [self.rule_items_sql(t, table, alias, r), self.rule_why_sql(t, table, alias, r)]
-            if r.command in ("insert", "update", "update check"):
+            if r.command in ("insert", "update", "update after"):
                 out.append(self.refuse_sql(t, table, r))
                 refuse[r.command] = f"{self.rule_fn(table, r.command, 'refuse')}(ROW({alias}.*)::{qt(table)})"
         out.append(self.explain_table_sql(t, table, by_cmd))
@@ -236,7 +236,7 @@ END $f$;"""
         if "update" in by_cmd:
             # the row after the change answers to the `update after` rule where there is one, instead of the
             # update rule (the WITH CHECK is that rule's)
-            after = "update check" if "update check" in by_cmd else "update"
+            after = "update after" if "update after" in by_cmd else "update"
             update = (
                 f"{why('update', stored('update', 'r_old', True))} || CASE WHEN p_row IS NULL THEN '{{}}'::text[] ELSE "
                 f"ARRAY['after the change:'] || "

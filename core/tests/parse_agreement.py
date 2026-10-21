@@ -296,7 +296,7 @@ def reading_ts(tree: Tree) -> Shape:
                     elif r.tag == "rule":
                         command = name_of(field(r, "command")) or ""
                         if "after" in tokens(r):
-                            command = "update check"
+                            command = "update after"
                         out["rules"].append((table, command, columns, expression))
             case "invariants":
                 for n in (k for k in kids(top) if k.tag == "never"):

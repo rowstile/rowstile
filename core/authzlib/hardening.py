@@ -219,8 +219,8 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
             if tb in open_update and (tb, c) not in guarded
         ]
         # ...and those that move a row within its tree with nothing checking where it goes (an 'after' rule)
-        after = {(r.table, c) for r in self.rules if r.command == "update check" for c in r.columns}
-        after_all = {r.table for r in self.rules if r.command == "update check" and not r.columns}
+        after = {(r.table, c) for r in self.rules if r.command == "update after" for c in r.columns}
+        after_all = {r.table for r in self.rules if r.command == "update after" and not r.columns}
         # a composite link ([org_id, parent_id]) is checked when one of its columns has an 'after' rule
         unchecked_moves = [
             (tb, ", ".join(cs), rel, loc)
@@ -260,7 +260,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
         # refusal. (`nobody` asks for no privilege; a rule on a column, or `after`, is an update's.)
         asked = sorted(
             {
-                (r.table, "update" if r.command == "update check" else r.command)
+                (r.table, "update" if r.command == "update after" else r.command)
                 for r in self.rules
                 if r.command != "mask" and r.expr != nobody
             }

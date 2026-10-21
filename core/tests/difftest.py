@@ -78,9 +78,9 @@ def refusals_of(pol: Policy) -> re.Pattern[str]:
     (refusals.rule_fn): a long table's are shortened with a hash, and no longer end in `:refuse`."""
     names = sorted(
         {
-            "authz_gen." + q(f"{r.table}:{r.command.replace('update check', 'update_after')}:refuse")
+            "authz_gen." + q(f"{r.table}:{r.command.replace('update after', 'update_after')}:refuse")
             for r in pol.rules
-            if r.command in ("insert", "update", "update check")
+            if r.command in ("insert", "update", "update after")
         }
     )
     return re.compile("|".join([REFUSE.pattern, *(re.escape(n) + r"\(" for n in names)]))
@@ -402,12 +402,12 @@ class Checker:
             )
         self.column_rules: list[tuple[Rule, str]] = []
         for r in ruled:
-            name = ident(f"authz_update{'_after' if r.command == 'update check' else ''} {', '.join(r.columns)}")
+            name = ident(f"authz_update{'_after' if r.command == 'update after' else ''} {', '.join(r.columns)}")
             m = COLUMN_CHECK.search(triggers.get((r.table, name), ""))
-            if not m or (m.group(1) == "NEW") != (r.command == "update check"):
+            if not m or (m.group(1) == "NEW") != (r.command == "update after"):
                 raise SystemExit(
                     f"{r.table}, the rule on {', '.join(r.columns)}: its trigger {name} is missing, or doesn't "
-                    f"check the row {'after' if r.command == 'update check' else 'before'} the change"
+                    f"check the row {'after' if r.command == 'update after' else 'before'} the change"
                 )
             self.column_rules.append((r, f"{m.group(2)}(the_row)"))  # asked of each row, FROM <table> the_row
         self.checks = 0  # how many snapshots so far: who is asked with a scope, and which
@@ -1256,8 +1256,8 @@ class Checker:
                     if not expr:
                         continue
                     # an update's check is its 'after' rule if it has one, otherwise the update rule again
-                    after = any(r.table == table and r.command == "update check" and not r.columns for r in self.rules)
-                    cmd = "update check" if command == "update" and part == "check" and after else command
+                    after = any(r.table == table and r.command == "update after" and not r.columns for r in self.rules)
+                    cmd = "update after" if command == "update" and part == "check" and after else command
                     want = self.expected_rule(state, table, cmd)
                     got = set(snap[(u, "policy", table, name, part)])
                     if got != want:
@@ -1343,8 +1343,8 @@ class Checker:
             for part, expr in (("using", qual), ("check", check)):
                 if not expr:
                     continue
-                after = any(r.table == table and r.command == "update check" and not r.columns for r in self.rules)
-                cmd = "update check" if command == "update" and part == "check" and after else command
+                after = any(r.table == table and r.command == "update after" and not r.columns for r in self.rules)
+                cmd = "update after" if command == "update" and part == "check" and after else command
                 want = (
                     self.expected_rule(state, table, cmd) if self.scope_allows(scope, "cmd", table, command) else set()
                 )

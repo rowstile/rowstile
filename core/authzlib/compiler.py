@@ -99,8 +99,8 @@ def rule_name(rule: Rule) -> str:
     # (two masks of one column are refused as masked twice before two rules alike, and refusals explain writes)
     assert rule.command != "mask", "a mask is never named in a message about rules"
     if not rule.columns:
-        return "update after" if rule.command == "update check" else rule.command
-    return "update " + ", ".join(rule.columns) + (" after" if rule.command == "update check" else "")
+        return rule.command
+    return "update " + ", ".join(rule.columns) + (" after" if rule.command == "update after" else "")
 
 
 # what AZ302 says of a permission that depends on itself otherwise than by inheriting

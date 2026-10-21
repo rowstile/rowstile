@@ -292,7 +292,7 @@ def cols(c: Cols) -> tuple[str, ...]:
 @dataclass
 class Rule:
     table: str
-    command: str  # select | insert | update | update check (written "after") | delete | mask
+    command: str  # select | insert | update | update after | delete | mask
     expr: Expr
     src: str
     loc: Loc
@@ -1767,13 +1767,6 @@ def parse_rule_line(pol: Policy, table: str, s: str, loc: Loc) -> None:
     command, rest = words[0], (words[1] if len(words) > 1 else "").strip()
     # which row an update rule checks: the row before the change (the default), or after it
     when = rest.rsplit(None, 1)[-1] if rest else ""
-    if when == "check":
-        fail(
-            loc,
-            f"write 'after' instead of 'check' (checked on the row after the change): "
-            f"{head.strip()[: -len('check')].strip()} after : ...",
-            "AZ105",
-        )
     if when == "before" and rest == when:
         fail(
             loc,
@@ -1799,7 +1792,7 @@ def parse_rule_line(pol: Policy, table: str, s: str, loc: Loc) -> None:
     pol.rules.append(
         Rule(
             table,
-            "update check" if check else command,
+            "update after" if check else command,
             ExprParser(expr.strip(), loc, len(s) - len(expr.lstrip())).parse(),
             expr.strip(),
             loc,
