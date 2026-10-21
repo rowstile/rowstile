@@ -116,6 +116,15 @@ test("useAccessRequest: asking for access", async () => {
   await waitFor(() => expect(screen.getByText("sent")).toBeTruthy());
 });
 
+// A server component renders the kit: the app's layout (app/layout.tsx) wraps every page in <AuthzProvider>,
+// and app/buttons/page.tsx renders <Can>, whose fallback the server sends until the browser has asked.
+test("a server component renders the provider and <Can> (the App Router's layout)", async () => {
+  const r = await nodeFetch(`${SERVER}/buttons`, as("1"));
+  const html = await r.text();
+  expect(r.status, html.slice(0, 500)).toBe(200);
+  expect(html).toContain('<span id="rename">no rename yet</span>');
+});
+
 // --- without the server: answers of the test's own, for what the routes don't do on cue ---------------------
 /** A fetch that answers as the routes might, and keeps what it was asked. */
 function answering(answer: (path: string, init?: RequestInit) => Response) {

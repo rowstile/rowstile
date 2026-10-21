@@ -11,7 +11,12 @@
  * default, when the routes have a change feed), every hook asks again when access may have changed. The
  * answers are the signed-in user's: give the provider `user` (their id, or null) if the user can change
  * without a page load, and the hooks ask again for the new one.
+ *
+ * A client module ("use client"): a server component, such as the App Router's app/layout.tsx, renders the
+ * provider and the components as it renders its own.
  */
+"use client";
+
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Id, ObjectType, Permission, Problem, Share, SharedRelation, SharedType } from "@rowstile/client";
 

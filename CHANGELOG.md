@@ -100,6 +100,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `folder.view` on files listed the confidential files in the folders a user may view. Code that read such a view
   now gets `permission denied`: `authz.list` answers what it asked. Applying the policy again (or the next
   migration) brings it in.
+- `@rowstile/react` works in a Next.js server component, such as `app/layout.tsx`: the package is a client
+  module (`"use client"`). Rendering `<AuthzProvider>` or `<Can>` there failed the build, which asked for
+  `"use client"` in a file of the app.
 
 ## 0.1.0 (alpha)
 
