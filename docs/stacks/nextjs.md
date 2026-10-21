@@ -203,6 +203,24 @@ import { changes } from "@rowstile/pg";
 export const feed = changes(new pg.Pool({ connectionString: process.env.ROWSTILE_FEED_URL ?? url, max: 1 }));
 ```
 
+The layout wraps every page in `<AuthzProvider>`. The kit is a client module (`"use client"`), so the layout,
+a server component, renders it as it is:
+
+```tsx
+// app/layout.tsx
+import { AuthzProvider } from "@rowstile/react";
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <AuthzProvider>{children}</AuthzProvider>
+      </body>
+    </html>
+  );
+}
+```
+
 `usePerms` answers a list's buttons in one call, and `<Can>` shows what the user may do:
 
 ```tsx

@@ -40,8 +40,10 @@ export const { GET, POST } = authzRoutes({ calls: db.$authz, changes: feed });
 
 ## Good to know
 
-- Wrap the app in `<AuthzProvider>`. Give it `user={id}` if the user can change without a page load: the
-  hooks forget what they had and ask again.
+- Wrap the app in `<AuthzProvider>`: with Next.js's App Router, in `app/layout.tsx`. The kit is a client
+  module (`"use client"`), so a server component renders it as it is, with no wrapper of your own.
+- Give `<AuthzProvider>` `user={id}` if the user can change without a page load: the hooks forget what they had
+  and ask again.
 - The answers are for the page only. A user who edits the page still meets the database, which refuses.
 - React 18 or later.
 
