@@ -135,7 +135,7 @@ function authz_int."folder__edit__why"(p_id bigint, p_depth int, p_seen text[]) 
 function authz_int."folder__owner__who"(p_id bigint) | 1156f2147071 shape=0f42f6dc
 function authz_int."folder__owner__why"(p_id bigint, p_depth int, p_seen text[]) | eedb351dd8e0 shape=93e67383
 function authz_int."folder__parent__tree_check_loops"(p_ids bigint[]) | af99b5fef707 shape=a9007a33 tree=folder__parent__tree
-function authz_int."folder__parent__tree_compute"(p_ids bigint[]) | d9130b2cf50d shape=1b436a45 tree=folder__parent__tree
+function authz_int."folder__parent__tree_compute"(p_ids bigint[]) | 268d561d4cde shape=1b436a45 tree=folder__parent__tree
 function authz_int."folder__parent__tree_on_rows"() | fee9597fab1c shape=51fa243d tree=folder__parent__tree
 function authz_int."folder__parent__tree_on_truncate"() | 0f865e70e08f shape=0a5b3c22 tree=folder__parent__tree
 function authz_int."folder__parent__tree_rebuild"() | a7a32cb209c3 shape=506d5965 tree=folder__parent__tree
@@ -260,7 +260,7 @@ step grant_views | 90e185585d2a
 step mask_privileges | 0f76f9d7c5d3
 step share_indexes | b7adfd36bb93
 step sweep | 617caa4e7bfd
-step tables | 910f23c833ea
+step tables | 917414b419f9
 table authz_gen.policy_lines | 9ac99c239bde shape=dcfedc96
 table authz_int."folder__parent__tree" | 533ed647de51 shape=533ed647 tree=folder__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
@@ -273,41 +273,41 @@ table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
 table authz_int.scope_items | 37f4db5fc367 shape=66a4763a
 table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | 84953f57c11e shape=c57707aa
-table authz_int.trees | 5aa749dd7b28 shape=02db6ec7
+table authz_int.trees | 1e617fde973e shape=02db6ec7
 table authz_int.types | 941796b264b7 shape=b6d5b497
-tree folder__parent__tree | d0311a01eae11396e025b5c146315789
+tree folder__parent__tree | 379723681149eed9131ca86ec982a202
 trigger "authz_folder__parent__tree_del" ON "app"."folders" | b31f2fcea3d2 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_ins" ON "app"."folders" | 2825bf58a3d1 tree=folder__parent__tree
 trigger "authz_folder__parent__tree_trunc" ON "app"."folders" | e9e86bb352cc tree=folder__parent__tree
 trigger "authz_folder__parent__tree_upd" ON "app"."folders" | 84621c73bf59 tree=folder__parent__tree
-trigger "authz_folder_col_audit_del" ON "app"."folders" | 61cd2e94dc49
-trigger "authz_folder_col_audit_ins" ON "app"."folders" | 8b130ff270b5
-trigger "authz_folder_col_audit_row" ON "app"."folders" | 7336808a9ab0
-trigger "authz_folder_col_audit_trunc" ON "app"."folders" | 2b7dd07a1da4
-trigger "authz_folder_col_audit_upd" ON "app"."folders" | b907c62ccf76
-trigger "authz_message_col_audit_del" ON "app"."inbox" | b6c102f9b775
-trigger "authz_message_col_audit_ins" ON "app"."inbox" | 0cbc799aa924
-trigger "authz_message_col_audit_row" ON "app"."inbox" | 22aa9e30ed4e
-trigger "authz_message_col_audit_trunc" ON "app"."inbox" | 7cf2ae2794a2
-trigger "authz_message_col_audit_upd" ON "app"."inbox" | 03dbfc7583be
-trigger "authz_note_col_audit_del" ON "app"."notes" | 9780bc7fec26
-trigger "authz_note_col_audit_ins" ON "app"."notes" | c9a47119c371
-trigger "authz_note_col_audit_row" ON "app"."notes" | f66428d79022
-trigger "authz_note_col_audit_trunc" ON "app"."notes" | 0dffb43c0a45
-trigger "authz_note_col_audit_upd" ON "app"."notes" | 85b46cb22a2c
-trigger "authz_project_col_audit_del" ON "app"."projects" | abe2f3a5fd4c
-trigger "authz_project_col_audit_ins" ON "app"."projects" | 5ce9fd3ecded
-trigger "authz_project_col_audit_row" ON "app"."projects" | b4da96388886
-trigger "authz_project_col_audit_trunc" ON "app"."projects" | 42afab451531
-trigger "authz_project_col_audit_upd" ON "app"."projects" | 041d0a658d14
-trigger "authz_rel_audit_1_del" ON "app"."members" | ebf8d4cd217e
-trigger "authz_rel_audit_1_ins" ON "app"."members" | 9b55cce9e978
-trigger "authz_rel_audit_1_trunc" ON "app"."members" | 88ae03d8c8f3
-trigger "authz_rel_audit_1_upd" ON "app"."members" | cdfa509efc2c
-trigger "authz_rel_audit_2_del" ON "app"."project_services" | eec93f2a58ef
-trigger "authz_rel_audit_2_ins" ON "app"."project_services" | 2057a10b3243
-trigger "authz_rel_audit_2_trunc" ON "app"."project_services" | 8c26b1dd24c6
-trigger "authz_rel_audit_2_upd" ON "app"."project_services" | 60cbda3754e3
+trigger "authz_folder_col_audit_del" ON "app"."folders" | abdc9293f48c
+trigger "authz_folder_col_audit_ins" ON "app"."folders" | 99258d87435e
+trigger "authz_folder_col_audit_row" ON "app"."folders" | 34e25caf0eb7
+trigger "authz_folder_col_audit_trunc" ON "app"."folders" | 52a470c67a8d
+trigger "authz_folder_col_audit_upd" ON "app"."folders" | ec6c2e01e786
+trigger "authz_message_col_audit_del" ON "app"."inbox" | 85a1e7ff2142
+trigger "authz_message_col_audit_ins" ON "app"."inbox" | ef2312465dc6
+trigger "authz_message_col_audit_row" ON "app"."inbox" | d4622d03c6e6
+trigger "authz_message_col_audit_trunc" ON "app"."inbox" | ffc7e51179ca
+trigger "authz_message_col_audit_upd" ON "app"."inbox" | 5909bb3bffc5
+trigger "authz_note_col_audit_del" ON "app"."notes" | bcfda40ed294
+trigger "authz_note_col_audit_ins" ON "app"."notes" | 35dd7e64fccb
+trigger "authz_note_col_audit_row" ON "app"."notes" | 3ffa597f86f3
+trigger "authz_note_col_audit_trunc" ON "app"."notes" | 405c1f579df9
+trigger "authz_note_col_audit_upd" ON "app"."notes" | a1cbb2586f93
+trigger "authz_project_col_audit_del" ON "app"."projects" | 1196d070dee2
+trigger "authz_project_col_audit_ins" ON "app"."projects" | ece38fd6924f
+trigger "authz_project_col_audit_row" ON "app"."projects" | 871be1a09d38
+trigger "authz_project_col_audit_trunc" ON "app"."projects" | fa7d3aab9fa5
+trigger "authz_project_col_audit_upd" ON "app"."projects" | 381ab139b96d
+trigger "authz_rel_audit_1_del" ON "app"."members" | 5a8453a836c4
+trigger "authz_rel_audit_1_ins" ON "app"."members" | a79c69ae8997
+trigger "authz_rel_audit_1_trunc" ON "app"."members" | 43936b007002
+trigger "authz_rel_audit_1_upd" ON "app"."members" | 6c70b424169f
+trigger "authz_rel_audit_2_del" ON "app"."project_services" | 68ab970da381
+trigger "authz_rel_audit_2_ins" ON "app"."project_services" | 1208746ceda8
+trigger "authz_rel_audit_2_trunc" ON "app"."project_services" | 62424805b8d8
+trigger "authz_rel_audit_2_upd" ON "app"."project_services" | bfd2b920ee0b
 trigger "authz_service_keys_gone_del" ON "app"."services" | 8c2ec74b256b
 trigger "authz_service_keys_gone_id" ON "app"."services" | a5f62bdd5272
 trigger "authz_service_keys_gone_moved" ON "app"."services" | 1041496023b7

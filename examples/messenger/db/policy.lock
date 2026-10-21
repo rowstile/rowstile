@@ -491,7 +491,7 @@ step grant_views | c8e558735372
 step mask_privileges | 0f76f9d7c5d3
 step share_indexes | 8efa8abfe32b
 step sweep | 66b168ba0729
-step tables | 6727fce5fc81
+step tables | 0e9aabc58d96
 table authz_gen.policy_lines | 8faa1384ef8e shape=dcfedc96
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | 1779df2cc717 shape=1779df2c
@@ -505,62 +505,62 @@ table authz_int.session_key | f99b8771bebc shape=48b1cfb2
 table authz_int.shared_relations | fe0f6cf5c3d9 shape=c57707aa
 table authz_int.trees | 02db6ec72102 shape=02db6ec7
 table authz_int.types | 87bc8837daf3 shape=b6d5b497
-trigger "authz_block_col_audit_del" ON "ms"."blocks" | 94397913ac82
-trigger "authz_block_col_audit_ins" ON "ms"."blocks" | 723e99504f75
-trigger "authz_block_col_audit_row" ON "ms"."blocks" | 6389edca0576
-trigger "authz_block_col_audit_trunc" ON "ms"."blocks" | a7621132f66e
-trigger "authz_block_col_audit_upd" ON "ms"."blocks" | c744a55003f2
-trigger "authz_bot_col_audit_del" ON "ms"."bots" | a924f1b7ef5e
-trigger "authz_bot_col_audit_ins" ON "ms"."bots" | 536f5303f66d
-trigger "authz_bot_col_audit_row" ON "ms"."bots" | 4ad6dcbba321
-trigger "authz_bot_col_audit_trunc" ON "ms"."bots" | e4bbc6e3d2da
-trigger "authz_bot_col_audit_upd" ON "ms"."bots" | b4839a31da9f
+trigger "authz_block_col_audit_del" ON "ms"."blocks" | 0d454379377a
+trigger "authz_block_col_audit_ins" ON "ms"."blocks" | 26bbc2165cd0
+trigger "authz_block_col_audit_row" ON "ms"."blocks" | b44577ab8207
+trigger "authz_block_col_audit_trunc" ON "ms"."blocks" | 49368040b2d7
+trigger "authz_block_col_audit_upd" ON "ms"."blocks" | 51c1dfd93729
+trigger "authz_bot_col_audit_del" ON "ms"."bots" | 19c960c0a556
+trigger "authz_bot_col_audit_ins" ON "ms"."bots" | bd7b74f27792
+trigger "authz_bot_col_audit_row" ON "ms"."bots" | db4697193de7
+trigger "authz_bot_col_audit_trunc" ON "ms"."bots" | 69f4f90e7e0c
+trigger "authz_bot_col_audit_upd" ON "ms"."bots" | 3862aa54c616
 trigger "authz_bot_keys_gone_del" ON "ms"."bots" | 62ce78bc2e19
 trigger "authz_bot_keys_gone_id" ON "ms"."bots" | b0e76463a7e5
 trigger "authz_bot_keys_gone_moved" ON "ms"."bots" | a8a8f27baee1
 trigger "authz_bot_keys_gone_trunc" ON "ms"."bots" | 0aefe24a7373
 trigger "authz_bot_keys_gone_trunc_first" ON "ms"."bots" | f0aa412add9e
-trigger "authz_chat_bot_col_audit_del" ON "ms"."chat_bots" | ecbfc86da023
-trigger "authz_chat_bot_col_audit_ins" ON "ms"."chat_bots" | 72c0e8f50d2f
-trigger "authz_chat_bot_col_audit_row" ON "ms"."chat_bots" | 3254cb36623e
-trigger "authz_chat_bot_col_audit_trunc" ON "ms"."chat_bots" | 02e6ec646aae
-trigger "authz_chat_bot_col_audit_upd" ON "ms"."chat_bots" | be2955518e6c
-trigger "authz_chat_col_audit_del" ON "ms"."chats" | 61e037fcb004
-trigger "authz_chat_col_audit_ins" ON "ms"."chats" | 98ce9c33a04a
-trigger "authz_chat_col_audit_row" ON "ms"."chats" | 9bfa77bcbeb3
-trigger "authz_chat_col_audit_trunc" ON "ms"."chats" | 27810857bd22
-trigger "authz_chat_col_audit_upd" ON "ms"."chats" | 7deab2a8bc8c
+trigger "authz_chat_bot_col_audit_del" ON "ms"."chat_bots" | 8661ae040d1e
+trigger "authz_chat_bot_col_audit_ins" ON "ms"."chat_bots" | a068f8befdb1
+trigger "authz_chat_bot_col_audit_row" ON "ms"."chat_bots" | ed25971550a9
+trigger "authz_chat_bot_col_audit_trunc" ON "ms"."chat_bots" | f80bef9729be
+trigger "authz_chat_bot_col_audit_upd" ON "ms"."chat_bots" | 9d1ac62ed5a7
+trigger "authz_chat_col_audit_del" ON "ms"."chats" | 8727a1733c4b
+trigger "authz_chat_col_audit_ins" ON "ms"."chats" | d59ebde6a35a
+trigger "authz_chat_col_audit_row" ON "ms"."chats" | 54c705c7fc3a
+trigger "authz_chat_col_audit_trunc" ON "ms"."chats" | 4881c593d3a0
+trigger "authz_chat_col_audit_upd" ON "ms"."chats" | 3d9b3862462a
 trigger "authz_chat_forget_del" ON "ms"."chats" | b249a7e46352
 trigger "authz_chat_forget_id" ON "ms"."chats" | b06f68229c36
 trigger "authz_chat_forget_moved" ON "ms"."chats" | 298e67b4a59d
 trigger "authz_chat_forget_trunc" ON "ms"."chats" | a2eda4a8274e
 trigger "authz_chat_forget_trunc_first" ON "ms"."chats" | cc78f6b0ebe2
-trigger "authz_membership_col_audit_del" ON "ms"."members" | 927cb5c3b3de
-trigger "authz_membership_col_audit_ins" ON "ms"."members" | 5040fef1fa84
-trigger "authz_membership_col_audit_row" ON "ms"."members" | e34d7eb8211d
-trigger "authz_membership_col_audit_trunc" ON "ms"."members" | 8affec14fa5d
-trigger "authz_membership_col_audit_upd" ON "ms"."members" | 21e048ea18a4
-trigger "authz_message_col_audit_del" ON "ms"."messages" | 74baed6524f1
-trigger "authz_message_col_audit_ins" ON "ms"."messages" | a70f6e075a4f
-trigger "authz_message_col_audit_row" ON "ms"."messages" | 7c0e272d1a7c
-trigger "authz_message_col_audit_trunc" ON "ms"."messages" | b50fd11029ec
-trigger "authz_message_col_audit_upd" ON "ms"."messages" | 937bdf68335d
-trigger "authz_rel_audit_1_del" ON "ms"."blocks" | 52b1087e6f2d
-trigger "authz_rel_audit_1_ins" ON "ms"."blocks" | 61009a6eed67
-trigger "authz_rel_audit_1_trunc" ON "ms"."blocks" | 4f0ade6cd8f8
-trigger "authz_rel_audit_1_upd" ON "ms"."blocks" | 5b9f5764adf8
-trigger "authz_rel_audit_2_del" ON "ms"."chat_bots" | 5b3408708b52
-trigger "authz_rel_audit_2_ins" ON "ms"."chat_bots" | e1f17c16fbae
-trigger "authz_rel_audit_2_trunc" ON "ms"."chat_bots" | 5414269aae51
-trigger "authz_rel_audit_2_upd" ON "ms"."chat_bots" | 0036979c69cc
-trigger "authz_rel_audit_3_del" ON "ms"."direct_blocks" | 39d75e9d93ae
-trigger "authz_rel_audit_3_ins" ON "ms"."direct_blocks" | f469c0999bd8
-trigger "authz_rel_audit_3_trunc" ON "ms"."direct_blocks" | b30f3c2b6985
-trigger "authz_rel_audit_3_upd" ON "ms"."direct_blocks" | e85707a3bb84
-trigger "authz_rel_audit_4_del" ON "ms"."members" | e952ef151829
-trigger "authz_rel_audit_4_ins" ON "ms"."members" | 573f83ba3e7f
-trigger "authz_rel_audit_4_trunc" ON "ms"."members" | 0c9aabe3ec04
-trigger "authz_rel_audit_4_upd" ON "ms"."members" | c008711da8a9
+trigger "authz_membership_col_audit_del" ON "ms"."members" | e2077f28ef26
+trigger "authz_membership_col_audit_ins" ON "ms"."members" | 79a2ec6aacc6
+trigger "authz_membership_col_audit_row" ON "ms"."members" | fb89eda45045
+trigger "authz_membership_col_audit_trunc" ON "ms"."members" | 7df48237a44b
+trigger "authz_membership_col_audit_upd" ON "ms"."members" | 7db11fa0ff6a
+trigger "authz_message_col_audit_del" ON "ms"."messages" | 1fc442e00056
+trigger "authz_message_col_audit_ins" ON "ms"."messages" | c91b8ded9a33
+trigger "authz_message_col_audit_row" ON "ms"."messages" | dfe06748f054
+trigger "authz_message_col_audit_trunc" ON "ms"."messages" | da169830ce78
+trigger "authz_message_col_audit_upd" ON "ms"."messages" | 358a4ebb3a30
+trigger "authz_rel_audit_1_del" ON "ms"."blocks" | cda36f43be0c
+trigger "authz_rel_audit_1_ins" ON "ms"."blocks" | 930649344cf7
+trigger "authz_rel_audit_1_trunc" ON "ms"."blocks" | d6bc91dc211d
+trigger "authz_rel_audit_1_upd" ON "ms"."blocks" | d36c5fabaf0e
+trigger "authz_rel_audit_2_del" ON "ms"."chat_bots" | be46460c857e
+trigger "authz_rel_audit_2_ins" ON "ms"."chat_bots" | e1d24812e896
+trigger "authz_rel_audit_2_trunc" ON "ms"."chat_bots" | e2785d7e196f
+trigger "authz_rel_audit_2_upd" ON "ms"."chat_bots" | 0c83d3052c21
+trigger "authz_rel_audit_3_del" ON "ms"."direct_blocks" | 8ed390ef0829
+trigger "authz_rel_audit_3_ins" ON "ms"."direct_blocks" | ca7b0da13420
+trigger "authz_rel_audit_3_trunc" ON "ms"."direct_blocks" | daf341ae99a5
+trigger "authz_rel_audit_3_upd" ON "ms"."direct_blocks" | fb79bdb37bf3
+trigger "authz_rel_audit_4_del" ON "ms"."members" | e1ba930728f7
+trigger "authz_rel_audit_4_ins" ON "ms"."members" | f1889bac0d0c
+trigger "authz_rel_audit_4_trunc" ON "ms"."members" | dc0aa2d0863e
+trigger "authz_rel_audit_4_upd" ON "ms"."members" | 92fa60d6f136
 trigger "authz_update chat_id, seq, sender_id, bot_id, created_at" ON "ms"."messages" | baac6796a217
 trigger "authz_update chat_id, user_id, joined_at, joined_seq" ON "ms"."members" | 5a214f08b1b5
 trigger "authz_update deleted" ON "ms"."messages" | 0e8e4af8fa47
@@ -572,11 +572,11 @@ trigger "authz_update role" ON "ms"."members" | 429fd6b62c5c
 trigger "authz_update_after body" ON "ms"."messages" | bb3898b21c6f
 trigger "authz_update_after deleted" ON "ms"."messages" | a524ba68801c
 trigger "authz_update_after role" ON "ms"."members" | f6c10a9670ef
-trigger "authz_user_col_audit_del" ON "ms"."users" | b1dcf1840f5e
-trigger "authz_user_col_audit_ins" ON "ms"."users" | cd91198a9b58
-trigger "authz_user_col_audit_row" ON "ms"."users" | 80e12c8c751c
-trigger "authz_user_col_audit_trunc" ON "ms"."users" | 2492cae3479e
-trigger "authz_user_col_audit_upd" ON "ms"."users" | 622be7f5bbc3
+trigger "authz_user_col_audit_del" ON "ms"."users" | a6fc56d3362a
+trigger "authz_user_col_audit_ins" ON "ms"."users" | 68378bd738a8
+trigger "authz_user_col_audit_row" ON "ms"."users" | 44bca16781e3
+trigger "authz_user_col_audit_trunc" ON "ms"."users" | f982f3600394
+trigger "authz_user_col_audit_upd" ON "ms"."users" | 583d18939ce6
 trigger "authz_user_keys_gone_del" ON "ms"."users" | d1240ec91226
 trigger "authz_user_keys_gone_id" ON "ms"."users" | dc80ccf3c687
 trigger "authz_user_keys_gone_moved" ON "ms"."users" | 3f1671fb3d3e
