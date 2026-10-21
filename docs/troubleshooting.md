@@ -117,8 +117,11 @@ That is Postgres's own message, not rowstile's (whose refusals say which rule, a
 
 ## Your app's role sees everything
 
-Row-level security doesn't apply to superusers, roles with `BYPASSRLS`, or a table's owner (without
-`FORCE ROW LEVEL SECURITY`). `authz.lint()` checks all three, and applying shows its findings.
+Row-level security doesn't apply to superusers, roles with `BYPASSRLS`, or a table's owner, who may also turn
+it off (`FORCE ROW LEVEL SECURITY` doesn't stop that). The app role must be a role of its own: not the tables'
+owner, nor the role that applies the policy, nor a member of either. Applying refuses an app role that is the
+role applying the policy, or a member of it (AZ624). `authz.lint()` checks the rest, and applying shows its
+findings.
 
 ## A list or a page is slow
 

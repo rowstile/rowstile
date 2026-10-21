@@ -352,6 +352,14 @@ BEGIN
     severity := 'error'; object := {lit(role)};
     problem := format('is a member of %s, which bypasses row-level security', r.parent); RETURN NEXT;
   END LOOP;
+  -- the policy's owner (or a member of it): its sessions are believed unsigned, it may read rowstile's tables
+  -- (the session key among them) and turn row-level security off (applying refuses it, AZ624: this finds a grant made since)
+  FOR r IN SELECT n.nspowner::regrole AS owner FROM pg_namespace n, pg_roles a
+           WHERE n.nspname = 'authz_int' AND a.oid = v_role AND NOT a.rolsuper AND pg_has_role(v_role, n.nspowner, 'MEMBER') LOOP
+    severity := 'error'; object := {lit(role)};
+    problem := format('is the policy''s owner %s, or a member of it: who is signed in is believed without a signature, and it may read rowstile''s tables and turn row-level security off. The app role must be a role of its own: not the tables'' owner or the policy''s, nor a member of either', r.owner);
+    RETURN NEXT;
+  END LOOP;
   -- rowstile's own objects: nobody but the owner uses them, except for what the policy grants
   FOR r IN {self.extra_grants_sql()} LOOP
     severity := 'error'; object := r.object;
@@ -380,15 +388,14 @@ BEGIN
     RETURN NEXT;
   END LOOP;
   -- governed tables
-  FOR r IN SELECT c.oid::regclass AS tbl, c.relrowsecurity, c.relforcerowsecurity, c.relowner,
+  FOR r IN SELECT c.oid::regclass AS tbl, c.relrowsecurity, c.relowner,
                   c.oid = ANY (SELECT to_regclass(x) FROM unnest({arr([qt(t) for t in governed])}) x) AS governed
            FROM pg_class c WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest({arr([qt(t) for t in typed_tables])}) x) LOOP
-    IF r.relowner = v_role OR pg_has_role(v_role, r.relowner, 'MEMBER') THEN
-      IF NOT r.relforcerowsecurity THEN
-        severity := 'error'; object := r.tbl::text;
-        problem := format('is owned by %s (or a role it belongs to): owners skip row-level security unless you ALTER TABLE %s FORCE ROW LEVEL SECURITY', {lit(role)}, r.tbl);
-        RETURN NEXT;
-      END IF;
+    -- (FORCE ROW LEVEL SECURITY is no way out: an owner may turn it off again, and row-level security with it)
+    IF pg_has_role(v_role, r.relowner, 'MEMBER') THEN
+      severity := 'error'; object := r.tbl::text;
+      problem := format('is owned by %s (or a role it belongs to): an owner skips row-level security, and may turn it off, FORCE ROW LEVEL SECURITY or not. The app role must not own the tables: ALTER TABLE %s OWNER TO the role that applies the policy', {lit(role)}, r.tbl);
+      RETURN NEXT;
     END IF;
     IF NOT r.relrowsecurity AND r.governed THEN
       severity := 'error'; object := r.tbl::text;
@@ -655,12 +662,18 @@ BEGIN
     severity := 'error'; problem := format('%s has BYPASSRLS: row-level security does not apply to it', v_me::regrole);
     RETURN NEXT;
   END IF;
-  -- a table's owner (or a role with its rights) skips row-level security, unless the table forces it
+  -- the policy's owner (or a member of it): who is signed in is believed without a signature
+  IF pg_has_role(v_me, (SELECT nspowner FROM pg_namespace WHERE nspname = 'authz_int'), 'MEMBER') THEN
+    severity := 'error';
+    problem := format('%s is the policy''s owner, or a member of it: who is signed in is believed without a signature, and it may turn row-level security off. Log in as an app role of its own', v_me::regrole);
+    RETURN NEXT;
+  END IF;
+  -- a table's owner (or a role with its rights) skips row-level security, and may turn it off: FORCE or not
   FOR r IN SELECT c.oid::regclass AS tbl FROM pg_class c
            WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest({governed}) x)
-             AND NOT c.relforcerowsecurity AND pg_has_role(v_me, c.relowner, 'USAGE') LOOP
+             AND pg_has_role(v_me, c.relowner, 'USAGE') LOOP
     severity := 'error';
-    problem := format('%s owns %s (or has its owner''s rights): owners skip row-level security', v_me::regrole, r.tbl);
+    problem := format('%s owns %s (or has its owner''s rights): an owner skips row-level security, and may turn it off', v_me::regrole, r.tbl);
     RETURN NEXT;
   END LOOP;
   -- a table with rules whose row-level security is off: the rules don't apply

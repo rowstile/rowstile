@@ -253,6 +253,7 @@ FEATURES: list[Feature] = [
         (
             T("sessions.sh", "changing authz.user_id after signing in is an error"),
             T("sessions.sh", "a signature from an earlier transaction is refused in the next one"),
+            T("sessions.sh", "that says it is the policy's owner, whose sessions are believed unsigned"),
             T("identity.sh", "a valid token signs in as bob, with its scope"),
             T("identity.sh", "wrong signature"),
             T("identity.sh", "and cannot change anything"),
@@ -360,6 +361,8 @@ FEATURES: list[Feature] = [
             T("governance.sh", "lint finds a move nothing checks the destination of"),
             T("governance.sh", "lint finds a permission no rule reads that is slow to plan"),
             T("adversarial.sh", "lint reports a grant on rowstile's objects made after apply"),
+            T("apply.sh", "lint reports an app role that is a member of the policy's owner: an error"),
+            T("governance.sh", "FORCE ROW LEVEL SECURITY or not, since an owner may turn it off"),
             T("governance.sh", "a Globex user owning an Acme folder breaks it"),
         ),
         (T("around.py", "def lint_errors("), T("around.py", "def drift(")),
@@ -394,6 +397,7 @@ FEATURES: list[Feature] = [
             "err.AZ610",
             "err.AZ612",
             "err.AZ614",
+            "err.AZ624",
         ),
         Doc(TOOLS, "`rowstile apply"),
         (
@@ -401,6 +405,7 @@ FEATURES: list[Feature] = [
             T("apply.sh", "again: unchanged"),
             T("apply.sh", "shares are kept"),
             T("apply.sh", "its schemas are gone"),
+            T("apply.sh", "applying refuses the policy's owner as the app role"),
             T("cli.sh", "check: ok, exit 0"),
             T("cli.sh", "diff lists who loses what"),
             T("migrations.sh", "a second change is pushed too"),

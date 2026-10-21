@@ -379,7 +379,7 @@ async def test_13_refuses_a_connection_that_skips_rls() -> None:
     owner_app = make_app(OWNER.replace("+psycopg", "+asyncpg"), check_connection=False)
     with pytest.raises(ConnectionProblem) as e:
         await owner_app.state.authz.check()
-    assert "owners skip row-level security" in str(e.value) or "superuser" in str(e.value)
+    assert "an owner skips row-level security" in str(e.value) or "superuser" in str(e.value)
     await owner_app.state.engine.dispose()
     fine = make_app(APP, check_connection=False)
     await fine.state.authz.check()

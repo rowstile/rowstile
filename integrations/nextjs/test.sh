@@ -64,7 +64,7 @@ $NEXT start -p "$WEB" >"$LOG/server.log" 2>&1 & servers+=($!)
 PG_POOL_MAX=1 $NEXT start -p "$((WEB + 1))" >"$LOG/server-one.log" 2>&1 & servers+=($!)
 # 13: the app refuses to start on a connection that skips row-level security (here, the owner's)
 ROWSTILE_APP_URL=$ROWSTILE_OWNER_DSN timeout 60 $NEXT start -p "$((WEB + 2))" >"$LOG/server-owner.log" 2>&1
-if [ $? = 1 ] && grep -q "owners skip row-level security" "$LOG/server-owner.log"; then
+if [ $? = 1 ] && grep -q "an owner skips row-level security" "$LOG/server-owner.log"; then
   echo "ok    13: the app refuses to start on the owner's connection"
 else cat "$LOG/server-owner.log"; echo "FAIL  13: the app started on the owner's connection"; rc=1; fi
 for _ in $(seq 60); do curl -sf "$CONFORMANCE_SERVER/api/projects" >/dev/null && curl -sf "$CONFORMANCE_SERVER_ONE/api/projects" >/dev/null && break; sleep 1; done

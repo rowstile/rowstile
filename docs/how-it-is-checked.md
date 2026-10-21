@@ -280,7 +280,7 @@ each feature against each suite.
 | Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review` | 2 | [governance](reference/governance.md) | `governance.sh`, `principals.sh` |  |
 | The change feed: `authz.changes_since`, `authz.trim_changes` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` |  |
 | The audit trail: `authz.audit`, `authz.trim_audit` | 2 | [governance](reference/governance.md) | `governance.sh` |  |
-| Checking the database: `authz.lint`, `authz.check_invariants` | 2 | [governance](reference/governance.md) | `governance.sh`, `adversarial.sh` | `around.py` |
+| Checking the database: `authz.lint`, `authz.check_invariants` | 2 | [governance](reference/governance.md) | `governance.sh`, `adversarial.sh`, `apply.sh` | `around.py` |
 | What apps see of a refusal: each code's SQLSTATE and HTTP answer, the reason in the error | 1 | [app-code](reference/app-code.md) | `unit_test.py`, `reference.sh`, `adversarial.sh`, `integrations/fastapi`, `integrations/nextjs` | `around.py` |
 | Applying a policy: `rowstile apply`, `check`, `push`, `diff`, `remove` | 1 | [tools](reference/tools.md) | `apply.sh`, `cli.sh`, `migrations.sh`, `children.sh` | `interrupt.py`, `around.py`, `migrate_test.py` |
 | Migrations: `rowstile migrate`, the lock file, trees built beside then swapped in | 1 | [migrations](reference/migrations.md) | `migrations.sh`, `unit_test.py` | `migrate_test.py`, `interrupt.py` |

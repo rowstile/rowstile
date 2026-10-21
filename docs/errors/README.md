@@ -80,6 +80,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ621](AZ621.md): Which table holds the users?
 - [AZ622](AZ622.md): A user table the draft can't use
 - [AZ623](AZ623.md): Too many people for a snapshot
+- [AZ624](AZ624.md): The app role is the policy's owner
 - [AZ625](AZ625.md): A cascade line that names no foreign key
 
 ## What apps see

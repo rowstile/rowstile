@@ -306,14 +306,15 @@ async def test_queries_by_permission_sync_and_async(app: FastAPI) -> None:
 
 
 async def test_the_connection_check_over_each_driver() -> None:
-    owners = "owners skip row-level security"
-    for url, expected in ((SYNC, []), (OWNER, [owners] * 4)):  # the owner owns the four tables with rules
+    owners, policy = "an owner skips row-level security", "is the policy's owner"
+    # the owner is the policy's, and owns the four tables with rules
+    for url, expected in ((SYNC, []), (OWNER, [policy] + [owners] * 4)):
         engine = create_engine(url)
         try:
             found = sorted(rowstile.check_problems(await authz_sa.connection_check(engine)))
         finally:
             engine.dispose()
-        assert [owners if owners in p else p for p in found] == expected, found
+        assert [owners if owners in p else policy if policy in p else p for p in found] == expected, found
         with psycopg.connect(libpq(url)) as conn:
             assert sorted(pgp.problems(conn)) == found
         aconn = await asyncpg.connect(libpq(url))

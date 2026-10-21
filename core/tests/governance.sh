@@ -527,6 +527,16 @@ admin "... and none with the privileges back" "0" "SELECT count(*) FROM authz.li
 # a relation named like a type that doesn't sign in (file.folder, folder.org) is nobody's mistake: no note
 admin "lint has no note on a relation named like a type that doesn't sign in" "0" \
   "SELECT count(*) FROM authz.lint() WHERE problem LIKE 'is named like the type%'"
+# ...and one named like a type that does: alone in a rule it reads like any user
+sed -e 's/^  owner  : user   = owner_id$/  user   : user   = owner_id\n  owner  : user   = owner_id/' \
+  -e 's/^  can share = owner or folder.share$/  can share = owner or user or folder.share/' example/docs.authz > /tmp/authz_gov_shadow.authz
+python3 compile_policy.py /tmp/authz_gov_shadow.authz > /tmp/authz_gov_shadow.sql && reapply /tmp/authz_gov_shadow.sql
+L=$(grep -n '^  user   : user   = owner_id$' /tmp/authz_gov_shadow.authz | cut -d: -f1)
+admin "lint notes a relation named like a type that signs in, with its line" \
+  "info|file.user|is named like the type user (line $L), which signs in: alone in a rule it reads like any user, and it is this row's. A name that says what the relation is (author, owner) reads better" \
+  "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE problem LIKE 'is named like the type%'"
+reapply /tmp/authz_governance.sql
+rm -f /tmp/authz_gov_shadow.authz /tmp/authz_gov_shadow.sql
 # without its column rule, whoever may edit a file may make themselves its owner: lint asks for a rule, and
 # suggests the type's own share
 grep -v "update id, owner_id, confidential" example/docs.authz > /tmp/authz_no_column_rule.authz
@@ -600,12 +610,17 @@ admin "... rowstile's own policies are not reported" "0" "SELECT count(*) FROM a
 PSQL -c "GRANT CREATE ON SCHEMA app TO app_user" -c "ALTER TABLE app.files OWNER TO app_user" >/dev/null
 [ "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'is owned by%'")" = "1" ] &&
   echo "ok    lint finds: a governed table owned by the app role" || { echo "FAIL  lint misses the owner"; fails=$((fails + 1)); }
-PSQL -c "ALTER TABLE app.files OWNER TO CURRENT_USER" -c "REVOKE CREATE ON SCHEMA app FROM app_user" >/dev/null
+# (FORCE ROW LEVEL SECURITY is no way out: the owner may turn it off again)
+PSQL -c "ALTER TABLE app.files FORCE ROW LEVEL SECURITY" >/dev/null
+admin "... FORCE ROW LEVEL SECURITY or not, since an owner may turn it off" \
+  "error|is owned by app_user (or a role it belongs to): an owner skips row-level security, and may turn it off, FORCE ROW LEVEL SECURITY or not. The app role must not own the tables: ALTER TABLE app.files OWNER TO the role that applies the policy" \
+  "SELECT severity || '|' || problem FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'is owned by%'"
+PSQL -c "ALTER TABLE app.files NO FORCE ROW LEVEL SECURITY" -c "ALTER TABLE app.files OWNER TO CURRENT_USER" -c "REVOKE CREATE ON SCHEMA app FROM app_user" >/dev/null
 # ...and by a role the app role is a member of, whose rights it has
 PGOPTIONS="-c client_min_messages=error" PSQL -c "DROP ROLE IF EXISTS authz_gov_owners" -c "CREATE ROLE authz_gov_owners" \
      -c "GRANT authz_gov_owners TO app_user" -c "GRANT CREATE ON SCHEMA app TO authz_gov_owners" -c "ALTER TABLE app.files OWNER TO authz_gov_owners" >/dev/null
 admin "... and one owned by a role the app role is a member of" \
-  "error|is owned by app_user (or a role it belongs to): owners skip row-level security unless you ALTER TABLE app.files FORCE ROW LEVEL SECURITY" \
+  "error|is owned by app_user (or a role it belongs to): an owner skips row-level security, and may turn it off, FORCE ROW LEVEL SECURITY or not. The app role must not own the tables: ALTER TABLE app.files OWNER TO the role that applies the policy" \
   "SELECT severity || '|' || problem FROM authz.lint() WHERE object = 'app.files' AND problem LIKE 'is owned by%'"
 PSQL -c "ALTER TABLE app.files OWNER TO CURRENT_USER" -c "REVOKE CREATE ON SCHEMA app FROM authz_gov_owners" -c "DROP ROLE authz_gov_owners" >/dev/null
 PSQL -c "ALTER TABLE app.files DISABLE ROW LEVEL SECURITY" >/dev/null
