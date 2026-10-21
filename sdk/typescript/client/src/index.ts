@@ -298,7 +298,11 @@ export function sqlstate(e: unknown): string | undefined {
   return dbError(e)?.code;
 }
 
-const RLS_GENERIC = /^new row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/;
+// Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
+// without its schema, and sets no field for it
+const RLS_GENERIC = /^(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/;
+const UNSEEN = "this user may not see the row as written (the select rule). An insert that reads it back (RETURNING), " +
+  "an upsert, and an update with a WHERE need to see it.";
 const OURS = /may not (insert|update|delete) this row (?:into|of) (\S+?)(?: to these values)?$/;
 /** The table in a column rule's refusal, "changing locked of app.notes 7 needs: folder.manage" (always an
  *  update); undefined for any other message. Read with indexOf: a pattern here would backtrack on a long one. */
@@ -317,17 +321,22 @@ export function refusal(e: unknown, schemaOf?: (table: string) => string | undef
   if (!err || err.code !== "42501") return null;
   const generic = RLS_GENERIC.exec(err.message);
   if (generic) {
-    const schema = err.schema ?? schemaOf?.(generic[2]);
-    const table = schema ? `${schema}.${generic[2]}` : generic[2];
-    if (generic[1]) {
+    const [, row, existing, name] = generic;
+    const schema = err.schema ?? schemaOf?.(name);
+    const table = schema ? `${schema}.${name}` : name;
+    if (row === "target") {
+      // MERGE matched a row the update or the delete rule hides; Postgres doesn't say which
+      return new Refused(`${err.message}: MERGE matched a row the update or delete rule doesn't let this user change`,
+        table, undefined, [], { cause: e });
+    }
+    if (existing) {
       // an upsert (INSERT ... ON CONFLICT DO UPDATE) whose existing row this user may not update, or not see
       return new Refused(`${err.message}: the row is there already, and the update rule (or the select rule) doesn't ` +
         "let this user change it (ON CONFLICT DO UPDATE)", table, "update", [], { cause: e });
     }
-    // Postgres's own words, not rowstile's: the row was allowed in, but may not be read back (INSERT ...
-    // RETURNING, or an ORM that reads the new row, as Prisma's create does), which the select rule decides
-    return new Refused(`${err.message}: the write was allowed, but the select rule doesn't let this user read the row ` +
-      "back (RETURNING); read it back only if the select rule allows it", table, "select", [], { cause: e });
+    // the select rule, on the row as written: an insert that reads it back (RETURNING, or an ORM that reads the new
+    // row, as Prisma's create does), an upsert, or an update after which the row would be out of this user's sight
+    return new Refused(`${err.message}: ${UNSEEN}`, table, "select", [], { cause: e });
   }
   const ours = OURS.exec(err.message);
   const code = errorCode(e);

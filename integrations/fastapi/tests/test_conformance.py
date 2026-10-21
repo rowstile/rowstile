@@ -134,7 +134,7 @@ async def test_8_insert_then_read_back(app: FastAPI) -> None:
         quiet = await c.post("/inbox/quietly", json={"recipient_id": 2, "body": "hi bo"}, headers=as_("1"))
     assert ok.status_code == 201 and ok.json()["id"] > 100, ok.text
     assert unreadable.status_code == 403, unreadable.text
-    assert unreadable.json()["command"] == "select" and "read the row back" in unreadable.json()["detail"]
+    assert unreadable.json()["command"] == "select" and "may not see the row as written" in unreadable.json()["detail"]
     assert quiet.status_code == 202, quiet.text
 
 

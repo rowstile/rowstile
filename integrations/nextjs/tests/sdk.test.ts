@@ -170,7 +170,36 @@ describe("the runtime's functions over pg", () => {
         "INSERT INTO app.inbox (sender_id, recipient_id, body) VALUES (1, 2, 'hi') RETURNING id")).catch((err) => err);
       expect(e).toBeInstanceOf(Refused);
       expect([e.table, e.command]).toEqual(["inbox", "select"]);   // Postgres names no schema for it, nor does pg
-      expect(e.message).toContain("the select rule doesn't let this user read the row back");
+      expect(e.message).toContain("this user may not see the row as written (the select rule)");
+    } finally {
+      await p.end();
+    }
+  });
+
+  // Postgres's own words, where no rule's refusal speaks first, read for what refused: an update after which the row
+  // would be hidden is the select rule's, and no read back; an upsert of a row the user may not change is the update
+  // rule's; MERGE's names no command, since Postgres doesn't say whether the update rule or the delete rule
+  test("Postgres's own refusals, over pg: the rule each names", async () => {
+    const p = new pg.Pool({ connectionString: APP });
+    // cy (3): author of note 4 in project 1, a member there
+    const refused = (sql: string) => actingAs("3", () => rowstile(p).query(sql)).catch((e: unknown) => e);
+    try {
+      const hidden = await refused("UPDATE app.notes SET project_id = 2 WHERE id = 4");   // into bo's project
+      const upsert = await refused("INSERT INTO app.notes (id, project_id, author_id, body) VALUES (1, 1, 3, 'x') " +
+        "ON CONFLICT (id) DO UPDATE SET body = 'x'");                                       // note 1 is ann's
+      const merge = await refused(
+        "MERGE INTO app.notes n USING (VALUES (1)) s(id) ON n.id = s.id WHEN MATCHED THEN UPDATE SET body = 'x'");
+      const read = (r: unknown) => r instanceof Refused ? [r.table, r.command, r.why, r.message] : r;
+      expect(read(hidden)).toEqual(["notes", "select", [],
+        'new row violates row-level security policy for table "notes": this user may not see the row as written ' +
+        "(the select rule). An insert that reads it back (RETURNING), an upsert, and an update with a WHERE need to " +
+        "see it."]);
+      expect(read(upsert)).toEqual(["notes", "update", [],
+        'new row violates row-level security policy (USING expression) for table "notes": the row is there already, ' +
+        "and the update rule (or the select rule) doesn't let this user change it (ON CONFLICT DO UPDATE)"]);
+      expect(read(merge)).toEqual(["notes", undefined, [],
+        'target row violates row-level security policy (USING expression) for table "notes": MERGE matched a row ' +
+        "the update or delete rule doesn't let this user change"]);
     } finally {
       await p.end();
     }

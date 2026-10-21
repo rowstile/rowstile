@@ -64,8 +64,10 @@ Traps it handles:
   whenever it is used, inside your own extensions too. An extension you add to the client `authz()` returns is
   placed before it, so `authz()` stays the last one: each of your query hooks runs once for a call, and sees
   the errors `authz()` makes (`Refused`, `NotFound`).
-- **Inserts that read the row back** (`RETURNING`, Prisma's `create`) also need the select rule: Postgres's own
-  message comes back as `Refused` naming the select rule.
+- **Inserts that read the row back** (`RETURNING`, Prisma's `create`) also need the select rule, and so do
+  updates after which the user could no longer see the row: Postgres's own message comes back as `Refused`
+  naming the select rule. An upsert of a row the user may not change names the update rule, and a MERGE's
+  refusal names no command (Postgres doesn't say whether the update or the delete rule).
 - **Prisma's promises are lazy**: `actingAs` and `job` await what they return inside their scope.
 - **A connection that drops.** node-postgres stops the process when a client that is checked out loses its
   connection and nobody listens: `@rowstile/pg` listens while it holds one, so the transaction fails instead.

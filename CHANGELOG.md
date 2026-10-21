@@ -487,6 +487,13 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   as two.
 - `{size > ٣}` compared size with the number 3; Postgres reads `٣` as a column's name. Only the digits 0 to 9
   make a number now.
+- Both SDKs read Postgres's own refusals for what refused. An update after which the user could no longer see
+  the row was a 403 that spoke of reading an insert back; it now says the user may not see the row as written
+  (the select rule). In Python, an upsert (`INSERT ... ON CONFLICT DO UPDATE`) of a row the user may not change
+  named the select rule; it names the update rule, as in TypeScript. A `MERGE` that matched a row the update or
+  delete rule hides was no refusal at all (a 500); it is a 403 with no command, since Postgres doesn't say which
+  rule. And in Python a refusal by a restrictive policy rowstile didn't make is no longer read as the select
+  rule's: it stays the database's error, as in TypeScript.
 
 ## 0.1.0 (alpha)
 
