@@ -45,20 +45,27 @@ test "private, shared with a person, public"
   anyone can view document $diary
 ```
 
+Ann's line makes a link and presents its token, as a request that carries it would. `set_config(..., true)`
+lasts until the test ends, so Bo, and anyone, then hold the link:
+
 ```authz
 test "anyone with the link"
   as user $bo refused {SELECT authz.create_link('document', $d, 'viewer')}
-  as user $ann allowed {SELECT authz.create_link('document', $d, 'viewer')}
+  user $bo cannot view document $d
+  as user $ann allowed {SELECT set_config('authz_ctx.links', authz.create_link('document', $d, 'viewer'), true)}
   as user $ann sees 1 {SELECT FROM authz.list_links('document', $d)}
+  user $bo can view document $d
+  user $bo cannot edit document $d
+  anyone can view document $d
 ```
 
 ## Try it
 
 [Open it in the playground](https://rowstile.dev/playground/#e=google-docs-sharing): the tables, the policy and the
-tests, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/google-docs-sharing/`](google-docs-sharing/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+tests, in your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/google-docs-sharing/`](google-docs-sharing/). CI takes them on every change
+(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
 
 More: [sharing with teams, and shares that end](sharing-and-links.md),
 [links from app code](../reference/app-code.md), [the other recipes](../cookbook.md).

@@ -12,10 +12,12 @@ type document = app.documents
   can view  = share or viewer
 ```
 
+Ann asks about her document, the first in `rows.sql`:
+
 ```sql
-SELECT * FROM authz.who('document', 7, 'view');           -- everyone who may view it
-SELECT * FROM authz.list_shares('document', 7);           -- what was shared, with whom, by whom, until when
-SELECT * FROM authz.explain('document', 7, 'view', '4');  -- why user 4 may, or what is missing
+SELECT * FROM authz.who('document', 1, 'view');           -- everyone who may view it
+SELECT * FROM authz.list_shares('document', 1);           -- what was shared, with whom, by whom, until when
+SELECT * FROM authz.explain('document', 1, 'view', '2');  -- why user 2 may, or what is missing
 ```
 
 - `authz.who` and `authz.list_shares` answer people who hold `share` on the document, and nobody else: who
@@ -42,10 +44,10 @@ test "who may see it, and what was shared"
 ## Try it
 
 [Open it in the playground](https://rowstile.dev/playground/#e=who-has-access): the tables, the policy and the
-tests, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/who-has-access/`](who-has-access/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+tests, in your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/who-has-access/`](who-has-access/). CI takes them on every change (`core/tests/cookbook.sh`), and
+checks that every line of policy and tests shown here is in those files, and that the SQL shown here runs, as Ann.
 
 More: [every function apps call](../reference/app-code.md), [the audit trail](../reference/governance.md),
 [the other recipes](../cookbook.md).

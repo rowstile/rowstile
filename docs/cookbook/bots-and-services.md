@@ -48,10 +48,10 @@ test "a bot posts where it was added, as itself"
 ## Try it
 
 [Open it in the playground](https://rowstile.dev/playground/#e=bots-and-services): the tables, the policy and the
-test, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/bots-and-services/`](bots-and-services/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+test, in your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/bots-and-services/`](bots-and-services/). CI takes them on every change (`core/tests/cookbook.sh`),
+and checks that every line of policy and tests shown here is in those files.
 
 More: [principals other than users, API keys and scopes](../reference/identity.md),
 [the other recipes](../cookbook.md).

@@ -379,11 +379,11 @@ record $? "docs"
 }
 unit policy 2 docs
 cookbook() {
-step "the cookbook's recipes: each one's policy applies, its tests pass, and its page shows only what is tested"
+step "the cookbook's recipes: each one's policy applies, its tests pass, its page shows only what is tested, and rowstile dev runs it"
 tests/cookbook.sh
 record $? "cookbook"
 }
-unit policy 23 cookbook
+unit policy 35 cookbook
 reference() {
 step "the reference runs as written: its policies compile, its SQL and its commands run, each block or why not"
 tests/reference.sh

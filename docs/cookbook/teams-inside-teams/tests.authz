@@ -14,3 +14,21 @@ test "what a team may read, its sub-teams' members may read"
   user $cy cannot view document $d
   as user $bo sees 1 {SELECT FROM app.documents WHERE id = $d}
   as user $cy sees 0 {SELECT FROM app.documents WHERE id = $d}
+
+test "to any depth, loops included"
+  given ann = {INSERT INTO app.users VALUES (901, 'Ann') RETURNING id}
+  given bo = {INSERT INTO app.users VALUES (902, 'Bo') RETURNING id}
+  given dee = {INSERT INTO app.users VALUES (904, 'Dee') RETURNING id}
+  given eng = {INSERT INTO app.teams (id, name) VALUES (901, 'Engineering') RETURNING id}
+  given web = {INSERT INTO app.teams (id, parent_id, name) VALUES (902, $eng, 'Web') RETURNING id}
+  given ui = {INSERT INTO app.teams (id, parent_id, name) VALUES (903, $web, 'Design') RETURNING id}
+  given {INSERT INTO app.team_members VALUES ($ui, $dee), ($eng, $bo)}
+  given plans = {INSERT INTO app.documents (owner_id, title) VALUES ($ann, 'Plans') RETURNING id}
+  given sketch = {INSERT INTO app.documents (owner_id, title) VALUES ($ann, 'Sketches') RETURNING id}
+  given {INSERT INTO app.document_teams VALUES ($plans, $eng), ($sketch, $ui)}
+  user $dee can view document $plans
+  user $bo cannot view document $sketch
+  given {UPDATE app.teams SET parent_id = $ui WHERE id = $eng}
+  user $bo can view document $sketch
+  user $dee can view document $plans
+  as user $bo sees 2 {SELECT FROM app.documents WHERE id IN ($plans, $sketch)}

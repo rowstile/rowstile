@@ -40,11 +40,11 @@ test "in an announcement channel, members read and only admins post"
 
 ## Try it
 
-[Open it in the playground](https://rowstile.dev/playground/#e=conditions-on-the-row): the tables, the policy and the
-test, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/conditions-on-the-row/`](conditions-on-the-row/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+[Open it in the playground](https://rowstile.dev/playground/#e=conditions-on-the-row): the tables, the policy and
+the test, in your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/conditions-on-the-row/`](conditions-on-the-row/). CI takes them on every change
+(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
 
 ## What it costs
 

@@ -34,10 +34,10 @@ test "nobody writes to someone who blocked them"
 
 ## Try it
 
-[Open it in the playground](https://rowstile.dev/playground/#e=blocking): the tables, the policy and the
-test, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/blocking/`](blocking/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+[Open it in the playground](https://rowstile.dev/playground/#e=blocking): the tables, the policy and the test, in
+your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/blocking/`](blocking/). CI takes them on every change (`core/tests/cookbook.sh`), and checks that
+every line of policy and tests shown here is in those files.
 
 More: [following a relation](../reference/language.md), [the other recipes](../cookbook.md).

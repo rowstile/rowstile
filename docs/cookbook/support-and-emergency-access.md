@@ -55,11 +55,11 @@ a key limited to a scope may do can be tested: [API keys limited to some permiss
 
 ## Try it
 
-[Open it in the playground](https://rowstile.dev/playground/#e=support-and-emergency-access): the tables, the policy and the
-tests, in your browser, with nothing to install. Or take the files of
-[`docs/cookbook/support-and-emergency-access/`](support-and-emergency-access/) (`schema.sql`, `policy.authz`, `tests.authz`) and run `rowstile dev`.
-CI applies and tests them on every change (`core/tests/cookbook.sh`), and every line shown here is in those
-files.
+[Open it in the playground](https://rowstile.dev/playground/#e=support-and-emergency-access): the tables, the
+policy and the tests, in your browser, with nothing to install. Or try it on a database of your own:
+[the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
+[`docs/cookbook/support-and-emergency-access/`](support-and-emergency-access/). CI takes them on every change
+(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
 
 More: [the permissions the runtime asks for](../reference/language.md),
 [the audit trail and break glass](../reference/governance.md), [access on request](access-on-request.md),

@@ -23,5 +23,9 @@ test "a share that starts later, and a link"
   given d = {INSERT INTO app.documents (owner_id, title) VALUES ($ann, 'Plans') RETURNING id}
   as user $ann allowed {SELECT authz.share('document', $d, 'viewer', 'user', $bo, '', now() + interval '1 week', now() + interval '1 day')}
   user $bo cannot view document $d
-  as user $ann allowed {SELECT authz.create_link('document', $d, 'viewer')}
+  as user $ann sees 1 {SELECT FROM authz.list_shares('document', $d) WHERE starts_at = now() + interval '1 day' AND expires_at = now() + interval '1 week'}
   as user $bo refused {SELECT authz.create_link('document', $d, 'viewer')}
+  as user $ann allowed {SELECT set_config('authz_ctx.links', authz.create_link('document', $d, 'viewer'), true)}
+  user $bo can view document $d
+  anyone can view document $d
+  anyone cannot edit document $d

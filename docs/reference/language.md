@@ -178,6 +178,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   refused if a rule or a missing privilege stops it, or if it changes no row (the rows it meant are
   hidden from X). <!-- checked: tests/devx.sh "a write after WITH or a comment that changes no row is refused, and one the app role has no privilege for"; tests/devx.sh "an 'allowed' that is refused shows the refusal and why" --> <!-- answer: tests-refused -->
   Any other error, a unique key say, fails the check whichever was expected. Each named test runs in a transaction that is rolled back.
+  What a line sets for its transaction (`set_config(..., true)`, such as a share link's token in `authz_ctx.links`) holds for the test's later lines, unless the line ends in an error.
   After who a line is about, `with scope read` (or several: `with scope read, files`) checks it as a key or
   a token limited to those scopes would be: `user 3 with scope read cannot edit file 11`,
   `as user 3 with scope read refused {UPDATE ...}`. <!-- answer: tests-scope --> A scope the policy doesn't have is a mistake (AZ503).

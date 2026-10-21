@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """rowstile: compile policies and apply them to a database, from a terminal, CI or a migration.
 
-    rowstile dev     [--once] [--no-studio] [--studio-port N]
+    rowstile dev     [POLICY.authz] [--once] [--no-studio] [--studio-port N]
                                                    on each save: check, diff, push, test, write the clients;
                                                    Studio on http://127.0.0.1:4983 beside it
     rowstile studio  [--port N] [--write]          Studio: the tables as anyone, why and how to grant, the graph,

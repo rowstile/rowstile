@@ -198,6 +198,13 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   invariant says no one outside sees a ticket. The multi-tenant page says that someone in two organisations may
   move a project across, and how to forbid it. The language reference says which moves `authz.lint()` warns
   about. A policy copied from these recipes wants the same change.
+- Each cookbook page said to take the recipe's files and run `rowstile dev`, which stopped at "which policy
+  file?". Each recipe's folder now has a `rowstile.toml` that names its policy and its tests, and the cookbook
+  says the steps: load `schema.sql` and `rows.sql`, then run `rowstile dev`. The recipes' tests now check what
+  their pages say: someone with a link sees the document, a share starts and ends when it says, an approved
+  request ends after the time asked for, nobody decides their own request, asking for a document that doesn't
+  exist goes as asking for a hidden one, a private folder's owner keeps it, and teams count three deep and in
+  a loop. `rowstile dev --help` shows that it takes a policy file.
 
 ## 0.1.0 (alpha)
 
