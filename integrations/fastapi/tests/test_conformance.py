@@ -322,10 +322,16 @@ def test_10_an_id_with_a_colon_is_a_users_not_a_service() -> None:
     assert rowstile.Principal.of(("service", 1)) == rowstile.Principal("service", "1")
     with rowstile.acting_as("service:1"):
         assert rowstile.current() == rowstile.Principal("user", "service:1")
-    # what str() wrote, read back, for text the app wrote itself
-    assert rowstile.Principal.parse(str(rowstile.Principal("service", "1"))) == rowstile.Principal("service", "1")
+    # what str() wrote, read back, for text the app wrote itself (a job's argument): every principal as itself,
+    # a user whose id holds a colon or is "nobody" too
+    users = ["service:1", "nobody", "google-oauth2:117", "user:5", "a:b", ":", "(1,a:b)", "(1,2)", "", "42"]
+    every = [rowstile.Principal.of(u) for u in users] + [rowstile.NOBODY, rowstile.Principal.of(("service", 1))]
+    every += [rowstile.Principal("service", "3:4"), rowstile.Principal("service", "(1,2)")]
+    assert [rowstile.Principal.parse(str(p)) for p in every] == every
+    written = [str(rowstile.Principal.of(u)) for u in ["service:1", "nobody", "42"]]
+    assert written == ["user:service:1", "user:nobody", "42"]
+    assert [str(rowstile.Principal.of(("service", 1))), str(rowstile.NOBODY)] == ["service:1", "nobody"]
     assert rowstile.Principal.parse("42") == rowstile.Principal("user", "42")
-    assert rowstile.Principal.parse("nobody") == rowstile.NOBODY
 
 
 # 12: the framework's test database has the policy: a database per worker, copied from the migrated one

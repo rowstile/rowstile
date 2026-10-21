@@ -47,6 +47,10 @@ Each release upgrades from the one before it. How releases are numbered and made
   through the other table's row-level security, a `not exists` there could show rows `authz.can` refused. The
   check that inheritance doesn't depend on the time missed `now()` after such a quote too. Applying the policy
   again (or the next migration) brings it in.
+- The SDKs read back every principal they wrote as text: `Principal.parse(str(p))` in Python, and
+  `parsePrincipal(describe(p))` in TypeScript. The user whose id is `service:1` was written `service:1` and read
+  back as service 1; a user whose id is `nobody` came back as nobody. A user whose id holds `:` or is `nobody` is
+  now written `user:<id>` (`user:service:1`), and reads back as that user.
 
 ## 0.1.0 (alpha)
 

@@ -273,10 +273,15 @@ test("10: an id with a colon is a user's, not a service", async () => {
   expect(principal("service:1")).toEqual({ type: "user", id: "service:1" });
   expect(principal(["service", 1])).toEqual({ type: "service", id: "1" });
   expect(await actingAs("service:1", async () => current())).toEqual({ type: "user", id: "service:1" });
-  // what describe() wrote, read back, for text the app wrote itself
-  expect(parsePrincipal(describePrincipal({ type: "service", id: "1" }))).toEqual({ type: "service", id: "1" });
+  // what describe() wrote, read back, for text the app wrote itself (a job's argument): every principal as itself,
+  // a user whose id holds a colon or is "nobody" too
+  const users = ["service:1", "nobody", "google-oauth2:117", "user:5", "a:b", ":", "(1,a:b)", "(1,2)", "", "42"];
+  const every = [...users.map((u) => principal(u)), principal(null), principal(["service", 1]),
+    principal(["service", "3:4"]), principal(["service", "(1,2)"])];
+  expect(every.map((p) => parsePrincipal(describePrincipal(p)))).toEqual(every);
+  expect(["service:1", "nobody", "42"].map((u) => describePrincipal(principal(u)))).toEqual(["user:service:1", "user:nobody", "42"]);
+  expect([describePrincipal(principal(["service", 1])), describePrincipal(principal(null))]).toEqual(["service:1", "nobody"]);
   expect(parsePrincipal("42")).toEqual({ type: "user", id: "42" });
-  expect(parsePrincipal("nobody")).toEqual({ type: "user", id: null });
 });
 
 // 12: the framework's test database has the policy: a database per worker, copied from the migrated one
