@@ -63,6 +63,23 @@ async def not_found(_request: Request, e: NotFound) -> JSONResponse:
     return JSONResponse({"detail": "not found"}, 404)
 
 
+# a unique or foreign key the database refused, by the constraint's name (db/migrations): the answer
+NOT_EMPTY = (
+    "the folder isn't empty: empty it first (it may hold things you can't see, which only their owners can remove)"
+)
+CONSTRAINTS: dict[str, tuple[int, str]] = {
+    "users_email_key": (409, "an account with that email exists already"),
+    "folders_parent_id_name_key": (409, "something with that name is already there"),
+    "files_folder_id_name_key": (409, "something with that name is already there"),
+    # what it still holds may be something this person can't see (a folder someone made inside and stopped
+    # inheritance on): the database keeps it, and says no more than that it is there
+    "folders_parent_id_fkey": (409, NOT_EMPTY),
+    "files_folder_id_fkey": (409, NOT_EMPTY),
+    "groups_parent_id_fkey": (409, "the group has sub-groups: delete them first"),
+    "group_members_user_id_fkey": (404, "no such person"),
+}
+
+
 @app.exception_handler(psycopg.Error)
 async def database_error(request: Request, e: psycopg.Error) -> JSONResponse:
     diag = getattr(e, "diag", None)
@@ -70,18 +87,9 @@ async def database_error(request: Request, e: psycopg.Error) -> JSONResponse:
     r = refusal(e)
     if r:
         return await refused(request, r)
-    if isinstance(e, errors.UniqueViolation):
-        return JSONResponse({"detail": "something with that name is already there"}, 409)
-    if isinstance(e, errors.ForeignKeyViolation):
-        # what it still holds may be something this person can't see (a folder someone made inside and stopped
-        # inheritance on): the database keeps it, and says no more than that it is there
-        return JSONResponse(
-            {
-                "detail": "the folder isn't empty: empty it first (it may hold things you can't see, "
-                "which only their owners can remove)"
-            },
-            409,
-        )
+    known = CONSTRAINTS.get(diag.constraint_name or "") if diag else None
+    if known and isinstance(e, (errors.UniqueViolation, errors.ForeignKeyViolation)):
+        return JSONResponse({"detail": known[1]}, known[0])
     if isinstance(e, errors.ProgramLimitExceeded):  # the storage quota (db migration 0004)
         return JSONResponse({"detail": message}, 413)
     if isinstance(
@@ -410,6 +418,14 @@ def start_upload(folder_id: int, body: NewUpload, user: DictRow = Depends(auth.c
     }
 
 
+def too_large(stored: int, key: str) -> None:
+    """The size claimed when an upload starts is the browser's word, and the signed link takes any length: what
+    arrived is checked too. Too large, it is thrown away (the rows wait for the maintenance job, or another try)."""
+    if stored > settings.max_upload_bytes:
+        storage.discard(key)
+        raise HTTPException(413, "the file is too large")
+
+
 @app.post("/api/files/{file_id}/ready")
 def finish_upload(file_id: int, user: DictRow = Depends(auth.current_user)) -> DictRow | None:
     with db.as_user(user["id"]) as tx:
@@ -417,6 +433,7 @@ def finish_upload(file_id: int, user: DictRow = Depends(auth.current_user)) -> D
         stored = storage.accept(str(row["object_key"]))  # the bytes move to the file's object: the link is spent
         if stored is None:
             raise HTTPException(409, "the file's bytes haven't arrived")
+        too_large(stored, str(row["object_key"]))
         tx.run("UPDATE fm.file_versions SET ready = true, size = %s WHERE object_key = %s", (stored, row["object_key"]))
         return changed(
             tx, "fm.files", file_id, ["ready = true", "size = %s", "updated_at = now()"], [stored], FILE_COLS
@@ -478,6 +495,7 @@ def finish_version(version_id: int, user: DictRow = Depends(auth.current_user)) 
         stored = storage.accept(str(v["object_key"]))
         if stored is None:
             raise HTTPException(409, "the version's bytes haven't arrived")
+        too_large(stored, str(v["object_key"]))
         tx.run("UPDATE fm.file_versions SET ready = true, size = %s WHERE id = %s", (stored, version_id))
         return make_current(tx, dict(v, size=stored))
 
@@ -504,23 +522,48 @@ def download_version(
     return link(row, preview)
 
 
+SEARCH_PAGE = 50
+
+
+def search_page(tx: db.Tx, kind: Kind, pattern: str, after: tuple[str, int] | None) -> tuple[list[DictRow], str | None]:
+    """A page of one list, by name then id (names repeat across folders), after the row `after` names; and where
+    the next page starts, if there is one."""
+    query: LiteralString = (
+        f"SELECT {FOLDER_COLS} FROM fm.folders f WHERE f.name ILIKE %s "
+        if kind == "folder"
+        else f"SELECT {FILE_COLS} FROM fm.files f WHERE f.ready AND f.name ILIKE %s "
+    )
+    if after:
+        query += "AND (f.name, f.id) > (%s, %s) "
+    rows = tx.rows(query + "ORDER BY f.name, f.id LIMIT %s", (pattern, *(after or ()), SEARCH_PAGE + 1))
+    if len(rows) <= SEARCH_PAGE:
+        return rows, None
+    last = rows[SEARCH_PAGE - 1]
+    return rows[:SEARCH_PAGE], f"{last['id']}:{last['name']}"
+
+
 @app.get("/api/search")
-def search(q: str, after: str = "", user: DictRow = Depends(auth.current_user)) -> Answer:
-    """Folders and files whose name contains q, among those the user can see, 50 at a time by name."""
+def search(q: str, kind: Kind | None = None, after: str = "", user: DictRow = Depends(auth.current_user)) -> Answer:
+    """Folders and files whose name contains q, among those the user can see: 50 of each at a time, by name.
+    `next` says where each list's next page starts (null: none); ask for it with kind and after."""
     if len(q) < 2:
         raise HTTPException(400, "type at least two characters")
+    start = None
+    if after:
+        if kind is None:
+            raise HTTPException(400, "say which list the cursor is of (kind)")
+        id_, colon, name = after.partition(":")
+        if not (colon and id_.isascii() and id_.isdigit() and len(id_) < 19):  # an id: a bigint
+            raise HTTPException(400, "that isn't where a page of this search ends")
+        start = (name, int(id_))
     pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    kinds: list[Kind] = [kind] if kind else ["folder", "file"]
+    lists: dict[Kind, list[DictRow]] = {"folder": [], "file": []}
+    following: dict[Kind, str | None] = {"folder": None, "file": None}
     with db.as_user(user["id"]) as tx:
-        folders = tx.rows(
-            f"SELECT {FOLDER_COLS} FROM fm.folders f WHERE f.name ILIKE %s AND f.name > %s ORDER BY f.name LIMIT 50",
-            (pattern, after),
-        )
-        files = tx.rows(
-            f"SELECT {FILE_COLS} FROM fm.files f WHERE f.ready AND f.name ILIKE %s AND f.name > %s "
-            f"ORDER BY f.name LIMIT 50",
-            (pattern, after),
-        )
-    return {"folders": folders, "files": files}
+        for k in kinds:
+            lists[k], following[k] = search_page(tx, k, pattern, start)
+    return {"folders": lists["folder"], "files": lists["file"], "next": following}
 
 
 # --- groups: made and run by the people in them ------------------------------------------------

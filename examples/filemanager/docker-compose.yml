@@ -15,9 +15,11 @@ services:
     environment: {RUSTFS_ACCESS_KEY: rustfsadmin, RUSTFS_SECRET_KEY: rustfsadmin}
     ports: ["29000:9000"]
     volumes: [files:/data]
+    # the app makes its bucket at start: it waits until RustFS answers, not only until it has started
+    healthcheck: {test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9000/health"], interval: 2s, retries: 30}
   app:
     build: {context: ../.., dockerfile: examples/filemanager/backend/Dockerfile}
-    depends_on: {db: {condition: service_healthy}, storage: {condition: service_started}}
+    depends_on: {db: {condition: service_healthy}, storage: {condition: service_healthy}}
     environment:
       FM_ADMIN_URL: postgresql://postgres:postgres@db:5432/filemanager
       FM_APP_PASSWORD: fm_app

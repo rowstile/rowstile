@@ -10,6 +10,8 @@ export interface Group { id: string; name: string; parent_id: string | null; mem
 export interface Member { id: string; email: string; name: string; is_admin: boolean }
 export interface Folder { id: number; parent_id: number | null; name: string; owner_id: string; inherit: boolean; created_at: string; mine?: boolean }
 export interface FileRow { id: number; folder_id: number; name: string; owner_id: string; size: number; content_type: string; created_at: string; updated_at: string }
+/** A page of search results: each list's next page starts at its cursor in `next` (null: no more). */
+export interface SearchPage { folders: Folder[]; files: FileRow[]; next: { folder: string | null; file: string | null } }
 export interface FolderPage { folder: Folder; path: { id: number; name: string }[]; folders: Folder[]; files: FileRow[]; perms: string[] }
 export interface ShareRow { relation: Relation; subject_type: "user" | "group"; subject_id: string; subject_relation: string;
                             subject_name: string | null; expires_at: string | null; created_by: string | null }
@@ -75,7 +77,8 @@ export const api = {
   restoreVersion: (id: number) => call<FileRow>("POST", `/api/versions/${id}/restore`),
   versionUrl: (id: number) => call<{ url: string }>("GET", `/api/versions/${id}/download`),
   previewUrl: (id: number) => call<{ url: string; content_type: string }>("GET", `/api/files/${id}/download?preview=true`),
-  search: (q: string) => call<{ folders: Folder[]; files: FileRow[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`),
+  search: (q: string, more?: { kind: Kind; after: string }) => call<SearchPage>("GET", `/api/search?q=${encodeURIComponent(q)}` +
+    (more ? `&kind=${more.kind}&after=${encodeURIComponent(more.after)}` : "")),
   createGroup: (name: string, parent_id: string | null) => call<Group>("POST", "/api/groups", { name, parent_id }),
   renameGroup: (id: string, name: string) => call<void>("PATCH", `/api/groups/${id}`, { name }),
   deleteGroup: (id: string) => call<void>("DELETE", `/api/groups/${id}`),

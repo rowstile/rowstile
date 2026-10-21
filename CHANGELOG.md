@@ -515,6 +515,13 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   delete rule hides was no refusal at all (a 500); it is a 403 with no command, since Postgres doesn't say which
   rule. And in Python a refusal by a restrictive policy rowstile didn't make is no longer read as the select
   rule's: it stays the database's error, as in TypeScript.
+- The file manager example: its errors said "the folder isn't empty" for a group with sub-groups and for a member
+  who has no account, and "something with that name is already there" for an email that has an account; each
+  now says what it is, from the constraint's name. Search pages by name then id, each list with its own cursor,
+  and the web app shows "More": a page that ended among equal names (they repeat across folders) skipped the
+  rest of them, and the web app stopped at 50. `FM_MAX_UPLOAD_BYTES` holds for the bytes an upload sends, not
+  only for the size it claims. Two uploads committing at the same time could together pass the storage quota;
+  the second now waits for the first (a migration). The app waits for RustFS to answer before it starts.
 
 ## 0.1.0 (alpha)
 
