@@ -286,7 +286,7 @@ each feature against each suite.
 | What apps see of a refusal: each code's SQLSTATE and HTTP answer, the reason in the error | 1 | [app-code](reference/app-code.md) | `unit_test.py`, `reference.sh`, `adversarial.sh`, `integrations/fastapi`, `integrations/nextjs` | `around.py` |
 | Applying a policy: `rowstile apply`, `check`, `push`, `diff`, `remove` | 1 | [tools](reference/tools.md) | `apply.sh`, `cli.sh`, `migrations.sh`, `children.sh` | `interrupt.py`, `around.py`, `migrate_test.py` |
 | Migrations: `rowstile migrate`, the lock file, trees built beside then swapped in | 1 | [migrations](reference/migrations.md) | `migrations.sh`, `unit_test.py` | `migrate_test.py`, `interrupt.py` |
-| Upgrading rowstile: `rowstile reapply`, migrations from an older release (from the beta on) | 1 | [migrations](reference/migrations.md) | `upgrade.sh`, `unit_test.py`, `apply.sh` | `upgrade_world.py` |
+| Upgrading rowstile: `rowstile reapply`, migrations from an older release (from the beta on) | 1 | [migrations](reference/migrations.md) | `upgrade.sh`, `unit_test.py`, `apply.sh`, `cli.sh` | `upgrade_world.py` |
 | Running the policy's tests: `rowstile test` | 2 | [tools](reference/tools.md) | `cli.sh`, `devx.sh`, `confidence_test.py` |  |
 | Asking the database as someone: `rowstile can`, `explain`, `perms`, `list`, `who`, `explain-rule`, `sql` | 2 | [tools](reference/tools.md) | `cli.sh`, `devx.sh`, `capitals.sh` |  |
 | What would grant a permission: `rowstile why` | 2 | [tools](reference/tools.md) | `studio_test.py`, `unit_test.py` |  |

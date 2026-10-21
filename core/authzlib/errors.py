@@ -633,7 +633,9 @@ CODES = {
         "written now would be that step back, though it would read like an upgrade. An old global install, a CI "
         "image pinned to an older version or one machine that wasn't upgraded are the usual causes: upgrade the "
         "command there. To go back to the older version on purpose, add `--downgrade` (`rowstile apply`, `push`, "
-        "`migrate` and `remove` take it). Development builds of the same version can't be told apart, and are never refused.",
+        "`migrate` and `remove` take it). Development builds of the same version can't be told apart, and are never refused. "
+        "A question to such a database (`rowstile can`, `explain-rule`, ...) that calls a function the newer "
+        "version doesn't make, or makes with other arguments, stops with this code too: upgrade the command.",
         "",
         "",
         when="command",
@@ -745,6 +747,16 @@ CODES = {
         "type file = app.files\n  owner : user = owner_id\n  can view = owner\nrules app.files\n  select : view\n"
         "  cascade from app.users (owner_id)\n",
         when="apply",
+    ),
+    "AZ626": Code(
+        "A policy applied by another version of rowstile",
+        "The command called an `authz.*` function that the policy in force doesn't have, or doesn't have with the "
+        "arguments this version gives it: another version of rowstile applied that policy, and the message names "
+        "it. The usual cause is a command upgraded and a database not yet. Make the database what this version "
+        "makes: `rowstile reapply` on a database that doesn't take migrations; elsewhere `rowstile migrate`, then "
+        "deploy the migration as any other. A function name rowstile doesn't make, or arguments no function "
+        "takes, is said in Postgres's own words instead.",
+        when="command",
     ),
     "AZ701": Code(
         "Nobody signed in",

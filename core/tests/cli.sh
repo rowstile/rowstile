@@ -91,6 +91,14 @@ echo "-- the command line: options anywhere, arguments counted"
 run who folder 1 view; case "$out" in *"no policy is applied"*"AZ609"*) [ $rc -eq 1 ] && ok "who with no policy applied: the same message as the other commands" || bad "who exit" "$rc";; *) bad "who without a policy" "$out";; esac
 CLI apply "$T/main.authz" >/dev/null 2>&1
 dropdb --if-exists "${DB}_other" 2>/dev/null; createdb "${DB}_other"
+# an authz.* function called where no policy was ever applied: no schema authz, then the schema alone
+none=$'1 no policy is applied [AZ609]\nHINT: rowstile apply db/policy.authz'
+out=$(python3 cli/rowstile_cli.py --db "dbname=${DB}_other" sql --as user:1 "SELECT authz.uid()" 2>&1); rc=$?
+[ "$rc $out" = "$none" ] && ok "sql calling authz.* where there is no schema authz: no policy is applied" || bad "sql, no schema authz" "$rc $out"
+psql -X -q -d "${DB}_other" -c "CREATE SCHEMA authz"
+out=$(python3 cli/rowstile_cli.py --db "dbname=${DB}_other" sql --as user:1 "SELECT authz.uid()" 2>&1); rc=$?
+[ "$rc $out" = "$none" ] && ok "... and where the schema is there but no policy was applied: the same" || bad "sql, schema authz alone" "$rc $out"
+psql -X -q -d "${DB}_other" -c "DROP SCHEMA authz"
 out=$(PGDATABASE="${DB}_other" python3 cli/rowstile_cli.py lint --db "dbname=$DB" 2>&1); rc=$?
 case "$out" in *"no policy is applied"*) bad "--db after the command is not read: the default database was used" "$out";; *) ok "--db after the command names the database";; esac
 out=$(PGDATABASE="${DB}_other" python3 cli/rowstile_cli.py apply "$T/main.authz" --db "dbname=$DB" 2>&1); rc=$?
@@ -252,6 +260,34 @@ out=$(timeout 20 python3 cli/rowstile_cli.py --db "dbname=$DB" sql --as user:5 "
 [ "$rc $out" = "1 COPY from stdin failed: the rowstile command sends no rows to COPY FROM STDIN (psql's \\copy does)" ] &&
   ok "sql with a COPY FROM STDIN says the command sends no rows, at once" || bad "sql COPY FROM STDIN" "$rc $out"
 PSQL -c "DROP TABLE app.cli_inbox"
+# an authz.* function the database doesn't have: the server's words when this command applied the policy in force
+# (a name rowstile doesn't make, arguments no function takes), and what to do when another version applied it
+nosuch=$'\nHINT: No function matches the given name and argument types. You might need to add explicit type casts.'
+run sql --as user:5 "SELECT authz.cann('folder', 1, 'view')"
+[ "$rc $out" = "1 function authz.cann(unknown, integer, unknown) does not exist$nosuch" ] &&
+  ok "sql calling a function rowstile doesn't make: the server's words, not that no policy is applied" || bad "sql, a name rowstile doesn't make" "$rc $out"
+run sql --as user:5 "SELECT authz.can('folder')"
+[ "$rc $out" = "1 function authz.can(unknown) does not exist$nosuch" ] &&
+  ok "... and one it makes, with arguments it doesn't take: the server's words too" || bad "sql, arguments no function takes" "$rc $out"
+build=$(python3 -c "import authzlib; print(authzlib.BUILD)")
+run explain-rule --as user:1 app.files update 11; was="$rc $out"
+PSQL -c "DROP FUNCTION authz.explain_rule" -c "UPDATE authz.policy_versions SET version = '0.0.1' WHERE id = (SELECT max(id) FROM authz.policy_versions)"
+run explain-rule --as user:3 app.files update 11
+[ "$rc $out" = "1 authz.explain_rule isn't in the policy in force as this command calls it: rowstile 0.0.1 applied it, and this command is $build [AZ626]
+HINT: rowstile reapply (a database that takes migrations: rowstile migrate, then deploy the migration)" ] &&
+  ok "a function an older rowstile didn't make: which version applied the policy, and rowstile reapply (AZ626)" || bad "a function an older version didn't make" "$rc $out"
+run sql --as user:5 "SELECT authz.cann('folder', 1, 'view')"
+[ "$rc $out" = "1 function authz.cann(unknown, integer, unknown) does not exist$nosuch" ] &&
+  ok "... a name rowstile doesn't make, called there: still the server's words" || bad "sql, a name rowstile doesn't make, older policy" "$rc $out"
+PSQL -c "UPDATE authz.policy_versions SET version = '99.0.0' WHERE id = (SELECT max(id) FROM authz.policy_versions)"
+run explain-rule --as user:3 app.files update 11
+[ "$rc $out" = "1 authz.explain_rule isn't in the policy in force as this command calls it: rowstile 99.0.0 applied it, which is newer than this command ($build) [AZ616]
+HINT: upgrade the rowstile command" ] &&
+  ok "... one a newer rowstile applied: upgrade the command (AZ616)" || bad "a function a newer version didn't make" "$rc $out"
+PSQL -c "UPDATE authz.policy_versions SET version = '0.0.1' WHERE id = (SELECT max(id) FROM authz.policy_versions)"
+run reapply; [ "$rc $out" = "0 applied again" ] && run explain-rule --as user:1 app.files update 11
+[ "$rc $out" = "$was" ] && case "$was" in "0 yes"*) true;; *) false;; esac &&
+  ok "... and rowstile reapply makes it, as the hint says" || bad "reapply after an older version" "$rc $out"
 
 echo "-- files that can't be read as they should"
 { cat example/docs.authz; printf -- '-- caf\351\n'; } > "$T/latin.authz"

@@ -5,7 +5,7 @@ adversarial 112
 apply 154
 capitals 98
 children 100
-cli 152
+cli 160
 concurrency 35
 confidence 64
 cookbook 102

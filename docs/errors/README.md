@@ -82,6 +82,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ623](AZ623.md): Too many people for a snapshot
 - [AZ624](AZ624.md): The app role is the policy's owner
 - [AZ625](AZ625.md): A cascade line that names no foreign key
+- [AZ626](AZ626.md): A policy applied by another version of rowstile
 
 ## What apps see
 

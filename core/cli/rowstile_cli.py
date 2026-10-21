@@ -576,15 +576,23 @@ def file_problem(e: OSError) -> str | None:
     return None if e.filename is None else f"{relative(str(e.filename))}: {e.strerror}"
 
 
-def database_stopped(e: pgwire.PgError | pgwire.ProtocolError | OSError) -> NoReturn:
+def database_stopped(
+    e: pgwire.PgError | pgwire.ProtocolError | OSError, conn: pgwire.Connection | None = None
+) -> NoReturn:
     """Says what stopped a command on its database: the server's words, with their detail and hint (exit 1); or,
     when the server ended the session or the connection broke, that the database was lost (exit 2). An error that
-    names a file is that file's."""
+    names a file is that file's. A missing authz.* function is asked about on conn (its transaction rolled back
+    already): no policy, or one another version of rowstile applied, is said as the other commands say it."""
     if isinstance(e, pgwire.PgError):
-        if (e.code == "3F000" and 'schema "authz"' in e.message) or (
-            e.code == "42883" and "function authz." in e.message
-        ):
-            fail("no policy is applied [AZ609]\nHINT: rowstile apply db/policy.authz")  # as the other commands say it
+        if e.code == "3F000" and 'schema "authz"' in e.message:
+            none = database.no_policy()
+            fail(f"{none}\nHINT: {none.hint}")  # as the other commands say it
+        if e.code == "42883" and "function authz." in e.message and conn is not None:
+            missing = None
+            with contextlib.suppress(pgwire.PgError, pgwire.ProtocolError, OSError):  # then the server's words
+                missing = transaction(conn, lambda db: database.missing_function(db, e.message), keep=False)
+            if missing is not None:
+                fail(f"{missing}\nHINT: {missing.hint}")
         if e.fields.get("S") in ("FATAL", "PANIC"):
             fail(f"lost the database: {e.message}", 2)
         detail, hint = e.fields.get("D"), e.fields.get("H")
@@ -1437,7 +1445,7 @@ def main(argv: list[str]) -> None:
     except database.Error as e:
         fail(str(e) + (f"\nHINT: {e.hint}" if e.hint else ""))
     except (pgwire.PgError, pgwire.ProtocolError, OSError) as e:
-        database_stopped(e)
+        database_stopped(e, conn)
     except Unreadable as e:
         fail(str(e), 2)
     except RecursionError:

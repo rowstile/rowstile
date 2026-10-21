@@ -176,7 +176,8 @@ values nothing else uses, or let the database make the ids (`RETURNING id`).
 
 `rowstile reapply` after installing a new version. A build from this repository's `main` (a version ending in
 `-dev`) records a hash of its compiler, so `rowstile apply` applies again after the compiler changed; if it
-still says `unchanged`, use `rowstile apply --force`.
+still says `unchanged`, use `rowstile apply --force`. Until then, a command that calls a function the old policy
+doesn't have names the version that applied it (AZ626).
 
 ## `authz.verify()` says false
 
