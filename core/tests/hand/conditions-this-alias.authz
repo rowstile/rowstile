@@ -4,7 +4,8 @@
 -- service signs in, o in authz.can and authz.list, r in the views another type looks into and in the inheritance
 -- tables, c in an inheritance table of two relations, s for a link table's row (x in the audit trail, which
 -- tests/governance.sh asks), share in shared if. browse reads the row's own table by its name, as the select rule
--- has it. A mark (ref_id) blocks a row; a seal stops what a folder inherits.
+-- has it. A mark (ref_id) blocks a row; a seal stops what a folder inherits. peek names one column in two cases
+-- (this.ID, this.id): one column, as Postgres folds names.
 app role app_user
 
 type user = app.users where {not exists (select 1 from app.marks u where u.ref_id = this.id and u.kind = 'user')}
@@ -17,6 +18,7 @@ type folder = app.folders
   can share  = owner
   can view   = owner and {not exists (select 1 from app.marks o where o.ref_id = this.id and o.kind = 'folder')}
   can open   = owner and {not exists (select 1 from app.marks r where r.ref_id = this.id and r.kind = 'folder')}
+  can peek   = owner and {not exists (select 1 from app.marks o where o.ref_id = this.ID and o.ref_id = this.id and o.kind = 'peek')}
   can browse = (owner or viewer) and {not exists (select 1 from app.folders where parent_id = this.id)}
   can read   = owner or (parent.read and {not exists (select 1 from app.marks r where r.ref_id = this.id and r.kind = 'seal')})
   can reach  = owner or (parent.reach and {not exists (select 1 from app.marks c where c.ref_id = this.id and c.kind = 'seal')})
@@ -45,7 +47,7 @@ test "this. names the row, whatever the condition's subquery calls its table"
   given {INSERT INTO app.files (id, folder_id, owner_id) VALUES (11, 1, 1), (13, 3, 1), (14, 4, 2), (15, 5, 2)}
   given {INSERT INTO app.projects (id) VALUES (1)}
   given {INSERT INTO app.memberships (id, project_id, user_id) VALUES (1, 1, 2), (2, 1, 3)}
-  given {INSERT INTO app.marks VALUES (100, 5, 'user', NULL), (101, 7, 'service', NULL), (102, 3, 'folder', NULL), (103, 1, 'membership', NULL), (104, NULL, 'invite', '2'), (105, 4, 'seal', NULL)}
+  given {INSERT INTO app.marks VALUES (100, 5, 'user', NULL), (101, 7, 'service', NULL), (102, 3, 'folder', NULL), (103, 1, 'membership', NULL), (104, NULL, 'invite', '2'), (105, 4, 'seal', NULL), (106, 3, 'peek', NULL)}
   as user 5 sees 0 {SELECT authz.uid() WHERE authz.uid() IS NOT NULL}
   as user 1 sees 1 {SELECT authz.uid() WHERE authz.uid() IS NOT NULL}
   as service 7 sees 0 {SELECT FROM authz.principal()}
@@ -53,6 +55,9 @@ test "this. names the row, whatever the condition's subquery calls its table"
   user 1 can view folder 1
   user 1 cannot view folder 3
   as user 1 sees 2 {SELECT x FROM authz.list('folder', 'view') x}
+  user 1 can peek folder 1
+  user 1 cannot peek folder 3
+  as user 1 sees 2 {SELECT x FROM authz.list('folder', 'peek') x WHERE x IN ('1', '2', '3')}
   user 1 can read folder 5
   user 1 cannot read folder 4
   user 1 can reach folder 5

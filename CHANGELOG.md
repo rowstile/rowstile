@@ -86,6 +86,17 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `authz.sync_members()` given NULL for the list removed every member of the group (a sync job's failed fetch
   emptied the team), and a NULL in the list failed with Postgres's not-null error from the app's table. Both are
   now refused, saying to list the members with no NULL (AZ710, a 400 in the SDKs); an empty list still means none.
+- A condition with a string or a comment that names `authz.uid()` (`{note <> 'set by authz.uid()'}`) compared
+  with another string in `authz.can`, `authz.list` and the rules: rowstile rewrote the call inside the string
+  too. Only the condition's code is rewritten now.
+- A condition that names a column of its row in two cases (`this.ID` and `this.id`) inside a subquery failed
+  with `column reference "id" is ambiguous`. Both are one column now, as Postgres reads unquoted names.
+- A condition that limits inheritance and reads another table could call `age(x)` with one argument, which
+  counts from today: the stored inheritance went stale without a word. It is refused (AZ305), and so are
+  `current_schema`, `current_catalog`, `current_database()`, `system_user`, `random_normal()`,
+  `gen_random_uuid()`, `uuidv4()`, `uuidv7()`, `authz.principal()`, `pg_backend_pid()`, `txid_current()` and
+  `pg_current_xact_id()`. The language reference and AZ305's page list all it refuses. A column named like one
+  of these functions (`now`, `random`) is no longer refused.
 - `rowstile init` stopped with a Python traceback (`KeyError`) when the table the columns naming users point to
   wasn't among the drafted ones: in another schema (as Supabase's `auth.users`, with `--schema public`), or left
   out for its name. It now says which table, which columns point to it, and what to do: draft its schema too,

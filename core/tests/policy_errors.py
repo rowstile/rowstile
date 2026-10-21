@@ -257,6 +257,13 @@ COMPILE = [
         10,
     ),
     (
+        "inheritance that depends on the time through age(), beside a subquery, where applying wouldn't find it",
+        "  can view = owner or (parent.view and {age(created) < interval '1 year' and not exists "
+        "(select 1 from alt.holds h where h.target = this.doc_no)})\n",
+        "can't limit inheritance: it depends on age() with one argument, which counts from today",
+        10,
+    ),
+    (
         "a group made only of itself",
         "type team = alt.groups (gid)\n  member : team#member shared by x\n  can x = member\n",
         "team.member only contains itself; add a source of users",
