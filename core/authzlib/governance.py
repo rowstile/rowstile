@@ -687,12 +687,12 @@ END $f$;"""
                 f"-- invariant ({inv.loc}): never {t.name}: {inv.src}\n",
                 t,
             )
-            checks.append(f"""      v_ids := ARRAY(SELECT id::text FROM authz_int.{q(view)} ORDER BY 1 LIMIT 5);
-      IF cardinality(v_ids) > 0 THEN
-        invariant := {lit(f"never {t.name}: {inv.src} (")} || {self.line_sql(f"invariant never {t.name}: {inv.src}", inv.loc)} || ')'; user_id := nullif({principal_text("v_p", "v_u")}, ''); object_ids := v_ids;
-        RETURN NEXT;
-      END IF;""")
-        body = "\n".join(checks) if checks else "      NULL;"
+            checks.append(f"""    v_ids := ARRAY(SELECT id::text FROM authz_int.{q(view)} ORDER BY 1 LIMIT 5);
+    IF cardinality(v_ids) > 0 THEN
+      invariant := {lit(f"never {t.name}: {inv.src} (")} || {self.line_sql(f"invariant never {t.name}: {inv.src}", inv.loc)} || ')'; user_id := nullif({principal_text("v_p", "v_u")}, ''); object_ids := v_ids;
+      RETURN NEXT;
+    END IF;""")
+        body = "\n".join(checks) if checks else "    NULL;"
         return f"""-- Invariants: checked as everyone who can sign in (named as the audit trail names them: '42', 'user:a:b',
 -- 'service:3') and as nobody; returns the violations
 CREATE FUNCTION authz.check_invariants() RETURNS TABLE (invariant text, user_id text, object_ids text[])
@@ -700,21 +700,13 @@ LANGUAGE plpgsql {DEF} AS $f$
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_pt text := coalesce(current_setting('authz.principal_type', true), '');
         v_scopes text := coalesce(current_setting('authz.scopes', true), ''); v_p text; v_u text; v_ids text[];
 BEGIN
-  BEGIN
-    PERFORM set_config('authz.scopes', '', true);
-    FOR v_p, v_u IN SELECT '', '' UNION ALL {people} LOOP
-      PERFORM set_config('authz.principal_type', v_p, true);
-      PERFORM set_config('authz.user_id', v_u, true);
-      PERFORM authz_int.sign();
-{body}
-    END LOOP;
-  EXCEPTION WHEN OTHERS THEN
-    PERFORM set_config('authz.user_id', v_me, true);
-    PERFORM set_config('authz.principal_type', v_pt, true);
-    PERFORM set_config('authz.scopes', v_scopes, true);
+  PERFORM set_config('authz.scopes', '', true);
+  FOR v_p, v_u IN SELECT '', '' UNION ALL {people} LOOP
+    PERFORM set_config('authz.principal_type', v_p, true);
+    PERFORM set_config('authz.user_id', v_u, true);
     PERFORM authz_int.sign();
-    RAISE;
-  END;
+{body}
+  END LOOP;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);

@@ -5554,15 +5554,10 @@ BEGIN
     RAISE EXCEPTION 'authz.who_among() signs people in, which a session limited by scopes or view-as may not'
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;
-  BEGIN
-    FOREACH v_u IN ARRAY coalesce(p_users, '{}') LOOP
-      PERFORM authz.act_as(p_principal_type, v_u);
-      IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_u; END IF;
-    END LOOP;
-  EXCEPTION WHEN OTHERS THEN
-    PERFORM authz.act_as(v_pt, v_me);
-    RAISE;
-  END;
+  FOREACH v_u IN ARRAY coalesce(p_users, '{}') LOOP
+    PERFORM authz.act_as(p_principal_type, v_u);
+    IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_u; END IF;
+  END LOOP;
   PERFORM authz.act_as(v_pt, v_me);
 END $f$;
 CREATE OR REPLACE FUNCTION authz.who_among(p_type text, p_id bigint, p_perm text, p_users text[], p_principal_type text DEFAULT 'user') RETURNS SETOF text LANGUAGE sql VOLATILE AS
@@ -6567,10 +6562,11 @@ BEGIN
   IF NOT authz_int.may_inspect(p_type, p_id) OR NOT authz_int.scope_perm(p_type, p_perm) THEN
     RAISE EXCEPTION 'you cannot see who has access to % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
-  BEGIN
-    PERFORM set_config('authz.scopes', '', true);   -- each candidate is checked with full rights
-    PERFORM set_config('authz.principal_type', '', true);   -- candidates are users
-    CASE p_type
+  -- (the caller's settings are put back below; an error needs nothing put back: Postgres undoes these settings with
+  -- the transaction, or the savepoint the error is caught at, as for explain, check_invariants and the logins)
+  PERFORM set_config('authz.scopes', '', true);   -- each candidate is checked with full rights
+  PERFORM set_config('authz.principal_type', '', true);   -- candidates are users
+  CASE p_type
     WHEN 'user' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
       v_bigint := p_id::bigint;
@@ -6722,13 +6718,6 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';
   END CASE;
-  EXCEPTION WHEN OTHERS THEN
-    PERFORM set_config('authz.user_id', v_me, true);
-    PERFORM set_config('authz.principal_type', v_pt, true);
-    PERFORM set_config('authz.scopes', v_scopes, true);
-    PERFORM authz_int.sign();
-    RAISE;
-  END;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);
@@ -6756,17 +6745,16 @@ BEGIN
     RETURN NEXT 'no   you have no access to ' || p_type || ' ' || p_id;
     RETURN;
   END IF;
-  BEGIN
-    IF p_user IS NOT NULL THEN
-      PERFORM set_config('authz.user_id', p_user, true);
-      PERFORM set_config('authz.principal_type', '', true);
-      PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
-      PERFORM authz_int.sign();
-    END IF;
-    v_ok := authz.can(p_type, p_id, p_perm);
-    RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
-      || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
-    CASE p_type
+  IF p_user IS NOT NULL THEN
+    PERFORM set_config('authz.user_id', p_user, true);
+    PERFORM set_config('authz.principal_type', '', true);
+    PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
+    PERFORM authz_int.sign();
+  END IF;
+  v_ok := authz.can(p_type, p_id, p_perm);
+  RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
+    || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
+  CASE p_type
     WHEN 'user' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
       v_bigint := p_id::bigint;
@@ -6823,13 +6811,6 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';
   END CASE;
-  EXCEPTION WHEN OTHERS THEN
-    PERFORM set_config('authz.user_id', v_me, true);
-    PERFORM set_config('authz.principal_type', v_pt, true);
-    PERFORM set_config('authz.scopes', v_scopes, true);
-    PERFORM authz_int.sign();
-    RAISE;
-  END;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);
@@ -6865,21 +6846,13 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_pt text := coalesce(current_setting('authz.principal_type', true), '');
         v_scopes text := coalesce(current_setting('authz.scopes', true), ''); v_p text; v_u text; v_ids text[];
 BEGIN
-  BEGIN
-    PERFORM set_config('authz.scopes', '', true);
-    FOR v_p, v_u IN SELECT '', '' UNION ALL SELECT '', x."id"::text FROM "cx"."users" x LOOP
-      PERFORM set_config('authz.principal_type', v_p, true);
-      PERFORM set_config('authz.user_id', v_u, true);
-      PERFORM authz_int.sign();
-      NULL;
-    END LOOP;
-  EXCEPTION WHEN OTHERS THEN
-    PERFORM set_config('authz.user_id', v_me, true);
-    PERFORM set_config('authz.principal_type', v_pt, true);
-    PERFORM set_config('authz.scopes', v_scopes, true);
+  PERFORM set_config('authz.scopes', '', true);
+  FOR v_p, v_u IN SELECT '', '' UNION ALL SELECT '', x."id"::text FROM "cx"."users" x LOOP
+    PERFORM set_config('authz.principal_type', v_p, true);
+    PERFORM set_config('authz.user_id', v_u, true);
     PERFORM authz_int.sign();
-    RAISE;
-  END;
+    NULL;
+  END LOOP;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);
@@ -7038,8 +7011,6 @@ BEGIN
   PERFORM set_config('authz.acting_user', '', true);
   PERFORM authz_int.sign();
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) THEN
-    PERFORM set_config('authz.user_id', '', true);
-    PERFORM set_config('authz.principal_type', '', true);
     RAISE EXCEPTION 'invalid API key' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703';
   END IF;
   -- when it was last used, to the minute: never waiting on another request with the key (the row they
@@ -7129,8 +7100,6 @@ BEGIN
   END IF;
   PERFORM authz_int.sign();
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) THEN
-    PERFORM set_config('authz.user_id', '', true);
-    PERFORM set_config('authz.principal_type', '', true);
     RAISE EXCEPTION 'the token names no active user' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703';
   END IF;
   PERFORM authz_int.jit_off();
@@ -7141,8 +7110,7 @@ END $f$;
 -- SELECT authz.view_as('42', 'ticket 1234')  (the user type has no impersonate permission: administrators only)
 CREATE OR REPLACE FUNCTION authz.view_as(p_user text, p_reason text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE v_me text := nullif(current_setting('authz.user_id', true), '');
-        v_pt text := coalesce(current_setting('authz.principal_type', true), ''); v_actor text := authz_int.actor();
+DECLARE v_actor text := authz_int.actor();
 BEGIN
   PERFORM authz_int.users_only('authz.view_as');
   IF coalesce(current_setting('authz.acting_user', true), '') <> '' THEN
@@ -7159,9 +7127,6 @@ BEGIN
   PERFORM set_config('authz.principal_type', '', true);
   PERFORM authz_int.sign();
   IF authz.uid() IS NULL THEN
-    PERFORM set_config('authz.user_id', coalesce(v_me, ''), true);
-    PERFORM set_config('authz.principal_type', v_pt, true);
-    PERFORM authz_int.sign();
     RAISE EXCEPTION 'there is no active user %', p_user USING HINT = 'rowstile help AZ708';
   END IF;
   PERFORM set_config('authz.acting_user', coalesce(v_actor, authz_int.caller_role()), true);
