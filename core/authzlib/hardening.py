@@ -37,7 +37,7 @@ class LintMixin(Core):
         (app_functions) and on the API; authz_int's functions keep PUBLIC's EXECUTE (the rules and the views call them
         as the app role; nobody else may use the schema).
         Anything else comes from the owner's default privileges or a grant made since."""
-        app = f"{lit(self.role)}::regrole"
+        app = f"{lit(q(self.role))}::regrole"
         api = "ARRAY[" + ", ".join(lit(f) for f in self.api_signatures()) + "]::regprocedure[]"
         who = "LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw"
         ours = "(SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int'))"
@@ -337,7 +337,7 @@ LANGUAGE sql STABLE SET search_path FROM CURRENT AS $f$ SELECT pg_catalog.curren
 -- Leaks: SELECT * FROM authz.lint()  (administrators; run after schema changes)
 CREATE FUNCTION authz.lint() RETURNS TABLE (severity text, object text, problem text)
 LANGUAGE plpgsql STABLE {DEF} AS $f$
-DECLARE r record; v_role oid := to_regrole({lit(role)});
+DECLARE r record; v_role oid := to_regrole({lit(q(role))});
 BEGIN
   IF v_role IS NULL THEN
     severity := 'error'; object := {lit(role)}; problem := 'the app role does not exist'; RETURN NEXT; RETURN;
@@ -645,7 +645,7 @@ END $f$;"""
 -- 'error': the rules don't apply to the role this connection runs as. No rows: all is well.
 CREATE FUNCTION authz.connection_check() RETURNS TABLE (severity text, problem text)
 LANGUAGE plpgsql STABLE {DEF} AS $f$
-DECLARE v_me oid := to_regrole(authz_int.caller_role()); v_app oid := to_regrole({lit(role)}); r record;
+DECLARE v_me oid := (SELECT oid FROM pg_roles WHERE rolname = authz_int.caller_role()); v_app oid := to_regrole({lit(q(role))}); r record;
 BEGIN
   IF (SELECT rolsuper FROM pg_roles WHERE oid = v_me) THEN
     severity := 'error'; problem := format('%s is a superuser: row-level security does not apply to it', v_me::regrole);

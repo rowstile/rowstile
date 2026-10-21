@@ -126,6 +126,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   explain a refused write, and the policies that call them, named every column of the row; now they pass the
   whole row and name only the columns the rules read. A column a rule reads still can't be dropped before the
   policy stops reading it.
+- An app role named with capitals works. `app role AppUser` names the role `"AppUser"`, as written, as a
+  table's name is. The rules and grants went to `appuser` (Postgres reads an unquoted name in lower case),
+  while masks and the named tests looked for `AppUser`, and failed with "role ... does not exist".
+  `authz.connection_check()` didn't find a connection's role named with capitals, and said nothing of it.
+  `rowstile init --role AppUser` quotes the name in the `CREATE ROLE` it says to run. A policy that names a
+  role made without quotes (`CREATE ROLE App_User` makes `app_user`) writes it in lower case.
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed

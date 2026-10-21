@@ -415,6 +415,12 @@ case "$out" in *"to your Python dependencies"*|*"(app_user)"*) bad "init in a Fa
   *"found   FastAPI, SQLAlchemy, Alembic"*"Rowstile(app, engine"*"connects as (tracker_app)"*) ok "init finds FastAPI through rowstile's extras, and names the policy's role";;
   *) bad "init in a FastAPI app" "$out";; esac
 grep -q "(tracker_app)" "$T/f/db/tests/first.authz" && ok "... in the first test file too" || bad "init: the role in the test file" "$(cat "$T/f/db/tests/first.authz")"
+# a role named with capitals: the policy names it as written, and the CREATE ROLE to run quotes it
+mkdir -p "$T/rc"
+out=$(cd "$T/rc" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --role TrackerApp 2>&1)
+case "$out" in *'CREATE ROLE "TrackerApp" LOGIN'*) grep -q "^app role TrackerApp " "$T/rc/db/policy.authz" &&
+  ok "init with a role named with capitals: the policy names it, the CREATE ROLE quotes it" || bad "init: the role with capitals in the policy" "$(head -8 "$T/rc/db/policy.authz")";;
+  *) bad "init: CREATE ROLE for a role with capitals" "$out";; esac
 # a FastAPI app that doesn't depend on rowstile yet: what to add to its dependencies, with the extras it uses
 mkdir -p "$T/fa"
 printf 'fastapi>=0.110\nsqlalchemy\n' > "$T/fa/requirements.txt"
