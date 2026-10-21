@@ -300,6 +300,11 @@ def test_groups_are_run_by_their_owners_and_admins() -> None:
     assert ben.get(f"/api/folders/{folder['id']}").status_code == 200
     assert cat.get(f"/api/folders/{folder['id']}").status_code == 404  # she left
     assert dan.delete(f"/api/groups/{g['id']}").status_code == 403
+    # its owner deletes a group with members: the app removes them first, through the rules (no cascade does)
+    gone = ann.post("/api/groups", json={"name": f"Gone {uuid.uuid4().hex[:6]}"}).json()
+    assert ann.post(f"/api/groups/{gone['id']}/members", json={"user_id": ben.me["id"]}).status_code == 201
+    assert ann.delete(f"/api/groups/{gone['id']}").status_code == 204
+    assert ann.get(f"/api/groups/{gone['id']}/members").status_code == 404
 
 
 # --- search, and uploads straight to RustFS -----------------------------------------------------

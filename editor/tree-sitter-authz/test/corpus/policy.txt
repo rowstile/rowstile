@@ -577,3 +577,44 @@ rules app.folders
           (identifier))
         (ref
           (identifier))))))
+
+================================================================================
+Foreign keys whose action is meant
+================================================================================
+
+rules ms.messages
+  select : chat.view
+  cascade from ms.chats
+  cascade from ms.users (sender_id)
+  cascade from cx.teams (org_id, parent_slug)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (rules
+    table: (table_name
+      schema: (identifier)
+      name: (identifier))
+    (rule
+      command: (command)
+      expression: (arrow
+        relation: (identifier)
+        permission: (identifier)))
+    (cascade
+      table: (table_name
+        schema: (identifier)
+        name: (identifier)))
+    (cascade
+      table: (table_name
+        schema: (identifier)
+        name: (identifier))
+      (column
+        (identifier)))
+    (cascade
+      table: (table_name
+        schema: (identifier)
+        name: (identifier))
+      (column
+        (identifier))
+      (column
+        (identifier)))))

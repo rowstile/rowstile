@@ -9,7 +9,7 @@
 
 [
   "app" "role" "include" "type" "where" "can" "roles" "from" "shared" "by" "if"
-  "rules" "view" "mask" "before" "after" "object" "subject"
+  "rules" "view" "mask" "cascade" "before" "after" "object" "subject"
   "scope" "caveat" "invariants" "never"
   "test" "given" "as" "cannot" "allowed" "refused" "sees" "with"
 ] @keyword

@@ -127,7 +127,7 @@ WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 ERROR = re.compile(r"^(?:(\S+?) )?line (\d+): (.*)$", re.S)
 TOP_WORDS = ["app role", "type", "rules", "include", "scope", "caveat", "invariants", "test"]
 EXPR_WORDS = ["or", "and", "not", "signed_in", "anyone", "nobody"]
-RULE_WORDS = ["select", "insert", "update", "delete", "mask", "after", "before"]
+RULE_WORDS = ["select", "insert", "update", "delete", "mask", "after", "before", "cascade", "from"]
 TYPE_WORDS = ["can", "shared", "by", "if", "where", "roles", "from", "principal"]
 SHARE_FIELDS = ["object_id", "subject_type", "subject_id", "subject_relation"]  # what `shared if {...}` reads
 KIND_CLASS, KIND_FIELD, KIND_METHOD, KIND_NAMESPACE = 5, 8, 6, 3  # SymbolKind
@@ -652,6 +652,9 @@ class Server:
                 add(self.tables(), C_MODULE, "table")
             elif not re.search(r"\s", before):
                 add(TOP_WORDS, C_KEYWORD)
+            return items
+        if kind == "rules" and re.match(r"\s+cascade\s+from\s+\S*$", before):
+            add(self.tables(), C_MODULE, "table")  # the table a foreign key points to
             return items
         t = self.home_type(uri, line)
         if t:

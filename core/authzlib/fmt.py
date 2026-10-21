@@ -4,6 +4,7 @@
   of a block are indented by two spaces; a continuation (or, and, where, if) lines up under the
   expression it continues
 - one blank line between blocks, none at the start or the end, never two in a row
+- `cascade from app.users (a, b)`: one space before the columns, one after each comma
 - in a run of relations, the ':' and the '=' line up; in a run of permissions, the '='; in a run of rules,
   the ':'; trailing comments line up two spaces after the longest line of their run
 - words are separated by one space, except inside {conditions}, quotes and comments, which stay as written
@@ -22,6 +23,7 @@ from .parse import Scanner, Step, meaning_lines
 
 TOP = re.compile(r"^(type|rules|scope|caveat|app\s+role|include|invariants|test)\b")
 CONT = re.compile(r"^(or|and|where|if)\b")
+CASCADE = re.compile(r"cascade from\s*([\w.]+)\s*(?:\((.*)\))?")
 
 
 class FormatError(Exception):
@@ -118,6 +120,10 @@ def format_policy(text: str) -> str:
             block = m.group(1) if m else None
             items.append(Line("scope" if block == "scope" and top_split(s, "=") else "top", s, comment, 0))
         else:
+            if block == "rules" and (m := CASCADE.fullmatch(s)):  # cascade from app.users (a, b)
+                s = f"cascade from {m.group(1)}" + (
+                    f" ({', '.join(c.strip() for c in m.group(2).split(','))})" if m.group(2) is not None else ""
+                )
             items.append(Line(kind_of(s, block), s, comment, 2))
         code_before = True
 

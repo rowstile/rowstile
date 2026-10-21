@@ -651,6 +651,32 @@ COMPILE = [
     ),
     ("a mask without columns", "rules alt.docs\n  select : share\n  mask : share\n", "write masks as: mask col1", 12),
     (
+        "a cascade line without from",
+        "rules alt.docs\n  select : share\n  cascade alt.users\n",
+        "write a cascade as: cascade from schema.table   (or, to say which of several keys: cascade from schema.table "
+        "(column, ...)) [AZ105]",
+        12,
+    ),
+    (
+        "a cascade line whose columns don't close",
+        "rules alt.docs\n  select : share\n  cascade from alt.users (owner_id\n",
+        "write a cascade as: cascade from schema.table",
+        12,
+    ),
+    (
+        "a cascade line naming a column twice",
+        "rules alt.docs\n  select : share\n  cascade from alt.users (owner_id, owner_id)\n",
+        "cascade from alt.users: a column is named twice [AZ105]",
+        12,
+    ),
+    (
+        "a cascade line written twice, its columns in another order",
+        "rules alt.docs\n  select : share\n  cascade from alt.users (owner_id, blocked_id)\n"
+        "  cascade from alt.users (blocked_id, owner_id)\n",
+        "cascade from alt.users is written twice under rules alt.docs [AZ109]",
+        13,
+    ),
+    (
         "a deny on a permission that inherits through another type",
         "  project : project = project_id\n  can hidden = {locked} or parent.hidden\n"
         "  can view = (owner or parent.view or project.view) and not hidden\n"
@@ -822,6 +848,22 @@ APPLY = [
         "inheritance calling a function that isn't IMMUTABLE",
         "  can view = owner or (parent.view and {alt.is_open(doc_no)})\n",
         "line 10: a condition used for inheritance calls alt.is_open(bigint), which is not IMMUTABLE",
+    ),
+    (
+        "a cascade line that names no foreign key that acts: the keys of docs to users are NO ACTION",
+        "rules alt.docs\n  select : share\n  cascade from alt.users\n",
+        "line 12: cascade from alt.users: no foreign key of alt.docs to alt.users deletes or changes rows of alt.docs "
+        "(ON DELETE CASCADE, SET NULL or SET DEFAULT, ON UPDATE SET NULL or SET DEFAULT): remove the line [AZ625]",
+    ),
+    (
+        "... nor one that acts only ON UPDATE CASCADE (docs.up), which needs no line",
+        "rules alt.docs\n  select : share\n  cascade from alt.docs (up)\n",
+        "line 12: cascade from alt.docs: no foreign key of alt.docs to alt.docs on (up) deletes or changes rows",
+    ),
+    (
+        "a cascade line naming a column the table doesn't have",
+        "rules alt.docs\n  select : share\n  cascade from alt.docs (upp)\n",
+        "line 12: column upp not found in alt.docs [AZ601]",
     ),
     (
         "a key declared with the wrong type",

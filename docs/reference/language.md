@@ -188,6 +188,12 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   An update two column rules both refuse is refused in the words of a rule on the row before the change first
   (`update id, owner_id` before `update folder_id after`), then of the one whose columns come first in name
   order, whatever order the policy writes them in. <!-- checked: tests/adversarial.sh "and both at once: the rule on the row before the change says why"; tests/invariance.py "the same answers"; tests/unit_test.py "test_triggers_are_named_after_what_they_guard" -->
+  A foreign key that deletes or changes a governed table's rows (`ON DELETE CASCADE`, `SET NULL` or
+  `SET DEFAULT`, `ON UPDATE SET NULL` or `SET DEFAULT`) does so without the rules, and applying warns of it.
+  `cascade from app.folders`, under `rules app.files`, says the key of files to folders does so as meant, and
+  applying no longer warns of it. <!-- checked: tests/apply.sh "a cascade marked as meant (cascade from) is no warning" -->
+  Where several keys of the table to that table act, the line says which by its columns:
+  `cascade from app.users (owner_id)`. Applying refuses a line that names no such key, or several (AZ625). <!-- checked: tests/apply.sh "a cascade line that two keys answer to is refused"; tests/apply.sh "a cascade line that names no foreign key that acts is refused (AZ625)" -->
   **Invariants** state what must never be true, for everyone who can sign in (each user, each
   service or other principal) and for nobody. <!-- checked: tests/principals.sh "invariants are asked as each service too, named as the audit trail names it"; tests/principals.sh "and as nobody: the row with no user" --> <!-- answer: invariants -->
 - **Tests**: the unnamed `test` section checks the data already in the database, with lines

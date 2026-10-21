@@ -137,6 +137,32 @@
     }
   },
   {
+    "type": "cascade",
+    "named": true,
+    "fields": {
+      "table": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "table_name",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "column",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "caveat",
     "named": true,
     "fields": {
@@ -851,6 +877,10 @@
       "required": false,
       "types": [
         {
+          "type": "cascade",
+          "named": true
+        },
+        {
           "type": "mask",
           "named": true
         },
@@ -1343,6 +1373,10 @@
   },
   {
     "type": "cannot",
+    "named": false
+  },
+  {
+    "type": "cascade",
     "named": false
   },
   {

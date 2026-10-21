@@ -137,7 +137,7 @@ module.exports = grammar({
         "rules",
         field("table", $.table_name),
         optional(seq("view", field("view", $.table_name))),
-        repeat(choice($.rule, $.mask)),
+        repeat(choice($.rule, $.mask, $.cascade)),
       ),
     rule: ($) =>
       seq(
@@ -149,6 +149,10 @@ module.exports = grammar({
       ),
     command: (_) => choice("select", "insert", "update", "delete"),
     mask: ($) => seq("mask", commaSep1($.column), ":", field("expression", $._expression)),
+    // a foreign key of the table to another whose action (ON DELETE CASCADE, SET NULL, ...) is meant; the key's
+    // columns where several keys of the table point there: `cascade from app.users (owner_id)`
+    cascade: ($) =>
+      seq("cascade", "from", field("table", $.table_name), optional(seq("(", commaSep1($.column), ")"))),
 
     // ---- invariants ------------------------------------------------------------------------------
     invariants: ($) => seq("invariants", repeat($.never)),

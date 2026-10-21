@@ -130,13 +130,46 @@ nshares=$(PSQL -c "SELECT count(*) FROM authz.shares")
 CLI reapply >/dev/null 2>&1; CLI reapply >/dev/null 2>&1
 [ "$(PSQL -c "SELECT count(*) FROM authz.shares")" = "$nshares" ] && [ "$(PSQL -c "SELECT authz.verify()")" = t ] &&
   ok "applying again keeps the $nshares shares and the trees stay consistent" || bad "reapply"
-# applying again warns of what the policy can't make safe: a foreign key that deletes rows of a governed table by
-# cascade (which skips row-level security), and a table that lost its rules (its row-level security stays on)
-PSQL -c "ALTER TABLE app.files ADD CONSTRAINT files_folder_cascade FOREIGN KEY (folder_id) REFERENCES app.folders ON DELETE CASCADE" >/dev/null
+# applying again warns of what the policy can't make safe: a foreign key that deletes or changes rows of a governed
+# table (its actions skip row-level security), and a table that lost its rules (its row-level security stays on).
+# ON UPDATE CASCADE is no warning: the docs app's files.folder_id has it, and the first apply above says nothing
+PSQL -c "ALTER TABLE app.files ADD CONSTRAINT files_folder_cascade FOREIGN KEY (folder_id) REFERENCES app.folders ON DELETE CASCADE" \
+     -c "ALTER TABLE app.files ADD CONSTRAINT files_owner_null FOREIGN KEY (owner_id) REFERENCES app.users ON DELETE SET NULL" \
+     -c "ALTER TABLE app.folders ADD CONSTRAINT folders_owner_default FOREIGN KEY (owner_id) REFERENCES app.users ON UPDATE SET DEFAULT" >/dev/null
 run apply "$T/docs.authz" --force
-case "$out" in *"foreign key files_folder_cascade on app.files is ON DELETE CASCADE: deleting a row of app.folders also deletes rows of app.files, and cascades skip row-level security"*"$T/docs.authz: applied")
+case "$out" in *"foreign key files_folder_cascade on app.files is ON DELETE CASCADE: deleting a row of app.folders also deletes rows of app.files. Foreign key actions skip row-level security, so a user could delete rows the policy doesn't let them delete. Use RESTRICT, or if that is meant, say so under rules app.files: cascade from app.folders"*"$T/docs.authz: applied")
   ok "re-applying warns of a foreign key that deletes a governed table's rows by cascade";; *) bad "a cascading foreign key" "$out";; esac
-PSQL -c "ALTER TABLE app.files DROP CONSTRAINT files_folder_cascade" >/dev/null
+case "$out" in *"foreign key files_owner_null on app.files is ON DELETE SET NULL: deleting a row of app.users also changes rows of app.files. Foreign key actions skip row-level security, so a user could change rows the policy doesn't let them change."*)
+  ok "... and of one that changes them when a row it names is deleted (ON DELETE SET NULL)";; *) bad "ON DELETE SET NULL" "$out";; esac
+case "$out" in *"foreign key folders_owner_default on app.folders is ON UPDATE SET DEFAULT: changing the key of a row of app.users also changes rows of app.folders."*)
+  ok "... or when that row's key changes (ON UPDATE SET DEFAULT)";; *) bad "ON UPDATE SET DEFAULT" "$out";; esac
+# a `cascade from` line says the key's action is meant: no warning for it, whatever the action
+sed -e 's/^rules app.files$/rules app.files\n  cascade from app.folders\n  cascade from app.users/' \
+    -e 's/^rules app.folders$/rules app.folders\n  cascade from app.users/' "$T/docs.authz" > "$T/meant.authz"
+run apply "$T/meant.authz"
+[ $rc -eq 0 ] && [ "$out" = "$T/meant.authz: applied" ] &&
+  ok "a cascade marked as meant (cascade from) is no warning, for CASCADE, SET NULL and SET DEFAULT" || bad "cascade from" "$out"
+# a second key of files to users that acts: a line must say which, by its columns, and one that does quiets only it
+PSQL -c "ALTER TABLE app.files ADD COLUMN editor_id bigint REFERENCES app.users ON DELETE SET NULL" >/dev/null
+run apply "$T/meant.authz" --force
+case "$out" in *"cascade from app.users: 2 foreign keys of app.files to app.users delete or change rows of app.files: say which by its columns, cascade from app.users (column, ...) [AZ625]"*)
+  [ $rc -ne 0 ] && ok "a cascade line that two keys answer to is refused: it must say which, by its columns" || bad "two keys: exit" "$rc";;
+  *) bad "a cascade line two keys answer to" "$out";; esac
+sed -i 's/^  cascade from app.users$/  cascade from app.users (owner_id)/' "$T/meant.authz"
+run apply "$T/meant.authz"
+case "$out" in *"foreign key files_editor_id_fkey on app.files is ON DELETE SET NULL"*"say so under rules app.files: cascade from app.users (editor_id)"*"$T/meant.authz: applied")
+  case "$out" in *"files_owner_null"*) bad "the key a line names still warns" "$out";;
+    *) ok "... and one that names its columns quiets that key only; the other's warning gives the line to write";; esac;;
+  *) bad "a cascade line by its columns" "$out";; esac
+PSQL -c "ALTER TABLE app.files DROP COLUMN editor_id" \
+     -c "ALTER TABLE app.files DROP CONSTRAINT files_folder_cascade, DROP CONSTRAINT files_owner_null" \
+     -c "ALTER TABLE app.folders DROP CONSTRAINT folders_owner_default" >/dev/null
+# a line that names no key that acts (files.folder_id is ON UPDATE CASCADE now, which needs no line): refused,
+# nothing applied
+run apply "$T/meant.authz" --force
+case "$out" in *"cascade from app.folders: no foreign key of app.files to app.folders deletes or changes rows of app.files (ON DELETE CASCADE, SET NULL or SET DEFAULT, ON UPDATE SET NULL or SET DEFAULT): remove the line [AZ625]"*)
+  [ $rc -ne 0 ] && ok "a cascade line that names no foreign key that acts is refused (AZ625)" || bad "no key: exit" "$rc";;
+  *) bad "a cascade line that names no key" "$out";; esac
 sed '/^rules app.files$/,/^$/d' "$T/docs.authz" > "$T/nofiles.authz"
 run apply "$T/nofiles.authz"
 case "$out" in *"app.files has no rules any more, and row-level security is still on, so the app role sees none of its rows"*"$T/nofiles.authz: applied")

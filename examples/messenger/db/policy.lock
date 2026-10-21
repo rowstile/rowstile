@@ -49,12 +49,14 @@
 > rules ms.bots: update : manage
 > rules ms.bots: update id, owner_id : nobody
 > rules ms.bots: delete : manage
+> rules ms.bots: cascade from ms.users
 > rules ms.chats
 > rules ms.chats: select : read or join or setup
 > rules ms.chats: insert : creator
 > rules ms.chats: update : manage
 > rules ms.chats: update kind, created_by, created_at, last_seq : nobody
 > rules ms.chats: delete : owner and {kind = 'group'}
+> rules ms.chats: cascade from ms.users
 > rules ms.members
 > rules ms.members: insert : (chat.add_members and ({role = 'member'} or chat.setup or (chat.manage and {role <> 'owner'})) and not person.has_blocked) or (chat.join and person and {role = 'member'})
 > rules ms.members: select : chat.read
@@ -64,6 +66,8 @@
 > rules ms.members: update last_read_seq : person
 > rules ms.members: update chat_id, user_id, joined_at, joined_seq : nobody
 > rules ms.members: delete : person or (chat.manage and {role <> 'owner'})
+> rules ms.members: cascade from ms.chats
+> rules ms.members: cascade from ms.users
 > rules ms.messages
 > rules ms.messages: select : read
 > rules ms.messages: insert : chat.post and ((sender and {bot_id is null}) or (from_bot and {sender_id is null}))
@@ -73,14 +77,22 @@
 > rules ms.messages: update deleted after : {deleted}
 > rules ms.messages: update chat_id, seq, sender_id, bot_id, created_at : nobody
 > rules ms.messages: delete : nobody
+> rules ms.messages: cascade from ms.chats
+> rules ms.messages: cascade from ms.users
+> rules ms.messages: cascade from ms.bots
 > rules ms.chat_bots
 > rules ms.chat_bots: select : chat.read
 > rules ms.chat_bots: insert : chat.manage and bot.manage and {added_by = authz.uid()}
 > rules ms.chat_bots: delete : chat.manage or bot.manage
+> rules ms.chat_bots: cascade from ms.chats
+> rules ms.chat_bots: cascade from ms.bots
+> rules ms.chat_bots: cascade from ms.users
 > rules ms.blocks
 > rules ms.blocks: select : blocker
 > rules ms.blocks: insert : blocker
 > rules ms.blocks: delete : blocker
+> rules ms.blocks: cascade from ms.users (blocker_id)
+> rules ms.blocks: cascade from ms.users (blocked_id)
 
 always | 8ec94d2fe384
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
@@ -454,15 +466,15 @@ rls "ms"."users" | 79ad975def28
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | f7d2efdcef9f
-step cascades | c97c051ebb2e
+step cascades | 836fb13e0bf4
 step grant_api | b7252c89e363
 step grant_functions | 17b97f79b8c3
 step grant_views | c8e558735372
 step mask_privileges | 0f76f9d7c5d3
 step share_indexes | 8efa8abfe32b
 step sweep | 66b168ba0729
-step tables | 21d99dc6b38b
-table authz_gen.policy_lines | c5c3334e67cc shape=dcfedc96
+step tables | 6727fce5fc81
+table authz_gen.policy_lines | 8faa1384ef8e shape=dcfedc96
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | 1779df2cc717 shape=1779df2c
 table authz_int.masked_columns | 2067eb678926 shape=2067eb67

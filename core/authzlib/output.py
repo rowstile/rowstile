@@ -10,7 +10,7 @@ from .governance import GovernanceMixin, trigger_if_partitioned
 from .hardening import LintMixin, path_writers_sql
 from .identity import SESSION_OK, IdentityMixin
 from .insight import InsightMixin
-from .parse import And, Arrow, ArrowOn, Expr, Loc, Not, Or, Ref, Rule, Type, fail
+from .parse import And, Arrow, ArrowOn, Cascade, Expr, Loc, Not, Or, Ref, Rule, Type, fail
 from .refusals import RefusalMixin
 from .sqlutil import (
     CHILD_TRIGGERS,
@@ -119,6 +119,40 @@ BEGIN
   EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s FOR KEY SHARE)', v_tbl, v_find) INTO v_found USING p_id;
   RETURN v_found;
 END $f$;"""
+
+
+# a foreign key (con, a row of pg_constraint) whose action changes its table's rows behind row-level security
+FK_ACTS = "(con.confdeltype IN ('c', 'n', 'd') OR con.confupdtype IN ('n', 'd'))"
+
+
+def fk_named(c: Cascade) -> str:
+    """SQL: whether the foreign key con is one that a `cascade from` line names: of its table to the other, on
+    those columns if it names any."""
+    columns = (
+        " AND ARRAY(SELECT a.attname::text FROM pg_attribute a WHERE a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey) "
+        f'ORDER BY a.attname::text COLLATE "C") = ARRAY[{", ".join(lit(x) for x in sorted(c.columns))}]::text[]'
+        if c.columns
+        else ""
+    )
+    return f"(con.conrelid = to_regclass({lit(qt(c.table))}) AND con.confrelid = to_regclass({lit(qt(c.parent))}){columns})"
+
+
+def cascade_check(c: Cascade) -> str:
+    """PL/pgSQL for applying's first check (v_n, missing): the line names one foreign key that acts (AZ625)."""
+    on = f" on ({', '.join(c.columns)})" if c.columns else ""
+    which = "drop all but one" if c.columns else f"say which by its columns, cascade from {c.parent} (column, ...)"
+    said = f"\\n  {c.loc}: cascade from {c.parent}: "
+    return (
+        f"  SELECT count(*) INTO v_n FROM pg_constraint con WHERE con.contype = 'f' AND {FK_ACTS} AND {fk_named(c)};\n"
+        f"  IF v_n = 0 THEN\n"
+        f"    missing := missing || E'{said}no foreign key of {c.table} to {c.parent}{on} deletes or changes rows of "
+        f"{c.table} (ON DELETE CASCADE, SET NULL or SET DEFAULT, ON UPDATE SET NULL or SET DEFAULT): remove the line "
+        f"[AZ625]';\n"
+        f"  ELSIF v_n > 1 THEN\n"
+        f"    missing := missing || E'{said}' || v_n || E' foreign keys of {c.table} to {c.parent}{on} delete or change "
+        f"rows of {c.table}: {which} [AZ625]';\n"
+        "  END IF;"
+    )
 
 
 class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, LintMixin, TreeMixin):
@@ -1185,16 +1219,39 @@ END $kv$;"""
             for tbl, pk, pkt, loc in self.pk_checks
         )
         rule_tables = ", ".join(f"{lit(qt(tb))}::regclass" for tb in by_table)
+        # each `cascade from` names one foreign key that deletes or changes its table's rows: applying refuses one
+        # that names none, or several (AZ625), and the warning below leaves out those it names
+        cascade_checks = "\n".join(cascade_check(c) for c in self.pol.cascades)
+        meant = " OR ".join(fk_named(c) for c in self.pol.cascades)
         fk_warning = (
-            f"""-- Foreign keys that delete governed rows skip row-level security
+            f"""-- Foreign keys that delete or change governed rows skip row-level security, unless a `cascade from` line
+-- says they do as meant. ON UPDATE CASCADE is left out: it changes a row's reference to follow the key it names,
+-- so the row still names the same row.
 DO $fk$
 DECLARE c record;
 BEGIN
-  FOR c IN SELECT con.conname, con.conrelid::regclass AS child, con.confrelid::regclass AS parent
+  FOR c IN SELECT con.conname, con.conrelid::regclass AS child,
+                  concat_ws(' ', CASE con.confdeltype WHEN 'c' THEN 'ON DELETE CASCADE' WHEN 'n' THEN 'ON DELETE SET NULL'
+                                                      WHEN 'd' THEN 'ON DELETE SET DEFAULT' END,
+                                 CASE con.confupdtype WHEN 'n' THEN 'ON UPDATE SET NULL' WHEN 'd' THEN 'ON UPDATE SET DEFAULT' END) AS actions,
+                  concat_ws(', and ',
+                    CASE WHEN con.confdeltype IN ('c', 'n', 'd') THEN format('deleting a row of %s also %s rows of %s', con.confrelid::regclass,
+                      CASE con.confdeltype WHEN 'c' THEN 'deletes' ELSE 'changes' END, con.conrelid::regclass) END,
+                    CASE WHEN con.confupdtype IN ('n', 'd') THEN format('changing the key of a row of %s also changes rows of %s', con.confrelid::regclass, con.conrelid::regclass) END) AS effects,
+                  CASE WHEN con.confdeltype <> 'c' THEN 'change' WHEN con.confupdtype IN ('n', 'd') THEN 'delete or change' ELSE 'delete' END AS verb,
+                  -- the line that says it is meant, with the tables as a policy writes them (and the key's columns
+                  -- where another key of the table to the same one acts too)
+                  (SELECT n.nspname || '.' || r.relname FROM pg_class r JOIN pg_namespace n ON n.oid = r.relnamespace WHERE r.oid = con.conrelid) AS rules,
+                  'cascade from ' || (SELECT n.nspname || '.' || r.relname FROM pg_class r JOIN pg_namespace n ON n.oid = r.relnamespace WHERE r.oid = con.confrelid)
+                    || CASE WHEN EXISTS (SELECT 1 FROM pg_constraint o WHERE o.contype = 'f' AND o.conrelid = con.conrelid AND o.confrelid = con.confrelid
+                                           AND o.oid <> con.oid AND (o.confdeltype IN ('c', 'n', 'd') OR o.confupdtype IN ('n', 'd')))
+                       THEN ' (' || (SELECT string_agg(a.attname, ', ' ORDER BY k.n) FROM unnest(con.conkey) WITH ORDINALITY k(attnum, n)
+                                     JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) || ')' ELSE '' END AS line
            FROM pg_constraint con
-           WHERE con.contype = 'f' AND con.confdeltype = 'c' AND con.conrelid IN ({rule_tables}) LOOP
-    RAISE WARNING 'foreign key % on % is ON DELETE CASCADE: deleting a row of % also deletes rows of %, and cascades skip row-level security, so a user could remove rows they cannot see. Use ON DELETE RESTRICT unless that is intended.',
-      c.conname, c.child, c.parent, c.child;
+           WHERE con.contype = 'f' AND {FK_ACTS}
+             AND con.conrelid IN ({rule_tables}){f"{chr(10)}             AND NOT ({meant})" if meant else ""} LOOP
+    RAISE WARNING 'foreign key % on % is %: %. Foreign key actions skip row-level security, so a user could % rows the policy doesn''t let them %. Use RESTRICT, or if that is meant, say so under rules %: %',
+      c.conname, c.child, c.actions, c.effects, c.verb, c.verb, c.rules, c.line;
   END LOOP;
 END $fk$;"""
             if by_table
@@ -1402,7 +1459,7 @@ END $w$;"""
             (
                 "changed",
                 "tables",
-                f"DO $chk$\nDECLARE missing text := ''; v_oid oid; v_type text;\nBEGIN\n{checks}\n{pk_checks}\n"
+                f"DO $chk$\nDECLARE missing text := ''; v_oid oid; v_type text; v_n int;\nBEGIN\n{checks}\n{pk_checks}\n{cascade_checks + chr(10) if cascade_checks else ''}"
                 f"  IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;\nEND $chk$;",
             ),
             ("full", "uid_type", uid_check),

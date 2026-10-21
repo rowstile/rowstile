@@ -28,7 +28,7 @@ from . import Compiler, PolicyError, migrate, parse_policy
 from .conditions import simple
 from .connection import Db
 from .evaluate import FOLLOWS, Difference, Listing, Reference, compare, worlds_to_try
-from .parse import KEYWORDS, And, Arrow, Cond, Expr, Loc, Not, Or, Perm, Policy, Ref, Rule, Type, read_lines
+from .parse import KEYWORDS, And, Arrow, Cascade, Cond, Expr, Loc, Not, Or, Perm, Policy, Ref, Rule, Type, read_lines
 from .statements import split
 
 MARK = "<!-- rowstile review -->"
@@ -46,7 +46,7 @@ class Changed(TypedDict):
     after: str | None
     line: str | None
     kind: str  # added | removed | changed
-    entity: str  # type | relation | permission | rule | scope | caveat | invariant | declaration
+    entity: str  # type | relation | permission | rule | scope | caveat | invariant | cascade | declaration
 
 
 class Through(TypedDict):
@@ -234,9 +234,11 @@ def squeeze(s: str) -> str:
 def entities(policy: str, files: dict[str, str] | None, pol: Policy) -> dict[str, tuple[str, Loc]]:
     """{key: (text, line)}: each declaration of the policy (pol: as parsed), its text normalized, and where it is
     written. Keys: 'type folder', 'folder.editor' (a relation: its sources joined), 'folder.edit' (a permission),
-    'rule app.folders update', 'scope read', 'caveat x', 'app role', 'invariant <text>'. Tests are left out."""
+    'rule app.folders update', 'scope read', 'caveat x', 'app role', 'invariant <text>', 'cascade app.files from
+    app.folders' (a key's columns after it, sorted, where the line names them). Tests are left out."""
     # a rule by its head as read (rule_head): `update a,b before` is `update a, b`, as the rest of the review names it
     heads = {r.loc: rule_head(r) for r in pol.rules}
+    cascades = {c.loc: cascade_key(c) for c in pol.cascades}
     out: dict[str, tuple[str, Loc]] = {}
     block: tuple[str, str | None] | None = None
     skip = False
@@ -281,6 +283,8 @@ def entities(policy: str, files: dict[str, str] | None, pol: Policy) -> dict[str
             key, said = f"{name}.{m.group(1)}", m.group(2)
             prev = out.get(key)
             out[key] = ((prev[0] + "; " if prev else "") + said, prev[1] if prev else loc)
+        elif kind == "rules" and loc in cascades:
+            out[cascades[loc]] = (cascades[loc], loc)
         elif kind == "rules":
             out[f"rule {name} {heads[loc]}"] = (s.partition(":")[2].strip(), loc)
         else:  # invariants
@@ -600,7 +604,12 @@ def entity_kind(key: str, *pols: Policy) -> str:
             else "relation"
         )
     word = key.split()[0]
-    return word if word in ("type", "rule", "scope", "caveat", "invariant") else "declaration"
+    return word if word in ("type", "rule", "scope", "caveat", "invariant", "cascade") else "declaration"
+
+
+def cascade_key(c: Cascade) -> str:
+    """A `cascade from` line as the review names it: 'cascade app.files from app.users (owner_id)'."""
+    return f"cascade {c.table} from {c.parent}" + (f" ({', '.join(sorted(c.columns))})" if c.columns else "")
 
 
 def rule_head(r: Rule) -> str:
@@ -838,6 +847,15 @@ def risk(b: Side, h: Side, worlds: int, seen: Difference | None = None) -> list[
             if what.startswith("invariant "):
                 flag(f"the invariant `{what[10:]}` is removed", what, "an invariant removed")
             continue
+        if c["kind"] == "added" and what.startswith("cascade "):
+            # what the foreign key deletes or changes skips the rules, and applying no longer warns of it
+            table = what.split()[1]
+            flag(
+                f"`{what}`: rows of {table} that a foreign key deletes or changes skip its rules, and that is "
+                "now marked as meant",
+                what,
+                "a cascade marked as meant",
+            )
         is_perm = (
             bool(re.match(r"^(\w+)\.(\w+)$", what))
             and what.split(".")[0] in h.pol.types
@@ -1210,7 +1228,7 @@ def summary(r: Review) -> dict[str, str]:
         for c in m["changed"]:
             key = (c["entity"], c["kind"])
             counts[key] = counts.get(key, 0) + 1
-        order = ["type", "relation", "permission", "rule", "scope", "caveat", "invariant", "declaration"]
+        order = ["type", "relation", "permission", "rule", "scope", "caveat", "invariant", "cascade", "declaration"]
         parts = [
             f"{plural(n, e)} {k}" for (e, k), n in sorted(counts.items(), key=lambda x: (order.index(x[0][0]), x[0][1]))
         ]
