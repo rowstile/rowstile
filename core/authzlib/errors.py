@@ -44,7 +44,9 @@ CODES = {
         "A line the language doesn't read",
         "A policy is made of blocks that start at the left margin (`app role`, `type`, `rules`, `scope`, `caveat`, "
         "`invariants`, `test`, `include`) and indented lines that belong to the block above them. This line is "
-        "neither: a word no block starts with (often a typo), or an indented line with no block above it.",
+        "neither: a word no block starts with (often a typo), or an indented line with no block above it in its "
+        "file (a block ends at an include line, and an included file starts blocks of its own). A line that starts "
+        "with the right word but goes on wrongly is told how that line is written: `write types as: ...`.",
         "typ folder = app.folders\n  owner : user = owner_id\n  can view = owner\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\n",
     ),
@@ -95,7 +97,8 @@ CODES = {
         "The `test` section holds checks on the data there: `user 3 can view file 11`, `user 3 cannot edit "
         'file 11`. A named test, `test "name"`, brings its own data first, `given ann = {INSERT ... RETURNING '
         "id}`, then checks: `user $ann can view folder $top`, `as user $ann refused {UPDATE ...}`, `as user $ann "
-        "sees 2 {SELECT ...}`. A test needs at least one line, and a test file holds only named tests.\n\n"
+        "sees 2 {SELECT ...}`. A test needs at least one line, a named test a name, and a test file holds only "
+        "named tests.\n\n"
         "Invariants are `never type: expression`, under `invariants`.",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\n"
         'test "owners see their folders"\n  user 1 may view folder 1\n',

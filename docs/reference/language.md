@@ -62,6 +62,9 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
 - **The app role** is the Postgres role the rules apply to, the one your app connects as. Its name is read
   as written, like a table's: `app role AppUser` is the role `CREATE ROLE "AppUser"` makes, while
   `CREATE ROLE AppUser` makes `appuser`. <!-- checked: tests/capitals.sh "apply: the rules apply to the role AppUser, as written" -->
+- **Files**: `include "roles.authz"` reads another file, named from the folder of the file that includes it
+  (AZ108). Each file's blocks are its own: a block ends at an include line and at the end of its file, so an
+  included file starts with a line at the left margin. <!-- checked: tests/policy_errors.py "an included file that starts indented"; tests/policy_errors.py "indented lines after an include" -->
 - **Keys**: a type's key is `id bigint` unless the type line says otherwise: `(gid)`,
   `(id uuid)`, or several columns for a composite key: `type folder = app.folders (org_id, id)`.
   The type is the column's own: a 32-bit key, as Prisma's `Int` or a `serial` makes, is `(id int)`.
@@ -189,6 +192,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   After who a line is about, `with scope read` (or several: `with scope read, files`) checks it as a key or
   a token limited to those scopes would be: `user 3 with scope read cannot edit file 11`,
   `as user 3 with scope read refused {UPDATE ...}`. <!-- answer: tests-scope --> A scope the policy doesn't have is a mistake (AZ503).
+  A scope's name may go on with `-` or `:` (`scope files:write = ...`), and a test names it the same way:
+  `with scope files:write`. <!-- checked: tests/policy_errors.py "a scope named with - in a test" -->
   Named tests may live in their own files (only `test "..."` blocks); `rowstile test` and
   `rowstile dev` run them, never `apply`. <!-- checked: tests/devx.sh "test runs named test files, exit 0"; tests/unit_test.py "test_what_a_test_file_is_refused_for"; tests/apply.sh "apply runs no test" -->
   A failing check explains itself. <!-- checked: tests/devx.sh "a failing check names its file and line, and explains itself" -->

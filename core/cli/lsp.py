@@ -427,7 +427,7 @@ class Server:
         stripped = s.strip()
         # a test line: user $x can PERM TYPE ID
         m = re.match(
-            r"(?:anyone|\S+\s+\S+(?:\s+with\s+scope\s+\w+(?:\s*,\s*\w+)*)?)\s+(?:can|cannot)\s+(\w+)\s+(\w+)",
+            r"(?:anyone|\S+\s+\S+(?:\s+with\s+scope\s+[\w:-]+(?:\s*,\s*[\w:-]+)*)?)\s+(?:can|cannot)\s+(\w+)\s+(\w+)",
             stripped,
         )
         if m and self.block(uri, line)[0] == "test" and name in (m.group(1), m.group(2)):

@@ -409,11 +409,13 @@ class Mark(NamedTuple):
 # a dollar quote's tag in SQL: $$, or $name$
 DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 # what may start a quote, open or close a brace, or start a comment: the text between is read in one step
-SPECIAL = re.compile(r"""['"{}$]|--""")
+SPECIAL = re.compile(r"""['"{}$]|--|/\*""")
 # what may start a quote or a brace: a line with none, outside braces, ends its code where -- starts
 QUOTE_OR_BRACE = re.compile(r"""['"{}$]""")
 # what may start a quote or a comment: braces in a line with none of these pair up as they come
-QUOTE_OR_COMMENT = re.compile(r"""['"$]|--""")
+QUOTE_OR_COMMENT = re.compile(r"""['"$]|--|/\*""")
+# where an SQL block comment opens or closes (they nest)
+BLOCK_COMMENT = re.compile(r"/\*|\*/")
 BRACE = re.compile(r"[{}]")
 
 
@@ -442,11 +444,15 @@ class Scanner:
     Outside braces, the policy's own text: '...' and "..." are quotes when they close on the same line (an
     apostrophe in a test's name opens none), and -- starts a comment. Inside braces, SQL: '...' (E'...' with its
     backslashes), "names", $$...$$ and $tag$...$tag$ are quotes, which may go on to the next line, and -- starts an
-    SQL comment, which also runs to the end of the line (the lines of a condition are joined into one). Braces
-    nest; one inside quotes opens nothing, and a `}` with none open is text."""
+    SQL comment, which also runs to the end of the line (the lines of a condition are joined into one). A /* ... */
+    comment, which nests and may go on to the next line, is read as a quote: what it holds opens or closes nothing,
+    and it stays in the condition. A $ right after a name's letter or digit is part of the name (a$b$), as in
+    Postgres, and opens no dollar quote. Braces nest; one inside quotes opens nothing, and a `}` with none open is
+    text."""
 
     depth: int = 0
-    quote: str = ""  # a quote inside braces the last line left open: ', ", E' or a dollar quote's tag
+    quote: str = ""  # a quote inside braces the last line left open: ', ", E', a dollar quote's tag, or /*
+    comments: int = 0  # how many /* comments are open, while quote is /*
 
     def code_end(self, line: str) -> int:
         """Where the line's code ends (where its comment starts, else its length), read as marks() reads it: the
@@ -460,6 +466,11 @@ class Scanner:
         out: list[Mark] = []
         i = 0
         while i < len(line):
+            if self.quote == "/*":
+                stop = self.comment_end(line, i)
+                out += [Mark(True, self.depth, False)] * (stop - i)
+                i = stop
+                continue
             if self.quote:
                 end = quote_end(line, i, self.quote)
                 stop = len(line) if end < 0 else end
@@ -485,7 +496,12 @@ class Scanner:
                     out += [Mark(True, 0, False)] * (end - i)
                     i = end
                 continue
-            dollar = DOLLAR_QUOTE.match(line, i) if c == "$" and self.depth else None
+            if line.startswith("/*", i) and self.depth:
+                out += [Mark(True, self.depth, False)] * 2
+                self.quote, self.comments, i = "/*", 1, i + 2
+                continue
+            name_goes_on = i > 0 and not out[-1].quoted and (line[i - 1].isalnum() or line[i - 1] in "_$")
+            dollar = DOLLAR_QUOTE.match(line, i) if c == "$" and self.depth and not name_goes_on else None
             if c in "'\"" or dollar:
                 tag = dollar.group(0) if dollar else c
                 if (
@@ -505,6 +521,16 @@ class Scanner:
                 self.depth += 1
             i += 1
         return out
+
+    def comment_end(self, line: str, i: int) -> int:
+        """Where the /* comments open before line[i] end: the index after the last one's */, or the line's length if
+        it ends first."""
+        for m in BLOCK_COMMENT.finditer(line, i):
+            self.comments += 1 if m.group() == "/*" else -1
+            if not self.comments:
+                self.quote = ""
+                return m.end()
+        return len(line)
 
 
 def comment_at(line: str, marks: list[Mark]) -> int:
@@ -817,18 +843,30 @@ def file_lines(name: str | None, text: str) -> list[Line]:
     return out
 
 
-def read_lines(
-    name: str | None, text: str, files: dict[str, str] | None = None, seen: set[str] | None = None
-) -> list[Line]:
+def read_lines(name: str | None, text: str, files: dict[str, str] | None = None) -> list[Line]:
     """The lines of a policy (name None) or of a file it includes, with includes expanded. Includes are looked up
     in `files` (name -> text), relative to the including file, and never on disk."""
+    return [line for part in read_parts(name, text, files) for line in part]
+
+
+def read_parts(
+    name: str | None, text: str, files: dict[str, str] | None = None, seen: set[str] | None = None
+) -> list[list[Line]]:
+    """read_lines in parts, where blocks end: a file's lines up to an include line, the included file's, and the
+    lines after the include. A block never goes on from one file into another."""
     files = files or {}
     seen = set() if seen is None else seen
-    out: list[Line] = []
+    out: list[list[Line]] = [[]]
     for line in file_lines(name, text):
-        loc, m = line.loc, INCLUDE.fullmatch(line.text) if line.indent == 0 else None
+        loc, m = line.loc, INCLUDE.fullmatch(line.text)
+        if m is not None and line.indent:
+            fail(
+                loc,
+                "an include line starts at the left margin: it includes a whole file, not lines of the block above",
+                "AZ101",
+            )
         if m is None:
-            out.append(line)
+            out[-1].append(line)
             continue
         inc = include_name(name or "", m.group(1))
         if inc is None:
@@ -843,7 +881,8 @@ def read_lines(
         if inc not in files:
             fail(loc, f"can't find {inc} in the policy's folder", "AZ108")
         seen.add(inc)
-        out += read_lines(inc, files[inc], files, seen)
+        out += read_parts(inc, files[inc], files, seen)
+        out.append([])
     return out
 
 
@@ -1246,7 +1285,7 @@ def parse_policy(text: str, path: str | None = None, files: dict[str, str] | Non
     given. A mistake raises a PolicyError: the first one, with every mistake found in .errors."""
     if files is None:  # included files read from disk, next to the policy file (or here)
         files = collect_includes(text, disk_reader(os.path.dirname(path) if path else "."))
-    return Reader().read(read_lines(None, text, files))
+    return Reader().read(read_parts(None, text, files))
 
 
 # a block's indented lines: what reads each
@@ -1268,9 +1307,27 @@ def expected_top(s: str) -> str:
     )
 
 
+# each line at the left margin, as it is written: what a mistake after its first word says
+TOP_FORMS = {
+    "type": "write types as: type name = schema.table [(key)] [principal] [where {sql}]",
+    "rules": "write rules as: rules schema.table [view schema.view]",
+    "test": 'write tests as: test "name" (or test alone, for checks on the data already there)',
+    "invariants": "invariants is alone on its line; each invariant goes below it, indented: never folder: share",
+    "app": "write the app role as: app role name",
+    "scope": "write scopes as: scope name = select, view, app.files.update, file.edit",
+    "caveat": "write caveats as: caveat name = {sql}",
+    "include": 'write includes as: include "file.authz" (the file\'s name in double quotes)',
+}
+
+
+OUTSIDE = "indented line outside a type, rules, invariants or test block"
+OUTSIDE_AFTER_INCLUDE = ": a block ends at an include line, and an included file starts blocks of its own"
+
+
 class Reader:
     """Reads a policy's lines: one at the left margin starts a block (type, rules, test, invariants) or is one on
-    its own (app role, scope, caveat); the indented lines below belong to the block. A mistake ends its line, not
+    its own (app role, scope, caveat); the indented lines below belong to the block, up to an include line or the
+    end of their file. A mistake ends its line, not
     the reading: the lines after it are read too, each mistake kept, and read() raises the first."""
 
     def __init__(self) -> None:
@@ -1278,22 +1335,24 @@ class Reader:
         self.block: Block | None = None  # what reads the indented lines below; None: they belong to nothing
         self.errors: list[PolicyError] = []
 
-    def read(self, lines: list[Line]) -> Policy:
-        for line in lines:
-            try:
-                if line.indent == 0:
-                    self.block = skip  # (until the line says which block it starts)
+    def read(self, parts: list[list[Line]]) -> Policy:
+        for n, part in enumerate(parts):
+            self.block = None  # (a block ends where another file's lines start, or end)
+            for line in part:
+                try:
+                    if line.indent == 0:
+                        self.block = skip  # (until the line says which block it starts)
+                        no_dollar_tags(line)
+                        self.block = self.top(line)
+                        continue
                     no_dollar_tags(line)
-                    self.block = self.top(line)
-                    continue
-                no_dollar_tags(line)
-                if self.block is None:
-                    self.block = skip  # (once for the lines together)
-                    fail(line.loc, "indented line outside a type, rules, invariants or test block", "AZ101")
-                else:
-                    self.block(line)
-            except PolicyError as e:
-                self.errors.append(e)
+                    if self.block is None:
+                        self.block = skip  # (once for the lines together)
+                        fail(line.loc, OUTSIDE + (OUTSIDE_AFTER_INCLUDE if n else ""), "AZ101")
+                    else:
+                        self.block(line)
+                except PolicyError as e:
+                    self.errors.append(e)
         self.finish()
         if self.errors:
             first = self.errors[0]
@@ -1308,6 +1367,8 @@ class Reader:
         w = Words(s)
         first = w.name(*TOP_WORDS)
         if first is None:
+            if w.name("include"):  # (a line with the name in double quotes is an include, read before this)
+                fail(loc, TOP_FORMS["include"], "AZ101", at=w.here())
             fail(loc, expected_top(s), "AZ101", at=w.here())
         word = first.text
 
@@ -1336,7 +1397,7 @@ class Reader:
                     self.caveat(w, loc)
             return None
 
-        return reading(loc, expected_top(s), "AZ101", read)
+        return reading(loc, TOP_FORMS[word], "AZ101", read)
 
     def type(self, w: Words, loc: Loc) -> Block:
         """type name = schema.table [(key)] [principal] [where {sql}]"""
@@ -1376,17 +1437,12 @@ class Reader:
         return lambda line: parse_rule_line(self.pol, table, line.text, line.loc)
 
     def scope(self, w: Words, loc: Loc) -> None:
-        """scope name = items (a name may go on with - or :, read-only, files:read)"""
-        first = w.need(w.name())
-        name, end = first.text, first.end
-        while (sep := w.peek()) and sep.kind == "mark" and sep.text in ("-", ":") and not w.spaced():
-            w.pos = sep.end
-            more = w.need(w.name(glued=True))
-            name, end = name + sep.text + more.text, more.end
+        """scope name = items"""
+        name, at = scope_name(w)
         w.need(w.mark("="))
         text, start = w.rest()
         if name in self.pol.scopes:
-            fail(loc, f"scope {name} is defined twice", "AZ109", at=(first.start, end))
+            fail(loc, f"scope {name} is defined twice", "AZ109", at=at)
         items, spans = parse_scope_items(text, loc, start)
         self.pol.scopes[name] = Scope(name, items, loc, spans)
 
@@ -1417,9 +1473,20 @@ class Reader:
         """test name, or test "name" (start: where the name is in the line)"""
         at = (start, start + len(name))
         if name[0] in "\"'":
+            # the name runs to the quote that ends the line (it may hold that quote: Studio writes such names)
             if len(name) < 2 or name[-1] != name[0]:
+                close = name.find(name[0], 1)
+                if close > 0:
+                    fail(
+                        loc,
+                        f"the test's name ends at its closing {name[0]}: nothing goes after it on the line",
+                        "AZ106",
+                        at=(start + close + 1, at[1]),
+                    )
                 fail(loc, f"the test's name has no closing {name[0]}: test {name}{name[0]}", "AZ106", at=at)
             name = name[1:-1]
+        if not name.strip():
+            fail(loc, 'the test\'s name is empty: say what it checks, test "owners see their folders"', "AZ106", at=at)
         if any(sc.name == name for sc in self.pol.scenarios):
             fail(loc, f"there is already a test named {name!r}", "AZ109", at=at)
         test = Scenario(name, loc)
@@ -1497,6 +1564,18 @@ def test_value(w: Words) -> str:
     return v[1:-1].replace("''", "'") if v.startswith("'") else v
 
 
+def scope_name(w: Words) -> tuple[str, tuple[int, int]]:
+    """A scope's name, and where it is written: a name that may go on with - or : and another, without spaces
+    (read-only, files:read)."""
+    first = w.need(w.name())
+    name, end = first.text, first.end
+    while (sep := w.peek()) and sep.kind == "mark" and sep.text in ("-", ":") and not w.spaced():
+        w.pos = sep.end
+        more = w.need(w.name(glued=True))
+        name, end = name + sep.text + more.text, more.end
+    return name, (first.start, end)
+
+
 def principal(w: Words, anyone: bool) -> tuple[str, str | None, tuple[str, ...]]:
     """Who a test's line is about: anyone (nobody signed in), or a type and an id, then `with scope a, b` (signed
     in limited to them, as a key with them is)."""
@@ -1508,9 +1587,9 @@ def principal(w: Words, anyone: bool) -> tuple[str, str | None, tuple[str, ...]]
     scopes: list[str] = []
     if w.name("with"):
         w.need(w.name("scope"))
-        scopes.append(w.need(w.name()).text)
+        scopes.append(scope_name(w)[0])
         while w.mark(","):
-            scopes.append(w.need(w.name()).text)
+            scopes.append(scope_name(w)[0])
     return ptype, who, tuple(scopes)
 
 
@@ -1540,6 +1619,22 @@ def given_step(s: str, loc: Loc, w: Words) -> GivenStep:
     return GivenStep(s, loc, sql.strip(), var=var.text if var else None)
 
 
+# a write's first word; and a query of a WITH that writes: `WITH gone AS (DELETE ...) SELECT ...`
+WRITE = re.compile(r"\s*(?:insert|update|delete|merge)\b", re.I)
+WITH_WRITE = re.compile(r"\bas\s*(?:not\s+)?(?:materialized\s*)?\(\s*(?:insert|update|delete|merge)\b", re.I)
+
+
+def writes(sql: str) -> bool:
+    """Whether a statement writes, as its words say (its comments and quoted text aside): it starts with a write,
+    or with a WITH one of whose queries writes."""
+    from .sqlutil import sql_code  # (sqlutil reads this module)
+
+    code = " ".join(text for is_code, text in sql_code(sql) if is_code)
+    return WRITE.match(code) is not None or (
+        re.match(r"\s*with\b", code, re.I) is not None and WITH_WRITE.search(code) is not None
+    )
+
+
 def as_step(s: str, loc: Loc, w: Words) -> AsStep:
     """as who allowed|refused|sees N {SQL}"""
 
@@ -1560,9 +1655,9 @@ def as_step(s: str, loc: Loc, w: Words) -> AsStep:
     (ptype, who, scopes), expect, sql = either(w, read)
     if not sql.strip():
         fail(loc, "as ... {...} needs a statement", "AZ106")
-    # `sees N` counts the rows of a query, which a write can't be put inside: at run time that was a bare
-    # "syntax error" from Postgres
-    if isinstance(expect, int) and re.match(r"\s*(insert|update|delete|merge)\b", sql, re.I):
+    # `sees N` counts the rows of a query, which a write can't be put inside: at run time that was a bare error
+    # from Postgres
+    if isinstance(expect, int) and writes(sql):
         fail(
             loc,
             "`sees N` counts the rows of a SELECT, and this statement writes: for a write that must change "
@@ -1690,12 +1785,14 @@ def shared_tail(w: Words) -> tuple[str | None, str | None] | Unread:
     return by, cond
 
 
+# a permission's line: `can`, then a space or a tab
+CAN = re.compile(r"can\s")
 RELATION = "write relations as: name : subject = source   (or: name : subjects shared [by perm] [if {sql}])"
 
 
 def parse_type_line(t: Type, s: str, loc: Loc) -> None:
     pieces: Pieces = {}
-    if s.startswith("can "):
+    if CAN.match(s):
         w = Words(s, len("can"), pieces)
 
         def read() -> tuple[Piece, tuple[str, int]]:
