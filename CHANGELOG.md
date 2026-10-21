@@ -213,6 +213,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `COMMIT`, the rest ran signed in as nobody). The Help pane shows an error page's examples as code. A link the page
   can't read says so until another example is chosen, and a page whose `bundle.json` doesn't load says why, where it
   said "loading…" for ever.
+- The file manager example's development steps work as written, as the messenger's now do: the README waits for
+  the services, runs the frontend from its own folder (`cd frontend` ran from `backend/`, which has none) and
+  says `npm ci`. `migrate.py` runs outside this repository (it stopped with a `StopIteration`): it needs the
+  command only for `--client`, and outside the repository it runs the one installed. The app's image no longer
+  copies the command, and `test.sh` takes the database and storage down when a step stops the run early.
 
 ## 0.1.0 (alpha)
 
