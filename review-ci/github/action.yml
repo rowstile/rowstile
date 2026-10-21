@@ -70,9 +70,8 @@ runs:
         set -o pipefail
         db=()
         [ -n "$DATABASE" ] && db=(--db "$DATABASE")
-        rowstile "${db[@]}" review --base "$BASE" --markdown > "$RUNNER_TEMP/rowstile-review.md"
-        # each flag on its policy line, in the pull request's files
-        rowstile "${db[@]}" review --base "$BASE" --annotations
+        # one review: the comment to a file, each flag on its policy line (in the pull request's files) to the log
+        rowstile "${db[@]}" review --base "$BASE" --annotations --out "$RUNNER_TEMP/rowstile-review.md"
         cat "$RUNNER_TEMP/rowstile-review.md" >> "$GITHUB_STEP_SUMMARY"
     - name: comment
       if: inputs.comment == 'true' && github.event.pull_request.number

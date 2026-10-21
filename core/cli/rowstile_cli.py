@@ -12,10 +12,11 @@
                                                    inheritance trees are built beside the ones in use first
                                                    (--one-phase: one); --check: exit 1 if there are changes no
                                                    migration has (for CI)
-    rowstile review  [--base REF] [--markdown|--json|--annotations] [--db DSN]
+    rowstile review  [--base REF] [--markdown|--json|--annotations] [--out FILE] [--db DSN]
                                                    what the change since REF (default main) does: meaning,
                                                    access (with --db: a database at REF with review data),
-                                                   risk, tests, deploy; the pull request comment with --markdown
+                                                   risk, tests, deploy; the pull request comment with --markdown,
+                                                   or in FILE with --out, beside what it prints (one review for both)
                                                    (exit 0 whatever it finds: test and migrate --check gate)
     rowstile fmt     [--check] [FILE.authz ...]     write policies and test files one way (--check: exit 1 if
                                                    one isn't; for CI); line endings stay the file's own
@@ -962,7 +963,7 @@ ARGUMENTS: dict[str, Takes] = {
     "dev": Takes(0, 1, "--db --once --no-studio --studio-port"),
     "studio": Takes(0, 0, "--db --port --write"),
     "migrate": Takes(0, 1, "--name --check --tool --dir --one-phase --downgrade"),
-    "review": Takes(0, 1, "--db --base --markdown --json --annotations"),
+    "review": Takes(0, 1, "--db --base --markdown --json --annotations --out"),
     "fmt": Takes(0, None, "--check"),
     "push": Takes(0, 1, "--db --development --downgrade"),
     "apply": Takes(0, 1, "--db --force --downgrade"),
@@ -1554,8 +1555,9 @@ def default_base() -> str:
 
 def review_cmd(cfg: Config, args: list[str], opts: dict[str, str], flags: set[str], dsn: str | None) -> int:
     """What the change since --base does, as text, --markdown (the pull request comment), --json
-    or --annotations (GitHub workflow commands). Access and the tests' results need --db: a database at the
-    base's state (its migrations, then the review data), which the review changes nothing in."""
+    or --annotations (GitHub workflow commands); with --out FILE, the comment in FILE too. Access and the tests'
+    results need --db: a database at the base's state (its migrations, then the review data), which the review
+    changes nothing in."""
     from authzlib import review
 
     path = args[-1] if args else cfg.policy
@@ -1608,6 +1610,9 @@ def review_cmd(cfg: Config, args: list[str], opts: dict[str, str], flags: set[st
         if conn is not None:
             abandon(conn)
             conn.close()
+    if opts.get("--out"):  # the comment to a file, and the annotations (say) to the log: one review for both
+        with open(opts["--out"], "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(review.markdown(r))
     if "--json" in flags:
         sys.stdout.write(review.as_json(r))
     elif "--markdown" in flags:

@@ -498,6 +498,8 @@ FEATURES: list[Feature] = [
             T("review.sh", "Access: who gains what, on the review data"),
             T("review.sh", "a refactor: meaning unchanged, checked in small worlds"),
             T("review.sh", "the review database is left as it was"),
+            T("review.sh", "the comment in the file, and the annotations printed, from one review"),
+            T("unit_test.py", "test_the_action_reviews_once_for_the_comment_and_the_annotations"),
             T("unit_test.py", "test_a_widening_is_flagged_however_it_is_made"),
             T("confidence_test.py", 'cli(db, "snapshot"'),
             T("confidence_test.py", "more people in the data than a snapshot is for: refused, saying how many"),
