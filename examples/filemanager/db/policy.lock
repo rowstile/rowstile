@@ -90,7 +90,7 @@ function authz.create_role(p_owner_type text, p_owner_id text, p_object_type tex
 function authz.decide_request(p_id bigint, p_approve boolean, p_note text) | bdb0efff318d shape=ebe1e76d
 function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9fc8335de7a shape=0a2287cd
-function authz.explain(p_type text, p_id text, p_perm text, p_user text) | e71391bb42f9 shape=7d6de14b
+function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 09328ee77eed shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | b916646bf293 shape=1223ad2f
 function authz.lint() | 9e98570d3e63 shape=54cb1505
