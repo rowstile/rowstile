@@ -70,7 +70,7 @@
 > rules fm.group_members: update id, user_id : nobody
 > rules fm.group_members: delete : manage or person
 
-always | 1e98aaef41d7
+always | b702b01c2993
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 45dbc2c29b55 shape=77f3e79f
@@ -81,7 +81,7 @@ function authz.cancel_request(p_id bigint) | d25e105562ab shape=19aa0bb3
 function authz.changes_since(p_pos bigint, p_limit int) | b494cb9cea48 shape=0448ffba
 function authz.check_invariants() | 39fc41835fa5 shape=a2072420
 function authz.close_review(p_review bigint, p_revoke_undecided boolean) | 5c17d4af6ead shape=8a35940c
-function authz.connection_check() | ddbf20b9fa20 shape=35f6ddfc
+function authz.connection_check() | 6577b6a7ba22 shape=35f6ddfc
 function authz.create_api_key(p_name text, p_scopes text, p_expires_at timestamptz, p_principal_type text, p_principal_id text) | 64a171935538 shape=bff4e5f3
 function authz.create_link(p_type text, p_id bigint, p_relation text, p_expires_at timestamptz) | 3737b3f6cdd1 shape=f4261756
 function authz.create_link(p_type text, p_id text, p_relation text, p_expires_at timestamptz) | 94706d6ae734 shape=08f941c7
@@ -93,7 +93,7 @@ function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9f
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 09328ee77eed shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | b916646bf293 shape=1223ad2f
-function authz.lint() | 76f2a7d05124 shape=54cb1505
+function authz.lint() | 60b390661d47 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | a007a1af8212 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
@@ -399,26 +399,26 @@ function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
 function authz_int.visible(p_type text, p_id text) | 1fa463ebe3bb shape=e14964bd
 function authz_int.writable() | dce4bbfe1638 shape=2260a03a
-policy "authz_delete" ON "fm"."file_versions" | 450de8fc8345
-policy "authz_delete" ON "fm"."files" | 81ae6ba3f582
-policy "authz_delete" ON "fm"."folders" | ed919ef2b0b5
-policy "authz_delete" ON "fm"."group_members" | 0aa8825a7c3a
-policy "authz_delete" ON "fm"."groups" | 5ae81e802f73
-policy "authz_insert" ON "fm"."file_versions" | a0b05ca1b366
-policy "authz_insert" ON "fm"."files" | 5069e6b644a1
-policy "authz_insert" ON "fm"."folders" | 178e57e48274
-policy "authz_insert" ON "fm"."group_members" | 2d74f43e5f0d
-policy "authz_insert" ON "fm"."groups" | 84bce9b1020b
-policy "authz_select" ON "fm"."file_versions" | 37aabb76a825
-policy "authz_select" ON "fm"."files" | dc0d3f5896cf
-policy "authz_select" ON "fm"."folders" | 4d5cb3912c0b
-policy "authz_select" ON "fm"."group_members" | 6135bb9f0035
-policy "authz_select" ON "fm"."groups" | c3f59331aa86
-policy "authz_update" ON "fm"."file_versions" | 1f18039b6d45
-policy "authz_update" ON "fm"."files" | 148230c98197
-policy "authz_update" ON "fm"."folders" | a1f2f634bb6f
-policy "authz_update" ON "fm"."group_members" | 850eb6e7fd91
-policy "authz_update" ON "fm"."groups" | 5ab4253d9467
+policy "authz_delete" ON "fm"."file_versions" | 57da50e43a13
+policy "authz_delete" ON "fm"."files" | f89b699001d2
+policy "authz_delete" ON "fm"."folders" | efee753aa681
+policy "authz_delete" ON "fm"."group_members" | 09d7b408c7db
+policy "authz_delete" ON "fm"."groups" | f5a1421f5480
+policy "authz_insert" ON "fm"."file_versions" | c65d1e2438f1
+policy "authz_insert" ON "fm"."files" | fd444c377698
+policy "authz_insert" ON "fm"."folders" | 1832b54a3f25
+policy "authz_insert" ON "fm"."group_members" | f51042d6f30e
+policy "authz_insert" ON "fm"."groups" | 4c53e9ecf288
+policy "authz_select" ON "fm"."file_versions" | c265ed5cfe7c
+policy "authz_select" ON "fm"."files" | 663e01bf2d62
+policy "authz_select" ON "fm"."folders" | e3b2ce410a8f
+policy "authz_select" ON "fm"."group_members" | 8e6c8a42e0ed
+policy "authz_select" ON "fm"."groups" | 726da2db037c
+policy "authz_update" ON "fm"."file_versions" | 78a5d334053c
+policy "authz_update" ON "fm"."files" | eaf92e3c52f3
+policy "authz_update" ON "fm"."folders" | 612136534aa8
+policy "authz_update" ON "fm"."group_members" | 2c41bea0b7cc
+policy "authz_update" ON "fm"."groups" | e39495bdf6d4
 rls "fm"."file_versions" | fff5af26c945
 rls "fm"."files" | 1223f29d9096
 rls "fm"."folders" | 59812d027bdf
@@ -428,9 +428,9 @@ schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | f7d2efdcef9f
 step cascades | f5a2f66fb7bc
-step grant_api | 05b4ca474c81
+step grant_api | 704aab13a2b7
 step grant_functions | 74383e5368be
-step grant_views | b5e030535a0a
+step grant_views | f5e06792b144
 step mask_privileges | 0f76f9d7c5d3
 step share_indexes | 06f2a06178e6
 step sweep | a91797a846f7
