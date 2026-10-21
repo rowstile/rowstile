@@ -18,6 +18,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - Codes for the mistakes `rowstile init` and `rowstile snapshot` report, each with its page (`rowstile help
   AZ621`): AZ620 (no tables to draft from), AZ621 (which table holds the users), AZ622 (a users table the draft
   can't use), AZ623 (too many people for a snapshot).
+- `rowstile review --out FILE` writes the pull request comment to FILE as well, beside what it prints:
+  `--annotations --out review.md` gives both from one review. The GitHub action runs the review once this way,
+  where it ran it twice (the base's tests and the access comparison too).
 
 ### Changed
 

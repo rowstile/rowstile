@@ -12622,16 +12622,16 @@ class ReviewInCI(unittest.TestCase):
         )
         return f"{self.MARK}\n### rowstile\n\n<details><summary>Meaning</summary>\n\n| | before | after | line |\n{rows}\n</details>\n"
 
-    def comment_step(self) -> tuple[str, list[str], str]:
-        """(shell, the names its env sets, run) of the action's step named comment."""
+    def comment_step(self, name: str = "comment") -> tuple[str, list[str], str]:
+        """(shell, the names its env sets, run) of the action's step of that name."""
         with open(self.ACTION, encoding="utf-8") as fh:
             text = fh.read()
-        step = re.split(r"\n    - ", text.split("\n    - name: comment\n", 1)[1])[0]
+        step = re.split(r"\n    - ", text.split(f"\n    - name: {name}\n", 1)[1])[0]
         shell = re.search(r"^      shell: (\S+)$", step, re.M)
         env = re.search(r"^      env:\n((?:        .*\n)+)", step + "\n", re.M)
         block = re.search(r"^      run: \|\n((?:        .*\n|\n)+)", step + "\n", re.M)
         line = re.search(r"^      run: (?!\|)(.+)$", step, re.M)
-        assert shell and env and (block or line), "the comment step's shell, env and run aren't found"
+        assert shell and env and (block or line), f"the {name} step's shell, env and run aren't found"
         run = "\n".join(x[8:] for x in block.group(1).split("\n")) if block else line.group(1) if line else ""
         names = re.findall(r"^        ([A-Z_]+):", env.group(1), re.M)
         return shell.group(1), names, run
@@ -12706,6 +12706,43 @@ class ReviewInCI(unittest.TestCase):
             server.shutdown()
             server.server_close()
         return p.returncode, p.stdout + p.stderr, calls
+
+    def test_the_action_reviews_once_for_the_comment_and_the_annotations(self) -> None:
+        # a stand-in for the command: it says how it was run, and writes as rowstile review does
+        shell, names, run = self.comment_step("review")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.mkdir(os.path.join(tmp, "bin"))
+            fake = os.path.join(tmp, "bin", "rowstile")
+            with open(fake, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "#!/usr/bin/env python3\nimport os, sys\nargs = sys.argv[1:]\n"
+                    "with open(os.environ['RUNS'], 'a') as fh: fh.write(' '.join(args) + '\\n')\n"
+                    "if '--out' in args: open(args[args.index('--out') + 1], 'w').write('<!-- rowstile review -->\\n')\n"
+                    "print('<!-- rowstile review -->' if '--markdown' in args else '::warning file=db/policy.authz')\n"
+                )
+            os.chmod(fake, 0o755)
+            given = {"BASE": "abc123", "DATABASE": ""}
+            env = {
+                **os.environ,
+                **{k: given[k] for k in names},
+                "PATH": os.path.join(tmp, "bin") + os.pathsep + os.environ["PATH"],
+                "RUNS": os.path.join(tmp, "runs"),
+                "RUNNER_TEMP": tmp,
+                "GITHUB_STEP_SUMMARY": os.path.join(tmp, "summary"),
+            }
+            self.assertEqual(shell, "bash")
+            cmd = ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", run]
+            p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60, cwd=tmp)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            with open(env["RUNS"], encoding="utf-8") as fh:
+                runs = fh.read().splitlines()
+            with open(env["GITHUB_STEP_SUMMARY"], encoding="utf-8") as fh:
+                summary = fh.read()
+            with open(os.path.join(tmp, "rowstile-review.md"), encoding="utf-8") as fh:
+                comment = fh.read()
+        self.assertEqual(runs, [f"review --base abc123 --annotations --out {tmp}/rowstile-review.md"])
+        self.assertIn("::warning file=db/policy.authz", p.stdout)  # in the log, where GitHub reads them
+        self.assertEqual((comment, summary), ("<!-- rowstile review -->\n",) * 2)
 
     def test_the_comment_is_posted_then_updated_in_place(self) -> None:
         posted: list[dict[str, str]] = [{"body": "a person's comment"}]

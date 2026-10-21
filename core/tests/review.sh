@@ -56,6 +56,17 @@ CLI review --base main --json | python3 -c "import json,sys; d=json.load(sys.std
 case "$(CLI review --base main --annotations)" in "::warning file=p/db/policy.authz,line="*"a permission widened"*)
   ok "--annotations: on the policy line, its path from the repository's top folder";;
   *) bad "annotations" "$(CLI review --base main --annotations)";; esac
+# one review for both, as the action runs it: the comment to a file, the annotations to the log
+rm -f "$T/review.md"
+out=$(CLI review --base main --annotations --out "$T/review.md" 2>&1); rc=$?
+case "$out" in "::warning file=p/db/policy.authz,line="*"a permission widened"*)
+  [ $rc -eq 0 ] && [ "$(cat "$T/review.md" 2>/dev/null)" = "$(CLI review --base main --markdown)" ] &&
+    ok "--out FILE: the comment in the file, and the annotations printed, from one review" ||
+    bad "--out: the file" "$(head -3 "$T/review.md" 2>&1)";;
+  *) bad "--out: the annotations" "$out";; esac
+out=$(CLI review --base main --out "$T" 2>&1); rc=$?
+case "$out" in *": Is a directory") [ $rc -eq 2 ] && ok "--out to a folder: said, with its path, exit 2" || bad "--out to a folder: exit" "$rc";;
+  *) bad "--out to a folder" "$out";; esac
 
 echo "-- a base git doesn't know, a policy with a mistake"
 out=$(CLI review --base no-such-branch 2>&1); rc=$?

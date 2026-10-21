@@ -43,6 +43,8 @@ says what a change does, in plain words, for the pull request:
   A `where` added to a link table, or one that holds for fewer of its rows, allows less, and isn't flagged. <!-- checked: tests/unit_test.py "test_a_where_on_a_link_table_narrows_or_widens_as_it_reads" -->
   Each names its policy line; `--annotations` writes them for GitHub, on the file
   the line is in. <!-- checked: tests/review.sh "on the policy line, its path from the repository's top folder"; tests/unit_test.py "test_a_flag_in_an_included_file_is_annotated_there" -->
+  `--out FILE` writes the comment to a file as well, so one review gives both, as the action runs it:
+  `rowstile review --annotations --out review.md`. <!-- checked: tests/review.sh "the comment in the file, and the annotations printed, from one review"; tests/unit_test.py "test_the_action_reviews_once_for_the_comment_and_the_annotations" -->
   "Nothing flagged" means none of these was found in the worlds tried, not a proof.
 - **Tests**: checks whose expectation flipped (the author saying "I meant this"), checks removed, new
   permissions no test names. <!-- checked: tests/unit_test.py "test_tests_that_flip"; tests/unit_test.py "test_a_new_permission_no_test_names"; tests/review.sh "Tests: the tests of the pull request ran, and the flipped check is named" -->
