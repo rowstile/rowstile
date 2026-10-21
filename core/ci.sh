@@ -25,8 +25,11 @@ MODE=--quick
 case "${1:-}" in --full) MODE=""; shift;; --proofs) MODE=--proofs; shift;; --short) MODE=--short; shift;; --soak) MODE=--soak; shift;; esac
 VERSIONS=${*:-16 17 18}
 # how long one version's suites may take, on the clock: two hours; the soak three and a half (its random
-# policies alone may take one, and it shares the machine with the night's other jobs)
+# policies alone may take one, and it shares the machine with the night's other jobs); one part of a push's run
+# (--quick or --short, ROWSTILE_PART), which takes about five minutes, 25: a step that hangs fails the job early, and
+# its log says what was still running
 LIMIT=7200; [ "$MODE" = --soak ] && LIMIT=12600
+if [ -n "${ROWSTILE_PART:-}" ] && { [ "$MODE" = --quick ] || [ "$MODE" = --short ]; }; then LIMIT=1500; fi
 failed=()
 # where the logs go: /tmp, or ROWSTILE_CI_LOGS (CI gives each job its own: self-hosted runners may share a machine)
 LOGS=${ROWSTILE_CI_LOGS:-/tmp}
@@ -69,6 +72,8 @@ for v in $VERSIONS; do
     bash -c "${cov:+rm -rf $cov; }ROWSTILE_LANES='${ROWSTILE_LANES:-}' bash run_tests.sh $MODE" > "$log" 2>&1
   rc=$?
   if [ $rc -eq 124 ]; then why="the suites were still running after ${LIMIT}s (the limit): stopped there"
+    # what was still running: the step that hung, by its command line
+    { echo "--- still running at the limit:"; docker exec "$name" ps -eo pid,etime,args 2>&1; } >> "$log"
   elif [ $rc -ne 0 ]; then
     state=$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null) || state="not there"
     [ "$state" = true ] || why="the container stopped before the suites ended (running: $state)"

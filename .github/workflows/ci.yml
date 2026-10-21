@@ -67,7 +67,7 @@ jobs:
       # a cancelled job may stop before ci.sh removes its container: this job's own (the label names the job)
       - if: always()
         run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
-      - if: failure()
+      - if: failure() || cancelled()   # cancelled by hand too: what had run, and the hung step
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: logs-pg${{ matrix.pg }}-${{ matrix.part }}
