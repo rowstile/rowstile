@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('doc__parent_shortcut__tree2', '1400ba45110128364c9f57cbb95609a6', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[], 'doc__parent_shortcut__tree2')) n(name, hash, oids, rel)
+           JOIN (VALUES ('doc__parent_shortcut__tree2', '27a8270c680f58ce30b05c018a8e032c', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[], 'doc__parent_shortcut__tree2')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -275,130 +275,155 @@ CREATE OR REPLACE FUNCTION authz.link_hashes() RETURNS text[] LANGUAGE sql STABL
 DO $chk$
 DECLARE missing text := ''; v_oid oid; v_type text; v_n int;
 BEGIN
-  IF to_regclass('"alt"."users"') IS NULL THEN missing := missing || E'\n  line 4: table alt.users not found [AZ601]';
+  IF to_regclass('"alt"."users"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 4: table alt.users not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."users"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 4: column id not found in alt.users [AZ601]';
+    missing := missing || E'\n  ' || 'line 4: column id not found in alt.users [AZ601]';
   END IF;
-  IF to_regclass('"alt"."users"') IS NULL THEN missing := missing || E'\n  line 5: table alt.users not found [AZ601]';
+  IF to_regclass('"alt"."users"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 5: table alt.users not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."users"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 5: column id not found in alt.users [AZ601]';
+    missing := missing || E'\n  ' || 'line 5: column id not found in alt.users [AZ601]';
   END IF;
-  IF to_regclass('"alt"."groups"') IS NULL THEN missing := missing || E'\n  line 8: table alt.groups not found [AZ601]';
+  IF to_regclass('"alt"."groups"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 8: table alt.groups not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."groups"')
                     AND attname = 'gid' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 8: column gid not found in alt.groups [AZ601]';
+    missing := missing || E'\n  ' || 'line 8: column gid not found in alt.groups [AZ601]';
   END IF;
-  IF to_regclass('"alt"."groups"') IS NULL THEN missing := missing || E'\n  line 9: table alt.groups not found [AZ601]';
+  IF to_regclass('"alt"."groups"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 9: table alt.groups not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."groups"')
                     AND attname = 'owner_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 9: column owner_id not found in alt.groups [AZ601]';
+    missing := missing || E'\n  ' || 'line 9: column owner_id not found in alt.groups [AZ601]';
   END IF;
-  IF to_regclass('"alt"."group_members"') IS NULL THEN missing := missing || E'\n  line 10: table alt.group_members not found [AZ601]';
+  IF to_regclass('"alt"."group_members"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 10: table alt.group_members not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."group_members"')
                     AND attname = 'group_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 10: column group_id not found in alt.group_members [AZ601]';
+    missing := missing || E'\n  ' || 'line 10: column group_id not found in alt.group_members [AZ601]';
   END IF;
-  IF to_regclass('"alt"."group_members"') IS NULL THEN missing := missing || E'\n  line 10: table alt.group_members not found [AZ601]';
+  IF to_regclass('"alt"."group_members"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 10: table alt.group_members not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."group_members"')
                     AND attname = 'user_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 10: column user_id not found in alt.group_members [AZ601]';
+    missing := missing || E'\n  ' || 'line 10: column user_id not found in alt.group_members [AZ601]';
   END IF;
-  IF to_regclass('"alt"."projects"') IS NULL THEN missing := missing || E'\n  line 14: table alt.projects not found [AZ601]';
+  IF to_regclass('"alt"."projects"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 14: table alt.projects not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."projects"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 14: column id not found in alt.projects [AZ601]';
+    missing := missing || E'\n  ' || 'line 14: column id not found in alt.projects [AZ601]';
   END IF;
-  IF to_regclass('"alt"."projects"') IS NULL THEN missing := missing || E'\n  line 15: table alt.projects not found [AZ601]';
+  IF to_regclass('"alt"."projects"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 15: table alt.projects not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."projects"')
                     AND attname = 'lead_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 15: column lead_id not found in alt.projects [AZ601]';
+    missing := missing || E'\n  ' || 'line 15: column lead_id not found in alt.projects [AZ601]';
   END IF;
-  IF to_regclass('"alt"."project_groups"') IS NULL THEN missing := missing || E'\n  line 16: table alt.project_groups not found [AZ601]';
+  IF to_regclass('"alt"."project_groups"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 16: table alt.project_groups not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."project_groups"')
                     AND attname = 'project_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 16: column project_id not found in alt.project_groups [AZ601]';
+    missing := missing || E'\n  ' || 'line 16: column project_id not found in alt.project_groups [AZ601]';
   END IF;
-  IF to_regclass('"alt"."project_groups"') IS NULL THEN missing := missing || E'\n  line 16: table alt.project_groups not found [AZ601]';
+  IF to_regclass('"alt"."project_groups"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 16: table alt.project_groups not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."project_groups"')
                     AND attname = 'group_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 16: column group_id not found in alt.project_groups [AZ601]';
+    missing := missing || E'\n  ' || 'line 16: column group_id not found in alt.project_groups [AZ601]';
   END IF;
-  IF to_regclass('"alt"."docs"') IS NULL THEN missing := missing || E'\n  line 19: table alt.docs not found [AZ601]';
+  IF to_regclass('"alt"."docs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 19: table alt.docs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."docs"')
                     AND attname = 'doc_no' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 19: column doc_no not found in alt.docs [AZ601]';
+    missing := missing || E'\n  ' || 'line 19: column doc_no not found in alt.docs [AZ601]';
   END IF;
-  IF to_regclass('"alt"."docs"') IS NULL THEN missing := missing || E'\n  line 20: table alt.docs not found [AZ601]';
+  IF to_regclass('"alt"."docs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 20: table alt.docs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."docs"')
                     AND attname = 'owner_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 20: column owner_id not found in alt.docs [AZ601]';
+    missing := missing || E'\n  ' || 'line 20: column owner_id not found in alt.docs [AZ601]';
   END IF;
-  IF to_regclass('"alt"."docs"') IS NULL THEN missing := missing || E'\n  line 21: table alt.docs not found [AZ601]';
+  IF to_regclass('"alt"."docs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 21: table alt.docs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."docs"')
                     AND attname = 'blocked_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 21: column blocked_id not found in alt.docs [AZ601]';
+    missing := missing || E'\n  ' || 'line 21: column blocked_id not found in alt.docs [AZ601]';
   END IF;
-  IF to_regclass('"alt"."docs"') IS NULL THEN missing := missing || E'\n  line 25: table alt.docs not found [AZ601]';
+  IF to_regclass('"alt"."docs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 25: table alt.docs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."docs"')
                     AND attname = 'up' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 25: column up not found in alt.docs [AZ601]';
+    missing := missing || E'\n  ' || 'line 25: column up not found in alt.docs [AZ601]';
   END IF;
-  IF to_regclass('"alt"."doc_links"') IS NULL THEN missing := missing || E'\n  line 26: table alt.doc_links not found [AZ601]';
+  IF to_regclass('"alt"."doc_links"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 26: table alt.doc_links not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."doc_links"')
                     AND attname = 'child' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 26: column child not found in alt.doc_links [AZ601]';
+    missing := missing || E'\n  ' || 'line 26: column child not found in alt.doc_links [AZ601]';
   END IF;
-  IF to_regclass('"alt"."doc_links"') IS NULL THEN missing := missing || E'\n  line 26: table alt.doc_links not found [AZ601]';
+  IF to_regclass('"alt"."doc_links"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 26: table alt.doc_links not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."doc_links"')
                     AND attname = 'parent' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 26: column parent not found in alt.doc_links [AZ601]';
+    missing := missing || E'\n  ' || 'line 26: column parent not found in alt.doc_links [AZ601]';
   END IF;
-  IF to_regclass('"alt"."docs"') IS NULL THEN missing := missing || E'\n  line 28: table alt.docs not found [AZ601]';
+  IF to_regclass('"alt"."docs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 28: table alt.docs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."docs"')
                     AND attname = 'project_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 28: column project_id not found in alt.docs [AZ601]';
+    missing := missing || E'\n  ' || 'line 28: column project_id not found in alt.docs [AZ601]';
   END IF;
-  IF to_regclass('"alt"."doc_projects"') IS NULL THEN missing := missing || E'\n  line 29: table alt.doc_projects not found [AZ601]';
+  IF to_regclass('"alt"."doc_projects"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 29: table alt.doc_projects not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."doc_projects"')
                     AND attname = 'doc_no' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 29: column doc_no not found in alt.doc_projects [AZ601]';
+    missing := missing || E'\n  ' || 'line 29: column doc_no not found in alt.doc_projects [AZ601]';
   END IF;
-  IF to_regclass('"alt"."doc_projects"') IS NULL THEN missing := missing || E'\n  line 29: table alt.doc_projects not found [AZ601]';
+  IF to_regclass('"alt"."doc_projects"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 29: table alt.doc_projects not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."doc_projects"')
                     AND attname = 'proj_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 29: column proj_id not found in alt.doc_projects [AZ601]';
+    missing := missing || E'\n  ' || 'line 29: column proj_id not found in alt.doc_projects [AZ601]';
   END IF;
-  IF to_regclass('"alt"."docs"') IS NULL THEN missing := missing || E'\n  line 46: table alt.docs not found [AZ601]';
+  IF to_regclass('"alt"."docs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 46: table alt.docs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."docs"')
                     AND attname = 'owner_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 46: column owner_id not found in alt.docs [AZ601]';
+    missing := missing || E'\n  ' || 'line 46: column owner_id not found in alt.docs [AZ601]';
   END IF;
-  IF to_regclass('"alt"."docs"') IS NULL THEN missing := missing || E'\n  line 47: table alt.docs not found [AZ601]';
+  IF to_regclass('"alt"."docs"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 47: table alt.docs not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"alt"."docs"')
                     AND attname = 'up' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 47: column up not found in alt.docs [AZ601]';
+    missing := missing || E'\n  ' || 'line 47: column up not found in alt.docs [AZ601]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"alt"."users"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 4: alt.users.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 4: alt.users.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"alt"."groups"') AND attname = 'gid' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 8: alt.groups.gid is ' || v_type || E', not bigint: write its type after the key, (gid ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 8: alt.groups.gid is ' || v_type
+      || ', not bigint: write its type after the key, (gid ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"alt"."projects"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 14: alt.projects.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 14: alt.projects.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"alt"."docs"') AND attname = 'doc_no' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 19: alt.docs.doc_no is ' || v_type || E', not bigint: write its type after the key, (doc_no ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 19: alt.docs.doc_no is ' || v_type
+      || ', not bigint: write its type after the key, (doc_no ' || v_type || ') [AZ602]';
   END IF;
   IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;
 END $chk$;
@@ -567,7 +592,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('doc__parent_shortcut__tree2', '1400ba45110128364c9f57cbb95609a6', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[]);
+  ('doc__parent_shortcut__tree2', '27a8270c680f58ce30b05c018a8e032c', ARRAY[to_regclass('"alt"."doc_links"')::oid, to_regclass('"alt"."docs"')::oid, to_regclass('authz.shares')::oid]::oid[]);
 
 CREATE TABLE authz_int.shared_relations (object_type text, relation text, subject text, shared_by text, required text[], loc text, PRIMARY KEY (object_type, relation, subject));
 
@@ -992,7 +1017,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."doc__parent__tree_links"'::regclass, 'authz_int."doc__parent__tree_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 33: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 33', d.fn;
   END LOOP;
 END $imm$;
 
@@ -1090,7 +1116,8 @@ BEGIN
            WHERE w.ev_class = 'authz_int."doc__parent__tree_conds"'::regclass
              AND c.oid NOT IN (w.ev_class, '"alt"."docs"'::regclass) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
-      RAISE EXCEPTION 'line 33: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]', d.rel;
+      RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
+        'line 33', d.rel;
     END IF;
     EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
                    'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__parent__tree_on_deps"()', 'authz_doc__parent__tree_dep', d.rel);
@@ -1237,7 +1264,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."doc__parent_shortcut__tree_links"'::regclass, 'authz_int."doc__parent_shortcut__tree_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 36: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 36', d.fn;
   END LOOP;
 END $imm$;
 
@@ -1336,7 +1364,8 @@ BEGIN
            WHERE w.ev_class = 'authz_int."doc__parent_shortcut__tree_conds"'::regclass
              AND c.oid NOT IN (w.ev_class, '"alt"."docs"'::regclass) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
-      RAISE EXCEPTION 'line 36: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]', d.rel;
+      RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
+        'line 36', d.rel;
     END IF;
     EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
                    'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__parent_shortcut__tree_on_deps"()', 'authz_doc__parent_shortcut__tree_dep', d.rel);
@@ -1521,7 +1550,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."doc__parent_shortcut__tree2_links"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 19: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 19', d.fn;
   END LOOP;
 END $imm$;
 
@@ -1968,7 +1998,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."doc_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_ins" AFTER INSERT ON "alt"."doc_links" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_ins"()';
   ELSE
-    RAISE NOTICE '"alt"."doc_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."doc_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_upd"() RETURNS trigger
@@ -1997,7 +2027,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."doc_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_upd" AFTER UPDATE ON "alt"."doc_links" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_upd"()';
   ELSE
-    RAISE NOTICE '"alt"."doc_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."doc_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_del"() RETURNS trigger
@@ -2017,7 +2047,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."doc_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_del" AFTER DELETE ON "alt"."doc_links" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_del"()';
   ELSE
-    RAISE NOTICE '"alt"."doc_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."doc_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_trunc"() RETURNS trigger
@@ -2032,7 +2062,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."doc_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_trunc" AFTER TRUNCATE ON "alt"."doc_links" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_trunc"()';
   ELSE
-    RAISE NOTICE '"alt"."doc_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."doc_links"';
   END IF;
 END $tr$;
 
@@ -2054,7 +2084,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."doc_projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_ins" AFTER INSERT ON "alt"."doc_projects" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_ins"()';
   ELSE
-    RAISE NOTICE '"alt"."doc_projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."doc_projects"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_upd"() RETURNS trigger
@@ -2083,7 +2113,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."doc_projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_upd" AFTER UPDATE ON "alt"."doc_projects" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_upd"()';
   ELSE
-    RAISE NOTICE '"alt"."doc_projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."doc_projects"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_del"() RETURNS trigger
@@ -2103,7 +2133,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."doc_projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_del" AFTER DELETE ON "alt"."doc_projects" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_del"()';
   ELSE
-    RAISE NOTICE '"alt"."doc_projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."doc_projects"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_trunc"() RETURNS trigger
@@ -2118,7 +2148,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."doc_projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_trunc" AFTER TRUNCATE ON "alt"."doc_projects" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_trunc"()';
   ELSE
-    RAISE NOTICE '"alt"."doc_projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."doc_projects"';
   END IF;
 END $tr$;
 
@@ -2140,7 +2170,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."group_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_ins" AFTER INSERT ON "alt"."group_members" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_ins"()';
   ELSE
-    RAISE NOTICE '"alt"."group_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."group_members"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_upd"() RETURNS trigger
@@ -2169,7 +2199,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."group_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_upd" AFTER UPDATE ON "alt"."group_members" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_upd"()';
   ELSE
-    RAISE NOTICE '"alt"."group_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."group_members"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_del"() RETURNS trigger
@@ -2189,7 +2219,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."group_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_del" AFTER DELETE ON "alt"."group_members" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_del"()';
   ELSE
-    RAISE NOTICE '"alt"."group_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."group_members"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_trunc"() RETURNS trigger
@@ -2204,7 +2234,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."group_members"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_trunc" AFTER TRUNCATE ON "alt"."group_members" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_trunc"()';
   ELSE
-    RAISE NOTICE '"alt"."group_members" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."group_members"';
   END IF;
 END $tr$;
 
@@ -2226,7 +2256,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."project_groups"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_ins" AFTER INSERT ON "alt"."project_groups" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_ins"()';
   ELSE
-    RAISE NOTICE '"alt"."project_groups" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."project_groups"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_upd"() RETURNS trigger
@@ -2255,7 +2285,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."project_groups"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_upd" AFTER UPDATE ON "alt"."project_groups" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_upd"()';
   ELSE
-    RAISE NOTICE '"alt"."project_groups" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."project_groups"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_del"() RETURNS trigger
@@ -2275,7 +2305,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."project_groups"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_del" AFTER DELETE ON "alt"."project_groups" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_del"()';
   ELSE
-    RAISE NOTICE '"alt"."project_groups" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."project_groups"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_trunc"() RETURNS trigger
@@ -2290,7 +2320,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."project_groups"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_trunc" AFTER TRUNCATE ON "alt"."project_groups" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_trunc"()';
   ELSE
-    RAISE NOTICE '"alt"."project_groups" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."project_groups"';
   END IF;
 END $tr$;
 
@@ -2306,7 +2336,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."users"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_user_col_audit_ins" AFTER INSERT ON "alt"."users" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"alt"."users" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."users"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."user__col_audit_upd"() RETURNS trigger
@@ -2330,7 +2360,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."users"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_user_col_audit_upd" AFTER UPDATE ON "alt"."users" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"alt"."users" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."users"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."user__col_audit_del"() RETURNS trigger
@@ -2344,7 +2374,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."users"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_user_col_audit_del" AFTER DELETE ON "alt"."users" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"alt"."users" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."users"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."user__col_audit_trunc"() RETURNS trigger
@@ -2359,7 +2389,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."users"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_user_col_audit_trunc" AFTER TRUNCATE ON "alt"."users" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"alt"."users" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."users"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -2377,7 +2407,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."users"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_user_col_audit_row" AFTER UPDATE ON "alt"."users" FOR EACH ROW WHEN (OLD."id" IS DISTINCT FROM NEW."id") EXECUTE FUNCTION authz_int."user__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"alt"."users" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."users"';
   END IF;
 END $tr$;
 
@@ -2393,7 +2423,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."groups"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_grp_col_audit_ins" AFTER INSERT ON "alt"."groups" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."grp__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"alt"."groups" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."groups"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."grp__col_audit_upd"() RETURNS trigger
@@ -2417,7 +2447,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."groups"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_grp_col_audit_upd" AFTER UPDATE ON "alt"."groups" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."grp__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"alt"."groups" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."groups"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."grp__col_audit_del"() RETURNS trigger
@@ -2431,7 +2461,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."groups"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_grp_col_audit_del" AFTER DELETE ON "alt"."groups" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."grp__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"alt"."groups" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."groups"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."grp__col_audit_trunc"() RETURNS trigger
@@ -2446,7 +2476,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."groups"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_grp_col_audit_trunc" AFTER TRUNCATE ON "alt"."groups" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."grp__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"alt"."groups" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."groups"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -2464,7 +2494,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."groups"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_grp_col_audit_row" AFTER UPDATE ON "alt"."groups" FOR EACH ROW WHEN (OLD."owner_id" IS DISTINCT FROM NEW."owner_id") EXECUTE FUNCTION authz_int."grp__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"alt"."groups" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."groups"';
   END IF;
 END $tr$;
 
@@ -2480,7 +2510,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_proj_col_audit_ins" AFTER INSERT ON "alt"."projects" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."proj__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"alt"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."projects"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."proj__col_audit_upd"() RETURNS trigger
@@ -2504,7 +2534,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_proj_col_audit_upd" AFTER UPDATE ON "alt"."projects" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."proj__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"alt"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."projects"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."proj__col_audit_del"() RETURNS trigger
@@ -2518,7 +2548,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_proj_col_audit_del" AFTER DELETE ON "alt"."projects" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."proj__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"alt"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."projects"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."proj__col_audit_trunc"() RETURNS trigger
@@ -2533,7 +2563,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_proj_col_audit_trunc" AFTER TRUNCATE ON "alt"."projects" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."proj__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"alt"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."projects"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -2551,7 +2581,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_proj_col_audit_row" AFTER UPDATE ON "alt"."projects" FOR EACH ROW WHEN (OLD."lead_id" IS DISTINCT FROM NEW."lead_id") EXECUTE FUNCTION authz_int."proj__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"alt"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."projects"';
   END IF;
 END $tr$;
 
@@ -2567,7 +2597,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."docs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_doc_col_audit_ins" AFTER INSERT ON "alt"."docs" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"alt"."docs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."docs"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."doc__col_audit_upd"() RETURNS trigger
@@ -2612,7 +2642,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."docs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_doc_col_audit_upd" AFTER UPDATE ON "alt"."docs" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"alt"."docs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."docs"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."doc__col_audit_del"() RETURNS trigger
@@ -2626,7 +2656,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."docs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_doc_col_audit_del" AFTER DELETE ON "alt"."docs" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"alt"."docs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."docs"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."doc__col_audit_trunc"() RETURNS trigger
@@ -2641,7 +2671,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."docs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_doc_col_audit_trunc" AFTER TRUNCATE ON "alt"."docs" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."doc__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"alt"."docs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."docs"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -2671,7 +2701,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"alt"."docs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_doc_col_audit_row" AFTER UPDATE ON "alt"."docs" FOR EACH ROW WHEN (OLD."owner_id" IS DISTINCT FROM NEW."owner_id" OR OLD."blocked_id" IS DISTINCT FROM NEW."blocked_id" OR OLD."up" IS DISTINCT FROM NEW."up" OR OLD."project_id" IS DISTINCT FROM NEW."project_id") EXECUTE FUNCTION authz_int."doc__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"alt"."docs" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"alt"."docs"';
   END IF;
 END $tr$;
 

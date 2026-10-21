@@ -27,7 +27,7 @@ def trigger_if_table(table: str, trigger_sql: str, what: str) -> str:
         f"  IF (SELECT relkind FROM pg_class WHERE oid = {lit(qt(table))}::regclass) IN ('r', 'p') THEN\n"
         f"    EXECUTE '{body}';\n"
         f"  ELSE\n"
-        f"    RAISE NOTICE '{qt(table).replace(chr(39), chr(39) * 2)} is not a table: changes to it are not audited or fed ({what})';\n"
+        f"    RAISE NOTICE '% is not a table: changes to it are not audited or fed ({what})', {lit(qt(table))};\n"
         f"  END IF;\nEND $tr$;"
     )
 

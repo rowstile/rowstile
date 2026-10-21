@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'cb4c0dddb8cb9ad7f47ce50fc425aab0', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '20eb39d7e531ea49f75bb398b3eac89e', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree'), ('folder_project__backer_parent__tree', 'b66f8269810dd94b292ac1db4d42ec2a', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
+           JOIN (VALUES ('folder_project__host_inside_parent__tree2', '582fd7f13f138fa4714f98996f2ea8b9', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree'), ('folder_project__backer_parent__tree', '68d2d5fc8183e8be25c3fbf7557c98f8', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -275,155 +275,185 @@ CREATE OR REPLACE FUNCTION authz.link_hashes() RETURNS text[] LANGUAGE sql STABL
 DO $chk$
 DECLARE missing text := ''; v_oid oid; v_type text; v_n int;
 BEGIN
-  IF to_regclass('"cx"."users"') IS NULL THEN missing := missing || E'\n  line 13: table cx.users not found [AZ601]';
+  IF to_regclass('"cx"."users"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 13: table cx.users not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."users"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 13: column id not found in cx.users [AZ601]';
+    missing := missing || E'\n  ' || 'line 13: column id not found in cx.users [AZ601]';
   END IF;
-  IF to_regclass('"cx"."folders"') IS NULL THEN missing := missing || E'\n  line 15: table cx.folders not found [AZ601]';
+  IF to_regclass('"cx"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 15: table cx.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."folders"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 15: column id not found in cx.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 15: column id not found in cx.folders [AZ601]';
   END IF;
-  IF to_regclass('"cx"."folders"') IS NULL THEN missing := missing || E'\n  line 16: table cx.folders not found [AZ601]';
+  IF to_regclass('"cx"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 16: table cx.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."folders"')
                     AND attname = 'parent_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 16: column parent_id not found in cx.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 16: column parent_id not found in cx.folders [AZ601]';
   END IF;
-  IF to_regclass('"cx"."folders"') IS NULL THEN missing := missing || E'\n  line 16: table cx.folders not found [AZ601]';
+  IF to_regclass('"cx"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 16: table cx.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."folders"')
                     AND attname = 'parent_type' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 16: column parent_type not found in cx.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 16: column parent_type not found in cx.folders [AZ601]';
   END IF;
-  IF to_regclass('"cx"."folders"') IS NULL THEN missing := missing || E'\n  line 17: table cx.folders not found [AZ601]';
+  IF to_regclass('"cx"."folders"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 17: table cx.folders not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."folders"')
                     AND attname = 'owner_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 17: column owner_id not found in cx.folders [AZ601]';
+    missing := missing || E'\n  ' || 'line 17: column owner_id not found in cx.folders [AZ601]';
   END IF;
-  IF to_regclass('"cx"."projects"') IS NULL THEN missing := missing || E'\n  line 27: table cx.projects not found [AZ601]';
+  IF to_regclass('"cx"."projects"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 27: table cx.projects not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."projects"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 27: column id not found in cx.projects [AZ601]';
+    missing := missing || E'\n  ' || 'line 27: column id not found in cx.projects [AZ601]';
   END IF;
-  IF to_regclass('"cx"."placements"') IS NULL THEN missing := missing || E'\n  line 28: table cx.placements not found [AZ601]';
+  IF to_regclass('"cx"."placements"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 28: table cx.placements not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."placements"')
                     AND attname = 'project_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 28: column project_id not found in cx.placements [AZ601]';
+    missing := missing || E'\n  ' || 'line 28: column project_id not found in cx.placements [AZ601]';
   END IF;
-  IF to_regclass('"cx"."placements"') IS NULL THEN missing := missing || E'\n  line 28: table cx.placements not found [AZ601]';
+  IF to_regclass('"cx"."placements"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 28: table cx.placements not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."placements"')
                     AND attname = 'folder_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 28: column folder_id not found in cx.placements [AZ601]';
+    missing := missing || E'\n  ' || 'line 28: column folder_id not found in cx.placements [AZ601]';
   END IF;
-  IF to_regclass('"cx"."projects"') IS NULL THEN missing := missing || E'\n  line 30: table cx.projects not found [AZ601]';
+  IF to_regclass('"cx"."projects"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 30: table cx.projects not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."projects"')
                     AND attname = 'lead_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 30: column lead_id not found in cx.projects [AZ601]';
+    missing := missing || E'\n  ' || 'line 30: column lead_id not found in cx.projects [AZ601]';
   END IF;
-  IF to_regclass('"cx"."backings"') IS NULL THEN missing := missing || E'\n  line 31: table cx.backings not found [AZ601]';
+  IF to_regclass('"cx"."backings"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 31: table cx.backings not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."backings"')
                     AND attname = 'project_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 31: column project_id not found in cx.backings [AZ601]';
+    missing := missing || E'\n  ' || 'line 31: column project_id not found in cx.backings [AZ601]';
   END IF;
-  IF to_regclass('"cx"."backings"') IS NULL THEN missing := missing || E'\n  line 31: table cx.backings not found [AZ601]';
+  IF to_regclass('"cx"."backings"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 31: table cx.backings not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."backings"')
                     AND attname = 'backer_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 31: column backer_id not found in cx.backings [AZ601]';
+    missing := missing || E'\n  ' || 'line 31: column backer_id not found in cx.backings [AZ601]';
   END IF;
-  IF to_regclass('"cx"."backings"') IS NULL THEN missing := missing || E'\n  line 31: table cx.backings not found [AZ601]';
+  IF to_regclass('"cx"."backings"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 31: table cx.backings not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."backings"')
                     AND attname = 'backer_type' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 31: column backer_type not found in cx.backings [AZ601]';
+    missing := missing || E'\n  ' || 'line 31: column backer_type not found in cx.backings [AZ601]';
   END IF;
-  IF to_regclass('"cx"."regions"') IS NULL THEN missing := missing || E'\n  line 38: table cx.regions not found [AZ601]';
+  IF to_regclass('"cx"."regions"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 38: table cx.regions not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."regions"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 38: column id not found in cx.regions [AZ601]';
+    missing := missing || E'\n  ' || 'line 38: column id not found in cx.regions [AZ601]';
   END IF;
-  IF to_regclass('"cx"."site_links"') IS NULL THEN missing := missing || E'\n  line 39: table cx.site_links not found [AZ601]';
+  IF to_regclass('"cx"."site_links"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 39: table cx.site_links not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."site_links"')
                     AND attname = 'region_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 39: column region_id not found in cx.site_links [AZ601]';
+    missing := missing || E'\n  ' || 'line 39: column region_id not found in cx.site_links [AZ601]';
   END IF;
-  IF to_regclass('"cx"."site_links"') IS NULL THEN missing := missing || E'\n  line 39: table cx.site_links not found [AZ601]';
+  IF to_regclass('"cx"."site_links"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 39: table cx.site_links not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."site_links"')
                     AND attname = 'site_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 39: column site_id not found in cx.site_links [AZ601]';
+    missing := missing || E'\n  ' || 'line 39: column site_id not found in cx.site_links [AZ601]';
   END IF;
-  IF to_regclass('"cx"."region_links"') IS NULL THEN missing := missing || E'\n  line 40: table cx.region_links not found [AZ601]';
+  IF to_regclass('"cx"."region_links"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 40: table cx.region_links not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."region_links"')
                     AND attname = 'region_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 40: column region_id not found in cx.region_links [AZ601]';
+    missing := missing || E'\n  ' || 'line 40: column region_id not found in cx.region_links [AZ601]';
   END IF;
-  IF to_regclass('"cx"."region_links"') IS NULL THEN missing := missing || E'\n  line 40: table cx.region_links not found [AZ601]';
+  IF to_regclass('"cx"."region_links"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 40: table cx.region_links not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."region_links"')
                     AND attname = 'parent_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 40: column parent_id not found in cx.region_links [AZ601]';
+    missing := missing || E'\n  ' || 'line 40: column parent_id not found in cx.region_links [AZ601]';
   END IF;
-  IF to_regclass('"cx"."regions"') IS NULL THEN missing := missing || E'\n  line 41: table cx.regions not found [AZ601]';
+  IF to_regclass('"cx"."regions"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 41: table cx.regions not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."regions"')
                     AND attname = 'chief_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 41: column chief_id not found in cx.regions [AZ601]';
+    missing := missing || E'\n  ' || 'line 41: column chief_id not found in cx.regions [AZ601]';
   END IF;
-  IF to_regclass('"cx"."sites"') IS NULL THEN missing := missing || E'\n  line 50: table cx.sites not found [AZ601]';
+  IF to_regclass('"cx"."sites"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 50: table cx.sites not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."sites"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 50: column id not found in cx.sites [AZ601]';
+    missing := missing || E'\n  ' || 'line 50: column id not found in cx.sites [AZ601]';
   END IF;
-  IF to_regclass('"cx"."site_regions"') IS NULL THEN missing := missing || E'\n  line 51: table cx.site_regions not found [AZ601]';
+  IF to_regclass('"cx"."site_regions"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 51: table cx.site_regions not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."site_regions"')
                     AND attname = 'site_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 51: column site_id not found in cx.site_regions [AZ601]';
+    missing := missing || E'\n  ' || 'line 51: column site_id not found in cx.site_regions [AZ601]';
   END IF;
-  IF to_regclass('"cx"."site_regions"') IS NULL THEN missing := missing || E'\n  line 51: table cx.site_regions not found [AZ601]';
+  IF to_regclass('"cx"."site_regions"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 51: table cx.site_regions not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."site_regions"')
                     AND attname = 'region_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 51: column region_id not found in cx.site_regions [AZ601]';
+    missing := missing || E'\n  ' || 'line 51: column region_id not found in cx.site_regions [AZ601]';
   END IF;
-  IF to_regclass('"cx"."sites"') IS NULL THEN missing := missing || E'\n  line 52: table cx.sites not found [AZ601]';
+  IF to_regclass('"cx"."sites"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 52: table cx.sites not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."sites"')
                     AND attname = 'region_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 52: column region_id not found in cx.sites [AZ601]';
+    missing := missing || E'\n  ' || 'line 52: column region_id not found in cx.sites [AZ601]';
   END IF;
-  IF to_regclass('"cx"."notes"') IS NULL THEN missing := missing || E'\n  line 56: table cx.notes not found [AZ601]';
+  IF to_regclass('"cx"."notes"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 56: table cx.notes not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."notes"')
                     AND attname = 'id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 56: column id not found in cx.notes [AZ601]';
+    missing := missing || E'\n  ' || 'line 56: column id not found in cx.notes [AZ601]';
   END IF;
-  IF to_regclass('"cx"."notes"') IS NULL THEN missing := missing || E'\n  line 57: table cx.notes not found [AZ601]';
+  IF to_regclass('"cx"."notes"') IS NULL THEN
+    missing := missing || E'\n  ' || 'line 57: table cx.notes not found [AZ601]';
   ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('"cx"."notes"')
                     AND attname = 'author_id' AND attnum > 0 AND NOT attisdropped) THEN
-    missing := missing || E'\n  line 57: column author_id not found in cx.notes [AZ601]';
+    missing := missing || E'\n  ' || 'line 57: column author_id not found in cx.notes [AZ601]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."users"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 13: cx.users.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 13: cx.users.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."folders"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 15: cx.folders.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 15: cx.folders.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."projects"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 27: cx.projects.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 27: cx.projects.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."regions"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 38: cx.regions.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 38: cx.regions.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."sites"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 50: cx.sites.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 50: cx.sites.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type
   FROM pg_attribute WHERE attrelid = to_regclass('"cx"."notes"') AND attname = 'id' AND attnum > 0 AND NOT attisdropped;
   IF FOUND AND v_oid <> to_regtype('bigint') THEN
-    missing := missing || E'\n  line 56: cx.notes.id is ' || v_type || E', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
+    missing := missing || E'\n  ' || 'line 56: cx.notes.id is ' || v_type
+      || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
   IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;
 END $chk$;
@@ -608,9 +638,9 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder_project__host_inside_parent__tree2', 'cb4c0dddb8cb9ad7f47ce50fc425aab0', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
-  ('folder__parent__tree', '20eb39d7e531ea49f75bb398b3eac89e', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[]),
-  ('folder_project__backer_parent__tree', 'b66f8269810dd94b292ac1db4d42ec2a', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]);
+  ('folder_project__host_inside_parent__tree2', '582fd7f13f138fa4714f98996f2ea8b9', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
+  ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[]),
+  ('folder_project__backer_parent__tree', '68d2d5fc8183e8be25c3fbf7557c98f8', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]);
 
 CREATE TABLE authz_int.shared_relations (object_type text, relation text, subject text, shared_by text, required text[], loc text, PRIMARY KEY (object_type, relation, subject));
 
@@ -1026,14 +1056,16 @@ BEGIN
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((not archived), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 15: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 15', SQLERRM;
   END;
   DROP TABLE authz_probe;
   CREATE TEMP TABLE authz_probe (LIKE "cx"."placements");
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((active), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 28: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 28', SQLERRM;
   END;
   DROP TABLE authz_probe;
   FOR d IN SELECT DISTINCT p.oid::regprocedure AS fn
@@ -1041,7 +1073,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."folder_project__host_inside_parent__tree_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 15: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 15', d.fn;
   END LOOP;
 END $imm$;
 
@@ -1138,7 +1171,8 @@ BEGIN
            WHERE w.ev_class = 'authz_int."folder_project__host_inside_parent__tree_conds"'::regclass
              AND c.oid NOT IN (w.ev_class, '"cx"."folders"'::regclass, '"cx"."projects"'::regclass) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
-      RAISE EXCEPTION 'line 15: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]', d.rel;
+      RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
+        'line 15', d.rel;
     END IF;
     EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
                    'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_deps"()', 'authz_folder_project__host_inside_parent__tree_dep', d.rel);
@@ -1353,14 +1387,16 @@ BEGIN
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((not archived), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 15: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 15', SQLERRM;
   END;
   DROP TABLE authz_probe;
   CREATE TEMP TABLE authz_probe (LIKE "cx"."placements");
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((active), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 28: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 28', SQLERRM;
   END;
   DROP TABLE authz_probe;
   FOR d IN SELECT DISTINCT p.oid::regprocedure AS fn
@@ -1368,7 +1404,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."folder_project__host_inside_parent__tree2_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 15: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 15', d.fn;
   END LOOP;
 END $imm$;
 
@@ -1638,14 +1675,16 @@ BEGIN
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((owner_id is null /* this.owner_id: nobody's */ and parent_type <> $$this.id$$ and parent_type <> e'it\'s' and parent_type <> 'this.id''s' and id <>-1), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 23: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 23', SQLERRM;
   END;
   DROP TABLE authz_probe;
   CREATE TEMP TABLE authz_probe (LIKE "cx"."folders");
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((not archived), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 15: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 15', SQLERRM;
   END;
   DROP TABLE authz_probe;
   FOR d IN SELECT DISTINCT p.oid::regprocedure AS fn
@@ -1653,7 +1692,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."folder__parent__tree_links"'::regclass, 'authz_int."folder__parent__tree_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 15: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 15', d.fn;
   END LOOP;
 END $imm$;
 
@@ -1824,7 +1864,8 @@ BEGIN
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((not archived), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 15: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 15', SQLERRM;
   END;
   DROP TABLE authz_probe;
   FOR d IN SELECT DISTINCT p.oid::regprocedure AS fn
@@ -1832,7 +1873,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."folder_project__backer_parent__tree_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 15: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 15', d.fn;
   END LOOP;
 END $imm$;
 
@@ -2053,14 +2095,16 @@ BEGIN
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((active), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 39: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 39', SQLERRM;
   END;
   DROP TABLE authz_probe;
   CREATE TEMP TABLE authz_probe (LIKE "cx"."site_regions");
   BEGIN
     CREATE INDEX ON authz_probe ((coalesce((active), false)));
   EXCEPTION WHEN others THEN
-    RAISE EXCEPTION 'line 51: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]', SQLERRM;
+    RAISE EXCEPTION '%: a condition that limits inheritance must give the same answer for every user at any time (%) [AZ603]',
+      'line 51', SQLERRM;
   END;
   DROP TABLE authz_probe;
   FOR d IN SELECT DISTINCT p.oid::regprocedure AS fn
@@ -2068,7 +2112,8 @@ BEGIN
            JOIN pg_rewrite w ON w.oid = dep.objid AND dep.classid = 'pg_rewrite'::regclass
            JOIN pg_proc p ON p.oid = dep.refobjid AND dep.refclassid = 'pg_proc'::regclass
            WHERE w.ev_class IN ('authz_int."region_site__over__tree_conds"'::regclass) AND p.provolatile <> 'i' LOOP
-    RAISE EXCEPTION 'line 39: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]', d.fn;
+    RAISE EXCEPTION '%: a condition used for inheritance calls %, which is not IMMUTABLE; read tables with a subquery instead, so changes to them are tracked [AZ603]',
+      'line 39', d.fn;
   END LOOP;
 END $imm$;
 
@@ -2165,7 +2210,8 @@ BEGIN
            WHERE w.ev_class = 'authz_int."region_site__over__tree_conds"'::regclass
              AND c.oid NOT IN (w.ev_class, '"cx"."regions"'::regclass, '"cx"."sites"'::regclass) LOOP
     IF d.relkind NOT IN ('r', 'p') THEN
-      RAISE EXCEPTION 'line 39: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]', d.rel;
+      RAISE EXCEPTION '%: a condition used for inheritance reads %, which is not a table; read its tables directly [AZ604]',
+        'line 39', d.rel;
     END IF;
     EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON %s '
                    'FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_deps"()', 'authz_region_site__over__tree_dep', d.rel);
@@ -2572,7 +2618,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."backings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_ins" AFTER INSERT ON "cx"."backings" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."backings" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."backings"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_upd"() RETURNS trigger
@@ -2601,7 +2647,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."backings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_upd" AFTER UPDATE ON "cx"."backings" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."backings" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."backings"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_del"() RETURNS trigger
@@ -2621,7 +2667,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."backings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_del" AFTER DELETE ON "cx"."backings" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_del"()';
   ELSE
-    RAISE NOTICE '"cx"."backings" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."backings"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_1_trunc"() RETURNS trigger
@@ -2636,7 +2682,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."backings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_1_trunc" AFTER TRUNCATE ON "cx"."backings" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_1_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."backings" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."backings"';
   END IF;
 END $tr$;
 
@@ -2658,7 +2704,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."placements"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_ins" AFTER INSERT ON "cx"."placements" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."placements" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."placements"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_upd"() RETURNS trigger
@@ -2687,7 +2733,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."placements"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_upd" AFTER UPDATE ON "cx"."placements" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."placements" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."placements"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_del"() RETURNS trigger
@@ -2707,7 +2753,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."placements"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_del" AFTER DELETE ON "cx"."placements" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_del"()';
   ELSE
-    RAISE NOTICE '"cx"."placements" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."placements"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_2_trunc"() RETURNS trigger
@@ -2722,7 +2768,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."placements"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_2_trunc" AFTER TRUNCATE ON "cx"."placements" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_2_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."placements" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."placements"';
   END IF;
 END $tr$;
 
@@ -2744,7 +2790,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."region_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_ins" AFTER INSERT ON "cx"."region_links" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."region_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."region_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_upd"() RETURNS trigger
@@ -2773,7 +2819,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."region_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_upd" AFTER UPDATE ON "cx"."region_links" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."region_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."region_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_del"() RETURNS trigger
@@ -2793,7 +2839,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."region_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_del" AFTER DELETE ON "cx"."region_links" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_del"()';
   ELSE
-    RAISE NOTICE '"cx"."region_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."region_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_3_trunc"() RETURNS trigger
@@ -2808,7 +2854,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."region_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_3_trunc" AFTER TRUNCATE ON "cx"."region_links" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_3_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."region_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."region_links"';
   END IF;
 END $tr$;
 
@@ -2830,7 +2876,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."site_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_ins" AFTER INSERT ON "cx"."site_links" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."site_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."site_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_upd"() RETURNS trigger
@@ -2859,7 +2905,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."site_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_upd" AFTER UPDATE ON "cx"."site_links" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."site_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."site_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_del"() RETURNS trigger
@@ -2879,7 +2925,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."site_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_del" AFTER DELETE ON "cx"."site_links" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_del"()';
   ELSE
-    RAISE NOTICE '"cx"."site_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."site_links"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_4_trunc"() RETURNS trigger
@@ -2894,7 +2940,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."site_links"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_4_trunc" AFTER TRUNCATE ON "cx"."site_links" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_4_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."site_links" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."site_links"';
   END IF;
 END $tr$;
 
@@ -2916,7 +2962,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."site_regions"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_5_ins" AFTER INSERT ON "cx"."site_regions" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_5_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."site_regions" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."site_regions"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_5_upd"() RETURNS trigger
@@ -2945,7 +2991,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."site_regions"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_5_upd" AFTER UPDATE ON "cx"."site_regions" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_5_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."site_regions" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."site_regions"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_5_del"() RETURNS trigger
@@ -2965,7 +3011,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."site_regions"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_5_del" AFTER DELETE ON "cx"."site_regions" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_5_del"()';
   ELSE
-    RAISE NOTICE '"cx"."site_regions" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."site_regions"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."rel_audit_5_trunc"() RETURNS trigger
@@ -2980,7 +3026,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."site_regions"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_rel_audit_5_trunc" AFTER TRUNCATE ON "cx"."site_regions" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."rel_audit_5_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."site_regions" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."site_regions"';
   END IF;
 END $tr$;
 
@@ -2996,7 +3042,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_ins" AFTER INSERT ON "cx"."folders" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."folders"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."folder__col_audit_upd"() RETURNS trigger
@@ -3034,7 +3080,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_upd" AFTER UPDATE ON "cx"."folders" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."folders"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."folder__col_audit_del"() RETURNS trigger
@@ -3048,7 +3094,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_del" AFTER DELETE ON "cx"."folders" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"cx"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."folders"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."folder__col_audit_trunc"() RETURNS trigger
@@ -3063,7 +3109,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_trunc" AFTER TRUNCATE ON "cx"."folders" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."folders"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -3089,7 +3135,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."folders"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_folder_col_audit_row" AFTER UPDATE ON "cx"."folders" FOR EACH ROW WHEN (OLD."parent_id" IS DISTINCT FROM NEW."parent_id" OR OLD."parent_type" IS DISTINCT FROM NEW."parent_type" OR OLD."owner_id" IS DISTINCT FROM NEW."owner_id") EXECUTE FUNCTION authz_int."folder__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"cx"."folders" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."folders"';
   END IF;
 END $tr$;
 
@@ -3105,7 +3151,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_project_col_audit_ins" AFTER INSERT ON "cx"."projects" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."project__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."projects"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."project__col_audit_upd"() RETURNS trigger
@@ -3129,7 +3175,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_project_col_audit_upd" AFTER UPDATE ON "cx"."projects" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."project__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."projects"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."project__col_audit_del"() RETURNS trigger
@@ -3143,7 +3189,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_project_col_audit_del" AFTER DELETE ON "cx"."projects" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."project__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"cx"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."projects"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."project__col_audit_trunc"() RETURNS trigger
@@ -3158,7 +3204,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_project_col_audit_trunc" AFTER TRUNCATE ON "cx"."projects" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."project__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."projects"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -3176,7 +3222,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."projects"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_project_col_audit_row" AFTER UPDATE ON "cx"."projects" FOR EACH ROW WHEN (OLD."lead_id" IS DISTINCT FROM NEW."lead_id") EXECUTE FUNCTION authz_int."project__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"cx"."projects" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."projects"';
   END IF;
 END $tr$;
 
@@ -3192,7 +3238,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."regions"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_region_col_audit_ins" AFTER INSERT ON "cx"."regions" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."regions" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."regions"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."region__col_audit_upd"() RETURNS trigger
@@ -3216,7 +3262,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."regions"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_region_col_audit_upd" AFTER UPDATE ON "cx"."regions" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."regions" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."regions"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."region__col_audit_del"() RETURNS trigger
@@ -3230,7 +3276,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."regions"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_region_col_audit_del" AFTER DELETE ON "cx"."regions" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"cx"."regions" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."regions"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."region__col_audit_trunc"() RETURNS trigger
@@ -3245,7 +3291,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."regions"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_region_col_audit_trunc" AFTER TRUNCATE ON "cx"."regions" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."regions" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."regions"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -3263,7 +3309,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."regions"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_region_col_audit_row" AFTER UPDATE ON "cx"."regions" FOR EACH ROW WHEN (OLD."chief_id" IS DISTINCT FROM NEW."chief_id") EXECUTE FUNCTION authz_int."region__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"cx"."regions" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."regions"';
   END IF;
 END $tr$;
 
@@ -3279,7 +3325,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."sites"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_site_col_audit_ins" AFTER INSERT ON "cx"."sites" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."site__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."sites" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."sites"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."site__col_audit_upd"() RETURNS trigger
@@ -3303,7 +3349,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."sites"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_site_col_audit_upd" AFTER UPDATE ON "cx"."sites" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."site__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."sites" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."sites"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."site__col_audit_del"() RETURNS trigger
@@ -3317,7 +3363,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."sites"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_site_col_audit_del" AFTER DELETE ON "cx"."sites" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."site__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"cx"."sites" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."sites"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."site__col_audit_trunc"() RETURNS trigger
@@ -3332,7 +3378,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."sites"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_site_col_audit_trunc" AFTER TRUNCATE ON "cx"."sites" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."site__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."sites" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."sites"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -3350,7 +3396,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."sites"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_site_col_audit_row" AFTER UPDATE ON "cx"."sites" FOR EACH ROW WHEN (OLD."region_id" IS DISTINCT FROM NEW."region_id") EXECUTE FUNCTION authz_int."site__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"cx"."sites" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."sites"';
   END IF;
 END $tr$;
 
@@ -3366,7 +3412,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."notes"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_note_col_audit_ins" AFTER INSERT ON "cx"."notes" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."note__col_audit_ins"()';
   ELSE
-    RAISE NOTICE '"cx"."notes" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."notes"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."note__col_audit_upd"() RETURNS trigger
@@ -3390,7 +3436,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."notes"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_note_col_audit_upd" AFTER UPDATE ON "cx"."notes" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."note__col_audit_upd"()';
   ELSE
-    RAISE NOTICE '"cx"."notes" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."notes"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."note__col_audit_del"() RETURNS trigger
@@ -3404,7 +3450,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."notes"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_note_col_audit_del" AFTER DELETE ON "cx"."notes" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."note__col_audit_del"()';
   ELSE
-    RAISE NOTICE '"cx"."notes" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."notes"';
   END IF;
 END $tr$;
 CREATE FUNCTION authz_int."note__col_audit_trunc"() RETURNS trigger
@@ -3419,7 +3465,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."notes"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_note_col_audit_trunc" AFTER TRUNCATE ON "cx"."notes" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."note__col_audit_trunc"()';
   ELSE
-    RAISE NOTICE '"cx"."notes" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."notes"';
   END IF;
 END $tr$;
 -- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
@@ -3437,7 +3483,7 @@ DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."notes"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_note_col_audit_row" AFTER UPDATE ON "cx"."notes" FOR EACH ROW WHEN (OLD."author_id" IS DISTINCT FROM NEW."author_id") EXECUTE FUNCTION authz_int."note__col_audit_row"()';
   ELSE
-    RAISE NOTICE '"cx"."notes" is not a table: changes to it are not audited or fed (audit)';
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."notes"';
   END IF;
 END $tr$;
 

@@ -17,6 +17,7 @@ import re  # noqa: E402
 
 from authzlib import Compiler, PolicyError, parse_policy  # noqa: E402
 from authzlib.errors import CODES, split  # noqa: E402
+from authzlib.governance import trigger_if_table  # noqa: E402
 
 
 def coded(message: str) -> bool:
@@ -885,6 +886,9 @@ APPLY = [
     ),
 ]
 
+# a file name SQL text must quote ('), and a RAISE's message too (%)
+QUOTED_FILE = "o'brien 50%.authz"
+
 # Answers worked out by hand, asked of the database as each user ('' is nobody): expect() says which ids
 # authz.list gives and which of the ids authz.can allows, sees() which rows the app role reads through the rules.
 ANSWERS = """
@@ -1208,6 +1212,13 @@ INCLUDES = [
         "sub/a.authz line 1: can't find sub/b.authz in the policy's folder [AZ108]",
     ),
     (
+        "a file whose name holds a dollar quote's tag",
+        'include "notes$f$.authz"\n',
+        {"notes$f$.authz": BASE},
+        "line 1: notes$f$.authz: an included file's name can't hold $f$: the generated functions name the file in "
+        "their messages, and $f$ would end one; rename the file [AZ108]",
+    ),
+    (
         "the same file twice",
         'include "a.authz"\ninclude "a.authz"\n',
         {"a.authz": BASE},
@@ -1445,7 +1456,9 @@ def main() -> None:
 
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
     subprocess.run(["createdb", db], check=True, capture_output=True)
-    for what, extra, want in APPLY:
+    # each also from an included file named with a quote and a percent sign: the messages hold its name as SQL
+    # text, and as a RAISE's message, and say it as written
+    for (what, extra, want), file in [(a, f) for a in APPLY for f in (None, QUOTED_FILE)]:
         subprocess.run(
             ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", "tests/alt_schema.sql"],
             check=True,
@@ -1454,7 +1467,12 @@ def main() -> None:
         subprocess.run(
             ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-c", APPLY_SETUP], check=True, capture_output=True
         )
-        sql = compile_policy(BASE + extra)
+        if file is None:
+            sql = compile_policy(BASE + extra)
+        else:
+            sql = compile_policy(f'include "{file}"\n', files={file: BASE + extra})
+            what += f", in {file}"
+            want = re.sub(r"^line ", f"{file} line ", want)
         p = subprocess.run(
             ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db], input=sql, capture_output=True, text=True
         )
@@ -1486,6 +1504,52 @@ def main() -> None:
             ok, err = False, str(e)
         fails += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  {what}{': ' + err if err else ''}")
+    # a whole policy in an included file named with a quote and a percent sign: it applies, and its named test runs,
+    # its line said as written
+    subprocess.run(
+        ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", "tests/alt_schema.sql"],
+        check=True,
+        capture_output=True,
+    )
+    text = (
+        BASE + "rules alt.docs\n  select : share\n"
+        'test "the owner sees the doc"\n  given u = {INSERT INTO alt.users VALUES (7) RETURNING id}\n'
+        "  given d = {INSERT INTO alt.docs (doc_no, owner_id) VALUES (70, $u) RETURNING doc_no}\n"
+        "  as user $u sees 1 {SELECT doc_no FROM alt.docs}\n"
+    )
+    c = Compiler(parse_policy(f'include "{QUOTED_FILE}"\n', files={QUOTED_FILE: text}))
+    p = subprocess.run(
+        ["psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-d", db],
+        input=c.compile("t")
+        + c.tests_function_sql()
+        + "\nSELECT string_agg(line || ': ' || ok, ', ') FROM pg_temp.authz_policy_tests();\n",
+        capture_output=True,
+        text=True,
+    )
+    got = p.stdout.strip().splitlines()[-1] if p.returncode == 0 else p.stderr.strip()
+    ok = got == f"{QUOTED_FILE} line 15: true"
+    fails += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  a policy in {QUOTED_FILE} applies, and its named test runs: {got}")
+    # a relation that is no table gets a notice instead of the trigger, which names it as written, a % in it too (no
+    # policy names such a table: trigger_if_table is called alone)
+    p = subprocess.run(
+        ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db],
+        input='CREATE VIEW alt."50%off" AS SELECT 1 AS x;\n'
+        + trigger_if_table(
+            "alt.50%off",
+            'CREATE TRIGGER "t" AFTER INSERT ON alt."50%off" FOR EACH STATEMENT EXECUTE FUNCTION authz_int.f()',
+            "audit",
+        ),
+        capture_output=True,
+        text=True,
+    )
+    got = p.stderr.strip()
+    ok = (
+        p.returncode == 0
+        and got == 'NOTICE:  "alt"."50%off" is not a table: changes to it are not audited or fed (audit)'
+    )
+    fails += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  a relation named with a % that is no table: a notice says so: {got}")
     # a shared relation with expiring shares can't later become a link for inheritance
     reset = lambda: [
         subprocess.run(
@@ -1563,7 +1627,17 @@ def main() -> None:
 
     subprocess.run(["dropdb", db], capture_output=True)
     total = (
-        len(COMPILE) + len(WHOLE) + 1 + len(TESTS) + 2 + len(INCLUDES) + 1 + len(APPLY) + len(APPLY_OK) + 2 + len(LINKS)
+        len(COMPILE)
+        + len(WHOLE)
+        + 1
+        + len(TESTS)
+        + 2
+        + len(INCLUDES)
+        + 1
+        + 2 * len(APPLY)
+        + len(APPLY_OK)
+        + 4
+        + len(LINKS)
     )
     print(f"policy errors: {total - fails} of {total} cases behave as expected")
     sys.exit(1 if fails else 0)

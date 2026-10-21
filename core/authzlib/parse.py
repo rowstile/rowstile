@@ -890,6 +890,14 @@ def read_parts(
                 f"named with / and without .. out of the folder",
                 "AZ108",
             )
+        tag = DOLLAR_TAG.search(inc)
+        if tag:
+            fail(
+                loc,
+                f"{m.group(1)}: an included file's name can't hold {tag.group(0)}: the generated functions name the "
+                f"file in their messages, and {tag.group(0)} would end one; rename the file",
+                "AZ108",
+            )
         if inc in seen:
             fail(loc, f"{m.group(1)} is included twice (or includes itself)", "AZ108")
         if inc not in files:

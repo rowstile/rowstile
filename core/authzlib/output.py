@@ -137,20 +137,27 @@ def fk_named(c: Cascade) -> str:
     return f"(con.conrelid = to_regclass({lit(qt(c.table))}) AND con.confrelid = to_regclass({lit(qt(c.parent))}){columns})"
 
 
+# what starts each problem in applying's first check: a new line, indented. The problem's own text is a plain literal
+# (lit), as it may name an included file whose name holds a quote
+NEXT = "E'\\n  '"
+
+
 def cascade_check(c: Cascade) -> str:
     """PL/pgSQL for applying's first check (v_n, missing): the line names one foreign key that acts (AZ625)."""
     on = f" on ({', '.join(c.columns)})" if c.columns else ""
     which = "drop all but one" if c.columns else f"say which by its columns, cascade from {c.parent} (column, ...)"
-    said = f"\\n  {c.loc}: cascade from {c.parent}: "
+    said = f"{c.loc}: cascade from {c.parent}: "
+    none = (
+        f"{said}no foreign key of {c.table} to {c.parent}{on} deletes or changes rows of {c.table} (ON DELETE CASCADE, "
+        "SET NULL or SET DEFAULT, ON UPDATE SET NULL or SET DEFAULT): remove the line [AZ625]"
+    )
+    several = f" foreign keys of {c.table} to {c.parent}{on} delete or change rows of {c.table}: {which} [AZ625]"
     return (
         f"  SELECT count(*) INTO v_n FROM pg_constraint con WHERE con.contype = 'f' AND {FK_ACTS} AND {fk_named(c)};\n"
         f"  IF v_n = 0 THEN\n"
-        f"    missing := missing || E'{said}no foreign key of {c.table} to {c.parent}{on} deletes or changes rows of "
-        f"{c.table} (ON DELETE CASCADE, SET NULL or SET DEFAULT, ON UPDATE SET NULL or SET DEFAULT): remove the line "
-        f"[AZ625]';\n"
+        f"    missing := missing || {NEXT} || {lit(none)};\n"
         f"  ELSIF v_n > 1 THEN\n"
-        f"    missing := missing || E'{said}' || v_n || E' foreign keys of {c.table} to {c.parent}{on} delete or change "
-        f"rows of {c.table}: {which} [AZ625]';\n"
+        f"    missing := missing || {NEXT} || {lit(said)} || v_n || {lit(several)};\n"
         "  END IF;"
     )
 
@@ -1234,10 +1241,11 @@ END $kv$;"""
         forget_types = [n for n in self.types if n in shared_types]
         verify = " AND ".join([f"authz_int.{q(n + '_verify')}()" for n in self.trees.values()] or ["true"])
         checks = "\n".join(
-            f"  IF to_regclass({lit(qt(tbl))}) IS NULL THEN missing := missing || E'\\n  {loc}: table {tbl} not found [AZ601]';\n"
+            f"  IF to_regclass({lit(qt(tbl))}) IS NULL THEN\n"
+            f"    missing := missing || {NEXT} || {lit(f'{loc}: table {tbl} not found [AZ601]')};\n"
             f"  ELSIF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass({lit(qt(tbl))})\n"
             f"                    AND attname = {lit(col)} AND attnum > 0 AND NOT attisdropped) THEN\n"
-            f"    missing := missing || E'\\n  {loc}: column {col} not found in {tbl} [AZ601]';\n  END IF;"
+            f"    missing := missing || {NEXT} || {lit(f'{loc}: column {col} not found in {tbl} [AZ601]')};\n  END IF;"
             for tbl, col, loc in dict.fromkeys((a, b, str(c)) for a, b, c in self.columns)
         )
         # the column's own type, as a type line writes it (varchar for character varying): what to write
@@ -1245,7 +1253,8 @@ END $kv$;"""
             f"  SELECT atttypid, replace(format_type(atttypid, NULL), 'character varying', 'varchar') INTO v_oid, v_type\n"
             f"  FROM pg_attribute WHERE attrelid = to_regclass({lit(qt(tbl))}) AND attname = {lit(pk)} AND attnum > 0 AND NOT attisdropped;\n"
             f"  IF FOUND AND v_oid <> to_regtype({lit(pkt)}) THEN\n"
-            f"    missing := missing || E'\\n  {loc}: {tbl}.{pk} is ' || v_type || E', not {pkt}: write its type after the key, ({pk} ' || v_type || ') [AZ602]';\n"
+            f"    missing := missing || {NEXT} || {lit(f'{loc}: {tbl}.{pk} is ')} || v_type\n"
+            f"      || {lit(f', not {pkt}: write its type after the key, ({pk} ')} || v_type || ') [AZ602]';\n"
             f"  END IF;"
             for tbl, pk, pkt, loc in self.pk_checks
         )
