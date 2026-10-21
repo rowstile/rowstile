@@ -31,8 +31,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
     - `sqlutil.py` — quoting helpers (`q`, `qt`, `lit`, ...), `this.`, and `reads_more` (whether a condition
       reads more than its row: then it runs with the policy's rights)
     - `conditions.py` — simple conditions (`{not archived}`, `{owner_id = authz.uid()}`) read as facts about
-      the row, for the reference evaluator; only what means the same whatever the column's type and collation
-      (`tests/conditions_test.py` asks Postgres the same questions)
+      the row, for the reference evaluator; only where the column can't hold two texts the policy compares as one
+      value (`alike`), the rest left to the database (`tests/conditions_test.py` asks Postgres the same questions)
     - `connection.py` — the `Db` authzlib works over, and typed readers for the values its rows hold
     - `versions.py` — how a version is written (X.Y.Z, -alpha.N, -beta.N, -rc.N, -dev), its stages' order and
       PyPI's spelling: the one grammar `packaging/version.py`, the downgrade guard, `cli/stack.py` and

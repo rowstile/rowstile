@@ -25,9 +25,8 @@ from collections.abc import Iterable
 from typing import NotRequired, TypeAlias, TypedDict
 
 from . import Compiler, PolicyError, migrate, parse_policy
-from .conditions import simple
 from .connection import Db
-from .evaluate import FOLLOWS, Difference, Listing, Reference, compare, worlds_to_try
+from .evaluate import FOLLOWS, Difference, Listing, Reference, alike_in, compare, facts, worlds_to_try
 from .parse import KEYWORDS, And, Arrow, Cascade, Cond, Expr, Loc, Not, Or, Perm, Policy, Ref, Rule, Type, read_lines
 from .statements import split
 
@@ -465,15 +464,15 @@ def expr_of(side: Side, what: str) -> Expr | None:
     return found.expr if found is not None else None
 
 
-def unreadable_pairs(b: Expr, h: Expr) -> list[tuple[str, str]] | None:
+def unreadable_pairs(b: Expr, h: Expr, alike: frozenset[str] = frozenset()) -> list[tuple[str, str]] | None:
     """When two expressions have one shape and differ only in conditions the review can't read (a subquery, a
-    function: conditions.simple reads neither; signed_in, anyone and nobody it reads), those conditions, before
-    and after. The small worlds hold such a condition as rows of its own, chosen per world, so two texts are two
-    unrelated sets there: the worlds can't say whether the change gives more or less. None when they differ in
-    anything else."""
+    function: conditions.simple reads neither; a text compared with a column that is compared with a look-alike
+    one, in alike: evaluate.facts; signed_in, anyone and nobody it reads), those conditions, before and after. The
+    small worlds hold such a condition as rows of its own, chosen per world, so two texts are two unrelated sets
+    there: the worlds can't say whether the change gives more or less. None when they differ in anything else."""
 
     def unread(sql: str) -> bool:
-        return simple(sql) is None and sql not in KEYWORDS.values()
+        return facts(sql, alike) is None and sql not in KEYWORDS.values()
 
     match b, h:
         case (Cond(sb), Cond(sh)):
@@ -481,13 +480,13 @@ def unreadable_pairs(b: Expr, h: Expr) -> list[tuple[str, str]] | None:
                 return []
             return [(sb, sh)] if unread(sb) and unread(sh) else None
         case (Not(ib), Not(ih)):
-            return unreadable_pairs(ib, ih)
+            return unreadable_pairs(ib, ih, alike)
         case (And(ib), And(ih)) | (Or(ib), Or(ih)):
             if len(ib) != len(ih):
                 return None
             out: list[tuple[str, str]] = []
             for x, y in zip(ib, ih, strict=True):
-                pairs = unreadable_pairs(x, y)
+                pairs = unreadable_pairs(x, y, alike)
                 if pairs is None:
                     return None
                 out += pairs
@@ -498,9 +497,10 @@ def unreadable_pairs(b: Expr, h: Expr) -> list[tuple[str, str]] | None:
 def unreadable_changes(b: Side, h: Side, changed: list[Changed]) -> dict[str, list[tuple[str, str]]]:
     """The permissions and rules that changed only in conditions the review can't read, with those conditions."""
     out: dict[str, list[tuple[str, str]]] = {}
+    alike = alike_in([b.pol, h.pol])
     for c in changed:
         eb, eh = (expr_of(b, c["what"]), expr_of(h, c["what"])) if c["kind"] == "changed" else (None, None)
-        pairs = unreadable_pairs(eb, eh) if eb is not None and eh is not None else None
+        pairs = unreadable_pairs(eb, eh, alike) if eb is not None and eh is not None else None
         if pairs:
             out[c["what"]] = pairs
     return out

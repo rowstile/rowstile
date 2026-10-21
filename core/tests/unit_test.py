@@ -3361,6 +3361,19 @@ rules app.folders
         r = self.review.review((base, {}, {}), (replaced(base, f"after : {member}", "after : view"), {}, {}))
         self.assertIn("not a refactor: rule app.folders update org_id after differs for ", self.review.text(r))
 
+    def test_texts_a_column_may_hold_alike_are_beyond_the_review(self) -> None:
+        # `{status = 'a  b'}` and `{status = 'a  b' and status <> 'A  B'}` were read as the same, "Meaning unchanged",
+        # where a case-insensitive column holds the second for no row: the worlds draw such conditions' rows, so the
+        # review says it can't read the change
+        r = self.small("{status = 'a  b'}", "{status = 'a  b' and status <> 'A  B'}")
+        self.assertIsNone(r["meaning"]["equivalent"])
+        self.assertEqual(r["meaning"].get("unreadable"), ["folder.remove"])
+        self.assertEqual({f["why"] for f in r["risk"]}, {"a condition it can't read changed"})
+        # other words are read as two values: the same meaning, checked in small worlds
+        r = self.small("{status = 'a  b'}", "{status = 'a  b' and status <> 'draft'}")
+        self.assertIn("small worlds", r["meaning"]["equivalent"] or "")
+        self.assertNotIn("unreadable", r["meaning"])
+
     def test_text_between_dollar_quotes_is_compared_as_written(self) -> None:
         # $$a  b$$ is a string, as 'a  b' is: its spaces are what it says, not the policy's layout
         base = replaced(self.SMALL, "{status = 'a  b'}", "{status = $$a  b$$}")
@@ -6278,6 +6291,68 @@ class Confidence(unittest.TestCase):
         self.assertEqual(simple("price < 1.00006103515625"), Cmp("<", Col("price"), Const(Decimal("1.00006103515625"))))
         self.assertIsNone(simple("price < 1.000030517578125"))
         self.assertEqual(simple("price = null"), Cmp("=", Col("price"), Const(None)))
+        # a digit past ASCII is a letter to Postgres: `size > ٣` compares two columns
+        self.assertIsNone(simple("size > \u0663"))
+        self.assertEqual(simple("size > 3"), Cmp(">", Col("size"), Const(3)))
+
+    def test_texts_a_column_may_hold_as_one_value(self) -> None:
+        from authzlib.conditions import alike
+
+        # each pair one value to a collation ICU makes from its root (und-u-ks-level1, -ks-level2, -ka-shifted, -kn)
+        # or to a type (char(n), date, tsvector)
+        for a, b in (
+            ("a", "A"),
+            ("cafe", "café"),
+            ("ab", "a-b"),
+            ("ab", "a b"),
+            ("a1", "a01"),
+            ("ae", "æ"),
+            ("o", "ø"),
+            ("l", "ł"),
+            ("ss", "ß"),
+            ("a", "a\u00ad"),
+            ("a", "\uff41"),
+            ("a", "a "),
+            ("2024-01-01", "2024-1-1"),
+            ("now", "today"),
+            ("epoch", "1970-01-01"),
+            ("a b", "b a"),
+            ("draft", "draft"),  # the same text, first of all
+        ):
+            self.assertTrue(alike(a, b), (a, b))
+        # words no collation of that kind holds alike: the evaluator reads them as two values
+        for a, b in (
+            ("draft", "published"),
+            ("admin", "member"),
+            ("publié", "brouillon"),
+            ("v1", "admin"),
+            ("ab", "ba"),
+        ):
+            self.assertFalse(alike(a, b), (a, b))
+
+    def test_prove_leaves_texts_a_column_may_hold_alike_to_the_database(self) -> None:
+        """{status = 'Public'} and {status = 'public'} were read as two values, so prove said an invariant held that
+        a case-insensitive column breaks (a row 'public' equals both). Texts that may be one value are the
+        database's to read, drawn as rows of their own; different words are still read as two."""
+        from authzlib import prove
+
+        def check(view: str, other: str) -> prove.Proof:
+            [r] = prove.prove(
+                parse_policy(
+                    self.HEAD + f"type doc = app.docs\n  owner : user = owner_id\n  can view = owner or {{{view}}}\n"
+                    f"invariants\n  never doc: view and {{{other}}} and not owner\n",
+                    "p.authz",
+                ),
+                worlds=80,
+            )
+            return r
+
+        r = check("status = 'Public'", "status = 'public'")
+        self.assertFalse(r["holds"])
+        self.assertIn("{status = 'Public'} holds for doc 1", r["world"])
+        self.assertIn("{status = 'public'} holds for doc 1", r["world"])
+        self.assertTrue(check("status = 'published'", "status = 'draft'")["holds"])
+        self.assertTrue(check("status in ('a', 'b')", "status not in ('a', 'b')")["holds"])
 
     def test_prove_reads_quoted_columns_and_long_decimals_as_postgres_does(self) -> None:
         """A quoted column was a condition prove couldn't read, so {"done"} and {not "done"} were drawn apart and

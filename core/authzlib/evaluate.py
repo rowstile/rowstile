@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import NamedTuple, TypeAlias, TypedDict, TypeVar, cast
 
-from .conditions import Node, Scalar, columns_of, simple, truth, uses_uid
+from .conditions import Node, Scalar, alike_columns, columns_of, reads_alike, simple, truth, uses_uid
 from .parse import KEYWORDS, ROLES, And, Arrow, ArrowOn, Cond, Expr, Not, Or, Policy, Ref, Relation, Rule, Source, Type
 
 # a relation or permission of a type, and the ids that hold it
@@ -419,6 +419,26 @@ class Difference(TypedDict):
     worlds: int  # how many worlds were tried
 
 
+def alike_in(pols: Iterable[Policy]) -> frozenset[str]:
+    """The columns the policies' simple conditions compare with texts the column may hold as one value
+    (conditions.alike_columns: 'a' and 'A' under a case-insensitive collation)."""
+    conds: list[str] = []
+    for p in pols:
+        conds += [c for _, c in Reference(p).conditions()]
+        for t in p.types.values():
+            conds += [t.where] if t.where else []
+            conds += [s.where for r in t.relations.values() for s in r.sources if s.kind == "table" and s.where]
+    return alike_columns(node for c in dict.fromkeys(conds) if (node := simple(c)) is not None)
+
+
+def facts(sql: str, alike: frozenset[str]) -> Node | None:
+    """A condition as facts about its row's columns (conditions.simple), unless it compares a column of alike with a
+    text: whether a row equal to one of its texts equals another is the column's collation's to say, so its rows are
+    drawn as any other condition's are."""
+    node = simple(sql)
+    return None if node is None or reads_alike(node, alike) else node
+
+
 def groups(nodes: list[tuple[Node, bool]]) -> list[list[tuple[Node, bool]]]:
     """Conditions in groups that read columns in common: a group's values are chosen together, apart from the
     others'."""
@@ -465,6 +485,14 @@ class World:
         self.pols = list(pols)
         self.density, self.chained = density, chained
         self._followed: dict[int, tuple[Policy, set[tuple[str, str]]]] = {}
+        self._alike: dict[int, tuple[Policy, frozenset[str]]] = {}
+
+    def facts(self, pol: Policy, sql: str) -> Node | None:
+        """A condition as the world reads it from its rows' columns, or None when it draws the rows it holds for
+        (evaluate.facts, over the world's policies and pol)."""
+        if id(pol) not in self._alike or self._alike[id(pol)][0] is not pol:
+            self._alike[id(pol)] = (pol, alike_in([*self.pols, pol]))
+        return facts(sql, self._alike[id(pol)][1])
 
     def fill(self) -> float:
         """How many rows a column names something on."""
@@ -540,7 +568,7 @@ class World:
         for p in [*self.pols, pol]:
             conds = list(Reference(p).conditions()) + [(t.name, t.where) for t in p.types.values() if t.where]
             for tname, cond in conds:
-                node = simple(cond)
+                node = self.facts(pol, cond)
                 if node is not None:
                     for col, how in columns_of(node).items():
                         hows.setdefault((tname, col), []).extend(how)
@@ -577,7 +605,8 @@ class World:
             for t in p.types.values():
                 for r in t.relations.values():
                     for src in r.sources:
-                        node = simple(src.where) if src.kind == "table" and src.table == table and src.where else None
+                        read = src.kind == "table" and src.table == table and src.where
+                        node = self.facts(pol, src.where) if read else None
                         if node is not None:
                             for col, how in columns_of(node).items():
                                 hows.setdefault(col, []).extend(how)
@@ -629,7 +658,7 @@ class World:
         ]
         wanted: dict[str, list[tuple[Node, bool]]] = {}
         for tname, cond in dict.fromkeys(conds):
-            node = simple(cond)
+            node = self.facts(pol, cond)
             if cond not in self.conds or tname not in pol.types or node is None or uses_uid(node):
                 continue
             if not any((tname, col) in linked for col in columns_of(node)):
@@ -685,7 +714,7 @@ class World:
             ids = self.ids(t.name)
             out.ids[t.name] = ids
             # the where is a condition like any other: the same text gives the same rows in a rule or a permission
-            where = simple(t.where) if t.where else None
+            where = self.facts(pol, t.where) if t.where else None
             if t.where and where is not None and not uses_uid(where):
                 out.valid[t.name] = [i for i in ids if truth(where, out.columns[t.name][i], None) is True]
             else:
@@ -715,7 +744,7 @@ class World:
             # a simple condition reads the row's columns
             if cond in KEYWORDS.values():
                 out.cond[(tname, cond)] = []
-            elif simple(cond) is None:
+            elif self.facts(pol, cond) is None:
                 out.cond[(tname, cond)] = self.holds(tname, cond, self.ids(tname))
         return out
 
@@ -767,7 +796,7 @@ class World:
             rows = self.pick(bare, lambda rng: [(o, x) for o in ids for x in subject_ids if rng.random() < rate])
             if src.where in self.conds:
                 return list(rows) if self.conds[src.where] else []
-            node = simple(src.where)
+            node = self.facts(pol, src.where)
             if node is None or uses_uid(node):
                 return self.pick((*key, "holds"), lambda rng: [row for row in rows if rng.random() < 0.5])
             # a simple where reads the row's columns, drawn once a row for every policy: `{active}` and
@@ -1163,8 +1192,9 @@ class Listing:
                     if col is not None:
                         linked.setdefault((t.name, col), r.name)
         self.linked = linked
+        self.alike = alike_in(self.pols)
         for tname, cond in found.conds:
-            node = simple(cond)
+            node = facts(cond, self.alike)
             if node is not None:
                 found.relations.update((tname, linked[(tname, c)]) for c in columns_of(node) if (tname, c) in linked)
         domains = World("listing", MOST_ROWS, pols=self.pols, density=0.5).domains(self.pols[0])
@@ -1180,7 +1210,7 @@ class Listing:
         plain: list[tuple[Node, bool]] = []
         opaque: list[str] = []
         for c in sorted(conds):
-            node = simple(c)
+            node = facts(c, self.alike)
             if c in KEYWORDS.values():
                 continue
             if node is None or (c == t.where and uses_uid(node)):
@@ -1417,7 +1447,7 @@ class Listed(World):
             ids = self.ids(t.name)
             out.ids[t.name] = ids
             out.columns[t.name] = {i: dict(self.classes[(t.name, i)].columns) for i in ids}
-            where = simple(t.where) if t.where else None
+            where = facts(t.where, self.listing.alike) if t.where else None
             if t.where and where is not None and not uses_uid(where):
                 out.valid[t.name] = [i for i in ids if truth(where, out.columns[t.name][i], None) is True]
             else:
@@ -1444,7 +1474,7 @@ class Listed(World):
         for tname, cond in self.listing.conditions(pol):
             if cond in KEYWORDS.values():
                 out.cond[(tname, cond)] = []
-            elif simple(cond) is None:
+            elif facts(cond, self.listing.alike) is None:
                 out.cond[(tname, cond)] = [i for i in out.ids[tname] if cond in self.classes[(tname, i)].holds]
         return out
 

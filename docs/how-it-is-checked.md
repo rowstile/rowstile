@@ -104,7 +104,11 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   So [`tests/conditions_test.py`](../core/tests/conditions_test.py) makes conditions up at
   random over columns of each kind, some named in quotes, with decimals among the numbers, and each one the
   evaluator reads itself must get Postgres's answer on every row: three thousand on every run, fifty thousand with
-  new seeds every night.
+  new seeds every night. Two of the columns tell texts apart otherwise than byte by byte: one under a collation
+  that ignores case, accents and punctuation, and a `char(3)`. A made-up row holds a text the conditions name or
+  another, so two texts a column may hold as one value are left to the database, and the run asks Postgres
+  which texts are one value, two by two, under five such collations and as eight types (a date, a uuid, a
+  tsvector...): each such pair must be one the evaluator leaves to the database.
 - **The review, against the database**: `rowstile review` says whether a pull request that rewrites permissions
   grants the same as before, from small worlds made up for the two policies; it reads no database for that.
   [`tests/rewrites.py`](../core/tests/rewrites.py) holds that verdict against one. It rewrites a permission or a

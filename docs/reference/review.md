@@ -25,8 +25,10 @@ says what a change does, in plain words, for the pull request:
   Formatting and comments are "unchanged" too; text inside quotes is not formatting. <!-- checked: tests/unit_test.py "test_comments_only"; tests/unit_test.py "test_text_in_quotes_is_compared_as_written" -->
   A
   condition the worlds can't read (a subquery, a function: anything beyond the row's own columns and
-  `authz.uid()`) is a set of rows of its own there, so when a permission or rule changed only in such
-  conditions, the review says it can't compare them and names them, instead of guessing. <!-- checked: tests/unit_test.py "test_a_condition_it_cannot_read_reworded"; tests/unit_test.py "test_what_changes_beside_a_condition_it_cannot_read" -->
+  `authz.uid()`; a text compared with a column the policies also compare with a text it may hold as the same
+  value, `'a'` beside `'A'` under a case-insensitive collation) is a set of rows of its own there, so when a
+  permission or rule changed only in such
+  conditions, the review says it can't compare them and names them, instead of guessing. <!-- checked: tests/unit_test.py "test_a_condition_it_cannot_read_reworded"; tests/unit_test.py "test_what_changes_beside_a_condition_it_cannot_read"; tests/unit_test.py "test_texts_a_column_may_hold_alike_are_beyond_the_review" -->
 - **Access**: with `--db`, a database at the base branch's state (its migrations, then the review data,
   prepared by CI; never production), who gains and who loses what if the pull request's policy were in
   force, with examples and how each is granted. <!-- checked: tests/review.sh "Access: who gains what, on the review data"; tests/review.sh "and how it gains, asked as the bot, from what grants it alone"; tests/unit_test.py "test_how_someone_gains_is_what_grants_it" -->
