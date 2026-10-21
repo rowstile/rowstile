@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundle } from "./build.mjs";
-import { compiler, database } from "./core.mjs";
+import { compiler, database, line } from "./core.mjs";
 
 let fails = 0;
 /** @param {string} what @param {unknown} ok @param {unknown} [got] */
@@ -73,8 +73,17 @@ const refused = await db.ask("user:2", "INSERT INTO app.notes (project_id, autho
 check("bo's insert is refused, with the reason", !refused.ok && refused.code === "42501" && /may not insert/.test(refused.message)
   && Boolean(refused.detail), refused);
 const writes = await db.ask("user:1", "INSERT INTO app.notes (project_id, author_id, body) VALUES (1, 1, 'two') RETURNING id");
-check("ada's insert works, and is rolled back", writes.ok && writes.rows.length === 1
+check("ada's insert works, and is rolled back", writes.ok && writes.rows.length === 1 && writes.rolledBack && writes.asRole === null
   && JSON.stringify(await notes("user:1")) === '["Chapter one"]', writes);
+const committed = await db.ask("user:1", "INSERT INTO app.notes (project_id, author_id, body) VALUES (1, 1, 'kept'); COMMIT; SELECT 1");
+check("a COMMIT in the statement: the answer says it wasn't rolled back", committed.ok && committed.rolledBack === false
+  && JSON.stringify(await notes("user:1")) === '["Chapter one","kept"]', committed);
+const ended = await db.ask("user:1", "SELECT 1; ROLLBACK; SELECT 2");
+check("... a ROLLBACK, and what follows it: the same", ended.ok && ended.rolledBack === false, ended);
+const escaped = await db.ask("user:3", "RESET ROLE; SELECT count(*)::int FROM app.notes");
+check("a RESET ROLE in the statement: the answer says which role it ended as", escaped.ok && escaped.asRole === "postgres"
+  && escaped.rows[0][0] === 2, escaped);
+await db.run(gs.data, must(c.compile(gs.policy, gs.tests)));
 const twice = await db.ask("user:1", "SELECT 1 AS x, 2 AS x");
 check("two columns with one name: each cell its own value", twice.ok && JSON.stringify([twice.fields, twice.rows]) === '[["x","x"],[[1,2]]]', twice);
 const colon = await db.ask("user:1:x", "SELECT current_setting('authz.user_id')");
@@ -96,6 +105,9 @@ check("... and the compiler still works", c.compile(gs.policy, gs.tests).ok);
 const badData = await db.run("CREATE TABLE app.oops (", must(c.compile(gs.policy, gs.tests)));
 check("a mistake in the tables: which step, and Postgres's message", !badData.ok && badData.step === "tables and data"
   && badData.message.includes("syntax error"), badData);
+const stale = await db.ask("user:1", "SELECT 1");
+check("... then asking: the policy isn't applied, not the last one's role", !stale.ok
+  && stale.message === "the policy isn't applied: the Tests tab says why", stale);
 const missing = await db.run("CREATE SCHEMA app;", must(c.compile(gs.policy, gs.tests)));
 check("tables the policy names that aren't there: AZ601", !missing.ok && missing.step === "applying the policy"
   && missing.message.includes("[AZ601]"), missing);
@@ -108,6 +120,18 @@ const second = await db.run(other.data, must(c.compile(other.policy, other.tests
 // the getting-started example's tables are gone (both examples use the schema app)
 const left = await pg.query("SELECT (to_regclass('app.projects') IS NULL AND to_regclass('app.notes') IS NULL) AS gone");
 check("another example after it, and nothing of the one before", second.ok && left.rows[0].gone === true, [second, left.rows]);
+
+console.log("-- one thing at a time");
+const inLine = line();
+/** @type {string[]} */
+const order = [];
+const first = inLine(async () => { await new Promise((r) => setTimeout(r, 20)); order.push("first"); });
+const broke = inLine(async () => { order.push("broke"); throw new Error("a step that fails"); });
+const after = inLine(async () => { order.push("after"); return "answered"; });
+const settled = await Promise.allSettled([first, broke, after]);
+check("steps run in order, one at a time", JSON.stringify(order) === '["first","broke","after"]', order);
+check("a step that fails rejects its own promise; the steps after it still run",
+  settled[1].status === "rejected" && settled[2].status === "fulfilled" && settled[2].value === "answered", settled);
 
 // the glue calls the compiler its own way: what it writes is what the command writes
 console.log("-- the same SQL as the command");

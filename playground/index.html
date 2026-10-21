@@ -60,6 +60,7 @@
   .status { padding: 8px 12px; border-top: 1px solid var(--line); font-size: 14px; flex-shrink: 0; max-height: 40%; overflow: auto; }
   .status.ok { color: var(--ok); }
   .status.bad { color: var(--bad); background: var(--bad-bg); }
+  .status.warn { color: var(--warn); }
   .status code { font-family: var(--code); font-size: 13px; }
   .status a { color: inherit; font-weight: 600; }
   .pane { flex: 1; overflow: auto; min-height: 0; display: none; }
@@ -111,6 +112,7 @@
       <textarea class="code" id="policy" spellcheck="false" aria-label="Policy"></textarea>
     </div>
     <div class="status" id="status">loading…</div>
+    <div class="status warn" id="notice" hidden></div>
   </section>
   <section aria-label="Results">
     <div class="bar" role="tablist">
@@ -134,7 +136,9 @@
         </div>
         <textarea id="query" spellcheck="false" aria-label="SQL to run as that person"></textarea>
         <span class="muted" style="font-size:13px">Runs as the app role, filtered by row-level security, and is rolled back.
-          One thing differs from a server: this Postgres has a single session, the owner's, so a statement here may
+          A <code>COMMIT</code> or <code>ROLLBACK</code> in it ends that transaction early: what it wrote stays
+          until the next edit, and what follows runs signed in as nobody. A <code>RESET ROLE</code> makes the rest run as the owner, who sees every row. The answer
+          says when either happened. One thing differs from a server: this Postgres has a single session, the owner's, so a statement here may
           set <code>authz.user_id</code> itself. On a server the app role's session is believed only after <code>authz.act_as()</code>.</span>
       </div>
       <div class="pad" id="answer"></div>

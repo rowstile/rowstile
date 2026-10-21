@@ -205,6 +205,14 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   request ends after the time asked for, nobody decides their own request, asking for a document that doesn't
   exist goes as asking for a hidden one, a private folder's owner keeps it, and teams count three deep and in
   a loop. `rowstile dev --help` shows that it takes a policy file.
+- The playground goes on after an edit that follows an answer: the tests run again and the question is asked again.
+  It stopped there for good, and Run did nothing until the page was reloaded. A step that fails no longer stops the
+  ones after it, and an answer with a large `int8` in an array (`ARRAY[9007199254740993::int8]`) shows. Asking after
+  a failed run says the policy isn't applied, not that the last policy's role doesn't exist. An answer whose
+  statement ran `COMMIT`, `ROLLBACK` or `RESET ROLE` says it wasn't rolled back, or which role it ended as (after a
+  `COMMIT`, the rest ran signed in as nobody). The Help pane shows an error page's examples as code. A link the page
+  can't read says so until another example is chosen, and a page whose `bundle.json` doesn't load says why, where it
+  said "loading…" for ever.
 
 ## 0.1.0 (alpha)
 
