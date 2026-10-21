@@ -132,8 +132,13 @@ if [ "$MODE" != proofs ] && [ "$MODE" != soak ]; then
 if every_version && part unit; then
 unit_tests() {
 step "fast checks without a database: golden SQL, included files, the command's SQL, rowstile command"
-python3 tests/unit_test.py 2>&1 | tail -n 3
-record "${PIPESTATUS[0]}" "unit"
+out=$(mktemp)
+python3 tests/unit_test.py > "$out" 2>&1
+rc=$?
+# a failure shows unittest's own report (each failing test, and why), else the last lines (how many, OK)
+if [ "$rc" -ne 0 ]; then awk '/^==========+$/ { shown = 1 } shown' "$out"; else tail -n 3 "$out"; fi
+rm -f "$out"
+record "$rc" "unit"
 }
 unit unit 80 unit_tests
 # (in this part, the shortest, though it needs a database: in the command part it made that part the longest)
