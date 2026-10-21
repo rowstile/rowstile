@@ -1,0 +1,10 @@
+{
+  // The suites' JavaScript (studio_page.mjs, Studio's page in a browser) is typed with JSDoc and checked strictly
+  // (npm ci at the repository's root for @types/node):   npx tsc -p core/tests
+  "compilerOptions": {
+    "allowJs": true, "checkJs": true, "noEmit": true, "strict": true, "skipLibCheck": true,
+    "target": "ES2023", "lib": ["ES2023", "DOM", "DOM.Iterable"], "module": "NodeNext", "moduleResolution": "NodeNext",
+    "types": ["node"], "noUnusedLocals": true, "noImplicitReturns": true, "noFallthroughCasesInSwitch": true
+  },
+  "include": ["*.mjs"]
+}

@@ -449,6 +449,12 @@ class Studio:
         who = principal(str(body.get("as") or ""))
         if who[0] is None:
             raise Problem("as whom? pick someone to view as: they make the change")
+        if what == "unshare" and body.get("subject_type") == "link":
+            # authz.list_shares names a link's subject (link), which authz.unshare would match to no share, and say
+            # nothing: the link would stay on
+            raise Problem(
+                "a share link isn't unshared: authz.revoke_link turns it off, by the id authz.list_links gives"
+            )
 
         def run(db: Db) -> Message:
             self.act_as(db, who)

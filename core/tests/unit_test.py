@@ -10328,6 +10328,21 @@ WINDOWS_ONLY = (
 )
 
 
+class StudioPage(unittest.TestCase):
+    """Studio's page, which tests/studio_page.mjs opens in Chrome (CI's studio-page job): its graph is drawn by the
+    playground's Mermaid, which Studio loads checked against its hash (a hash that isn't the file's fails there)."""
+
+    def test_studio_and_the_playground_draw_with_one_mermaid(self) -> None:
+        version = r"cdn\.jsdelivr\.net/npm/mermaid@(\d+\.\d+\.\d+)/dist/"
+        self.assertEqual(
+            search(version, read("cli/studio/app.js")).group(1),
+            search(version, read("../playground/playground.mjs")).group(1),
+        )
+
+    def test_ci_opens_the_page_in_a_browser(self) -> None:
+        self.assertIn("      - run: bash core/tests/studio_page.sh\n", read("../.github/workflows/ci.yml"))
+
+
 class StudioPort(unittest.TestCase):
     """Studio's port on 127.0.0.1 is held by Studio alone: a port another program holds is refused, and no other
     program may bind it while Studio runs. On Windows SO_REUSEADDR lets a socket bind an address and port another
