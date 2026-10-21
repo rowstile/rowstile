@@ -84,6 +84,13 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   `parsePrincipal(describe(p))` in TypeScript. The user whose id is `service:1` was written `service:1` and read
   back as service 1; a user whose id is `nobody` came back as nobody. A user whose id holds `:` or is `nobody` is
   now written `user:<id>` (`user:service:1`), and reads back as that user.
+- The audit trail, `created_by` (shares, links, custom roles, reviews), `decided_by` (requests, reviews) and what
+  `authz.login_key` and `authz.login_jwt` return name a user as the SDKs do. The user whose id is `service:1` was
+  written `service:1`, as service 1 is, and the user whose id is `nobody` as `nobody`. A user whose id holds `:` or
+  is `nobody` is now `user:<id>` (`user:service:1`); other users are still their id (`42`), and other principals
+  `type:id`. The invariants' `user_id` and `rowstile diff` (its rows and `--users`) name them the same way. So the
+  SDKs' `Principal.parse` and `parsePrincipal` read who acted back from the audit trail. Applying the policy
+  again (or the next migration) brings it in.
 - `authz.explain` with the signed-in user's own id answers as without one. For a folder user 3 can't see,
   `authz.explain('folder', 6, 'edit', '3')` as user 3 showed its rule and the parts it reads (`parent is a
   folder you can't see`, `yes  {inherit}`), where a missing folder showed none of that; it now says

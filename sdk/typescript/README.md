@@ -45,7 +45,8 @@ or `null` (nobody: only what `anyone` may see). A plain id is always a user's, w
 is the user with that id, so an id from outside (a username, an identity provider's subject) can't name a
 service. `parsePrincipal(text)` reads back what `describe()` wrote, for text your own code wrote (a job's
 argument): `describe()` writes a user whose id holds `:` or is `nobody` as `user:<id>` (`user:service:3`), so
-every principal reads back as itself. Whoever the code acts for (`actingAs`, a `job`)
+every principal reads back as itself. The audit trail and `created_by` name who acted the same way, so
+`parsePrincipal` reads them too. Whoever the code acts for (`actingAs`, a `job`)
 comes first, else the `user` function, else nobody; a `who` given to one call (`transaction(fn, who)`) comes
 before all, and `null` there is nobody. Every transaction signs in, even as nobody, and nothing uses a
 session-level `SET`, so pools and poolers in transaction mode are safe; the change feed needs its own connection

@@ -60,7 +60,8 @@ class Principal:
     @classmethod
     def parse(cls, text: str) -> Principal:
         """What str() wrote, read back: 'service:3' is service 3, '42' and 'user:42' user 42, 'nobody' nobody.
-        For text your own code wrote (a job's argument), not for an id that came from outside."""
+        For text your own code wrote (a job's argument) and for who acted in the audit trail (its user_id, a
+        share's created_by), which the database writes the same way; not for an id that came from outside."""
         if text == "nobody":
             return NOBODY
         if ":" in text and not text.startswith("("):

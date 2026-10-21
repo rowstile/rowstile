@@ -139,6 +139,18 @@ def lit(s: object) -> str:
     return "'" + str(s).replace("'", "''") + "'"
 
 
+def principal_text(ptype: str, pid: str) -> str:
+    """SQL naming a principal as the audit trail, created_by and the SDKs write it: a user by their id ('42'), or
+    'user:<id>' when the id holds ':' or is 'nobody' ('user:service:1'), so it can't read as another principal or
+    as nobody; another principal as type:id ('service:3'). ptype and pid are SQL: the type ('' or 'user': a user)
+    and the id (NULL gives NULL)."""
+    return (
+        f"CASE WHEN coalesce({ptype}, '') IN ('', 'user') "
+        f"THEN CASE WHEN pg_catalog.strpos({pid}, ':') > 0 OR {pid} = 'nobody' THEN 'user:' || {pid} ELSE {pid} END "
+        f"ELSE {ptype} || ':' || {pid} END"
+    )
+
+
 def union(parts: list[str]) -> str:
     return parts[0] if len(parts) == 1 else "\n  UNION ALL\n  ".join(f"({p})" for p in parts)
 

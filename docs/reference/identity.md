@@ -44,6 +44,8 @@ holding `manage_keys` on it (`can manage_keys = owner`); a JWT names the type in
 setting `jwt_type_claim` says. <!-- checked: tests/principals.sh "its owner makes service 7 a key"; tests/principals.sh "someone else may not"; tests/principals.sh "a token for service 8" -->
 While a service is signed in, `authz.uid()` is NULL and
 `authz.principal()` returns `('service', '7')`; the audit trail and `created_by` say `service:7`. <!-- checked: tests/principals.sh "authz.uid() is no one; authz.principal() is service 7"; tests/principals.sh "it shares as itself: created_by says so"; tests/principals.sh "the audit trail says so too" -->
+They name a user by their id (`42`), or as `user:<id>` when the id holds `:` or is `nobody` (`user:service:7`), so
+no user reads as a service or as nobody; the SDKs write a principal the same way, and read these back. <!-- checked: tests/principals.sh "the audit trail names them the same way, each as itself"; tests/principals.sh "the user whose id is service:1 shares: created_by says user:service:1"; tests/principals.sh "... and the user whose id is nobody: user:nobody"; tests/principals.sh "... a user whose id is plain stays their id: 42" -->
 `authz.who` lists users. <!-- checked: tests/principals.sh "authz.who lists users" -->
 Some calls are for users only: the custom roles API (`create_role`, `set_role_permissions`, `delete_role`,
 `roles_of`), access requests (`request_access`, `pending_requests`, `decide_request`, `cancel_request`),

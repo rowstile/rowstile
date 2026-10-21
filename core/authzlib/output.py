@@ -22,6 +22,7 @@ from .sqlutil import (
     ident,
     lit,
     on_row,
+    principal_text,
     q,
     qt,
     row_cond,
@@ -835,7 +836,7 @@ BEGIN
     RAISE EXCEPTION 'custom roles on % cannot grant %', p_object_type, v_bad USING HINT = 'rowstile help AZ706';
   END IF;
   INSERT INTO authz.roles (owner_type, owner_id, object_type, name, created_by)
-  VALUES (p_owner_type, authz_int.canon(p_owner_type, p_owner_id), p_object_type, p_name, authz.uid()::text)
+  VALUES (p_owner_type, authz_int.canon(p_owner_type, p_owner_id), p_object_type, p_name, authz_int.actor())
   RETURNING id INTO v_id;
   INSERT INTO authz.role_permissions SELECT v_id, p FROM unnest(p_permissions) p ON CONFLICT DO NOTHING;
   RETURN v_id;
@@ -1509,7 +1510,7 @@ END $keep$;"""
     def principals_sql(self) -> str:
         """Who is signed in: authz.user_id says the id, authz.principal_type the type (empty: a user).
         authz.uid() is the user; each other principal type gets authz_int."<type>__me"(); authz.principal()
-        is whoever it is, and authz_int.actor() how the audit trail names them ('7', 'service:3')."""
+        is whoever it is, and authz_int.actor() how the audit trail names them ('7', 'user:a:b', 'service:3')."""
         setting = "pg_catalog.current_setting('authz.user_id', true)"
         out, cases = [], ["    WHEN 'user' THEN principal_id := authz.uid()::text;"]
         for t in self.types.values():
@@ -1542,13 +1543,13 @@ BEGIN
   END CASE;
   IF principal_id IS NOT NULL THEN RETURN NEXT; END IF;
 END $f$;
--- how the audit trail and created_by name who acted: a user's id, or type:id for other principals
+-- how the audit trail and created_by name who acted, as the SDKs write a principal: a user's id ('42'), or
+-- user:<id> for an id holding ':' or that is 'nobody' ('user:service:1'); type:id for other principals
 CREATE FUNCTION authz_int.actor() RETURNS text
 LANGUAGE plpgsql STABLE {DEFINER} AS $f$
 BEGIN
   RETURN CASE WHEN NOT {SESSION_OK} THEN NULL
-              WHEN coalesce({PT}, '') IN ('', 'user') THEN nullif(current_setting('authz.user_id', true), '')
-              ELSE {PT} || ':' || nullif(current_setting('authz.user_id', true), '') END;
+              ELSE {principal_text(PT, "nullif(current_setting('authz.user_id', true), '')")} END;
 END $f$;""")
         return "\n".join(out)
 

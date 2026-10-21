@@ -135,16 +135,14 @@ class TestMixin(Core):
 """)
         invariants = ""
         if self.pol.invariants:
-            # who broke it: a user's id, or another principal as the check names it ('service:3')
+            # who broke it, as the check names them: a user's id ('42', or 'user:a:b' for one holding ':'), or
+            # another principal ('service:3')
             others = "".join(
-                f"WHEN starts_with(v_inv.user_id, {lit(t.name + ':')}) THEN {lit(t.name + ' ')} || "
-                f"substr(v_inv.user_id, {len(t.name) + 2}) "
-                for t in self.types.values()
-                if t.principal and t.name != "user"
+                f"WHEN starts_with(v_inv.user_id, {lit(name + ':')}) THEN {lit(name + ' ')} || "
+                f"substr(v_inv.user_id, {len(name) + 2}) "
+                for name in ["user"] + [t.name for t in self.types.values() if t.principal and t.name != "user"]
             )
-            who = "'user ' || coalesce(v_inv.user_id, '(nobody)')"
-            if others:
-                who = f"CASE {others}ELSE {who} END"
+            who = f"CASE {others}ELSE 'user ' || coalesce(v_inv.user_id, '(nobody)') END"
             invariants = f"""  v_test := 'invariants'; v_line := ''; v_n := 0;
   PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true),
           set_config('authz.scopes', '', true);

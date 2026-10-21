@@ -6,7 +6,7 @@ from __future__ import annotations
 from .compiler import Core
 from .parse import ColumnSource, Link, Relation, TableSource, Type
 from .parse import cols as columns_of
-from .sqlutil import IF_PARTITIONED, lit, on_row, q, qt
+from .sqlutil import IF_PARTITIONED, lit, on_row, principal_text, q, qt
 from .statements import made
 
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
@@ -500,7 +500,7 @@ BEGIN
                         CASE WHEN r.duration IS NULL THEN NULL ELSE now() + r.duration END);
   END IF;
   UPDATE authz.requests SET status = CASE WHEN p_approve THEN 'approved' ELSE 'denied' END,
-    decided_by = authz.uid()::text, decided_at = now(), note = p_note WHERE id = p_id;
+    decided_by = authz_int.actor(), decided_at = now(), note = p_note WHERE id = p_id;
   PERFORM authz_int.audit(CASE WHEN p_approve THEN 'approve_request' ELSE 'deny_request' END, r.object_type,
     r.object_id, r.relation, 'user', r.requester, '', jsonb_build_object('request', p_id, 'note', p_note));
 END $f$;
@@ -552,7 +552,7 @@ BEGIN
   IF g.object_id IS NULL THEN
     INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation,
                               expires_at, created_by)
-    VALUES (p_type, p_id, p_relation, 'user', authz.uid()::text, '', v_until, authz.uid()::text);
+    VALUES (p_type, p_id, p_relation, 'user', authz.uid()::text, '', v_until, authz_int.actor());
   ELSIF g.caveat IS NOT NULL OR (g.starts_at IS NOT NULL AND g.starts_at > now())
         OR (g.expires_at IS NOT NULL AND g.expires_at < v_until) THEN
     -- a share that would not let them in now becomes an unconditional one until then (the old one is in the audit)
@@ -586,7 +586,7 @@ BEGIN
     RAISE EXCEPTION 'you cannot review % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
   INSERT INTO authz.reviews (object_type, object_id, created_by, closes_at)
-  VALUES (p_type, p_id, authz.uid()::text, p_closes_at) RETURNING id INTO v_id;
+  VALUES (p_type, p_id, authz_int.actor(), p_closes_at) RETURNING id INTO v_id;
   INSERT INTO authz.review_items (review_id, item, relation, subject_type, subject_id, subject_relation, expires_at)
   SELECT v_id, row_number() OVER (ORDER BY g.created_at, g.relation, g.subject_type, g.subject_id), g.relation,
          g.subject_type, g.subject_id, g.subject_relation, g.expires_at
@@ -629,7 +629,7 @@ BEGIN
     RAISE EXCEPTION 'you cannot decide on % in review % (you could not unshare it)', i.relation, p_review
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
-  UPDATE authz.review_items SET keep = p_keep, decided_by = authz.uid()::text, decided_at = now()
+  UPDATE authz.review_items SET keep = p_keep, decided_by = authz_int.actor(), decided_at = now()
   WHERE review_id = p_review AND item = p_item;
 END $f$;
 -- Close: revoke what reviewers marked (and, if asked, whatever nobody decided and you could unshare)
@@ -683,12 +683,12 @@ END $f$;"""
             )
             checks.append(f"""      v_ids := ARRAY(SELECT id::text FROM authz_int.{q(view)} ORDER BY 1 LIMIT 5);
       IF cardinality(v_ids) > 0 THEN
-        invariant := {lit(f"never {t.name}: {inv.src} (")} || {self.line_sql(f"invariant never {t.name}: {inv.src}", inv.loc)} || ')'; user_id := nullif(CASE WHEN v_p = '' THEN v_u ELSE v_p || ':' || v_u END, ''); object_ids := v_ids;
+        invariant := {lit(f"never {t.name}: {inv.src} (")} || {self.line_sql(f"invariant never {t.name}: {inv.src}", inv.loc)} || ')'; user_id := nullif({principal_text("v_p", "v_u")}, ''); object_ids := v_ids;
         RETURN NEXT;
       END IF;""")
         body = "\n".join(checks) if checks else "      NULL;"
-        return f"""-- Invariants: checked as everyone who can sign in (each user, each other principal as 'service:3') and as
--- nobody; returns the violations
+        return f"""-- Invariants: checked as everyone who can sign in (named as the audit trail names them: '42', 'user:a:b',
+-- 'service:3') and as nobody; returns the violations
 CREATE FUNCTION authz.check_invariants() RETURNS TABLE (invariant text, user_id text, object_ids text[])
 LANGUAGE plpgsql {DEF} AS $f$
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_pt text := coalesce(current_setting('authz.principal_type', true), '');
@@ -724,8 +724,8 @@ END $f$;"""
         Afterwards DIFF_ROWS lists the changes."""
         # here the policy runs inside our transaction, and is rolled back
         body = self.compile(source_name, transaction=False)
-        # everyone who can sign in, and nobody: each user, then each other principal named as the audit trail
-        # names it ('service:7'); --users names them the same way
+        # everyone who can sign in, and nobody: each user, then each other principal, named as the audit trail
+        # names them ('42', 'user:a:b', 'service:7'); --users names them the same way
         only = ("CONTINUE WHEN v_u <> ALL (ARRAY[" + ", ".join(lit(u) for u in users) + "]::text[]);") if users else ""
         snapshot = lambda into: (
             f"""DO $snap$
@@ -738,7 +738,7 @@ BEGIN
   FOR who IN SELECT CASE WHEN t.name = 'user' THEN '' ELSE t.name END AS ptype, t.tbl, t.pk FROM authz_int.types t
              WHERE t.name = 'user' OR t.principal ORDER BY t.name <> 'user', t.name LOOP
   FOR v_id IN EXECUTE format('SELECT %I::text FROM %s', who.pk, who.tbl) || CASE WHEN who.ptype = '' THEN ' UNION ALL SELECT ''''' ELSE '' END LOOP
-    v_u := CASE WHEN who.ptype = '' THEN v_id ELSE who.ptype || ':' || v_id END;
+    v_u := {principal_text("who.ptype", "v_id")};
     {only}
     PERFORM set_config('authz.principal_type', who.ptype, true);
     PERFORM set_config('authz.user_id', v_id, true);
