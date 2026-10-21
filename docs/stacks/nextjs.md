@@ -22,7 +22,7 @@ in CI already there.
 # Prisma 7 and its Postgres adapter, if the app doesn't have them yet
 npm install @prisma/client@7 @prisma/adapter-pg@7 pg && npm install --save-dev prisma@7
 # @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
-npm install @rowstile/client@next @rowstile/prisma@next @rowstile/next@next @rowstile/react@next
+npm install @rowstile/client@next @rowstile/prisma@next @rowstile/pg@next @rowstile/next@next @rowstile/react@next
 npm install --save-dev rowstile@next @rowstile/vitest@next
 npx rowstile init        # a first policy from your tables, a test file, rowstile.toml
 ```
@@ -92,18 +92,22 @@ Importing `@rowstile/next` keeps signed-in reads out of Next.js's caches, and `a
 The imports below end in `.ts` and the app's own start with `@/`: `allowImportingTsExtensions`, and
 `"paths": { "@/*": ["./src/*"] }`, in `tsconfig.json`.
 
+`auth()` is your sign-in's: Auth.js's, or whatever reads your session cookie or token. The conformance app
+has no sign-in, so its `src/auth.ts` stands in for one: it takes the user from a header its checks set, which a
+real app must never believe. That is why this page doesn't show it.
+
 ```ts
 import { PrismaPg } from "@prisma/adapter-pg";
-import { headers } from "next/headers";
 import pg from "pg";
 import { authz, signedIn } from "@rowstile/prisma";
 import "@rowstile/next";                              // signed-in reads never land in a cache
+import { auth } from "./auth.ts";                     // the session: Auth.js's auth(), or your own
 import { PrismaClient } from "./generated/prisma/client.ts";
 import "./authz.gen.ts";                              // the policy's names, for the SDK's types
 
-/** Who the request is. A real app reads its session (auth()); the conformance app, a header. */
+/** Who the request is: the session's user (none: nobody, who sees only what `anyone` may). */
 export async function requestUser(): Promise<string | null> {
-  return (await headers()).get("x-user");
+  return (await auth())?.user?.id ?? null;
 }
 
 const url = process.env.ROWSTILE_APP_URL;
@@ -253,8 +257,8 @@ export const POST = route(async (req: Request, { params }: Params) => {
 ## Next.js with pg, without Prisma
 
 An app on plain `pg` (node-postgres) takes `@rowstile/pg` where this page has `@rowstile/prisma`; the rest
-holds: `route()`, `action()`, `checkAtStart`, the React kit. Install `@rowstile/pg@next` instead of
-`@rowstile/prisma@next`. The pool connects as the app role, with a URL of its own, and `authz(pool, { user })`
+holds: `route()`, `action()`, `checkAtStart`, the React kit. Leave Prisma and `@rowstile/prisma@next` out
+of the install: `@rowstile/pg@next` is there already, for the live updates. The pool connects as the app role, with a URL of its own, and `authz(pool, { user })`
 signs each transaction in as the request's user (`requestUser`: your session's user id, as above):
 
 ```ts

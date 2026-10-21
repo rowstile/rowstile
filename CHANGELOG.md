@@ -115,6 +115,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   steps highlight: they now build the grammar, put it where Neovim looks and start highlighting, and say
   Neovim 0.11 or newer. Paths into the repository say `core/cli/`, and Sublime Text is no longer said to read
   the TextMate grammar as it is.
+- The stack pages' code no longer takes the signed-in user from a request header. The Next.js and FastAPI
+  pages showed the conformance apps' stand-in, a header any client can set; they now show the user coming
+  from the app's session (`auth()` in Next.js, the app's own `session_user` in FastAPI). The Next.js page's
+  install line has `@rowstile/pg`, which its live updates import, and the FastAPI page's code imports `os`
+  and `rowstile`, which it uses.
 - Applying and `rowstile remove` know rowstile's own row-level security policies by the comment that marks
   them, not by their names. An app's own policy named `authz_select` (or `authz_insert`, `authz_update`,
   `authz_delete`) was dropped as rowstile's, without a word, and `authz.lint()` didn't report one on a governed

@@ -87,24 +87,29 @@ itself. What a middleware of yours puts on `request.state` is there only if that
 `Rowstile(...)` (Starlette runs the one added last first). It may raise an `HTTPException` (a 401 for a bad
 token). WebSockets are not signed in: use `rowstile.acting_as()` in the endpoint.
 
+Here `user` is `session_user`, from the app's own `auth.py`: yours reads your session cookie or token. The
+conformance app has no sign-in, so its `auth.py` stands in for one: it takes the user from a header its checks
+set, which a real app must never believe. That is why this page doesn't show it.
+
 ```python
-from fastapi import FastAPI, Request
+import os
+
+import rowstile
+from fastapi import FastAPI
 from rowstile import NotFound, Principal
 from rowstile import sqlalchemy as authz_sa
 from rowstile.fastapi import Rowstile
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-def user_of(request: Request) -> str | None:
-    """Who the request is: a real app would read its session or token; here a header (none: nobody)."""
-    return request.headers.get("x-user")
+from .auth import session_user
 
 
 def make_app(url: str | None = None, check_connection: bool = True, pool_size: int = 5) -> FastAPI:
     engine = create_async_engine(url or os.environ["ROWSTILE_APP_URL"], pool_size=pool_size, max_overflow=0)
     Session = async_sessionmaker(engine, expire_on_commit=False)
     app = FastAPI()
-    authz = Rowstile(app, engine, user=user_of, check_connection=check_connection)
+    authz = Rowstile(app, engine, user=session_user, check_connection=check_connection)
 ```
 
 Then routes are plain SQLAlchemy. A list shows only the user's rows:
@@ -262,6 +267,12 @@ The policy's own tests run with `rowstile test`. In pytest, sign in the way the 
 that write don't meet each other (a run without workers has one copy):
 
 ```python
+# tests/conftest.py
+import os
+
+import pytest
+from rowstile.testing import WorkerDatabase, database_per_worker
+
 @pytest.fixture(scope="session")
 def worker_database() -> WorkerDatabase:
     return database_per_worker(os.environ["ROWSTILE_TESTS_URL"], app_url=os.environ["ROWSTILE_APP_URL"])
