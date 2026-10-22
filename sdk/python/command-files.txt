@@ -1,0 +1,7 @@
+# The rowstile command's files, as its packages carry them: a folder of core/, then the endings of the files in it
+# that the command runs. Nothing else of a folder goes in (bytecode, an editor's backup, a note). Read by
+# hatch_build.py here (the wheel and the sdist) and packaging/npm/build.mjs (the npm package). It is here, beside
+# the build hook, so that a build from a copy of sdk/python and core/ (the command's image) has it.
+authzlib .py
+cli .py
+cli/studio .html .js .css

@@ -124,6 +124,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Fixed
 
+- The `rowstile` npm package holds the command's files and nothing else: its build copied `core/authzlib` and
+  Studio's folder whole, so a file left there (a note, a backup) went in. It now takes the files one list names,
+  the one the Python package's build reads.
 - The npm launcher asks the Python `ROWSTILE_PYTHON` names for its version first, as it asks the one on `PATH`:
   one older than 3.11, or a path that isn't a Python, is refused with a sentence, where the command failed
   inside. A bundled Python that isn't executable and can't be made so (a `node_modules` another user
