@@ -8,8 +8,13 @@ async), so every transaction it begins on `engine` signs in as them. A refused w
 reason (an RFC 9457 problem body), a row the user can't see 404. A call the database turns down that is no refusal
 answers as its code's page says, with its words: a login refused or a call that needs someone signed in 401 (AZ703,
 AZ714), something it names that isn't there 404 too (AZ708: a share with someone who doesn't exist), an argument
-missing or wrong 400 (AZ710), a move inside itself 409 (AZ713). At start-up the app refuses to run on a connection
-that skips row-level security (authz.connection_check()), with or without a lifespan of its own.
+missing or wrong 400 (AZ710), a move inside itself 409 (AZ713). An ORM update the rules allow that matched no row
+(the row changed since it was read: a version counter) answers 409. At start-up the app refuses to run on a
+connection that skips row-level security (authz.connection_check()), with or without a lifespan of its own.
+
+An app on psycopg or asyncpg without SQLAlchemy passes no engine, Rowstile(app, None, user=...), and signs in with
+rowstile.psycopg.transaction() or rowstile.asyncpg.transaction(): the drivers' errors are answered the same way
+(there is no engine to check at start-up: rowstile.psycopg.problems(conn) and rowstile.asyncpg.problems(conn)).
 
 user(request) runs in a middleware this adds: read the session or the token from the request itself. What a
 middleware of the app's puts on request.state is there only if it was added after Rowstile(...) (Starlette
@@ -20,6 +25,7 @@ it is. WebSockets are not signed in: use rowstile.acting_as() in the endpoint.
 from __future__ import annotations
 
 import contextlib
+import importlib
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
@@ -40,7 +46,6 @@ from . import (
     Refused,
     Who,
     _current,
-    _writes,
     call_problem,
     check_problems,
     not_signed_in,
@@ -71,7 +76,8 @@ class Rowstile:
         app.add_middleware(_SignIn, user=user)
         app.add_exception_handler(Refused, _problem)
         app.add_exception_handler(NotFound, _problem)
-        app.add_exception_handler(DBAPIError, _db_error)
+        for error in _database_errors():
+            app.add_exception_handler(error, _db_error)
         app.add_exception_handler(StaleDataError, _stale)
         if check_connection and engine is not None:
             # around the app's lifespan, whichever it has: Starlette runs "startup" handlers only when the app
@@ -115,13 +121,9 @@ class _SignIn:
                 answer = JSONResponse({"detail": e.detail}, status_code=e.status_code, headers=e.headers)
                 return await answer(scope, receive, send)
             token = _current.set(Principal.of(who))
-        # the request's own writes, with user= or not: why_stale answers about them, also from a sync endpoint's
-        # worker thread, which sees this list
-        writes = _writes.set([])
         try:
             await self.app(scope, receive, send)
         finally:
-            _writes.reset(writes)
             if token is not None:
                 _current.reset(token)
 
@@ -146,16 +148,42 @@ async def _db_error(request: Request, exc: Exception) -> Response:
     if problem is not None:  # a share with someone who doesn't exist: 404; a negative page size: 400; ...
         return _json(problem)
     if not_signed_in(exc):  # the app's bug, not the user's doing: a 500 that says what
+        how = (
+            "rowstile.sqlalchemy.install(engine) does it; is this engine in AUTOCOMMIT, or the query on another "
+            "connection?"
+            if isinstance(exc, DBAPIError)
+            else "rowstile.psycopg.transaction() and rowstile.asyncpg.transaction() do it"
+        )
         raise NotSignedIn(
-            "a query ran in a transaction nobody signed in to: every transaction must begin with "
-            "authz.act_as() (rowstile.sqlalchemy.install(engine) does it; is this engine in "
-            "AUTOCOMMIT, or the query on another connection?)"
+            f"a query ran in a transaction nobody signed in to: every transaction must begin with authz.act_as() ({how})"
         ) from exc
     raise exc
 
 
+def _database_errors() -> list[type[Exception]]:
+    """The errors a query raises: SQLAlchemy's, and psycopg's and asyncpg's own, for an app on the driver alone
+    (Rowstile(app, None, user=...)), where they are installed."""
+    errors: list[type[Exception]] = [DBAPIError]
+    for module, name in (("psycopg", "Error"), ("asyncpg", "PostgresError")):
+        try:
+            errors.append(getattr(importlib.import_module(module), name))
+        except ImportError:
+            pass  # not installed: none of its errors to answer
+    return errors
+
+
+_CONFLICT: Problem = {
+    "type": "https://rowstile.dev/problems/conflict",
+    "title": "Conflict",
+    "status": 409,
+    "detail": "the row changed since it was read, and the rules allow the change: read it again",
+}
+
+
 async def _stale(request: Request, exc: Exception) -> Response:
-    verdict = await sa.why_stale(exc)
-    if verdict is None:
-        return _json(NotFound().problem())
-    return _json(verdict.problem())
+    verdict = sa.why_stale_sync(exc)
+    if verdict is not None:
+        return _json(verdict.problem())
+    if sa._rules_allow(exc):  # the row changed meanwhile (a version counter): the rules allow the change
+        return _json(_CONFLICT)
+    raise exc  # it can't tell (a model mapped to a join): the app's to answer

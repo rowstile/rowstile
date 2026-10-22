@@ -7,6 +7,8 @@ import contextvars
 import importlib
 import io
 import os
+import pathlib
+import re
 import subprocess
 import sys
 import threading
@@ -116,8 +118,12 @@ def test_install_once_and_user_when_nothing_else_says() -> None:
 
     engine = create_engine(SYNC)
     try:
-        assert authz_sa.install(engine, user=user) is engine
-        assert authz_sa.install(engine, user=lambda: 3) is engine  # installed once: the first one's user() stays
+        assert authz_sa.install(engine) is engine  # as Rowstile(app, engine) does: no user() yet
+        assert authz_sa.install(engine, user=user) is engine  # given after it, user() is the engine's
+        assert authz_sa.install(engine, user=user) is engine and authz_sa.install(engine) is engine  # it stays
+        other = "install(engine) was given another user() for this engine before: an engine has one"
+        with pytest.raises(ValueError, match=re.escape(other)):
+            authz_sa.install(engine, user=lambda: 3)
         with engine.connect() as conn:  # nothing says who: user() does
             assert projects(conn) == [2, 3]
         with rowstile.acting_as(None), engine.connect() as conn:  # acting_as decides first, None too
@@ -138,54 +144,33 @@ def test_a_driver_with_another_parameter_style_signs_in_with_the_values_written_
         engine.dispose()
 
 
-def test_why_stale_asks_about_the_last_flush_and_its_tables() -> None:
+def test_why_stale_says_nothing_of_another_error() -> None:
     engine = authz_sa.install(create_engine(SYNC))
     try:
-        with rowstile.acting_as(3):
-            # a flush that failed for another reason (the app role may not update projects at all), then one the
-            # rules allowed: the database is asked about the last flush's rows only, and allowed them
-            denied = pytest.raises(ProgrammingError, match="permission denied for table projects")
-            with denied, Session(engine) as s, s.begin():
-                project = s.get(Project, 1)
-                assert project is not None
-                project.name = "x"
-            with Session(engine) as s:
-                note = s.get(Note, 4)
-                assert note is not None
-                note.body = "y"
-                s.flush()
-                s.rollback()
-            assert authz_sa.why_stale_sync() is None
-            # a model mapped to a join names no one table: its rows aren't asked about (and the last flush that
-            # names one was allowed)
-            with pytest.raises(StaleDataError) as e, Session(engine) as s, s.begin():
-                row = s.scalars(select(NoteInProject).where(NoteInProject.note_id == 1)).one()
-                row.body = "x"
-            assert authz_sa.why_stale_sync(e.value) is None
+        # a flush that failed for another reason (the app role may not update projects at all): nothing to say
+        denied = pytest.raises(ProgrammingError, match="permission denied for table projects")
+        with rowstile.acting_as(3), denied as e, Session(engine) as s, s.begin():
+            project = s.get(Project, 1)
+            assert project is not None
+            project.name = "x"
+        assert authz_sa.why_stale_sync(e.value) is None
     finally:
         engine.dispose()
 
 
-async def test_why_stale_for_the_engine_that_wrote(app: FastAPI) -> None:
+async def test_why_stale_for_either_engine(app: FastAPI) -> None:
     engine = authz_sa.install(create_engine(SYNC))
     try:
         with rowstile.acting_as(3):
-            with Session(engine) as ss:  # a flush the rules allowed: nothing to say
-                note = ss.get(Note, 4)
-                assert note is not None
-                note.body = "y"
-                ss.flush()
-                ss.rollback()
-            assert await authz_sa.why_stale() is None
-            # an async engine's flush is asked about with the async function
+            # an async engine's flush: the answer is on the error, which either function reads
             with pytest.raises(StaleDataError) as e:
                 async with app.state.Session.begin() as s:
                     hidden = await s.get(Note, 1)
                     assert hidden is not None
                     hidden.body = "x"
-            with pytest.raises(TypeError, match=r"an async engine's write: await rowstile.sqlalchemy.why_stale\(\)"):
-                authz_sa.why_stale_sync(e.value)
-            # ... which asks about a sync engine's flush too: of two rows, the first the database says no for
+            said = repr(authz_sa.why_stale_sync(e.value)), repr(await authz_sa.why_stale(e.value))
+            assert said == (f"Refused({REFUSED!r})",) * 2, said
+            # a sync engine's flush of two rows: the first the database says no for
             with pytest.raises(StaleDataError) as e, Session(engine) as ss, ss.begin():
                 first, last = ss.get(Note, 1), ss.get(Note, 4)
                 assert first is not None and last is not None
@@ -194,6 +179,79 @@ async def test_why_stale_for_the_engine_that_wrote(app: FastAPI) -> None:
             assert isinstance(verdict, Refused) and verdict.message == REFUSED, verdict
     finally:
         engine.dispose()
+
+
+def test_why_stale_is_asked_in_the_flushs_own_transaction() -> None:
+    engine = authz_sa.install(create_engine(SYNC))
+    try:
+        with rowstile.acting_as(3):
+            # a note ann adds in the transaction, which cy (a member of the project) sees and may not edit: only
+            # this transaction sees it yet
+            with pytest.raises(StaleDataError) as e, Session(engine) as s, s.begin():
+                s.execute(text("SELECT authz.act_as('user', '1')"))
+                note = Note(project_id=1, author_id=1, body="ann's")
+                s.add(note)
+                s.flush()
+                made = note.id
+                s.execute(text("SELECT authz.act_as('user', '3')"))
+                note.body = "x"
+            verdict = authz_sa.why_stale_sync(e.value)
+            assert isinstance(verdict, Refused), verdict
+            assert verdict.message == f"permission denied: user 3 may not update row {made} of app.notes", verdict
+            # in a savepoint: asked before it is rolled back, and the transaction goes on
+            with Session(engine) as s, s.begin():
+                with pytest.raises(StaleDataError) as e, s.begin_nested():
+                    hidden = s.get(Note, 1)
+                    assert hidden is not None
+                    hidden.body = "x"
+                assert repr(authz_sa.why_stale_sync(e.value)) == f"Refused({REFUSED!r})"
+                assert s.scalar(text("SELECT current_setting('authz.user_id')")) == "3"
+    finally:
+        engine.dispose()
+
+
+def test_a_flush_of_many_rows_is_asked_about_each() -> None:
+    # SQLAlchemy tells every row of a table before it sends the statements: the refused row is found among them,
+    # however many come after it
+    engine = authz_sa.install(create_engine(SYNC))
+    try:
+        with rowstile.acting_as(3):
+            with pytest.raises(StaleDataError) as e, Session(engine) as s, s.begin():
+                s.add_all([Note(project_id=1, author_id=3, body=str(i)) for i in range(30)])  # cy's own
+                s.flush()
+                hidden = s.get(Note, 1)  # the first of the flush's rows, by its key
+                assert hidden is not None
+                for note in s.scalars(select(Note).where(Note.author_id == 3)).all():
+                    note.body += "!"
+                hidden.body = "x"
+            verdict = authz_sa.why_stale_sync(e.value)
+            assert isinstance(verdict, Refused) and verdict.message == REFUSED, verdict
+    finally:
+        engine.dispose()
+
+
+def test_why_stale_cant_tell_when_the_database_couldnt_be_asked() -> None:
+    engine = authz_sa.install(create_engine(SYNC))
+    try:
+        with rowstile.acting_as(3), mock.patch.object(authz_sa, "_EXPLAIN_EACH", text("SELECT authz.no_such()")):
+            failed = refused_flush(engine)
+        assert authz_sa.why_stale_sync(failed) is None
+        with rowstile.acting_as(3), engine.connect() as conn:  # the transaction was rolled back as ever
+            assert projects(conn) == [1, 3]
+    finally:
+        engine.dispose()
+    # an engine install() wasn't given (the owner's) remembers no rows, and has nothing to say
+    owner = create_engine(OWNER)
+    try:
+        with pytest.raises(StaleDataError) as e, Session(owner) as s, s.begin():
+            note = s.get(VersionedNote, 4)
+            assert note is not None
+            with psycopg.connect(libpq(OWNER)) as other:  # someone changes it meanwhile
+                other.execute("UPDATE app.notes SET body = body || '.' WHERE id = 4")
+            note.body = "mine"
+        assert authz_sa.why_stale_sync(e.value) is None
+    finally:
+        owner.dispose()
 
 
 def refused_flush(engine: Engine, note: int = 1) -> StaleDataError:
@@ -242,16 +300,6 @@ def test_outside_a_block_a_later_transaction_isnt_asked_about_an_earlier_write()
             row = s.scalars(select(NoteInProject).where(NoteInProject.note_id == 1)).one()
             row.body = "x"
         assert authz_sa.why_stale_sync(e.value) is None
-    finally:
-        engine.dispose()
-
-
-def test_a_block_isnt_asked_about_a_write_made_outside_it() -> None:
-    engine = authz_sa.install(create_engine(SYNC), user=lambda: 3)
-    try:
-        refused_flush(engine)  # outside a block
-        with rowstile.acting_as(3):  # a block that wrote nothing has nothing to say
-            assert authz_sa.why_stale_sync() is None
     finally:
         engine.dispose()
 
@@ -461,7 +509,7 @@ def test_postgres_own_refusals_name_the_rule() -> None:
     )
 
 
-async def test_an_update_the_rules_allow_that_matched_nothing_is_404(app: FastAPI) -> None:
+async def test_an_update_the_rules_allow_that_matched_nothing_is_409(app: FastAPI) -> None:
     @app.patch("/versioned/{note_id}")
     async def edit(note_id: int) -> None:
         async with app.state.Session() as s:
@@ -472,9 +520,55 @@ async def test_an_update_the_rules_allow_that_matched_nothing_is_404(app: FastAP
             note.body = "mine"
             await s.commit()
 
+    @app.patch("/joined/{note_id}")
+    async def edit_joined(note_id: int) -> None:
+        async with app.state.Session.begin() as s:
+            mine = await s.get(Note, 4)  # a flush the rules allow first, of another row
+            assert mine is not None
+            mine.body += "!"
+            await s.flush()
+            row = (await s.scalars(select(NoteInProject).where(NoteInProject.note_id == note_id))).one()
+            row.body = "x"  # a model mapped to a join names no one table: its row can't be asked about
+
     async with client(app) as c:
         r = await c.patch("/versioned/4", headers={"x-user": "3"})  # cy may edit note 4: not the rules' doing
-    assert r.status_code == 404 and r.json()["detail"] == "the row not found", r.text
+        # the earlier flush's row isn't asked about in its place: this one's can't tell, and leaves it to the app
+        with pytest.raises(StaleDataError):
+            await c.patch("/joined/1", headers={"x-user": "3"})
+    assert r.status_code == 409, r.text
+    assert r.json() == {
+        "type": "https://rowstile.dev/problems/conflict",
+        "title": "Conflict",
+        "status": 409,
+        "detail": "the row changed since it was read, and the rules allow the change: read it again",
+    }, r.text
+
+
+async def test_a_refused_update_is_explained_with_the_pools_one_connection_held() -> None:
+    # the session still holds the pool's one connection when the error is answered (closed late, as a dependency's
+    # cleanup was on FastAPI before 0.106): the answer needs no other connection
+    engine = create_async_engine(APP, pool_size=1, max_overflow=0, pool_timeout=3)
+    a = FastAPI()
+    Rowstile(a, engine, user=lambda request: "3", check_connection=False)
+    sessions: list[AsyncSession] = []
+
+    @a.patch("/notes/{note_id}")
+    async def edit(note_id: int) -> None:
+        s = AsyncSession(engine)
+        sessions.append(s)
+        note = await s.get(Note, note_id)
+        assert note is not None
+        note.body = "x"
+        await s.commit()
+
+    try:
+        async with client(a) as c:
+            r = await c.patch("/notes/1")
+    finally:
+        for s in sessions:
+            await s.close()
+        await engine.dispose()
+    assert r.status_code == 403 and r.json()["detail"] == REFUSED, r.text
 
 
 async def test_a_request_without_a_user_is_answered_about_its_own_write() -> None:
@@ -522,6 +616,71 @@ async def test_psycopg_async_blocks_and_expect() -> None:
             none = await aconn.execute("UPDATE app.notes SET body = 'x' WHERE id = 1")
             with pytest.raises(NotFound, match=r"app\.notes 1 not found"):
                 await pgp.aexpect(aconn, none, "app.notes", "update", 1)
+
+
+async def test_an_app_on_psycopg_or_asyncpg_alone_answers_as_the_pages_say() -> None:
+    # Rowstile(app, None, user=...): no engine; the drivers' own errors are answered as SQLAlchemy's are
+    a = FastAPI()
+    Rowstile(a, None, user=lambda request: request.headers.get("x-user"))
+
+    @a.post("/psycopg/notes")
+    async def add() -> None:
+        async with await psycopg.AsyncConnection.connect(libpq(APP)) as aconn, pgp.atransaction(aconn):
+            await aconn.execute("INSERT INTO app.notes (project_id, author_id, body) VALUES (3, 2, 'hi')")
+
+    @a.get("/asyncpg/page")
+    async def page() -> None:
+        conn = await asyncpg.connect(libpq(APP))
+        try:
+            async with pga.transaction(conn):
+                await conn.fetch("SELECT x FROM authz.list('project', 'view', NULL, -1) x")
+        finally:
+            await conn.close()
+
+    @a.get("/psycopg/unsigned")
+    async def unsigned() -> None:
+        async with await psycopg.AsyncConnection.connect(libpq(APP)) as aconn, aconn.transaction():
+            await aconn.execute("SELECT count(*) FROM app.notes")  # a transaction of its own: nobody signed in
+
+    async with client(a) as c:
+        refused = await c.post("/psycopg/notes", headers={"x-user": "2"})
+        negative = await c.get("/asyncpg/page", headers={"x-user": "1"})
+        how = r"authz\.act_as\(\) \(rowstile\.psycopg\.transaction\(\) and rowstile\.asyncpg\.transaction\(\) do it\)"
+        with pytest.raises(NotSignedIn, match=how):
+            await c.get("/psycopg/unsigned", headers={"x-user": "1"})
+    assert refused.status_code == 403, refused.text
+    body = refused.json()
+    assert (body["table"], body["command"], body["code"]) == ("app.notes", "insert", "AZ709"), body
+    assert "user 2 may not insert this row into app.notes" in body["detail"], body
+    assert negative.status_code == 400, negative.text
+    assert negative.json() == {
+        "type": "https://rowstile.dev/problems/bad-argument",
+        "title": "Bad Request",
+        "status": 400,
+        "detail": "the page size must not be negative (got -1)",
+        "code": "AZ710",
+    }, negative.text
+
+
+def test_an_app_without_a_driver_has_no_handler_for_its_errors() -> None:
+    # neither psycopg nor asyncpg installed: SQLAlchemy's errors only
+    code = "\n".join(
+        [
+            "import sys",
+            "sys.modules['psycopg'] = sys.modules['asyncpg'] = None",
+            "from fastapi import FastAPI",
+            "from rowstile.fastapi import Rowstile",
+            "app = FastAPI()",
+            "Rowstile(app)",
+            "ours = [e for e in app.exception_handlers if isinstance(e, type) and e.__module__.startswith(('rowstile', 'sqlalchemy'))]",
+            "print(sorted(e.__module__ + '.' + e.__name__ for e in ours))",
+        ]
+    )
+    got = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    handled = (
+        "['rowstile.NotFound', 'rowstile.Refused', 'sqlalchemy.exc.DBAPIError', 'sqlalchemy.orm.exc.StaleDataError']"
+    )
+    assert got.returncode == 0 and got.stdout.strip() == handled, (got.stdout, got.stderr)
 
 
 async def test_asyncpg_blocks_inside_a_block_and_expect() -> None:
@@ -578,6 +737,8 @@ def test_a_key_with_an_empty_field_and_no_answer() -> None:
     assert rowstile.answer(None) == (None, None, None)  # no row: the row isn't there for this user
     hidden = rowstile.verdict("app.notes", "update", 7, *rowstile.answer(None))
     assert isinstance(hidden, NotFound) and str(hidden) == "app.notes 7 not found"
+    said = [str(NotFound()), str(NotFound("app.notes")), str(NotFound(id_=7)), NotFound().problem()["detail"]]
+    assert said == ["not found", "app.notes not found", "row 7 not found", "not found"], said
 
 
 # --- the pytest helpers (rowstile.testing) ------------------------------------------------------------------------
@@ -600,6 +761,59 @@ async def test_the_helpers_say_what_was_expected(
             assert_not_found(lambda: touch(1))
         with pytest.raises(AssertionError, match="expected a refusal, got None"):
             await assert_refused(allowed)
+
+
+HELPERS = """
+import asyncio
+
+import pytest
+import rowstile
+
+
+async def refused() -> None:
+    raise rowstile.Refused("no")
+
+
+async def hidden() -> None:
+    raise rowstile.NotFound("app.notes", 1)
+
+
+def test_awaited(as_user, assert_refused, assert_not_found):
+    assert asyncio.run(assert_refused(refused)).message == "no"
+    assert str(asyncio.run(assert_not_found(hidden))) == "app.notes 1 not found"
+
+
+def test_refused_never_awaited(assert_refused):
+    assert_refused(refused)
+
+
+@pytest.mark.anyio
+async def test_not_found_never_awaited(assert_not_found):
+    assert_not_found(hidden)
+"""
+
+
+def test_the_helpers_load_by_themselves_and_fail_a_test_that_never_awaits_them(tmp_path: pathlib.Path) -> None:
+    # installed, the package's entry point loads the fixtures: a test file and nothing else (no pytest_plugins). An
+    # async function's check runs when it is awaited: a test that never awaits it fails, it doesn't pass unchecked
+    (tmp_path / "test_helpers.py").write_text(HELPERS)
+    got = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    out = got.stdout
+    assert got.returncode == 1 and "3 passed, 2 errors" in out, (
+        out + got.stderr
+    )  # each never-awaited: an error at teardown
+    for helper in ("assert_refused", "assert_not_found"):
+        never = f"{helper}() was given an async function, and what it returned was never awaited, so the check never ran: await it"
+        assert f"ERROR at teardown of test_{helper.split('_', 1)[1]}_never_awaited" in out, out
+        assert never in out, out
+    assert "coroutine" not in out + got.stderr, (
+        got.stderr
+    )  # no warning of its own about a coroutine never awaited: closed, and said
 
 
 def test_the_database_fixtures(authz_owner_url: str, authz_app_url: str) -> None:

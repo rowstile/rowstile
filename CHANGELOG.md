@@ -62,6 +62,14 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   usage.
 - The generated Python client's `share` takes `caveat_args` as a dict, `{"ip": "10.0.0.7"}`, as the TypeScript
   client's `caveatArgs` and `explain_rule`'s row do (it took JSON text). Regenerate the client.
+- `rowstile.sqlalchemy.why_stale(exc)` and `why_stale_sync(exc)` take the `StaleDataError`, which they no longer
+  may leave out: the SDK asks the database why a flush failed before its transaction is rolled back, and puts the
+  answer on the error.
+- `rowstile.sqlalchemy.install(engine, user=...)` given a `user()` for an engine installed without one (as
+  `Rowstile(app, engine)` installs it) takes it, where it was ignored. Another `user()` than the one the engine
+  has is a `ValueError`, where the first one stayed without a word.
+- In `rowstile.testing`, a test that never awaits what `assert_refused` or `assert_not_found` returned for an
+  async function fails at teardown and says to await it. It passed without checking anything.
 
 ### Removed
 
@@ -537,6 +545,22 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `@rowstile/drizzle` on node-postgres listens for a lost connection while a transaction holds one, as
   `@rowstile/pg` does: a database that restarts mid-transaction fails the transaction, where it stopped the
   process.
+- `rowstile.fastapi` with no engine, `Rowstile(app, None, user=...)` (an app on psycopg or asyncpg without
+  SQLAlchemy), answers the drivers' errors as it answers SQLAlchemy's: a refused write 403, and each code as its
+  page says. They were a 500.
+- `rowstile.fastapi` answers an ORM update the rules allow that matched no row (the row changed since it was
+  read: a version counter) with 409, where it answered 404 "the row not found". Where it can't tell (a model
+  mapped to a join), it leaves the `StaleDataError` to the app.
+- A refused ORM update is explained from the flush's own transaction, before it is rolled back. A row that
+  transaction had written answered 404, since another transaction can't see it; with a pool of one connection
+  that the request's session still held, the answer waited for the pool and failed with a 500. A flush of more
+  than 20 rows of a table was asked about its last 20 only (a 404 when the refused row came earlier), one query
+  each: every row is asked about now, in one statement.
+- `NotFound()` without a table says "not found", and `NotFound(id_=7)` "row 7 not found" (it said "the row not
+  found").
+- The Python SDK's docs no longer offer `pytest_plugins = ["rowstile.testing"]`, which stops pytest once the
+  package's entry point has loaded the fixtures. `ids()` says a uuid key takes `key_type=Uuid` (with `None` the
+  ids are text, which a uuid column can't be compared with), and that a key of several columns can't use it.
 
 ## 0.1.0 (alpha)
 

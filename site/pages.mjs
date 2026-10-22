@@ -182,7 +182,7 @@ export const DESCRIPTIONS = {
   "problems/not-found.md": "The problem type the rowstile SDKs answer with (404) when a row isn't there or can't be seen, or what a call names isn't there.",
   "problems/bad-argument.md": "The problem type the rowstile SDKs answer with (400) when the database says a call lacks an argument or has a wrong one.",
   "problems/not-signed-in.md": "The problem type the rowstile SDKs answer with (401) when the database says a call needs someone signed in, or a login was refused.",
-  "problems/conflict.md": "The problem type the rowstile SDKs answer with (409) when the database turns down a move that would put an object inside itself.",
+  "problems/conflict.md": "The problem type the rowstile SDKs answer with (409) when the database turns down a move that would put an object inside itself, or a row changed since it was read.",
   "errors/index.md": "Every rowstile error code: what it means, the mistake, and the same mistake fixed.",
 };
 
