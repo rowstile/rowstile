@@ -1,6 +1,7 @@
 #!/bin/bash
-# docs_test.sh: docs/getting-started.md runs as written and does what the guide says, and the blog post's
-# experiment.sql runs as its header says.
+# docs_test.sh: docs/getting-started.md runs as written and does what the guide says (its Python too, against the
+# client it writes: tests/guide_app.py), the blog post's experiment.sql runs as its header says, and the code of the
+# landing pages (README.md, site/index.md) runs and does what its comments say.
 #   PGHOST=... PGUSER=postgres tests/docs_test.sh
 # Walks the guide's blocks in order, in a fresh database and an empty folder: ```sql blocks run in psql,
 # ```authz <file> blocks are written to that file, ```sh blocks run (with rowstile on the PATH, and
@@ -77,6 +78,29 @@ refused=$(psql -X -At -d "$DB" -c "CREATE ROLE docs_other" -c "SET ROLE docs_oth
 case "$refused" in *"permission denied"*) echo "ok    another role can't say who is signed in";;
   *) echo "FAIL  another role signed someone in: $refused"; fails=$((fails + 1));; esac
 
+# step 7, the guide's Python: the client written as the guide says, then the block run (tests/guide_app.py) for a
+# request by a user who can't see the note, one who sees it and may not edit it, and one who may
+client=$(grep -o '`rowstile client py > [A-Za-z_]*\.py`' "$GUIDE" | head -n 1 | tr -d '`')
+written=$(cd "$DIR" && DATABASE_URL="dbname=$DB" PATH="$OLDPWD/../$CLI:$PATH" bash -e -c "$client" 2>&1) &&
+  [ -s "$DIR/authz_client.py" ] && echo "ok    the guide's line writes the Python client ($client)" ||
+  { echo "FAIL  the guide's line doesn't write authz_client.py: '$client' $written"; fails=$((fails + 1)); }
+app() { python3 tests/guide_app.py "$GUIDE" "$DIR" "$DB" \
+          "{\"current_user_id\": $1, \"project_id\": 1, \"note_id\": 1, \"body\": \"Chapter two\"}" 2>&1; }
+out=$(app 3)
+check "the guide's Python, for cy, who can't see the note: its handler answers 404" \
+  "$(echo "$out" | sed -n 1p)" '[404, {"detail": "not found"}]'
+check "... and makes the database's refusal of cy's note a 403 that says why" "$(echo "$out" | sed -n 2p)" \
+  '[403, {"detail": "you may not do that", "why": ["no   insert : project.edit and author  (line 33)", "  no   project.edit", "    no   you have no access to project 1", "  yes  author"]}]'
+psql -X -q -d "$DB" -c "SET ROLE app_backend" \
+  -c "BEGIN; SELECT authz.act_as('user', '1'); SELECT authz.share('project', 1, 'viewer', 'user', 3); COMMIT" >/dev/null
+out=$(app 3)
+check "for cy, once ada shares the project with her to view: 403, and why she may not edit the note" \
+  "$(echo "$out" | sed -n 1p)" '[403, {"detail": "you may not do that", "why": ["no   update : edit  (line 34)", "  no   edit", "    no   user 3 does not hold edit on note 1", "      note.edit = author or project.edit", "      no   author", "      no   project.edit", "        no   project is project 1, without edit", "          project.edit = share or editor", "          no   share", "          no   editor"]}]'
+out=$(app 2)
+check "for bo, a writer: no error, and the note is changed" \
+  "$(echo "$out" | sed -n 1p) $(psql -X -At -d "$DB" -c "SELECT body FROM app.notes WHERE id = 1")" "null Chapter two"
+check "... and the database lets him add a note" "$(echo "$out" | sed -n 2p)" "null"
+
 rm -r "$DIR"
 dropdb "$DB"
 drop_roles
@@ -93,4 +117,53 @@ check "the blog post's experiment.sql runs to its end as a role that isn't a sup
 check "it times each query three times through each of the four policies" "$(echo "$out" | grep -c 'Execution Time')" "36"
 dropdb "$BLOG"
 psql -X -q -d postgres -c "DROP ROLE IF EXISTS demo_app" >/dev/null
+
+# the landing pages, README.md and site/index.md: the policy each shows applies to the tables it reads
+# (tests/fixtures/landing.sql, where user 42 owns folder 8 and edits folder 10), and its SQL runs as the app role
+# and does what its comments say, before and after 42 is made an editor of folder 7. A fenced block of another
+# kind says why it isn't run, in a comment right before it (<!-- not run: why -->). (The README's install lines are
+# DocPages': the same as docs/installing.md's, for the version being released.)
+LAND=authz_docs_landing
+landing() {   # page, the SQL's output before, after
+  local page=$1 B out
+  B=$(mktemp -d)
+  out=$(python3 - "../$page" "$B" <<'PY'
+import os, re, sys
+page, out = sys.argv[1:]
+text = open(page, encoding="utf-8").read()
+n = {"authz": 0, "sql": 0}
+bad = []
+for m in re.finditer(r"^```(\w*)[^\n]*\n.*?^```", text, re.S | re.M):
+    kind, before = m.group(1), text[: m.start()].rstrip().split("\n")[-1].strip()
+    if kind in n:
+        n[kind] += 1
+        with open(os.path.join(out, f"{n[kind]}.{kind}"), "w", encoding="utf-8") as fh:
+            fh.write(m.group(0).split("\n", 1)[1][:-3])
+    elif not re.fullmatch(r"<!-- not run: .+ -->", before):
+        bad.append(f"line {text[: m.start()].count(chr(10)) + 1}: a {kind or 'plain'} block, not run, and no comment says why")
+if n["authz"] != 1:
+    bad.append(f"{n['authz']} policies (one is applied)")
+if not n["sql"]:
+    bad.append("no SQL")
+print("; ".join(bad))
+PY
+)
+  [ -z "$out" ] && echo "ok    $page: one policy, its SQL, and no other block" || { echo "FAIL  $page: $out"; fails=$((fails + 1)); }
+  dropdb --if-exists "$LAND" 2>/dev/null; createdb "$LAND" || exit 1
+  psql -X -q -v ON_ERROR_STOP=1 -d "$LAND" -f tests/fixtures/landing.sql >/dev/null
+  out=$(python3 cli/rowstile_cli.py --db "dbname=$LAND" apply "$B/1.authz" 2>&1)
+  case "$out" in *": applied") echo "ok    $page: its policy applies";; *) echo "FAIL  $page: its policy: $out"; fails=$((fails + 1));; esac
+  ran() { for f in "$B"/*.sql; do
+            PGOPTIONS="-c client_min_messages=warning" psql -X -At -v ON_ERROR_STOP=1 -d "$LAND" -c "SET ROLE app_user" -f "$f" 2>&1
+          done; }
+  check "$page: its SQL, as user 42" "$(ran)" "$2"
+  psql -X -q -d "$LAND" -c "INSERT INTO app.folder_editors VALUES (7, 42)"
+  check "$page: its SQL, once 42 may edit folder 7" "$(ran)" "$3"
+  rm -r "$B"
+  dropdb "$LAND"
+}
+FOLDERS=$'8|Home|42|\n9|Photos|1|8\n10|Drafts|1|7\n11|Old|1|10'
+landing README.md $'SET\nBEGIN\n\n'"$FOLDERS"$'\nf\n7|{}\n8|{edit,view}\nCOMMIT' \
+  $'SET\nBEGIN\n\n7|Notes|1|\n'"$FOLDERS"$'\nt\n7|{edit,view}\n8|{edit,view}\nCOMMIT'
+landing site/index.md $'SET\nBEGIN\n\n'"$FOLDERS"$'\nUPDATE 0\nCOMMIT' $'SET\nBEGIN\n\n7|Notes|1|\n'"$FOLDERS"$'\nUPDATE 1\nCOMMIT'
 [ $fails -eq 0 ] && echo "docs: all passed" || { echo "docs: $fails failed"; exit 1; }

@@ -378,7 +378,7 @@ record $? "adversarial"
 unit policy 11 adversarial
 
 docs() {
-step "docs/getting-started.md runs as written"
+step "docs/getting-started.md runs as written, its Python too, and the landing pages' code"
 tests/docs_test.sh
 record $? "docs"
 }

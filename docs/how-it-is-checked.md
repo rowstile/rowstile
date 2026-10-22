@@ -227,9 +227,10 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   Every night [`tests/fuzz_coverage.py`](../core/tests/fuzz_coverage.py) gives the parser and the compiler
   twenty minutes more under Atheris, a fuzzer that watches which branches each input reaches and works from the
   ones that reach new ground, held to the same rule.
-- **The docs**: the getting-started guide runs as written, every line of policy and tests the cookbook shows is
-  in a recipe that is applied and tested, the SQL it shows runs, and every line of code on the stack pages is in
-  an app whose tests pass. <!-- checked: tests/docs_test.sh "every block of the guide runs"; tests/cookbook.sh "every line of policy and tests its page shows is in its files"; tests/cookbook.sh "the SQL its page shows runs, as its first user"; tests/unit_test.py "test_every_line_is_in_a_tested_app" -->
+- **The docs**: the getting-started guide runs as written, its Python too, against the client it writes; the
+  policy and the SQL the README and the site's home page show apply and run; every line of policy and tests the
+  cookbook shows is in a recipe that is applied and tested, the SQL it shows runs, and every line of code on the
+  stack pages is in an app whose tests pass. <!-- checked: tests/docs_test.sh "every block of the guide runs"; tests/docs_test.sh "the guide's Python, for cy, who can't see the note: its handler answers 404"; tests/docs_test.sh "its SQL, once 42 may edit folder 7"; tests/cookbook.sh "every line of policy and tests its page shows is in its files"; tests/cookbook.sh "the SQL its page shows runs, as its first user"; tests/unit_test.py "test_every_line_is_in_a_tested_app" -->
   Every block of code in the reference runs too, or says why it can't, and each promise these pages make, and
   the reference's, names the check that holds it in a comment readers don't see, or says why none does. <!-- checked: tests/reference.sh "every block of the reference runs, or says why not"; tests/unit_test.py "test_every_promise_says_what_holds_it"; tests/unit_test.py "test_each_tag_names_checks_that_are_there" -->
 - **Three versions of Postgres**: every suite on PostgreSQL 16 for each change, and on 17 and 18
