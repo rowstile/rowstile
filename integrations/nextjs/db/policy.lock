@@ -63,7 +63,7 @@ function authz.create_role(p_owner_type text, p_owner_id text, p_object_type tex
 function authz.decide_request(p_id bigint, p_approve boolean, p_note text) | 763b303c1435 shape=ebe1e76d
 function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id integer, p_perm text, p_user text) | 1409a3a04a15 shape=7d31b532
-function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 4ffa953eaae0 shape=7d6de14b
+function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 6131b528f0f4 shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | 1e145f454a48 shape=1223ad2f
 function authz.lint() | 7bb071170764 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 8d5b8e132afb shape=e713a7cc
@@ -106,7 +106,7 @@ function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type t
 function authz.verify() | 8e50658767de shape=8e0f53a6
 function authz.view_as(p_user text, p_reason text) | f584bb4a4348 shape=5d7b6326
 function authz.who(p_type text, p_id integer, p_perm text) | 392e8fa82862 shape=b6bb06d3
-function authz.who(p_type text, p_id text, p_perm text) | bd39d43f6d26 shape=1cf83af9
+function authz.who(p_type text, p_id text, p_perm text) | 57bdb14b17ff shape=1cf83af9
 function authz.who_among(p_type text, p_id integer, p_perm text, p_users text[], p_principal_type text) | 3cbf9dbbd703 shape=21122f56
 function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 1a0a683f586e shape=17b9de43
 function authz_gen."app.feedback:insert:items"(p_row "app"."feedback") | 4a88637384bc shape=8c57a438 atomic
