@@ -1,6 +1,6 @@
 {
   "name": "@rowstile/drizzle",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-dev",
   "description": "rowstile with Drizzle ORM: transactions signed in as the request's user, ids() for where clauses",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
@@ -39,7 +39,7 @@
   "sideEffects": false,
   "engines": { "node": ">=22.12.0" },
   "dependencies": {
-    "@rowstile/client": "0.1.0-beta.1"
+    "@rowstile/client": "0.1.0-dev"
   },
   "peerDependencies": {
     "drizzle-orm": "^0.45.4"
