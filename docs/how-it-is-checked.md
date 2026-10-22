@@ -120,7 +120,8 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   turned round, a part said twice, a part absorbed) and in ways that may (an `and` for an `or`, a part dropped,
   one relation in place of another). Where the review says "grants the same", the database's own answers on the
   policy's data, for everyone, before and after the rewrite, are the same too; and a rewrite that changes
-  nothing is given no difference by either. The first difference the review shows for each policy is replayed in a
+  nothing is given no difference by either, and is refused by the compiler only for a shape the language limits
+  (how a permission recurses or inherits, where `roles` is said). <!-- checked: tests/rewrites.py "it changes nothing, and the compiler refuses it" --> The first difference the review shows for each policy is replayed in a
   database: the small world it was found in, made as rows, gives the user the answers the review says, under the
   policy and under the rewrite. A condition the review doesn't read (a subquery) holds where the rows say,
   which may not be where the world says. So what the rows hold is read back: they must hold the world but
@@ -132,7 +133,9 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   `rowstile fmt`. Each compiles to the same objects, read back as migrations read them, each made by the same
   SQL but for the order things come in, the lines they are on and the names the compiler numbers as it meets
   them (not a rule on columns: Postgres fires a table's triggers in the order of their names, so each is named
-  after its rule). Each is applied, and every answer on the policy's data is the same: lists (whole, and in
+  after its rule). The SQL is read as SQL, not as a set of words: the operands of an `or` or an `and`, the items
+  of a list and statements that don't read what another sets may come in another order, but an `and` in place of
+  an `or`, or an operand moved across one, is another SQL. Each is applied, and every answer on the policy's data is the same: lists (whole, and in
   pages of two), checks, the rows each select rule shows, who holds what, why a write would be refused, which
   rule on columns refuses an update two of them guard, the invariants. <!-- checked: tests/invariance.py "the same answers" --> Then every key of each type is replaced by another drawn at random, in the rows, the link
   tables, the shares and the custom roles, and the answers are the same, mapped back. One policy and the nine

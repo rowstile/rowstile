@@ -9324,6 +9324,28 @@ class Rewrites(unittest.TestCase):
             self.assertIn(law, {**rewrites.SAME, **rewrites.OTHER})
             self.assertEqual(head[-1], "select" if where.endswith("select rule") else where.split(".")[1], rw.what)
 
+    def test_a_rewrite_that_changes_nothing_is_refused_only_for_a_shape(self) -> None:
+        """The compiler may refuse a rewrite that changes nothing for a shape the language limits (counted by code);
+        any other refusal of it is a problem. One that may change something is counted, whatever the code."""
+        import random
+
+        import rewrites
+
+        rw = rewrites.rewrites(genpolicy.make(2), random.Random(1), 1)
+        same, other = next(r for r in rw if r.same), next(r for r in rw if not r.same)
+        tally = rewrites.Tally()
+        shape = authzlib.PolicyError("line 9: t1.p2 depends on itself", "AZ302")
+        mistake = authzlib.PolicyError("line 9: t1 has no relation or permission 'x'", "AZ203")
+        self.assertEqual(rewrites.refused(same, shape, tally), [])
+        self.assertEqual(rewrites.refused(other, mistake, tally), [])
+        self.assertEqual(
+            rewrites.refused(same, mistake, tally),
+            [
+                f"{same.what}: it changes nothing, and the compiler refuses it: line 9: t1 has no relation or permission 'x' [AZ203]"
+            ],
+        )
+        self.assertEqual((dict(tally.shapes), tally.refused), ({"AZ302": 1}, 1))
+
 
 class Invariance(unittest.TestCase):
     """tests/invariance.py writes policies another way and renumbers their data, and wants the same SQL and the same
@@ -9344,6 +9366,89 @@ class Invariance(unittest.TestCase):
             diffs, counts = invariance.sql_differences(base, invariance.objects(new_text, files))
             self.assertEqual(diffs, [], name)
             self.assertGreater(counts["same"], 300, name)
+
+    def test_sql_is_read_as_what_it_says_but_for_order(self) -> None:
+        """Only what may come in any order is: an `or`'s and an `and`'s operands, a simple CASE's branches, the items
+        of an ARRAY, an IN and a VALUES list, statements but for what one sets and another reads, an explanation's
+        words. An `and` and an `or` that trade places, an operator's operands swapped or a NOT moved are another
+        SQL, though their words are the same."""
+        import invariance
+
+        def same(a: str, b: str) -> bool:
+            return invariance.sql_form(a) == invariance.sql_form(b)
+
+        for a, b in [
+            ("SELECT 1 WHERE (x.a AND x.b) OR x.c", "SELECT 1 WHERE (x.a OR x.b) AND x.c"),
+            ("SELECT 1 WHERE x.a < x.b", "SELECT 1 WHERE x.b < x.a"),
+            ("SELECT 1 WHERE NOT x.a AND x.b", "SELECT 1 WHERE x.a AND NOT x.b"),
+            ("SELECT coalesce(x.a, false)", "SELECT coalesce(false, x.a)"),
+            ("SELECT CASE WHEN x.a THEN 1 WHEN x.b THEN 2 END", "SELECT CASE WHEN x.b THEN 2 WHEN x.a THEN 1 END"),
+            ("BEGIN v := 1; RETURN v; END", "BEGIN RETURN v; v := 1; END"),
+            ("BEGIN m := m || 'a'; RAISE '%', m; END", "BEGIN RAISE '%', m; m := m || 'a'; END"),
+            ("RETURN NEXT 'p = a or (b and c)'", "RETURN NEXT 'p = (a or b) and c'"),
+        ]:
+            self.assertFalse(same(a, b), (a, b))
+            self.assertEqual(sorted(invariance.TOKEN.findall(a)), sorted(invariance.TOKEN.findall(b)), (a, b))
+        for a, b in [
+            ("SELECT 1 WHERE (x.a AND x.b) OR x.c", "SELECT 1 WHERE x.c OR (x.b AND x.a)"),
+            ("SELECT 1 WHERE (x.a OR x.b) OR x.c", "SELECT 1 WHERE x.c OR x.b OR x.a OR x.c"),
+            (
+                "SELECT 1 WHERE x.a IN (1, 2) AND y = ANY (ARRAY['a', 'b'])",
+                "SELECT 1 WHERE y = ANY (ARRAY['b', 'a']) AND x.a IN (2, 1)",
+            ),
+            ("INSERT INTO t VALUES (1, 'a'), (2, 'b')", "INSERT INTO t VALUES (2, 'b'), (1, 'a')"),
+            (
+                "CASE p WHEN 'a' THEN RETURN 1; WHEN 'b' THEN RETURN 2; END CASE",
+                "CASE p WHEN 'b' THEN RETURN 2; WHEN 'a' THEN RETURN 1; END CASE",
+            ),
+            (
+                "(SELECT 1) UNION ALL ((SELECT 2) UNION ALL (SELECT 3))",
+                "(SELECT 3) UNION ALL (SELECT 1) UNION ALL (SELECT 2)",
+            ),
+            (
+                "BEGIN v := 1; RETURN NEXT v; v := 2; RETURN NEXT v; END",
+                "BEGIN v := 2; RETURN NEXT v; v := 1; RETURN NEXT v; END",
+            ),
+            (
+                "BEGIN m := m || 'a'; m := m || 'b'; RAISE '%', m; END",
+                "BEGIN m := m || 'b'; m := m || 'a'; RAISE '%', m; END",
+            ),
+            ("RETURN NEXT 'p = a or (b and {c = 1})'", "RETURN NEXT 'p = ({c = 1} and b) or a'"),
+            ("GRANT SELECT ON a, b TO app", "GRANT SELECT ON b, a TO app"),
+            (
+                "FOR a IN SELECT 1 UNION ALL SELECT 2 LOOP RETURN NEXT a; END LOOP",
+                "FOR a IN SELECT 2 UNION ALL SELECT 1 LOOP RETURN NEXT a; END LOOP",
+            ),
+        ]:
+            self.assertTrue(same(a, b), (a, b))
+
+    def test_an_or_and_an_and_that_trade_places_are_another_sql(self) -> None:
+        """A wrong rewrite planted in the compiled policy: in one object, the first `or` and the first `and` swapped."""
+        import invariance
+
+        base = invariance.objects(read("example/docs.authz"), {})
+        k, x = next((k, x) for k, x in base.items() if "\n    OR " in x and "\n    AND " in x)
+        swapped = (
+            x.replace("\n    OR ", "\n    @ ", 1)
+            .replace("\n    AND ", "\n    OR ", 1)
+            .replace("\n    @ ", "\n    AND ", 1)
+        )
+        diffs, _ = invariance.sql_differences(base, {**base, k: swapped})
+        self.assertEqual([d.split(": differs:")[0] for d in diffs], [k])
+
+    def test_a_way_of_writing_it_the_compiler_refuses_is_a_problem(self) -> None:
+        import invariance
+
+        text = read("example/docs.authz")
+        refused = text.replace("can edit  = share or", "can edit  = nosuch or")
+        self.assertNotEqual(refused, text)
+        passed, problems = invariance.same_sql(invariance.objects(text, {}), refused, {})
+        self.assertEqual(passed, "")
+        self.assertEqual(len(problems), 1)
+        self.assertRegex(
+            problems[0], r"^the compiler refuses it: line \d+: folder has no relation or permission 'nosuch'"
+        )
+        self.assertTrue(problems[0].endswith("[AZ203]"), problems[0])
 
     def test_a_policy_that_says_something_else_is_another_sql(self) -> None:
         import invariance
