@@ -3,7 +3,7 @@
 # may set. Only the signature authz.act_as(), the logins and authz.view_as() make keeps the app role from
 # choosing its own user by setting them, widening its scopes, or reusing a sign-in in another transaction or on
 # another connection.
-#   PGHOST=... PGUSER=postgres tests/sessions.sh [database]
+#   PGHOST=... PGUSER=authz_owner PGSUPERUSER=postgres tests/sessions.sh [database]
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_sessions}

@@ -68,8 +68,9 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
     `init`), `studio.py` and `studio/` (Studio: a local web page and its JSON API; read-only transactions unless
     `--write` or `dev`; localhost and a token; `tests/studio_test.py`) and `pgwire.py` (stdlib Postgres client,
     SCRAM, notices, URLs, `script()` for many statements)
-  - `compile_policy.py` — the compiler without a database: SQL for psql (`--check|--tests|--diff`; argparse, `options()` typed);
-    used by the tests, the editor task and the benchmark
+  - `compile_policy.py` — the compiler without a database: SQL for psql, on stdout (`--check|--tests|--diff`;
+    argparse, `options()` typed); used by the suites, the benchmark, the playground's test and the mutation sweep's
+    plan (`mutants/plan.py`)
   - `example/` — docs app: `app_schema.sql`, `docs.authz`, `docs.test.authz` (what most suites set up, and one of
     the playground's examples; the reference uses its rows in places, but its opening policy is another, larger
     one); its own tests pass on its own data (the shares they need, a named test makes); nothing generated is
@@ -78,16 +79,18 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
     `tests/golden/` holds the expected generated SQL; `scenario.sql` is the docs app end to end (psql, with
     `-v docs_tests=` the compiled policy tests)
   - `bench/` — `benchmark.sql` (the docs app, bigger; `benchmark_results.txt`) and the scale benchmark (`scale.sh`, pgbench workloads, `results/`, the latest results in its README); the
-    default size (20k folders) is for quick dev runs, `--large` (50k) is the gate's size on the dev laptop, 4 GB
-    shared buffers; `regress.sh` is the CI check (10k folders against `baseline.txt`)
-  - `Dockerfile` — Postgres for development and tests: the stock image, python3, the command
-    (build context: repo root)
+    default size (20k folders) is for quick dev runs (`--large`, 50k, was the gate's size on the laptop of 2026-10,
+    out of use), 4 GB shared buffers; `regress.sh` is the nightly check (10k folders against this machine's
+    `baseline.txt`: a baseline belongs to the machine that recorded it, so git ignores it and CI keeps its own in
+    the Actions cache)
+  - `Dockerfile` — Postgres for development and tests: the stock image, python3, git (the review reads the base
+    branch with it), the root certificates and the command (build context: repo root)
 - `editor/` — `test.sh` (in containers: the grammar, the Zed build, the VS Code extension built as its README says
   and `extension_test.js` against stand-ins for VS Code, Neovim set up as the README says); the VS Code extension:
   TextMate grammar (the site highlights ```authz with it too), and `extension.js` starting `rowstile lsp`;
   `tree-sitter-authz/` (the Tree-sitter grammar and its queries, for Zed, Helix and Neovim; `src/` is generated and
   committed, editors build from it); `zed/` (the Zed extension: its queries are copies of the grammar's, `Editors`
-  in `unit_test.py`)
+  in `unit_test.py`); `images/Dockerfile` (the toolchains `test.sh` runs in, pinned by digest, never built)
 - `review-ci/` — the review for CI: `github/action.yml` (a composite action; it installs the release its tag names
   from PyPI, or with `version: source` this checkout's command, as `.github/workflows/ci.yml` does) and
   `gitlab/rowstile-review.gitlab-ci.yml`
@@ -96,6 +99,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   `docker-compose.yml` (rowstile image from this repo, RustFS); `test.sh` runs its tests
 - `examples/messenger/` — the second adopter, a WhatsApp-style app built to show what rowstile takes off an app
   (same stack and rules as the file manager: public surface only, `check_public_surface.py`); `test.sh` runs its tests
+- `examples/public_surface.py` — the one public-surface check both examples run (each one's
+  `check_public_surface.py` calls it on its folder): what is public, and how a name is matched
 - `sdk/python/` — the `rowstile` Python package: the Python SDK (`rowstile`: FastAPI, SQLAlchemy, psycopg, asyncpg,
   Alembic, pytest) and the command, which `hatch_build.py` puts inside it (`rowstile/_command`).
   It holds no rowstile logic: it signs transactions in and translates the `authz.*` answers
@@ -104,10 +109,16 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   root's `package.json` is the npm workspace for these packages and `integrations/nextjs` (one React, one pg);
   `npm ci` at the root. Like the Python SDK it holds no rowstile logic
 - `integrations/<stack>/` — each SDK's conformance suite: a small app and the checks listed in `integrations/README.md`;
-  `integrations/fastapi/test.sh` (uv, Docker), `integrations/nextjs/test.sh` (Next.js, Prisma 7, Vitest, Docker)
+  `integrations/fastapi/test.sh` (uv, Docker), `integrations/nextjs/test.sh` (Next.js, Prisma 7, Vitest, Docker);
+  `pooler.sh` puts PgBouncer in front of a suite's Postgres (`POOLER=pgbouncer test.sh`), its image pinned in
+  `images/Dockerfile`
 - `packaging/` — how rowstile is installed: `npm/build.mjs` (the `rowstile` npm package and one
   `@rowstile/cli-<platform>` per platform with a standalone Python), `docker/Dockerfile` (the command's image);
-  `test.sh` installs each on a clean machine; `version.py` sets the version (X.Y.Z, X.Y.Z-alpha.N,
+  `test.sh` installs each on a clean machine (the machines pinned in `machines/Dockerfile`), starts the Linux
+  platform packages and reads the macOS and Windows ones (`npm/platforms.py`: the Python, the libraries and the
+  modules the command loads are there); the command's files the Python and npm packages carry are listed once,
+  in `sdk/python/command-files.txt`; `changelog.py` takes a release's notes from `CHANGELOG.md`;
+  `version.py` sets the version (X.Y.Z, X.Y.Z-alpha.N,
   X.Y.Z-beta.N, X.Y.Z-rc.N or X.Y.Z-dev: the grammar of `core/authzlib/versions.py`);
   `npm_latest.py` moves npm's `latest` to where `next` is while no final release exists (the release's npm
   job, and by hand `gh workflow run release.yml -f latest=true`).
@@ -118,7 +129,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   GitHub's runners (`ubuntu-latest`)
 - `demo/` — the recording at the top of the README (`demo.gif`): `record.sh` runs `demo.tape` in a terminal
   recorder in a container, on the guide's own app (`files.py` takes it from `docs/getting-started.md`); made
-  again by hand when what the commands print changes (`Demo` in `unit_test.py` checks the tape still fits)
+  again by hand when what the commands print changes, and at each release (`RELEASING.md`; `Demo` in
+  `unit_test.py` checks the tape still fits)
 - `playground/` — rowstile in the browser: the compiler in Pyodide (a worker), the SQL in PGlite; `core.mjs` is the
   engine, `test.mjs` runs it in Node, `browser_test.mjs` the page in headless Chrome, `build.mjs` writes `dist/`
   (its examples are read from the repository: the getting-started guide's own, the docs app, the cookbook's
@@ -137,7 +149,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   each SQL block its page shows (as user 1, the app role; `<!-- not run: why -->` before one it can't), compares
   each `$ rowstile ...` output with what the command prints, and checks every policy and test line its page shows
   is in its files; the site and the playground list them from the folders,
-  and `/playground/#e=<name>` opens one), `troubleshooting.md`,
+  and `/playground/#e=<name>` opens one), `how-it-is-checked.md` (how rowstile is checked, for readers to judge it),
+  `troubleshooting.md`,
   `operations.md`, `managed-postgres.md` (the setup on a managed service; Neon and Supabase, as tried),
   `signed-urls.md`, `comparison.md` and `compare/` (a page per alternative, titled `# rowstile and <it>`, which
   the site lists from the folder: what they say of another project is quoted from its docs with the day they
@@ -152,8 +165,10 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
 - `site/` — the docs site (VitePress; own `package.json`, like `playground/`): the Markdown stays where it is,
   `pages.mjs` says which files are pages and at which address, and turns each link (written relative to its
   file, for GitHub) into the page's address or the file on GitHub; a link to a missing file or page fails the
-  build. `build.mjs` writes `dist/`: the pages, `/playground/`, each page's Markdown (`/getting-started.md`),
-  `llms.txt` pointing to those, `llms-full.txt`. Its own pages: `index.md` and `problems/` (the SDKs' problem
+  build, and so do a link to a heading that isn't there (its anchor against the ids of the page it goes to) and a
+  page no menu lists (`checkMenus`); `pages_test.mjs` checks those rules without building. `build.mjs` writes
+  `dist/`: the pages, `/playground/`, each page's Markdown (`/getting-started.md`), `llms.txt` pointing to those,
+  `llms-full.txt`. Its own pages: `index.md` and `problems/` (the SDKs' problem
   `type` URLs). A new doc page goes in `PAGES`, with its sentence in `DESCRIPTIONS` (what a search result and a
   shared link show; a page without one fails the build), and in the sidebar (`.vitepress/config.mts`). `build.mjs`
   also checks that the sitemap lists every page, and writes `robots.txt`. The blog: a post is
@@ -167,20 +182,26 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   releases a site tag (`site-vN`) publishes `docs/blog/` and `docs/compare/` alone, on the release the site
   shows: `source.mjs` is the rule (what a tag is built from, and the checkout), `source_test.mjs` its test,
   `RELEASING.md` the steps
-- `.github/workflows/ci.yml` — on each push: `tests/unit_test.py` and the type checks, every suite on PG 16
-  (`ci.sh`) and what depends on the version on 17 and 18 (`ci.sh --short`), the examples, the conformance suites,
-  the editors, packaging, the site. The suites run in parts, a job each, side by side (`ROWSTILE_PART`;
-  `run_tests.sh` names them and puts each step in one: a new step goes in a unit inside an `if part ...` (a
-  function, then `unit PART SECONDS NAME`: a part's units run in lanes, `tests/lanes.sh`), and a new part
-  in the workflows' lists, which `Delivery` in `unit_test.py` checks); the jobs `postgres (16)` and the like,
-  which `main` requires, only wait for their parts. `nightly.yml` (main) — every suite on 17 and 18, the proofs
-  (`--proofs`) on each version, the soak (new seeds each night, one version in turn, in five parts side by side;
-  by hand, several at once on the three versions: `gh workflow run
-  nightly.yml -f only=soak -f soaks=7`), the conformance suites on 17 and 18 and on 16
-  through PgBouncer (`integrations/pooler.sh`), the migrations `rowstile migrate` writes run by goose,
-  dbmate and Flyway (`tests/migration_tools.sh`), then
-  the benchmark check (`gh workflow run nightly.yml -f only=bench` runs it alone; it judges speed against
-  the runners' own baseline, not the gate's limits). `ci.sh` writes its logs to `/tmp`
+- `.github/workflows/ci.yml` — on each pull request and push to `main`: `tests/unit_test.py` and the type checks
+  (`unit`), the suites (`suites.yml`, called once per version: every suite on PG 16, `ci.sh`, and what depends on
+  the version on 17 and 18, `ci.sh --short`), what they run of the code (`coverage`: on a pull request, a line or
+  branch it changes in `authzlib` or `cli` that no suite runs fails it), the review, the examples, the conformance
+  suites, the editors, packaging, the playground, Studio's page and the site. Every job has a `timeout-minutes`
+  (about three times its longest run, ten at least), so a step that hangs fails soon. The suites run in parts, a
+  job each, side by side (`ROWSTILE_PART`; `run_tests.sh` names them and puts each step in one: a new step goes in
+  a unit inside an `if part ...` (a function, then `unit PART SECONDS NAME`: a part's units run in lanes,
+  `tests/lanes.sh`), and a new part in the workflows' lists, which `Delivery` in `unit_test.py` checks); the jobs
+  `postgres (16)`, `postgres (17, --short)` and `postgres (18, --short)` only wait for their version's parts.
+  `main` requires them by name in the repository's ruleset, with `coverage` and most of the other jobs: a new job
+  is added there by hand. `nightly.yml` (main; by hand, one job: `-f only=<job>`) — the full run on 16 in its
+  parts side by side (`races` among them), every suite on 17 and 18 (with upgrades from every release from the
+  beta on), the proofs (`--proofs`) on each version, the soak (new seeds each night, one version in turn, in six
+  parts side by side; by hand, several at once on the three versions: `gh workflow run nightly.yml -f only=soak
+  -f soaks=7`), the conformance suites on 17 and 18 and on 16 through PgBouncer (`integrations/pooler.sh`), the
+  migrations `rowstile migrate` writes run by goose, dbmate and Flyway (`tests/migration_tools.sh`), the grammar
+  and the parser on every small policy, the statements of rowstile's PL/pgSQL the suites run, the fuzzer, the
+  comparison pages' readings (`readings`), and the benchmark check (`-f only=bench`; it judges speed against the
+  runners' own baseline, not the gate's limits). `ci.sh` writes its logs to `/tmp`
 - `.github/workflows/scorecard.yml` — the OpenSSF Scorecard, weekly and on `main`: published at scorecard.dev
   (the README's badge), each check's reason in the run's files, the findings under Security, Code scanning.
   Publishing restricts the workflow: only its listed actions, no `run` steps, no `env`
@@ -194,13 +215,14 @@ as it (`PGSUPERUSER` names the superuser, for the few checks that a superuser's 
 simplest is Docker, from the repo root:
 
     core/ci.sh                   # run_tests.sh --quick on 16, 17 and 18, each in a fresh container
-    core/ci.sh --full 16         # the full run (~15 minutes) on one version
+    core/ci.sh --full 16         # the full run on one version (over an hour; nightly runs it in parts side by side)
     core/ci.sh --short 17 18     # what depends on the version (what CI runs on 17 and 18 for each push)
     ROWSTILE_PART=command core/ci.sh 16   # one part of a run (`run_tests.sh` names them: unit, policy, command, random)
     ROWSTILE_LANES=1 core/ci.sh 16        # a part's steps one after the other (else in 3 lanes side by side)
     core/ci.sh --coverage 16     # and what the suites run of authzlib and cli: .ci/coverage-16/report.txt says
                                  # what nothing runs (tests/coverage_report.py; CI's coverage job, --diff on PRs)
-    python3 core/tests/unit_test.py   # a second, no database; --update rewrites tests/golden/ after an intended change
+    python3 core/tests/unit_test.py   # two to three minutes, no database; --update rewrites tests/golden/ after
+                                      # an intended change
 
 For one suite, start a container and run it inside:
 
@@ -211,7 +233,9 @@ For one suite, start a container and run it inside:
 
 - The suites run the mounted repository's code; the image only holds a copy of the command for `docker exec`.
 - A part's steps run in lanes side by side, on one server (`tests/lanes.sh`): a suite's databases, roles and
-  `/tmp` files have names of its own, and a check on `pg_stat_activity` or `pg_locks` names its database.
+  `/tmp` files have names of its own, and a check on `pg_stat_activity` or `pg_locks` names its database. Each
+  shell suite's `trap` drops what it made however it ends; where two sessions race, the suite asks the server
+  where each one is (`tests/races.sh`), never a `sleep`.
 - `ci.sh` starts Postgres with `fsync`, `synchronous_commit` and `full_page_writes` off: the databases last as
   long as the container. Its `wal_level` is `logical`: `governance.sh` copies the audit trail to another database
   by a subscription (skipped, saying why, on a server without it). `difftest.py` asks a snapshot's questions in up to four sessions side by side
@@ -306,7 +330,8 @@ For one suite, start a container and run it inside:
 - Every behaviour change gets a check in the relevant suite; `tests/difftest.py` compares the database
   against an independent reference evaluator (`authzlib/evaluate.py`, also the review's) — keep it in sync with
   language changes. The two share the parser, so `HandAnswers` (`tests/unit_test.py`) holds the evaluator to
-  answers worked out by hand from the reference: a new language form gets a case there, and, if it belongs to the
+  answers worked out by hand from the reference (where only the database can give one, a policy with named tests in
+  `tests/hand/`, which `tests/hand_answers.sh` runs): a new language form gets a case there, and, if it belongs to the
   core (a kind of source, an operator), a place in `tests/small.py`'s list (`sources`, `expressions`), whose
   COUNTS then change (`--count`); `gh workflow run nightly.yml -f only=small` checks the whole list (fourteen
   jobs), each night's soak a fourteenth of it.
@@ -333,8 +358,8 @@ For one suite, start a container and run it inside:
   environment), integrations/fastapi, examples/filemanager and examples/messenger (their backends'); CI's `unit`
   job runs them all. Test code types the JSON it checks as `Answer = Any`, one alias, named; app code types rows
   as psycopg's `DictRow`. Python 3.11 syntax, standard library only (no `typing.override`, 3.12). A policy
-  expression is a NamedTuple per kind (`parse.Expr`: `Or`, `And`, `Not`, `Cond`, `Ref`, `Arrow`, `ArrowOn`):
-  build them with the class, and in typed code take them apart with `match`/`isinstance`, not `node[0]`.
+  expression is a frozen dataclass per kind (`parse.Expr`: `Or`, `And`, `Not`, `Cond`, `Ref`, `Arrow`, `ArrowOn`):
+  build them with the class, and take them apart with `match`/`isinstance` (they have no `node[0]`).
 - JavaScript is typed too: JSDoc, checked by `tsc` with `checkJs` and `strict`, one `tsconfig.json` per folder with its
   environment's types (playground, site, editor, editor/tree-sitter-authz, packaging/npm; Studio's page:
   `core/cli/tsconfig.studio.json`); CI's `javascript` job runs them after `npm ci` in each. The page's API answers
@@ -377,7 +402,7 @@ For one suite, start a container and run it inside:
   on pull requests and `main`). Never commit to `main` directly.
 - Commits are signed off (`git commit -s`; `.github/workflows/pr.yml` checks), and their subject says what
   changed, in plain words.
-- A change users will notice gets a line under **Unreleased** in `CHANGELOG.md` (Added, Changed, Fixed,
+- A change users will notice gets a line under **Unreleased** in `CHANGELOG.md` (Added, Changed, Fixed, Removed,
   Upgrading); the same check asks when `core/authzlib`, `core/cli`, `sdk`, `review-ci`, `packaging` or
   `editor` change (label `no changelog` otherwise).
 - Merging: the maintainer's pull requests rebased, outside ones squashed, a merge commit only when a commit

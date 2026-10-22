@@ -2,7 +2,7 @@
 # migrations.sh: policy changes as migrations: rowstile migrate writes them for each tool, they
 # apply in order on a database, a migration applied out of order is refused, --check tells CI about
 # changes no migration has, and rowstile push brings a development database along the same way.
-#   PGHOST=... PGUSER=... tests/migrations.sh
+#   PGHOST=... PGUSER=authz_owner PGSUPERUSER=postgres tests/migrations.sh
 set -u
 cd "$(dirname "$0")/.."
 DB=authz_migrations

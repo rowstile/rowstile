@@ -2,7 +2,7 @@
 # apply.sh: what applying a policy with the rowstile command does to a database: no extension,
 # no superuser needed, only-if-changed, included files, previews, tests, backup and restore, applying
 # again after an upgrade, and removing.
-#   PGHOST=... PGUSER=postgres tests/apply.sh
+#   PGHOST=... PGUSER=authz_owner PGSUPERUSER=postgres tests/apply.sh
 set -u
 cd "$(dirname "$0")/.."
 DB=authz_apply

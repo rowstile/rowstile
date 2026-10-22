@@ -5,7 +5,7 @@
 # puts a row in another partition is a delete there and an insert here, with no AFTER UPDATE row trigger.
 # What rowstile keeps with row triggers has to hold for those rows too: a rule on a column, forgetting a row's
 # shares when its key changes, the audit line of a changed relationship column.
-#   PGHOST=... PGUSER=postgres tests/children.sh
+#   PGHOST=... PGUSER=authz_owner tests/children.sh
 set -u
 cd "$(dirname "$0")/.."
 ROOT=$PWD

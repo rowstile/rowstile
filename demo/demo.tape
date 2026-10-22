@@ -1,4 +1,4 @@
-# The demo, ninety seconds: a policy, its tests, a one-word change and what the review says of it, a refusal
+# The demo, about eighty seconds: a policy, its tests, a one-word change and what the review says of it, a refusal
 # that says why, and what would grant it. A tape for VHS (github.com/charmbracelet/vhs); record.sh runs it in a
 # container, against the app of docs/getting-started.md. Everything typed here is typed for real: what the
 # recording shows is what the commands printed.

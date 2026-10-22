@@ -3,7 +3,7 @@
 # capital letters in the tables' names and the columns', in public. Wherever a table is looked up by its name,
 # the name has to be quoted, or Postgres reads "Folder" as folder and finds nothing. Last, names past ASCII that
 # Postgres reads unquoted (archivé).
-#   PGHOST=... PGUSER=postgres tests/capitals.sh
+#   PGHOST=... PGUSER=authz_owner PGSUPERUSER=postgres tests/capitals.sh
 set -u
 cd "$(dirname "$0")/.."
 ROOT=$PWD
