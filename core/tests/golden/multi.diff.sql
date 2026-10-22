@@ -6141,12 +6141,13 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     problem := format('a unique index on %s: inserting a duplicate fails even when the existing row is hidden, which tells the user it exists', r.tbl);
     RETURN NEXT;
   END LOOP;
-  -- primary keys the app role may choose (a column it may insert or update, not GENERATED ALWAYS): the same
+  -- primary keys the app role may choose (a key column it may insert or update, not GENERATED ALWAYS; not one the
+  -- index only INCLUDEs, which it holds but is not keyed by): the same
   FOR r IN SELECT i.indexrelid::regclass AS idx, i.indrelid::regclass AS tbl
            FROM pg_index i WHERE i.indisprimary
              AND i.indrelid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY['"mt"."docs"']::text[]) x)
              AND EXISTS (SELECT 1 FROM pg_attribute a
-                         WHERE a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey) AND a.attidentity <> 'a'
+                         WHERE a.attrelid = i.indrelid AND a.attnum = ANY ((i.indkey::int2[])[0:i.indnkeyatts - 1]) AND a.attidentity <> 'a'
                            AND (has_column_privilege(v_role, i.indrelid, a.attnum, 'INSERT')
                                 OR has_column_privilege(v_role, i.indrelid, a.attnum, 'UPDATE'))) LOOP
     severity := 'info'; object := r.idx::text;
