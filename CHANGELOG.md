@@ -131,6 +131,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - A release publishes on PyPI and on the VS Code Marketplace the files its GitHub release attaches and attests:
   the wheel, the sdist and the `.vsix` were built a second time for those. A patch to an older line no longer
   becomes the repository's latest release on GitHub.
+- `authz.revoke_link` judges a link given in several relations as things are before it goes, and turns it off in
+  all of them or in none. It took the link out of one relation at a time and judged the next on what was left: a
+  user whose access came by that link was refused in the second relation once the first was gone, and taking it
+  from the first could let a user turn it off in a relation they could not unshare when they asked.
 - The `rowstile` npm package holds the command's files and nothing else: its build copied `core/authzlib` and
   Studio's folder whole, so a file left there (a note, a backup) went in. It now takes the files one list names,
   the one the Python package's build reads.

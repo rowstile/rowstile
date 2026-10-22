@@ -5,7 +5,7 @@
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_governance}
-X="${DB}_across" COPY_DB="${DB}_copy" TDB="${DB}_this"
+X="${DB}_across" COPY_DB="${DB}_copy" TDB="${DB}_this" L="${DB}_links"
 T=$(mktemp -d)
 . tests/races.sh
 # whatever way the suite ends: the sessions it left running, its databases (the copy's subscription and slot first, which hold both), its roles,
@@ -17,7 +17,7 @@ cleanup() {
       -c "ALTER SUBSCRIPTION authz_governance_trail SET (slot_name = NONE)" -c "DROP SUBSCRIPTION authz_governance_trail" >/dev/null 2>&1
     psql -X -q -U "$PGSUPERUSER" -d "$DB" -c "SELECT pg_drop_replication_slot('authz_governance_trail')" >/dev/null 2>&1
   fi
-  for d in "$DB" "$X" "$COPY_DB" "$TDB"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+  for d in "$DB" "$X" "$COPY_DB" "$TDB" "$L"; do dropdb --force --if-exists "$d" 2>/dev/null; done
   for r in authz_gov_other authz_gov_owners; do psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1; done
   rm -rf "$T"
 }
@@ -455,6 +455,46 @@ admin "alice (manage_editors) turns it off, and the audit trail has it as an uns
    FROM authz.audit ORDER BY id DESC LIMIT 1"
 as 1 -c "SELECT authz.create_link('folder', 3, 'editor')" >/dev/null
 admin "an administrator lists a link and turns it off" "0"   "SELECT authz.revoke_link('folder', 3, (SELECT id FROM authz.list_links('folder', 3))); SELECT count(*) FROM authz.list_links('folder', 3)"
+# one link in two relations (one token: its id names both): turned off as things are before any of it goes, whole or
+# not at all. The token is what lets user 1 share r1 and r2 (shared by p1); in the second policy, r3 is shared by p2,
+# which user 1 holds only once the link is gone from r2
+LSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$L" "$@"; }
+for variant in whole none; do
+  dropdb --if-exists "$L" 2>/dev/null; createdb "$L" || exit 1
+  if [ "$variant" = whole ]; then more="  r1 : link shared by p1
+  r2 : link shared by p1
+  can p1 = (member or r2) and r1"
+  else more="  r2 : link shared by p1
+  r3 : link shared by p2
+  can p1 = member
+  can p2 = {b1} and not r2
+  can p3 = r3 or p2
+  can share = p1"
+  fi
+  printf 'app role app_user\ntype user = x.users\ntype t1 = x.t1\n  member : user shared by p1\n%s\nrules x.t1\n  select : p1\n' "$more" > $T/links.authz
+  LSQL >/dev/null <<'SQL' || exit 1
+CREATE SCHEMA x;
+CREATE TABLE x.users (id bigint PRIMARY KEY);
+CREATE TABLE x.t1 (id bigint PRIMARY KEY, b1 boolean);
+INSERT INTO x.users VALUES (1);
+INSERT INTO x.t1 VALUES (2, true);
+SQL
+  python3 compile_policy.py $T/links.authz > $T/links.sql &&
+    PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$L" -f $T/links.sql >/dev/null || exit 1
+  [ "$variant" = whole ] && rels="('r1'), ('r2')" || rels="('r2'), ('r3'), ('member')"
+  LSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id)
+    SELECT 't1', '2', r, CASE r WHEN 'member' THEN 'user' ELSE 'link' END,
+           CASE r WHEN 'member' THEN '1' ELSE encode(sha256(convert_to('k1', 'UTF8')), 'hex') END FROM (VALUES $rels) v(r)" >/dev/null
+  got=$(psql -X -q -At -d "$L" -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SET authz_ctx.links = 'k1'" \
+    -c "SELECT authz.revoke_link('t1', '2', left(encode(sha256(convert_to('k1', 'UTF8')), 'hex'), 16))" 2>&1 | grep '^ERROR:' || true)
+  got="${got}|$(LSQL -c "SELECT string_agg(relation, ',' ORDER BY relation) FROM authz.shares WHERE subject_type = 'link'")"
+  if [ "$variant" = whole ]; then want="|"; label="a link in two relations, which its token lets user 1 share: turned off in both"
+  else want="ERROR:  you cannot turn off link 6ab9f1eb8f7d3388 of t1 2 (you could not unshare it)|r2,r3"
+    label="... and one user 1 could not unshare in one of them before asking: turned off in neither"
+  fi
+  [ "$got" = "$want" ] && echo "ok    $label" || { echo "FAIL  $label: expected '$want', got '$got'"; fails=$((fails + 1)); }
+done
+dropdb "$L"
 # a team itself and its members are two shares: a review revokes the one it was asked to
 as 1 -c "SELECT authz.share('folder', 3, 'editor', 'team', 11)" -c "SELECT authz.share('folder', 3, 'editor', 'team', 11, 'member')" >/dev/null
 editors() { echo "SELECT string_agg(subject_type || ':' || subject_id || ':' || subject_relation, ', ' ORDER BY subject_type, subject_relation)
