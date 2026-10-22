@@ -356,9 +356,8 @@ what one of them compiles to, on GitHub's runners, [weekly](../.github/workflows
 catches is listed in `core/mutants/survivors.txt`, either as one that changes no answer or with the check that would
 catch it, and one that isn't listed fails the run. <!-- checked: tests/unit_test.py "test_a_new_survivor_fails_the_run" -->
 The first pass over all of them ended on 20 October 2026: of the 2,749 that change what a policy compiles to, the
-suites caught 2,714 (98.7%). Those they missed got a check, or a line in `survivors.txt` saying why no answer
-changes: 159 such lines now, and one mistake still waiting for its check, which needs a server past 2^32
-transactions.
+suites caught 2,714 (98.7%). Those they missed got a check, or a line in `survivors.txt`: why no answer changes,
+or which check would catch it and is still to write.
 
 ## When something is found
 
