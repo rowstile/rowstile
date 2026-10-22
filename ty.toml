@@ -8,7 +8,7 @@ extra-paths = ["core", "core/cli", "core/mutants", "packaging", "docs"]
 
 # the standard-library code; what needs packages has its own settings (sdk/python, integrations/fastapi, examples/*)
 [src]
-include = ["core/authzlib", "core/cli", "core/compile_policy.py", "core/tests", "core/bench", "core/mutants", "packaging/version.py", "packaging/changelog.py", "docs/llms_full.py", "review-ci/github/comment.py"]
+include = ["core/authzlib", "core/cli", "core/compile_policy.py", "core/tests", "core/bench", "core/mutants", "packaging/version.py", "packaging/changelog.py", "docs/llms_full.py", "docs/compare_readings.py", "review-ci/github/comment.py"]
 [rules]
 all = "error"
 # typing.override is Python 3.12's, and the command runs on 3.11 with the standard library only

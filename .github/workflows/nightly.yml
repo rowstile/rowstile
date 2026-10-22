@@ -3,7 +3,8 @@
 # on (each push: from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
 # SDKs' conformance suites on 17 and 18, rowstile's migrations run by goose, dbmate and Flyway (tools), the grammar
 # and the parser on more policies (grammar), each statement of rowstile's PL/pgSQL the suites run (statements), the
-# parser and the compiler under a coverage-guided fuzzer (fuzz), and the scale benchmark last.
+# parser and the compiler under a coverage-guided fuzzer (fuzz), whether a comparison page's reading of another
+# project's documentation is more than a quarter old (readings), and the scale benchmark last.
 # On GitHub's runners, as ci.yml (or the one the repository variable RUNNER names). Run by hand too
 # (workflow_dispatch), all of it or one job: `gh workflow run nightly.yml -f only=bench`. And several soaks at
 # once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7` (and
@@ -16,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run only this job (suites, proofs, soak, small, full, conformance, tools, grammar, statements, fuzz, bench); empty: all of them"
+        description: "Run only this job (suites, proofs, soak, small, full, conformance, tools, grammar, statements, fuzz, readings, bench); empty: all of them"
         default: ""
       soaks:
         description: "How many soaks to run at once (1 to 9), each with its own seed, on 16, 17 and 18 in turn"
@@ -256,6 +257,16 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with: {name: fuzz-found, path: fuzz-found/}
+  # What the comparison pages (docs/comparison.md, docs/compare/) say of other projects is quoted from their
+  # documentation, with the day it was read, and wants reading again each quarter: this fails once a page's reading
+  # is older, and says which (docs/compare_readings.py). Here, not on each push: a date alone would turn every pull
+  # request red on the day it passed
+  readings:
+    if: ${{ !inputs.only || inputs.only == 'readings' }}
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - run: python3 docs/compare_readings.py --github
   # Each statement and branch of rowstile's PL/pgSQL the suites run, on 16: core/ci.sh --statements preloads
   # plpgsql_check's profiler (in the coverage image only; rowstile needs no extension) and keeps its counts, in the
   # parts run_tests.sh names, side by side. The counts are kept when a check fails too: they are worth reading then

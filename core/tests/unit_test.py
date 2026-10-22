@@ -9,6 +9,7 @@ files, what the rowstile command runs against a database, its file reading, and 
 
 import collections
 import dataclasses
+import datetime
 import fnmatch
 import glob
 import io
@@ -61,6 +62,9 @@ sys.path.insert(0, os.path.join(ROOT, "mutants"))
 import mutants  # noqa: E402
 import plan as sweep_plan  # noqa: E402
 import sweep  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(ROOT), "docs"))
+import compare_readings  # noqa: E402
 
 GOLDEN = os.path.join(ROOT, "tests", "golden")
 UPDATE = "--update" in sys.argv
@@ -10583,10 +10587,6 @@ class ComparePages(unittest.TestCase):
             self.assertIn(f"](compare/{page})", overview, f"docs/comparison.md doesn't link {where}")
             self.assertIn("](../comparison.md)", text, f"{where} doesn't link the overview")
             self.assertRegex(text, r"\n## When .* the better choice\n", f"{where}: when the other is the better choice")
-            if page in self.OTHERS:
-                self.assertRegex(
-                    text, r"read on \d{4}-\d{2}-\d{2} and linked", f"{where}: the day their docs were read"
-                )
             policies = re.findall(r"```authz\n(.*?)```", text, re.S)
             self.assertTrue(policies, where)
             for policy in policies:
@@ -10603,6 +10603,92 @@ class ComparePages(unittest.TestCase):
                 if line.strip()
             ]
             self.assertEqual([x for x in shown if x not in have], [], f"{where}: code lines in no conformance app")
+
+    def test_each_page_that_quotes_another_project_says_the_day_it_read_it(self) -> None:
+        """The overview and the pages that quote another project say once the day its documentation was read
+        (docs/compare_readings.py, which the nightly runs); the others say none."""
+        import contextlib
+
+        self.assertEqual(compare_readings.PAGES, ("docs/comparison.md", *(f"docs/compare/{p}" for p in self.OTHERS)))
+        texts = {page: read("../" + page) for page in compare_readings.PAGES}
+        days = {}
+        for page, text in texts.items():
+            found = compare_readings.readings(page, text)
+            self.assertEqual(len(found), 1, f"{page}: the day the documentation it quotes was read, once")
+            days[page] = found[0].day
+        for page in ("app-code.md", "hand-written-rls.md"):
+            self.assertEqual(compare_readings.readings(page, read(f"../docs/compare/{page}")), [], page)
+        # on the day the first is due, nothing is; the day after, it is, and the run fails, an annotation on its line
+        first = min(compare_readings.due(day) for day in days.values())
+        said, problems = compare_readings.check(texts, first)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(said), len(texts))
+        late = first + datetime.timedelta(days=1)
+        for today, status in ((first, 0), (late, 1)):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(compare_readings.main(["--today", str(today), "--github"]), status)
+            due = [page for page, day in days.items() if compare_readings.due(day) < today]
+            self.assertEqual(re.findall(r"^::error file=([^,]+),line=\d+::read on ", out.getvalue(), re.M), due)
+            self.assertEqual(
+                re.findall(r"^([^:]+):\d+: read on .*, more than a quarter ago", err.getvalue(), re.M), due
+            )
+        # annotations only when asked for: the same run on a terminal says it in plain lines
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(compare_readings.main(["--today", str(late)]), 1)
+        self.assertNotIn("::", out.getvalue())
+        self.assertIn("more than a quarter ago", err.getvalue())
+
+    def test_a_reading_is_due_a_quarter_later(self) -> None:
+        def day(text: str) -> datetime.date:
+            return datetime.date.fromisoformat(text)
+
+        for read_on, due in (
+            ("2026-10-07", "2027-01-07"),
+            ("2026-09-15", "2026-12-15"),
+            ("2026-01-31", "2026-04-30"),
+            ("2026-11-30", "2027-02-28"),
+            ("2027-11-30", "2028-02-29"),
+        ):
+            self.assertEqual(compare_readings.due(day(read_on)), day(due), read_on)
+        page = "x.md"
+        text = "What it says\nis from its documentation, read on 2026-10-07 and\nlinked.\n"
+        said = ["x.md:2: read on 2026-10-07, due again on 2027-01-07"]
+        self.assertEqual(compare_readings.check({page: text}, day("2027-01-07")), (said, []))
+        self.assertEqual(
+            compare_readings.check({page: text}, day("2027-01-08")),
+            (
+                said,
+                [
+                    (
+                        page,
+                        2,
+                        "read on 2026-10-07, more than a quarter ago (due on 2027-01-07): read the documentation it "
+                        "quotes again, from its sources, correct what changed, and write the day of that reading",
+                    )
+                ],
+            ),
+        )
+        wanted = 'one "read on YYYY-MM-DD and linked" wanted, the day the docs were read: '
+        self.assertEqual(
+            compare_readings.check({page: "read on 2026-10-07, and linked"}, day("2026-10-07")),
+            ([], [(page, 1, wanted + "none")]),
+        )
+        twice = "read on 2026-10-07 and linked\n\nread on 2026-10-08 and linked\n"
+        self.assertEqual(
+            compare_readings.check({page: twice}, day("2026-10-08")), ([], [(page, 1, wanted + "2, on lines 1, 3")])
+        )
+
+    def test_the_nightly_asks_whether_a_reading_is_due_and_no_push_does(self) -> None:
+        # a date alone would turn every pull request red one day: the nightly's readings job asks instead
+        nightly = read("../.github/workflows/nightly.yml")
+        job = search(r"\n  readings:\n(.*?)(?=\n  [a-z-]+:\n)", nightly, re.S).group(1)
+        self.assertIn("inputs.only == 'readings'", job)
+        self.assertIn("\n      - run: python3 docs/compare_readings.py --github", job)
+        self.assertIn("readings", search(r'description: "Run only this job \(([^)]*)\)', nightly).group(1))
+        for name in ("ci.yml", "pr.yml", "release.yml", "site.yml"):
+            self.assertNotIn("compare_readings", read(f"../.github/workflows/{name}"), name)
 
     def test_the_two_services_are_compared_with_one_policy(self) -> None:
         """The OpenFGA and the SpiceDB pages show the same model on rowstile's side: one policy, word for word."""

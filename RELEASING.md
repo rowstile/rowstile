@@ -151,6 +151,11 @@ the site's own code. An article and a comparison page describe no version, and d
   needs no site tag. The count goes on after it.
 - The release workflow doesn't run on a site tag, which publishes no package (`Delivery` in
   `core/tests/unit_test.py` checks that no pattern of its own matches one).
+- What the comparison pages say of other projects is quoted from their documentation, with the day it was
+  read, and wants reading again each quarter. `python3 docs/compare_readings.py` lists each page's reading
+  and the day it is due again, and the nightly's `readings` job fails once one is past it. Read the
+  documentation again from its sources, correct what changed, write the new day, and publish the pages with
+  a site tag.
 
 ## The repository's settings
 
