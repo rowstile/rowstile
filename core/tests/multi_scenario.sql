@@ -218,11 +218,15 @@ SELECT test.ok('the shares still show it as (link)',
 SELECT set_config('test.link', (SELECT id FROM authz.list_links('folder', 2)), false);
 SELECT test.as(4);
 SELECT test.ok('dave may not list them, nor those of a folder that isn''t there',
-  test.try($$SELECT * FROM authz.list_links('folder', 2)$$) = '42501'
-  AND test.try($$SELECT * FROM authz.list_links('folder', 999)$$) = '42501');
+  test.error($$SELECT * FROM authz.list_links('folder', 2)$$)
+  = '42501: you cannot see the links of folder 2'
+  AND test.error($$SELECT * FROM authz.list_links('folder', 999)$$)
+  = '42501: you cannot see the links of folder 999');
 SELECT test.ok('nor turn one off, whether its id names a link or not',
-  test.try(format('SELECT authz.revoke_link(''folder'', 2, %L)', current_setting('test.link'))) = '42501'
-  AND test.try($$SELECT authz.revoke_link('folder', 2, 'nothing')$$) = '42501');
+  test.error(format('SELECT authz.revoke_link(''folder'', 2, %L)', current_setting('test.link')))
+  = '42501: you cannot turn off the links of folder 2'
+  AND test.error($$SELECT authz.revoke_link('folder', 2, 'nothing')$$)
+  = '42501: you cannot turn off the links of folder 2');
 SELECT test.as(1);
 SELECT set_config('test.token2', authz.create_link('folder', 2, 'viewer', now() + interval '1 day'), false);
 SELECT test.ok('a second link, until tomorrow: both listed, the older first',
@@ -240,8 +244,10 @@ SELECT test.ok('... and with the first, of the first: no end',
 RESET authz_ctx.links;
 SELECT test.as(1);
 SELECT test.ok('an id that names no link there is said',
-  test.try($$SELECT authz.revoke_link('folder', 2, 'nothing')$$) = 'P0001'
-  AND test.try(format('SELECT authz.revoke_link(''folder'', 1, %L)', current_setting('test.link'))) = 'P0001');
+  test.error($$SELECT authz.revoke_link('folder', 2, 'nothing')$$)
+  = 'P0001: no link nothing on folder 2'
+  AND test.error(format('SELECT authz.revoke_link(''folder'', 1, %L)', current_setting('test.link')))
+  = format('P0001: no link %s on folder 1', current_setting('test.link')));
 SELECT authz.revoke_link('folder', 2, current_setting('test.link'));
 SELECT test.ok('alice turns the first off: the other is left',
   (SELECT count(*) = 1 AND bool_and(l.expires_at IS NOT NULL) FROM authz.list_links('folder', 2) l));
@@ -257,7 +263,8 @@ SELECT set_config('test.token3', authz.create_link('project', 1, 'viewer'), fals
 SELECT test.ok('bob (edit on project 1) lists its link',
   (SELECT count(*) = 1 AND bool_and(l.relation = 'viewer') FROM authz.list_links('project', 1) l));
 SELECT test.as(4);
-SELECT test.ok('dave may not', test.try($$SELECT * FROM authz.list_links('project', 1)$$) = '42501');
+SELECT test.ok('dave may not', test.error($$SELECT * FROM authz.list_links('project', 1)$$)
+  = '42501: you cannot see the links of project 1');
 SELECT test.as(2);
 SELECT authz.revoke_link('project', 1, (SELECT id FROM authz.list_links('project', 1)));
 SELECT test.ok('bob turns it off', (SELECT count(*) = 0 FROM authz.list_links('project', 1)));
@@ -279,7 +286,8 @@ SELECT test.ok('in business hours: folder 1 and below', test.docs() = '01, 02');
 RESET authz_ctx.mode;
 SELECT test.as(1);
 SELECT test.ok('a caveat the policy does not define is refused',
-  test.try($$SELECT authz.share('folder', '1', 'viewer', 'user', '00000000-0000-4000-8000-000000000004', '', NULL, NULL, 'full_moon')$$) = 'P0001');
+  test.error($$SELECT authz.share('folder', '1', 'viewer', 'user', '00000000-0000-4000-8000-000000000004', '', NULL, NULL, 'full_moon')$$)
+  = 'P0001: no caveat full_moon in the policy');
 SELECT test.ok('a parameterised caveat: only from the office IP',
   test.try($$SELECT authz.share('folder', '1', 'viewer', 'user', '00000000-0000-4000-8000-000000000004', '', NULL, NULL, 'from_ip', '{"ip": "10.1.2.3"}')$$) = 'ok');
 SELECT test.as(4);
@@ -430,9 +438,12 @@ SELECT test.ok('the view has exactly the rows she may select',
 SELECT test.as(2);
 SELECT test.ok('bob (editor) sees the text',
   (SELECT body FROM mt.docs_visible WHERE id = '10000000-0000-4000-8000-000000000001') = 'the text');
-SELECT test.ok('the text cannot be read from the table directly', test.try('SELECT body FROM mt.docs') = '42501');
-SELECT test.ok('... nor with SELECT *', test.try('SELECT * FROM mt.docs') = '42501');
-SELECT test.ok('the view cannot be written to', test.try($$UPDATE mt.docs_visible SET author_id = author_id$$) = '42501');
+SELECT test.ok('the text cannot be read from the table directly', test.error('SELECT body FROM mt.docs')
+  = '42501: permission denied for table docs');
+SELECT test.ok('... nor with SELECT *', test.error('SELECT * FROM mt.docs')
+  = '42501: permission denied for table docs');
+SELECT test.ok('the view cannot be written to', test.error($$UPDATE mt.docs_visible SET author_id = author_id$$)
+  = '42501: permission denied for view docs_visible');
 SELECT test.ok('editors still write the text through the table',
   test.rows($$UPDATE mt.docs SET body = 'new text' WHERE id = '10000000-0000-4000-8000-000000000001'$$) = 1);
 SELECT test.as(NULL);

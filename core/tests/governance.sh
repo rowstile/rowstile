@@ -5,6 +5,23 @@
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_governance}
+X="${DB}_across" COPY_DB="${DB}_copy" TDB="${DB}_this"
+T=$(mktemp -d)
+. tests/races.sh
+# whatever way the suite ends: the sessions it left running, its databases (the copy's subscription and slot first, which hold both), its roles,
+# its files
+cleanup() {
+  stop_sessions
+  if [ -n "${PGSUPERUSER:-}" ]; then
+    psql -X -q -U "$PGSUPERUSER" -d "$COPY_DB" -c "ALTER SUBSCRIPTION authz_governance_trail DISABLE" \
+      -c "ALTER SUBSCRIPTION authz_governance_trail SET (slot_name = NONE)" -c "DROP SUBSCRIPTION authz_governance_trail" >/dev/null 2>&1
+    psql -X -q -U "$PGSUPERUSER" -d "$DB" -c "SELECT pg_drop_replication_slot('authz_governance_trail')" >/dev/null 2>&1
+  fi
+  for d in "$DB" "$X" "$COPY_DB" "$TDB"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+  for r in authz_gov_other authz_gov_owners; do psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1; done
+  rm -rf "$T"
+}
+trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 fails=0
 PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
@@ -35,9 +52,9 @@ reapply() {
   PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "$1" >/dev/null
 }
 
-python3 compile_policy.py example/docs.authz > /tmp/authz_governance.sql || exit 1
+python3 compile_policy.py example/docs.authz > $T/governance.sql || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null &&
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_governance.sql >/dev/null || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/governance.sql >/dev/null || exit 1
 
 echo "-- the audit trail"
 as 5 -c "SELECT authz.share('folder', 2, 'viewer', 'user', 4)" >/dev/null
@@ -93,7 +110,7 @@ admin "emptying a link table is recorded" "truncate|folder" \
 admin "... and announced for every folder" "{*}" \
   "SELECT object_ids::text FROM authz.changes WHERE pos > $POS AND object_type = 'folder' ORDER BY pos LIMIT 1"
 PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', '999', 'viewer', 'user', '4')" >/dev/null
-reapply /tmp/authz_governance.sql
+reapply $T/governance.sql
 admin "shares dropped when the policy is applied (their row is gone) are recorded, with why" \
   "unshare|applying the policy: the row was deleted" \
   "SELECT action || '|' || reason FROM authz.audit WHERE object_id = '999' ORDER BY id DESC LIMIT 1"
@@ -107,6 +124,8 @@ if [ -n "${PGSUPERUSER:-}" ]; then
   expect_code "... nor by a superuser in replica role: an entry deleted" "42501: the audit trail cannot be changed" "${REPLICA[@]}" -c "DELETE FROM authz.audit"
   expect_code "... an entry changed" "42501: the audit trail cannot be changed" "${REPLICA[@]}" -c "UPDATE authz.audit SET reason = 'nothing happened'"
   expect_code "... or the trail emptied" "42501: the audit trail cannot be changed" "${REPLICA[@]}" -c "TRUNCATE authz.audit"
+else
+  echo "skip  the trail's guard in replica role needs a superuser to set it (PGSUPERUSER): 3 checks"
 fi
 expect_code "the app role cannot read it" "42501: permission denied for table audit" -c "SELECT count(*) FROM authz.audit"
 
@@ -128,8 +147,10 @@ admin "a file added, then deleted: the feed has both" "insert,delete" \
   "SELECT string_agg(cause, ',' ORDER BY pos) FROM authz.changes_since($POS) WHERE object_type = 'file' AND '98' = ANY (object_ids)"
 got=$(psql -X -q -At -d "$DB" -c "LISTEN authz_changes" -c "SET ROLE app_user" -c "SET authz.user_id = 5" \
        -c "SELECT authz.share('file', 11, 'viewer', 'user', 4)" -c "SELECT 1" 2>&1)
+made=$(PSQL -c "SELECT count(*) FROM authz.shares WHERE object_type = 'file' AND object_id = '11' AND relation = 'viewer' AND subject_id = '4'")
 case "$got" in *'notification "authz_changes"'*) echo "FAIL  the feed notified without notify_changes: $got"; fails=$((fails + 1));;
-  *) echo "ok    by default the feed doesn't NOTIFY (it would queue every commit): consumers poll";; esac
+  *) [ "$made" = 1 ] && echo "ok    by default the feed doesn't NOTIFY (it would queue every commit): consumers poll" ||
+       { echo "FAIL  the share the feed would announce wasn't made: $got"; fails=$((fails + 1)); };; esac
 PSQL -c "INSERT INTO authz.settings VALUES ('notify_changes', 'on')" >/dev/null
 got=$(psql -X -q -At -d "$DB" -c "LISTEN authz_changes" -c "SET ROLE app_user" -c "SET authz.user_id = 5" \
        -c "SELECT authz.unshare('file', 11, 'viewer', 'user', 4)" -c "SELECT 1" 2>&1)
@@ -146,10 +167,9 @@ admin "a share moved to another file: both files are announced" "11,12" \
 PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '12' AND subject_id = '4'" >/dev/null
 # folders and projects inside each other through links people share (one inheritance table for the two types): a new
 # link announces what it moves, and only that
-X="${DB}_across"
 XSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$X" "$@"; }
 dropdb --if-exists "$X" 2>/dev/null; createdb "$X" || exit 1
-cat > /tmp/authz_governance_across.authz <<'EOF'
+cat > $T/governance_across.authz <<'EOF'
 app role app_user
 type user = x.users
 type folder = x.folders
@@ -172,8 +192,8 @@ INSERT INTO x.users VALUES (1);
 INSERT INTO x.folders VALUES (1, 1), (2, 1), (3, NULL);
 INSERT INTO x.projects VALUES (10, NULL), (20, NULL);
 SQL
-python3 compile_policy.py /tmp/authz_governance_across.authz > /tmp/authz_governance_across.sql &&
-  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -f /tmp/authz_governance_across.sql >/dev/null || exit 1
+python3 compile_policy.py $T/governance_across.authz > $T/governance_across.sql &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -f $T/governance_across.sql >/dev/null || exit 1
 XSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES
   ('project', '10', 'parent', 'folder', '1'), ('project', '20', 'parent', 'folder', '2')" >/dev/null
 POS=$(XSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
@@ -183,7 +203,7 @@ got=$(XSQL -c "SELECT string_agg(object_type || ' ' || array_to_string(object_id
 [ "$got" = "folder 3" ] && [ "$(XSQL -c "SET authz.user_id = 1" -c "SELECT authz.can('folder', 3, 'view')")" = t ] &&
   echo "ok    a folder put inside a project by a share: the feed announces it, and nothing else, with inheritance as the cause" ||
   { echo "FAIL  the feed after a link across types: expected 'folder 3', got '$got'"; fails=$((fails + 1)); }
-dropdb "$X"; rm -f /tmp/authz_governance_across.authz /tmp/authz_governance_across.sql
+dropdb "$X"; rm -f $T/governance_across.authz $T/governance_across.sql
 
 
 echo "-- emergency access (break glass)"
@@ -326,35 +346,42 @@ expect_code "... and so is approving the request of a requester who is gone" "P0
   -c "SET authz.user_id = 5" -c "SELECT authz.decide_request($RQH, true)"
 admin "... so nothing is shared with the later folder" "0" "SELECT count(*) FROM authz.shares WHERE object_type = 'folder' AND object_id IN ('41', '42')"
 # a request made while its requester is deleted: it waits for the delete, then there is nobody to make it
-psql -X -q -d "$DB" -c "BEGIN" -c "DELETE FROM app.users WHERE id = 9" -c "SELECT pg_sleep(1.5)" -c "COMMIT" >/dev/null 2>&1 &
-sleep 0.5
-expect_code "a request made while its requester is deleted waits for the delete, then is refused" "42501: sign in first" \
-  -c "SET authz.user_id = 9" -c "SELECT authz.request_access('folder', 6, 'viewer', 'too late')"
-wait
+race
+PGAPPNAME=authz_gov_a psql -X -q -d "$DB" -c "BEGIN" -c "DELETE FROM app.users WHERE id = 9" -c "$HOLD" -c "COMMIT" >/dev/null 2>&1 &
+held authz_gov_a
+PGAPPNAME=authz_gov_b psql -X -q -At -d "$DB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "SET authz.user_id = 9" \
+  -c "SELECT authz.request_access('folder', 6, 'viewer', 'too late')" > "$T/late.out" 2>&1 &
+blocked authz_gov_b
+go; wait
+got=$(error_of "$(cat "$T/late.out")")
+if agrees "a request made while its requester is deleted" "42501: sign in first" "$got"; then
+  echo "ok    a request made while its requester is deleted waits for the delete, then is refused"
+else echo "FAIL  a request made while its requester is deleted: expected 42501: sign in first, got $got"; fails=$((fails + 1)); fi
 admin "... and leaves no request behind" "0" "SELECT count(*) FROM authz.requests WHERE requester = '9'"
 # REPEATABLE READ: a delete of the object whose snapshot is older than a request on it fails to serialize
-psql -X -q -d "$DB" > /tmp/authz_governance_rr.out 2>&1 <<'SQL' &
+race
+PGAPPNAME=authz_gov_a psql -X -q -d "$DB" > $T/governance_rr.out 2>&1 <<SQL &
 BEGIN ISOLATION LEVEL REPEATABLE READ;
 SELECT count(*) FROM app.orgs;
-SELECT pg_sleep(1.5);
+$HOLD;
 DELETE FROM app.folders WHERE id = 41;
 COMMIT;
 SQL
-sleep 0.5
+held authz_gov_a
 as 4 -c "SELECT authz.request_access('folder', 41, 'viewer', 'dave needs the new one')" >/dev/null
-wait
-if grep -q "could not serialize access due to concurrent update" /tmp/authz_governance_rr.out; then
+go; wait
+if grep -q "could not serialize access due to concurrent update" $T/governance_rr.out; then
   echo "ok    a delete with an older snapshot than a request on the folder gets a serialization error"
-else echo "FAIL  a delete with an older snapshot than a request: $(tr '\n' ' ' < /tmp/authz_governance_rr.out)"; fails=$((fails + 1)); fi
+else echo "FAIL  a delete with an older snapshot than a request: $(tr '\n' ' ' < $T/governance_rr.out)"; fails=$((fails + 1)); fi
 admin "... and the folder and the request are both still there" "1|1" \
   "SELECT (SELECT count(*) FROM app.folders WHERE id = 41) || '|' || (SELECT count(*) FROM authz.requests WHERE object_id = '41' AND status = 'pending')"
-rm -f /tmp/authz_governance_rr.out
+rm -f $T/governance_rr.out
 PSQL -c "DELETE FROM app.folders WHERE id IN (41, 42, 43)" >/dev/null
 # a request whose requester was deleted while no trigger watched (after rowstile remove, before the next apply):
 # applying the policy cancels it
 PSQL -c "INSERT INTO authz.requests (object_type, object_id, relation, requester, reason) VALUES ('folder', '6', 'viewer', '77', 'left over')" >/dev/null
 RQS=$(as 4 -c "SELECT authz.request_access('folder', 6, 'viewer', 'dave still needs it')")
-reapply /tmp/authz_governance.sql
+reapply $T/governance.sql
 admin "applying the policy cancels the pending requests of requesters whose row is gone" "cancelled|its requester is gone" \
   "SELECT status || '|' || note FROM authz.requests WHERE requester = '77'"
 admin "... and keeps the pending requests of requesters who are there" "pending|" \
@@ -399,11 +426,11 @@ echo "-- reviews respect 'shared by'"
 sed -e 's/^  editor      : user, team#member shared$/  editor      : user, team, team#member, link shared by manage_editors/' \
     -e 's/^  can share = owner or org.admin or (parent.share and {inherit})$/&\n  can manage_editors = owner/' \
     -e 's/^  viewer      : user, team#member, org#member shared$/&\n  viewer      : user:* shared by manage_editors/' \
-    example/docs.authz > /tmp/authz_governance_by.authz
-grep -q "can manage_editors = owner" /tmp/authz_governance_by.authz && grep -q "shared by manage_editors" /tmp/authz_governance_by.authz &&
-  grep -q "user:\* shared by manage_editors" /tmp/authz_governance_by.authz ||
+    example/docs.authz > $T/governance_by.authz
+grep -q "can manage_editors = owner" $T/governance_by.authz && grep -q "shared by manage_editors" $T/governance_by.authz &&
+  grep -q "user:\* shared by manage_editors" $T/governance_by.authz ||
   { echo "FAIL  could not make the variant policy"; fails=$((fails + 1)); }
-python3 compile_policy.py /tmp/authz_governance_by.authz > /tmp/authz_governance_by.sql && reapply /tmp/authz_governance_by.sql
+python3 compile_policy.py $T/governance_by.authz > $T/governance_by.sql && reapply $T/governance_by.sql
 as 1 -c "SELECT authz.share('folder', 3, 'editor', 'user', 4)" >/dev/null
 expect_code "erin (share, but not manage_editors) cannot unshare dave's editor share" "42501: you cannot unshare editor on folder 3 (needs manage_editors)" -c "SET authz.user_id = 5" \
   -c "SELECT authz.unshare('folder', 3, 'editor', 'user', 4)"
@@ -445,7 +472,7 @@ REV5=$(as 1 -c "SELECT authz.start_review('folder', '3')")
 as 1 -c "SELECT authz.review_decide($REV5, $(item "$REV5" user ''), true)" >/dev/null
 check "closing with undecided items revoked revokes the one nobody decided" "1" "SET authz.user_id = 1; SELECT authz.close_review($REV5, true)"
 admin "... and keeps the one marked keep" "user:4:" "$(editors)"
-reapply /tmp/authz_governance.sql
+reapply $T/governance.sql
 as 1 -c "SELECT authz.unshare('folder', 3, 'editor', 'user', 4)" >/dev/null
 
 echo "-- invariants"
@@ -460,18 +487,20 @@ inv="invariant never folder: share and not org.member (line $(grep -n '^  never 
 case "$got" in *"WARNING:  FAIL  $inv: $inv: user 6 can reach {4}"*"policy test(s) failed"*) echo "ok    the policy tests fail on it, naming the invariant, its line and who breaks it";;
   *) echo "FAIL  policy tests with a broken invariant: $got"; fails=$((fails + 1));; esac
 # an invariant is checked in a view of its own: a permission of its type named never_1 takes nothing from it
-sed 's/^  can break_glass = org.member$/&\n  can never_1 = owner/' example/docs.authz > /tmp/authz_governance_never.authz
-grep -q "^  can never_1 = owner$" /tmp/authz_governance_never.authz || { echo "FAIL  could not make the policy with never_1"; fails=$((fails + 1)); }
-python3 compile_policy.py /tmp/authz_governance_never.authz > /tmp/authz_governance_never.sql && reapply /tmp/authz_governance_never.sql
+sed 's/^  can break_glass = org.member$/&\n  can never_1 = owner/' example/docs.authz > $T/governance_never.authz
+grep -q "^  can never_1 = owner$" $T/governance_never.authz || { echo "FAIL  could not make the policy with never_1"; fails=$((fails + 1)); }
+python3 compile_policy.py $T/governance_never.authz > $T/governance_never.sql && reapply $T/governance_never.sql
 admin "... also beside a permission folder.never_1" "6|{4}" "SELECT user_id || '|' || object_ids::text FROM authz.check_invariants()"
-reapply /tmp/authz_governance.sql
+reapply $T/governance.sql
 PSQL -c "UPDATE app.folders SET owner_id = 1 WHERE id = 4" >/dev/null
 expect_code "the app role cannot run the invariant check" "42501: permission denied for function check_invariants" -c "SELECT * FROM authz.check_invariants()"
 
 got=$(psql -X -q -At -d "$DB" -c "SET ROLE app_user" -c "SET client_min_messages = log" -c "SET authz_debug.log_decisions = on" \
        -c "SET authz.user_id = 1" -c "SELECT authz.can('file', E'11\\nauthz decision: forged', 'view')" 2>&1)
 case "$got" in *$'\n'"authz decision: forged"*) echo "FAIL  a forged log line: $got"; fails=$((fails + 1));;
-  *) echo "ok    ids cannot start a line of their own in the log";; esac
+  *'authz decision: user="1" type="file" id="11\nauthz decision: forged" perm="view" -> false'*)
+    echo "ok    ids cannot start a line of their own in the log: the line break is written as \\n";;
+  *) echo "FAIL  the decision on an id with a line break isn't logged: $got"; fails=$((fails + 1));; esac
 echo "-- decision logs"
 got=$(psql -X -q -At -d "$DB" -c "SET ROLE app_user" -c "SET client_min_messages = log" -c "SET authz_debug.log_decisions = on" \
        -c "SET authz.user_id = 1" -c "SELECT authz.can('file', 11, 'view')" 2>&1)
@@ -487,7 +516,7 @@ case "$got" in *'authz decision: user=none type="file" id="11" perm="view" -> fa
   *) echo "FAIL  decision log with nobody signed in: $got"; fails=$((fails + 1));; esac
 
 echo "-- previewing a policy change"
-TMPD=$(mktemp -d)
+TMPD=$T/preview; mkdir "$TMPD"
 sed -e 's/^           or linked_into.view .*$//' -e 's/^  linked_into : folder *= .*$//' example/docs.authz > "$TMPD/nolinks.authz"
 grep -q "linked_into" "$TMPD/nolinks.authz" && { echo "FAIL  could not make the policy without links"; fails=$((fails + 1)); }
 COUNTS="SELECT (SELECT count(*) FROM authz.shares) || '|' || (SELECT count(*) FROM authz.audit) || '|' || (SELECT count(*) FROM authz.changes)"
@@ -507,7 +536,9 @@ out=$(sed 's/^ROLLBACK;$/SELECT '"'"'signed in after the preview: '"'"' || curre
 [ "$out" = "signed in after the preview: 5" ] && echo "ok    the preview leaves signed in whoever it found" ||
   { echo "FAIL  who is signed in after the preview: $out"; fails=$((fails + 1)); }
 out=$(python3 compile_policy.py "$TMPD/nolinks.authz" --diff --users 1,3 | PGOPTIONS="-c client_min_messages=error" psql -X -q -d "$DB" 2>&1)
-case "$out" in *"| 5 "*|*ERROR*) echo "FAIL  --users 1,3 shows other users: $out"; fails=$((fails + 1));; *) echo "ok    --users limits the preview";; esac
+case "$out" in *"| 5 "*|*ERROR*) echo "FAIL  --users 1,3 shows other users: $out"; fails=$((fails + 1));;
+  *"== Summary: how many (user, object) pairs change =="*"== Details (first 200) =="*) echo "ok    --users limits the preview";;
+  *) echo "FAIL  --users 1,3 gives no preview: $out"; fails=$((fails + 1));; esac
 rm -rf "$TMPD"
 
 echo "-- ways around row-level security (authz.lint)"
@@ -529,26 +560,26 @@ admin "lint has no note on a relation named like a type that doesn't sign in" "0
   "SELECT count(*) FROM authz.lint() WHERE problem LIKE 'is named like the type%'"
 # ...and one named like a type that does: alone in a rule it reads like any user
 sed -e 's/^  owner  : user   = owner_id$/  user   : user   = owner_id\n  owner  : user   = owner_id/' \
-  -e 's/^  can share = owner or folder.share$/  can share = owner or user or folder.share/' example/docs.authz > /tmp/authz_gov_shadow.authz
-python3 compile_policy.py /tmp/authz_gov_shadow.authz > /tmp/authz_gov_shadow.sql && reapply /tmp/authz_gov_shadow.sql
-L=$(grep -n '^  user   : user   = owner_id$' /tmp/authz_gov_shadow.authz | cut -d: -f1)
+  -e 's/^  can share = owner or folder.share$/  can share = owner or user or folder.share/' example/docs.authz > $T/gov_shadow.authz
+python3 compile_policy.py $T/gov_shadow.authz > $T/gov_shadow.sql && reapply $T/gov_shadow.sql
+L=$(grep -n '^  user   : user   = owner_id$' $T/gov_shadow.authz | cut -d: -f1)
 admin "lint notes a relation named like a type that signs in, with its line" \
   "info|file.user|is named like the type user (line $L), which signs in: alone in a rule it reads like any user, and it is this row's. A name that says what the relation is (author, owner) reads better" \
   "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE problem LIKE 'is named like the type%'"
-reapply /tmp/authz_governance.sql
-rm -f /tmp/authz_gov_shadow.authz /tmp/authz_gov_shadow.sql
+reapply $T/governance.sql
+rm -f $T/gov_shadow.authz $T/gov_shadow.sql
 # without its column rule, whoever may edit a file may make themselves its owner: lint asks for a rule, and
 # suggests the type's own share
-grep -v "update id, owner_id, confidential" example/docs.authz > /tmp/authz_no_column_rule.authz
-python3 compile_policy.py /tmp/authz_no_column_rule.authz > /tmp/authz_no_column_rule.sql && reapply /tmp/authz_no_column_rule.sql
+grep -v "update id, owner_id, confidential" example/docs.authz > $T/no_column_rule.authz
+python3 compile_policy.py $T/no_column_rule.authz > $T/no_column_rule.sql && reapply $T/no_column_rule.sql
 admin "lint finds a column that gives a relation and that an editor may change" "1" \
   "SELECT count(*) FROM authz.lint() WHERE object = 'app.files.owner_id' AND problem LIKE 'grants file.owner%add a rule such as \"update owner_id : share\"'"
 # ...and has nothing to say when nobody may update the row at all
-sed 's/^  update  *: edit$/  update : nobody/' /tmp/authz_no_column_rule.authz | grep -v "update folder_id after" > /tmp/authz_update_nobody.authz
-python3 compile_policy.py /tmp/authz_update_nobody.authz > /tmp/authz_update_nobody.sql && reapply /tmp/authz_update_nobody.sql
+sed 's/^  update  *: edit$/  update : nobody/' $T/no_column_rule.authz | grep -v "update folder_id after" > $T/update_nobody.authz
+python3 compile_policy.py $T/update_nobody.authz > $T/update_nobody.sql && reapply $T/update_nobody.sql
 admin "...and none where the rule is \"update : nobody\"" "0" \
   "SELECT count(*) FROM authz.lint() WHERE object LIKE 'app.files.%' AND problem LIKE 'grants %'"
-reapply /tmp/authz_governance.sql
+reapply $T/governance.sql
 PSQL -c "GRANT TRUNCATE ON app.files TO app_user" \
      -c "CREATE VIEW app.all_files AS SELECT * FROM app.files" -c "GRANT SELECT ON app.all_files TO app_user" \
      -c "GRANT INSERT, TRUNCATE ON app.team_members TO app_user" \
@@ -635,18 +666,18 @@ admin "lint finds row-level security off on a table with rules: an error" "1"   
 PSQL -c "ALTER TABLE app.files ENABLE ROW LEVEL SECURITY" >/dev/null
 expect_code "the app role cannot run lint" "42501: permission denied for function lint" -c "SELECT * FROM authz.lint()"
 # without its 'after' rule, moving a folder isn't checked where it goes
-grep -v "update parent_id after" example/docs.authz > /tmp/authz_no_after.authz
-python3 compile_policy.py /tmp/authz_no_after.authz > /tmp/authz_no_after.sql && reapply /tmp/authz_no_after.sql
+grep -v "update parent_id after" example/docs.authz > $T/no_after.authz
+python3 compile_policy.py $T/no_after.authz > $T/no_after.sql && reapply $T/no_after.sql
 admin "lint finds a move nothing checks the destination of" "1" \
   "SELECT count(*) FROM authz.lint() WHERE object = 'app.folders.parent_id' AND problem LIKE 'moves a row under another%'"
 # nor where nobody may update a folder at all (no update rule, so no 'after' rule nor column rule either)
 grep -v -e "^  update parent_id after" -e "^  update                               : edit$" -e "^  update id, owner_id, org_id, inherit : share$" \
-  example/docs.authz > /tmp/authz_no_update.authz
-python3 compile_policy.py /tmp/authz_no_update.authz > /tmp/authz_no_update.sql && reapply /tmp/authz_no_update.sql
+  example/docs.authz > $T/no_update.authz
+python3 compile_policy.py $T/no_update.authz > $T/no_update.sql && reapply $T/no_update.sql
 admin "... but none where nobody may update the row" "0" \
   "SELECT count(*) FROM authz.lint() WHERE problem LIKE 'moves a row under another%'"
-rm -f /tmp/authz_no_update.authz /tmp/authz_no_update.sql
-reapply /tmp/authz_governance.sql
+rm -f $T/no_update.authz $T/no_update.sql
+reapply $T/governance.sql
 admin "...and none with the rule back" "0" \
   "SELECT count(*) FROM authz.lint() WHERE problem LIKE 'moves a row under another%'"
 # a row keyed by two columns, moved by the pair: lint names the pair and the rule to add (it failed on the pair as
@@ -655,9 +686,9 @@ PSQL -c "CREATE TABLE app.gov_boxes (org_id bigint, id bigint, parent_id bigint,
      -c "GRANT SELECT, UPDATE ON app.gov_boxes TO app_user" >/dev/null
 { sed '/^test$/,$d' example/docs.authz
   printf 'type box = app.gov_boxes (org_id, id)\n  parent : box  = [org_id, parent_id]\n  owner  : user = owner_id\n  can edit = owner or parent.edit\n'
-  printf 'rules app.gov_boxes\n  select : edit\n  update : edit\n'; } > /tmp/authz_boxes.authz
-python3 compile_policy.py /tmp/authz_boxes.authz > /tmp/authz_boxes.sql &&
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_boxes.sql >/dev/null
+  printf 'rules app.gov_boxes\n  select : edit\n  update : edit\n'; } > $T/boxes.authz
+python3 compile_policy.py $T/boxes.authz > $T/boxes.sql &&
+reapply $T/boxes.sql
 admin "lint finds a move by a pair of columns, and says the rule to add" "1" \
   "SELECT count(*) FROM authz.lint() WHERE object = 'app.gov_boxes.org_id, parent_id' AND problem LIKE '%add a rule such as \"update org_id, parent_id after : parent.edit\"'"
 # each check on one box finds its row by the type's key (org_id, id): its primary key serves it; without one lint
@@ -670,7 +701,7 @@ admin "... without it, lint names the lookup by the key, and the index to add" "
 PSQL -c "CREATE INDEX ON app.gov_boxes (id, org_id, owner_id)" >/dev/null
 admin "... and an index that starts with the key's columns, in another order, serves it" "0" \
   "SELECT count(*) FROM authz.lint() WHERE object = 'app.gov_boxes.org_id, id'"
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_governance.sql >/dev/null
+reapply $T/governance.sql
 PSQL -c "DROP TABLE app.gov_boxes" >/dev/null
 # a row placed under a node or a folder by a (type, id) pair of columns (named as no other table's are): both grant
 # a relation, and the id moves the row; an 'after' rule on the whole row checks where it goes
@@ -678,21 +709,21 @@ PSQL -c "CREATE TABLE app.gov_nodes (id bigint PRIMARY KEY, node_kind text, node
      -c "GRANT SELECT, UPDATE ON app.gov_nodes TO app_user" >/dev/null
 { sed '/^test$/,$d' example/docs.authz
   printf 'type node = app.gov_nodes\n  above : node, folder = (node_kind, node_above)\n  owner : user = owner_id\n  can edit = owner or above.edit\n'
-  printf 'rules app.gov_nodes\n  select : edit\n  update : edit\n'; } > /tmp/authz_nodes.authz
-python3 compile_policy.py /tmp/authz_nodes.authz > /tmp/authz_nodes.sql && reapply /tmp/authz_nodes.sql
+  printf 'rules app.gov_nodes\n  select : edit\n  update : edit\n'; } > $T/nodes.authz
+python3 compile_policy.py $T/nodes.authz > $T/nodes.sql && reapply $T/nodes.sql
 admin "lint finds both columns of a (type, id) pair that grant a relation an editor may change" \
   "app.gov_nodes.node_above,app.gov_nodes.node_kind,app.gov_nodes.owner_id" \
   "SELECT string_agg(object, ',' ORDER BY object) FROM authz.lint() WHERE object LIKE 'app.gov_nodes.%' AND problem LIKE 'grants %'"
-L=$(grep -n '^  above : node, folder' /tmp/authz_nodes.authz | cut -d: -f1)
+L=$(grep -n '^  above : node, folder' $T/nodes.authz | cut -d: -f1)
 admin "... and the move by its id, which nothing checks the destination of" \
   "warning|moves a row under another (above, line $L), and nothing checks where it moves to, so anyone who may update a row may put it inside something they may not change: add a rule such as \"update node_above after : above.edit\"" \
   "SELECT severity || '|' || problem FROM authz.lint() WHERE object = 'app.gov_nodes.node_above' AND problem LIKE 'moves %'"
-printf '  update after : edit\n' >> /tmp/authz_nodes.authz
-python3 compile_policy.py /tmp/authz_nodes.authz > /tmp/authz_nodes.sql && reapply /tmp/authz_nodes.sql
+printf '  update after : edit\n' >> $T/nodes.authz
+python3 compile_policy.py $T/nodes.authz > $T/nodes.sql && reapply $T/nodes.sql
 admin "... and none with an 'after' rule for every column" "0" "SELECT count(*) FROM authz.lint() WHERE problem LIKE 'moves a row under another%'"
-reapply /tmp/authz_governance.sql
+reapply $T/governance.sql
 PSQL -c "DROP TABLE app.gov_nodes" >/dev/null
-rm -f /tmp/authz_nodes.authz /tmp/authz_nodes.sql
+rm -f $T/nodes.authz $T/nodes.sql
 # a permission that names others more than once is slow to plan wherever it is checked, a rule or not: here no rule
 # reads note.read, and authz.list and authz.can plan its 191 views (p6 names p5 twice, ... down to p0)
 PSQL -c "CREATE TABLE app.gov_crowds (id bigint PRIMARY KEY, a boolean, b boolean)" \
@@ -703,10 +734,10 @@ PSQL -c "CREATE TABLE app.gov_crowds (id bigint PRIMARY KEY, a boolean, b boolea
 { sed '/^test$/,$d' example/docs.authz
   printf 'type crowd = app.gov_crowds\n  member : user = app.gov_crowd_members(crowd_id -> user_id)\n  can p0 = member\n'
   for n in 1 2 3 4 5 6; do printf '  can p%s = (p%s and {a}) or (p%s and {b})\n' $n $((n - 1)) $((n - 1)); done
-  printf 'type note = app.gov_notes\n  crowd : crowd = crowd_id\n  can read = crowd.p6\n'; } > /tmp/authz_crowds.authz
-python3 compile_policy.py /tmp/authz_crowds.authz > /tmp/authz_crowds.sql &&
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_crowds.sql >/dev/null
-L=$(grep -n '^  can read = crowd.p6$' /tmp/authz_crowds.authz | cut -d: -f1)
+  printf 'type note = app.gov_notes\n  crowd : crowd = crowd_id\n  can read = crowd.p6\n'; } > $T/crowds.authz
+python3 compile_policy.py $T/crowds.authz > $T/crowds.sql &&
+reapply $T/crowds.sql
+L=$(grep -n '^  can read = crowd.p6$' $T/crowds.authz | cut -d: -f1)
 admin "lint finds a permission no rule reads that is slow to plan, and says its line and how many views" \
   "warning|note.read|names permissions that name others more than once (line $L), and Postgres writes each one out again every time: 191 view definitions to plan each check of it (authz.list, authz.can, a rule that names it) before a row is read, which can take a tenth of a second and more, up to a second or two. Name each permission once on the way" \
   "SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE object = 'note.read'"
@@ -714,9 +745,9 @@ admin "... and of the permissions it names, the one that names many (64), not th
   "SELECT string_agg(object, ',' ORDER BY object) FROM authz.lint() WHERE object LIKE 'crowd.%' AND problem LIKE '%view definitions to plan%'"
 check "... and authz.list answers it" "1,3" \
   "SET authz.user_id = '1'; SELECT string_agg(l, ',' ORDER BY l::int) FROM authz.list('note', 'read') l"
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_governance.sql >/dev/null
+reapply $T/governance.sql
 PSQL -c "DROP TABLE app.gov_notes, app.gov_crowd_members, app.gov_crowds" >/dev/null
-rm -f /tmp/authz_crowds.authz /tmp/authz_crowds.sql
+rm -f $T/crowds.authz $T/crowds.sql
 # the lookups are joins, which an index with a condition doesn't serve, nor one a failed CREATE INDEX CONCURRENTLY
 # left unfinished: lint names the lookup there, as rowstile indexes does
 PSQL -c "DROP INDEX app.team_members_user_id_idx" -c "CREATE INDEX team_members_some ON app.team_members (user_id) WHERE user_id > 0" >/dev/null
@@ -756,8 +787,8 @@ PSQL -c "CREATE TABLE app.gov_shelves (id bigint PRIMARY KEY, owner_id bigint, o
 { sed '/^test$/,$d' example/docs.authz
   printf 'type shelf = app.gov_shelves where {open}\n  owner  : user   = owner_id\n'
   printf '  holder : folder = app.gov_shelf_folders(shelf_id -> folder_id) where {active}\n  host   : folder shared\n'
-  printf '  can share = owner\n  can view  = holder.view or host.view\n'; } > /tmp/authz_shelves.authz
-python3 compile_policy.py /tmp/authz_shelves.authz > /tmp/authz_shelves.sql && reapply /tmp/authz_shelves.sql
+  printf '  can share = owner\n  can view  = holder.view or host.view\n'; } > $T/shelves.authz
+python3 compile_policy.py $T/shelves.authz > $T/shelves.sql && reapply $T/shelves.sql
 PSQL -c "SET authz.user_id = 5" -c "SELECT authz.share('shelf', 1, 'host', 'folder', 4)" -c "SELECT authz.share('shelf', 2, 'host', 'folder', 3)" >/dev/null
 admin "explain lists the folders a shelf's active rows and its own shares name, and no others" \
   "yes  user 1 holds view on shelf 1|  shelf.view = holder.view or host.view|  yes  holder.view|    yes  holder is folder 3, which has view|  yes  host.view|    yes  host is folder 4, which has view" \
@@ -765,9 +796,9 @@ admin "explain lists the folders a shelf's active rows and its own shares name, 
 admin "... and of a shelf whose where is unknown, that it fails it" \
   "no   user 1 does not hold view on shelf 3|  no   shelf 3 fails the type's where {open}" \
   "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('shelf', '3', 'view', '1') WITH ORDINALITY x(e, n)"
-reapply /tmp/authz_governance.sql
+reapply $T/governance.sql
 PSQL -c "DROP TABLE app.gov_shelves, app.gov_shelf_folders" >/dev/null
-rm -f /tmp/authz_shelves.authz /tmp/authz_shelves.sql
+rm -f $T/shelves.authz $T/shelves.sql
 
 echo "-- retention"
 POS=$(PSQL -c "SELECT max(pos) FROM authz.changes")
@@ -778,8 +809,11 @@ admin "... newer ones stay" "t" "SELECT EXISTS (SELECT 1 FROM authz.changes WHER
 expect_code "a reader behind the trimmed part is told to read everything again" "55000: the change feed up to position " -c "RESET ROLE" \
   -c "SELECT * FROM authz.changes_since(0)"
 admin "... a reader past it goes on" "t" "SELECT count(*) > 0 FROM authz.changes_since($POS)"
+# the oldest entry made two hours old: kept by the default, trimmed with changes_keep = '1 hour' (and only it)
+PSQL -c "UPDATE authz.changes SET at = now() - interval '2 hours' WHERE pos = (SELECT min(pos) FROM authz.changes)" >/dev/null
+admin "an entry two hours old stays by default" "0" "SELECT authz.trim_changes()"
 PSQL -c "INSERT INTO authz.settings VALUES ('changes_keep', '1 hour')" >/dev/null
-admin "how long the feed keeps entries is a setting" "0" "SELECT authz.trim_changes()"
+admin "how long the feed keeps entries is a setting: with changes_keep = '1 hour', it goes" "1" "SELECT authz.trim_changes()"
 # an entry exactly as old as the period (written an hour before this transaction began) is not older: it stays
 PSQL -c "SELECT authz.trim_changes(interval '0')" >/dev/null
 admin "an entry exactly as old as the period stays" "0" \
@@ -803,6 +837,8 @@ admin "... and the trigger is on again after a trim, in every replication role" 
 if [ -n "${PGSUPERUSER:-}" ]; then
   expect_code "... so a superuser in replica role still can't delete an entry" "42501: the audit trail cannot be changed" "${REPLICA[@]}" \
     -c "DELETE FROM authz.audit"
+else
+  echo "skip  the guard after a trim in replica role needs a superuser to set it (PGSUPERUSER)"
 fi
 expect_code "the app role cannot trim" "42501: permission denied for function trim_audit" -c "SELECT authz.trim_audit(interval '0')"
 # emptying a governed table whose own columns hold relations (a file's folder and owner): last, the files are gone
@@ -834,11 +870,10 @@ if [ "$WAL" != logical ]; then
 elif [ -z "${PGSUPERUSER:-}" ]; then
   echo "skip  a subscription that copies the trail needs a superuser to make it (PGSUPERUSER)"
 else
-  COPY_DB="${DB}_copy"
   SU() { psql -X -q -At -U "$PGSUPERUSER" "$@"; }
   dropdb --if-exists "$COPY_DB" 2>/dev/null
   createdb "$COPY_DB" && PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$COPY_DB" \
-    -f example/app_schema.sql -f /tmp/authz_governance.sql >/dev/null || { echo "FAIL  the database that subscribes"; fails=$((fails + 1)); }
+    -f example/app_schema.sql -f $T/governance.sql >/dev/null || { echo "FAIL  the database that subscribes"; fails=$((fails + 1)); }
   SU -d "$DB" -c "CREATE PUBLICATION authz_governance_trail FOR TABLE authz.audit" \
      -c "SELECT pg_create_logical_replication_slot('authz_governance_trail', 'pgoutput')" >/dev/null
   SU -d "$COPY_DB" -c "CREATE SUBSCRIPTION authz_governance_trail
@@ -870,15 +905,14 @@ else
 fi
 
 echo "-- this. in a condition whose subquery calls its table as the row is called (tests/hand/conditions-this-alias.authz)"
-TDB="${DB}_this"
 dropdb --if-exists "$TDB" 2>/dev/null; createdb "$TDB" || exit 1
 TQ() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$TDB" "$@" 2>&1; }
 # an invariant that the marked folder 3 breaks: its condition calls app.marks r, as the invariants' views call the row
 { cat tests/hand/conditions-this-alias.authz
   printf '\ninvariants\n  never folder: owner and not {not exists (select 1 from app.marks r where r.ref_id = this.id and r.kind = %s)}\n' "'folder'"
-} > /tmp/authz_governance_this.authz
+} > $T/governance_this.authz
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$TDB" -f tests/hand/schema.sql >/dev/null &&
-python3 cli/rowstile_cli.py --db "dbname=$TDB" apply /tmp/authz_governance_this.authz >/dev/null || exit 1
+python3 cli/rowstile_cli.py --db "dbname=$TDB" apply $T/governance_this.authz >/dev/null || exit 1
 TQ -c "INSERT INTO app.users (id) VALUES (1), (2), (3)" -c "INSERT INTO app.projects (id) VALUES (1)" \
    -c "INSERT INTO app.folders (id, owner_id) VALUES (1, 1), (3, 1)" \
    -c "INSERT INTO app.marks VALUES (102, 3, 'folder', NULL), (103, 1, 'membership', NULL)" \
@@ -889,6 +923,6 @@ got=$(TQ -c "SELECT string_agg(relation || ' ' || subject_id, ', ' ORDER BY rela
 got=$(TQ -c "SELECT string_agg(user_id || ' ' || object_ids::text, ', ') FROM authz.check_invariants() WHERE invariant LIKE 'never folder: owner and%'")
 [ "$got" = "1 {3}" ] && echo "ok    ... and an invariant's condition reads the folder it is about: the marked folder breaks it" ||
   { echo "FAIL  an invariant whose subquery calls its table r: $got"; fails=$((fails + 1)); }
-dropdb "$TDB"; rm -f /tmp/authz_governance_this.authz
+dropdb "$TDB"; rm -f $T/governance_this.authz
 dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "governance: all passed"; else echo "governance: $fails failed"; exit 1; fi

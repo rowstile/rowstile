@@ -19,6 +19,9 @@ bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
 same() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected '$3', got '$2'"; fi; }
 schema() { PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$1" -f tests/children_schema.sql >/dev/null; }
 T=$(mktemp -d)
+# whatever way the suite ends: its databases, its files
+cleanup() { [ -n "${KEEP:-}" ] || for d in "$DB" "$DB2"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
+trap cleanup EXIT
 # runs the command in the project; sets $out (stdout and stderr) and $rc
 run() { out=$(cd "$T" && python3 "$ROOT/cli/rowstile_cli.py" "$@" 2>&1); rc=$?; }
 # whether the command's last line says this of the policy ("…policy.authz: unchanged")
@@ -131,16 +134,19 @@ owner 1 -c "UPDATE ch.tasks SET owner_id = 1 WHERE id = 3" -c "UPDATE ch.tasks S
 same "... a line for each change after that, moved or not" "$(relates task 3)" "1 set 2, was 1; 1 set 1, was 2; 1 set 2, was 1"
 
 echo "-- the API keys of principals stored in partitions, and in a table that inherits"
+# (bot 4 and person 13, stored in the table that inherits, are only renamed: their keys stay)
+PSQL -c "INSERT INTO ch.bots VALUES (4, 'd')" -c "INSERT INTO ch.people_old VALUES (13, 'kept')" >/dev/null
 PSQL -c "INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash) VALUES
-  ('1', 'bot', 'a', 'ak_', 'h1'), ('2', 'bot', 'b', 'ak_', 'h2'), ('3', 'bot', 'c', 'ak_', 'h3'),
-  ('11', 'person', 'd', 'ak_', 'h4'), ('12', 'person', 'e', 'ak_', 'h5')"
+  ('1', 'bot', 'a', 'ak_', 'h1'), ('2', 'bot', 'b', 'ak_', 'h2'), ('3', 'bot', 'c', 'ak_', 'h3'), ('4', 'bot', 'f', 'ak_', 'h6'),
+  ('11', 'person', 'd', 'ak_', 'h4'), ('12', 'person', 'e', 'ak_', 'h5'), ('13', 'person', 'g', 'ak_', 'h7')"
 keys() { PSQL -c "SELECT coalesce(string_agg(user_id, ' ' ORDER BY user_id), '') FROM authz.api_keys WHERE principal_type = '$1'"; }
-PSQL -c "UPDATE ch.bots SET id = 33 WHERE id = 3" -c "UPDATE ch.bots SET id = 502 WHERE id = 2" -c "DELETE FROM ch.bots WHERE id = 1"
-same "a bot's keys go when its id changes, inside its partition or to another, and with its row" "$(keys bot)" ""
+PSQL -c "UPDATE ch.bots SET id = 33 WHERE id = 3" -c "UPDATE ch.bots SET id = 502 WHERE id = 2" -c "DELETE FROM ch.bots WHERE id = 1" \
+     -c "UPDATE ch.bots SET name = 'dd' WHERE id = 4"
+same "a bot's keys go when its id changes, inside its partition or to another, and with its row; a bot renamed keeps its own" "$(keys bot)" "4"
 same "the table that inherits from the people's has the row trigger that deletes the keys of an id that changes" \
   "$(PSQL -c "SELECT count(*) FROM pg_trigger WHERE tgrelid = 'ch.people_old'::regclass AND tgname = 'authz_person_keys_gone_id'")" 1
-PSQL -c "UPDATE ch.people SET id = 111 WHERE id = 11" -c "DELETE FROM ch.people WHERE id = 12"
-same "... so a person stored there loses their keys with a new id, and one above with their row" "$(keys person)" ""
+PSQL -c "UPDATE ch.people SET id = 111 WHERE id = 11" -c "DELETE FROM ch.people WHERE id = 12" -c "UPDATE ch.people SET name = 'still' WHERE id = 13"
+same "... so a person stored there loses their keys with a new id, and one above with their row; one renamed there keeps them" "$(keys person)" "13"
 
 echo "-- trees whose tables have no rules, written directly through what is under them (posts read them)"
 # Postgres runs a table's statement triggers only for statements on it, and those keep the trees, the shares and
@@ -272,6 +278,4 @@ run remove --yes
 same "remove leaves no trigger on the tables, nor on those under them" \
   "$(PSQL -c "SELECT count(*) FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid WHERE NOT g.tgisinternal AND c.relnamespace = 'ch'::regnamespace")" 0
 
-rm -rf "$T"
-[ -z "${KEEP:-}" ] && dropdb "$DB" && dropdb "$DB2"
 if [ $fails -eq 0 ]; then echo "children: all passed"; else echo "children: $fails failed"; exit 1; fi

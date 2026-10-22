@@ -71,8 +71,12 @@ for v in $VERSIONS; do
     bash -c "${cov:+rm -rf $cov; }ROWSTILE_LANES='${ROWSTILE_LANES:-}' bash run_tests.sh $MODE" > "$log" 2>&1
   rc=$?
   if [ $rc -eq 124 ]; then why="the suites were still running after ${LIMIT}s (the limit): stopped there"
-    # what was still running: the step that hung, by its command line
-    { echo "--- still running at the limit:"; docker exec "$name" ps -eo pid,etime,args 2>&1; } >> "$log"
+    # what was still running: the step that hung, by its command line, and what the steps not ended had printed
+    # (tests/lanes.sh keeps a step's output until it ends)
+    { echo "--- still running at the limit:"; docker exec "$name" ps -eo pid,etime,args 2>&1
+      docker exec "$name" bash -c 'for f in /tmp/rowstile-lanes.*/[0-9]*.[0-9]*; do
+        case $f in *.done) continue;; esac; [ -e "$f.done" ] || [ -e "${f%.*}.end" ] && continue
+        echo "--- what a step not ended had printed ($f):"; cat "$f"; done' 2>&1; } >> "$log"
   elif [ $rc -ne 0 ]; then
     state=$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null) || state="not there"
     [ "$state" = true ] || why="the container stopped before the suites ended (running: $state)"

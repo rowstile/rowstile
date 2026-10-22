@@ -4,6 +4,11 @@
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_identity}
+T=$(mktemp -d)
+. tests/races.sh
+# whatever way the suite ends: the sessions it left running, its databases, its files
+cleanup() { stop_sessions; for d in "$DB" "${DB}_cx"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
+trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 fails=0
 PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
@@ -44,9 +49,9 @@ SQL
   else echo "FAIL  $1: $out"; fails=$((fails + 1)); fi
 }
 
-python3 compile_policy.py example/docs.authz > /tmp/authz_identity.sql || exit 1
+python3 compile_policy.py example/docs.authz > $T/identity.sql || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null &&
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_identity.sql >/dev/null || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/identity.sql >/dev/null || exit 1
 PSQL -c "SET ROLE app_user; SET authz.user_id = 5; SELECT authz.share('folder', 1, 'viewer', 'org', 1, 'member')" >/dev/null
 
 echo "-- scopes and API keys"
@@ -104,10 +109,11 @@ check "alice lists her keys" "2" "SET authz.user_id = 1; SELECT count(*) FROM au
 check "a key signs in to a read-only transaction (a replica, a GET)" "1"   "BEGIN READ ONLY; SELECT authz.login_key('$FILES'); SELECT authz.uid(); COMMIT;"
 PSQL -c "UPDATE authz.api_keys SET last_used_at = NULL" >/dev/null
 # one request holds the key's row (it signed in first and is still running): another with the key doesn't wait
-(PSQL -c "SET ROLE app_user" -c "BEGIN" -c "SELECT authz.login_key('$FILES')" -c "SELECT pg_sleep(3)" -c "COMMIT" >/dev/null) &
-sleep 1
+race
+PGAPPNAME=authz_identity_a PSQL -c "SET ROLE app_user" -c "BEGIN" -c "SELECT authz.login_key('$FILES')" -c "$HOLD" -c "COMMIT" >/dev/null &
+held authz_identity_a
 check "... and requests with one key don't wait for each other" "1"   "SET statement_timeout = '1500ms'; BEGIN; SELECT authz.login_key('$FILES'); SELECT authz.uid(); COMMIT;"
-wait
+go; wait
 check "... last_used_at is kept, to the minute" "t"   "RESET ROLE; SELECT last_used_at > now() - interval '1 minute' FROM authz.api_keys WHERE name = 'script';"
 check "... not written again until a minute has passed" "t" \
   "RESET ROLE; BEGIN; UPDATE authz.api_keys SET last_used_at = now() - interval '1 minute' WHERE name = 'script';
@@ -270,9 +276,9 @@ echo "-- a group keyed by two columns, in a policy without impersonate (tests/co
 CX="${DB}_cx"
 dropdb --if-exists "$CX" 2>/dev/null; createdb "$CX" || exit 1
 CXQ() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$CX" "$@" 2>&1; }
-python3 compile_policy.py tests/composite.authz > /tmp/authz_identity_cx.sql || exit 1
+python3 compile_policy.py tests/composite.authz > $T/cx.sql || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$CX" -f tests/composite_schema.sql >/dev/null &&
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$CX" -f /tmp/authz_identity_cx.sql >/dev/null || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$CX" -f $T/cx.sql >/dev/null || exit 1
 CXQ -c "INSERT INTO cx.users VALUES (1), (2), (3)" -c "INSERT INTO cx.orgs VALUES (1)" \
     -c "INSERT INTO cx.teams (org_id, slug) VALUES (1, 'red team'), (1, 'blue')" \
     -c "INSERT INTO cx.team_members VALUES (1, 'red team', 1), (1, 'blue', 2)" >/dev/null
@@ -289,7 +295,6 @@ got=$(CXQ -c "INSERT INTO cx.folders (org_id, id, owner_id) VALUES (1, 1, 1)" -c
 got=$(CXQ -c "SET ROLE app_user" -c "SET authz.user_id = 1" -c "SELECT authz.view_as('2', 'ticket 46')" | grep '^ERROR:')
 [ "$got" = "ERROR:  you cannot view as user 2" ] && echo "ok    the user type has no impersonate: a user may not view as another" ||
   { echo "FAIL  view as, without impersonate: $got"; fails=$((fails + 1)); }
-dropdb "$CX"; rm -f /tmp/authz_identity_cx.sql
+dropdb "$CX"; rm -f $T/cx.sql
 
-dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "identity: all passed"; else echo "identity: $fails failed"; exit 1; fi

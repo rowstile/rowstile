@@ -39,7 +39,8 @@ run_lanes() {
     for ((k = 1; k < LANES; k++)); do [ "${load[k]}" -lt "${load[best]}" ] && best=$k; done
     set -- ${UNITS[i]}; load[best]=$((load[best] + $2)); lane[i]=$best
   done
-  dir=$(mktemp -d) || return 1
+  # (named so: core/ci.sh shows what a step still running at its limit had printed)
+  dir=$(mktemp -d /tmp/rowstile-lanes.XXXXXX) || return 1
   echo "part $p in $LANES lanes, about ${load[*]} seconds each (ROWSTILE_LANES=1: one step after the other)"
   # Ctrl-C or a stop: every lane and what it runs stops too (they are in this process group)
   trap 'trap "" TERM; kill 0; exit 130' INT TERM

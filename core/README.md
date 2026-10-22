@@ -32,7 +32,9 @@ the stock Postgres image. CI runs `--quick` for each push and the whole run each
 (`.github/workflows/nightly.yml`), in parts, each on a machine of its own, side by side (`run_tests.sh` names
 them), so a run waits for the longest part and not for their sum. Within a part, the
 steps run in three lanes side by side against the same server (`tests/lanes.sh`; `ROWSTILE_LANES` says how many),
-each step's output printed whole once it ends, in the order `run_tests.sh` writes them:
+each step's output printed whole once it ends, in the order `run_tests.sh` writes them. Each suite's databases,
+roles and files have names of its own, and its `trap` drops them however it ends; where two sessions race, the
+suite asks the server where each one is (`tests/races.sh`), never a `sleep`:
 
 | suite | what it checks |
 |---|---|
@@ -104,9 +106,9 @@ measured (`.ci/coverage-16/`) and says:
 - each kind of rowstile's functions (`authz_gen."<table>:update:refuse"`, a tree's refresh, `authz.share`) that
   no suite ever calls, as far as Postgres can count: it counts only the calls that return, but keeps a count from
   a function's first call, so a guard whose every call raises is listed apart; a call before a database's last
-  apply is lost (applying makes the functions anew), unless the suite measures first, as `tests/governance.sh`
-  and `tests/devx.sh` do (`bash tests/coverage_functions.sh "$DB"`); a plain SQL function, which Postgres may
-  inline, is listed apart too;
+  apply is lost (applying makes the functions anew), unless the suite measures first, as `tests/governance.sh`,
+  `tests/devx.sh` and `tests/principals.sh` do (`bash tests/coverage_functions.sh "$DB"`); a plain SQL function,
+  which Postgres may inline, is listed apart too;
 - with `core/ci.sh --statements 16` (nightly), each statement and branch of rowstile's PL/pgSQL (schemas `authz`,
   `authz_int`, `authz_gen`) that no suite runs, by kind of function, each `RAISE` first: the coverage image has
   plpgsql_check (PGDG's package) and `--statements` preloads it with its profiler on, which counts every statement
