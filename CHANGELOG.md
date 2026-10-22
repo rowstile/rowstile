@@ -85,6 +85,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Removed
 
+- The Python SDK's helpers that its modules share are no longer public names: `rowstile.literal`,
+  `call_problem`, `check_problems`, `key_text`, `key_shown`, `explain_rule_args`, `explain_rule_sql` and `answer`
+  now start with `_`, and `key_text` and `key_shown` are one. `verdict()` and the rest of `rowstile.__all__` stay.
 - A test's name is written in double quotes only, as the docs show it: `test "owners see their folders"`.
   `test owners see their folders` and `test 'owners'` are refused, with the line to write instead (AZ101), and
   VS Code no longer colours them as a test's name.
@@ -118,6 +121,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   shared.
 - The Python package's wheel and sdist hold only the command's own files. Built from a tree with other files
   beside them (an editor's backup, a note), they held those too.
+- `rowstile.alembic.include_object` said it left out the masked views rowstile makes. It leaves out a model whose
+  table says so, `info={"rowstile": True}`: the FastAPI page and the SDK's README now say to mark a model of a
+  masked view that way.
 - The tools reference lists every option each command takes (`migrate --tool --dir --one-phase --downgrade`,
   `diff --limit`, `bench --people --rounds`, `init --role --out`, `snapshot --out`, and the others), every
   `rowstile.toml` setting (`[migrations] lock` and `write_after`, `[review] snapshot`, `[clients] ts`), the exit

@@ -1013,6 +1013,7 @@ FEATURES: list[Feature] = [
             Check(FASTAPI_SDK, "test_an_app_on_psycopg_or_asyncpg_alone_answers_as_the_pages_say"),
             Check(FASTAPI_SDK, "test_why_stale_is_asked_in_the_flushs_own_transaction"),
             Check(FASTAPI_SDK, "test_autogenerate_leaves_rowstiles_tables_alone_with_include_object_alone"),
+            Check(FASTAPI_SDK, "test_autogenerate_leaves_a_model_of_a_masked_view_alone_when_it_says_so"),
             Check(FASTAPI_SDK, "test_where_the_command_is"),
         ),
     ),

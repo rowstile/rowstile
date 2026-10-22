@@ -26,7 +26,7 @@ Rowstile(app, engine, user=current_user)     # current_user(request): its user's
 | `rowstile.sqlalchemy` | `install(engine)` (sync or async; SQLModel too), `ids(type, perm)` for `where`, `perms_of()` for a list's buttons, `can()` (`Queries[ObjectType, Permission]()` has the three taking only the generated client's names, so a misspelled one doesn't type-check), `expect()` for Core updates and deletes, `why_stale()` for the ORM's StaleDataError |
 | `rowstile.psycopg` | `transaction(conn, who)`, `atransaction(aconn, who)`, `expect()`, `aexpect()` |
 | `rowstile.asyncpg` | `transaction(conn, who)`, `expect()` |
-| `rowstile.alembic` | `include_name`, `include_object`: autogenerate leaves rowstile's objects alone |
+| `rowstile.alembic` | `include_name`, `include_object`: autogenerate leaves rowstile's objects alone, and a model of a masked view that says so (`info={"rowstile": True}` on its table) |
 | `rowstile.testing` | pytest fixtures, loaded once the package is installed: `as_user`, `assert_refused`, `assert_not_found` (awaited, with an async function: a test that never awaits it fails), `authz_owner_url`, `authz_app_url`; `database_per_worker(url)`: a copy of the migrated test database for each pytest-xdist worker |
 
 Who a transaction acts for: `42` or `"42"` (a user), `("service", 3)` (another principal type of the policy),

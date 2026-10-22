@@ -233,6 +233,9 @@ from rowstile.alembic import include_name, include_object
     )
 ```
 
+A model of a masked view (the view a `mask` reads through) says so with `info={"rowstile": True}` on its table
+(`__table_args__`). Otherwise autogenerate sees no table for it, and adds one.
+
 Alembic connects as the owner, with a sync driver: `ROWSTILE_OWNER_URL` is a `postgresql+psycopg://` URL.
 A policy's revision is one script of many statements, and asyncpg takes one statement at a time ("cannot
 insert multiple commands into a prepared statement"); the revision checks, and says so in a line. The app

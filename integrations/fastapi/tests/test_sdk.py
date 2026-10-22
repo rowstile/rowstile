@@ -360,7 +360,7 @@ async def test_the_connection_check_over_each_driver() -> None:
     for url, expected in ((SYNC, []), (OWNER, [policy] + [owners] * 4)):
         engine = create_engine(url)
         try:
-            found = sorted(rowstile.check_problems(await authz_sa.connection_check(engine)))
+            found = sorted(rowstile._check_problems(await authz_sa.connection_check(engine)))
         finally:
             engine.dispose()
         assert [owners if owners in p else policy if policy in p else p for p in found] == expected, found
@@ -733,12 +733,24 @@ async def test_an_id_written_into_the_sign_in_is_that_id_whatever_standard_confo
 
 # --- the keys and answers as the database writes them ------------------------------------------------------------
 def test_a_key_with_an_empty_field_and_no_answer() -> None:
-    assert rowstile.key_text((1, None)) == '("1",)'
-    assert rowstile.answer(None) == (None, None, None)  # no row: the row isn't there for this user
-    hidden = rowstile.verdict("app.notes", "update", 7, *rowstile.answer(None))
+    assert rowstile._key_text((1, None)) == "(1,)"
+    assert rowstile._answer(None) == (None, None, None)  # no row: the row isn't there for this user
+    hidden = rowstile.verdict("app.notes", "update", 7, *rowstile._answer(None))
     assert isinstance(hidden, NotFound) and str(hidden) == "app.notes 7 not found"
     said = [str(NotFound()), str(NotFound("app.notes")), str(NotFound(id_=7)), NotFound().problem()["detail"]]
     assert said == ["not found", "app.notes not found", "row 7 not found", "not found"], said
+
+
+def test_a_composite_keys_text_is_postgres_own_and_reads_back_as_the_key() -> None:
+    """One spelling for a message and for authz.explain_rule, which casts it to the key's row type: as Postgres
+    writes the row, and read back field for field, whatever a field holds."""
+    keys = [("a b", "x,y"), ("", 'q"t'), ("b\\s", "(1)"), ("NULL", "\tx"), ("1", None)]
+    with psycopg.connect(libpq(OWNER)) as conn:
+        conn.execute("CREATE TYPE pg_temp.pair AS (a text, b text)")
+        for key in keys:
+            said = rowstile._key_text(key)
+            assert conn.execute("SELECT ROW(%s, %s)::pg_temp.pair::text", key).fetchone() == (said,), key
+            assert conn.execute("SELECT (%s::pg_temp.pair).*", (said,)).fetchone() == key, said
 
 
 # --- the pytest helpers (rowstile.testing) ------------------------------------------------------------------------
@@ -877,5 +889,27 @@ def test_autogenerate_leaves_rowstiles_tables_alone_with_include_object_alone() 
         with engine.connect() as conn:
             context = MigrationContext.configure(conn, opts={"include_schemas": True, "include_object": include_object})
             assert compare_metadata(context, Base.metadata) == []
+    finally:
+        engine.dispose()
+
+
+def test_autogenerate_leaves_a_model_of_a_masked_view_alone_when_it_says_so() -> None:
+    """A model of a masked view (app.notes_visible) marks its table: autogenerate adds no table for it. Unmarked,
+    it would."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+    from rowstile.alembic import include_object
+    from sqlalchemy import Column, Table
+
+    engine = create_engine(OWNER)
+    try:
+        with engine.connect() as conn:
+            context = MigrationContext.configure(conn, opts={"include_schemas": True, "include_object": include_object})
+            for info, added in (({"rowstile": True}, []), ({}, ["app.notes_visible"])):
+                metadata = MetaData()
+                Table("notes_visible", metadata, Column("id", BigInteger, primary_key=True), schema="app", info=info)
+                diff = compare_metadata(context, metadata)
+                tables = [d[1] for d in diff if isinstance(d, tuple) and d[0] == "add_table"]
+                assert [f"{t.schema}.{t.name}" for t in tables] == added, info
     finally:
         engine.dispose()

@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from . import (
     _UNSET,
     Who,
+    _answer,
+    _check_problems,
+    _explain_rule_args,
+    _explain_rule_sql,
     _Unset,
     act_as_args,
-    answer,
-    check_problems,
-    explain_rule_args,
-    explain_rule_sql,
     verdict,
 )
 
@@ -39,7 +39,7 @@ Result = TypeVar("Result")
 _Args = tuple[str | None, str | None]
 
 _ACT_AS = "SELECT authz.act_as(%s, %s)"
-_EXPLAIN = explain_rule_sql("%(t)s", "%(c)s", "%(k)s")
+_EXPLAIN = _explain_rule_sql("%(t)s", "%(c)s", "%(k)s")
 _SIGNED = "_rowstile_signed_in"  # on the connection: who each open block of ours signed in, outermost first
 
 
@@ -102,18 +102,18 @@ def expect(conn: psycopg.Connection[Any], result: Result, table: str, command: s
     transaction."""
     if _changed(result):
         return result
-    t, c, k = explain_rule_args(table, command, key)
+    t, c, k = _explain_rule_args(table, command, key)
     row = conn.execute(_EXPLAIN, {"t": t, "c": c, "k": k}).fetchone()
-    raise verdict(table, command, key, *answer(row))
+    raise verdict(table, command, key, *_answer(row))
 
 
 async def aexpect(aconn: psycopg.AsyncConnection[Any], result: Result, table: str, command: str, key: object) -> Result:
     """expect, on an async connection."""
     if _changed(result):
         return result
-    t, c, k = explain_rule_args(table, command, key)
+    t, c, k = _explain_rule_args(table, command, key)
     row = await (await aconn.execute(_EXPLAIN, {"t": t, "c": c, "k": k})).fetchone()
-    raise verdict(table, command, key, *answer(row))
+    raise verdict(table, command, key, *_answer(row))
 
 
 def connection_check(conn: psycopg.Connection[Any]) -> list[tuple[str, str]]:
@@ -121,4 +121,4 @@ def connection_check(conn: psycopg.Connection[Any]) -> list[tuple[str, str]]:
 
 
 def problems(conn: psycopg.Connection[Any]) -> list[str]:
-    return check_problems(connection_check(conn))
+    return _check_problems(connection_check(conn))
