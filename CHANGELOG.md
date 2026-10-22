@@ -271,6 +271,15 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   steps highlight: they now build the grammar, put it where Neovim looks and start highlighting, and say
   Neovim 0.11 or newer. Paths into the repository say `core/cli/`, and Sublime Text is no longer said to read
   the TextMate grammar as it is.
+- The editors read more policies as the compiler does. Zed, Helix and Neovim showed a parse error on a condition
+  holding `"a}b"`, `"it's"`, `E'it\'s'`, `$$}$$`, a `/* } */` comment, or a `--` comment with a brace or an
+  apostrophe in it; on a column named `before` or `after` (`update before before : edit`, as the compiler's own
+  message suggests); and on a test id with a `$` inside (`user a$b can view file 1`). In VS Code and on the site,
+  `before` and `after` at the end of an update rule's columns are coloured as words of the language, not as
+  columns; `test` and `invariants` followed by a comment keep their colour; and `user:*` (any type's), `principal`,
+  `include "roles.authz"`, a link table's name with its `object:` and `subject:`, and test lines whose id is
+  quoted with a space are coloured. VS Code moves `type`, `rules` and the other first words back to the margin
+  when typed on an indented line, and closes `[` and `"`.
 - The stack pages' code no longer takes the signed-in user from a request header. The Next.js and FastAPI
   pages showed the conformance apps' stand-in, a header any client can set; they now show the user coming
   from the app's session (`auth()` in Next.js, the app's own `session_user` in FastAPI). The Next.js page's

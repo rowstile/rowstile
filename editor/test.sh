@@ -3,9 +3,10 @@
 #   - the Tree-sitter grammar (tree-sitter-authz): src/ is what grammar.js generates, its corpus passes, and
 #     every .authz file in the repository parses without an error, the queries included; and it reads each of
 #     them, 200 random policies and core/tests/small.py's set up to size 4 (each written two ways), as
-#     core/authzlib/parse.py does (core/tests/parse_agreement.py)
+#     core/authzlib/parse.py does (core/tests/parse_agreement.py); editor/test/*.authz are forms easy to misread
 #   - the VS Code extension packages as the README says, with the licence and only full addresses on its
-#     Marketplace page, and extension.js passes extension_test.js
+#     Marketplace page, extension.js passes extension_test.js, and the TextMate grammar colours the policies in
+#     editor/test/ as their comments say (textmate_test.js)
 #   - Neovim highlights a policy with the README's steps
 #   - the Zed extension builds (WebAssembly, as Zed builds it)
 # Needs Docker and bash.
@@ -41,9 +42,11 @@ fi
 echo "-- the grammar"
 docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz node:24-trixie bash -c '
   npm ci --no-audit --no-fund >/dev/null 2>&1 || { echo "FAIL  npm ci"; exit 1; }
-  rm -rf /tmp/src && cp -r src /tmp/src && npx tree-sitter generate >/dev/null 2>&1 &&
-    diff -r /tmp/src src >/dev/null && echo "ok    src/ is what grammar.js generates" ||
-    { echo "FAIL  src/ is not what grammar.js generates: run npx tree-sitter generate"; exit 1; }
+  # (generated in a copy: the check leaves the checkout as it was)
+  rm -rf /tmp/gen-src && mkdir /tmp/gen-src && cp grammar.js package.json tree-sitter.json /tmp/gen-src &&
+    (cd /tmp/gen-src && /repo/editor/tree-sitter-authz/node_modules/.bin/tree-sitter generate >/dev/null 2>&1) &&
+    diff -r /tmp/gen-src/src src >/dev/null && echo "ok    src/ is what grammar.js generates" ||
+    { echo "FAIL  src/ is not what grammar.js generates: run npx tree-sitter generate in editor/tree-sitter-authz, and commit src/"; exit 1; }
   npx tree-sitter test >/tmp/corpus.log 2>&1 && echo "ok    the corpus" || { cat /tmp/corpus.log; exit 1; }
   files=$(find /repo -name "*.authz" -not -path "*/node_modules/*" -not -path "*/.venv/*" | sort)
   npx tree-sitter parse -q $files 2>/dev/null && echo "ok    every policy in the repository parses ($(echo "$files" | wc -l) files)" ||
@@ -86,7 +89,10 @@ if fail:
     sys.exit(1)
 print(f"ok    the .vsix has the licence, and each link on its page is a full address ({len(links)})")
 EOF
-  cd editor && node extension_test.js
+  cd editor && node extension_test.js || exit 1
+  # the TextMate grammar, with its devDependencies: the tokenizer and regular expressions VS Code uses
+  npm ci --no-audit --no-fund >/tmp/npm.log 2>&1 || { cat /tmp/npm.log; echo "FAIL  npm ci"; exit 1; }
+  node textmate_test.js
 ' || rc=1
 
 echo "-- Neovim"

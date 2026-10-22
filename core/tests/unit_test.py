@@ -14489,6 +14489,34 @@ class Editors(unittest.TestCase):
             m = re.match(header, line)
             self.assertEqual(m.group(2) if m else None, name, line)
 
+    def test_the_grammars_test_policies_are_policies(self) -> None:
+        # editor/test/*.authz: forms easy to misread, whose scopes textmate_test.js checks and which the Tree-sitter
+        # grammar must read as the parser does (editor/test.sh compares the two on each policy the parser reads)
+        folder = os.path.join(self.REPO, "editor", "test")
+        names = sorted(f for f in os.listdir(folder) if f.endswith(".authz"))
+        self.assertGreater(len(names), 3)
+        for name in names:
+            with open(os.path.join(folder, name), encoding="utf-8") as fh:
+                text = fh.read()
+            parse_policy(text, os.path.join(folder, name))
+            if name != "roles.authz":  # (the file blocks.authz includes)
+                self.assertRegex(text, r"(?m)^--\s*(\^+|<-+) \S+$", f"{name} says no scope")
+
+    def test_vscode_outdents_a_blocks_first_word_and_closes_zeds_pairs(self) -> None:
+        import tomllib
+
+        with open(os.path.join(self.REPO, "editor", "language-configuration.json"), encoding="utf-8") as fh:
+            config = json.load(fh)
+        with open(os.path.join(self.REPO, "editor", "zed", "languages", "authz", "config.toml"), "rb") as fb:
+            zed = tomllib.load(fb)
+        # VS Code tries the pattern on the whole line, its indent included: the word typed on an indented line
+        outdent = config["indentationRules"]["decreaseIndentPattern"]
+        for word in parse.TOP_WORDS + ("include",):
+            self.assertRegex(f"    {word}", outdent)
+        self.assertNotRegex("    owner : user = owner_id", outdent)
+        pairs = {(p["open"], p["close"]) for p in config["autoClosingPairs"]}
+        self.assertEqual(pairs, {(b["start"], b["end"]) for b in zed["brackets"] if b["close"]})
+
     def test_zed_builds_this_grammar(self) -> None:
         # extension.toml names the commit Zed fetches the grammar from: its grammar must be this one
         with open(os.path.join(self.REPO, "editor", "zed", "extension.toml"), encoding="utf-8") as fh:

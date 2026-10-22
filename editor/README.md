@@ -106,5 +106,6 @@ The TextMate grammar (`syntaxes/authz.tmLanguage.json`) also works on its own in
 highlights with.
 
 `test.sh` checks the Tree-sitter grammar (generated from `grammar.js`, its corpus, every policy in the
-repository parses), packages the VS Code extension as this page says, highlights a policy in Neovim set up as
-this page says, and builds the Zed extension, each in a container.
+repository parses), that the TextMate grammar colours the policies in `test/` as their comments say, packages
+the VS Code extension as this page says, highlights a policy in Neovim set up as this page says, and builds the
+Zed extension, each in a container.

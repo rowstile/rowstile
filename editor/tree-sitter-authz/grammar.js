@@ -35,9 +35,24 @@ module.exports = grammar({
 
     string: (_) => /"[^"\n]*"/,
 
-    // {any SQL}: braces nest, and quoted text may hold braces
+    // {any SQL}: braces nest, and what parse.py's Scanner reads as quoted may hold braces and quotes: 'text',
+    // E'text' (with backslash escapes), "names", $$text$$ and /* comments */ (a -- comment is one of the extras).
+    // A name's letters and digits are read whole, a $ in it too (a$b), so an E or a $ after them opens nothing
     sql: ($) => seq("{", optional($.sql_text), "}"),
-    sql_text: ($) => repeat1(choice(/[^{}']+/, /'([^']|'')*'/, $._sql_nested)),
+    sql_text: ($) =>
+      repeat1(
+        choice(
+          /[A-Za-z0-9_\u0080-￿][A-Za-z0-9_$\u0080-￿]*/,
+          /[!#%&()*+,.:;<=>?@\[\\\]^`|~]+/,
+          /[-\/$]/,
+          /'([^']|'')*'/,
+          /[Ee]'([^'\\]|\\(.|\n)|'')*'/,
+          /"([^"]|"")*"/,
+          /\$\$([^$]|\$[^$])*\$\$/,
+          /\/\*([^*]|\*+[^*\/])*\*+\//,
+          $._sql_nested,
+        ),
+      ),
     _sql_nested: ($) => seq("{", optional($.sql_text), "}"),
 
     // ---- top-level lines -------------------------------------------------------------------------
@@ -139,14 +154,17 @@ module.exports = grammar({
         optional(seq("view", field("view", $.table_name))),
         repeat(choice($.rule, $.mask, $.cascade)),
       ),
+    // the last word before the colon, if it is before or after, is when the rule is checked; the words before it
+    // are columns, which may be named before or after too: `update after after : ...`
     rule: ($) =>
       seq(
         field("command", $.command),
-        optional(commaSep1($.column)),
+        optional(commaSep1(choice($.column, alias($._when_column, $.column)))),
         optional(choice("before", "after")),
         ":",
         field("expression", $._expression),
       ),
+    _when_column: ($) => prec(-1, alias(choice("before", "after"), $.identifier)),
     command: (_) => choice("select", "insert", "update", "delete"),
     mask: ($) => seq("mask", commaSep1($.column), ":", field("expression", $._expression)),
     // a foreign key of the table to another whose action (ON DELETE CASCADE, SET NULL, ...) is meant; the key's
@@ -174,9 +192,11 @@ module.exports = grammar({
     // signed in limited to scopes, as a key that has them: `with scope read, files:write`
     limited: ($) => seq("with", "scope", commaSep1(field("scope", $.scope_name))),
     _value: ($) => choice($.variable, $.literal, $.value),
-    variable: (_) => /\$[A-Za-z_][A-Za-z0-9_]*/,
+    // as parse.py reads a test's id: a 'quoted' literal, or anything up to the next space, a variable if it
+    // starts with $ (`$ann`), a value if not (`11`, `a$b`, a uuid)
+    variable: (_) => /\$[^\s{}']*/,
     literal: (_) => /'([^']|'')*'/,
-    value: (_) => /[^\s{}'$]+/,
+    value: (_) => /[^\s{}'$][^\s{}']*/,
     number: (_) => /\d+/,
   },
 });

@@ -65,7 +65,7 @@
     "headers": {
       "patterns": [
         {
-          "match": "^(type)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(=)\\s*([A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*)",
+          "match": "^(type)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(=)\\s*([A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*)(?:\\s*\\([^)]*\\))?(?:\\s+(principal)\\b)?",
           "captures": {
             "1": {
               "name": "keyword.declaration.type.authz"
@@ -78,6 +78,9 @@
             },
             "4": {
               "name": "entity.name.tag.table.authz"
+            },
+            "5": {
+              "name": "keyword.other.principal.authz"
             }
           }
         },
@@ -99,7 +102,7 @@
           }
         },
         {
-          "match": "^(app\\s+role|scope|caveat|include)\\b\\s*([A-Za-z_][A-Za-z0-9_:\\-]*)?",
+          "match": "^(app\\s+role|scope|caveat)\\b\\s*([A-Za-z_][A-Za-z0-9_:\\-]*)?",
           "captures": {
             "1": {
               "name": "keyword.declaration.authz"
@@ -110,13 +113,24 @@
           }
         },
         {
-          "match": "^(test|invariants)\\s*$",
+          "match": "^(include)\\s+(\"[^\"]*\")",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.authz"
+            },
+            "2": {
+              "name": "string.quoted.double.authz"
+            }
+          }
+        },
+        {
+          "match": "^(test|invariants)(?=\\s*(?:--|$))",
           "name": "keyword.declaration.section.authz"
         }
       ]
     },
     "relation": {
-      "match": "^\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(:)(?=[^:]*(=|\\bshared\\b))",
+      "match": "^\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(:)(?=\\s*(?:[A-Za-z_][A-Za-z0-9_]*(?:#[A-Za-z_][A-Za-z0-9_]*|:\\*)?)(?:\\s*,\\s*(?:[A-Za-z_][A-Za-z0-9_]*(?:#[A-Za-z_][A-Za-z0-9_]*|:\\*)?))*\\s*(?:=|shared\\b))",
       "captures": {
         "1": {
           "name": "variable.other.relation.authz"
@@ -171,6 +185,10 @@
         "2": {
           "patterns": [
             {
+              "match": "\\b(before|after)(?=\\s*$)",
+              "name": "keyword.other.when.authz"
+            },
+            {
               "match": "[A-Za-z_][A-Za-z0-9_]*",
               "name": "variable.other.column.authz"
             }
@@ -209,7 +227,7 @@
           }
         },
         {
-          "match": "^\\s+(as)\\s+(anyone|[A-Za-z_][A-Za-z0-9_]*\\s+\\S+?)(?:\\s+(with\\s+scope)\\s+([A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*)*))?\\s+(allowed|refused|sees\\s+\\d+)\\b",
+          "match": "^\\s+(as)\\s+(anyone|[A-Za-z_][A-Za-z0-9_]*\\s+(?:'(?:[^']|'')*'|\\S+?))(?:\\s+(with\\s+scope)\\s+([A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*)*))?\\s+(allowed|refused|sees\\s+\\d+)\\b",
           "captures": {
             "1": {
               "name": "keyword.control.authz"
@@ -229,7 +247,7 @@
           }
         },
         {
-          "match": "^\\s+(anyone|[A-Za-z_][A-Za-z0-9_]*\\s+\\S+?)(?:\\s+(with\\s+scope)\\s+([A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*)*))?\\s+(can|cannot)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+(\\S+)",
+          "match": "^\\s+(anyone|[A-Za-z_][A-Za-z0-9_]*\\s+(?:'(?:[^']|'')*'|\\S+?))(?:\\s+(with\\s+scope)\\s+([A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:[-:][A-Za-z_][A-Za-z0-9_]*)*)*))?\\s+(can|cannot)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+('(?:[^']|'')*'|\\S+)",
           "captures": {
             "1": {
               "name": "variable.other.authz"
@@ -277,11 +295,33 @@
           "name": "keyword.operator.logical.authz"
         },
         {
+          "match": "\\b(object|subject)\\s*(:)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.authz"
+            },
+            "2": {
+              "name": "punctuation.separator.authz"
+            }
+          }
+        },
+        {
           "match": "\\b(shared|by|if|where|from)\\b",
           "name": "keyword.other.authz"
         },
         {
-          "match": "\\b(user|anyone|link)(:\\*)?\\b",
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(:\\*)",
+          "captures": {
+            "1": {
+              "name": "support.type.subject.authz"
+            },
+            "2": {
+              "name": "keyword.operator.wildcard.authz"
+            }
+          }
+        },
+        {
+          "match": "\\b(user|anyone|link)\\b",
           "name": "support.type.subject.authz"
         },
         {
@@ -301,6 +341,10 @@
               "name": "variable.other.relation.authz"
             }
           }
+        },
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "name": "entity.name.tag.table.authz"
         },
         {
           "match": "([A-Za-z_][A-Za-z0-9_]*)(\\.)([A-Za-z_][A-Za-z0-9_]*)",
@@ -323,6 +367,10 @@
         {
           "match": "=",
           "name": "keyword.operator.assignment.authz"
+        },
+        {
+          "match": "\"[^\"]*\"",
+          "name": "string.quoted.double.authz"
         },
         {
           "match": "'[^']*'",

@@ -128,11 +128,35 @@
         "members": [
           {
             "type": "PATTERN",
-            "value": "[^{}']+"
+            "value": "[A-Za-z0-9_\\u0080-￿][A-Za-z0-9_$\\u0080-￿]*"
+          },
+          {
+            "type": "PATTERN",
+            "value": "[!#%&()*+,.:;<=>?@\\[\\\\\\]^`|~]+"
+          },
+          {
+            "type": "PATTERN",
+            "value": "[-\\/$]"
           },
           {
             "type": "PATTERN",
             "value": "'([^']|'')*'"
+          },
+          {
+            "type": "PATTERN",
+            "value": "[Ee]'([^'\\\\]|\\\\(.|\\n)|'')*'"
+          },
+          {
+            "type": "PATTERN",
+            "value": "\"([^\"]|\"\")*\""
+          },
+          {
+            "type": "PATTERN",
+            "value": "\\$\\$([^$]|\\$[^$])*\\$\\$"
+          },
+          {
+            "type": "PATTERN",
+            "value": "\\/\\*([^*]|\\*+[^*\\/])*\\*+\\/"
           },
           {
             "type": "SYMBOL",
@@ -1289,8 +1313,22 @@
               "type": "SEQ",
               "members": [
                 {
-                  "type": "SYMBOL",
-                  "name": "column"
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "column"
+                    },
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_when_column"
+                      },
+                      "named": true,
+                      "value": "column"
+                    }
+                  ]
                 },
                 {
                   "type": "REPEAT",
@@ -1302,8 +1340,22 @@
                         "value": ","
                       },
                       {
-                        "type": "SYMBOL",
-                        "name": "column"
+                        "type": "CHOICE",
+                        "members": [
+                          {
+                            "type": "SYMBOL",
+                            "name": "column"
+                          },
+                          {
+                            "type": "ALIAS",
+                            "content": {
+                              "type": "SYMBOL",
+                              "name": "_when_column"
+                            },
+                            "named": true,
+                            "value": "column"
+                          }
+                        ]
                       }
                     ]
                   }
@@ -1349,6 +1401,28 @@
           }
         }
       ]
+    },
+    "_when_column": {
+      "type": "PREC",
+      "value": -1,
+      "content": {
+        "type": "ALIAS",
+        "content": {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "before"
+            },
+            {
+              "type": "STRING",
+              "value": "after"
+            }
+          ]
+        },
+        "named": true,
+        "value": "identifier"
+      }
     },
     "command": {
       "type": "CHOICE",
@@ -1808,7 +1882,7 @@
     },
     "variable": {
       "type": "PATTERN",
-      "value": "\\$[A-Za-z_][A-Za-z0-9_]*"
+      "value": "\\$[^\\s{}']*"
     },
     "literal": {
       "type": "PATTERN",
@@ -1816,7 +1890,7 @@
     },
     "value": {
       "type": "PATTERN",
-      "value": "[^\\s{}'$]+"
+      "value": "[^\\s{}'$][^\\s{}']*"
     },
     "number": {
       "type": "PATTERN",

@@ -805,7 +805,10 @@ FEATURES: list[Feature] = [
         ),
         (T("conditions_test.py", "def condition("), T("genpolicy.py", "READS = [")),
         hand=("conditions-sql", "conditions-null", "conditions-this", "conditions-rights"),
-        grammar=("Words for conditions, custom roles where they give, this in conditions",),
+        grammar=(
+            "Words for conditions, custom roles where they give, this in conditions",
+            "Conditions whose SQL hides braces and quotes: 'x', E'x', \"names\", $$x$$, comments",
+        ),
     ),
     Feature(
         "lang.inheritance",
@@ -871,7 +874,10 @@ FEATURES: list[Feature] = [
         ),
         (T(DIFF, "policy as app"), T("around.py", "def write_problems("), T("genpolicy.py", "def before_after(")),
         hand=("rules-commands", "update-before-after", "column-rules"),
-        grammar=("Rules, masks, scopes, caveats, invariants",),
+        grammar=(
+            "Rules, masks, scopes, caveats, invariants",
+            "Columns named before or after: the last word before the colon says when",
+        ),
     ),
     Feature(
         "lang.masks",
@@ -970,7 +976,10 @@ FEATURES: list[Feature] = [
             T("cookbook.sh", "every line of policy and tests its page shows is in its files"),
         ),
         hand=("tests-refused", "tests-scope"),
-        grammar=("Tests: checks, and named tests with their own data",),
+        grammar=(
+            "Tests: checks, and named tests with their own data",
+            "Test ids: a $ inside a value, a variable (all up to a space), a quoted literal",
+        ),
     ),
     # --- the SDKs: each judged by its conformance suite (integrations/README.md's checks) ---------------
     Feature(
