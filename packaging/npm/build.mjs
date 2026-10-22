@@ -26,26 +26,26 @@ const CACHE = join(HERE, ".cache");
 // texts of the libraries built into that Python (OpenSSL, SQLite, zlib...), which only the release's full
 // archives carry (python/licenses/, the same files for every target), less those of the parts trim() removes.
 // RELEASING.md's release steps check for a newer release: nothing else watches it.
-const RELEASE = "20260924";
-const PYTHON = "3.13.15";
+const RELEASE = "20261021";
+const PYTHON = "3.13.17";
 /** @typedef {{triple: string, os: string, cpu: string, libc?: string, sha256: string}} Target */
 /** @type {Record<string, Target>} */
 const TARGETS = {
   "linux-x64": { triple: "x86_64-unknown-linux-gnu", os: "linux", cpu: "x64", libc: "glibc",
-    sha256: "d0b640eed27fbdd6f5f2bd33444aee53df2c8863f8b2a96f4094717411e3de9c" },
+    sha256: "f829adc9d888e76c8801b4799ed444188d35239fcae3a9808a99ec5cb0d8d92c" },
   "linux-arm64": { triple: "aarch64-unknown-linux-gnu", os: "linux", cpu: "arm64", libc: "glibc",
-    sha256: "5ad58156cbec94e5643c13caa792e92df72a23f33d3a6425d4cbff5c4b7a040c" },
+    sha256: "c6857c65b996701a5da104cbb49b35249c0c026dc0664239b04f7156aa88326a" },
   // Linux with musl (Alpine): glibc's Python can't start there
   "linux-x64-musl": { triple: "x86_64-unknown-linux-musl", os: "linux", cpu: "x64", libc: "musl",
-    sha256: "94c39f6249241858871b9fe9cae8b506076ed8291860b1334210a76c13ac2b65" },
+    sha256: "089e64ce3a7969382e4782e2051c12d6de143e9f7d102c89a8c8d54e7c554b90" },
   "linux-arm64-musl": { triple: "aarch64-unknown-linux-musl", os: "linux", cpu: "arm64", libc: "musl",
-    sha256: "e919f032be1fbcd7cac8c591f89df461f21749ca6c9c7cee78fbd0909af4cc64" },
+    sha256: "5af630e7e458af4675ea9a39b220b80baed17bc7a3e22b0fc97115a54fa0e96e" },
   "darwin-x64": { triple: "x86_64-apple-darwin", os: "darwin", cpu: "x64",
-    sha256: "327814efd865a0b6a99c149b12a261e9d0ad409183515c745d41bda2d07282e9" },
+    sha256: "ce9c748c8f7525c0052247edb2435fdb1cac89c77e687e0e199eaf2b827668c2" },
   "darwin-arm64": { triple: "aarch64-apple-darwin", os: "darwin", cpu: "arm64",
-    sha256: "064afb7c2fc0bbf511d886288adf98696af5105e36c138cdf2c199c0146fcf68" },
+    sha256: "8dc60610a82f1e73be7faf964383e02520f95f6e39592a5c37c3809f5a7b798e" },
   "win32-x64": { triple: "x86_64-pc-windows-msvc", os: "win32", cpu: "x64",
-    sha256: "e42fa944748a50e9ff481cbb817ef8a6e3da6fbcf0cf6f29b554e1acb8c7384d" },
+    sha256: "56cde3b1a1dcc36576753cb408ee0c3568d211baafa0eee40423adc147c480f2" },
 };
 // the command's files, each folder of core/ and the endings of its files the command runs (the Python package's
 // build reads the same list): file by file, so nothing else of the tree it is built from goes in
@@ -57,7 +57,8 @@ const COMMAND = readFileSync(join(ROOT, "sdk", "python", "command-files.txt"), "
 const UNUSED = ["test", "idlelib", "tkinter", "turtledemo", "turtle.py", "ensurepip", "lib2to3", "pydoc_data",
   "site-packages", "venv", "__phello__"];
 // python-licenses/: each text, and the licence it is (SPDX), for the package's `license`. Left out, with the parts
-// trim() removes: Berkeley DB (in _dbm), Tcl, Tk, Tix and the X11 libraries Tk uses; OpenSSL 1.1 (no target has it)
+// trim() removes: Berkeley DB (in _dbm), Tcl, Tk, Tix and the X11 libraries Tk uses; zstd (no module of Python 3.13
+// uses it: _zstd came in 3.14); zlib-ng (each target's zlib is zlib's own, or on macOS the system's)
 /** @type {Record<string, string>} */
 const LICENSES = {
   "LICENSE.cpython.txt": "PSF-2.0", "LICENSE.openssl-3.txt": "Apache-2.0", "LICENSE.sqlite.txt": "blessing",

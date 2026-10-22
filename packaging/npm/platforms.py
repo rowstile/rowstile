@@ -43,7 +43,10 @@ PE_MACHINE = {"x64": 0x8664}
 # the libraries each system has: anything else a binary loads must be in the package
 SYSTEM = {
     "glibc": {"libc.so.6", "libm.so.6", "libpthread.so.0", "libdl.so.2", "libutil.so.1", "librt.so.1"}
-    | {"ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1"},
+    | {"ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1"}
+    # GCC's runtime (the arm64 Python takes its 128-bit float helpers from it): Node loads it too, so every
+    # machine the launcher runs on has it
+    | {"libgcc_s.so.1"},
     "musl": {"libc.so"},
     "win32": {
         "advapi32.dll",

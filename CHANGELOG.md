@@ -95,6 +95,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   too), and says when Supavisor, PgCat, Neon and Supabase were tried by hand.
 - The speed figures on the limits page and the benchmark's page say what measured them: a build of 2026-10-03,
   on the laptop the project was developed on then. No build since has run those sizes.
+- The Python the npm packages bring is CPython 3.13.17 (python-build-standalone 20261021, with OpenSSL 3.5.9),
+  where it was 3.13.15.
 
 ### Removed
 
