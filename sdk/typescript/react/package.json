@@ -4,8 +4,26 @@
   "description": "rowstile for React: usePerms, <Can>, a headless share dialog, access requests, live updates",
   "license": "Apache-2.0",
   "homepage": "https://rowstile.dev",
-  "keywords": ["rowstile", "postgres", "postgresql", "authorization", "row-level-security", "rls", "permissions", "access-control", "rbac", "rebac", "multi-tenant", "react", "hooks"],
-  "repository": { "type": "git", "url": "git+https://github.com/rowstile/rowstile.git", "directory": "sdk/typescript/react" },
+  "keywords": [
+    "rowstile",
+    "postgres",
+    "postgresql",
+    "authorization",
+    "row-level-security",
+    "rls",
+    "permissions",
+    "access-control",
+    "rbac",
+    "rebac",
+    "multi-tenant",
+    "react",
+    "hooks"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rowstile/rowstile.git",
+    "directory": "sdk/typescript/react"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,11 +37,13 @@
     "dist"
   ],
   "sideEffects": false,
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "dependencies": {
     "@rowstile/client": "0.1.0-dev"
   },
   "peerDependencies": {
-    "react": "^19.3.0"
+    "react": "^19.3.1"
   }
 }
