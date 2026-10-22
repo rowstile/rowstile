@@ -210,6 +210,9 @@ def groups(user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
 
 # --- folders and files -------------------------------------------------------------------------
 FOLDER_COLS = "f.id, f.parent_id, f.name, f.owner_id, f.inherit, f.created_at"
+# in a listing: whether the user may share the folder, which moving and deleting it need too (the web app shows
+# those actions only then); one check per folder listed
+CAN_SHARE = "authz.can('folder', f.id::text, 'share') AS can_share"
 FILE_COLS = "f.id, f.folder_id, f.name, f.owner_id, f.size, f.content_type, f.created_at, f.updated_at"
 
 
@@ -219,7 +222,7 @@ def home(user: DictRow = Depends(auth.current_user)) -> Answer:
     and files shared with them on their own."""
     with db.as_user(user["id"]) as tx:
         folders = tx.rows(
-            f"SELECT {FOLDER_COLS}, f.owner_id = %s AS mine FROM fm.folders f WHERE f.parent_id IS NULL "
+            f"SELECT {FOLDER_COLS}, {CAN_SHARE}, f.owner_id = %s AS mine FROM fm.folders f WHERE f.parent_id IS NULL "
             f"OR NOT EXISTS (SELECT 1 FROM fm.folders p WHERE p.id = f.parent_id) ORDER BY f.name",
             (user["id"],),
         )
@@ -242,7 +245,8 @@ def folder(folder_id: int, user: DictRow = Depends(auth.current_user)) -> Answer
             (folder_id,),
         )
         folders = tx.rows(
-            f"SELECT {FOLDER_COLS} FROM fm.folders f WHERE f.parent_id = %s ORDER BY f.name", (folder_id,)
+            f"SELECT {FOLDER_COLS}, {CAN_SHARE} FROM fm.folders f WHERE f.parent_id = %s ORDER BY f.name",
+            (folder_id,),
         )
         files = tx.rows(
             f"SELECT {FILE_COLS} FROM fm.files f WHERE f.folder_id = %s AND f.ready ORDER BY f.name", (folder_id,)

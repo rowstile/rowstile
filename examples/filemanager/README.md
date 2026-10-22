@@ -32,7 +32,7 @@ sends `/api` to the backend. The tests, from this folder:
 | | |
 |---|---|
 | `db/migrations/` | the tables (`fm.users`, `fm.groups`, `fm.folders`, `fm.files`, ...), the app role's grants, and the policy's migrations, which `rowstile migrate` writes from `db/policy.authz` |
-| `db/policy.authz` | who may do what: folders nest and pass access down unless a folder stops it; sharing with people and groups (nested), with expiry; support staff may break the glass |
+| `db/policy.authz` | who may do what: folders nest and pass access down unless a folder stops it; sharing with people and groups (nested), with expiry; editors may change a folder, but moving, deleting or sharing it, or stopping inheritance, takes the right to share it; support staff may break the glass |
 | `db/migrate.py` | runs the migrations not run yet, and with `--client` rewrites `backend/app/authz_client.py` (`rowstile client py`) |
 | `backend/app/main.py` | the HTTP API. Every call runs in a transaction signed in as the user (`authz.user_id`), so row-level security decides what it sees and changes; the backend adds no permission checks of its own (one exception: listing and revoking share links, a table of the app's, ask `authz.can` first). At start it refuses a connection that skips row-level security (`authz.connection_check()`) |
 | `backend/app/storage.py` | file contents in RustFS. A download link is signed only after the file's row was read through row-level security, and lives 10 minutes. A browser uploads to a place of its own; confirming the upload moves the bytes to the file's object, so the upload link can't change a confirmed file |

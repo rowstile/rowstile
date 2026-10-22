@@ -56,6 +56,7 @@ rules fm.folders
   insert                       : ({parent_id is null} or parent.edit) and owner
   update                       : edit
   update parent_id after       : parent.edit or ({parent_id is null} and share)
+  update parent_id             : share  -- moving it takes it from everyone above, as deleting it does
   update id, owner_id, inherit : share
   delete                       : share
 

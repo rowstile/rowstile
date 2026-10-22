@@ -95,10 +95,12 @@ export function Browser({ folderId, me }: { folderId: number | null; me: User })
                 {!f.inherit && <span className="tag">own access</span>}</td>
               <td />
               <td className="actions">
-                <button className="link" onClick={() => setDialog({ share: { kind: "folder", id: f.id, name: f.name } })}>Share</button>
+                {f.can_share && <button className="link" onClick={() => setDialog({ share: { kind: "folder", id: f.id, name: f.name } })}>Share</button>}
                 <button className="link" onClick={() => rename("folder", f.id, f.name)}>Rename</button>
-                <button className="link" onClick={() => setDialog({ move: { kind: "folder", id: f.id, name: f.name } })}>Move</button>
-                <button className="link" onClick={() => remove("folder", f.id, f.name)}>Delete</button>
+                {f.can_share && <>
+                  <button className="link" onClick={() => setDialog({ move: { kind: "folder", id: f.id, name: f.name } })}>Move</button>
+                  <button className="link" onClick={() => remove("folder", f.id, f.name)}>Delete</button>
+                </>}
               </td>
             </tr>))}
           {files.map((f) => (

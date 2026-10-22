@@ -147,6 +147,35 @@ def test_others_see_nothing(world: World) -> None:
     assert sub["id"] not in [x["id"] for x in bob.get("/api/home").json()["folders"]]
 
 
+def test_moving_a_folder_needs_share() -> None:
+    """An editor may rename a folder, not move it: moving takes it from everyone who reached it from above."""
+    olga, ed = person("olga"), person("ed")
+    shared = olga.post("/api/folders", json={"name": f"Shared {uuid.uuid4().hex[:6]}"}).json()
+    inner = olga.post("/api/folders", json={"name": "Inner", "parent_id": shared["id"]}).json()
+    other = olga.post("/api/folders", json={"name": f"Other {uuid.uuid4().hex[:6]}"}).json()
+    his = ed.post("/api/folders", json={"name": "His"}).json()
+    r = olga.post(
+        f"/api/folders/{shared['id']}/shares",
+        json={"relation": "editor", "subject_type": "user", "subject_id": ed.me["id"]},
+    )
+    assert r.status_code == 201, r.text
+    for change in ({"parent_id": his["id"]}, {"to_top": True}):
+        r = ed.patch(f"/api/folders/{inner['id']}", json=change)
+        assert (r.status_code, r.json()["detail"]) == (403, "you may not do that here"), r.text
+        assert any("share" in line for line in r.json()["why"]), r.json()
+    assert [p["id"] for p in olga.get(f"/api/folders/{inner['id']}").json()["path"]] == [shared["id"], inner["id"]]
+    assert ed.patch(f"/api/folders/{inner['id']}", json={"name": "Renamed"}).status_code == 200
+    assert olga.patch(f"/api/folders/{inner['id']}", json={"parent_id": other["id"]}).status_code == 200
+    assert [p["id"] for p in olga.get(f"/api/folders/{inner['id']}").json()["path"]] == [other["id"], inner["id"]]
+    # the web app shows moving (and sharing, deleting) only where the user may share
+    assert [f["can_share"] for f in ed.get(f"/api/folders/{shared['id']}").json()["folders"]] == []
+    assert olga.patch(f"/api/folders/{inner['id']}", json={"parent_id": shared["id"]}).status_code == 200
+    assert [f["can_share"] for f in ed.get(f"/api/folders/{shared['id']}").json()["folders"]] == [False]
+    assert [f["can_share"] for f in olga.get(f"/api/folders/{shared['id']}").json()["folders"]] == [True]
+    on_top = {f["id"]: f["can_share"] for f in ed.get("/api/home").json()["folders"]}
+    assert (on_top[shared["id"]], on_top[his["id"]]) == (False, True)
+
+
 def test_a_folder_cannot_go_inside_itself(world: World) -> None:
     alice, top, sub = world["alice"], world["top"], world["sub"]
     assert alice.patch(f"/api/folders/{top['id']}", json={"parent_id": sub["id"]}).status_code == 400
