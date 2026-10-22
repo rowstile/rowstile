@@ -15585,18 +15585,124 @@ class Delivery(unittest.TestCase):
             import changelog
         finally:
             sys.path.pop(0)
-        text = "# Changelog\n\n## Unreleased\n\n### Fixed\n- one\n- two\n\n## 0.2.0 (release candidate)\n- older\n"
+        text = "# Changelog\n\n## Unreleased\n\n### Fixed\n- one\n- two\n\n## 0.2.0-rc.1 (2026-11-02)\n- older\n"
         self.assertEqual(changelog.unreleased(text), ["- one", "- two"])
         self.assertEqual(changelog.unreleased(text.replace("- one\n- two\n", "")), [])
-        # an alpha's notes are its version's section, as a candidate's are
-        alpha = text.replace("(release candidate)", "(alpha)")
-        self.assertEqual(changelog.heading("0.2.0-alpha.1", alpha), "## 0.2.0 (alpha)")
-        self.assertEqual(changelog.section("0.2.0-alpha.1", alpha), "- older\n")
-        self.assertEqual(changelog.section("0.3.0-alpha.1", alpha), "")
-        # and a beta's
-        beta = text.replace("(release candidate)", "(beta)")
-        self.assertEqual(changelog.heading("0.2.0-beta.1", beta), "## 0.2.0 (beta)")
-        self.assertEqual(changelog.section("0.2.0-beta.2", beta), "- older\n")
+        with (
+            mock.patch.object(changelog, "read", return_value=text),
+            self.assertRaisesRegex(
+                SystemExit,
+                r"^changelog\.py: 0\.2\.0-rc\.2 is being released with 2 lines still under Unreleased: they become "
+                r"its section, ## 0\.2\.0-rc\.2 \(YYYY-MM-DD\) \(RELEASING\.md\)$",
+            ),
+        ):
+            changelog.main(["--tagged", "0.2.0-rc.2"])
+
+    def test_a_release_s_notes_are_its_own_section(self) -> None:
+        # each alpha, beta and candidate has a section of its own: its notes are that section, never the version's
+        # whole history (0.1.0-alpha.9's notes held every alpha before it, 100 KB)
+        sys.path.insert(0, os.path.join(self.REPO, "packaging"))
+        try:
+            import changelog
+        finally:
+            sys.path.pop(0)
+        text = (
+            "# Changelog\n\n## Unreleased\n\n## 0.2.0-beta.2 (2026-11-09)\n\n### Fixed\n\n- second\n\n"
+            "## 0.2.0-beta.1 (2026-11-02)\n\n### Added\n\n- first\n\n## 0.2.0-alpha.1 (2026-10-30)\n\n- early\n\n"
+            "## 0.1.0 (2026-10-01)\n\n- before\n"
+        )
+        self.assertEqual(changelog.heading("0.2.0-beta.1", text), "## 0.2.0-beta.1 (2026-11-02)")
+        self.assertEqual(changelog.section("0.2.0-beta.2", text), "### Fixed\n\n- second\n")
+        self.assertEqual(changelog.section("0.2.0-beta.1", text), "### Added\n\n- first\n")
+        self.assertEqual(changelog.section("0.2.0-alpha.1", text), "- early\n")
+        self.assertEqual(changelog.section("0.1.0", text), "- before\n")
+        # a version is matched whole: 0.2.0's heading isn't 0.2.0-beta.1's, nor beta.1's beta.10's
+        for version in ("0.2.0", "0.2.0-beta.10", "0.2.0-beta", "0.1.0-rc.1"):
+            self.assertIsNone(changelog.heading(version, text), version)
+            self.assertEqual(changelog.section(version, text), "", version)
+        for version, notes in (("0.2.0-beta.1", "### Added\n\n- first\n"), ("0.1.0", "- before\n")):
+            out = io.StringIO()
+            with mock.patch.object(changelog, "read", return_value=text), contextlib.redirect_stdout(out):
+                changelog.main([version])
+            self.assertEqual(out.getvalue(), notes)
+        # a version with no section of its own fails, saying the heading to write
+        with (
+            mock.patch.object(changelog, "read", return_value=text),
+            self.assertRaisesRegex(
+                SystemExit,
+                r"^changelog\.py: CHANGELOG\.md has no section for 0\.2\.0-beta\.3: its heading is "
+                r"## 0\.2\.0-beta\.3 \(YYYY-MM-DD\), above its lines \(RELEASING\.md\)$",
+            ),
+        ):
+            changelog.main(["0.2.0-beta.3"])
+        # and every release's heading has its date, a pre-release's too
+        for heading in ("## 0.2.0-beta.1", "## 0.2.0-beta.1 (beta)"):
+            undated = text.replace("## 0.2.0-beta.1 (2026-11-02)", heading)
+            with (
+                mock.patch.object(changelog, "read", return_value=undated),
+                self.assertRaisesRegex(
+                    SystemExit, r"^changelog\.py: 0\.2\.0-beta\.1's heading needs the date: ## 0\.2\.0-beta\.1 \(YYYY"
+                ),
+            ):
+                changelog.main(["0.2.0-beta.1"])
+
+    def test_the_changelog_s_layout(self) -> None:
+        # RELEASING.md's layout: a heading per release, its parts in one order, each once, a list not split
+        sys.path.insert(0, os.path.join(self.REPO, "packaging"))
+        try:
+            import changelog
+        finally:
+            sys.path.pop(0)
+        good = (
+            "# Changelog\n\nWhat changed.\n\n## Unreleased\n\n### Added\n\n- a\n  more of a\n- b\n\n### Fixed\n\n- c\n\n"
+            "## 0.2.0-beta.1 (2026-11-02)\n\nThe first beta.\n\n### Changed\n\n- d\n\n### Upgrading\n\n- e\n\n"
+            "## 0.2.0-alpha.1 (2026-10-20)\n\n- f\n\n## Before the beta\n\nThe alphas.\n"
+        )
+        self.assertEqual(changelog.layout(good), [])
+        # newest first, beta.10 after beta.9
+        later = good.replace("0.2.0-beta.1 ", "0.2.0-beta.10 ").replace("0.2.0-alpha.1 ", "0.2.0-beta.9 ")
+        self.assertEqual(changelog.layout(later), [])
+        for bad, said in (
+            (
+                good.replace("- a\n  more of a\n- b\n", "- a\n  more of a\n\n- b\n"),
+                "line 11: a blank line inside the list of Unreleased's Added",
+            ),
+            (
+                good.replace("### Fixed", "### Upgrading\n\n- x\n\n### Fixed"),
+                "line 17: ### Fixed is out of order, or twice: Added, Changed, Removed, Fixed, Upgrading, each once",
+            ),
+            (
+                good.replace("### Fixed", "### Added"),
+                "line 13: ### Added is out of order, or twice: Added, Changed, Removed, Fixed, Upgrading, each once",
+            ),
+            (
+                good.replace("### Fixed", "### Security"),
+                "line 13: ### Security is no part of a section: Added, Changed, Removed, Fixed, Upgrading",
+            ),
+            (
+                good.replace("## 0.2.0-beta.1 (2026-11-02)", "## 0.2.0 (beta)"),
+                "line 17: ## 0.2.0 (beta) is no release's heading: ## X.Y.Z[-beta.N] (YYYY-MM-DD)",
+            ),
+            (
+                good.replace("## 0.2.0-alpha.1 (2026-10-20)", "## 0.2.0-beta.1 (2026-11-02)"),
+                "line 29: ## 0.2.0-beta.1 (2026-11-02) comes after the history, or twice",
+            ),
+            (
+                good.replace("## 0.2.0-alpha.1 (2026-10-20)", "## 0.2.0-rc.1 (2026-10-20)"),
+                "line 29: ## 0.2.0-rc.1 (2026-10-20) is below an older release's section: newest first",
+            ),
+            (
+                later.replace("## 0.2.0-beta.9 (2026-10-20)", "## 0.2.0 (2026-10-20)"),
+                "line 29: ## 0.2.0 (2026-10-20) is below an older release's section: newest first",
+            ),
+            (good + "\n## 0.1.0 (2026-10-01)\n", "line 37: ## 0.1.0 (2026-10-01) comes after the history, or twice"),
+            (good + "\n### Added\n", "line 37: ### Added is outside a release's section"),
+            (good.replace("- c\n", "- c\n\nWhat changed since beta.1:\n"), "line 17: a part's lines are a list: - ..."),
+            (good.replace("## Unreleased\n\n", ""), "## Unreleased is the first section"),
+        ):
+            self.assertIn(said, changelog.layout(bad))
+        # the repository's own
+        self.assertEqual(changelog.layout(changelog.read()), [])
 
     def test_main_s_notes_are_what_unreleased_holds(self) -> None:
         # the release workflow run by hand (a dry run) from main writes main's notes: after a final release main is
@@ -15606,7 +15712,7 @@ class Delivery(unittest.TestCase):
             import changelog
         finally:
             sys.path.pop(0)
-        released = "# Changelog\n\n## Unreleased\n\n### Fixed\n- one\n\n## 0.1.0 (2026-11-02)\n- older\n"
+        released = "# Changelog\n\n## Unreleased\n\n### Fixed\n- one\n\n## 0.2.0-rc.1 (2026-11-02)\n- older\n"
         for text, said in ((released, "### Fixed\n- one\n"), (released.replace("### Fixed\n- one\n", ""), "")):
             out = io.StringIO()
             with mock.patch.object(changelog, "read", return_value=text), contextlib.redirect_stdout(out):
@@ -15615,9 +15721,9 @@ class Delivery(unittest.TestCase):
         # a release's own notes are still its section, which it must have
         with (
             mock.patch.object(changelog, "read", return_value=released),
-            self.assertRaisesRegex(SystemExit, r"^changelog\.py: CHANGELOG\.md has no section for 0\.2\.0$"),
+            self.assertRaisesRegex(SystemExit, r"^changelog\.py: CHANGELOG\.md has no section for 0\.2\.0-rc\.2: "),
         ):
-            changelog.main(["0.2.0-rc.1"])
+            changelog.main(["0.2.0-rc.2"])
 
     def release_jobs(self) -> dict[str, str]:
         """release.yml's jobs by name, each its text without the comments."""

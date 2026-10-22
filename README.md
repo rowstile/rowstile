@@ -69,8 +69,8 @@ it shows a need. Until 1.0, a minor release may change the language, the `authz.
 file formats; from the beta on, each release upgrades a database from the one before it, and the changelog
 says what to do. [What a 0.x release promises](docs/reference/limits.md#what-a-0x-release-promises).
 
-rowstile was called rowfence until 0.1.0-alpha.1; another product had the name first. The
-[changelog](CHANGELOG.md) says what to change.
+rowstile was called rowfence until 0.1.0-alpha.1; another product had the name first. The changelog says
+what the alphas were: [Before the beta](CHANGELOG.md#before-the-beta).
 
 ## Installing
 

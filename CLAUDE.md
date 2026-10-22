@@ -402,8 +402,8 @@ For one suite, start a container and run it inside:
   on pull requests and `main`). Never commit to `main` directly.
 - Commits are signed off (`git commit -s`; `.github/workflows/pr.yml` checks), and their subject says what
   changed, in plain words.
-- A change users will notice gets a line under **Unreleased** in `CHANGELOG.md` (Added, Changed, Fixed, Removed,
-  Upgrading); the same check asks when `core/authzlib`, `core/cli`, `sdk`, `review-ci`, `packaging` or
+- A change users will notice gets a line under **Unreleased** in `CHANGELOG.md` (Added, Changed, Removed, Fixed,
+  Upgrading, in that order); the same check asks when `core/authzlib`, `core/cli`, `sdk`, `review-ci`, `packaging` or
   `editor` change (label `no changelog` otherwise).
 - Merging: the maintainer's pull requests rebased, outside ones squashed, a merge commit only when a commit
   must stay reachable.
