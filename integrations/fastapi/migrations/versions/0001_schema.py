@@ -23,7 +23,6 @@ def upgrade() -> None:
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'conf_app') THEN
         CREATE ROLE conf_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{password}';
       END IF; END $$""")
-    op.execute("ALTER ROLE conf_app SET jit = off")
     op.execute("GRANT USAGE ON SCHEMA app TO conf_app")
     op.execute("GRANT SELECT ON ALL TABLES IN SCHEMA app TO conf_app")
     op.execute("GRANT INSERT, UPDATE, DELETE ON app.notes, app.inbox TO conf_app")

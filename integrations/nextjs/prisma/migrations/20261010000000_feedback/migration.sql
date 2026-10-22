@@ -1,5 +1,5 @@
 -- Feedback on a project (a model with no @@map, in the app schema: its table is its name), which the app role
--- may read and write; the policy says who may (the next migration)
+-- may read and write; the policy says who may (its migration comes after this one)
 -- CreateTable
 CREATE TABLE "app"."feedback" (
     "id" SERIAL NOT NULL,

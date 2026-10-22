@@ -91,7 +91,6 @@ DO $$ BEGIN
     CREATE ROLE conf_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'app';
   END IF;
 END $$;
-ALTER ROLE conf_app SET jit = off;
 GRANT USAGE ON SCHEMA "app" TO conf_app;
 GRANT SELECT ON ALL TABLES IN SCHEMA "app" TO conf_app;
 GRANT INSERT, UPDATE, DELETE ON "app"."notes", "app"."inbox" TO conf_app;
