@@ -56,7 +56,8 @@ A build from `main` records its version with a hash of the compiler's sources (`
   its first candidate, never after it. A beta is released like a candidate (below).
 - **Release candidates before each minor and major release**: `rc.1`, then `rc.2` and on if fixes land. Each
   is installed from the registries the way users install it and checked before the next step. The final
-  release is the last candidate with only the version and the changelog's date changed.
+  release is the last candidate with only the version and the changelog changed (its own section, above the
+  candidate's).
 - **Patches whenever a fix is ready**, tagged straight from a green `main` or `release/X.Y`, without a
   candidate: an urgent fix shouldn't wait a round.
 
@@ -68,6 +69,25 @@ A build from `main` records its version with a hash of the compiler's sources (`
 - A patch comes from `main` when `main` holds only fixes since the last release. Otherwise, make
   `release/X.Y` from the tag `vX.Y.Z` (once), land the fix on `main` first, then cherry-pick it to the branch
   (`git cherry-pick -x`) in a pull request, and release from there.
+
+## The changelog
+
+[CHANGELOG.md](CHANGELOG.md) is what a release's notes are made from, and the site shows it as a page. Its
+layout, which `Delivery` in `core/tests/unit_test.py` checks (`layout()` in `packaging/changelog.py`):
+
+- `## Unreleased` first: what `main` holds since the last release. Each pull request users will notice adds its
+  line there ([CONTRIBUTING.md](CONTRIBUTING.md)).
+- Then a section for each release, newest first, headed with its exact version and its day:
+  `## 0.2.0-alpha.1 (YYYY-MM-DD)`, `## 0.2.0-beta.1 (...)`, `## 0.2.0-rc.1 (...)`, `## 0.2.0 (...)`. A
+  release's notes on GitHub are its section alone, never the version's whole history.
+- In a section, its parts in this order, each once at most: `### Added`, `### Changed`, `### Removed`,
+  `### Fixed`, `### Upgrading` (what someone upgrading from the release before must do: a policy line to rewrite,
+  a call to rename, a migration to make; only there, never inside another part's line). A short paragraph may
+  come before the first part.
+- A part's lines are a list, one line a change, with no blank line inside it. A line says what users see, in
+  plain words; what they won't notice belongs in the commit message.
+- Last, `## Before the beta`: what the alphas were, and a link to each one's GitHub release, which keeps its
+  notes.
 
 ## Making a release
 
@@ -87,11 +107,12 @@ request of its own, before the release's.
       - `python3 packaging/version.py X.Y.Z-rc.N`
       - the install lines that name the image's tag, `ghcr.io/rowstile/rowstile:X.Y.Z-rc.N`, in `README.md` and
         `docs/installing.md`: version.py leaves them, and the unit tests (`DocPages`) fail until they name it
-      - `CHANGELOG.md`: for the version's first alpha, beta or candidate, **Unreleased** becomes
-        `## X.Y.Z (alpha)`, `## X.Y.Z (beta)` or `## X.Y.Z (release candidate)`, with a new empty
-        **Unreleased** above it. For a later one, **Unreleased**'s lines move into that section, and the first
-        beta or candidate after an earlier stage turns its heading into `(beta)` or `(release candidate)`. For
-        the final release, the heading gets its date: `## X.Y.Z (YYYY-MM-DD)`
+      - `CHANGELOG.md`: **Unreleased** becomes the release's own section, `## X.Y.Z-rc.N (YYYY-MM-DD)` (the
+        day of the tag), with a new empty `## Unreleased` above it. Every release has one, an alpha, a beta or a
+        candidate as much as a final release, and its notes are that section alone
+        (`python3 packaging/changelog.py X.Y.Z-rc.N` prints them). A final release's section opens with a
+        sentence saying which candidate it is and that its alphas', betas' and candidates' sections below hold
+        what changed since the release before; under it, what changed since that candidate, if anything
       - the apps' migrations, where `rowstile migrate --check` asks for one: in `examples/filemanager`,
         `examples/messenger`, `integrations/fastapi` and `integrations/nextjs`, run
         `python3 ../../core/cli/rowstile_cli.py migrate --name rowstile_X_Y_Z`. This is the upgrade users

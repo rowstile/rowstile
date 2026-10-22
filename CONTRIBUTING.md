@@ -36,7 +36,8 @@ Fixes go to `main` first, then to the release branch.
   always, never, can't, only, refuses, keeps or removes) ends with a comment naming the check that holds it, or
   saying why none does: `Promises` in `core/tests/unit_test.py` says how.
 - **A line in [CHANGELOG.md](CHANGELOG.md)** under **Unreleased**, if users will notice: under Added, Changed,
-  Fixed, Removed or Upgrading (what someone upgrading must do). A check asks for it when a pull request changes what
+  Removed, Fixed or Upgrading (what someone upgrading must do), one line a change, in plain words. Its layout is
+  in [RELEASING.md](RELEASING.md#the-changelog). A check asks for it when a pull request changes what
   users run; a maintainer adds the label `no changelog` when they won't notice.
 - **Types and layout.** Every Python function says its arguments' and result's types, the code passes ty and
   Ruff, and Ruff lays it out (`uvx ruff@0.15.12 format` before you commit; 120 columns). A pre-commit hook
