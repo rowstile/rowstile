@@ -7,7 +7,7 @@ runners: `prepare`, then `run` on many runners side by side (one shard each), th
     python3 core/mutants/sweep.py list [--since C]                       # every mutant, by operator and file
     python3 core/mutants/sweep.py calls DIR... --source TEXT --out F     # the call data, from CI's coverage artifacts
     python3 core/mutants/sweep.py prepare --out P [--since C | --only ID,... | --limit N] [--shards N]
-                                          [--carried DIR] [--calls F]     # the cheap phase, and the shards' queues
+                                          [--carried DIR] [--calls F] [--stats F]   # the cheap phase, the queues
     python3 core/mutants/sweep.py run --prepared P --shard 1/8 --out R   # one shard: a Postgres container of its own
     python3 core/mutants/sweep.py collect --prepared P --shards R... --out C   # the results, the report, survivors
 
@@ -20,7 +20,12 @@ code. A shard stops taking mutants after --budget minutes; those left are `not r
 Results: one JSON object a mutant (results.jsonl): its id, where it is, its kind (plan.py), what caught it (a
 suite, `compiler fails` or `compiler hangs`), `MISSED`, or why it didn't run (`same`, `unreached`, `not run`,
 `error`), its seconds and the suites' order. `--carried` takes a previous run's: the results of mutants whose line
-hasn't changed carry over, but for those MISSED and not listed as equivalent, which run again."""
+hasn't changed carry over, but for those MISSED and not listed as equivalent, which run again.
+
+The suites' order learns each suite's catches and seconds (stats.json, plan.Stats). No copy is kept in the
+repository, which would go stale: `--stats` takes the newest run's (the workflow finds it, whatever results it
+carries), else `--carried`'s; without either every suite counts the same until the run learns. collect names the
+run in the stats it keeps, and each report says whose stats ordered it."""
 
 from __future__ import annotations
 
@@ -42,7 +47,6 @@ import plan
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 ROOT = os.path.dirname(os.path.dirname(HERE))
-SEED_STATS = os.path.join(HERE, "stats.json")
 SURVIVORS = os.path.join(HERE, "survivors.txt")
 PER_SHARD = 30  # mutants a shard is given when no limit is: about what one runner clears in its budget
 BY_COMPILER = ("compiler fails", "compiler hangs")
@@ -164,6 +168,21 @@ def carried_over(path: str | None, ids: set[str], survivors: dict[str, tuple[str
     return out
 
 
+def stats_file(stats: str | None, carried: str | None) -> str | None:
+    """The stats the order starts from: --stats, else the carried run's, else none."""
+    if stats:
+        return stats
+    if carried and os.path.exists(os.path.join(carried, "stats.json")):
+        return os.path.join(carried, "stats.json")
+    return None
+
+
+def learned_by(commit: str) -> str:
+    """The run that learned the stats collect keeps: GitHub's run id, the commit and the day."""
+    run = os.environ.get("GITHUB_RUN_ID")
+    return f"{'run ' + run if run else 'a run by hand'} at {commit}, {time.strftime('%Y-%m-%d', time.gmtime())}"
+
+
 def prepare(args: argparse.Namespace) -> None:
     core = os.path.join(args.root, "core")
     os.makedirs(args.out, exist_ok=True)
@@ -194,9 +213,9 @@ def prepare(args: argparse.Namespace) -> None:
     print(f"measured the outputs unmutated in {time.time() - t0:.0f} s; calls: {calls.source}", flush=True)
     rows = plan.cheap(base, calls, work, candidates, args.procs, limit) if candidates else []
     shutil.rmtree(work, ignore_errors=True)
-    stats = plan.Stats.load(os.path.join(args.carried, "stats.json") if args.carried and os.path.exists(
-        os.path.join(args.carried, "stats.json")) else SEED_STATS)  # fmt: skip
+    stats = plan.Stats.load(stats_file(args.stats, args.carried))
     stats.save(os.path.join(args.out, "stats.json"))
+    print(f"the suites' order: the stats of {stats.source}", flush=True)
     decided = list(carried)
     queued: list[Record] = []
     for row in rows:
@@ -216,7 +235,8 @@ def prepare(args: argparse.Namespace) -> None:
     for q in queued:
         q["shard"] = where[q["id"]]
     queued.sort(key=lambda q: (q["shard"], -q["predicted"], q["id"]))
-    queue = {"commit": head(args.root), "calls": calls.source, "shards": shards, "mutants": queued}
+    queue = {"commit": head(args.root), "calls": calls.source, "stats": stats.source, "shards": shards,
+             "mutants": queued}  # fmt: skip
     with open(os.path.join(args.out, "queue.json"), "w", encoding="utf-8") as fh:
         json.dump(queue, fh, indent=1)
     write_jsonl(os.path.join(args.out, "decided.jsonl"), decided)
@@ -453,6 +473,7 @@ def collect(args: argparse.Namespace) -> int:
         fh.writelines(line_of(r) + "\n" for r in rows)
     stats = plan.Stats.load(os.path.join(args.prepared, "stats.json"))
     merge_stats(stats, deltas)
+    stats.source = learned_by(queue["commit"])
     stats.save(os.path.join(args.out, "stats.json"))
     survivors = read_survivors(args.survivors)
     classified = len(queue["mutants"]) + sum(1 for r in rows if not r.get("carried") and r["id"] not in ran)
@@ -480,7 +501,8 @@ def report(queue: dict[str, Any], rows: list[Record], ran: dict[str, Record], su
     out = [f"## Mutants at {queue['commit']}", ""]
     out.append(f"This run: {len(this)} mutants run, {sum(r['result'] == 'not run' for r in ran.values())} left for "
                f"the next run, {sum(r['result'] == 'error' for r in rows)} errors; results carried over from before: "
-               f"{sum(bool(r.get('carried')) for r in rows)}. Calls from {queue['calls']}.")  # fmt: skip
+               f"{sum(bool(r.get('carried')) for r in rows)}. Calls from {queue['calls']}; the suites' order from "
+               f"the stats of {queue['stats']}.")  # fmt: skip
     out.append("")
     if judged:
         out.append(f"**Score: {len(caught) + len(compiler)} of {judged} caught "
@@ -548,6 +570,7 @@ def main() -> int:
     p.add_argument("--shards", type=int, default=8)
     p.add_argument("--carried", help="a previous run's results (results.jsonl, stats.json)")
     p.add_argument("--calls", help="the call data (sweep.py calls); without it, every suite in the stats' order")
+    p.add_argument("--stats", help="the stats the order starts from (a run's stats.json); default: --carried's")
     p.add_argument("--survivors", default=SURVIVORS)
     p.add_argument("--procs", type=int, default=os.cpu_count() or 2)
     p.add_argument("--seed", type=int, default=1, help="the order mutants are taken in (mutants.spread)")
@@ -568,7 +591,7 @@ def main() -> int:
     p.add_argument("--summary", help="also append the report here (GITHUB_STEP_SUMMARY)")
     p.add_argument("--jobs", type=int, default=8, help="jobs side by side, for the estimate")
     args = ap.parse_args()
-    for k in ("root", "out", "prepared", "carried", "calls", "survivors"):  # the compile helper runs in core/
+    for k in ("root", "out", "prepared", "carried", "calls", "stats", "survivors"):  # the compile helper runs in core/
         if getattr(args, k, None):
             setattr(args, k, os.path.abspath(getattr(args, k)))
     if args.mode == "list":

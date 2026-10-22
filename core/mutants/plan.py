@@ -58,12 +58,14 @@ MSCEN = (
     f"&& {PG} psql -X -q -v ON_ERROR_STOP=1 -d authz_m -f /tmp/m_multi.sql >/dev/null "
     "&& psql -X -q -v ON_ERROR_STOP=1 -d authz_m -f tests/multi_scenario.sql"
 )
-# unit_test.py without Golden (it fails on any change to the generated SQL: a change detector, not a check of what
-# the SQL means) and the two classes that ask the repository's git
+# unit_test.py without the change detectors: Golden (it fails on any change to the generated SQL, not a check of
+# what the SQL means) and Survivors (it fails when a listed survivor's line changes, as each mutant there does).
+# Nor Encodings and Editors, which ask the repository's git. The other checks that ask it (in Layout and Executable)
+# skip themselves: git refuses a checkout another user owns, and the container runs them as root.
 UNIT = (
     "python3 -c \"import sys, unittest; sys.argv = ['unit_test']; sys.path.insert(0, 'tests'); import unit_test as u; "
     "c = [v for k, v in vars(u).items() if isinstance(v, type) and issubclass(v, unittest.TestCase) "
-    "and k not in ('Golden', 'Encodings', 'Editors')]; "
+    "and k not in ('Golden', 'Survivors', 'Encodings', 'Editors')]; "
     "s = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(x) for x in c); "
     'sys.exit(not unittest.TextTestRunner(verbosity=0).run(s).wasSuccessful())"'
 )
@@ -207,6 +209,7 @@ NOT_SWEPT = ("upgrading",)
 DIFFTEST_STEP = re.compile(r"random changes, compared with the reference evaluator \((\w+),")
 PRIOR = 0.5  # catches a suite is credited with before any: those with none go cheapest first
 DEFAULT_SECONDS = 60.0  # a suite the stats don't have yet
+NO_STATS = f"no run (every suite counted at {DEFAULT_SECONDS:.0f} s with no catch, until this one learns)"
 
 
 def suites_of_step(step: str) -> list[str]:
@@ -312,22 +315,28 @@ def refresh_calls(dirs: list[str], source: str, dest: str) -> list[str]:
 
 @dataclass
 class Stats:
-    """Each suite's catches and its seconds (a running mean of its green runs): the order learns from both."""
+    """Each suite's catches and its seconds (a running mean of its green runs): the order learns from both. No file
+    in the repository holds them: each run starts from the newest run's (mutants.yml), and source names the run
+    that learned them last."""
 
     suites: dict[str, dict[str, float]]
+    source: str
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     @staticmethod
-    def load(path: str) -> Stats:
-        with open(path, encoding="utf-8") as fh:
-            d = json.load(fh)
+    def load(path: str | None) -> Stats:
+        """A run's stats.json; without one, every suite at DEFAULT_SECONDS with no catch."""
+        d: dict[str, Any] = {"suites": {}, "source": NO_STATS}
+        if path:
+            with open(path, encoding="utf-8") as fh:
+                d = json.load(fh)
         for s, _ in SUITES:
             d["suites"].setdefault(s, {"catches": 0, "seconds": DEFAULT_SECONDS, "runs": 0})
-        return Stats(d["suites"])
+        return Stats(d["suites"], d.get("source") or f"{path}, which names no run")
 
     def save(self, path: str) -> None:
         with self.lock, open(path + ".tmp", "w", encoding="utf-8") as fh:
-            json.dump({"suites": self.suites}, fh, indent=1, sort_keys=True)
+            json.dump({"source": self.source, "suites": self.suites}, fh, indent=1, sort_keys=True)
             fh.write("\n")
         os.replace(path + ".tmp", path)
 

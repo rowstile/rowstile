@@ -208,7 +208,7 @@ SQL_WORD = re.compile(
     r"WHEN|FROM|JOIN|BEGIN|END|IF|ON|SET|GRANT|REVOKE|ALTER|DROP|USING|NULL|LOOP|DEFINER|VALUES)\b|coalesce\("
 )
 MESSAGE_CALLS = {"fail", "PolicyError", "warn", "print", "note", "ValueError", "RuntimeError", "SystemExit",
-                 "AssertionError", "TypeError", "KeyError", "exit", "error", "say", "Problem"}  # fmt: skip
+                 "AssertionError", "TypeError", "KeyError", "error", "say"}  # fmt: skip
 
 
 def excluded_ranges(src: Source) -> list[tuple[int, int]]:
@@ -262,7 +262,7 @@ SETTING = re.compile(
 COALESCE_BOOL = re.compile(r",\s*(true|false)\)")
 WHERE_END = re.compile(
     r"\b(GROUP BY|ORDER BY|LIMIT|RETURNING|UNION|THEN|LOOP|ON CONFLICT|FOR UPDATE|FOR SHARE|INTO|EXCEPT|INTERSECT|"
-    r"HAVING|WINDOW|OFFSET|LOOP|DO)\b"
+    r"HAVING|WINDOW|OFFSET|DO)\b"
 )
 CONTINUED = re.compile(r"(=|<|>|\(|,|\|\||\b(AND|OR|NOT|IS|IN|LIKE|ILIKE|ANY|ALL|BETWEEN|AS))\s*$")
 
@@ -470,7 +470,7 @@ def unique_context(src: Source, a: int, b: int) -> tuple[int, int]:
     n = len(starts) - 1
     for k in range(40):
         ca = starts[max(la - 1 - (k + 1) // 2, 0)]
-        cb = starts[min(lb + k // 2, n)] if min(lb + k // 2, n) < len(starts) else len(text)
+        cb = starts[min(lb + k // 2, n)]
         cb = min(cb, len(text))
         if text.count(text[ca:cb]) == 1:
             return ca, cb

@@ -7,7 +7,9 @@ files, what the rowstile command runs against a database, its file reading, and 
                                           # tests/golden/*.sql, then read the diff before committing
 """
 
+import argparse
 import collections
+import contextlib
 import dataclasses
 import datetime
 import fnmatch
@@ -15007,11 +15009,79 @@ class Mutants(unittest.TestCase):
 
         rows = [row("ga", "scenario"), row("gb", "MISSED"), row("gc", "MISSED"), row("gd", "MISSED")]
         survivors = {"gb": ("lead", "a check"), "gd": ("equivalent", "why")}
-        queue = {"commit": "abc1234", "calls": "none", "mutants": [{"id": r["id"]} for r in rows]}
+        queue = {
+            "commit": "abc1234",
+            "calls": "none",
+            "stats": "run 41 at 0123abc, 2026-10-17",
+            "mutants": [{"id": r["id"]} for r in rows],
+        }
         text, new = sweep.report(queue, rows, {str(r["id"]): r for r in rows}, survivors, [], 100, 4, 8)
         self.assertEqual(new, ["gc"])
         self.assertIn("**Score: 1 of 3 caught", text)
         self.assertIn("| `gc` | **new** |", text)
+        # and whose stats ordered the suites
+        self.assertIn("Calls from none; the suites' order from the stats of run 41 at 0123abc, 2026-10-17.", text)
+
+    def test_the_order_learns_from_the_newest_run(self) -> None:
+        # no copy of the stats is kept in the repository: one was, and a week on it still ordered each run that
+        # carried none. Without a run's, every suite counts the same
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "mutants", "stats.json")))
+        stats = sweep_plan.Stats.load(None)
+        self.assertEqual(stats.source, "no run (every suite counted at 60 s with no catch, until this one learns)")
+        self.assertEqual(sorted(stats.suites), sorted(s for s, _ in sweep_plan.SUITES))
+        self.assertEqual({(v["catches"], v["seconds"]) for v in stats.suites.values()}, {(0, 60.0)})
+        # the stats collect keeps name the run that learned them; prepare takes --stats, else the carried run's
+        stats.caught("scenario")
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(sweep.stats_file(None, d))
+            self.assertIsNone(sweep.stats_file(None, None))
+            path = os.path.join(d, "stats.json")
+            with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "42"}):
+                stats.source = sweep.learned_by("abc1234")
+            stats.save(path)
+            self.assertEqual(sweep.stats_file(None, d), path)
+            self.assertEqual(sweep.stats_file("newest/stats.json", d), "newest/stats.json")
+            back = sweep_plan.Stats.load(path)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"suites": {}}, fh)
+            unnamed = sweep_plan.Stats.load(path)
+        self.assertRegex(back.source, r"^run 42 at abc1234, 20\d\d-\d\d-\d\d$")
+        self.assertEqual((back.suites["scenario"]["catches"], back.suites["unit"]["catches"]), (1, 0))
+        self.assertEqual(unnamed.source, f"{path}, which names no run")
+        with mock.patch.dict(os.environ):
+            os.environ.pop("GITHUB_RUN_ID", None)
+            self.assertRegex(sweep.learned_by("abc1234"), r"^a run by hand at abc1234, 20\d\d-\d\d-\d\d$")
+
+    def test_collect_keeps_the_stats_it_learned_with_the_run(self) -> None:
+        made = self.made(self.SAMPLE)
+        with tempfile.TemporaryDirectory() as d:
+            root, prepared, shard, out = (os.path.join(d, x) for x in ("root", "prepared", "shard", "out"))
+            os.makedirs(os.path.join(root, "core", "authzlib"))
+            with open(os.path.join(root, "core", "authzlib", "view.py"), "w", encoding="utf-8") as fh:
+                fh.write(self.SAMPLE)
+            for x in (prepared, shard):
+                os.makedirs(x)
+            stats = sweep_plan.Stats.load(None)
+            stats.source = "run 41 at 0123abc, 2026-10-17"
+            stats.save(os.path.join(prepared, "stats.json"))
+            queue = {"commit": "abc1234", "calls": "none", "stats": stats.source, "shards": 1,
+                     "mutants": [{"id": made[0].id, "kind": "sql"}]}  # fmt: skip
+            with open(os.path.join(prepared, "queue.json"), "w", encoding="utf-8") as fh:
+                json.dump(queue, fh)
+            sweep.write_jsonl(os.path.join(prepared, "decided.jsonl"), [])
+            sweep.write_jsonl(os.path.join(shard, "results-1.jsonl"), [sweep.record(made[0], "sql", "scenario")])
+            with open(os.path.join(shard, "stats-1.json"), "w", encoding="utf-8") as fh:
+                json.dump({"catches": {"scenario": 1}, "green": {"unit": [30.0]}, "broken": []}, fh)
+            args = argparse.Namespace(prepared=prepared, shards=[shard], out=out, root=root, survivors=sweep.SURVIVORS,
+                                      summary=None, jobs=8)  # fmt: skip
+            with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "42"}), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(sweep.collect(args), 0)
+            kept = sweep_plan.Stats.load(os.path.join(out, "stats.json"))
+            with open(os.path.join(out, "report.md"), encoding="utf-8") as fh:
+                report = fh.read()
+        self.assertRegex(kept.source, r"^run 42 at abc1234, 20\d\d-\d\d-\d\d$")
+        self.assertEqual((kept.suites["scenario"]["catches"], kept.suites["unit"]["seconds"]), (1, 30.0))
+        self.assertIn("the suites' order from the stats of run 41 at 0123abc, 2026-10-17.", report)
 
     def test_lines_run_on_import_are_not_judged_by_the_outputs(self) -> None:
         # a module's constant runs on any import: an output unchanged says nothing of the command that reads it
@@ -15047,8 +15117,10 @@ class Mutants(unittest.TestCase):
         for step in steps:
             step = re.sub(r"\$(?:1|gen)\b", "docs", step)
             self.assertTrue(sweep_plan.suites_of_step(step) or step.startswith(sweep_plan.NOT_SWEPT), step)
-        with open(sweep.SEED_STATS, encoding="utf-8") as fh:
-            self.assertEqual(sorted(json.load(fh)["suites"]), sorted(names))
+        # its unit suite leaves out the change detectors: they would catch a mutant for what it changes, not for
+        # what it means
+        for detector in ("Golden", "Survivors"):
+            self.assertIn(f"'{detector}'", sweep_plan.UNIT)
 
     def test_call_data_names_only_suites_of_the_sweep(self) -> None:
         # a step the data's run had and no suite stands for: it chose a name the stats don't have, and the
@@ -15087,6 +15159,38 @@ class Mutants(unittest.TestCase):
             "${{ (inputs.only || inputs.since || inputs.limit) && (inputs.resume || 'latest') != 'latest'"
             " && 'mutants-results-partial' || 'mutants-results' }}",
         )
+        # the suites' order starts from the newest run's stats, whatever resume says: a run that starts its results
+        # afresh still knows which suites catch most per second
+        step = search(
+            r"^      # the stats the suites' order starts from.*?(?=^      - id: prepare)", text, re.S | re.M
+        ).group(0)
+        self.assertNotIn("RESUME", step)
+        self.assertIn('for branch in "$BRANCH" main; do', step)
+        self.assertIn("for name in mutants-results mutants-results-partial; do", step)
+        self.assertIn("args+=(--stats .mutants/stats/stats.json)", text)
+
+
+class Survivors(unittest.TestCase):
+    """core/mutants/survivors.txt names mutants authzlib makes now, in the file and function it says. A survivor's
+    id changes with its line: the old one then names nothing, and the next sweep fails on the new one. The sweep's
+    unit suite leaves this class out (plan.UNIT): there, every mutant of a listed line would fail it."""
+
+    def test_each_listed_survivor_is_made_now(self) -> None:
+        with open(sweep.SURVIVORS, encoding="utf-8") as fh:
+            lines = [sweep.SURVIVOR.fullmatch(line.rstrip("\n")) for line in fh]
+        listed = {m.group(1): (m.group(3), m.group(4)) for m in lines if m}
+        self.assertEqual(sorted(listed), sorted(sweep.read_survivors(sweep.SURVIVORS)))
+        made: dict[str, tuple[str, str]] = {}
+        for fname in sorted({f for f, _ in listed.values()}):
+            with open(os.path.join(ROOT, "authzlib", fname), encoding="utf-8") as fh:
+                made.update((m.id, (m.file, m.func)) for m in mutants.of_file(fname, fh.read()))
+        self.assertEqual(
+            sorted(i for i in listed if i not in made),
+            [],
+            "listed in core/mutants/survivors.txt, no longer made (their line changed): take them out, and judge "
+            "what they became when the sweep lists it (sweep.py list --since <the change> --ids)",
+        )
+        self.assertEqual({i: (where, made[i]) for i, where in listed.items() if made.get(i, where) != where}, {})
 
 
 class Editors(unittest.TestCase):
