@@ -356,14 +356,33 @@ tests/concurrency.sh
 record $? "concurrency"
 }
 unit policy 10 concurrency
-# every order of two tree writes in READ COMMITTED (the full run has every level, in the races part below)
+# every order of two tree writes in READ COMMITTED, each world of tests/interleave.py a unit (the full run has every
+# level, in the races part below)
 if [ "$MODE" != full ]; then
-interleavings_rc() {
-step "every order of two tree writes, in READ COMMITTED"
-python3 tests/interleave.py --levels "read committed" --db authz_interleave_rc | quiet_ok
-record "${PIPESTATUS[0]}" "interleavings (read committed)"
+interleavings_docs() {
+step "every order of two tree writes, in READ COMMITTED (docs)"
+python3 tests/interleave.py --levels "read committed" --worlds docs --db authz_interleave_rc | quiet_ok
+record "${PIPESTATUS[0]}" "interleavings (read committed, docs)"
 }
-unit policy 45 interleavings_rc
+unit policy 45 interleavings_docs
+interleavings_cross() {
+step "every order of two tree writes, in READ COMMITTED (cross)"
+python3 tests/interleave.py --levels "read committed" --worlds cross --db authz_interleave_rc | quiet_ok
+record "${PIPESTATUS[0]}" "interleavings (read committed, cross)"
+}
+unit policy 45 interleavings_cross
+interleavings_parts() {
+step "every order of two tree writes, in READ COMMITTED (parts)"
+python3 tests/interleave.py --levels "read committed" --worlds parts --db authz_interleave_rc | quiet_ok
+record "${PIPESTATUS[0]}" "interleavings (read committed, parts)"
+}
+unit policy 80 interleavings_parts
+interleavings_boxes() {
+step "every order of two tree writes, in READ COMMITTED (boxes)"
+python3 tests/interleave.py --levels "read committed" --worlds boxes --db authz_interleave_rc | quiet_ok
+record "${PIPESTATUS[0]}" "interleavings (read committed, boxes)"
+}
+unit policy 10 interleavings_boxes
 fi
 
 moves() {
@@ -504,7 +523,7 @@ fi
 
 # Tree writes under concurrency: every order of two of them at each isolation level, and a concurrent stress run;
 # the inheritance tables must stay exact throughout.
-# --proofs runs a short version on its own (--quick leaves it out, so each stays under 10 minutes).
+# --proofs runs them on their own, with a short stress run (--quick leaves them out, to stay under 10 minutes).
 if { [ "$MODE" = full ] || [ "$MODE" = proofs ] || [ "$MODE" = soak ]; } && part races; then
   STRESS=100; [ "$MODE" = proofs ] && STRESS=15; [ "$MODE" = soak ] && STRESS=300
   step "every order of two tree writes, at each isolation level"

@@ -17,8 +17,11 @@ docs 37
 governance 225
 hand answers 360
 identity 86
-interleavings 324
-interleavings (read committed) 36
+interleavings 792
+interleavings (read committed, boxes) 10
+interleavings (read committed, cross) 21
+interleavings (read committed, docs) 36
+interleavings (read committed, parts) 21
 invariance of the fixed policies 27
 keep unchanged trees 9
 language server 122
