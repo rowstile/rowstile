@@ -1,6 +1,6 @@
-# What ci.yml leaves out of each push, every night on main: every suite on PostgreSQL 17 and 18 (ci.yml runs
-# them all on 16, and only what depends on the version on 17 and 18), with upgrades from every release from the beta
-# on (each push: from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
+# What ci.yml leaves out of each push, every night on main: the full run on 16 (ci.yml runs --quick there), every
+# suite on PostgreSQL 17 and 18 (ci.yml runs only what depends on the version there), with upgrades from every
+# release from the beta on (each push: from the release before), the race and stress tests on each, the random checks long with a new seed (soak), the
 # SDKs' conformance suites on 17 and 18, rowstile's migrations run by goose, dbmate and Flyway (tools), the grammar
 # and the parser on more policies (grammar), each statement of rowstile's PL/pgSQL the suites run (statements), the
 # parser and the compiler under a coverage-guided fuzzer (fuzz), whether a comparison page's reading of another
@@ -32,11 +32,14 @@ concurrency:
   cancel-in-progress: false
 # what a job needs beyond reading the repository, it says itself
 permissions: {contents: read}
+# Each job's timeout-minutes: about three times its longest run, ten at least; where it runs core/ci.sh, ten more
+# than ci.sh's own limit, which stops the suites first and says what was still running
 jobs:
   # in the parts run_tests.sh names, side by side, as ci.yml runs them
   suites:
     if: ${{ !inputs.only || inputs.only == 'suites' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -56,6 +59,7 @@ jobs:
   proofs:
     if: ${{ !inputs.only || inputs.only == 'proofs' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 130
     strategy:
       fail-fast: false
       matrix:
@@ -73,6 +77,7 @@ jobs:
   soak-plan:
     if: ${{ !inputs.only || inputs.only == 'soak' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       soaks: ${{ steps.plan.outputs.soaks }}
     steps:
@@ -99,6 +104,7 @@ jobs:
     needs: soak-plan
     name: ${{ matrix.soak.name }} (${{ matrix.soak.pg }}, ${{ matrix.part }})
     runs-on: ubuntu-latest
+    timeout-minutes: 220
     strategy:
       fail-fast: false
       max-parallel: 8   # (several soaks asked for at once: pull requests keep runners)
@@ -128,6 +134,7 @@ jobs:
     if: ${{ inputs.only == 'small' }}
     name: small policies (slice ${{ matrix.slice }} of 7)
     runs-on: ubuntu-latest
+    timeout-minutes: 220
     strategy:
       fail-fast: false
       max-parallel: 7
@@ -144,15 +151,17 @@ jobs:
         with:
           name: small-${{ matrix.slice }}
           path: /tmp/rowstile-ci-*.log
-  # The full run (run_tests.sh without --quick: the random checks' longer runs among it) on 16, asked for by hand, in
-  # its parts side by side (as after a change to what the full run checks: `gh workflow run nightly.yml -f only=full`)
+  # The full run (run_tests.sh without --quick: the random policies, the random checks' longer runs, every isolation
+  # level's interleavings, the stress test at 100 s a level, the cuts after every statement) on 16, in its parts side
+  # by side. Asked for alone too, as after a change to what it checks: `gh workflow run nightly.yml -f only=full`
   full:
-    if: ${{ inputs.only == 'full' }}
+    if: ${{ !inputs.only || inputs.only == 'full' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 130
     strategy:
       fail-fast: false
       matrix:
-        part: [unit, policy, command, random]
+        part: [unit, policy, command, random, races]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash core/ci.sh --full 16
@@ -170,6 +179,7 @@ jobs:
   conformance:
     if: ${{ !inputs.only || inputs.only == 'conformance' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -198,6 +208,7 @@ jobs:
   tools:
     if: ${{ !inputs.only || inputs.only == 'tools' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash core/tests/migration_tools.sh
@@ -206,6 +217,7 @@ jobs:
   grammar:
     if: ${{ !inputs.only || inputs.only == 'grammar' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -220,6 +232,7 @@ jobs:
   fuzz:
     if: ${{ !inputs.only || inputs.only == 'fuzz' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: |
@@ -236,6 +249,7 @@ jobs:
   readings:
     if: ${{ !inputs.only || inputs.only == 'readings' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: python3 docs/compare_readings.py --github
@@ -245,6 +259,7 @@ jobs:
   statements:
     if: ${{ !inputs.only || inputs.only == 'statements' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -276,6 +291,7 @@ jobs:
     needs: statements
     if: ${{ !cancelled() && (!inputs.only || inputs.only == 'statements') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
@@ -298,6 +314,7 @@ jobs:
   bench:
     if: ${{ !inputs.only || inputs.only == 'bench' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0

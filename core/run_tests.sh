@@ -4,7 +4,9 @@
 #   ./run_tests.sh --quick                                         # meant to stay under 10 minutes
 #   ./run_tests.sh --proofs                                        # every order of two tree writes, and the stress test (short)
 #   ./run_tests.sh --short                                         # what depends on the Postgres version: --quick
-#                         without the checks that need no database, one random-change run, no migrate vs apply
+#                         without the unit part (unit_test.py, the cuts half way of interrupt.py, the fixed policies'
+#                         invariance), the parser fuzzer, the policy errors, the language server, the random policies
+#                         written another way (invariance.py), migrate vs apply, and difftest's policies but docs
 #   SOAK_SEED=N ./run_tests.sh --soak                              # the random checks (random policies too), long, with a new seed
 #                         (about 110 minutes; a random seed if SOAK_SEED is empty; the log says which; SMALL_SLICE=K:
 #                         the seventh of the small policies it checks, 0 to 6, the day's otherwise)
@@ -27,14 +29,15 @@ if [ "$(psql -X -At -d postgres -c "SELECT rolsuper FROM pg_roles WHERE rolname 
 fi
 MODE=full; case "${1:-}" in --quick) MODE=quick;; --proofs) MODE=proofs;; --short) MODE=short;; --soak) MODE=soak;; esac
 STEPS=100; [ "$MODE" = quick ] || [ "$MODE" = short ] && STEPS=15
-# --short leaves out what reads no database (the same on every version) and the longest cross-checks
+# --short leaves out what is the same on every version and the longest cross-checks (the header lists them)
 every_version() { [ "$MODE" != short ]; }
 DB=authz_tests
 failed=()
 # The parts of a run: CI runs them side by side, each on a runner and in a container of its own, and the run
 # is as long as its longest part. ROWSTILE_PART names the one to run (none: the whole run, one part after the
 # other). The workflows list them, and tests/unit_test.py checks they leave none out.
-# (unit: the checks without a database, alone, so that the longest part doesn't wait for them; --short has none)
+# (unit: the checks without a database, and the cuts half way, alone, so that the longest part doesn't wait for
+# them; --short has no unit part, the full run a races part too)
 PARTS_SUITES="unit policy command random"                 # --quick, --short and the full run
 PARTS_SOAK="changes-1 changes-2 policies around small races"    # --soak
 case "$MODE" in

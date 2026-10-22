@@ -1,6 +1,6 @@
 # Every suite on PostgreSQL 16 and what depends on the version on 17 and 18, the way core/ci.sh runs them locally.
-# Each job runs on GitHub's ubuntu-latest, a machine of its own. The proofs, 17's and 18's other suites and the
-# benchmark run nightly (nightly.yml).
+# Each job runs on GitHub's ubuntu-latest, a machine of its own. The full run on 16, the proofs, 17's and 18's other
+# suites and the benchmark run nightly (nightly.yml).
 name: ci
 on:
   push:
@@ -13,9 +13,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 # what a job needs beyond reading the repository, it says itself
 permissions: {contents: read}
+# Each job's timeout-minutes: about three times its longest run, ten at least, so that a step that hangs fails its
+# job soon, not after GitHub's six hours (the suites' own: suites.yml)
 jobs:
   unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {fetch-depth: 0}     # the Zed extension's grammar commit is checked against this one
@@ -33,71 +36,65 @@ jobs:
           for app in filemanager messenger; do
             uv sync --project examples/$app/backend --frozen && uvx ty@0.0.56 check --project examples/$app || exit 1
           done
-  # The suites, in the parts run_tests.sh names: each on a runner and in a container of its own, side by
-  # side, so the wait is the longest part's and not their sum. They don't wait for the unit job: their own unit
-  # part runs the same checks, measured (--short has no unit part: 17 and 18 run it nightly)
-  suites:
-    name: suites (${{ matrix.pg }}, ${{ matrix.part }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        pg: ["16", "17", "18"]
-        part: [unit, policy, command, random]
-        include:
-          - {pg: "16", mode: ""}           # every suite (run_tests.sh --quick)
-          - {pg: "17", mode: "--short"}    # what depends on the version; the rest runs nightly
-          - {pg: "18", mode: "--short"}
-        exclude:
-          - {pg: "17", part: unit}
-          - {pg: "18", part: unit}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      # --coverage, on 16: each Python process also measures what it runs of authzlib and cli (the coverage job reads
-      # it). 17 and 18 run less and added nothing (2026-10-10: the same lines, branches and functions as 16 alone)
-      - run: bash core/ci.sh ${{ matrix.pg == '16' && '--coverage' || '' }} ${{ matrix.mode }} ${{ matrix.pg }}
-        env: {ROWSTILE_PART: "${{ matrix.part }}"}
-      - if: failure() || cancelled()   # cancelled by hand too: what had run, and the hung step
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
-        with:
-          name: logs-pg${{ matrix.pg }}-${{ matrix.part }}
-          path: /tmp/rowstile-ci-${{ matrix.pg }}.log
-      # what it measured: the lines, combined in one file (ci.sh's report made it, its name starts with a dot), and
-      # the calls of rowstile's functions
-      - if: success() && matrix.pg == '16'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
-        with:
-          name: coverage-pg${{ matrix.pg }}-${{ matrix.part }}
-          path: |
-            .ci/coverage-${{ matrix.pg }}/.coverage
-            .ci/coverage-${{ matrix.pg }}/functions.tsv
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
-  # The checks `main` requires, under the names it knows: one per version, green when every part above was.
-  # It runs whatever became of them (a job that is skipped counts as passed), and fails unless they passed
-  postgres:
-    needs: suites
+  # The suites, in the parts run_tests.sh names, a version at a time (suites.yml): each part on a runner and in a
+  # container of its own, side by side, so the wait is the longest part's and not their sum. They don't wait for the
+  # unit job: their own unit part runs the same checks, measured (--short has no unit part: 17 and 18 run it nightly)
+  # 16: every suite (run_tests.sh --quick); 17 and 18: what depends on the version (--short)
+  suites-16:
+    name: suites (16)
+    uses: ./.github/workflows/suites.yml
+    with: {pg: "16", mode: "", parts: '["unit", "policy", "command", "random"]'}
+  suites-17:
+    name: suites (17)
+    uses: ./.github/workflows/suites.yml
+    with: {pg: "17", mode: "--short", parts: '["policy", "command", "random"]'}
+  suites-18:
+    name: suites (18)
+    uses: ./.github/workflows/suites.yml
+    with: {pg: "18", mode: "--short", parts: '["policy", "command", "random"]'}
+  # The checks `main` requires, under the names it knows: one per version, waiting for that version's parts alone,
+  # green when every one of them was. Each runs whatever became of them (a job that is skipped counts as passed),
+  # and fails unless they passed
+  postgres-16:
+    name: postgres (16)
+    needs: suites-16
     if: always()
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {pg: "16", mode: ""}
-          - {pg: "17", mode: "--short"}
-          - {pg: "18", mode: "--short"}
+    timeout-minutes: 10
     steps:
       - run: |
-          echo "the suites, all versions and parts together: $SUITES"
+          echo "the suites on 16, every part: $SUITES"
           test "$SUITES" = success
-        env: {SUITES: "${{ needs.suites.result }}"}
+        env: {SUITES: "${{ needs.suites-16.result }}"}
+  postgres-17:
+    name: postgres (17, --short)
+    needs: suites-17
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: |
+          echo "the suites on 17, every part: $SUITES"
+          test "$SUITES" = success
+        env: {SUITES: "${{ needs.suites-17.result }}"}
+  postgres-18:
+    name: postgres (18, --short)
+    needs: suites-18
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: |
+          echo "the suites on 18, every part: $SUITES"
+          test "$SUITES" = success
+        env: {SUITES: "${{ needs.suites-18.result }}"}
   # What the suites run of authzlib and cli, every part's measure together (core/tests/coverage_report.py:
   # the table here, what nothing runs line by line in the artifact). On a pull request, a line it adds or changes
   # there that nothing runs fails the job
   coverage:
-    needs: suites
+    needs: suites-16   # (16's parts measure: suites.yml)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {fetch-depth: 0}     # the changes are read against main
@@ -121,6 +118,7 @@ jobs:
     if: github.event_name == 'pull_request'
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions: {contents: read, pull-requests: write}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
@@ -132,6 +130,7 @@ jobs:
   conformance-python:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
@@ -150,6 +149,7 @@ jobs:
   conformance-typescript:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -174,6 +174,7 @@ jobs:
   playground:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -188,6 +189,7 @@ jobs:
   studio-page:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -201,6 +203,7 @@ jobs:
   site:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -214,6 +217,7 @@ jobs:
   javascript:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -237,6 +241,7 @@ jobs:
   editor:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash editor/test.sh
@@ -246,6 +251,7 @@ jobs:
   packaging:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     env:
       ROWSTILE_IMAGE_PLATFORMS: linux/amd64,linux/arm64
     steps:
@@ -259,6 +265,7 @@ jobs:
   filemanager:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
@@ -272,6 +279,7 @@ jobs:
   messenger:
     needs: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0

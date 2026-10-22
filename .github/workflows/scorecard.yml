@@ -20,6 +20,7 @@ permissions: {contents: read}
 jobs:
   scorecard:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # security-events: the findings' list; id-token: the proof, to scorecard.dev, that this run made the result
     permissions: {contents: read, actions: read, security-events: write, id-token: write}
     steps:

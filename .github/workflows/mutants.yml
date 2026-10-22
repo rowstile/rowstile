@@ -45,6 +45,7 @@ permissions: {contents: read}
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # reads main's CI artifacts (the call data) and this workflow's last results
     permissions: {contents: read, actions: read}
     outputs:
@@ -155,6 +156,7 @@ jobs:
     needs: [prepare, sweep]
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {ref: "${{ github.sha }}"}   # the commit prepare read (schedule and dispatch: never a pull request's)

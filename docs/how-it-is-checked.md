@@ -42,7 +42,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   SQL was never judged there ([`tests/decisions.py`](../core/tests/decisions.py)): it is for people to read, in
   the run's log, and fails nothing. <!-- unchecked: a report in the log, which no check reads -->
 - **Random policies**: [`tests/genpolicy.py`](../core/tests/genpolicy.py) writes policies at random, with their
-  tables and data, and checks them the same way: on each full run, the few policies, of a thousand, in which
+  tables and data, and checks them the same way: in the full run each night, the few policies, of a thousand, in which
   every two of the shapes below meet (sixteen), and a hundred with new seeds every night. A third of them name
   their tables and columns as an app's own may be: with capitals, with words SQL reserves (`select`, `order`,
   `user`), with a quote or an accent, or as long as Postgres allows. Every name the compiler writes into SQL is
@@ -70,7 +70,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   app role on every row and undoes them (updates, deletes, and inserts of rows like the ones there), shares too (against who may share and what the relation's
   `shared if` says of the share), checks that no share outlives its row, that a role the policy
   doesn't name gets nothing, and that `authz.lint()` reports what changed and `rowstile apply` puts it right.
-  A few on every run; on the full run the twenty-five worlds, of a thousand seeds, in which every two of those
+  A few on every run; in the full run each night the twenty-five worlds, of a thousand seeds, in which every two of those
   features meet (words for keys in the Turkish database among them); sixty with new seeds every night.
 - **Every small policy**: a random draw can wait long for the one small policy, and the one small world, that a
   mistake needs. [`tests/small.py`](../core/tests/small.py) lists every policy of the core language up to a size
@@ -139,7 +139,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   pages of two), checks, the rows each select rule shows, who holds what, why a write would be refused, which
   rule on columns refuses an update two of them guard, the invariants. <!-- checked: tests/invariance.py "the same answers" --> Then every key of each type is replaced by another drawn at random, in the rows, the link
   tables, the shares and the custom roles, and the answers are the same, mapped back. One policy and the nine
-  fixed policies' SQL on every run; eight policies, and the fixed policies' answers, on the full run; twenty
+  fixed policies' SQL on every run; eight policies, and the fixed policies' answers, in the full run each night; twenty
   with new seeds every night.
 
 ## The boundary
@@ -240,9 +240,11 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   stack pages is in an app whose tests pass. <!-- checked: tests/docs_test.sh "every block of the guide runs"; tests/docs_test.sh "the guide's Python, for cy, who can't see the note: its handler answers 404"; tests/docs_test.sh "its SQL, once 42 may edit folder 7"; tests/cookbook.sh "every line of policy and tests its page shows is in its files"; tests/cookbook.sh "the SQL its page shows runs, as its first user"; tests/unit_test.py "test_every_line_is_in_a_tested_app" -->
   Every block of code in the reference runs too, or says why it can't, and each promise these pages make, and
   the reference's, names the check that holds it in a comment readers don't see, or says why none does. <!-- checked: tests/reference.sh "every block of the reference runs, or says why not"; tests/unit_test.py "test_every_promise_says_what_holds_it"; tests/unit_test.py "test_each_tag_names_checks_that_are_there" -->
-- **Three versions of Postgres**: every suite on PostgreSQL 16 for each change, and on 17 and 18
-  [every night](../.github/workflows/nightly.yml), with every order of two tree writes, the stress test and the
-  random policies.
+- **Three versions of Postgres**: on PostgreSQL 16 for each change, every suite but genpolicy's random policies
+  and the stress test, in shorter runs, with the orders of two tree writes in READ COMMITTED alone; the full run,
+  with them all, on 16 [every night](../.github/workflows/nightly.yml). On 17 and 18 every night, the suites as 16
+  runs them for each change, every order of two tree writes at each isolation level and the stress test; and the
+  soak, the random checks' long run, on one of the three each night in turn.
 - **The suites themselves**: each passes as many checks as
   [`tests/check_counts.txt`](../core/tests/check_counts.txt) says, no fewer and no more, or the run fails. A
   suite that stopped checking something (a glob that matches nothing, a loop over an empty list, a test that

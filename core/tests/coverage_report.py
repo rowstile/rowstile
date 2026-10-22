@@ -47,9 +47,12 @@ SETTINGS = os.path.join(HERE, "coverage.ini")
 # the steps of run_tests.sh that compare the database's answers with the reference evaluator's, by their names
 # (CoverageReport in unit_test.py checks it against the steps that run difftest, genpolicy and around)
 ORACLE = re.compile(r"compared with the reference evaluator|in random worlds")
-# the code that writes the SQL deciding who may do what
+# the code that writes the SQL deciding who may do what: the checks and lists, the trees, and what every check
+# calls of identity.py (who is signed in: authz_int.session_ok(); the scopes: scope_cmd, scope_perm, writable).
+# Not refusals.py: its functions run once a check has said no, to say why
 DECIDES = (
     "authzlib/compiler.py",
+    "authzlib/identity.py",
     "authzlib/insight.py",
     "authzlib/output.py",
     "authzlib/sqlutil.py",
