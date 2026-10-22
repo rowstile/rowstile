@@ -28,7 +28,8 @@ updates:
   # minor or major (Python 3.14, Node 26, Postgres 19) is a change made on purpose. In core/Dockerfile, a new digest
   # is the newest patch release of that Postgres major: the suites run on what users get
   - package-ecosystem: docker
-    directories: ["/core", "/demo", "/examples/filemanager/backend", "/examples/messenger/backend", "/packaging/docker"]
+    directories: ["/core", "/demo", "/examples/filemanager/backend", "/examples/messenger/backend", "/packaging/docker",
+                  "/packaging/machines"]
     schedule: {interval: monthly}
     cooldown: {default-days: 7}
     ignore:

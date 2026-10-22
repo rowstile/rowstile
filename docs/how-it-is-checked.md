@@ -375,6 +375,9 @@ are all listed there.
 - An audit by someone outside the project. There has been none.
 - The limits [the threat model](threat-model.md#known-limits-accepted) accepts: side channels such as
   `EXPLAIN ANALYZE` row counts, tables without rules, `SECURITY DEFINER` functions an app adds.
-- Managed Postgres services other than the two [it was tried on](managed-postgres.md), and macOS.
+- Managed Postgres services other than the two [it was tried on](managed-postgres.md).
+- macOS and Windows: no machine or runner here has either. The npm packages for them are read by the packaging
+  tests (their Python is built for that system and CPU, and holds every library and module the command loads),
+  but not started. The Linux ones are started, x64 and arm64, glibc and musl.
 - Your policy. rowstile enforces what the policy says; whether it says what you meant is what its tests, its
   invariants and [the review of each change](reference/review.md) are for.

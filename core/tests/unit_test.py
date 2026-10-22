@@ -10954,10 +10954,14 @@ class SdkPackages(unittest.TestCase):
         m = re.fullmatch(r">=((\d+\.\d+)\.\d+)", str(next(iter(floors.values()))))
         assert m, floors
         floor, short = m.groups()
-        with open(os.path.join(self.REPO, "packaging", "test.sh"), encoding="utf-8") as fh:
-            self.assertTrue(
-                f" node:{floor}-slim " in fh.read(), f"packaging/test.sh installs the launcher on Node {floor}"
+        with open(os.path.join(self.REPO, "packaging", "machines", "Dockerfile"), encoding="utf-8") as fh:
+            self.assertRegex(
+                fh.read(),
+                rf"(?m)^FROM node:{re.escape(floor)}-slim@sha256:[0-9a-f]{{64}} AS node-floor$",
+                f"packaging/test.sh installs the launcher on Node {floor} (its machine node-floor)",
             )
+        with open(os.path.join(self.REPO, "packaging", "test.sh"), encoding="utf-8") as fh:
+            self.assertIn('-v "$REPO:/repo" "$NODE_FLOOR" bash -c', fh.read())
         with open(os.path.join(self.REPO, ".github", "workflows", "nightly.yml"), encoding="utf-8") as fh:
             on = re.search(rf'- \{{pg: "\d+", pooler: "", node: "{re.escape(floor)}"\}}', fh.read())
             self.assertTrue(on, f"nightly.yml runs the TypeScript conformance suite on Node {floor}")
@@ -14478,6 +14482,44 @@ class Delivery(unittest.TestCase):
         # nothing watches python-build-standalone but a release step: it names the constant build.mjs pins
         self.assertRegex(build, r'(?m)^const RELEASE = "\d{8}";$')
         self.assertIn("`packaging/npm/build.mjs` (`RELEASE`", read("../RELEASING.md"))
+
+    def test_platform_packages_are_read(self) -> None:
+        # packaging/test.sh reads every platform package with platforms.py (the macOS and Windows ones can't be
+        # started on Linux); what it does with a file that isn't the binary it expects, and with imports
+        import ast
+        import struct
+
+        sys.path.insert(0, os.path.join(self.REPO, "packaging", "npm"))
+        import platforms
+
+        self.assertEqual(
+            [platforms.binary(b) for b in (b"\x7fELF\x02\x01", b"\xcf\xfa\xed\xfe", b"MZ\x90\x00", b"#!/bin/sh")],
+            ["elf", "macho", "pe", None],
+        )
+        for reader, data, said in (
+            (platforms.elf, b"\x7fELF\x01\x01" + bytes(58), "not a 64-bit little-endian ELF file"),
+            (platforms.macho, b"\xce\xfa\xed\xfe" + bytes(28), "not a 64-bit Mach-O file"),
+            (platforms.pe, b"ZM" + bytes(62), "not a PE file"),
+            (platforms.pe, b"MZ" + bytes(58) + struct.pack("<I", 64) + b"NE\0\0", "not a PE file"),
+            (
+                platforms.pe,
+                b"MZ" + bytes(58) + struct.pack("<I", 64) + b"PE\0\0" + bytes(20) + struct.pack("<H", 0x10B),
+                "not a 64-bit PE file",
+            ),
+        ):
+            with self.assertRaises(ValueError) as caught:
+                reader(data)
+            self.assertEqual(str(caught.exception), said)
+        tree = ast.parse(
+            "import os.path\nfrom . import decoder\nfrom .scanner import make\ntry:\n    import _json\nexcept ImportError:\n    pass\n"
+        )
+        self.assertEqual(
+            platforms.imports(tree, "json", True, False),
+            ({"os.path", "json", "json.scanner"}, {"json.decoder", "json.scanner.make"}),
+        )
+        self.assertEqual(
+            platforms.imports(tree, "json.tool", False, True)[0], {"os.path", "json", "json.scanner", "_json"}
+        )
 
     def test_the_readme_lists_every_suite(self) -> None:
         def suites(text: str) -> set[str]:
