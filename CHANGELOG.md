@@ -26,6 +26,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - `rowstile review --out FILE` writes the pull request comment to FILE as well, beside what it prints:
   `--annotations --out review.md` gives both from one review. The GitHub action runs the review once this way,
   where it ran it twice (the base's tests and the access comparison too).
+- The command's image (`ghcr.io/rowstile/rowstile`) is built for arm64 as well as x64: on an Apple Silicon Mac
+  or an arm64 machine, Docker runs it without emulation. Its label `org.opencontainers.image.version` says its
+  version.
 
 ### Changed
 
