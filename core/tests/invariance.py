@@ -26,9 +26,10 @@ made by the same SQL, but for these, which a policy written another way may chan
   - the order things come in: statements and objects, a dispatch's CASE branches (types and permissions in the
     order the policy declares them), the rows of a VALUES list, an array's items, the parts of a UNION, the
     operands of an OR or an AND (the compiler keeps the written order among operands that cost the same,
-    compiler.item_cost). An object is the same when its lines are the same in another order ('lines'), or its
-    words and symbols ('tokens': then also the place an explanation gives each item, v[n], and a tree's hash,
-    which is of its SQL)
+    compiler.item_cost), and an operand said twice once the order makes two alike. So an object is the same when
+    its SQL, read as SQL (sql_form()), is the same but for those orders: then also the place an explanation gives
+    each item, v[n], and a tree's hash, which is of its SQL, may differ. An `and` in an `or`'s place, an
+    operand moved across one, a `<` turned round or a NOT moved is another object, though its words are the same
   - names the compiler gives in the order it meets what they are for (NUMBERED, ON_TYPES): invariants
     (__never__N), a second tree of the same types and relations (__tree2), the types an arrow is followed to
     (__on_t2_t1), and a view of starting points two permissions share (named after the first the compiler meets:
@@ -50,6 +51,7 @@ compares their SQL alone.
 from __future__ import annotations
 
 import argparse
+import functools
 import io
 import json
 import os
@@ -60,7 +62,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -250,7 +252,11 @@ COMPILED: dict[str, str] = {}  # the SQL objects() compiled, by the policy's tex
 def objects(text: str, files: Files) -> dict[str, str]:
     """The compiled policy read back as migrations read it (migrate.read): each object, step and tree by its name,
     with the SQL that makes it, comments aside and line numbers (with the file they are in) as `line N`."""
-    sql, c, _ = database.migratable(text, files)
+
+    def made(c: Compiler) -> tuple[str, Compiler]:  # (as database.whole(), with the compiler's refusal a PolicyError)
+        return c.compile("the policy", transaction=False), c
+
+    sql, c, _ = database.migratable(text, files, database.build(text, files, made))
     COMPILED[json.dumps([text, files])] = f"BEGIN;\n{sql}\nCOMMIT;\n"  # (as rowstile apply runs it)
     out: dict[str, str] = {}
     for it in c.items:
@@ -266,8 +272,8 @@ def objects(text: str, files: Files) -> dict[str, str]:
     for k, v in list(out.items()):
         m = re.fullmatch(r'view authz_int\."(\w+?)__(\w+)__direct"', k)
         if m:
-            body = sorted(TOKEN.findall(v.split("\n", 1)[1]))  # (its union's parts in any order)
-            alias = f"{m.group(1)}__{migrate.digest(' '.join(body), 8)}__direct"
+            body = repr(sql_form(v.split("\n", 1)[1]))  # (its union's parts in any order)
+            alias = f"{m.group(1)}__{migrate.digest(body, 8)}__direct"
             out = {
                 kk.replace(f'"{m.group(1)}__{m.group(2)}__direct"', f'"{alias}"'): vv.replace(
                     f'"{m.group(1)}__{m.group(2)}__direct"', f'"{alias}"'
@@ -296,25 +302,270 @@ def numbered(objs: dict[str, str]) -> dict[str, list[str]]:
     return {k: sorted(v) for k, v in out.items()}
 
 
-def how_differs(a: str, b: str) -> str:
-    """'' when the same; else 'lines' when the same lines in another order, 'tokens' when the same words and
-    symbols in another order, 'more' when anything else differs."""
-    if a == b:
-        return ""
-    if sorted(a.split("\n")) == sorted(b.split("\n")):
-        return "lines"
-    if sorted(TOKEN.findall(PLACES.sub("#", a))) == sorted(TOKEN.findall(PLACES.sub("#", b))):
-        return "tokens"
-    return "more"
+# ----------------------------------------------------------------------
+# SQL read as what it says, but for order
+# ----------------------------------------------------------------------
+SQL_TOKEN = re.compile(
+    r"--[^\n]*|'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|\$\w*\$|[A-Za-z_][A-Za-z0-9_$]*|\d+|<>|<=|>=|::|:=|\|\||\S"
+)
+PAIRS = {"(": ")", "[": "]", "{": "}"}  # ({ }: a condition, in an explanation's words)
+BLOCKS = ("CASE", "BEGIN", "IF", "LOOP")  # each closed by END (END IF, END LOOP, END CASE)
+# the words that end a clause: what is between two of them is a list of items, each an OR of ANDs
+CLAUSES = {
+    *("SELECT", "FROM", "WHERE", "GROUP", "HAVING", "ORDER", "LIMIT", "INTO", "VALUES", "SET", "ON", "TO", "USING"),
+    *("WITH", "CHECK", "AS", "WHEN", "THEN", "ELSE", "ELSIF", "RETURN", "RETURNS", "EXECUTE", ":"),
+}
+LISTS = {"VALUES", "ON"}  # the clauses whose items come in any order: a VALUES list's rows, what GRANT .. ON names
+LISTY = re.compile(r"(?i)\b(?:and|or|union|values)\b|[,;]")  # a literal that may hold a list: its text is read too
+
+
+class Group(NamedTuple):
+    """What brackets, a dollar quote or a block (CASE .. END, BEGIN .. END, IF .. END IF, LOOP .. END LOOP) hold."""
+
+    kind: str
+    items: list[str | Group]
+
+
+Items = list[str | Group]
+Form = object  # SQL as read by sql_form(): strings, and tuples and lists of forms, compared with ==
+
+
+def sql_tree(tokens: list[str]) -> Items:
+    """The tokens nested in groups; a group not closed is closed at the end, a closer that closes none is a token."""
+    stack: list[Group] = [Group("", [])]
+    prev = ";"
+    i = 0
+    while i < len(tokens):
+        t, u = tokens[i], tokens[i].upper()
+        top = stack[-1]
+        dollar = len(t) > 1 and t[0] == "$" == t[-1]
+        if (
+            t in PAIRS
+            or u in ("CASE", "BEGIN", "LOOP")
+            or (u == "IF" and prev in (";", "THEN", "ELSE", "BEGIN", "LOOP", "$"))
+        ):
+            stack.append(Group(u if u in BLOCKS else t, []))  # (an IF that starts a statement: not IF NOT EXISTS)
+        elif dollar and top.kind != t:
+            stack.append(Group(t, []))
+        elif (dollar and top.kind == t) or t == PAIRS.get(top.kind) or (u == "END" and top.kind in BLOCKS):
+            stack.pop()
+            stack[-1].items.append(top)
+            if u == "END" and i + 1 < len(tokens) and tokens[i + 1].upper() == top.kind != "BEGIN":
+                i += 1
+        else:
+            top.items.append(t)
+        prev = "$" if dollar else u
+        i += 1
+    while len(stack) > 1:
+        top = stack.pop()
+        stack[-1].items.append(top)
+    return stack[0].items
+
+
+def split_at(items: Items, words: set[str]) -> list[Items]:
+    out: list[Items] = [[]]
+    for n in items:
+        if isinstance(n, str) and n.upper() in words:
+            out.append([])
+        else:
+            out[-1].append(n)
+    return out
+
+
+def flat(items: Items) -> list[str]:
+    return [t for n in items for t in ([n] if isinstance(n, str) else flat(n.items))]
+
+
+def in_order(forms: list[Form]) -> list[Form]:
+    return sorted(forms, key=repr)
+
+
+def defines(tokens: list[str]) -> set[str]:
+    """The variables a statement sets as a whole: v := ..., SELECT ... INTO a, b."""
+    if len(tokens) > 1 and tokens[1] == ":=":
+        return {tokens[0]}
+    if not tokens:
+        return set()
+    upper = [t.upper() for t in tokens]
+    if upper[0] != "SELECT" or "INTO" not in upper:
+        return set()
+    k = upper.index("INTO") + 1
+    out = {tokens[k]}
+    while k + 2 < len(tokens) and tokens[k + 1] == ",":
+        k += 2
+        out.add(tokens[k])
+    return out
+
+
+def in_units(units: list[list[Form]]) -> list[Form]:
+    """Units in any order, each its first statement, then those that read what it sets in any order."""
+    return in_order([(u[0], in_order(u[1:])) for u in units])
+
+
+def statements(items: Items) -> Form:
+    """Statements: in any order, but for what one sets and another reads. A unit is a statement with those after
+    it that read a variable it sets (a statement that sets one as a whole starts a unit of its own); the units come
+    in any order between the statements that read what units add to (v := v || x), which stay where they are."""
+    stmts = [s for s in split_at(items, {";"}) if s]
+    if len(stmts) <= 1 and ";" not in items:
+        return clauses(items)
+    out: list[Form] = []
+    units: list[list[Form]] = []
+    sets: set[str] = set()  # what the unit sets
+    added: set[str] = set()  # what the units add to
+    for s in stmts:
+        tokens = flat(s)
+        own = defines(tokens)
+        reads = {
+            t
+            for k, t in enumerate(tokens)
+            if tokens[k + 1 : k + 2] != [":="] and not (k >= 2 and tokens[k - 2 : k] == [t, ":="])
+        } - own
+        if reads & added:
+            out += [in_units(units), clauses(s)]
+            units, sets = [], set()
+            continue
+        if units and not own and reads & sets:
+            units[-1].append(clauses(s))
+        else:
+            units.append([clauses(s)])
+            sets = set()
+        sets |= own | {tokens[k - 1] for k in range(1, len(tokens)) if tokens[k] == ":="}
+        added |= {t for k, t in enumerate(tokens) if tokens[k + 1 : k + 4] == [":=", t, "||"]}
+    return ("statements", *out, in_units(units))
+
+
+def bracketed(form: Form) -> Form | None:
+    """What a form of a bracket alone holds, else None."""
+    while isinstance(form, tuple) and len(form) == 1:
+        form = form[0]
+    return form[1] if isinstance(form, tuple) and len(form) == 2 and form[0] == "(" else None
+
+
+def joined(parts: list[Form], word: str) -> Form:
+    """Parts joined by an operator whose operands come in any order: those in brackets joined by it taken in, one
+    said twice said once (the compiler checks an operand said twice once, and two written alike only once reordered
+    are)."""
+    out: list[Form] = []
+    for p in parts:
+        inner = bracketed(p)
+        while isinstance(inner, tuple) and len(inner) == 1:
+            inner = inner[0]
+        taken = inner[1] if isinstance(inner, tuple) and inner[:1] == (word,) else None
+        out += taken if isinstance(taken, list) else [p]
+    return (word, in_order(list({repr(f): f for f in out}.values())))
+
+
+def clauses(items: Items, listed: bool = False) -> Form:
+    """A statement or an expression: the parts of a UNION, and of an INTERSECT, in any order; else its clauses in
+    order, each a list of items (in any order after VALUES or ON, and before any clause where listed: an ARRAY's, an
+    IN's), each item an OR of ANDs."""
+    parts = split_at(items, {"UNION"})
+    if len(parts) > 1:
+        parts = [[n for n in p if not (isinstance(n, str) and n.upper() in ("ALL", "DISTINCT"))] for p in parts]
+        head: Items = []
+        tail: Items = []
+        if all(len(p) == 1 for p in parts[1:]) and parts[0] and isinstance(parts[0][-1], Group):
+            head, parts[0] = parts[0][:-1], parts[0][-1:]  # (CREATE VIEW v AS (...) UNION ALL (...))
+        elif "SELECT" in (str(n).upper() for n in parts[0]):  # (FOR a IN SELECT ... UNION ALL SELECT ... LOOP)
+            k = [str(n).upper() for n in parts[0]].index("SELECT")
+            head, parts[0] = parts[0][:k], parts[0][k:]
+            if parts[-1] and isinstance(parts[-1][-1], Group) and parts[-1][-1].kind in BLOCKS:
+                tail, parts[-1] = parts[-1][-1:], parts[-1][:-1]
+        union = joined([clauses(p) for p in parts], "UNION")
+        return (clauses(head), union, atom(tail)) if head or tail else union
+    parts = split_at(items, {"INTERSECT"})
+    if len(parts) > 1:
+        return joined([clauses(p) for p in parts], "INTERSECT")
+    out: list[Form] = []
+    segment: Items = []
+    clause = ""
+    for k, n in enumerate(items):
+        u = n.upper() if isinstance(n, str) else ""
+        if u in CLAUSES and not (u == "FROM" and k and items[k - 1] == "DISTINCT"):  # (IS DISTINCT FROM)
+            out += [listing(segment, (listed and not clause) or clause in LISTS), u]
+            segment, clause = [], u
+        else:
+            segment.append(n)
+    out.append(listing(segment, (listed and not clause) or clause in LISTS))
+    return tuple(out)
+
+
+def listing(items: Items, listed: bool) -> Form:
+    forms = [junction(x, "OR") for x in split_at(items, {","})]
+    return forms[0] if len(forms) == 1 else ("list", in_order(forms) if listed else forms)
+
+
+def junction(items: Items, word: str) -> Form:
+    """An OR of ANDs: the operands of each in any order."""
+    parts = split_at(items, {word})
+    read = (lambda p: junction(p, "AND")) if word == "OR" else atom
+    return read(items) if len(parts) == 1 else joined([read(p) for p in parts], word)
+
+
+def atom(items: Items) -> Form:
+    """An operand: its tokens in order, each group read as what it holds."""
+    out: list[Form] = []
+    for k, n in enumerate(items):
+        if isinstance(n, str):
+            literal = n[0] == "'" and LISTY.search(n)
+            out.append(("'", sql_form(n[1:-1].replace("''", "'"), literal=True)) if literal else n)
+        elif n.kind in PAIRS:
+            listed = k > 0 and isinstance(items[k - 1], str) and str(items[k - 1]).upper() in ("ARRAY", "IN")
+            out.append((n.kind, statements(n.items) if ";" in n.items else clauses(n.items, listed)))
+        elif n.kind == "CASE":
+            out.append(case(n.items))
+        elif n.kind == "IF":
+            out.append(("IF", branches(n.items, ("THEN", "ELSIF", "ELSE"))))
+        else:
+            out.append((n.kind, statements(n.items)))
+    return tuple(out)
+
+
+def branches(items: Items, words: tuple[str, ...]) -> list[tuple[str, Form]]:
+    """A block's parts, each after the word it starts with (the first: after ''), in order."""
+    parts: list[tuple[str, Items]] = [("", [])]
+    for n in items:
+        if isinstance(n, str) and n.upper() in words:
+            parts.append((n.upper(), []))
+        else:
+            parts[-1][1].append(n)
+    return [(w, statements(p) if w in ("THEN", "ELSE") else clauses(p)) for w, p in parts]
+
+
+def case(items: Items) -> Form:
+    """CASE x WHEN a THEN ... WHEN b THEN ... END: its branches in any order (CASE WHEN ...: in order)."""
+    subject, *rest = branches(items, ("WHEN", "THEN", "ELSE"))
+    pairs: list[Form] = [(rest[k], rest[k + 1]) for k in range(len(rest) - 1) if rest[k][0] == "WHEN"]
+    simple = bool(split_at(items, {"WHEN"})[0])
+    return ("CASE", subject, in_order(pairs) if simple else pairs, [b for b in rest if b[0] == "ELSE"])
+
+
+@functools.cache
+def sql_form(sql: str, literal: bool = False) -> Form:
+    """SQL read as what it says (PLACES aside), with what may come in another order sorted (the module's
+    description lists it): the statements of an object or a body (statements()), the operands of an OR, an AND, a
+    UNION and an INTERSECT, the branches of a CASE on a value, the items of an ARRAY, an IN and a VALUES list, what
+    GRANT .. ON names. And so in a literal that may hold a list (an EXECUTE's SQL, an explanation's words: a
+    permission = an expression, the bracket the next literal closes aside). All else in order: what an operator,
+    a function, NOT or a clause takes, and where, says the same only in the same order."""
+    tokens = [t for t in SQL_TOKEN.findall(PLACES.sub("#", sql)) if not t.startswith("--")]
+    tail: list[str] = []
+    while literal and tokens and tokens[-1] in PAIRS:
+        tail.insert(0, tokens.pop())
+    items = sql_tree(tokens)
+    if literal and ";" not in items and "=" in items:
+        k = items.index("=")
+        return (clauses(items[:k]), "=", clauses(items[k + 1 :], True), tail)
+    return (statements(items) if ";" in items or not literal else clauses(items, True), tail)
 
 
 def sql_differences(before: dict[str, str], after: dict[str, str]) -> tuple[list[str], dict[str, int]]:
     """The objects that differ beyond what the module's description says may (lines to print), and how many are
-    the same or differ in each way it allows: 'lines' (in another order), 'tokens' (the same words in another
-    order)."""
+    the same and the same but for order (sql_form())."""
     a, b = numbered(before), numbered(after)
     problems: list[str] = []
-    counts: dict[str, int] = {"same": 0, "lines": 0, "tokens": 0}
+    counts: dict[str, int] = {"same": 0, "in another order": 0}
     for k in sorted(set(a) | set(b)):
         if len(a.get(k, [])) != len(b.get(k, [])):
             problems.append(f"{k}: made {len(a.get(k, []))} times before the change, {len(b.get(k, []))} after")
@@ -322,16 +573,21 @@ def sql_differences(before: dict[str, str], after: dict[str, str]) -> tuple[list
         left = list(b[k])
         for x in a[k]:
             # its match: the same, else the same but for order (a name numbered may have changed places)
-            ways = [(("", "lines", "tokens", "more").index(how_differs(x, y)), j) for j, y in enumerate(left)]
-            rank, j = min(ways)
-            y = left.pop(j)
-            if rank == 3:
-                lx, ly = x.split("\n"), y.split("\n")
-                problems.append(
-                    f"{k}: differs: before {[z for z in lx if z not in ly][:2]}, after {[z for z in ly if z not in lx][:2]}"
-                )
-            else:
-                counts[("same", "lines", "tokens")[rank]] += 1
+            if x in left:
+                left.remove(x)
+                counts["same"] += 1
+                continue
+            j = next((j for j, y in enumerate(left) if sql_form(y) == sql_form(x)), None)
+            if j is not None:
+                left.pop(j)
+                counts["in another order"] += 1
+                continue
+            lx, ly = x.split("\n"), left.pop(0).split("\n")
+            gone, new = [z for z in lx if z not in ly][:2], [z for z in ly if z not in lx][:2]
+            if not gone and not new:  # (the same lines, read in another order)
+                n = next((n for n, (p, q) in enumerate(zip(lx, ly, strict=False)) if p != q), min(len(lx), len(ly)))
+                gone, new = lx[n : n + 2], ly[n : n + 2]
+            problems.append(f"{k}: differs: before {gone}, after {new}")
     return problems, counts
 
 
@@ -778,6 +1034,18 @@ def policy_files(spec: Spec, workdir: str) -> tuple[str, str, Files]:
     return path, text, files
 
 
+def same_sql(base: dict[str, str], text: str, files: Files) -> tuple[str, list[str]]:
+    """The policy written another way (text, files) against what it compiled to as written (base, objects()):
+    what passed ('' if not), and the problems (none if it passed)."""
+    try:
+        diffs, counts = sql_differences(base, objects(text, files))
+    except PolicyError as e:
+        return "", [f"the compiler refuses it: {e}"]
+    if diffs:
+        return "", [f"the compiled policy differs: {d}" for d in diffs[:8]]
+    return "the same SQL (" + ", ".join(f"{n} {w}" for w, n in counts.items() if n) + ")", []
+
+
 def compiled(text: str, files: Files) -> str:
     """The policy's SQL, as applied: objects() compiled it already, or compiled now."""
     return COMPILED.get(json.dumps([text, files])) or Compiler(parse_policy(text, "gen.authz", files)).compile(
@@ -813,10 +1081,6 @@ def check(spec: Spec, db: DB, db2: DB, steps: int, workdir: str) -> tuple[list[s
         base_sql = compiled(text, files)
     except PolicyError as e:
         raise Skipped(str(e)) from None
-    except database.Error as e:  # (migratable() says the compiler's refusal so: "policy line N: ...")
-        if not str(e).startswith("policy "):
-            raise
-        raise Skipped(str(e)) from None
     if "view definitions to plan" in base_sql:
         raise Skipped("authz.lint() warns that a permission or a select rule is slow to plan")
     r = random.Random(f"invariance/{spec.seed}")
@@ -825,17 +1089,11 @@ def check(spec: Spec, db: DB, db2: DB, steps: int, workdir: str) -> tuple[list[s
     changed: list[tuple[str, str, Files]] = []
     for name, transform in TRANSFORMS.items():
         new_text, new_files = transform(text, files, r)
-        try:
-            diffs, counts = sql_differences(base_objs, objects(new_text, new_files))
-        except PolicyError as e:
-            problems.append(f"{name}: the compiler refuses it: {e}")
-            continue
-        if diffs:
-            problems += [f"{name}: the compiled policy differs: {d}" for d in diffs[:8]]
-            continue
-        how = ", ".join(f"{n} {w}" for w, n in counts.items() if n)
-        passed.append(f"{name}: the same SQL ({how})")
-        changed.append((name, new_text, new_files))
+        same, wrong = same_sql(base_objs, new_text, new_files)
+        problems += [f"{name}: {w}" for w in wrong]
+        if same:
+            passed.append(f"{name}: {same}")
+            changed.append((name, new_text, new_files))
     gen = gen_class(spec, path, os.path.join(workdir, "gen_schema.sql"))(random.Random(spec.seed))
     pol = parse_policy(text, path, files)
     db.recreate()
@@ -960,15 +1218,14 @@ def fixed(ways: int, db: DB | None, steps: int) -> int:
         for name, transform in TRANSFORMS.items():
             for k in range(ways):
                 new_text, new_files = transform(text, {}, random.Random(f"invariance/{path}/{k}"))
-                diffs, counts = sql_differences(base, objects(new_text, new_files))
-                if diffs:
+                same, wrong = same_sql(base, new_text, new_files)
+                if wrong:
                     failed += 1
-                    print(f"FAIL {path}, {name} ({k + 1}): the compiled policy differs")
-                    for d in diffs[:8]:
-                        print(f"    {d}")
+                    print(f"FAIL {path}, {name} ({k + 1}):")
+                    for w in wrong:
+                        print(f"    {w}")
                     continue
-                how = ", ".join(f"{n} {w}" for w, n in counts.items() if n)
-                print(f"ok {path}, {name} ({k + 1}): the same SQL ({how})")
+                print(f"ok {path}, {name} ({k + 1}): {same}")
                 if k == 0:
                     changed.append((name, new_text, new_files))
         gens = [g for g in difftest.GENERATORS.values() if g.policy == path]

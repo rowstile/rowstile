@@ -20,7 +20,9 @@ every other principal and nobody, before and after; what `rowstile review` shows
 again after a few random changes. A policy fails when
 
   - the review says the rewrite grants the same, and the database's answers change;
-  - a rewrite that changes nothing is given a difference by the review, or changes the database's answers.
+  - a rewrite that changes nothing is given a difference by the review, or changes the database's answers;
+  - the compiler refuses a rewrite that changes nothing, for anything but a shape the language limits (SHAPES: how
+    a permission recurses or inherits, where `roles` is said).
 
 A rewrite that may change something, and for which the review shows a difference, is counted: with the database's
 answers changing too, or on data that doesn't show it. And the first such difference of each policy is replayed in a
@@ -237,13 +239,32 @@ class Refused(Exception):
 
 SLOW = 5.0  # seconds for one diff: such a policy's rewrites would take minutes, and say nothing more
 
+# what the compiler may refuse in a rewrite that changes nothing: the shapes the language limits, whatever they mean
+# (a permission recurses as `or rel.perm` alone, AZ302; its inheritance joins an `and` only with conditions and
+# `not`, AZ304, on the row alone, AZ305; a deny's permission inherits as the one it takes from does, AZ306; `roles` is
+# said in a permission's top `or`, AZ210). Any other refusal of such a rewrite is a problem
+SHAPES = {"AZ210", "AZ302", "AZ304", "AZ305", "AZ306"}
+
 
 class Tally:
     def __init__(self) -> None:
         self.same = self.agreed = self.shown = self.unshown = self.refused = self.beyond = 0
+        self.shapes: Counter[str] = Counter()  # (rewrites that change nothing, refused for a shape: by code)
         self.replayed = 0
         self.reread = 0  # (replayed where a condition the review can't read holds where the rows say)
         self.unloadable: Counter[str] = Counter()  # (why rows can't make the world)
+
+
+def refused(rw: Rewrite, e: PolicyError, tally: Tally) -> list[str]:
+    """A rewrite the compiler refuses: counted (one that may change something: a `not` where none may be, a deny
+    off its links; one that changes nothing: for a shape, SHAPES), or the problem it is."""
+    if not rw.same:
+        tally.refused += 1
+    elif e.code in SHAPES:
+        tally.shapes[str(e.code)] += 1
+    else:
+        return [f"{rw.what}: it changes nothing, and the compiler refuses it: {e}"]
+    return []
 
 
 def said(m: review.Meaning) -> str:
@@ -380,12 +401,13 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
     r = random.Random(f"rewrites/{spec.seed}")
     base = review.Side(text, None, None)
     tried: list[tuple[Rewrite, str, review.Meaning]] = []
+    problems: list[str] = []
     for rw in rewrites(spec, r, each):
         new = policy_text(rw.spec)
         try:
             m = review.meaning(base, review.Side(new, None, None), worlds)
-        except PolicyError:
-            tally.refused += 1  # (the compiler refuses the rewrite: a `not` where none may be, a deny off its links)
+        except PolicyError as e:
+            problems += refused(rw, e, tally)
             continue
         tried.append((rw, new, m))
     gen = gen_class(spec, policy_path, os.path.join(workdir, "gen_schema.sql"))(random.Random(spec.seed))
@@ -395,7 +417,6 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
     db.run(compiled.stdout)
     db.run(gen.grants())
     conn = pgwire.connect(**pgwire.parse_dsn(f"dbname={db.name}"))
-    problems: list[str] = []
     changed: set[str] = set()  # the rewrites the database's answers changed with, on some data
     try:
         for n in range(rounds):
@@ -504,7 +525,10 @@ def main() -> None:
         f"(refused, or slow to read); {tally.same} rewrites that change nothing, said so and seen so; of those that "
         f"may change something, {tally.shown} the review and the database both show changing, {tally.unshown} the "
         f"review shows and this data doesn't, {tally.agreed} that change nothing here, {tally.beyond} beyond the "
-        f"review; {tally.refused} rewrites the compiler refuses; {tally.replayed} of the review's differences replayed "
+        f"review; {tally.refused} rewrites that may change something the compiler refuses, and "
+        f"{sum(tally.shapes.values())} that change nothing for their shape"
+        + "".join(f"; {n}: {code}" for code, n in sorted(tally.shapes.items()))
+        + f"; {tally.replayed} of the review's differences replayed "
         f"in a database, {tally.reread} of them where a condition the review can't read holds where the rows say "
         f"({sum(tally.unloadable.values())} in worlds rows can't make"
         + "".join(f"; {n}: {why}" for why, n in sorted(tally.unloadable.items()))
