@@ -41,7 +41,7 @@ type membership = ms.members (chat_id, user_id uuid)
   chat   : chat = chat_id
   person : user = user_id
 
--- messages are numbered per chat; you read what was said since you joined
+-- messages are numbered per chat; members read what was said since they joined, bots the whole chat
 type message = ms.messages (chat_id, seq)
   chat     : chat = chat_id
   sender   : user = sender_id

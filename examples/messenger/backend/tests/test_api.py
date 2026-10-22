@@ -7,11 +7,14 @@ row-level security decides: the backend has no permission checks of its own.
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
+import textwrap
 import threading
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, LiteralString
 
@@ -269,12 +272,29 @@ def test_lint_has_nothing_new_to_say() -> None:
         conn.execute("SELECT count(*) FROM ms.credentials")
 
 
+def readme_refusal() -> list[str]:
+    """The refused post README.md shows: the code block that starts with the insert rule."""
+    readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
+    block = re.search(r"\n *```\n((?: *no   insert :.*\n)(?: .*\n)*?) *```\n", readme)
+    assert block, "README.md shows no refused insert"
+    return textwrap.dedent(block[1]).splitlines()
+
+
+def unnamed(why: list[str]) -> list[str]:
+    """The lines of an explanation, without who was refused and in which chat (they differ each run)."""
+    return [
+        re.sub(r"user \S+ does not hold post on chat \d+", "user ... does not hold post on chat ...", x) for x in why
+    ]
+
+
 def test_announcements() -> None:
     ann, ben = person("Ann"), person("Ben")
     g = group(ann, ben, title="News")
     assert ann.patch(f"/api/chats/{g}", json={"admins_only": True}).status_code == 200
     r = say(ben, g, "can I say something?")
     assert r.status_code == 403 and r.json()["detail"] == "you can't send messages here"
+    # the README quotes this refusal: the database's words, its rule's line in db/policy.authz included
+    assert unnamed(r.json()["why"]) == unnamed(readme_refusal()), r.json()["why"]
     assert say(ann, g, "Only admins post here").status_code == 201
     assert bodies(ben, g) == ["Only admins post here"]
 
@@ -306,7 +326,10 @@ def test_invite_links() -> None:
     ann, ben, cat = person("Ann"), person("Ben"), person("Cat")
     g = group(ann, ben, title="Book club")
     assert ben.post(f"/api/chats/{g}/invite").status_code == 403  # not an admin
-    token = ann.post(f"/api/chats/{g}/invite").json()["token"]
+    made = ann.post(f"/api/chats/{g}/invite").json()
+    token = made["token"]
+    left = datetime.fromisoformat(made["expires_at"]) - datetime.now(UTC)
+    assert timedelta(days=7, minutes=-1) < left <= timedelta(days=7), made  # anyone may use it for a week
     # its maker, an admin, may join without it: the chat the link names (?chat=, as the web app writes it) answers
     assert ann.get(f"/api/join/{token}").status_code == 404
     mine = ann.get(f"/api/join/{token}", params={"chat": g}).json()
