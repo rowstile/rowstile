@@ -48,8 +48,17 @@ echo "-- npm"
 # as the caller, not root: it writes into the checkout (packaging/npm/out, .cache), and a root-owned folder
 # there can't be removed afterwards
 as_me=(-u "$(id -u):$(id -g)" -e HOME=/tmp)
-docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo "$NODE" bash -c \
-  "node packaging/npm/build.mjs --all >/dev/null && cd $OUT && npm pack -s /repo/packaging/npm/out/rowstile /repo/packaging/npm/out/cli-* >/dev/null" \
+# from a copy of what the build reads, with what a developer's tree may hold beside the command's files: bytecode,
+# an editor's backup, notes (a check below asks that none of it goes in)
+docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo "$NODE" bash -c "set -e
+  mkdir -p /tmp/src/core /tmp/src/sdk/python /tmp/src/packaging/npm packaging/npm/.cache
+  cp -r core/authzlib core/cli /tmp/src/core/ && cp LICENSE /tmp/src/ && cp sdk/python/command-files.txt /tmp/src/sdk/python/
+  cp -r packaging/npm/build.mjs packaging/npm/rowstile packaging/npm/python-licenses /tmp/src/packaging/npm/
+  ln -s /repo/packaging/npm/.cache /tmp/src/packaging/npm/.cache
+  mkdir -p /tmp/src/core/authzlib/__pycache__ && touch /tmp/src/core/authzlib/__pycache__/parse.cpython-313.pyc \
+    /tmp/src/core/authzlib/parse.py.orig /tmp/src/core/cli/notes.txt /tmp/src/core/cli/studio/notes.txt
+  node /tmp/src/packaging/npm/build.mjs --all >/dev/null
+  cd $OUT && npm pack -s /tmp/src/packaging/npm/out/rowstile /tmp/src/packaging/npm/out/cli-* >/dev/null" \
   || bad "the npm packages build"
 big=()
 for f in "$OUT"/rowstile-cli-*.tgz; do
@@ -201,6 +210,16 @@ got = {kind: {n.split("/_command/", 1)[1] for n in names if "/_command/" in n} f
 wrong = {kind: (sorted(want - files), sorted(files - want)) for kind, files in got.items() if files != want}
 print("(missing, not the command's):", wrong) if wrong else None
 sys.exit(1 if wrong else 0)
+EOF
+
+# ... and nothing else of the tree it is built from: the npm build above put bytecode, a backup and notes beside them
+python3 - "$OUT" <<'EOF' && ok "the npm package holds the command's files, and no other file of the tree" || bad "the npm package holds another file of the tree"
+import glob, sys, tarfile
+want = {f[len("core/"):] for f in glob.glob("core/authzlib/*.py") + glob.glob("core/cli/*.py") + glob.glob("core/cli/studio/*")}
+names = tarfile.open(glob.glob(sys.argv[1] + "/rowstile-[0-9]*.tgz")[0]).getnames()
+got = {n.split("/command/", 1)[1] for n in names if "/command/" in n}
+print("missing:", sorted(want - got), "not the command's:", sorted(got - want)) if got != want else None
+sys.exit(1 if got != want else 0)
 EOF
 
 # each package carries the licence it names

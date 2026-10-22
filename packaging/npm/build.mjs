@@ -47,9 +47,12 @@ const TARGETS = {
   "win32-x64": { triple: "x86_64-pc-windows-msvc", os: "win32", cpu: "x64",
     sha256: "e42fa944748a50e9ff481cbb817ef8a6e3da6fbcf0cf6f29b554e1acb8c7384d" },
 };
-// the command's files: core/authzlib, every module of core/cli, and Studio's page (cli/studio)
-const COMMAND = ["authzlib", "cli/studio",
-  ...readdirSync(join(ROOT, "core", "cli")).filter((f) => f.endsWith(".py")).map((f) => `cli/${f}`)];
+// the command's files, each folder of core/ and the endings of its files the command runs (the Python package's
+// build reads the same list): file by file, so nothing else of the tree it is built from goes in
+const COMMAND = readFileSync(join(ROOT, "sdk", "python", "command-files.txt"), "utf8").split("\n")
+  .map((line) => line.replace(/#.*/, "").trim().split(/\s+/)).filter(([folder]) => folder)
+  .flatMap(([folder, ...endings]) => readdirSync(join(ROOT, "core", folder), { withFileTypes: true })
+    .filter((f) => f.isFile() && endings.some((e) => f.name.endsWith(e))).map((f) => `${folder}/${f.name}`));
 // what the command never uses: the standard library's tests, GUIs, installers and headers
 const UNUSED = ["test", "idlelib", "tkinter", "turtledemo", "turtle.py", "ensurepip", "lib2to3", "pydoc_data",
   "site-packages", "venv", "__phello__"];
@@ -94,11 +97,7 @@ function write(path, data) {
 
 /** @param {string} dest */
 function copyCommand(dest) {
-  for (const part of COMMAND) {
-    cpSync(join(ROOT, "core", part), join(dest, part), {
-      recursive: true, filter: (src) => !src.includes("__pycache__") && !src.endsWith(".pyc"),
-    });
-  }
+  for (const file of COMMAND) cpSync(join(ROOT, "core", file), join(dest, file));
 }
 
 /** @param {string[]} platforms */
