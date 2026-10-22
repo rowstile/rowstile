@@ -1,5 +1,6 @@
 #!/bin/bash
-# docs_test.sh: docs/getting-started.md runs as written and does what the guide says.
+# docs_test.sh: docs/getting-started.md runs as written and does what the guide says, and the blog post's
+# experiment.sql runs as its header says.
 #   PGHOST=... PGUSER=postgres tests/docs_test.sh
 # Walks the guide's blocks in order, in a fresh database and an empty folder: ```sql blocks run in psql,
 # ```authz <file> blocks are written to that file, ```sh blocks run (with rowstile on the PATH, and
@@ -79,4 +80,17 @@ case "$refused" in *"permission denied"*) echo "ok    another role can't say who
 rm -r "$DIR"
 dropdb "$DB"
 drop_roles
+
+# the blog post's experiment runs as its header says, small, as a role that isn't a superuser: with the setting
+# a stock server has (the suites' owner has createrole_self_grant, which would hide a missing grant)
+BLOG=authz_docs_blog
+dropdb --if-exists "$BLOG" 2>/dev/null; createdb "$BLOG" || exit 1
+out=$(cd ../docs/blog/recursive-row-level-security &&
+      PGOPTIONS="-c createrole_self_grant=" psql -X -d "$BLOG" -v folders=200 -f experiment.sql 2>&1)
+rc=$?
+check "the blog post's experiment.sql runs to its end as a role that isn't a superuser" "$rc" "0"
+[ $rc -ne 0 ] && echo "$out" | grep ERROR | head -n 3
+check "it times each query three times through each of the four policies" "$(echo "$out" | grep -c 'Execution Time')" "36"
+dropdb "$BLOG"
+psql -X -q -d postgres -c "DROP ROLE IF EXISTS demo_app" >/dev/null
 [ $fails -eq 0 ] && echo "docs: all passed" || { echo "docs: $fails failed"; exit 1; }
