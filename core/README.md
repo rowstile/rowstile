@@ -28,8 +28,9 @@ From this folder:
 
 `./run_tests.sh` runs everything against fresh databases, in about 15 minutes (a few
 with `--quick`), as a non-superuser owner of the tables (started as a superuser, it makes one), on
-the stock Postgres image. CI runs it in parts, each on a machine of its own, side by side
-(`run_tests.sh` names them), so a push waits for the longest part and not for their sum. Within a part, the
+the stock Postgres image. CI runs `--quick` for each push and the whole run each night
+(`.github/workflows/nightly.yml`), in parts, each on a machine of its own, side by side (`run_tests.sh` names
+them), so a run waits for the longest part and not for their sum. Within a part, the
 steps run in three lanes side by side against the same server (`tests/lanes.sh`; `ROWSTILE_LANES` says how many),
 each step's output printed whole once it ends, in the order `run_tests.sh` writes them:
 
@@ -118,7 +119,7 @@ measured (`.ci/coverage-16/`) and says:
 - with `--diff main`: the lines changed since `main` that nothing runs (exit 1 if there are any).
 
 CI measures on 16 alone: 17 and 18 ran the same lines, branches and functions (compared on 2026-10-10). Code that
-only another version runs would need theirs measured again (`--coverage` in `.github/workflows/ci.yml`).
+only another version runs would need theirs measured again (`--coverage` in `.github/workflows/suites.yml`).
 
 ### How many checks each suite passes
 

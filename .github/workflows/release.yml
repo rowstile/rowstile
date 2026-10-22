@@ -33,6 +33,7 @@ jobs:
   check:
     if: ${{ !inputs.latest }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       version: ${{ steps.v.outputs.version }}
       publish: ${{ steps.v.outputs.publish }}
@@ -68,6 +69,7 @@ jobs:
     needs: check
     if: needs.check.outputs.publish == 'public'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: pypi
     permissions: {id-token: write, contents: read}
     steps:
@@ -82,6 +84,7 @@ jobs:
   npm:
     needs: check
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # npm trusts this workflow only in the environment `npm` (each package's trusted publisher names it), which
     # takes v* tags, and main for the `latest` job; a dry run, on a branch, publishes nothing and goes without it
     environment: ${{ needs.check.outputs.publish == 'public' && 'npm' || '' }}
@@ -147,6 +150,7 @@ jobs:
   latest:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: npm
     permissions: {id-token: write, contents: read}
     steps:
@@ -160,6 +164,7 @@ jobs:
   image:
     needs: check
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions: {packages: write, contents: read}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
@@ -189,6 +194,7 @@ jobs:
   release-files:
     needs: check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions: {contents: read}
     env:
       VERSION: ${{ needs.check.outputs.version }}
@@ -216,6 +222,7 @@ jobs:
     needs: [check, release-files]
     if: needs.check.outputs.publish != 'none'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # id-token and attestations: the files' provenance (below)
     permissions: {contents: write, id-token: write, attestations: write}
     env:
@@ -252,6 +259,7 @@ jobs:
   vscode:
     needs: check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: ${{ needs.check.outputs.publish == 'public' && 'vscode' || '' }}
     permissions: {contents: read}
     steps:
@@ -294,6 +302,7 @@ jobs:
   mcp:
     needs: [check, npm]
     runs-on: ubuntu-latest            # the publisher below is the one built for x64
+    timeout-minutes: 20
     continue-on-error: true
     permissions: {id-token: write, contents: read}
     env:

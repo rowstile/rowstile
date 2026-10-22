@@ -15259,7 +15259,7 @@ class Delivery(unittest.TestCase):
     def job(self, workflow: str, name: str) -> str:
         """A job's text in a workflow."""
         text = "\n".join(self.workflows()[f".github/workflows/{workflow}"])
-        return search(rf"^  {name}:\n(.*?)(?=^  [a-z-]+:\n|\Z)", text, re.S | re.M).group(1)
+        return search(rf"^  {name}:\n(.*?)(?=^  [\w-]+:\n|\Z)", text, re.S | re.M).group(1)
 
     def test_the_workflows_run_every_part_of_a_run(self) -> None:
         # run_tests.sh's parts run side by side, a job each: a part no job names would run nowhere
@@ -15267,9 +15267,22 @@ class Delivery(unittest.TestCase):
         parts = {k: search(rf'^PARTS_{k}="([^"]+)"', runner, re.M).group(1).split() for k in ("SUITES", "SOAK")}
         # ... and the script's steps are in those parts, by those names
         self.assertEqual(set(re.findall(r"\bpart ([a-z0-9-]+);", runner)), {*parts["SUITES"], *parts["SOAK"]})
+        # the full run's (nightly) has one more, the short run's (17 and 18 on each push) one less
+        parts["FULL"] = [*parts["SUITES"], *search(r'full\) PARTS="\$PARTS_SUITES ([^"]+)"', runner).group(1).split()]
+        self.assertIn("short) PARTS=${PARTS_SUITES#unit };", runner)
+        short = [p for p in parts["SUITES"] if p != "unit"]
+        # ci.yml runs each version's parts with suites.yml
+        self.assertIn("        part: ${{ fromJSON(inputs.parts) }}\n", self.job("suites.yml", "suites"))
+        for pg, mode, want in (("16", "", parts["SUITES"]), ("17", "--short", short), ("18", "--short", short)):
+            body = self.job("ci.yml", f"suites-{pg}")
+            self.assertIn("    uses: ./.github/workflows/suites.yml\n", body)
+            given = search(r"with: \{pg: \"(\d+)\", mode: \"([^\"]*)\", parts: '\[([^\]]*)\]'\}", body)
+            self.assertEqual(
+                (given.group(1), given.group(2), re.findall(r'"([a-z0-9-]+)"', given.group(3))), (pg, mode, want)
+            )
         for workflow, name, kind in (
-            ("ci.yml", "suites", "SUITES"),
             ("nightly.yml", "suites", "SUITES"),
+            ("nightly.yml", "full", "FULL"),
             ("nightly.yml", "statements", "SUITES"),
             ("nightly.yml", "soak", "SOAK"),
         ):
@@ -15300,20 +15313,31 @@ class Delivery(unittest.TestCase):
                     self.assertNotRegex(m.group(1), r": | #", f"{path}:{n}")
 
     def test_the_required_checks_fail_unless_every_part_passed(self) -> None:
-        # `main` requires a check per version ("postgres (16)"): a job that waits for the version's parts. A job
-        # that is skipped counts as passed, so it runs whatever became of them, and fails unless they passed
-        body = self.job("ci.yml", "postgres")
-        self.assertIn("    needs: suites\n", body)
-        self.assertIn("    if: always()\n", body)
-        self.assertIn('test "$SUITES" = success', body)
-        self.assertIn('SUITES: "${{ needs.suites.result }}"', body)
-        self.assertEqual(
-            re.findall(r'\{pg: "(\d+)", mode: "([^"]*)"\}', body), [("16", ""), ("17", "--short"), ("18", "--short")]
-        )
-        self.assertEqual(
-            re.findall(r'\{pg: "(\d+)", mode: "([^"]*)"\}', self.job("ci.yml", "suites")),
-            [("16", ""), ("17", "--short"), ("18", "--short")],
-        )
+        # `main` requires a check per version ("postgres (16)"): a job that waits for that version's parts alone. A
+        # job that is skipped counts as passed, so it runs whatever became of them, and fails unless they passed
+        for pg, name in (("16", "postgres (16)"), ("17", "postgres (17, --short)"), ("18", "postgres (18, --short)")):
+            body = self.job("ci.yml", f"postgres-{pg}")
+            self.assertIn(f"    name: {name}\n    needs: suites-{pg}\n    if: always()\n", body)
+            self.assertIn('test "$SUITES" = success', body)
+            self.assertIn(f'SUITES: "${{{{ needs.suites-{pg}.result }}}}"', body)
+
+    def test_every_job_has_a_time_limit(self) -> None:
+        # a step that hangs would hold its runner for GitHub's default of six hours, and the required checks with it.
+        # A job that calls a workflow takes no limit: that workflow's jobs have theirs
+        for path, lines in self.workflows().items():
+            if not path.startswith(".github/"):
+                continue
+            jobs = re.findall(r"(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)", "\n".join(lines).split("\njobs:\n")[1])
+            self.assertTrue(jobs, path)
+            for name, body in jobs:
+                limit = re.search(r"(?m)^    timeout-minutes: (\d+)$", body)
+                if re.search(r"(?m)^    uses: \./", body):
+                    self.assertIsNone(limit, f"{path}: {name}")
+                else:
+                    self.assertIsNotNone(limit, f"{path}: {name}: timeout-minutes")
+        # a part's suites get more than ci.sh gives them: ci.sh stops them first, and says what was still running
+        part = int(search(r"then LIMIT=(\d+); fi", read("ci.sh")).group(1))
+        self.assertGreater(int(search(r"timeout-minutes: (\d+)", self.job("suites.yml", "suites")).group(1)) * 60, part)
 
     def test_a_releases_tag(self) -> None:
         sys.path.insert(0, os.path.join(self.REPO, "packaging"))

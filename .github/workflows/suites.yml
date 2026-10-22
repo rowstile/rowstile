@@ -1,0 +1,46 @@
+# The suites on one version of PostgreSQL, in the parts run_tests.sh names: each on a runner and in a container of
+# its own, side by side, so the wait is the longest part's and not their sum. ci.yml calls it once for each version,
+# so that each version's required check (`postgres (16)`) waits for that version's parts alone and fails only
+# when one of them did.
+name: suites
+on:
+  workflow_call:
+    inputs:
+      pg: {description: "the version of PostgreSQL", type: string, required: true}
+      mode: {description: "run_tests.sh's mode: empty (--quick) or --short", type: string, default: ""}
+      parts: {description: "the parts to run, a JSON list (--short has no unit part)", type: string, required: true}
+# what a job needs beyond reading the repository, it says itself
+permissions: {contents: read}
+jobs:
+  suites:
+    name: ${{ matrix.part }}
+    runs-on: ubuntu-latest
+    # ci.sh stops a part's suites after 25 minutes and says what was still running: this is for what is around them
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(inputs.parts) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      # --coverage, on 16: each Python process also measures what it runs of authzlib and cli (the coverage job reads
+      # it). 17 and 18 run less and added nothing (2026-10-10: the same lines, branches and functions as 16 alone)
+      - run: bash core/ci.sh ${{ inputs.pg == '16' && '--coverage' || '' }} ${{ inputs.mode }} ${{ inputs.pg }}
+        env: {ROWSTILE_PART: "${{ matrix.part }}"}
+      - if: failure() || cancelled()   # cancelled by hand too: what had run, and the hung step
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: logs-pg${{ inputs.pg }}-${{ matrix.part }}
+          path: /tmp/rowstile-ci-${{ inputs.pg }}.log
+      # what it measured: the lines, combined in one file (ci.sh's report made it, its name starts with a dot), and
+      # the calls of rowstile's functions
+      - if: success() && inputs.pg == '16'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: coverage-pg${{ inputs.pg }}-${{ matrix.part }}
+          path: |
+            .ci/coverage-${{ inputs.pg }}/.coverage
+            .ci/coverage-${{ inputs.pg }}/functions.tsv
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
