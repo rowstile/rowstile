@@ -48,11 +48,12 @@ model Member {
   @@schema("app")
 }
 
+// its key has a name of its own (name:), which says nothing of its fields' order: for the SDK's checks
 model ProjectService {
   project_id Int
   service_id Int
 
-  @@id([project_id, service_id])
+  @@id(name: "link", [project_id, service_id])
   @@index([service_id])
   @@map("project_services")
   @@schema("app")

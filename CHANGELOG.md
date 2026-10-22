@@ -525,6 +525,18 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   Moving a folder takes the right to share it, as deleting it does: an editor could move a folder into one of
   their own, which gave them `share` on it and took it from everyone who reached it from above. The web app
   shows a folder's Share, Move and Delete only to those who may share it.
+- TypeScript: inside `transaction(fn, who)` (`@rowstile/pg`, `@rowstile/drizzle`) and `begin(fn, who)`
+  (`@rowstile/postgres`), the object's own calls (`a.expect`, `a.can`, `a.share`, `a.query`, ...) run in that
+  transaction, as `who`, and `fn` acts for `who`. They ran in a transaction of their own on another connection,
+  signed in as whoever the code around acted for (or the `user` function, or nobody): `a.expect` gave the reason
+  for someone else, nothing saw what the transaction had written, and on a pool of one they waited for ever.
+- `@rowstile/prisma` reads a compound key's fields in the key's order, which its name gives
+  (`project_id_user_id`), not in the order the `where` lists them: `{ user_id: 2, project_id: 1 }` was asked
+  about row `(2,1)`, so an update could be a 404 where it is a 403, or name the wrong row. A key given a name of
+  its own (`@@id(name: ...)`) names no row unless `authz({ keys })` gives its fields.
+- `@rowstile/drizzle` on node-postgres listens for a lost connection while a transaction holds one, as
+  `@rowstile/pg` does: a database that restarts mid-transaction fails the transaction, where it stopped the
+  process.
 
 ## 0.1.0 (alpha)
 

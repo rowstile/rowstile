@@ -170,7 +170,8 @@ export type PrismaAuthz = ReturnType<typeof calls> & {
 };
 
 export interface ExtensionOptions {
-  /** A model's key fields, in the policy's key order, where it isn't `id` or the where's one unique field. */
+  /** A model's key fields, in the policy's key order, where it isn't `id`, the where's one unique field, or a
+   *  compound key Prisma names for its fields (project_id_user_id). */
   keys?: Record<string, string[]>;
 }
 
@@ -208,12 +209,16 @@ export function authz(options: ExtensionOptions = {}) {
       if (isScalar(where.id)) return where.id as Id;
       const entries = Object.entries(where);
       if (entries.length !== 1) return undefined;
-      const [, v] = entries[0];
+      const [name, v] = entries[0];
       if (isScalar(v)) return v as Id;
       // a compound key's fields, in a plain object: not a date (or bytes, a decimal), which isn't written as the
-      // database writes it
+      // database writes it. In the key's own order, which its name gives (Prisma names it for its fields, joined
+      // with "_": project_id_user_id), not in the order the app wrote them; a key given a name of its own
+      // (@@id(name: ...)) doesn't say, and options.keys must
       if (v && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype && Object.values(v).every(isScalar)) {
-        return Object.values(v) as Id;
+        const o = v as Record<string, unknown>;
+        const fields = Object.keys(o).sort((a, b) => name.indexOf(a) - name.indexOf(b));
+        if (fields.join("_") === name) return fields.map((f) => o[f]) as Id;
       }
       return undefined;
     };

@@ -48,7 +48,8 @@ argument): `describe()` writes a user whose id holds `:` or is `nobody` as `user
 every principal reads back as itself. The audit trail and `created_by` name who acted the same way, so
 `parsePrincipal` reads them too. Whoever the code acts for (`actingAs`, a `job`)
 comes first, else the `user` function, else nobody; a `who` given to one call (`transaction(fn, who)`) comes
-before all, and `null` there is nobody. Every transaction signs in, even as nobody, and nothing uses a
+before all, and `null` there is nobody. The code in `fn` acts for that transaction's principal too: the
+package's own calls made there (`a.expect`, `a.can`) run in the same transaction. Every transaction signs in, even as nobody, and nothing uses a
 session-level `SET`, so pools and poolers in transaction mode are safe; the change feed needs its own connection
 to Postgres ([Behind a pooler](../../docs/operations.md#behind-a-pooler)).
 
@@ -70,7 +71,8 @@ Traps it handles:
   refusal names no command (Postgres doesn't say whether the update or the delete rule).
 - **Prisma's promises are lazy**: `actingAs` and `job` await what they return inside their scope.
 - **A connection that drops.** node-postgres stops the process when a client that is checked out loses its
-  connection and nobody listens: `@rowstile/pg` listens while it holds one, so the transaction fails instead.
+  connection and nobody listens: `@rowstile/pg`, and `@rowstile/drizzle` on node-postgres, listen while a
+  transaction holds one, so the transaction fails instead.
   `changes(pool)` listens again after its connection drops, and tells its subscribers once.
 - **An update that changed nothing** is `NotFound` when the user can't see the row, `Refused` when the database
   says no, and `NotFound` again when the rule allows it and the statement matched nothing for another reason

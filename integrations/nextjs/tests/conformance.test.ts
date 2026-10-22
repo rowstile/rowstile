@@ -14,14 +14,14 @@ import { eq, sql as sqlTag } from "drizzle-orm";
 import { integer, numeric, pgSchema, serial, text, varchar } from "drizzle-orm/pg-core";
 import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { actingAs, beforeSignIn, ConnectionProblem, current, errorCode, NotSignedIn, sqlstate, translate } from "@rowstile/client";
-import { idShown, Refused, refusal, verdict } from "@rowstile/client";
+import { idShown, Refused, refusal, verdict, type AuthzCalls } from "@rowstile/client";
 import { describe as describePrincipal, parsePrincipal, principal } from "@rowstile/client";
 import { authzRoutes } from "@rowstile/next";
 import { authz as rowstile } from "@rowstile/pg";
 import { calls, changes } from "@rowstile/pg";
 import { authz as postgresAuthz } from "@rowstile/postgres";
 import { expect as drizzleExpect, inIds, withAuthz } from "@rowstile/drizzle";
-import { ids as drizzleIds } from "@rowstile/drizzle";
+import { ids as drizzleIds, queryable as drizzleQueryable } from "@rowstile/drizzle";
 import { databasePerWorker } from "@rowstile/vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { authz, signedIn } from "@rowstile/prisma";
@@ -60,7 +60,7 @@ test("1, 2: lists show what each may see", async () => {
   expect(await (await fetch(`${SERVER}/api/projects`)).json()).toEqual([3]);
 });
 
-// 3: not signed in at all: the strict sign-in error, naming act_as
+// 3: not signed in at all: the not-signed-in error (AZ701), naming act_as
 test("3: not signed in is an error that says how", async () => {
   const c = new pg.Client({ connectionString: APP });
   await c.connect();
@@ -229,6 +229,22 @@ test("8: insert, then read back", async () => {
     .catch((e: unknown) => e);
   expect(feedback instanceof Refused && [feedback.table, feedback.command]).toEqual(["app.feedback", "select"]);
   expect((await actingAs("1", () => db.feedback.create({ data: { project_id: 1, author_id: 1, body: "mine" } }))).body).toBe("mine");
+});
+
+// a transaction in a page's after(), once the page is sent: Next has no render to keep it out of a cache, and
+// @rowstile/next lets it sign in (Next's own words for that, as this version of Next says them)
+test("after(): a transaction once the page is sent signs in and runs", async () => {
+  const r = await fetch(`${SERVER}/later`, as("1"));
+  expect([r.status, await r.text()]).toEqual([200, expect.stringContaining("sent once the page is")]);
+  const owner = new pg.Client({ connectionString: OWNER });
+  await owner.connect();
+  try {
+    const sent = async () => (await owner.query("SELECT sender_id, recipient_id FROM app.inbox WHERE body = 'later'")).rows;
+    for (let i = 0; i < 100 && (await sent()).length === 0; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(await sent()).toEqual([{ sender_id: 1, recipient_id: 2 }]);
+  } finally {
+    await owner.end();
+  }
 });
 
 // 9: the generated names type-check, and a wrong permission name doesn't
@@ -447,8 +463,8 @@ describe("without Prisma", () => {
     try {
       const projects = await actingAs(["service", 1], () => a.begin(async (tx) => tx`SELECT id FROM app.projects ORDER BY id`));
       expect(projects.map((r) => r.id)).toEqual([1, 3]);
-      await expect(a.begin(async (tx) => tx`DELETE FROM app.notes WHERE id = 1 RETURNING id`.then((rows) =>
-        a.expect(rows, "app.notes", "delete", 1)), "2")).rejects.toBeNotFound();
+      await expect(a.begin(async (tx) => tx`DELETE FROM app.notes WHERE id = 3 RETURNING id`.then((rows) =>
+        a.expect(rows, "app.notes", "delete", 3)), "2")).rejects.toThrow("permission denied: user 2 may not delete row 3 of app.notes");
       expect(await a.permsOf("project", [1, 3])).toEqual({ "1": [], "3": ["view"] });   // signed out
     } finally {
       await sql.end();
@@ -557,20 +573,67 @@ describe("without Prisma", () => {
     }
   });
 
+  // Inside transaction(fn, who), the object's own calls run in that transaction: as who, not as whoever the code
+  // around it acts for; they see what it wrote; and on a pool of one they wait for no second connection. Code in
+  // fn that acts for someone else (actingAs) asks in a transaction of its own.
+  test("inside a transaction, the object's own calls run in it, as who it signed in as", async () => {
+    const p = new pg.Pool({ connectionString: APP, max: 1, connectionTimeoutMillis: 2000 });
+    const sql = postgres(APP, { max: 1 });
+    const two = new pg.Pool({ connectionString: APP, max: 2 });
+    const NEW = "INSERT INTO app.notes (project_id, author_id, body) VALUES (1, 3, 'new') RETURNING id";
+    // bo (2) acts around it; the transaction signs in as cy (3), who writes a note bo can't see: cy may edit it
+    const asked = (a: Pick<AuthzCalls, "can">, id: number) => Promise.all([current()?.id, a.can("note", id, "edit")]);
+    try {
+      const pgA = rowstile(p);
+      expect(await actingAs("2", () => pgA.transaction(async (c) => {
+        const id = (await c.query(NEW)).rows[0].id;
+        return [...await asked(pgA, id), (await pgA.query("SELECT count(*)::int AS n FROM app.notes WHERE id = $1", [id])).rows[0].n];
+      }, "3"))).toEqual(["3", true, 1]);
+      const pgExpect = await actingAs("2", () => pgA.transaction(async (c) =>
+        pgA.expect(await c.query("UPDATE app.notes SET body = 'x' WHERE id = 1"), "app.notes", "update", 1), "3")).catch((e) => e);
+      expect(pgExpect.message).toBe("permission denied: user 3 may not update row 1 of app.notes");
+      const postgresA = postgresAuthz(sql);
+      expect(await actingAs("2", () => postgresA.begin(async (tx) =>
+        asked(postgresA, (await tx.unsafe(NEW))[0].id), "3"))).toEqual(["3", true]);
+      const onPg = withAuthz(drizzle(p));
+      expect(await actingAs("2", () => onPg.transaction(async (tx) =>
+        asked(onPg, (await drizzleQueryable(tx).query(NEW)).rows[0].id), "3"))).toEqual(["3", true]);
+      const onPostgres = withAuthz(drizzlePostgres(sql));
+      expect(await actingAs("2", () => onPostgres.transaction(async (tx) =>
+        asked(onPostgres, (await drizzleQueryable(tx).query(NEW)).rows[0].id), "3"))).toEqual(["3", true]);
+      // someone else inside it: in a transaction of their own, as them
+      const twoA = rowstile(two);
+      expect(await actingAs("2", () => twoA.transaction(async () =>
+        [await twoA.can("project", 2, "edit"), await actingAs("2", () => twoA.can("project", 2, "edit"))], "3"))).toEqual([false, true]);
+    } finally {
+      await p.end();
+      await sql.end();
+      await two.end();
+    }
+  });
+
   // a connection that drops while a transaction holds it fails that transaction, not the process; the next works
-  test("pg: a connection lost inside a transaction", async () => {
+  test("pg and Drizzle on pg: a connection lost inside a transaction", async () => {
     const p = new pg.Pool({ connectionString: APP, max: 1 });
     const owner = new pg.Client({ connectionString: OWNER });
     await owner.connect();
     const a = rowstile(p);
+    const d = withAuthz(drizzle(p));
+    const lose = async (pid: number) => {
+      await owner.query("SELECT pg_terminate_backend($1)", [pid]);
+      await new Promise((r) => setTimeout(r, 300));                 // the app awaits something else meanwhile
+    };
     try {
       await expect(actingAs("1", () => a.transaction(async (c) => {
-        const pid = (await c.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
-        await owner.query("SELECT pg_terminate_backend($1)", [pid]);
-        await new Promise((r) => setTimeout(r, 300));               // the app awaits something else meanwhile
+        await lose((await c.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
         return c.query("SELECT 1");
       }))).rejects.toThrow();
       expect(await actingAs("2", () => a.list("project", "view"))).toEqual(["2", "3"]);
+      await expect(actingAs("1", () => d.transaction(async (tx) => {
+        await lose((await tx.execute(sqlTag`SELECT pg_backend_pid() AS pid`)).rows[0].pid as number);
+        return tx.execute(sqlTag`SELECT 1`);
+      }))).rejects.toThrow();
+      expect(await actingAs("2", () => d.list("project", "view"))).toEqual(["2", "3"]);
     } finally {
       await owner.end();
       await p.end();

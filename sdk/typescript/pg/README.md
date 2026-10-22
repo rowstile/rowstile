@@ -23,8 +23,9 @@ import { authz as rowstile } from "@rowstile/pg";
       expect(await a.transaction(async (c) => (await c.query("SELECT id FROM app.notes ORDER BY id")).rows.map((r) => r.id), "2")).toEqual([2, 3]);
 ```
 
-`transaction(fn, who)` signs in as `who`, or as whoever `actingAs` set. An UPDATE the rules refuse changes 0
-rows, without an error; `expect` asks the database why:
+`transaction(fn, who)` signs in as `who`, or as whoever `actingAs` set, else the `user` function, else nobody.
+`fn` acts for them too: `expect`, `can` and the others called inside it run in its transaction. An UPDATE the
+rules refuse changes 0 rows, without an error; `expect` asks the database why:
 
 ```ts
       await expect(actingAs("3", () => a.transaction(async (c) => {

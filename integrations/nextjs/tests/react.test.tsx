@@ -4,7 +4,7 @@
 // server, what the routes don't do on cue: errors, live updates, keys of several columns.
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import type { Id } from "@rowstile/client";
+import { idText, type Id } from "@rowstile/client";
 import { AuthzProvider, Can, ShareDialog, useAccessRequest, usePerms } from "@rowstile/react";
 import { SERVER, as, seed } from "./data";
 
@@ -217,6 +217,15 @@ test("a key of several columns, as the database writes it; an empty list asks no
   await waitFor(() => expect(screen.getByText('[1,"a\\"b"]:view [4]:edit 5:')).toBeTruthy());
   expect(screen.queryByText("loading")).toBeNull();                // the empty list: answered at once, with nothing,
   expect(f.asked).toEqual([`GET /api/authz/perms?type=project&ids=${encodeURIComponent('("1","a\\"b")')}&ids=4&ids=5`]);   // unasked
+});
+
+// the kit writes keys itself (@rowstile/client needs Node, so a browser can't load its idText): the same text
+test("a key as the kit writes it is the client's idText", async () => {
+  const ids: Id[] = [[1, 'a"b'], ["x\\y", "c,d"], [7, ""], ["(", ")"], [4], "5", 6];
+  const f = answering(() => Response.json({}));
+  render(<AuthzProvider fetch={f} live={false}><One ids={ids} /></AuthzProvider>);
+  await waitFor(() => expect(f.asked.length).toBe(1));
+  expect(f.asked).toEqual([`GET /api/authz/perms?type=project&${ids.map((id) => "ids=" + encodeURIComponent(idText(id))).join("&")}`]);
 });
 
 test("the share dialog: another user's shares never shown, an error, a share, asked again", async () => {

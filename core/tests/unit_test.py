@@ -10767,6 +10767,23 @@ class SdkPackages(unittest.TestCase):
             ]
             self.assertEqual(missing, [], f"sdk/typescript/{package}/README.md: lines not in integrations/nextjs")
 
+    def test_the_vitest_types_check_leaves_no_folder_behind(self) -> None:
+        # sdk/typescript/vitest/types-test/types.sh, with an npm that fails (Vitest 4) and a version it has no folder
+        # for (9, which stops the script): what it says, and no folder of its own left in the temporary directory
+        script = os.path.join(self.REPO, "sdk", "typescript", "vitest", "types-test", "types.sh")
+        with tempfile.TemporaryDirectory() as d:
+            stubs, tmp = os.path.join(d, "bin"), os.path.join(d, "tmp")
+            os.mkdir(stubs)
+            os.mkdir(tmp)
+            with open(os.path.join(stubs, "npm"), "w", encoding="utf-8") as fh:
+                fh.write("#!/bin/sh\nexit 1\n")
+            os.chmod(os.path.join(stubs, "npm"), 0o755)
+            env = {**os.environ, "PATH": stubs + os.pathsep + os.environ["PATH"], "TMPDIR": tmp}
+            for versions, said in ((["4"], "FAIL  installing Vitest 4\n"), (["9"], "")):
+                p = subprocess.run(["bash", script, *versions], env=env, capture_output=True, text=True, timeout=60)
+                self.assertEqual((p.returncode, p.stdout), (1, said), p.stderr)
+                self.assertEqual(os.listdir(tmp), [], versions)
+
     def test_the_release_ships_each_packages_own_page(self) -> None:
         with open(os.path.join(self.REPO, ".github", "workflows", "release.yml"), encoding="utf-8") as fh:
             release = fh.read()

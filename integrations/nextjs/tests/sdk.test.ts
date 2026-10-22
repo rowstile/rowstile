@@ -362,6 +362,14 @@ describe("@rowstile/prisma", () => {
     const member = await actingAs("2", () =>
       db.member.findUniqueOrThrow({ where: { project_id_user_id: { project_id: 9, user_id: 9 } } })).catch(missing);
     expect(member).toBe("app.members (9,9) not found");
+    // in the key's own order (its name's: project_id_user_id), whatever order the where gives its fields in; a key
+    // with a name of its own doesn't say, and names none
+    const reversed = await actingAs("2", () =>
+      db.member.findUniqueOrThrow({ where: { project_id_user_id: { user_id: 9, project_id: 8 } } })).catch(missing);
+    expect(reversed).toBe("app.members (8,9) not found");
+    const named = await actingAs("2", () =>
+      db.projectService.findUniqueOrThrow({ where: { link: { project_id: 8, service_id: 9 } } })).catch(missing);
+    expect(named).toBe("app.project_services not found");
     const more = await actingAs("2", () =>
       db.member.findUniqueOrThrow({ where: { project_id_user_id: { project_id: 9, user_id: 9 }, user_id: 9 } })).catch(missing);
     expect(more).toBe("app.members not found");

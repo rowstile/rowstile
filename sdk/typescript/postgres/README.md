@@ -22,16 +22,19 @@ import { authz as postgresAuthz } from "@rowstile/postgres";
       const projects = await actingAs(["service", 1], () => a.begin(async (tx) => tx`SELECT id FROM app.projects ORDER BY id`));
 ```
 
-A DELETE the rules refuse deletes 0 rows, without an error; `expect` asks the database why:
+A DELETE the rules refuse deletes 0 rows, without an error; `expect` asks the database why, in the same
+transaction, as the user it signed in as:
 
 ```ts
-      await expect(a.begin(async (tx) => tx`DELETE FROM app.notes WHERE id = 1 RETURNING id`.then((rows) =>
-        a.expect(rows, "app.notes", "delete", 1)), "2")).rejects.toBeNotFound();
+      await expect(a.begin(async (tx) => tx`DELETE FROM app.notes WHERE id = 3 RETURNING id`.then((rows) =>
+        a.expect(rows, "app.notes", "delete", 3)), "2")).rejects.toThrow("permission denied: user 2 may not delete row 3 of app.notes");
 ```
 
 ## Good to know
 
-- `begin(fn, who)` signs in as `who`, or as whoever `actingAs` set (`@rowstile/client`), else nobody.
+- `begin(fn, who)` signs in as `who`, or as whoever `actingAs` set (`@rowstile/client`), else the `user`
+  function, else nobody. `fn` acts for them too: `expect`, `can` and the others called inside it run in its
+  transaction.
 - Every transaction signs in, even as nobody, and nothing uses a session-level `SET`: poolers in transaction
   mode are safe.
 - `await a.check()` at start-up throws `ConnectionProblem` on a connection that skips row-level security.
