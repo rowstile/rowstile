@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(ROOT, "cli"))
 sys.path.insert(0, HERE)
 import pgwire  # noqa: E402
 import rowstile_cli  # noqa: E402
-from authzlib import database, perf  # noqa: E402
+from authzlib import database, evaluate, parse_policy, perf, prove  # noqa: E402
 from authzlib.connection import Db, Value  # noqa: E402
 
 T = TypeVar("T")
@@ -239,24 +239,36 @@ def main() -> None:
         ok = os.path.join(tmp, "p.authz")
         with open(policy, encoding="utf-8") as fh:
             text = fh.read()
+        holds = text.replace("never folder: share and not org.member", "never folder: edit and not view")
         with open(ok, "w", encoding="utf-8") as fh:
-            fh.write(text.replace("never folder: share and not org.member", "never folder: edit and not view"))
+            fh.write(holds)
         rc, out = cli(None, "prove", ok, "--worlds", "60")
-        # the 60 drawn, and the corners (each condition true on every row or none) 3 times at each of the 4 sizes
+        # every world: the 60 drawn, the corners (each condition true on every row or none) 3 times at each size, and
+        # the rare ones (dense, and chains longer than the policy reads)
+        pol = parse_policy(holds, "p.authz")
+        corners = len(evaluate.corners([pol]))
+        every = 60 + 3 * corners * prove.MAX_SIZE + sum(1 for _ in evaluate.rare_worlds([pol], 60, "0"))
         tried = re.search(r"ok   holds in every world tried \((\d+) worlds", out)
-        check("one it does: exit 0", rc == 0 and tried is not None and (int(tried.group(1)) - 60) % 12 == 0, out)
+        check(
+            f"one it does: exit 0, after every world ({every}: the drawn, the corners at each size, the rare ones)",
+            rc == 0 and corners > 0 and tried is not None and int(tried.group(1)) == every,
+            (every, out),
+        )
+        typo = text.replace(
+            "can view  = edit or viewer or (parent.view and {inherit})",
+            "can view  = edit or viewer or (parnt.view and {inherit})",
+        )
         with open(ok, "w", encoding="utf-8") as fh:
-            fh.write(
-                text.replace(
-                    "can view  = edit or viewer or (parent.view and {inherit})",
-                    "can view  = edit or viewer or (parnt.view and {inherit})",
-                )
-            )
+            fh.write(typo)
         rc, out = cli(None, "prove", ok)
+        line = typo[: typo.index("parnt.view")].count("\n") + 1
         check(
             "a policy check refuses: its message, line and code, no traceback",
-            rc == 1 and "[AZ" in out and "line " in out and "Traceback" not in out,
-            out,
+            rc == 1
+            and f"line {line}: folder has no relation or permission 'parnt' (it has: " in out
+            and out.rstrip().endswith("[AZ203]")
+            and "Traceback" not in out,
+            (line, out),
         )
         rc, out = cli(None, "prove", ok, "--worlds", "abc")
         check(

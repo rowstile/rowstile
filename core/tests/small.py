@@ -1135,6 +1135,18 @@ def smallest_failing(db: DB, workdir: str, it: Item, before: bool) -> list[str]:
 
 
 # ----------------------------------------------------------------------
+# What the compiler refuses of the whole set a run checks (--size N: `--count N` says it), by code. A compiler that
+# refused more of the set, valid policies among them, would leave fewer checked and nothing else would say so
+REFUSED: dict[int, dict[str, int]] = {
+    3: {"AZ302": 10, "AZ303": 19, "AZ306": 8},
+    4: {"AZ302": 127, "AZ303": 129, "AZ304": 88, "AZ306": 186},
+}
+# The codes it may refuse a policy of the set with: the shapes the language limits (AZ302 to AZ306), and a type's
+# permission named where the type has none (AZ203). A run of part of the set (a slice, one policy) holds these, and
+# checks a quarter of its policies at least (of the soak's set, up to size 6 and the denies of 7, two in five compile)
+REFUSES = {"AZ203", "AZ302", "AZ303", "AZ304", "AZ306"}
+
+
 class Tally:
     """What a run (or one of its jobs) did."""
 
@@ -1243,11 +1255,13 @@ def main() -> None:
     os.chdir(os.path.dirname(HERE))
     if args.count:
         # every size up to SIZE, and the denies of the next: the set --size SIZE checks
+        listed_, every_refused = 0, Counter[str]()
         for size in range(1, args.count + 2):
             started = time.monotonic()
             every = listed(size)
             specs = [spec for spec in every if size <= args.count or denies(spec)]
             refused = Counter[str]()
+            listed_ += len(specs)
             for spec in specs:
                 try:
                     Compiler(parse_policy(policy_text(spec), "small.authz")).compile("small.authz")
@@ -1260,6 +1274,8 @@ def main() -> None:
                 f"{time.monotonic() - started:.0f}s",
                 flush=True,
             )
+            every_refused += refused
+        print(f"the set --size {args.count} checks: {listed_} policies, REFUSED {dict(sorted(every_refused.items()))}")
         return
     k, n = (int(x) for x in args.slice.split("/"))
     started = time.monotonic()
@@ -1309,7 +1325,24 @@ def main() -> None:
         print(f"ok {what}every policy judged")
     else:
         print(f"FAIL {what}{judged} of {len(mine)} policies judged")
-    sys.exit(1 if failed or judged != len(mine) else 0)
+    refused = dict(sorted(tally.refused.items()))
+    whole = REFUSED.get(args.size) if n == 1 and args.only is None else None
+    if whole is not None:
+        refusals = refused == whole
+        print(
+            f"{'ok' if refusals else 'FAIL'} what the compiler refuses: {refused}"
+            + (", as REFUSED says" if refusals else f", REFUSED says {whole} (--count {args.size})")
+        )
+    else:
+        unknown = sorted(set(refused) - REFUSES)
+        refusals = not unknown and tally.checked * 4 >= len(mine)
+        print(
+            f"{'ok' if refusals else 'FAIL'} {what}what the compiler refuses: {refused}"
+            + (f", codes REFUSES doesn't name: {', '.join(unknown)}" if unknown else "")
+            + f"; {tally.checked} of {len(mine)} checked"
+            + ("" if tally.checked * 4 >= len(mine) else ", fewer than a quarter")
+        )
+    sys.exit(1 if failed or judged != len(mine) or not refusals else 0)
 
 
 if __name__ == "__main__":

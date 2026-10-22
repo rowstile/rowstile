@@ -1298,6 +1298,24 @@ class Slow(Exception):
     """The policy's reads are slow to plan (lint says so), or the seed went over its time."""
 
 
+def refusal(stderr: str) -> str | None:
+    """What compile_policy.py said when it refused a policy: its last line, which ends with the mistake's code
+    (`[AZ302]`). None for any other way it fails (a traceback): a compiler that crashes refuses nothing, and the
+    policy fails."""
+    last = stderr.strip().splitlines()[-1] if stderr.strip() else ""
+    return last if re.search(r"\[AZ\d+\]$", last) else None
+
+
+def too_few(checked: int, policies: int) -> str | None:
+    """The line a run that checked too few of its policies fails with (checked: passed or failed, neither refused
+    nor set aside as slow), or None. Of genpolicy's seeds 1 to 300, 5 in a hundred are refused and 4 slow to plan:
+    at least half leaves room for any run's seeds, and a compiler that refuses most of them, or calls them slow,
+    can't leave a run green with little or nothing checked."""
+    if checked * 2 >= policies:
+        return None
+    return f"FAIL only {checked} of {policies} policies checked (the others refused, or slow): too few to say anything"
+
+
 def invariant_problems(checker: Checker) -> tuple[list[str], set[int]]:
     """authz.check_invariants() against the evaluator: the first five ids each user, each bot and nobody breaks.
     And the invariants it says are broken (by their place in the policy)."""
@@ -1352,7 +1370,10 @@ def run(
         fh.write(schema_text(spec))
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
     if compiled.returncode != 0:
-        raise Refused(compiled.stderr.strip().splitlines()[-1] if compiled.stderr.strip() else "refused")
+        why = refusal(compiled.stderr)
+        if why is None:
+            return ["the compiler failed, refusing nothing:", *compiled.stderr.strip().splitlines()[-12:]]
+        raise Refused(why)
     if "view definitions to plan" in compiled.stdout and not slow:
         raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
@@ -1697,7 +1718,10 @@ def main() -> None:
                 "  not judged (their policy failed, or was too slow): "
                 + "; ".join(f"{a} + {b}" for a, b in sorted(missed))
             )
-    sys.exit(1 if failed else 0)
+    few = too_few(passed + failed, passed + failed + sum(refused.values()) + len(slow))
+    if few:
+        print(few)
+    sys.exit(1 if failed or few else 0)
 
 
 if __name__ == "__main__":

@@ -133,7 +133,12 @@ adding or taking away checks on purpose, write the new count there, or `python3 
 with the run's log (`/tmp/rowstile-ci-16.log`). A skipped unit test isn't a passed one: the unit tests' count is
 what they pass in `ci.sh`'s container, where those that ask git skip. The random suites (difftest, genpolicy, around,
 the invariance of random policies, the conditions, the parser fuzzer, the rewrites, the stress test) check as many
-things as their seeds draw, and aren't counted.
+things as their seeds draw, and aren't counted. They fail when they judged too little instead: genpolicy, around,
+the rewrites and the invariance when fewer than half their policies were checked (the others refused, or slow to
+plan), or when the compiler fails without a refusal's code; the rewrites when the database's diff shows none of the
+review's differences; the small policies when the compiler refuses other than `REFUSED` says (a slice: a code it
+doesn't name, or fewer than a quarter checked); the stress test when a kind of write changed nothing, or more than
+half the transactions failed.
 
 ### Mistakes put in on purpose
 
