@@ -14554,11 +14554,8 @@ class Delivery(unittest.TestCase):
 
     def test_jobs_run_on_githubs_own_runners(self) -> None:
         # each job on a machine of its own, GitHub's ubuntu-latest: no repository variable picks another runner (on a
-        # public repository, a fork's pull request would run on it), and no job waits on a lock for another's containers.
-        # The sweep's workflow still names the variable: its own change takes it out
+        # public repository, a fork's pull request would run on it), and no job waits on a lock for another's containers
         for path, lines in self.workflows().items():
-            if path == ".github/workflows/mutants.yml":
-                continue
             for n, line in enumerate(lines, 1):
                 m = re.match(r"\s*runs-on: (.*)$", line)
                 if m:
