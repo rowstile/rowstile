@@ -91,6 +91,9 @@ A query outside a signed-in transaction fails with the not-signed-in error (AZ70
       expect(translate(e)).toBeInstanceOf(NotSignedIn);
 ```
 
+`notSignedIn(e)` (in `@rowstile/client`) says whether an error is that one. A login the database refuses
+(AZ703) and settings changed by hand (AZ702) have its SQLSTATE, 28000, but are not it.
+
 ## Answering HTTP
 
 In your framework's error handler, `problemOf(e)` (in `@rowstile/client`) gives the status and the problem body

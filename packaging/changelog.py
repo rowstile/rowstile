@@ -8,7 +8,8 @@
 Each release has a section of its own, an alpha, a beta and a candidate as much as a final release:
 `## 0.2.0-alpha.1 (YYYY-MM-DD)`, `## 0.2.0-rc.1 (YYYY-MM-DD)`, `## 0.2.0 (YYYY-MM-DD)`. Its notes are that section,
 under its heading's exact version. A -dev version is no release: its notes are what **Unreleased** holds so far,
-perhaps nothing. `layout()` says where the file strays from RELEASING.md's layout. Standard library only.
+perhaps nothing. A relative link in the notes becomes a link to its file at the release's tag (at `main` for a -dev
+version). `layout()` says where the file strays from RELEASING.md's layout. Standard library only.
 """
 
 from __future__ import annotations
@@ -25,6 +26,9 @@ PARTS = ("Added", "Changed", "Removed", "Fixed", "Upgrading")
 HISTORY = "Before the beta"
 RELEASE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))? \(\d{4}-\d{2}-\d{2}\)")
 STAGES = ("alpha", "beta", "rc", None)  # a version's alphas come before its betas, its candidates, then itself
+REPOSITORY = "https://github.com/rowstile/rowstile"
+# code (inline or fenced), which is left as it is, or a link's target: [text](target)
+LINK = re.compile(r"(`+)[\s\S]*?\1|\]\(([^)\s]+)\)")
 
 
 def read() -> str:
@@ -56,6 +60,21 @@ def upcoming(text: str) -> str:
     end = re.search(r"^## ", body, re.M)
     said = (body[: end.start()] if end else body).strip()
     return said + "\n" if said else ""
+
+
+def linked(notes: str, ref: str) -> str:
+    """The notes with each relative link made a link to its file at ref (the release's tag): CHANGELOG.md's links
+    are written from the repository's root, as GitHub reads the file, but a release's page reads them from its
+    own address, where `[Installing](docs/installing.md)` leads nowhere. A link with a scheme (`https:`), one to
+    an anchor of the page, and code are left as they are."""
+
+    def absolute(m: re.Match[str]) -> str:
+        target = m.group(2)
+        if target is None or re.match(r"[a-z][a-z0-9+.-]*:|#", target, re.I):
+            return m.group(0)
+        return f"]({REPOSITORY}/blob/{ref}/{target.removeprefix('./').lstrip('/')})"
+
+    return LINK.sub(absolute, notes)
 
 
 def unreleased(text: str) -> list[str]:
@@ -123,7 +142,7 @@ def main(argv: list[str]) -> None:
             f"Unreleased: they become its section, ## {version} (YYYY-MM-DD) (RELEASING.md)"
         )
     if version.endswith("-dev"):
-        sys.stdout.write(upcoming(text))
+        sys.stdout.write(linked(upcoming(text), "main"))
         return
     notes = section(version, text)
     if not notes.strip():
@@ -133,7 +152,7 @@ def main(argv: list[str]) -> None:
         )
     if not re.search(r"\(\d{4}-\d{2}-\d{2}\)$", heading(version, text) or ""):
         raise SystemExit(f"changelog.py: {version}'s heading needs the date: ## {version} (YYYY-MM-DD)")
-    sys.stdout.write(notes)
+    sys.stdout.write(linked(notes, f"v{version}"))
 
 
 if __name__ == "__main__":

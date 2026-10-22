@@ -128,6 +128,11 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   if the same update gives that key to another row (two rows swapping keys, which takes a deferrable
   key), the shares stay with the key. And the audit has no line for a relation column changed by
   an update that changes the row's key and its partition at once.
+- **A key two rows hold, through a table that inherits**: a table's primary key doesn't cover the rows of a
+  table that inherits from it (`CREATE TABLE ... INHERITS`), so a row there may have the key of a row of the
+  table. rowstile sees one object with that key, and a permission holds on it where it holds on either row:
+  `authz.can`, `perms`, `explain`, `who` and `authz.list` answer so, as the rules do. <!-- checked: tests/children.sh "a key two rows hold: authz.can answers for either"; tests/children.sh "... and so do perms, explain and who"; tests/children.sh "... as list does" -->
+  Where two such rows aren't meant to be one object, keep their keys apart (one sequence for both tables).
 - **A foreign key's action skips the rules**: Postgres runs `ON DELETE CASCADE`, `ON DELETE SET NULL`
   or `SET DEFAULT`, and `ON UPDATE SET NULL` or `SET DEFAULT` without row-level security, so deleting a
   row (or changing its key) can delete or change rows of a governed table that the user may not. Apply

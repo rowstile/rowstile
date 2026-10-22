@@ -15725,6 +15725,44 @@ class Delivery(unittest.TestCase):
         ):
             changelog.main(["0.2.0-rc.2"])
 
+    def test_a_release_s_notes_link_to_the_files_at_its_tag(self) -> None:
+        # CHANGELOG.md's links are written from the repository's root, as GitHub reads the file; a release's page
+        # reads them from its own address, where they led nowhere (0.1.0-alpha.9's [Installing](docs/installing.md))
+        sys.path.insert(0, os.path.join(self.REPO, "packaging"))
+        try:
+            import changelog
+        finally:
+            sys.path.pop(0)
+        lines = (
+            "- Anything may change ([what a 0.x release promises](docs/reference/limits.md#what-a-0x-release-promises)).",
+            "- Installed with npm, pip or the image: [Installing](docs/installing.md); [the folder](./editor/), [CI](/.github/workflows/ci.yml).",
+            "- Two starters: [FastAPI](https://github.com/rowstile/starter-fastapi), <https://rowstile.dev/problems/refused>, [below](#upgrading).",
+            "- `Queries[ObjectType, Permission](x.md)`, and in a block:\n\n  ```md\n  [Installing](docs/installing.md)\n  ```",
+        )
+        text = "# Changelog\n\n## Unreleased\n\n- How releases are made: [RELEASING.md](RELEASING.md).\n"
+        text += "\n".join(lines[2:]) + "\n\n## 0.1.0-alpha.9 (2026-10-19)\n\n" + "\n".join(lines) + "\n"
+        tag = "https://github.com/rowstile/rowstile/blob/v0.1.0-alpha.9/"
+        out = io.StringIO()
+        with mock.patch.object(changelog, "read", return_value=text), contextlib.redirect_stdout(out):
+            changelog.main(["0.1.0-alpha.9"])
+        self.assertEqual(
+            out.getvalue(),
+            f"- Anything may change ([what a 0.x release promises]({tag}docs/reference/limits.md"
+            "#what-a-0x-release-promises)).\n"
+            f"- Installed with npm, pip or the image: [Installing]({tag}docs/installing.md); [the folder]({tag}editor/), "
+            f"[CI]({tag}.github/workflows/ci.yml).\n" + "\n".join(lines[2:]) + "\n",
+        )
+        # main between releases (the release workflow's dry run) links to main: no tag is there yet
+        out = io.StringIO()
+        with mock.patch.object(changelog, "read", return_value=text), contextlib.redirect_stdout(out):
+            changelog.main(["0.2.0-dev"])
+        self.assertEqual(
+            out.getvalue(),
+            "- How releases are made: [RELEASING.md](https://github.com/rowstile/rowstile/blob/main/RELEASING.md).\n"
+            + "\n".join(lines[2:])
+            + "\n",
+        )
+
     def release_jobs(self) -> dict[str, str]:
         """release.yml's jobs by name, each its text without the comments."""
         text = read("../.github/workflows/release.yml")
