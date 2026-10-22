@@ -2,6 +2,7 @@
 # test.sh: the Python SDK's conformance suite, against a fresh Postgres in Docker.
 #   integrations/fastapi/test.sh            # PG_MAJOR=17 or 18 for another version; KEEP=1 keeps the database
 #   POOLER=pgbouncer integrations/fastapi/test.sh     # the app through PgBouncer in transaction mode
+#   RESOLUTION=lowest-direct integrations/fastapi/test.sh     # the oldest versions the bounds allow, not uv.lock's
 # (to look at: check 14 migrates it once more, so the tests run again only on a new one, which this script makes)
 # Check 11 first: a fresh database, migrated with Alembic (rowstile's policy is one of the revisions), then
 # the policy's tests, then Alembic's own diff, which must show no change. Then the other checks (pytest).
@@ -29,6 +30,15 @@ if [ "${POOLER:-}" = pgbouncer ]; then          # the app through PgBouncer in t
   pooler_start "$NAME" "$APP_PORT" conf_app:app || exit 1
 fi
 export ROWSTILE_APP_URL="postgresql+asyncpg://conf_app:app@localhost:$APP_PORT/conf"
+if [ -n "${RESOLUTION:-}" ]; then
+  # the lowest version of each dependency pyproject.toml names (FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic: the
+  # same floors as the SDK's extras), on the oldest Python the SDK supports (the oldest of them build on no newer
+  # one), in an environment of its own; uv.lock and .venv stay as they are
+  export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv" UV_NO_SYNC=1
+  uv venv -q --python 3.11 "$UV_PROJECT_ENVIRONMENT" &&
+    uv pip install -q --python "$UV_PROJECT_ENVIRONMENT" --resolution "$RESOLUTION" -r pyproject.toml || exit 1
+  uv pip list -q --python "$UV_PROJECT_ENVIRONMENT" | grep -iE '^(fastapi|starlette|sqlalchemy|psycopg|asyncpg|alembic) '
+fi
 # What the checks run of the SDK (sdk/python/rowstile), lines and branches (pyproject.toml's [tool.coverage]): every
 # Python process from here on, the tests' own subprocesses too, measures itself into CONFORMANCE_COVERAGE (a folder
 # of its own if not given), where the report is kept; it is printed at the end
@@ -52,6 +62,8 @@ covered=$?
 cat "$COVERAGE/report.txt"
 if [ $# -gt 0 ]; then
   echo "(some of the checks ran: the SDK's coverage isn't judged)"
+elif [ -n "${RESOLUTION:-}" ]; then
+  echo "(the oldest versions: the SDK's coverage isn't judged, as some of its lines are for newer ones)"
 elif [ $covered = 0 ]; then
   echo "ok    the checks run every line and branch of the Python SDK"
 else

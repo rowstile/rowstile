@@ -11801,6 +11801,48 @@ class LlmsTxt(unittest.TestCase):
             self.assertLessEqual(len(rule), 255, rule)
 
 
+class PythonExtras(unittest.TestCase):
+    """The Python package's extras promise only what runs: each package an extra brings has the floor the
+    conformance app gives it, and each night that app's suite runs on those floors (RESOLUTION=lowest-direct)."""
+
+    REPO = os.path.dirname(ROOT)
+
+    @staticmethod
+    def floors(requirements: list[str]) -> dict[str, str]:
+        """Each requirement's package and the lowest version it allows: 'psycopg[binary]>=3.1.4' is psycopg, 3.1.4."""
+        out: dict[str, str] = {}
+        for requirement in requirements:
+            m = re.fullmatch(r"([\w.-]+)(?:\[[\w,]+\])?>=([\d.]+)", requirement)
+            assert m is not None, f"{requirement}: no floor (name>=version)"
+            out[m[1].lower()] = m[2]
+        return out
+
+    def test_each_extras_floor_is_the_conformance_apps(self) -> None:
+        import tomllib
+
+        with open(os.path.join(self.REPO, "sdk", "python", "pyproject.toml"), "rb") as fh:
+            extras = tomllib.load(fh)["project"]["optional-dependencies"]
+        with open(os.path.join(self.REPO, "integrations", "fastapi", "pyproject.toml"), "rb") as fh:
+            app = self.floors([r for r in tomllib.load(fh)["project"]["dependencies"] if not r.startswith("rowstile")])
+        for extra, requirements in sorted(extras.items()):
+            for name, floor in self.floors(requirements).items():
+                self.assertEqual(
+                    app.get(name),
+                    floor,
+                    f"rowstile[{extra}] allows {name} {floor}: integrations/fastapi/pyproject.toml must ask for the same "
+                    "floor, which the nightly run installs",
+                )
+
+    def test_the_conformance_suite_runs_on_the_floors_each_night(self) -> None:
+        with open(os.path.join(self.REPO, ".github", "workflows", "nightly.yml"), encoding="utf-8") as fh:
+            nightly = fh.read()
+        job = search(r"\n  conformance:\n(.*?)\n  \w", nightly, re.S).group(1)
+        self.assertIn('resolution: "lowest-direct"', job, "nightly.yml: the conformance job on the extras' floors")
+        self.assertIn("RESOLUTION: ${{ matrix.resolution }}", job)
+        with open(os.path.join(self.REPO, "integrations", "fastapi", "test.sh"), encoding="utf-8") as fh:
+            self.assertIn('--resolution "$RESOLUTION"', fh.read())
+
+
 class Licence(unittest.TestCase):
     """The Python package and the Zed extension ship the licence: their copies (sdk/python/LICENSE, what the build
     takes; editor/zed/LICENSE, what Zed's registry reads) are the repository's."""

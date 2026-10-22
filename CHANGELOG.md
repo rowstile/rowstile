@@ -29,6 +29,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Changed
 
+- The Python package's extras ask for the versions its conformance suite runs on: FastAPI 0.110, asyncpg 0.29
+  and psycopg 3.1.4 or newer (they allowed FastAPI 0.100, asyncpg 0.28 and psycopg 3.1, which nothing ran). The
+  suite also runs each night on the oldest versions the extras allow.
 - `rowstile review --json` no longer has `tests.invariants_removed`, which nothing printed: Risk's flag
   "an invariant removed" names each one.
 - The VS Code extension (0.1.3) is no longer marked a preview on the Marketplace and Open VSX.
@@ -113,6 +116,8 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   in with a key. The operations page says to make the roles first when restoring on a new server (`pg_dump`
   keeps none), and the OpenFGA and SpiceDB pages name the line their policy needs before its editors can be
   shared.
+- The Python package's wheel and sdist hold only the command's own files. Built from a tree with other files
+  beside them (an editor's backup, a note), they held those too.
 - The tools reference lists every option each command takes (`migrate --tool --dir --one-phase --downgrade`,
   `diff --limit`, `bench --people --rounds`, `init --role --out`, `snapshot --out`, and the others), every
   `rowstile.toml` setting (`[migrations] lock` and `write_after`, `[review] snapshot`, `[clients] ts`), the exit
