@@ -192,7 +192,7 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   a unit inside an `if part ...` (a function, then `unit PART SECONDS NAME`: a part's units run in lanes,
   `tests/lanes.sh`), and a new part in the workflows' lists, which `Delivery` in `unit_test.py` checks); the jobs
   `postgres (16)`, `postgres (17, --short)` and `postgres (18, --short)` only wait for their version's parts.
-  `main` requires them by name in the repository's ruleset, with `coverage` and most of the other jobs: a new job
+  `main` requires them by name in the repository's ruleset, with `coverage` and every other job of ci.yml but the parts: a new job
   is added there by hand. `nightly.yml` (main; by hand, one job: `-f only=<job>`) — the full run on 16 in its
   parts side by side (`races` among them), every suite on 17 and 18 (with upgrades from every release from the
   beta on), the proofs (`--proofs`) on each version, the soak (new seeds each night, one version in turn, in six

@@ -34,9 +34,9 @@ The core language, as listed (the policies are genpolicy's Spec, so its tables, 
 The size of a policy is how many sources, parts of permissions and `where`s it has. Two policies that differ only
 in their names (r1 for r2, p1 for p2) or in the order of an `or`'s or an `and`'s parts are one: only the first of
 them is listed (canonical(), which tests/unit_test.py holds to that). Every policy up to a size is listed, and those
-of the next size that have a deny inside inheritance: the smallest is of size 7, where the whole size is out of
-reach (736,644 policies). COUNTS and DENIES say how many there are; a run that lists another number fails: the
-language changed, and the counts are written again (--count).
+of the next size that have a deny inside inheritance (the soak: up to size 6, and the denies of size 7, where the
+whole size is out of reach: 736,644 policies). COUNTS and DENIES say how many there are; a run that lists another
+number fails: the language changed, and the counts are written again (--count).
 
 For each policy (the compiler refusing it: counted, by its code):
   1. Without a database: the reference evaluator (authzlib/evaluate.py) in every world of one and two rows of each

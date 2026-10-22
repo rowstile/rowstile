@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """confidence_test: rowstile prove, test --coverage, snapshot, indexes, plans and bench, on the docs example; and
-the plans of lookups through keys of two columns (tests/composite.authz); and that a list runs each starting point of a
-permission once, on a random policy (genpolicy's seed 3).
+the plans of lookups through keys of two columns (tests/composite.authz) and through (type, id) pairs
+(tests/cross.authz); and that a list runs each starting point of a permission once, on a random policy (genpolicy's
+seed 3).
 
 PGHOST=... PGUSER=... python3 tests/confidence_test.py [--db authz_confidence]
 """
