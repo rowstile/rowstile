@@ -35,7 +35,7 @@ export function App() {
       </header>
       <main>
         {route.page === "requests" ? <Requests /> :
-         route.page === "groups" ? <Groups /> :
+         route.page === "groups" ? <Groups me={me} /> :
          route.page === "search" ? <Search q={route.q} /> :
          route.page === "review" ? <Review id={route.id} /> :
          <Browser folderId={route.page === "folder" ? route.id : null} me={me} />}

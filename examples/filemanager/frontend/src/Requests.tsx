@@ -13,6 +13,10 @@ export function Requests() {
   };
   if (rows === null) return <p className="hint">{error || "Loading..."}</p>;
   const toDecide = rows.filter((r) => !r.mine), mine = rows.filter((r) => r.mine);
+  const deny = (id: number) => {
+    const note = prompt("Why not? (optional)");
+    if (note !== null) run(() => api.decide(id, false, note || undefined));   // Cancel: nothing is decided
+  };
   const what = (r: RequestRow) => <>
     {r.relation === "editor" ? "edit" : "view"} {r.object_type}{" "}
     <a href={r.object_type === "folder" ? `#/folder/${r.object_id}` : "#/"}>#{r.object_id}</a>
@@ -25,8 +29,7 @@ export function Requests() {
           <li key={r.id}>{r.requester_name ?? r.requester} asks to {what(r)}
             <span className="actions">
               <button onClick={() => run(() => api.decide(r.id, true))}>Approve</button>
-              <button className="link" onClick={() => run(() => api.decide(r.id, false, prompt("Why not? (optional)") ?? undefined))}>
-                Deny</button>
+              <button className="link" onClick={() => deny(r.id)}>Deny</button>
             </span></li>))}
         </ul>}
       <h2>My requests</h2>

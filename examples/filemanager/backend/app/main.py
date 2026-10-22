@@ -8,7 +8,7 @@ Something a user may not see answers 404, as if it didn't exist.
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, LiteralString
 from uuid import UUID
@@ -210,10 +210,14 @@ def groups(user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
 
 # --- folders and files -------------------------------------------------------------------------
 FOLDER_COLS = "f.id, f.parent_id, f.name, f.owner_id, f.inherit, f.created_at"
-# in a listing: whether the user may share the folder, which moving and deleting it need too (the web app shows
-# those actions only then); one check per folder listed
-CAN_SHARE = "authz.can('folder', f.id::text, 'share') AS can_share"
+# in a listing: whether the user may share the folder, which moving and deleting it need too, and edit it (rename
+# it); the web app shows those actions only then. Two checks per folder listed
+FOLDER_CAN = (
+    "authz.can('folder', f.id::text, 'share') AS can_share, authz.can('folder', f.id::text, 'edit') AS can_edit"
+)
 FILE_COLS = "f.id, f.folder_id, f.name, f.owner_id, f.size, f.content_type, f.created_at, f.updated_at"
+# the same for a file: editing it (renaming, moving, deleting, new versions) and sharing it
+FILE_CAN = "authz.can('file', f.id::text, 'edit') AS can_edit, authz.can('file', f.id::text, 'share') AS can_share"
 
 
 @app.get("/api/home")
@@ -222,12 +226,12 @@ def home(user: DictRow = Depends(auth.current_user)) -> Answer:
     and files shared with them on their own."""
     with db.as_user(user["id"]) as tx:
         folders = tx.rows(
-            f"SELECT {FOLDER_COLS}, {CAN_SHARE}, f.owner_id = %s AS mine FROM fm.folders f WHERE f.parent_id IS NULL "
+            f"SELECT {FOLDER_COLS}, {FOLDER_CAN}, f.owner_id = %s AS mine FROM fm.folders f WHERE f.parent_id IS NULL "
             f"OR NOT EXISTS (SELECT 1 FROM fm.folders p WHERE p.id = f.parent_id) ORDER BY f.name",
             (user["id"],),
         )
         files = tx.rows(
-            f"SELECT {FILE_COLS} FROM fm.files f "
+            f"SELECT {FILE_COLS}, {FILE_CAN} FROM fm.files f "
             f"WHERE f.ready AND NOT EXISTS (SELECT 1 FROM fm.folders p WHERE p.id = f.folder_id) ORDER BY f.name"
         )
     return {"folders": folders, "files": files}
@@ -245,11 +249,12 @@ def folder(folder_id: int, user: DictRow = Depends(auth.current_user)) -> Answer
             (folder_id,),
         )
         folders = tx.rows(
-            f"SELECT {FOLDER_COLS}, {CAN_SHARE} FROM fm.folders f WHERE f.parent_id = %s ORDER BY f.name",
+            f"SELECT {FOLDER_COLS}, {FOLDER_CAN} FROM fm.folders f WHERE f.parent_id = %s ORDER BY f.name",
             (folder_id,),
         )
         files = tx.rows(
-            f"SELECT {FILE_COLS} FROM fm.files f WHERE f.folder_id = %s AND f.ready ORDER BY f.name", (folder_id,)
+            f"SELECT {FILE_COLS}, {FILE_CAN} FROM fm.files f WHERE f.folder_id = %s AND f.ready ORDER BY f.name",
+            (folder_id,),
         )
         perms = tx.authz.perms("folder", folder_id)
     return {"folder": this, "path": path, "folders": folders, "files": files, "perms": perms}
@@ -672,7 +677,10 @@ def named(tx: db.Tx, rows: Sequence[Mapping[str, object]], key: str, into: str) 
 def shares(kind: Kind, id_: int, user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
     with db.as_user(user["id"]) as tx:
         found(tx.row(f"SELECT 1 FROM {TABLES[kind]} WHERE id = %s", (id_,)))
-        return named(tx, tx.authz.list_shares(kind, id_), "subject_id", "subject_name")
+        # people and groups: share links are among authz.list_shares' rows too, and /links lists them, each with
+        # an id to turn it off by
+        people = [s for s in tx.authz.list_shares(kind, id_) if s["subject_type"] != "link"]
+        return named(tx, people, "subject_id", "subject_name")
 
 
 @app.post("/api/{kind}s/{id_}/shares", status_code=201)
@@ -801,7 +809,17 @@ def request_access(
 @app.get("/api/requests")
 def requests(user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
     with db.as_user(user["id"]) as tx:
-        return named(tx, tx.authz.pending_requests(), "requester", "requester_name")
+        rows = named(tx, tx.authz.pending_requests(), "requester", "requester_name")
+    return [dict(r, duration=in_words(r["duration"])) for r in rows]
+
+
+def in_words(duration: timedelta | None) -> str | None:
+    """A request's duration as people write it ("7 days", "1 day 2 hours"); JSON would write a timedelta "P7D"."""
+    if duration is None:
+        return None
+    hours, seconds = divmod(duration.seconds, 3600)
+    parts = [(duration.days, "day"), (hours, "hour"), (seconds // 60, "minute"), (seconds % 60, "second")]
+    return " ".join(f"{n} {unit}{'' if n == 1 else 's'}" for n, unit in parts if n) or "under a second"
 
 
 class Decision(BaseModel):

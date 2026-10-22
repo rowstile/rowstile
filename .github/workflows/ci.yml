@@ -255,7 +255,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: flock /tmp/rowstile-ci-packaging.lock bash packaging/test.sh
   # The file manager against the rowstile image built from the same commit: its public-surface
-  # check, the generated client matching its policy, the API tests with RustFS, and the web app's build.
+  # check, the generated client matching its policy, the API tests with RustFS, and the web app's build and tests.
   filemanager:
     needs: unit
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
@@ -266,7 +266,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
-      - run: cd examples/filemanager/frontend && npm ci && npm run build
+      - run: cd examples/filemanager/frontend && npm ci && npm run build && npm test
       - run: flock /tmp/rowstile-ci-filemanager.lock bash examples/filemanager/test.sh
 
   messenger:
