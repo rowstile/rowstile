@@ -19,10 +19,11 @@
     "dist"
   ],
   "sideEffects": false,
+  "engines": { "node": ">=22.12.0" },
   "dependencies": {
     "@rowstile/client": "0.1.0-dev"
   },
   "peerDependencies": {
-    "react": ">=18"
+    "react": "^19.3.0"
   }
 }

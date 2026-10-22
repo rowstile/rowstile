@@ -9,6 +9,6 @@
   "repository": { "type": "git", "url": "git+https://github.com/rowstile/rowstile.git", "directory": "packaging/npm/rowstile" },
   "bin": { "rowstile": "bin/rowstile.js" },
   "files": ["bin", "command", "README.md"],
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=22.12.0" },
   "optionalDependencies": {}
 }
