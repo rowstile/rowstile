@@ -9761,6 +9761,49 @@ class SmallPolicies(unittest.TestCase):
             "t1.p1 holds on ['1'] in the world, [] in its rows",
         )
 
+    def test_a_parent_to_another_type_is_not_read_as_a_name_the_type_lacks(self) -> None:
+        # `parent.p2`, through a parent to t1's rows, read as t2's own p2: t2 has none, so that is no policy (the
+        # compiler refuses it, AZ203), and the evaluator is not asked of it; t1's own parent.p1 still is
+        spec = self.s.decorated(
+            self.spec("""
+            type user
+            type t1
+              r1 : user column
+              parent : t1 column
+              can p1 = r1 or parent.p1
+              can p2 = p1
+            type t2
+              parent : t1 table
+              can p1 = parent.p2
+        """)
+        )
+        text = genpolicy.policy_text(spec)
+        made = [m.what for m in self.s.mutants(spec, text)]
+        self.assertIn("t1.p1 at parent.p1: not followed", made)
+        self.assertNotIn("t2.p1: not followed", made)
+        self.assertIn("t2.p1: nobody", made)
+
+    def test_a_relation_to_two_types_over_two_sources_is_written_another_way(self) -> None:
+        # `parent` to t2's own rows by a column and to t1's by a link table: `parent.p1` names p1 of both, so neither
+        # type's permissions are renamed (renamed apart, it would read `parent.p2|p1`, which no policy writes)
+        spec = self.s.decorated(
+            self.spec("""
+            type user
+            type t1
+              r1 : user column
+              can p1 = r1
+            type t2
+              parent : t2 column
+              parent : t1 table
+              can p1 = parent.p1 or {b1}
+              can p2 = p1
+        """)
+        )
+        other, _, perms = self.s.respelled(spec)
+        Compiler(parse_policy(genpolicy.policy_text(other), "other.authz")).compile("other.authz")
+        self.assertEqual((perms["t2.p1"], perms["t2.p2"]), ("p1", "p2"))
+        self.assertEqual(self.s.choose(spec, genpolicy.policy_text(spec), self.s.canonical(spec)).problems, [])
+
     def test_the_parts_made_wrong_are_told_apart(self) -> None:
         spec = self.s.decorated(
             self.spec("""
