@@ -10718,6 +10718,14 @@ class BlogPosts(unittest.TestCase):
                 self.assertEqual(len(times), 9, f"{name}: three queries, three times each, for {section[:40]!r}")
                 medians = [statistics.median(times[i : i + 3]) for i in (0, 3, 6)]
                 self.assertEqual(row, [self.shown(m) for m in medians], f"{size}: {section.splitlines()[0]}")
+        # the script tells a reader to read the figure the tables give
+        with open(os.path.join(folder, "recursive-row-level-security", "experiment.sql"), encoding="utf-8") as fh:
+            script = fh.read()
+        self.assertIn("Each number is the middle one of three runs.", text)
+        self.assertTrue(
+            'Each query runs three times; read the middle "Execution Time" of each.' in " ".join(script.split("\n-- ")),
+            "experiment.sql: its header says to read the middle of the three timings",
+        )
         small, large = runs["200,000 files"], runs["2 million files"]
         for said, run in (
             ("3,410 files in the\nsmall run, 54,610 in the large one", None),

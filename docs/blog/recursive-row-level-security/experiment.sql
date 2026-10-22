@@ -4,8 +4,9 @@
 --
 --   createdb rls_tree && psql -X -d rls_tree -v folders=20000 -f experiment.sql
 --
--- It makes a schema `demo` and a role `demo_app`, and drops neither. PostgreSQL 16 or later. Each query runs
--- three times; read the last "Execution Time" of each.
+-- PostgreSQL 16 or later, as a superuser or as any role with CREATEROLE that may create a schema in the
+-- database (createdb makes you its owner). It first drops any earlier schema `demo` and role `demo_app`, then
+-- makes them and leaves both at the end. Each query runs three times; read the middle "Execution Time" of each.
 
 \set ON_ERROR_STOP on
 \if :{?folders} \else \set folders 20000 \endif
@@ -15,6 +16,8 @@ SET client_min_messages = warning;
 DROP SCHEMA IF EXISTS demo CASCADE;
 DROP ROLE IF EXISTS demo_app;
 CREATE ROLE demo_app;
+-- so that SET ROLE demo_app works for a role that isn't a superuser too
+GRANT demo_app TO CURRENT_USER;
 CREATE SCHEMA demo;
 GRANT USAGE ON SCHEMA demo TO demo_app;
 

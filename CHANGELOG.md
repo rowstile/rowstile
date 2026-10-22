@@ -567,6 +567,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - The Python SDK's docs no longer offer `pytest_plugins = ["rowstile.testing"]`, which stops pytest once the
   package's entry point has loaded the fixtures. `ids()` says a uuid key takes `key_type=Uuid` (with `None` the
   ids are text, which a uuid column can't be compared with), and that a key of several columns can't use it.
+- The blog post's `experiment.sql` stopped at its first query when run by a role that isn't a superuser
+  (`permission denied to set role "demo_app"`): it now grants that role to whoever runs it, so a role with
+  CREATEROLE runs it on a stock server too. Its header says it drops an earlier `demo` schema and
+  `demo_app` role first, and to read the middle of each query's three timings, as the post's figures are.
 
 ## 0.1.0 (alpha)
 
