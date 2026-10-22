@@ -114,8 +114,9 @@ jobs:
           name: coverage
           path: .ci/coverage/report.txt
           if-no-files-found: ignore
-  # rowstile review on pull requests: one comment, updated in place, on what the file manager's
-  # policy change does, and a warning on each line it flags (review-ci/github/action.yml), with this commit's command
+  # rowstile review on every pull request: one comment, updated in place, on what it does to the file manager's
+  # policy ("unchanged" when it doesn't touch it), and a warning on each line it flags (review-ci/github/action.yml),
+  # with this commit's command. It runs on all of them, so the action and the review are tried on each
   review:
     if: github.event_name == 'pull_request'
     needs: unit

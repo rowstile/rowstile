@@ -37,6 +37,8 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   suite also runs each night on the oldest versions the extras allow.
 - `rowstile review --json` no longer has `tests.invariants_removed`, which nothing printed: Risk's flag
   "an invariant removed" names each one.
+- `rowstile review` says "Meaning unchanged: no declaration changed" when no declaration of the policy changed.
+  It said "unchanged (only comments, spacing or order)", also on a pull request that didn't touch the policy.
 - The VS Code extension (0.1.3) is no longer marked a preview on the Marketplace and Open VSX.
 - The VS Code extension (0.1.3) asks for VS Code 1.82 or newer, the oldest its language client runs on (it
   said 1.75).

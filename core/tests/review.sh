@@ -186,12 +186,15 @@ PSQL -c "DROP TABLE app.folder_bots, app.bots"
 
 echo "-- rowstile fmt"
 G checkout -q -- db
+# a pull request that doesn't touch the policy: nothing in it reads as a change
+out=$(CLI review --base main 2>&1)
+case "$out" in "Meaning  unchanged: no declaration changed"*) ok "review of a policy the pull request doesn't touch: no declaration changed";; *) bad "review, policy untouched" "$out";; esac
 out=$(CLI fmt --check 2>&1); rc=$?
 case "$out" in *"db/policy.authz: not formatted"*) [ $rc -eq 1 ] && ok "fmt --check: exit 1, and which file" || bad "fmt --check exit" "$rc";; *) bad "fmt --check" "$out";; esac
 out=$(CLI fmt 2>&1); out2=$(CLI fmt --check 2>&1); rc=$?
 case "$out" in *"formatted db/policy.authz"*) [ $rc -eq 0 ] && ok "fmt writes it; then --check passes" || bad "fmt then check" "$out2";; *) bad "fmt" "$out";; esac
 out=$(CLI review --base main 2>&1)
-case "$out" in "Meaning  unchanged (only comments, spacing or order)"*"Deploy   no migration"*) ok "... and review says formatting changed nothing";; *) bad "review after fmt" "$out";; esac
+case "$out" in "Meaning  unchanged: no declaration changed"*"Deploy   no migration"*) ok "... and review says formatting changed nothing";; *) bad "review after fmt" "$out";; esac
 # a Windows checkout: the file's lines end with CRLF, and stay so
 sed -i 's/$/\r/' "$P/db/policy.authz"
 out=$(CLI fmt --check 2>&1); rc=$?

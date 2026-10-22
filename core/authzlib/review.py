@@ -1215,7 +1215,7 @@ def summary(r: Review) -> dict[str, str]:
     m = r["meaning"]
     lines: dict[str, str] = {}
     if m["equivalent"] == "text":
-        lines["Meaning"] = "unchanged (only comments, spacing or order)"
+        lines["Meaning"] = "unchanged: no declaration changed"
     elif m["equivalent"]:
         lines["Meaning"] = f"unchanged: every permission and rule grants the same in {m['equivalent']}"
     else:
