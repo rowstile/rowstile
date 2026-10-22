@@ -61,7 +61,7 @@ jobs:
       BRANCH: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-        with: {fetch-depth: 0}     # --since reads the changes
+        with: {fetch-depth: 0, persist-credentials: false}     # --since reads the changes
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97   # v7.0.0
         with:
           python-version: "3.13"
@@ -137,7 +137,7 @@ jobs:
         shard: ${{ fromJSON(needs.prepare.outputs.shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-        with: {ref: "${{ github.sha }}"}   # the commit prepare read (schedule and dispatch: never a pull request's)
+        with: {ref: "${{ github.sha }}", persist-credentials: false}   # the commit prepare read (schedule and dispatch: never a pull request's)
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97   # v7.0.0
         with:
           python-version: "3.13"
@@ -159,7 +159,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-        with: {ref: "${{ github.sha }}"}   # the commit prepare read (schedule and dispatch: never a pull request's)
+        with: {ref: "${{ github.sha }}", persist-credentials: false}   # the commit prepare read (schedule and dispatch: never a pull request's)
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97   # v7.0.0
         with:
           python-version: "3.13"

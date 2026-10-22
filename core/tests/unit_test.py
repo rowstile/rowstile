@@ -15182,7 +15182,7 @@ class Delivery(unittest.TestCase):
             for n, line in enumerate(lines):
                 if re.match(r"\s*(?:- )?uses: astral-sh/setup-uv@", line):
                     self.assertRegex(lines[n + 1], r'^\s+with: \{version: "\d+\.\d+\.\d+"\}$', f"{path}:{n + 1}")
-                for tool in re.findall(r"npx --yes (\S+)", line):
+                for tool in re.findall(r"(?:npx --yes|uvx) (\S+)", line):
                     self.assertRegex(tool, r"@\d+\.\d+\.\d+$", f"{path}:{n + 1}")
 
     def test_workflows_read_only_unless_a_job_says(self) -> None:
@@ -15423,6 +15423,175 @@ class Delivery(unittest.TestCase):
         beta = text.replace("(release candidate)", "(beta)")
         self.assertEqual(changelog.heading("0.2.0-beta.1", beta), "## 0.2.0 (beta)")
         self.assertEqual(changelog.section("0.2.0-beta.2", beta), "- older\n")
+
+    def test_main_s_notes_are_what_unreleased_holds(self) -> None:
+        # the release workflow run by hand (a dry run) from main writes main's notes: after a final release main is
+        # the next minor's -dev, which has no section yet, and right after it Unreleased is empty
+        sys.path.insert(0, os.path.join(self.REPO, "packaging"))
+        try:
+            import changelog
+        finally:
+            sys.path.pop(0)
+        released = "# Changelog\n\n## Unreleased\n\n### Fixed\n- one\n\n## 0.1.0 (2026-11-02)\n- older\n"
+        for text, said in ((released, "### Fixed\n- one\n"), (released.replace("### Fixed\n- one\n", ""), "")):
+            out = io.StringIO()
+            with mock.patch.object(changelog, "read", return_value=text), contextlib.redirect_stdout(out):
+                changelog.main(["0.2.0-dev"])
+            self.assertEqual(out.getvalue(), said)
+        # a release's own notes are still its section, which it must have
+        with (
+            mock.patch.object(changelog, "read", return_value=released),
+            self.assertRaisesRegex(SystemExit, r"^changelog\.py: CHANGELOG\.md has no section for 0\.2\.0$"),
+        ):
+            changelog.main(["0.2.0-rc.1"])
+
+    def release_jobs(self) -> dict[str, str]:
+        """release.yml's jobs by name, each its text without the comments."""
+        text = read("../.github/workflows/release.yml")
+        jobs = re.split(r"(?m)^  (?=[\w-]+:\n)", text.split("\njobs:\n", 1)[1])
+        out = {job.split(":", 1)[0]: re.sub(r"(?m)^\s*#.*\n", "", job) for job in jobs if job.strip()}
+        self.assertLessEqual({"check", "pypi", "npm", "image", "release-files", "github-release", "vscode"}, set(out))
+        return out
+
+    @staticmethod
+    def step_script(job: str, step_id: str) -> str:
+        """The `run: |` script of the job's step with this id, read line by line (a pattern over the job's text
+        could backtrack)."""
+        lines = job.splitlines(keepends=True)
+        start = lines.index(f"      - id: {step_id}\n")
+        n = next(i for i in range(start + 1, len(lines)) if lines[i] == "        run: |\n")
+        script = []
+        for line in lines[n + 1 :]:
+            if not line.startswith("          "):
+                break
+            script.append(line)
+        return "".join(script)
+
+    def tag_check(self, d: str, version: str, head: str, event: str = "push") -> tuple[int, str, str]:
+        """The release's check job's first step, run on `head` of the repository in d whose files say `version`:
+        (exit status, what it printed, the publish it wrote to its outputs)."""
+        step = self.step_script(self.release_jobs()["check"], "v")
+        stub = 'import sys\nprint("next" if "--dist-tag" in sys.argv else "{}")\n'
+        with open(os.path.join(d, "packaging", "version.py"), "w", encoding="utf-8") as fh:
+            fh.write(stub.format(version))
+        subprocess.run(["git", "checkout", "-q", "--detach", head], cwd=d, check=True)
+        output = os.path.join(d, ".output")
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": d,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GITHUB_EVENT_NAME": event,
+            "GITHUB_REF_NAME": f"v{version}" if event == "push" else "main",
+            "GITHUB_OUTPUT": output,
+        }
+        open(output, "w", encoding="utf-8").close()
+        script = textwrap.dedent(step)
+        p = subprocess.run(["bash", "-e", "-c", script], cwd=d, env=env, capture_output=True, text=True, timeout=60)
+        with open(output, encoding="utf-8") as fh:
+            publish = re.findall(r"(?m)^publish=(.*)$", fh.read())
+        return p.returncode, p.stdout, publish[0] if publish else ""
+
+    def test_a_tag_is_on_a_commit_of_main_or_of_its_line(self) -> None:
+        # RELEASING.md: a tag is on a commit of main or of release/X.Y. A tag on another branch's commit, one that
+        # went through no pull request, is refused before anything is published
+        with tempfile.TemporaryDirectory() as d:
+            git = {
+                **os.environ,
+                **dict.fromkeys(("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"), "t"),
+                **dict.fromkeys(("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"), "t@example.com"),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+            }
+
+            def run(*argv: str) -> str:
+                return subprocess.run(["git", *argv], cwd=d, env=git, check=True, capture_output=True, text=True).stdout
+
+            os.mkdir(os.path.join(d, "packaging"))
+            with open(os.path.join(d, "packaging", "changelog.py"), "w", encoding="utf-8") as fh:
+                fh.write("")
+            run("init", "-q")
+            run("commit", "-q", "--allow-empty", "-m", "base")
+            base = run("rev-parse", "HEAD").strip()
+            run("commit", "-q", "--allow-empty", "-m", "main")
+            main = run("rev-parse", "HEAD").strip()
+            run("checkout", "-q", "--detach", base)
+            run("commit", "-q", "--allow-empty", "-m", "elsewhere")
+            other = run("rev-parse", "HEAD").strip()
+            run("update-ref", "refs/remotes/origin/main", main)
+            refused = "the tag v{} is on a commit of neither main nor release/{} (RELEASING.md)\n"
+            # main's commit, and one main has moved on from
+            for head in (main, base):
+                status, said, publish = self.tag_check(d, "0.2.0-rc.1", head)
+                self.assertEqual((status, publish), (0, "public"), said)
+            status, said, publish = self.tag_check(d, "0.2.0-rc.1", other)
+            self.assertEqual((status, said, publish), (1, refused.format("0.2.0-rc.1", "0.2"), ""))
+            # a patch to an older line, on its release branch; not on another line's
+            run("update-ref", "refs/remotes/origin/release/0.1", other)
+            self.assertEqual(self.tag_check(d, "0.1.1", other)[::2], (0, "public"))
+            self.assertEqual(self.tag_check(d, "0.3.1", other)[:2], (1, refused.format("0.3.1", "0.3")))
+            # by hand, a dry run anywhere
+            self.assertEqual(self.tag_check(d, "0.3.0-dev", other, "workflow_dispatch")[::2], (0, "none"))
+
+    def test_what_is_published_is_built_where_nothing_can_be_written(self) -> None:
+        # a job that can publish (a right to write, or an environment's secrets and trust) runs no build: an install
+        # script or a build tool could publish under rowstile's name with the job's token. It publishes the files a
+        # job without those rights built, the same files the GitHub release attaches and attests
+        jobs = self.release_jobs()
+        builds = (
+            "npm ci",
+            "npm install",
+            "npm pack",
+            "npx tsc",
+            "build.mjs",
+            "uv build",
+            "uv sync",
+            "vsce@\\S+ package",
+        )
+        for name, job in jobs.items():
+            if re.search(r"(?m)^    (permissions: .*write|environment: )", job):
+                self.assertEqual([b for b in builds if re.search(rf"{b}\b", job)], [], name)
+        # each file once: the wheel and the sdist, the extension, the npm packages (the launcher among them)
+        text = "".join(jobs.values())
+        self.assertEqual([len(re.findall(b, text)) for b in ("uv build", "vsce@\\S+ package", "npm pack")], [1, 1, 1])
+        for name, built in (("pypi", "release-files"), ("vscode", "release-files"), ("npm", "npm-files")):
+            self.assertIn(f"    needs: [check, {built}]\n", jobs[name], name)
+            self.assertIn(f"        with: {{name: {built}, ", jobs[name], name)
+        self.assertIn("    needs: [check, release-files, npm-files]\n", jobs["github-release"])
+        self.assertRegex(jobs["npm"], r"npm publish --ignore-scripts .*\n(?:.*\n)*.*npm publish --ignore-scripts ")
+
+    def test_only_the_highest_release_is_github_s_latest(self) -> None:
+        # GitHub makes each release that isn't a pre-release its "Latest": a patch to an older line mustn't be
+        self.assertIn(
+            "          make_latest: ${{ needs.check.outputs.npm-tag == 'latest' }}\n",
+            self.release_jobs()["github-release"],
+        )
+
+    def test_the_image_has_its_provenance(self) -> None:
+        image = self.release_jobs()["image"]
+        self.assertIn(
+            "    permissions: {packages: write, contents: read, id-token: write, attestations: write}\n", image
+        )
+        self.assertIn("        id: build\n", image)
+        attest = search(r"(?m)^        uses: actions/attest@.*\n((?:          .*\n|        with:\n)+)", image).group(1)
+        self.assertIn("          subject-digest: ${{ steps.build.outputs.digest }}\n", attest)
+        self.assertIn("          push-to-registry: true\n", attest)
+        self.assertIn(
+            "gh attestation verify oci://ghcr.io/rowstile/rowstile:<version> --repo rowstile/rowstile",
+            read("../docs/installing.md"),
+        )
+
+    def test_no_checkout_leaves_its_token_behind(self) -> None:
+        # actions/checkout keeps the job's token for git by default, where every later step (a package's install
+        # script) can read it; nothing here pushes with git
+        kept = []
+        for path, lines in self.workflows().items():
+            for n, line in enumerate(lines):
+                if re.match(r"\s*(?:- )?uses: actions/checkout@", line) and not re.match(
+                    r"\s+with: \{(?:.*, )?persist-credentials: false[,}]", lines[n + 1]
+                ):
+                    kept.append(f"{path}:{n + 1}")
+        self.assertEqual(kept, [], "with: {persist-credentials: false}")
 
 
 class ReviewInCI(unittest.TestCase):

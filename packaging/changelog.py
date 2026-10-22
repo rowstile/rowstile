@@ -3,10 +3,12 @@
 
     python3 packaging/changelog.py 0.2.0-rc.1   # prints the section of 0.2.0; fails if there is none
     python3 packaging/changelog.py --tagged 0.2.0-rc.1   # ... and fails if Unreleased still has lines (a tag's check)
+    python3 packaging/changelog.py 0.3.0-dev    # main between releases (the release workflow's dry run): Unreleased
 
 Each release has a section, `## X.Y.Z (YYYY-MM-DD)`; while its alphas, its betas or its release candidates are
 out, `## X.Y.Z (alpha)`, `## X.Y.Z (beta)` or `## X.Y.Z (release candidate)`, and the notes of each of them are
-that section as it stands. A final release's heading must have its date. Standard library only.
+that section as it stands. A final release's heading must have its date. A -dev version is no release: its notes
+are what **Unreleased** holds so far, perhaps nothing. Standard library only.
 """
 
 from __future__ import annotations
@@ -41,14 +43,18 @@ def section(version: str, text: str) -> str:
     return (body[: end.start()] if end else body).strip() + "\n"
 
 
+def upcoming(text: str) -> str:
+    """What **Unreleased** says, headings of its parts included; empty if nothing."""
+    m = re.search(r"^## Unreleased$", text, re.M)
+    body = text[m.end() :] if m else ""
+    end = re.search(r"^## ", body, re.M)
+    said = (body[: end.start()] if end else body).strip()
+    return said + "\n" if said else ""
+
+
 def unreleased(text: str) -> list[str]:
     """The lines still under **Unreleased**: what a release's notes would leave out."""
-    m = re.search(r"^## Unreleased$", text, re.M)
-    if not m:
-        return []
-    body = text[m.end() :]
-    end = re.search(r"^## ", body, re.M)
-    return [line for line in (body[: end.start()] if end else body).splitlines() if line.startswith("- ")]
+    return [line for line in upcoming(text).splitlines() if line.startswith("- ")]
 
 
 def main(argv: list[str]) -> None:
@@ -61,6 +67,9 @@ def main(argv: list[str]) -> None:
             f"changelog.py: {version} is being released with {len(unreleased(text))} lines still under "
             "Unreleased: move them into its section (RELEASING.md)"
         )
+    if version.endswith("-dev"):
+        sys.stdout.write(upcoming(text))
+        return
     notes = section(version, text)
     if not notes.strip():
         raise SystemExit(f"changelog.py: CHANGELOG.md has no section for {version.split('-', 1)[0]}")

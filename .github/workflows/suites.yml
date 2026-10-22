@@ -23,6 +23,7 @@ jobs:
         part: ${{ fromJSON(inputs.parts) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       # --coverage, on 16: each Python process also measures what it runs of authzlib and cli (the coverage job reads
       # it). 17 and 18 run less and added nothing (2026-10-10: the same lines, branches and functions as 16 alone)
       - run: bash core/ci.sh ${{ inputs.pg == '16' && '--coverage' || '' }} ${{ inputs.mode }} ${{ inputs.pg }}

@@ -17,7 +17,7 @@ jobs:
       HEAD: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-        with: {fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha }}"}
+        with: {fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha }}", persist-credentials: false}
       # a bot's pull request (Dependabot) is GitHub's word, not the commit's: an author's name is whatever
       # the committer wrote, so no name excuses a commit
       - name: every commit is signed off (git commit -s)

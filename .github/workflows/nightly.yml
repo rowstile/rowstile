@@ -47,6 +47,7 @@ jobs:
         part: [unit, policy, command, random]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       # (the part command upgrades from every release on PyPI from 0.1.0-beta.1 on, not only the one before:
       # core/tests/upgrade.sh --every)
       - run: bash core/ci.sh ${{ matrix.pg }}
@@ -66,6 +67,7 @@ jobs:
         pg: ["16", "17", "18"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: bash core/ci.sh --proofs ${{ matrix.pg }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
@@ -113,6 +115,7 @@ jobs:
         part: [changes-1, changes-2, policies, around, small, races]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       # (`-f part=policies`: the other parts' jobs run nothing)
       - if: ${{ !inputs.part || inputs.part == matrix.part }}
         run: |
@@ -142,6 +145,7 @@ jobs:
         slice: [0, 1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: bash core/ci.sh --soak 16
         env:
           ROWSTILE_PART: small
@@ -164,6 +168,7 @@ jobs:
         part: [unit, policy, command, random, races]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: bash core/ci.sh --full 16
         env: {ROWSTILE_PART: "${{ matrix.part }}"}
       - if: always()
@@ -194,6 +199,7 @@ jobs:
       RESOLUTION: ${{ matrix.resolution }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -211,6 +217,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: bash core/tests/migration_tools.sh
   # The editors' grammar and the compiler's parser on core/tests/small.py's whole set, each policy written two ways,
   # in four parts side by side, a quarter each (editor/test.sh --agree; each push: up to size 4)
@@ -225,6 +232,7 @@ jobs:
         part: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: bash editor/test.sh --agree "--small 6 --slice ${{ matrix.part }}/4"
   # The parser and the compiler under Atheris (libFuzzer for Python) for twenty minutes, from every policy in the
   # repository: core/tests/fuzz_coverage.py, held to fuzz_parser.py's rule. What it finds is kept with the run
@@ -235,6 +243,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: |
           python3 -m venv "$RUNNER_TEMP/fuzz" && . "$RUNNER_TEMP/fuzz/bin/activate"
           pip install --require-hashes -r core/tests/fuzz-requirements.txt
@@ -252,6 +261,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: python3 docs/compare_readings.py --github
   # Each statement and branch of rowstile's PL/pgSQL the suites run, on 16: core/ci.sh --statements preloads
   # plpgsql_check's profiler (in the coverage image only; rowstile needs no extension) and keeps its counts, in the
@@ -266,6 +276,7 @@ jobs:
         part: [unit, policy, command, random]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: bash core/ci.sh --statements 16
         env: {ROWSTILE_PART: "${{ matrix.part }}"}
       - if: failure()
@@ -294,6 +305,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
         with: {pattern: "statements-pg16-*", path: .ci/parts}
       - run: docker build -q -t rowstile:16-coverage --build-arg PG_MAJOR=16 --build-arg COVERAGE=1 -f core/Dockerfile .
@@ -317,6 +329,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
         with:
           path: core/bench/baseline.txt

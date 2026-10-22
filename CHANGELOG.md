@@ -29,6 +29,8 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - The command's image (`ghcr.io/rowstile/rowstile`) is built for arm64 as well as x64: on an Apple Silicon Mac
   or an arm64 machine, Docker runs it without emulation. Its label `org.opencontainers.image.version` says its
   version.
+- The command's image comes with its provenance, signed through Sigstore by the release workflow that built it:
+  `gh attestation verify oci://ghcr.io/rowstile/rowstile:<version> --repo rowstile/rowstile` checks it.
 
 ### Changed
 
@@ -126,6 +128,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Fixed
 
+- A release publishes on PyPI and on the VS Code Marketplace the files its GitHub release attaches and attests:
+  the wheel, the sdist and the `.vsix` were built a second time for those. A patch to an older line no longer
+  becomes the repository's latest release on GitHub.
 - The `rowstile` npm package holds the command's files and nothing else: its build copied `core/authzlib` and
   Studio's folder whole, so a file left there (a note, a backup) went in. It now takes the files one list names,
   the one the Python package's build reads.
