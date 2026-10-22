@@ -4,11 +4,11 @@
 # The command runs on Python 3.11 or newer, standard library only: annotations use nothing else.
 [environment]
 python-version = "3.11"
-extra-paths = ["core", "core/cli", "core/mutants", "packaging", "docs"]
+extra-paths = ["core", "core/cli", "core/mutants", "packaging", "docs", "examples"]
 
 # the standard-library code; what needs packages has its own settings (sdk/python, integrations/fastapi, examples/*)
 [src]
-include = ["core/authzlib", "core/cli", "core/compile_policy.py", "core/tests", "core/bench", "core/mutants", "packaging/version.py", "packaging/changelog.py", "docs/llms_full.py", "docs/compare_readings.py", "review-ci/github/comment.py"]
+include = ["core/authzlib", "core/cli", "core/compile_policy.py", "core/tests", "core/bench", "core/mutants", "packaging/version.py", "packaging/changelog.py", "docs/llms_full.py", "docs/compare_readings.py", "review-ci/github/comment.py", "examples/public_surface.py"]
 [rules]
 all = "error"
 # typing.override is Python 3.12's, and the command runs on 3.11 with the standard library only
