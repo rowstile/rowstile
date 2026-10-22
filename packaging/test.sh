@@ -1,9 +1,15 @@
 #!/bin/bash
-# packaging/test.sh: the ways rowstile is installed, each checked on a clean machine (a container):
-#   - npm: `rowstile` and `@rowstile/cli-linux-x64` from `npm pack`, installed where there is no Python at
-#     all, on the lowest Node its engines state; the command runs on the Python that came with it (and fits the
-#     size budget, 40 MB), and a command
-#     stopped by a signal ends the launcher the same way; on Alpine (musl) with `@rowstile/cli-linux-x64-musl`
+# packaging/test.sh: the ways rowstile is installed, each checked on a clean machine (a container; each image is
+# pinned in packaging/machines/Dockerfile):
+#   - npm: `rowstile` and the seven platform packages from `npm pack`, each under the size budget (20 MB). On
+#     Linux x64, installed where there is no Python at all, on the lowest Node its engines state (the others on
+#     Node 24): the command runs on the Python that came with it, a
+#     command stopped by a signal ends the launcher the same way, and on Alpine (musl) it runs on
+#     `@rowstile/cli-linux-x64-musl`. On Linux arm64, glibc and musl alike, the same, where this machine runs
+#     arm64 containers (emulated, as CI sets up: required there, skipped elsewhere). Without its platform
+#     package (optional dependencies off), on the Python found on PATH. The macOS and Windows packages can't be
+#     started on Linux: packaging/npm/platforms.py reads every package instead (its Python is built for the
+#     package's system and CPU, every library a binary loads is there, and every module the command imports)
 #   - PyPI: the `rowstile` wheel and sdist (the command and the Python SDK), installed with pip
 #   - the command's image (packaging/docker/Dockerfile), on each platform the release publishes it for, and its version label
 # Each compiles a policy, writes its migration and its generated names, with no database.
@@ -15,6 +21,15 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 rc=0
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; rc=1; }
+skip() { echo "skip  $1"; }
+
+# each clean machine's image, by its stage's name
+machine() { sed -n "s/^FROM \([^ ]*\) AS $1\$/\1/p" packaging/machines/Dockerfile; }
+NODE=$(machine node) NODE_FLOOR=$(machine node-floor) NODE_SLIM=$(machine node-slim) NODE_ALPINE=$(machine node-alpine)
+PYTHON=$(machine python) PYTHON_311=$(machine python-3.11)
+for image in "$NODE" "$NODE_FLOOR" "$NODE_SLIM" "$NODE_ALPINE" "$PYTHON" "$PYTHON_311"; do
+  [ -n "$image" ] || { bad "packaging/machines/Dockerfile names each machine"; exit 1; }
+done
 
 # the same few steps everywhere: $1 runs the command
 SCRIPT='set -e
@@ -32,13 +47,23 @@ echo "-- npm"
 # as the caller, not root: it writes into the checkout (packaging/npm/out, .cache), and a root-owned folder
 # there can't be removed afterwards
 as_me=(-u "$(id -u):$(id -g)" -e HOME=/tmp)
-docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo node:24 bash -c \
-  "node packaging/npm/build.mjs --platform linux-x64 --platform linux-x64-musl >/dev/null && cd $OUT && npm pack -s /repo/packaging/npm/out/rowstile /repo/packaging/npm/out/cli-linux-x64 /repo/packaging/npm/out/cli-linux-x64-musl >/dev/null" \
+docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo "$NODE" bash -c \
+  "node packaging/npm/build.mjs --all >/dev/null && cd $OUT && npm pack -s /repo/packaging/npm/out/rowstile /repo/packaging/npm/out/cli-* >/dev/null" \
   || bad "the npm packages build"
-size=$(stat -c %s "$OUT"/rowstile-cli-linux-x64-[0-9]*.tgz 2>/dev/null || echo 0)
-[ "$size" -gt 0 ] && [ "$size" -lt 20000000 ] && ok "@rowstile/cli-linux-x64 is $((size / 1000000)) MB (under 20)" || bad "@rowstile/cli-linux-x64 is $size bytes"
+big=()
+for f in "$OUT"/rowstile-cli-*.tgz; do
+  [ -e "$f" ] && [ "$(stat -c %s "$f")" -lt 20000000 ] || big+=("$(basename "$f")")
+done
+n=$(ls "$OUT"/rowstile-cli-*.tgz 2>/dev/null | wc -l)
+[ "$n" = 7 ] && [ ${#big[@]} = 0 ] && ok "the seven platform packages, each under 20 MB (@rowstile/cli-linux-x64: $(($(stat -c %s "$OUT"/rowstile-cli-linux-x64-[0-9]*.tgz) / 1000000)) MB)" \
+  || bad "$n platform packages; over 20 MB: ${big[*]}"
+# what Linux can say of each, those it can't start included: on the Python they bring, which reads its library
+docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo "$PYTHON" python3 packaging/npm/platforms.py $OUT/rowstile-cli-*.tgz \
+  >"$OUT/npm-platforms.log" 2>&1 \
+  && ok "each platform package: its Python is built for its system and CPU, and holds every library it loads and every module the command imports" \
+  || { cat "$OUT/npm-platforms.log"; bad "a platform package as read"; }
 # on the lowest Node the package's engines state (packaging/npm/rowstile/package.json); the others on Node 24
-docker run --rm -v "$REPO:/repo" node:22.12.0-slim bash -c "
+docker run --rm -v "$REPO:/repo" "$NODE_FLOOR" bash -c "
   ! command -v python3 >/dev/null && ! command -v python >/dev/null || { echo 'python is here'; exit 1; }
   echo node \$(node --version)
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
@@ -47,14 +72,14 @@ docker run --rm -v "$REPO:/repo" node:22.12.0-slim bash -c "
   && ok "npm: runs where there is no Python, on its own ($(grep -o 'Python [0-9.]*' "$OUT/npm.log")), on $(grep -o '^node v[0-9.]*' "$OUT/npm.log")" \
   || { cat "$OUT/npm.log"; bad "npm"; }
 # a command that is stopped (SIGTERM, Ctrl-C, a hang-up, a kill) never looks finished to what started it
-docker run --rm -v "$REPO:/repo" node:24-slim bash -c "
+docker run --rm -v "$REPO:/repo" "$NODE_SLIM" bash -c "
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
   npm i --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
   node /repo/packaging/npm/signals_test.mjs node_modules/rowstile/bin/rowstile.js" >"$OUT/npm-signals.log" 2>&1 \
   && ok "npm: a command stopped by a signal ends the launcher by it ($(grep -c '^ok' "$OUT/npm-signals.log") signals)" \
   || { cat "$OUT/npm-signals.log"; bad "npm: a stopped command"; }
 # Alpine: musl, where glibc's Python can't start; its own package, and still no Python on the machine
-docker run --rm -v "$REPO:/repo" node:24-alpine sh -c "
+docker run --rm -v "$REPO:/repo" "$NODE_ALPINE" sh -c "
   ! command -v python3 >/dev/null && ! command -v python >/dev/null || { echo 'python is here'; exit 1; }
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
   npm i --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-musl-*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
@@ -62,20 +87,51 @@ docker run --rm -v "$REPO:/repo" node:24-alpine sh -c "
   && ok "npm on Alpine (musl): runs on the Python of @rowstile/cli-linux-x64-musl" \
   || { cat "$OUT/npm-musl.log"; bad "npm on Alpine (musl)"; }
 # the glibc package alone on Alpine (an npm that doesn't read libc, the wrong package copied): a sentence, not ENOENT
-docker run --rm -v "$REPO:/repo" node:24-alpine sh -c "
+docker run --rm -v "$REPO:/repo" "$NODE_ALPINE" sh -c "
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
   npm i --no-audit --no-fund --force /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
   npx rowstile --version" >"$OUT/npm-musl-wrong.log" 2>&1; \
   grep -q "no Python to run on" "$OUT/npm-musl-wrong.log" && ! grep -q ENOENT "$OUT/npm-musl-wrong.log" \
   && ok "npm on Alpine with glibc's package only: says there is no Python to run on" \
   || { cat "$OUT/npm-musl-wrong.log"; bad "npm on Alpine with glibc's package only"; }
+# Linux arm64, glibc and musl: the same steps, on an arm64 machine or one that emulates it (CI registers QEMU's
+# emulator first: there it is required)
+if [ "$(uname -m)" = aarch64 ] || [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+  for libc in glibc musl; do
+    if [ $libc = glibc ]; then image=$NODE_SLIM pkg=linux-arm64 tgz="rowstile-cli-linux-arm64-[0-9]*.tgz"
+    else image=$NODE_ALPINE pkg=linux-arm64-musl tgz="rowstile-cli-linux-arm64-musl-*.tgz"; fi
+    docker run --rm --platform linux/arm64 -v "$REPO:/repo" "$image" sh -c "
+      [ \"\$(uname -m)\" = aarch64 ] || { echo \"not arm64: \$(uname -m)\"; exit 1; }
+      ! command -v python3 >/dev/null && ! command -v python >/dev/null || { echo 'python is here'; exit 1; }
+      mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
+      npm i --no-audit --no-fund /repo/$OUT/$tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+      ${SCRIPT//PGA/npx rowstile}" >"$OUT/npm-$pkg.log" 2>&1 && grep -q "Python 3.13" "$OUT/npm-$pkg.log" \
+      && ok "npm on Linux arm64 ($libc): runs on the Python of @rowstile/cli-$pkg" \
+      || { cat "$OUT/npm-$pkg.log"; bad "npm on Linux arm64 ($libc)"; }
+  done
+elif [ "${GITHUB_ACTIONS:-}" = true ]; then
+  bad "npm on Linux arm64: this runner can't run arm64 containers (the workflow sets up QEMU's emulator first)"
+else
+  skip "npm on Linux arm64: this machine runs no arm64 containers (no QEMU emulator registered); CI runs it"
+fi
+# no platform package (optional dependencies off, a platform with none): the Python on PATH, which the message
+# for "no Python to run on" sends the user to
+docker run --rm -v "$REPO:/repo" "$NODE" bash -c "
+  echo \"on PATH: \$(python3 --version)\"
+  mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
+  npm i --no-audit --no-fund --omit=optional /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  [ ! -e node_modules/@rowstile ] || { echo 'a platform package is installed'; exit 1; }
+  ${SCRIPT//PGA/npx rowstile}" >"$OUT/npm-path.log" 2>&1 \
+  && grep -qF "(Python $(sed -n 's/^on PATH: Python //p' "$OUT/npm-path.log"))" "$OUT/npm-path.log" \
+  && ok "npm without its platform package: runs on the Python on PATH ($(sed -n 's/^on PATH: //p' "$OUT/npm-path.log"))" \
+  || { cat "$OUT/npm-path.log"; bad "npm without its platform package"; }
 
 echo "-- PyPI"
-docker run --rm -v "$REPO:/repo" python:3.13-slim bash -c "
+docker run --rm -v "$REPO:/repo" "$PYTHON" bash -c "
   pip install -q build >/dev/null 2>&1 && mkdir -p /tmp/src/core && cp -r /repo/sdk /tmp/src/     && cp -r /repo/core/authzlib /repo/core/cli /tmp/src/core/     && mkdir -p /tmp/src/core/authzlib/__pycache__ && touch /tmp/src/core/authzlib/__pycache__/parse.cpython-313.pyc /tmp/src/core/authzlib/parse.py.orig /tmp/src/core/cli/notes.txt /tmp/src/core/cli/studio/notes.txt     && python -m build -o /tmp/dist /tmp/src/sdk/python >/dev/null && cp /tmp/dist/* /repo/$OUT/"   || bad "the wheel and sdist build"
 ls "$OUT"/rowstile-*.whl "$OUT"/rowstile-*.tar.gz >/dev/null 2>&1 && ok "rowstile: a wheel and an sdist" || bad "no wheel or sdist"
 for dist in whl tar.gz; do
-  docker run --rm -v "$REPO:/repo" python:3.11-slim bash -c "
+  docker run --rm -v "$REPO:/repo" "$PYTHON_311" bash -c "
     pip install -q /repo/$OUT/rowstile-*.$dist >/dev/null 2>&1 || exit 1
     python -c 'import rowstile, rowstile.command' || exit 1
     python -c 'import authzlib' 2>/dev/null && { echo 'authzlib is importable at the top level'; exit 1; }
@@ -84,7 +140,7 @@ for dist in whl tar.gz; do
 done
 # the extras the stack pages tell people to install bring what the SDK's modules import: each in an environment
 # of its own, with the newest of what it asks for (the conformance app pins and adds its own)
-docker run --rm -v "$REPO:/repo" python:3.13-slim bash -c "
+docker run --rm -v "$REPO:/repo" "$PYTHON" bash -c "
   set -e
   whl=\$(ls /repo/$OUT/rowstile-*.whl)
   try() { python -m venv /tmp/\$1 && /tmp/\$1/bin/pip install -q \"\$whl[\$2]\" >/dev/null 2>&1 && /tmp/\$1/bin/python -c \"\$3\" && echo \"\$2: ok\"; }

@@ -118,10 +118,13 @@ pull request of its own, before the release's (the comment above `RELEASE` says 
    stands. The tag also deploys the docs site at
    rowstile.dev (`.github/workflows/site.yml`), built from the tag, when the release is what a plain install
    gets, or while no final release exists: `gh workflow run site.yml -f tag=vX.Y.Z` deploys another one.
-5. **Check it** as a user would: install from the registries on Linux, macOS and Windows, then `rowstile
-   init`, `migrate` and `test` on a small app, and the review action on a pull request. Then the next
-   alpha, beta or candidate, or the final release. A tag pushed is not a release made: look at the workflow's
-   run, and at what it published.
+5. **Check it** as a user would: install from the registries on Linux, then `rowstile init`, `migrate` and
+   `test` on a small app, and the review action on a pull request. Then the next alpha, beta or candidate, or
+   the final release. A tag pushed is not a release made: look at the workflow's run, and at what it
+   published. macOS and Windows are not checked this way: there is no machine or runner with either. What
+   checks them is the release's packaging tests (`packaging/test.sh`), which read their npm packages (the
+   Python is built for that system and CPU, and holds every library and module the command loads) but can't
+   start them; the Linux ones, x64 and arm64, glibc and musl, are started.
 
 Run by hand (Actions, **release**, **Run workflow**), the release workflow builds and checks everything and
 publishes nothing: a dry run before tagging.
