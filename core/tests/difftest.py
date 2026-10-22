@@ -11,7 +11,8 @@ one transaction) and after every change compares, for every user:
   - authz.list() for every permission of every type, and for one of them (in
     turn) in pages of two: each page after the last id of the one before, the
     whole in key order as the database orders the key (its collation's)
-  - authz.can() for every object and permission, plus ids that don't exist
+  - authz.can() for every object and permission, whether the user may see the
+    row or not, plus an id no row has
   - the rows each RLS policy lets the app role read
   - every policy expression (USING and WITH CHECK) evaluated on every row
   - every column rule's condition (a trigger's), evaluated on every row
@@ -23,6 +24,11 @@ one transaction) and after every change compares, for every user:
 against a reference evaluator written directly from the language's meaning:
 relations and permissions are sets of object ids, computed together as the
 least fixpoint of the policy. It shares only the parser with the compiler.
+
+A change may fail only as random changes may: a key it repeats or a row it
+names that isn't there, raised by its own statement (by SQLSTATE), or a refusal
+of rowstile's that the generator expects (by the code in its HINT). Anything
+else, or more than half the changes refused, fails the run.
 
 With --decisions it says at the end which parts of the policy never decided an
 answer in those checks, whose SQL the run never judged (tests/decisions.py),
@@ -95,6 +101,13 @@ EXPIRED = "now() - interval '1 hour'"
 # a share's start ahead, far enough that it doesn't come during a run (a soak's takes hours): not started throughout.
 # A generator gives one in place of one of its draws' live shares, so that its draws, and all it makes, stay the same
 LATER = "now() + interval '1 day'"
+# A random change runs with psql's errors in full (VERBOSITY verbose): what Gen.refused reads is their SQLSTATE, the
+# code a rowstile refusal gives in its HINT, and the functions they were raised in (CONTEXT), not their words
+CHANGE = "\\set VERBOSITY verbose\n"
+SQLSTATE = re.compile(r"^(?:psql:\S* )?ERROR:\s+([0-9A-Z]{5}): ", re.M)
+ROWSTILE_HINT = re.compile(r"^HINT:\s+rowstile help (AZ\d+)", re.M)
+IN_ROWSTILE = re.compile(r'\bfunction "?authz(?:_int|_gen)?"?\.')
+KEY_ERRORS = ("23505", "23503")  # unique_violation, foreign_key_violation
 SHARE_COLUMNS = "object_type, object_id, relation, subject_type, subject_id, subject_relation, expires_at, starts_at"
 STEER = 0.25  # of the changes, those aimed at parts of the policy that have decided no answer yet (Gen.steered)
 AIMS = 3  # how many parts one such change aims at, at most; or an eighth of the parts left, when that is more
@@ -165,8 +178,18 @@ def text_array(items: Sequence[str]) -> str:
 
 # a custom role's id no role has: changing or deleting it is refused as one the user may not manage is
 MISSING_ROLE = "999999"
+# an object's id no row has, which authz.can is asked about beside every row's: false, whoever asks
+MISSING_ROW = "999999"
 # a link's id (the start of its token's hash) no link has
 MISSING_LINK = "ffffffffffffffff"
+
+
+def asked_of_every_row(who: str, tname: str, perm: str, answers: Answer, ids: set[str], *more: str) -> list[str]:
+    """authz.can is asked of every row a snapshot holds (and of more ids, which no row has): not of some of them."""
+    asked = {i for i, _ in answers}
+    if asked == {*ids, *more}:
+        return []
+    return [f"{who}: authz.can('{tname}', ..., '{perm}') was asked of {sorted(asked)}, not of {sorted({*ids, *more})}"]
 
 
 def signs_in_as_user(u: str, types: dict[str, Type]) -> bool:
@@ -381,6 +404,19 @@ class Checker:
                 "FROM pg_policies WHERE policyname LIKE 'authz\\_%'"
             )[1]
         )
+        # each rule on a command (not on columns: a trigger's, below) is a policy named after it on its table, which
+        # the checks below then compare: one missing would refuse that command on every row, and compare nothing
+        made = {(table, name) for table, name, _, _ in self.policies}
+        wanted = {
+            (r.table, f"authz_{r.command}")
+            for r in self.rules
+            if not r.columns and r.command not in ("mask", "update after")
+        }
+        if made != wanted:
+            raise SystemExit(
+                f"{len(wanted)} rules on a command in the policy, {len(made)} row-level security policies for them: "
+                f"missing {sorted(wanted - made)}, not in the policy {sorted(made - wanted)}"
+            )
         # Column rules (`update owner_id : share`) are triggers, named after the rule's head on their table: each
         # one's condition is read back from its WHEN, to be evaluated on every row as the policies' are.
         triggers: dict[tuple[str, str], str] = {
@@ -476,6 +512,11 @@ class Checker:
                 "SELECT object_type, relation, shared_by FROM authz_int.shared_relations WHERE subject = 'link'"
             )
         }
+        # every row's id, as the owner reads them: authz.can is asked of each, whether the user may see the row or not
+        every = {
+            t.name: [row[0] for row in self.db.rows(f"SELECT {idsql(t)} FROM {qt(t.table)}")]
+            for t in self.types.values()
+        }
         # the rows explain is asked about by each user themselves, whether they may see them or not: picked here
         sample = {
             t.name: [
@@ -548,8 +589,7 @@ class Checker:
                     emit(
                         [u, "can", t.name, p],
                         f"SELECT coalesce(json_agg(json_build_array(i, authz.can({lit(t.name)}, i, {lit(p)}))), '[]') "
-                        f"FROM (SELECT {idsql(t)} AS i FROM {qt(t.table)} TABLESAMPLE BERNOULLI (30) "
-                        f"UNION SELECT '999999') ids",
+                        f"FROM unnest({text_array([*every[t.name], MISSING_ROW])}) i",
                     )
             # authz.perms_of (authz.perms for each): every permission held on a few objects at once, a list's buttons
             for t in self.types.values():
@@ -719,7 +759,7 @@ class Checker:
                 emit(
                     ["scoped", "can", t.name, p],
                     f"SELECT coalesce(json_agg(json_build_array(i, authz.can({lit(t.name)}, i, {lit(p)}))), '[]') "
-                    f"FROM (SELECT {idsql(t)} AS i FROM {qt(t.table)} TABLESAMPLE BERNOULLI (30)) ids",
+                    f"FROM unnest({text_array(every[t.name])}) i",
                 )
         lines.append("RESET ROLE;")
         for table, name, qual, check in self.policies:
@@ -1229,6 +1269,9 @@ class Checker:
                     for i, ok in snap[(u, "can", t.name, p)]:
                         if bool(ok) != (i in want):
                             problems.append(f"user {u}: authz.can('{t.name}', {i}, '{p}') = {ok}, expected {i in want}")
+                    problems += asked_of_every_row(
+                        f"user {u}", t.name, p, snap[(u, "can", t.name, p)], ids, MISSING_ROW
+                    )
             for table in dict.fromkeys(r.table for r in self.rules if r.command == "select"):
                 want = self.expected_rule(state, table, "select")
                 got = set(snap[(u, "rls", table)])
@@ -1342,6 +1385,7 @@ class Checker:
                 for i, ok in snap[("scoped", "can", t.name, p)]:
                     if bool(ok) != (i in want):
                         problems.append(f"{who}: authz.can('{t.name}', {i}, '{p}') = {ok}, expected {i in want}")
+                problems += asked_of_every_row(who, t.name, p, snap[("scoped", "can", t.name, p)], self.ref.ids(t))
         for table, name, qual, check in self.policies:
             command = name[len("authz_") :]
             for part, expr in (("using", qual), ("check", check)):
@@ -1418,12 +1462,19 @@ class Gen:
     schema: ClassVar[str]
     users: ClassVar[list[str]]
     role: ClassVar[str] = "app_user"
-    expected_errors: ClassVar[tuple[str, ...]] = (
-        "cannot be moved inside itself",
-        "violates foreign key constraint",
-        "duplicate key value",
-        "violates unique constraint",
-    )
+    # rowstile's own refusals a random change may meet, by the code in their HINT: a move under itself (AZ713)
+    refusals: ClassVar[tuple[str, ...]] = ("AZ713",)
+
+    def refused(self, err: str) -> bool:
+        """Whether a change failed as random changes may (err: psql's, with VERBOSITY verbose; CHANGE): a key the
+        change repeats, or a row it names that isn't there, raised by the change's own statement, or one of
+        rowstile's refusals the generator expects. Not the same constraint raised inside rowstile's own functions
+        (a trigger's): an app would meet that as a refused write it may make."""
+        state = SQLSTATE.search(err)
+        hint = ROWSTILE_HINT.search(err)
+        if hint:
+            return hint.group(1) in self.refusals
+        return bool(state) and state.group(1) in KEY_ERRORS and not IN_ROWSTILE.search(err)
 
     def context(self, u: str) -> dict[str, str]:
         """The request context (authz_ctx.*) the user's session sets."""
@@ -2584,10 +2635,8 @@ class CrossGen(Gen):
         "cx.site_links": {"active": "true"},
         "cx.site_regions": {"active": "true"},
     }
-    expected_errors: ClassVar[tuple[str, ...]] = (
-        *Gen.expected_errors,
-        "cannot expire, start later or have a caveat",  # a share that is a link: refused, as the docs say
-    )
+    # and a share that is a link of a tree, expiring, starting later or with a caveat: refused, as the docs say
+    refusals: ClassVar[tuple[str, ...]] = (*Gen.refusals, "AZ605")
 
     def context(self, u: str) -> dict[str, str]:
         """Who presents which link's token: users 1 and 4 the first, 3 and 6 the second, 2 and 5 none, and nobody
@@ -2840,7 +2889,7 @@ def main() -> None:
     db.run(gen.grants())
     checker = Checker(db, gen.policy, gen, decisions=args.decisions)
 
-    failures, refused = 0, 0
+    failures, refused, made = 0, 0, 0
     for step in range(args.steps + 1):
         problems = checker.check()
         if problems:
@@ -2861,15 +2910,19 @@ def main() -> None:
             ids
         )
         # (what a change draws with SQL's random() is the seed's too: a run can be made again)
-        code, _, err = db.run(f"SELECT setseed({sqlseed.random():.6f});\n{sql}", check=False)
+        code, _, err = db.run(f"{CHANGE}SELECT setseed({sqlseed.random():.6f});\n{sql}", check=False)
         if code != 0:
-            if any(e in err for e in gen.expected_errors):
+            if gen.refused(err):
                 refused += 1
             else:
                 print(f"step {step + 1}: unexpected error\n  {sql}\n  {err.strip()}")
                 failures += 1
+        made += 1
         if not args.quiet:
             print(f"step {step + 1}: {'refused' if code else 'ok'}  {sql.splitlines()[0][:110]}")
+    if refused > max(5, made // 2):  # (each generator has a tenth of its changes refused at most: 150 of each, seed 7)
+        print(f"{refused} of {made} changes refused: more than half, so the run checked little")
+        failures += 1
     print(
         f"{args.gen} seed {args.seed}: {args.steps} changes ({refused} refused as expected), "
         f"{'no mismatches' if not failures else f'{failures} failing step(s)'}"

@@ -95,7 +95,7 @@ import genpolicy  # noqa: E402
 from authzlib import evaluate  # noqa: E402
 from authzlib.parse import Rule  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
-from difftest import DB, Checker, Snapshot, idsql, lit, pages_sql  # noqa: E402
+from difftest import CHANGE, DB, Checker, Snapshot, idsql, lit, pages_sql  # noqa: E402
 from genpolicy import SCHEMA, WORDS_LATIN1, Refused, Slow, Spec, Spelling  # noqa: E402
 
 # The login roles of a run, named after its database (name_roles(): these are --db authz_around's)
@@ -1534,8 +1534,8 @@ def run(
         }
         sql = routed(db, spec, w, gen.change(ids), route)
         checker.since = int(db.rows("SELECT txid_current()")[0][0])
-        code, _, err = db.run(sql, check=False)
-        if code != 0 and not any(e in err for e in gen.expected_errors):
+        code, _, err = db.run(CHANGE + sql, check=False)
+        if code != 0 and not gen.refused(err):
             return [f"step {step + 1}: unexpected error", f"  {sql}", f"  {err.strip()}"]
     return []
 
