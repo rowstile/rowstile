@@ -522,6 +522,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   rest of them, and the web app stopped at 50. `FM_MAX_UPLOAD_BYTES` holds for the bytes an upload sends, not
   only for the size it claims. Two uploads committing at the same time could together pass the storage quota;
   the second now waits for the first (a migration). The app waits for RustFS to answer before it starts.
+  Moving a folder takes the right to share it, as deleting it does: an editor could move a folder into one of
+  their own, which gave them `share` on it and took it from everyone who reached it from above. The web app
+  shows a folder's Share, Move and Delete only to those who may share it.
 
 ## 0.1.0 (alpha)
 

@@ -61,3 +61,18 @@ test "support staff may break the glass, nobody else"
   user $sue can break_glass folder $docs
   user $sue cannot view folder $docs
   user $ann can view folder $docs
+
+test "moving a folder needs share, as deleting it does; an editor may still rename it"
+  given ann = {INSERT INTO fm.users (email, name) VALUES ('t-ann@x', 'Ann') RETURNING id}
+  given bo = {INSERT INTO fm.users (email, name) VALUES ('t-bo@x', 'Bo') RETURNING id}
+  given top = {INSERT INTO fm.folders (owner_id, name) VALUES ($ann, 'Top') RETURNING id}
+  given sub = {INSERT INTO fm.folders (parent_id, owner_id, name) VALUES ($top, $ann, 'Sub') RETURNING id}
+  given other = {INSERT INTO fm.folders (owner_id, name) VALUES ($ann, 'Other') RETURNING id}
+  given mine = {INSERT INTO fm.folders (owner_id, name) VALUES ($bo, 'Mine') RETURNING id}
+  as user $ann allowed {SELECT authz.share('folder', $top, 'editor', 'user', $bo)}
+  user $bo can edit folder $sub
+  user $bo cannot share folder $sub
+  as user $bo refused {UPDATE fm.folders SET parent_id = $mine WHERE id = $sub}
+  as user $bo refused {UPDATE fm.folders SET parent_id = NULL WHERE id = $sub}
+  as user $bo allowed {UPDATE fm.folders SET name = 'Renamed' WHERE id = $sub}
+  as user $ann allowed {UPDATE fm.folders SET parent_id = $other WHERE id = $sub}
