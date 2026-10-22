@@ -44,7 +44,7 @@ CORE = os.path.dirname(HERE)
 sys.path.insert(0, CORE)
 import compile_policy  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
-from difftest import DB, Answer, Checker, DocsGen, Ids, Snapshot, idsql, lit, read  # noqa: E402
+from difftest import CHANGE, DB, Answer, Checker, DocsGen, Ids, Snapshot, idsql, lit, read  # noqa: E402
 from migrate_test import objects, psql, snapshot  # noqa: E402
 
 CHANGES = 40  # random changes under the older release, after the first rows and shares
@@ -116,8 +116,8 @@ def fill(name: str, seed: int) -> list[str]:
     sqlseed = random.Random(f"upgrade/{seed}/sql")
     for step in range(CHANGES):
         sql = gen.change(ids_of(db, gen))
-        code, _, err = db.run(f"SELECT setseed({sqlseed.random():.6f});\n{sql}", check=False)
-        if code != 0 and not any(e in err for e in gen.expected_errors):
+        code, _, err = db.run(f"{CHANGE}SELECT setseed({sqlseed.random():.6f});\n{sql}", check=False)
+        if code != 0 and not gen.refused(err):
             problems.append(f"change {step + 1}, under the older release: {sql.splitlines()[0][:100]}: {err.strip()}")
     # a subtree moved, last: the top of the deepest chain under another top, with what hangs under it
     deep = db.rows(

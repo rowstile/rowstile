@@ -10178,7 +10178,9 @@ class Decisions(unittest.TestCase):
             """A database that answers each question by its key, and by the session it is asked in."""
 
             def run(self, sql: str, check: bool = True) -> tuple[int, str, str]:
-                return 0, "[]", ""  # (the policy expressions and column rules read back: none; what it makes: done)
+                if "FROM pg_policies" in sql:  # the rules' policies read back, each without an expression
+                    return 0, json.dumps([["mt.docs", "authz_select", "", ""], ["mt.docs", "authz_update", "", ""]]), ""
+                return 0, "[]", ""  # (the column rules read back: none; what it makes: done)
 
             def rows(self, sql: str) -> list[list[str]]:
                 session: dict[str, str] = {}
@@ -10249,6 +10251,146 @@ class Decisions(unittest.TestCase):
                 for who in world.principals([pol]):
                     self.assertEqual(forcing.evaluate(data, who, ["tok1"]), ref.evaluate(data, who, ["tok1"]), name)
             self.assertTrue(forcing.seen)
+
+
+class DifftestChanges(unittest.TestCase):
+    """What difftest (and the suites that make its random changes) counts as a change refused as it may be, read
+    from psql's errors in full (VERBOSITY verbose) by their SQLSTATE, rowstile's code and where they were raised; and
+    that authz.can is asked of every row."""
+
+    # psql's errors as it prints them with VERBOSITY verbose (PostgreSQL 16)
+    OWN_KEY = (
+        'ERROR:  23505: duplicate key value violates unique constraint "notes_pkey"\n'
+        "DETAIL:  Key (id)=(3) already exists.\nSCHEMA NAME:  cx\nTABLE NAME:  notes\n"
+        "CONSTRAINT NAME:  notes_pkey\nLOCATION:  _bt_check_unique, nbtinsert.c:666\n"
+    )
+    OWN_ROW = (
+        'psql:<stdin>:3: ERROR:  23503: insert or update on table "files" violates foreign key constraint '
+        '"files_folder_id_fkey"\nDETAIL:  Key (folder_id)=(99) is not present in table "folders".\n'
+        "SCHEMA NAME:  app\nTABLE NAME:  files\nCONSTRAINT NAME:  files_folder_id_fkey\n"
+    )
+    # the same constraint, raised by a statement inside one of rowstile's triggers
+    INSIDE = (
+        'ERROR:  23505: duplicate key value violates unique constraint "folder__tree_pkey"\n'
+        'CONTEXT:  SQL statement "INSERT INTO authz_int."folder__tree" VALUES (1, 1)"\n'
+        'PL/pgSQL function authz_int."folder__refresh"() line 4 at SQL statement\n'
+        "SCHEMA NAME:  authz_int\nTABLE NAME:  folder__tree\n"
+    )
+    LOOP = (
+        "ERROR:  23514: folder 3 cannot be moved inside itself\nHINT:  rowstile help AZ713\n"
+        'CONTEXT:  PL/pgSQL function authz_int."folder__check_loops"(text[]) line 9 at RAISE\n'
+    )
+    LINK = (
+        "ERROR:  23514: region.guest links are used for inheritance, so they cannot expire, start later or have a "
+        "caveat\nHINT:  rowstile help AZ605\n"
+        'CONTEXT:  PL/pgSQL function authz_int."authz_shares_no_expiry"() line 3 at RAISE\n'
+    )
+
+    def test_refused_by_sqlstate_code_and_place(self) -> None:
+        import difftest
+
+        docs, cross = difftest.DocsGen(random.Random(1)), difftest.CrossGen(random.Random(1))
+        self.assertEqual(
+            [docs.refused(e) for e in (self.OWN_KEY, self.OWN_ROW, self.INSIDE, self.LOOP, self.LINK)],
+            [True, True, False, True, False],
+        )
+        # a share that is a link of a tree, refused: what cross's changes may meet, and docs' never
+        self.assertTrue(cross.refused(self.LINK))
+        # the words alone, without the SQLSTATE psql gives with VERBOSITY verbose: not a refusal it knows
+        self.assertFalse(docs.refused('ERROR:  duplicate key value violates unique constraint "notes_pkey"\n'))
+        self.assertFalse(docs.refused("ERROR:  42501: permission denied for table notes\n"))
+        self.assertEqual(difftest.CHANGE, "\\set VERBOSITY verbose\n")
+
+    def test_can_asked_of_every_row(self) -> None:
+        import difftest
+
+        answers = [["1", True], ["2", False], [difftest.MISSING_ROW, False]]
+        self.assertEqual(difftest.asked_of_every_row("user 1", "doc", "view", answers, {"1", "2"}, "999999"), [])
+        self.assertEqual(
+            difftest.asked_of_every_row("user 1", "doc", "view", answers[1:], {"1", "2"}, "999999"),
+            ["user 1: authz.can('doc', ..., 'view') was asked of ['2', '999999'], not of ['1', '2', '999999']"],
+        )
+
+    def test_genpolicy_data_drawn_from_the_seed(self) -> None:
+        """What genpolicy's first data and changes draw with SQL's random() is the seed's too: each script that draws
+        sets the seed first, the same on every run, so `--only SEED` and the shrinking run on the same data."""
+        import contextlib
+
+        import difftest
+
+        sent: list[list[str]] = []
+
+        class Recorder(difftest.DB):
+            def recreate(self) -> None:
+                sent.append([])
+
+            def run(self, sql: str, check: bool = True) -> tuple[int, str, str]:
+                sent[-1].append(sql)
+                return 0, "", ""
+
+            def rows(self, sql: str) -> list[list[str]]:
+                return [["1"], ["2"]]
+
+        class Answers:  # the checks, which this leaves out: every answer as expected
+            def __init__(self, db: difftest.DB, path: str, gen: difftest.Gen, decisions: bool = False) -> None:
+                self.pol = parse_policy(read(path), path)
+                self.types = self.pol.types
+
+            def check(self) -> list[str]:
+                return []
+
+        spec = dataclasses.replace(genpolicy.make(1), invariants=[])
+        with (
+            tempfile.TemporaryDirectory() as work,
+            contextlib.chdir(ROOT),
+            mock.patch.object(genpolicy, "Checker", Answers),
+        ):
+            for _ in range(2):
+                self.assertEqual(genpolicy.run(spec, Recorder("unused"), 12, work, slow=True), [])
+        self.assertEqual(sent[0], sent[1])
+        drawn = [sql for sql in sent[0] if "random()" in sql]
+        self.assertGreaterEqual(len(drawn), 2, "the first data and some change draw with random()")
+        for sql in drawn:
+            self.assertRegex(sql.removeprefix(difftest.CHANGE), r"^SELECT setseed\(0\.\d+\);\n", sql[:200])
+
+    def test_genpolicy_smallest_failing_policy_run_as_the_first(self) -> None:
+        """The smallest policy that still fails is run again as the first was (the soak's --slow, --seconds), and
+        one that takes too long then is said, not a traceback."""
+        import contextlib
+
+        spec = genpolicy.make(1)
+        calls: list[tuple[float, bool]] = []
+
+        def run(
+            s: genpolicy.Spec,
+            db: object,
+            steps: int,
+            work: str,
+            seconds: float = 900,
+            *rest: object,
+            slow: bool = False,
+        ) -> list[str]:
+            calls.append((seconds, slow))
+            if len(calls) > 1:
+                raise genpolicy.Slow("over 33 s at step 2 of 3")
+            return ["step 1:", "user 1: authz.list('t1', 'p1') extra ['2'] missing []"]
+
+        out = io.StringIO()
+        argv = ["genpolicy.py", "--only", "1", "--steps", "3", "--seconds", "33", "--slow", "--db", "unused"]
+        with (
+            contextlib.chdir(os.getcwd()),
+            contextlib.redirect_stdout(out),
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(genpolicy, "variants", lambda seed: [("", spec)]),
+            mock.patch.object(genpolicy, "shrink", lambda s, fails: s),
+            mock.patch.object(genpolicy, "run", run),
+            self.assertRaises(SystemExit) as end,
+        ):
+            genpolicy.main()
+        self.assertEqual(end.exception.code, 1)
+        self.assertEqual(calls, [(33.0, True), (33.0, True)])
+        self.assertIn("  the smallest policy found that still fails (seed 1):", out.getvalue())
+        self.assertIn("    not checked again: over 33 s at step 2 of 3\n", out.getvalue())
 
 
 class Encodings(unittest.TestCase):

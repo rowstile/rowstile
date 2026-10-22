@@ -1240,9 +1240,11 @@ def run(
         raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
     gen = gen_class(spec, policy_path, schema_path)(random.Random(spec.seed))
+    # what the data and the changes draw with SQL's random() is the seed's too: --only runs it again, on the same data
+    sqlseed = random.Random(f"genpolicy/{spec.seed}/sql")
     db.recreate()
     db.run(schema_text(spec))
-    db.run(gen.initial())
+    db.run(f"SELECT setseed({sqlseed.random():.6f});\n{gen.initial()}")
     db.run(compiled.stdout)
     db.run(gen.grants())
     checker = Checker(db, policy_path, gen, decisions=report is not None)
@@ -1262,8 +1264,8 @@ def run(
             for t in checker.types.values()
         }
         sql = gen.change(ids)
-        code, _, err = db.run(sql, check=False)
-        if code != 0 and not any(e in err for e in gen.expected_errors):
+        code, _, err = db.run(f"{difftest.CHANGE}SELECT setseed({sqlseed.random():.6f});\n{sql}", check=False)
+        if code != 0 and not gen.refused(err):
             return [f"step {step + 1}: unexpected error", f"  {sql}", f"  {err.strip()}"]
     if report is not None and checker.decisions is not None:
         report += checker.decisions.report(name or f"seed {spec.seed}", only_decisive=True)
@@ -1523,8 +1525,11 @@ def main() -> None:
                     small = shrink(spec, fails)
                     print(f"  the smallest policy found that still fails ({name}):")
                     print("    " + policy_text(small).replace("\n", "\n    ").rstrip())
-                    for p in run(small, db, steps, workdir):
-                        print("   ", p)
+                    try:
+                        for p in run(small, db, steps, workdir, args.seconds, slow=args.slow):
+                            print("   ", p)
+                    except (Refused, Slow) as e:  # (it failed in the shrinking: run again, it may take too long)
+                        print(f"    not checked again: {e}")
     print(
         f"genpolicy seeds {seeds[0]}..{seeds[-1]}: {passed} passed, {failed} failed, "
         f"{sum(refused.values())} refused by the compiler"

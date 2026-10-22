@@ -829,8 +829,8 @@ def check(spec: Spec, db: DB, db2: DB, steps: int, workdir: str) -> tuple[list[s
             for t in pol.types.values()
         }
         sql = gen.change(ids)
-        code, _, err = db.run(sql, check=False)
-        if code != 0 and not any(e in err for e in gen.expected_errors):
+        code, _, err = db.run(difftest.CHANGE + sql, check=False)
+        if code != 0 and not gen.refused(err):
             return passed, [f"a random change failed: {sql}: {err.strip()}"]
     users = list(gen.users)
     base = answers(db, pol, users, gen.context, gen.role)

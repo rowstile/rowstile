@@ -62,7 +62,7 @@ from authzlib import Compiler, PolicyError, database, evaluate, parse_policy, re
 from authzlib.conditions import simple  # noqa: E402
 from authzlib.parse import KEYWORDS, Policy  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
-from difftest import DB, Ids, idsql, lit  # noqa: E402
+from difftest import CHANGE, DB, Ids, idsql, lit  # noqa: E402
 from difftest import Reference as Reader  # noqa: E402
 from genpolicy import CONDS, Node, Spec, atoms, gen_class, make, policy_text, schema_text, write_policy  # noqa: E402
 from small import Unloadable, load_sql  # noqa: E402
@@ -433,8 +433,8 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
                         for t in base.pol.types.values()
                     }
                     sql = gen.change(ids)
-                    code, _, err = db.run(sql, check=False)
-                    if code != 0 and not any(e in err for e in gen.expected_errors):
+                    code, _, err = db.run(CHANGE + sql, check=False)
+                    if code != 0 and not gen.refused(err):
                         return [f"round {n}: unexpected error", f"  {sql}", f"  {err.strip()}"]
     finally:
         conn.close()
