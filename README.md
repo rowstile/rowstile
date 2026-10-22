@@ -117,9 +117,11 @@ adds the SDK's packages to `package.json` (for Python, names the one to add) and
 | [`examples/`](examples/README.md) | complete apps built on rowstile: a file manager and a messenger |
 | [`editor/`](editor/README.md) | the VS Code and Zed extensions, a Tree-sitter grammar (Helix, Neovim); other editors start `rowstile lsp` |
 | `review-ci/` | the policy review for pull requests: a GitHub action and a GitLab CI template |
-| `docs/` | the guides and the reference, as Markdown; `site/` builds them into the docs site |
+| `docs/` | the guides and the reference, as Markdown |
+| `site/` | the docs site, rowstile.dev (VitePress): it builds the pages from `docs/` |
 | [`playground/`](playground/README.md) | rowstile in the browser (Pyodide and PGlite) |
 | `packaging/` | how rowstile is installed: npm, PyPI and a Docker image |
+| [`demo/`](demo/README.md) | the recording at the top of this page: `record.sh` runs `demo.tape` on the guide's own app |
 
 ## Contributing
 

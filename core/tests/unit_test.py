@@ -11063,6 +11063,19 @@ class DocPages(unittest.TestCase):
         # its tests name users by number (user 3, 9001): the user type's key is the default one
         self.assertEqual(c.types["user"].pktype, "bigint")
 
+    def test_the_readme_has_a_row_for_each_folder(self) -> None:
+        section = search(r"\n## This repository\n(.*?)\n## ", self.page("README.md"), re.S).group(1)
+        rows = re.findall(r"^\| \[?`([\w-]+)/`", section, re.M)
+        # the repository's folders: what a clone has at its root (not hidden, not what npm ci or Python write)
+        folders = sorted(
+            f
+            for f in os.listdir(self.REPO)
+            if os.path.isdir(os.path.join(self.REPO, f))
+            and not f.startswith(".")
+            and f not in ("node_modules", "__pycache__")
+        )
+        self.assertEqual(sorted(rows), folders, "README.md's This repository: a row for each folder, no other, once")
+
     def test_the_guides_files_are_laid_out_as_fmt_writes_them(self) -> None:
         from authzlib import fmt
 
