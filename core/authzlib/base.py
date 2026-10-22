@@ -118,8 +118,14 @@ CREATE TABLE IF NOT EXISTS authz.review_items (
   decided_by       text,
   decided_at       timestamptz,
   PRIMARY KEY (review_id, item));
--- Tables whose table-wide SELECT was replaced by column privileges because of masks
-CREATE TABLE IF NOT EXISTS authz.masked_tables (tbl text, role text, PRIMARY KEY (tbl, role));
+-- The SELECT that masks took away from a role, to give back when they go: the table-wide SELECT, replaced by
+-- column privileges (whole), and the SELECT of their own that masked columns had (cols)
+CREATE TABLE IF NOT EXISTS authz.masked_tables (
+  tbl   text,
+  role  text,
+  whole boolean NOT NULL,
+  cols  text[] NOT NULL,
+  PRIMARY KEY (tbl, role));
 REVOKE ALL ON authz.changes, authz.requests, authz.reviews, authz.review_items, authz.masked_tables FROM PUBLIC;
 
 -- Every policy the rowstile command applied or removed, with the rowstile version that did it

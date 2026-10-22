@@ -102,6 +102,27 @@ BEGIN
   END LOOP;
 END $mv$;"""
 
+# What masks took away from a role (authz.masked_tables), given back: the table-wide SELECT the masks replaced by
+# column privileges, and the masked columns' SELECT of their own. Removing gives it all back; applying too, then
+# takes away again what the policy's masks need (a table or a column no longer masked keeps what it got back)
+GIVE_BACK_MASKED = """DO $mr$
+DECLARE r record; cols text;
+BEGIN
+  FOR r IN SELECT * FROM authz.masked_tables LOOP
+    IF to_regclass(r.tbl) IS NOT NULL AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.role) THEN
+      IF r.whole THEN
+        -- (taking the table's SELECT back takes the SELECT on its other columns the mask gave instead)
+        EXECUTE format('REVOKE SELECT ON %s FROM %I', r.tbl, r.role);
+        EXECUTE format('GRANT SELECT ON %s TO %I', r.tbl, r.role);
+      END IF;
+      SELECT string_agg(format('%I', attname), ', ') INTO cols FROM pg_attribute
+      WHERE attrelid = r.tbl::regclass AND attnum > 0 AND NOT attisdropped AND attname = ANY (r.cols);
+      IF cols IS NOT NULL THEN EXECUTE format('GRANT SELECT (%s) ON %s TO %I', cols, r.tbl, r.role); END IF;
+    END IF;
+    DELETE FROM authz.masked_tables WHERE tbl = r.tbl AND role = r.role;
+  END LOOP;
+END $mr$;"""
+
 LOST_RULES = """-- Tables that had rules before but have none now keep row-level security on
 DO $l$
 DECLARE t record;

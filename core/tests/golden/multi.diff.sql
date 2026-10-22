@@ -305,8 +305,14 @@ CREATE TABLE IF NOT EXISTS authz.review_items (
   decided_by       text,
   decided_at       timestamptz,
   PRIMARY KEY (review_id, item));
--- Tables whose table-wide SELECT was replaced by column privileges because of masks
-CREATE TABLE IF NOT EXISTS authz.masked_tables (tbl text, role text, PRIMARY KEY (tbl, role));
+-- The SELECT that masks took away from a role, to give back when they go: the table-wide SELECT, replaced by
+-- column privileges (whole), and the SELECT of their own that masked columns had (cols)
+CREATE TABLE IF NOT EXISTS authz.masked_tables (
+  tbl   text,
+  role  text,
+  whole boolean NOT NULL,
+  cols  text[] NOT NULL,
+  PRIMARY KEY (tbl, role));
 REVOKE ALL ON authz.changes, authz.requests, authz.reviews, authz.review_items, authz.masked_tables FROM PUBLIC;
 
 -- Every policy the rowstile command applied or removed, with the rowstile version that did it
@@ -2931,26 +2937,42 @@ COMMENT ON VIEW "mt"."docs_visible" IS 'rowstile masked view';
 REVOKE ALL ON "mt"."docs_visible" FROM PUBLIC;
 GRANT SELECT ON "mt"."docs_visible" TO "app_user";
 
--- Column privileges: masked columns are read through the masked view only
-DO $mc$
+-- Column privileges: masked columns are read through the masked view only. What masks took away is given
+-- back first; then what this policy masks is taken away again
+DO $mr$
 DECLARE r record; cols text;
 BEGIN
-  -- tables that are no longer masked get back the table-wide SELECT they had
-  FOR r IN SELECT * FROM authz.masked_tables WHERE (tbl || '|' || role) <> ALL (ARRAY['"mt"."docs"|app_user']::text[]) LOOP
+  FOR r IN SELECT * FROM authz.masked_tables LOOP
     IF to_regclass(r.tbl) IS NOT NULL AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.role) THEN
-      EXECUTE format('GRANT SELECT ON %s TO %I', r.tbl, r.role);
+      IF r.whole THEN
+        -- (taking the table's SELECT back takes the SELECT on its other columns the mask gave instead)
+        EXECUTE format('REVOKE SELECT ON %s FROM %I', r.tbl, r.role);
+        EXECUTE format('GRANT SELECT ON %s TO %I', r.tbl, r.role);
+      END IF;
+      SELECT string_agg(format('%I', attname), ', ') INTO cols FROM pg_attribute
+      WHERE attrelid = r.tbl::regclass AND attnum > 0 AND NOT attisdropped AND attname = ANY (r.cols);
+      IF cols IS NOT NULL THEN EXECUTE format('GRANT SELECT (%s) ON %s TO %I', cols, r.tbl, r.role); END IF;
     END IF;
     DELETE FROM authz.masked_tables WHERE tbl = r.tbl AND role = r.role;
   END LOOP;
+END $mr$;
+DO $mc$
+DECLARE cols text; whole boolean; took text[];
+BEGIN
   -- mt.docs: body only through mt.docs_visible
-  IF has_table_privilege('app_user', '"mt"."docs"', 'SELECT')
-     OR EXISTS (SELECT 1 FROM authz.masked_tables WHERE tbl = '"mt"."docs"' AND role = 'app_user') THEN
+  whole := has_table_privilege('app_user', '"mt"."docs"', 'SELECT');
+  -- (the SELECT of their own the masked columns have, taken away below: given back when the mask goes)
+  took := ARRAY(SELECT c FROM unnest(ARRAY['body']) c
+                WHERE NOT whole AND has_column_privilege('app_user', '"mt"."docs"', c, 'SELECT'));
+  IF whole THEN
     REVOKE SELECT ON "mt"."docs" FROM "app_user";
     SELECT string_agg(format('%I', attname), ', ') INTO cols FROM pg_attribute
     WHERE attrelid = '"mt"."docs"'::regclass AND attnum > 0 AND NOT attisdropped
       AND attname <> ALL (ARRAY['body']);
     IF cols IS NOT NULL THEN EXECUTE format('GRANT SELECT (%s) ON "mt"."docs" TO "app_user"', cols); END IF;
-    INSERT INTO authz.masked_tables VALUES ('"mt"."docs"', 'app_user') ON CONFLICT DO NOTHING;
+  END IF;
+  IF whole OR took <> '{}' THEN
+    INSERT INTO authz.masked_tables VALUES ('"mt"."docs"', 'app_user', whole, took);
   END IF;
   REVOKE SELECT ("body") ON "mt"."docs" FROM "app_user";
   IF has_column_privilege('app_user', '"mt"."docs"', 'body', 'SELECT') THEN

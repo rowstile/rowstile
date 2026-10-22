@@ -26,6 +26,7 @@ from .sqlutil import (
     CAVEAT_ARG,
     DROP_MASKED_VIEWS,
     DROP_OLD_POLICIES,
+    GIVE_BACK_MASKED,
     IF_PARTITIONED,
     LETTER,
     LOST_RULES,
@@ -1195,26 +1196,15 @@ def review_run(
 
 
 # Everything apply() made, in an order that works: policies and masked views, then the schemas (their
-# CASCADE takes the triggers on app tables and the event triggers along), then the table-wide SELECT
-# that masks replaced, then the functions and indexes it put into authz, and the privileges it gave there.
+# CASCADE takes the triggers on app tables and the event triggers along), then the SELECT that masks
+# took away, then the functions and indexes it put into authz, and the privileges it gave there.
 REMOVE_SQL = "\n\n".join(
     [
         "DROP TABLE IF EXISTS pg_temp.authz_old_tables;",
         DROP_OLD_POLICIES,
         DROP_MASKED_VIEWS,
         "DROP SCHEMA IF EXISTS authz_gen, authz_int CASCADE;",
-        """DO $mr$
-DECLARE r record;
-BEGIN
-  FOR r IN SELECT * FROM authz.masked_tables LOOP
-    IF to_regclass(r.tbl) IS NOT NULL AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.role) THEN
-      -- (taking the table's SELECT back takes the SELECT on its other columns the mask gave instead)
-      EXECUTE format('REVOKE SELECT ON %s FROM %I', r.tbl, r.role);
-      EXECUTE format('GRANT SELECT ON %s TO %I', r.tbl, r.role);
-    END IF;
-    DELETE FROM authz.masked_tables WHERE tbl = r.tbl AND role = r.role;
-  END LOOP;
-END $mr$;""",
+        GIVE_BACK_MASKED,
         """DO $rf$
 DECLARE f regprocedure; i regclass;
 BEGIN

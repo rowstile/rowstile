@@ -131,7 +131,45 @@ out=$(apply /tmp/authz_masks_projects.sql); [ -z "$out" ] || bad "apply, two mas
 out=$(apply /tmp/authz_masks.sql); [ -z "$out" ] || bad "apply, the projects no longer masked" "$out"
 [ "$(PSQL -c "SELECT has_table_privilege('app_user', 'mt.projects', 'SELECT'), has_table_privilege('app_user', 'mt.docs', 'SELECT')")" = "t|f" ] &&
   ok "a table no longer masked gets its SELECT back; the one still masked doesn't" || bad "unmasking one of two tables"
-rm -f /tmp/authz_masks_two.authz /tmp/authz_masks_two.sql /tmp/authz_masks_projects.authz /tmp/authz_masks_projects.sql
+rm -f /tmp/authz_masks_projects.authz /tmp/authz_masks_projects.sql
+
+echo "-- a mask that goes leaves the app role's privileges as they were"
+# the app role reads mt.docs column by column (body among them): the masks take body's SELECT of its own away, and
+# give it back when they go, by applying, by a migration and by rowstile remove
+acl() { PSQL -c "SELECT (SELECT relacl::text FROM pg_class WHERE oid = 'mt.docs'::regclass) || ' ' || string_agg(attname || '=' || coalesce(attacl::text, ''), ' ' ORDER BY attnum)
+  FROM pg_attribute WHERE attrelid = 'mt.docs'::regclass AND attnum > 0 AND NOT attisdropped"; }
+CLI() { python3 cli/rowstile_cli.py --db "dbname=$DB" "$@"; }
+columns() { fresh; PSQL -c "REVOKE SELECT ON mt.docs FROM app_user" -c "GRANT SELECT (id, author_id, body) ON mt.docs TO app_user" >/dev/null; start=$(acl); }
+columns
+out=$(apply /tmp/authz_masks.sql); [ -z "$out" ] || bad "apply, the app role reading columns" "$out"
+[ "$(PSQL -c "SELECT has_column_privilege('app_user', 'mt.docs', 'body', 'SELECT'), has_column_privilege('app_user', 'mt.docs', 'id', 'SELECT'), has_table_privilege('app_user', 'mt.docs', 'SELECT')")" = "f|t|f" ] &&
+  ok "a masked column the app role could read with a grant of its own: the grant is taken away, the others kept" || bad "masking a column granted on its own" "$(acl)"
+apply /tmp/authz_masks_two.sql >/dev/null; apply /tmp/authz_masks.sql >/dev/null
+[ "$(PSQL -c "SELECT has_column_privilege('app_user', 'mt.docs', 'author_id', 'SELECT'), has_column_privilege('app_user', 'mt.docs', 'body', 'SELECT'), (SELECT cols FROM authz.masked_tables)")" = "t|f|{body}" ] &&
+  ok "... a second column masked, then no longer: its grant is given back, the first stays masked" || bad "a column no longer masked" "$(acl)"
+apply /tmp/authz_nomask.sql >/dev/null
+[ "$(acl)" = "$start" ] && ok "... and the policy without the mask applied: every grant is as it was" || bad "the grants after unmasking" "$(acl), not $start"
+CLI apply tests/multi.authz --force >/dev/null 2>&1 || bad "apply with the command"
+out=$(CLI remove --yes 2>&1) || bad "remove" "$out"
+[ "$(acl)" = "$start" ] && ok "... and rowstile remove gives the column's grant back" || bad "the grants after remove" "$(acl), not $start"
+columns
+M=$(mktemp -d)
+mkdir -p "$M/db"; cp tests/multi.authz "$M/db/policy.authz"
+printf 'policy = "db/policy.authz"\ndatabase = "dbname=%s"\n[migrations]\ntool = "sql"\ndir = "db/migrations"\n' "$DB" > "$M/rowstile.toml"
+migrate() {
+  ( cd "$M" && python3 "$OLDPWD/cli/rowstile_cli.py" migrate --name "$1" ) >/dev/null 2>&1 || bad "migrate $1"
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "$DB" -f "$(ls "$M"/db/migrations/*.sql | sort | tail -n 1)" 2>&1 >/dev/null
+}
+out=$(migrate masked); [ -z "$out" ] || bad "the first migration" "$out"
+cp /tmp/authz_nomask.authz "$M/db/policy.authz"
+out=$(migrate unmasked)
+[ -z "$out" ] && [ "$(acl)" = "$start" ] && ok "... and so does a migration to the policy without the mask" || bad "the grants after a migration" "$out $(acl), not $start"
+rm -rf "$M"
+# the table-wide SELECT a mask replaced: given back alone, the column grants the mask gave instead taken back
+fresh; apply /tmp/authz_masks.sql >/dev/null; apply /tmp/authz_masks_two.sql >/dev/null; apply /tmp/authz_nomask.sql >/dev/null
+[ "$(acl)" = "$(PSQL -c "SELECT relacl FROM pg_class WHERE oid = 'mt.docs'::regclass") id= container_type= container_id= author_id= body=" ] &&
+  ok "the table-wide SELECT a mask replaced, given back by applying once the masks changed and went: no column grant they gave is left" || bad "column grants left by unmasking" "$(acl)"
+rm -f /tmp/authz_masks_two.authz /tmp/authz_masks_two.sql
 
 [ -z "${KEEP:-}" ] && dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "masks: all passed"; else echo "masks: $fails failed"; exit 1; fi

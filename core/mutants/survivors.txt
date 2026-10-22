@@ -119,7 +119,6 @@ gec9dbc62c0 equivalent evaluate.py World.data: rng.random() equals the rate exac
 g8e309aab24 equivalent evaluate.py World.links: rng.random() equals the rate exactly with chance 2^-53 a draw: no world a run draws differs.
 gc3a544717c equivalent evaluate.py World.links: rng.random() equals 0.5 exactly with chance 2^-53 a draw: no world a run draws differs.
 gf53f34fabb equivalent evaluate.py Listing.conditions: the cache keeps each policy it holds alive, so no other policy can have its id while it is there: the entry found is always that policy's, and recomputing it gives the same list.
-gece2cb9dfb equivalent database.py <module>: the FOR loop's rows are read before any is deleted, and by its end every row of authz.masked_tables is deleted either way: the same grants are given back and the table is left empty.
 g2202983ba5 equivalent draft.py <module>: the uniques decide only whether a link table with a key of its own keys the pair it links (own_id), which needs a one-column key outside the pair: the key, listed among them, never equals the pair.
 gf9d5726ef6 equivalent hardening.py LintMixin.extra_grants_sql: aclexplode(NULL) gives no rows, so a column without an ACL adds nothing whether it is left out first or not.
 g8284bce604 equivalent hardening.py LintMixin.lint_sql: forced true, a source without a type column adds a column None, written 'None'; no attribute of its table has that name (to_regclass(...) and attname = 'None'), so lint finds nothing more.
