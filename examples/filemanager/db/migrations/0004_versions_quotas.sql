@@ -27,7 +27,7 @@ CREATE FUNCTION fm.usage(p_user uuid) RETURNS bigint
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   SELECT coalesce(sum(v.size), 0)::bigint FROM fm.file_versions v WHERE v.created_by = p_user $$;
 -- the app role asks only about the user signed in
--- (plpgsql: authz.uid() comes with the policy, which is applied after the migrations on a new database)
+-- (plpgsql: authz.uid() comes with the policy, whose first migration, 0005, runs after this one)
 CREATE FUNCTION fm.my_usage() RETURNS TABLE (used bigint, quota bigint)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
