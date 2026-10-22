@@ -245,8 +245,14 @@ CREATE TABLE IF NOT EXISTS authz.review_items (
   decided_by       text,
   decided_at       timestamptz,
   PRIMARY KEY (review_id, item));
--- Tables whose table-wide SELECT was replaced by column privileges because of masks
-CREATE TABLE IF NOT EXISTS authz.masked_tables (tbl text, role text, PRIMARY KEY (tbl, role));
+-- The SELECT that masks took away from a role, to give back when they go: the table-wide SELECT, replaced by
+-- column privileges (whole), and the SELECT of their own that masked columns had (cols)
+CREATE TABLE IF NOT EXISTS authz.masked_tables (
+  tbl   text,
+  role  text,
+  whole boolean NOT NULL,
+  cols  text[] NOT NULL,
+  PRIMARY KEY (tbl, role));
 REVOKE ALL ON authz.changes, authz.requests, authz.reviews, authz.review_items, authz.masked_tables FROM PUBLIC;
 
 -- Every policy the rowstile command applied or removed, with the rowstile version that did it
@@ -4040,19 +4046,25 @@ BEGIN
   END LOOP;
 END $fk$;
 
--- Column privileges: masked columns are read through the masked view only
-DO $mc$
+-- Column privileges: masked columns are read through the masked view only. What masks took away is given
+-- back first; then what this policy masks is taken away again
+DO $mr$
 DECLARE r record; cols text;
 BEGIN
-  -- tables that are no longer masked get back the table-wide SELECT they had
-  FOR r IN SELECT * FROM authz.masked_tables WHERE (tbl || '|' || role) <> ALL (ARRAY[]::text[]) LOOP
+  FOR r IN SELECT * FROM authz.masked_tables LOOP
     IF to_regclass(r.tbl) IS NOT NULL AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.role) THEN
-      EXECUTE format('GRANT SELECT ON %s TO %I', r.tbl, r.role);
+      IF r.whole THEN
+        -- (taking the table's SELECT back takes the SELECT on its other columns the mask gave instead)
+        EXECUTE format('REVOKE SELECT ON %s FROM %I', r.tbl, r.role);
+        EXECUTE format('GRANT SELECT ON %s TO %I', r.tbl, r.role);
+      END IF;
+      SELECT string_agg(format('%I', attname), ', ') INTO cols FROM pg_attribute
+      WHERE attrelid = r.tbl::regclass AND attnum > 0 AND NOT attisdropped AND attname = ANY (r.cols);
+      IF cols IS NOT NULL THEN EXECUTE format('GRANT SELECT (%s) ON %s TO %I', cols, r.tbl, r.role); END IF;
     END IF;
     DELETE FROM authz.masked_tables WHERE tbl = r.tbl AND role = r.role;
   END LOOP;
-
-END $mc$;
+END $mr$;
 
 CREATE TABLE authz_int.masked_columns (tbl text, col text, view text, PRIMARY KEY (tbl, col));
 

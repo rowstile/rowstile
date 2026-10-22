@@ -144,6 +144,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   (AZ622), and foreign keys to such a table gave no relation. `authz.lint()` likewise said the app role may choose
   a primary key the database makes when it may write a column the key's index INCLUDEs. Both read the key's own
   columns now.
+- A mask that goes gives the app role back the SELECT it had on the column. Where the app role read the table
+  column by column (`GRANT SELECT (id, body)`) and a mask took `body`, removing the mask, by applying, by a
+  migration or by `rowstile remove`, left `body` unreadable: only a table-wide SELECT was given back. And a
+  table-wide SELECT given back by applying no longer leaves beside it the column grants the mask gave instead.
 - The policy language page's example applies as written: its `shared if` condition had `...` in it, which no
   database runs. It says what an include may name (a file in the policy's folder, once). The identity page and
   the threat model name `view_as` among what signs a session in; the identity page no longer says the SDKs sign

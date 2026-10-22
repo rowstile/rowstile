@@ -84,8 +84,8 @@ The version (semantic versioning; 1.0 will freeze the public surface) is the com
 - **Backups**: everything is an ordinary table, view, function or policy, so `pg_dump` keeps it all:
   shares, audit trail, change feed, policy history, and what the policy made. <!-- checked: tests/apply.sh "pg_restore runs without errors"; tests/apply.sh "shares, audit trail, policy history and change feed are all restored"; tests/apply.sh "the restored database can apply its policy again" -->
 - **Removing**: `rowstile remove --yes` drops everything the policy made and gives back the
-  table-wide SELECT that masks replaced; shares and history stay, and row-level security stays on
-  (with a warning), so nothing becomes readable by accident. <!-- checked: tests/apply.sh "its schemas are gone"; tests/apply.sh "remove gives back the table-wide SELECT the mask replaced"; tests/apply.sh "shares are kept"; tests/apply.sh "remove warns that row-level security stays on" -->
+  SELECT that masks took (table-wide, or a column's own); shares and history stay, and row-level security stays on
+  (with a warning), so nothing becomes readable by accident. <!-- checked: tests/apply.sh "its schemas are gone"; tests/apply.sh "remove gives back the table-wide SELECT the mask replaced"; tests/masks.sh "and rowstile remove gives the column's grant back"; tests/apply.sh "shares are kept"; tests/apply.sh "remove warns that row-level security stays on" -->
   The privileges applying gave are taken back: every privilege is as it was before the first apply. <!-- checked: tests/apply.sh "after remove, every privilege is as it was before the first apply" -->
 - **Nothing needs a superuser**: later grants on masked columns are reported by `authz.lint()`, not
   refused. <!-- checked: tests/apply.sh "the owner applies the policy, with no superuser"; tests/masks.sh "and applying again takes it back"; tests/apply.sh "and later grants aren't refused any more" -->

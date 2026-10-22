@@ -888,6 +888,7 @@ FEATURES: list[Feature] = [
         (
             T("masks.sh", "the app role cannot read the masked column from the table"),
             T("masks.sh", "a mask PUBLIC could read around is refused"),
+            T("masks.sh", "and the policy without the mask applied: every grant is as it was"),
             T("multi_scenario.sql", "sees doc 01 in the masked view, but not its text"),
             T("apply.sh", "replaced in place, the app's view stays"),
         ),

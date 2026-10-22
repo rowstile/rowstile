@@ -247,8 +247,9 @@ readable through PUBLIC or another Postgres role. <!-- checked: tests/masks.sh "
 A later `GRANT` that makes it readable again
 isn't refused (that would need an event trigger, and so a superuser): `authz.lint()`
 reports it, and applying again takes it back. <!-- checked: tests/masks.sh "and applying again takes it back"; tests/apply.sh "and later grants aren't refused any more" -->
-Removing the mask gives the table-wide
-SELECT back. <!-- checked: tests/masks.sh "gives back table-wide SELECT and drops the view"; tests/apply.sh "remove gives back the table-wide SELECT the mask replaced" -->
+Removing the mask gives back what it took:
+the table-wide SELECT, or the SELECT of its own the column had (`GRANT SELECT (id, body)`), by applying, by a
+migration or by `rowstile remove`. <!-- checked: tests/masks.sh "gives back table-wide SELECT and drops the view"; tests/apply.sh "remove gives back the table-wide SELECT the mask replaced"; tests/masks.sh "and the policy without the mask applied: every grant is as it was"; tests/masks.sh "and so does a migration to the policy without the mask"; tests/masks.sh "and rowstile remove gives the column's grant back" -->
 
 The view is the app's to build on: a view of your own over it, or a function that reads it. Applying and
 migrations replace it in place, so those go on working when the policy changes. <!-- checked: tests/apply.sh "replaced in place, the app's view stays"; tests/migrate_test.py "a mask that changes, under a view of the app's" -->

@@ -16,6 +16,7 @@ from .sqlutil import (
     CHILD_TRIGGERS,
     CHILD_TRIGGERS_FN,
     DROP_OLD_POLICIES,
+    GIVE_BACK_MASKED,
     LOST_RULES,
     STUB_COLUMNS,
     VIEW_MARKS,
@@ -1101,17 +1102,21 @@ GRANT SELECT ON {qt(view)} TO {q(self.role)};""")
         for r in self.rules:
             if r.command == "mask":
                 masked.setdefault(r.table, []).extend(r.columns)
-        current = ", ".join(lit(qt(tb) + "|" + self.role) for tb in masked)
         per_table = "\n".join(
             f"""  -- {tb}: {", ".join(cols)} only through {self.pol.views[tb]}
-  IF has_table_privilege({lit(self.role)}, {lit(qt(tb))}, 'SELECT')
-     OR EXISTS (SELECT 1 FROM authz.masked_tables WHERE tbl = {lit(qt(tb))} AND role = {lit(self.role)}) THEN
+  whole := has_table_privilege({lit(self.role)}, {lit(qt(tb))}, 'SELECT');
+  -- (the SELECT of their own the masked columns have, taken away below: given back when the mask goes)
+  took := ARRAY(SELECT c FROM unnest(ARRAY[{", ".join(lit(c) for c in cols)}]) c
+                WHERE NOT whole AND has_column_privilege({lit(self.role)}, {lit(qt(tb))}, c, 'SELECT'));
+  IF whole THEN
     REVOKE SELECT ON {qt(tb)} FROM {q(self.role)};
     SELECT string_agg(format('%I', attname), ', ') INTO cols FROM pg_attribute
     WHERE attrelid = {lit(qt(tb))}::regclass AND attnum > 0 AND NOT attisdropped
       AND attname <> ALL (ARRAY[{", ".join(lit(c) for c in cols)}]);
     IF cols IS NOT NULL THEN EXECUTE format('GRANT SELECT (%s) ON {qt(tb)} TO {q(self.role)}', cols); END IF;
-    INSERT INTO authz.masked_tables VALUES ({lit(qt(tb))}, {lit(self.role)}) ON CONFLICT DO NOTHING;
+  END IF;
+  IF whole OR took <> '{{}}' THEN
+    INSERT INTO authz.masked_tables VALUES ({lit(qt(tb))}, {lit(self.role)}, whole, took);
   END IF;
   REVOKE SELECT ({", ".join(q(c) for c in cols)}) ON {qt(tb)} FROM {q(self.role)};
   IF {" OR ".join(f"has_column_privilege({lit(self.role)}, {lit(qt(tb))}, {lit(c)}, 'SELECT')" for c in cols)} THEN
@@ -1120,19 +1125,18 @@ GRANT SELECT ON {qt(view)} TO {q(self.role)};""")
   END IF;"""
             for tb, cols in masked.items()
         )
-        out.append(f"""-- Column privileges: masked columns are read through the masked view only
+        take = f"""
 DO $mc$
-DECLARE r record; cols text;
+DECLARE cols text; whole boolean; took text[];
 BEGIN
-  -- tables that are no longer masked get back the table-wide SELECT they had
-  FOR r IN SELECT * FROM authz.masked_tables WHERE (tbl || '|' || role) <> ALL (ARRAY[{current}]::text[]) LOOP
-    IF to_regclass(r.tbl) IS NOT NULL AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.role) THEN
-      EXECUTE format('GRANT SELECT ON %s TO %I', r.tbl, r.role);
-    END IF;
-    DELETE FROM authz.masked_tables WHERE tbl = r.tbl AND role = r.role;
-  END LOOP;
 {per_table}
-END $mc$;""")
+END $mc$;"""
+        out.append(
+            "-- Column privileges: masked columns are read through the masked view only. What masks took away is given\n"
+            "-- back first; then what this policy masks is taken away again\n"
+            + GIVE_BACK_MASKED
+            + (take if masked else "")
+        )
         rows = ", ".join(
             f"({lit(qt(tb))}, {lit(c)}, {lit(qt(self.pol.views[tb]))})" for tb, cols in masked.items() for c in cols
         )
