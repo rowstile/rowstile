@@ -92,8 +92,8 @@ class Called:
     name: str
     args: str
     calls: int
-    how: str = ""  # its language, then definer and set when it has them: "plpgsql definer set", "sql"
-    entered: bool = False  # called at all: Postgres has a count for it, which a call that raised leaves at 0
+    how: str  # its language, then definer and set when it has them: "plpgsql definer set", "sql"
+    entered: bool  # called at all: Postgres has a count for it, which a call that raised leaves at 0
 
     def counted(self) -> bool:
         """Whether Postgres counts its calls: not a plain SQL function, which it may inline into the query."""
@@ -110,12 +110,9 @@ def functions_measured(paths: Sequence[str]) -> list[Called]:
         with open(path, encoding="utf-8") as fh:
             for line in fh:
                 parts = line.rstrip("\n").split("\t")
-                if len(parts) in (6, 7, 8) and parts[5].isdigit():
-                    how = parts[6] if len(parts) >= 7 else ""
-                    calls = int(parts[5])
-                    # (written before the file said whether it was called at all: only a call that returned says so)
-                    entered = parts[7] == "t" if len(parts) == 8 else calls > 0
-                    out.append(Called(parts[0], parts[1], parts[2], parts[3], parts[4], calls, how, entered))
+                if len(parts) == 8 and parts[5].isdigit():
+                    step, db, schema, name, args, calls, how, entered = parts
+                    out.append(Called(step, db, schema, name, args, int(calls), how, entered == "t"))
     return out
 
 

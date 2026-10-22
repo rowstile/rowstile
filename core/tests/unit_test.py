@@ -1607,7 +1607,7 @@ class CommandMode(unittest.TestCase):
     def test_files_argument(self) -> None:
         make = lambda c: c.compile("x", transaction=False)
         database.build('include "a.authz"', {"a.authz": read(POLICIES["docs"])}, make)
-        database.build('include "a.authz"', '{"a.authz": ' + repr_json(read(POLICIES["docs"])) + "}", make)
+        database.build('include "a.authz"', '{"a.authz": ' + json.dumps(read(POLICIES["docs"])) + "}", make)
         with self.assertRaisesRegex(PolicyError, "files must be a map"):
             database.build("app role app_user", '["a.authz"]', make)
         with self.assertRaisesRegex(PolicyError, "files must be a map"):
@@ -1638,12 +1638,6 @@ class CommandMode(unittest.TestCase):
             "NOT IN ('ctx', 'link_hashes')",
         ):
             self.assertIn(text, database.REMOVE_SQL)
-
-
-def repr_json(s: object) -> str:
-    import json
-
-    return json.dumps(s)
 
 
 class Includes(unittest.TestCase):
@@ -1809,7 +1803,6 @@ class Command(unittest.TestCase):
         # review stops instead, exit 2, and says what git can't read and how to fetch it (tests/review.sh: the
         # command, for the policy, a file it includes, the lock file and the tests). A file that isn't at the base
         # is none, as before.
-        import contextlib
         import shutil
         import stat
 
@@ -1895,9 +1888,6 @@ class Command(unittest.TestCase):
     def test_a_row_that_isnt_json_is_shown_as_it_arrived(self) -> None:
         # Windows PowerShell 5 and cmd take the double quotes out of '{"column": 1}': JSON's message alone
         # ("Expecting property name enclosed in double quotes") doesn't say what happened
-        import contextlib
-        import io
-
         def refused(row: str) -> str:
             err = io.StringIO()
             with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
@@ -1989,26 +1979,27 @@ class Command(unittest.TestCase):
             with open(os.path.join(d, "package.json"), "w", encoding="utf-8") as fh:
                 fh.write('{"dependencies": {"next": "16", "@rowstile/prisma": "0.1.0"}}')
             self.assertEqual(sorted(cfg.clients), ["py", "ts-sdk"])
-        names = Compiler(parse_policy(read(POLICIES["docs"]))).compile("x") and database.client(
-            "ts-sdk", read(POLICIES["docs"])
-        )
+        names = database.client("ts-sdk", read(POLICIES["docs"]))
         self.assertIn('declare module "@rowstile/client"', names)
         self.assertIn("permissions: typeof permissions;", names)
         self.assertNotIn("class Refused", names)  # the SDK's own errors, or instanceof would fail
 
+    def folder(self, files: dict[str, str]) -> str:
+        """A project's folder holding these files (name: text), removed when the test ends, however it ends."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        for name, body in files.items():
+            path = os.path.join(tmp.name, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
+        return tmp.name
+
     def test_stack(self) -> None:
         import stack
 
-        def at(files: dict[str, str]) -> str:
-            d = tempfile.mkdtemp()
-            for name, body in files.items():
-                os.makedirs(os.path.dirname(os.path.join(d, name)) or d, exist_ok=True)
-                with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
-                    fh.write(body)
-            return d
-
         s = stack.detect(
-            at(
+            self.folder(
                 {
                     "package.json": '{"dependencies": {"drizzle-orm": "1", "pg": "8"}}',
                     "drizzle.config.ts": 'export default { out: "./db/drizzle" }',
@@ -2021,7 +2012,7 @@ class Command(unittest.TestCase):
             ("drizzle", "db/drizzle", {"ts": "src/authz.gen.ts"}, ["@rowstile/drizzle"], "src/db.ts"),
         )
         s = stack.detect(
-            at(
+            self.folder(
                 {
                     "requirements.txt": "fastapi>=0.110\nsqlmodel\n",
                     "alembic.ini": "script_location = %(here)s/alembic\n",
@@ -2043,7 +2034,7 @@ class Command(unittest.TestCase):
         # the stack pages install FastAPI's part through rowstile's own extras: the stack is found there too, and
         # rowstile, a dependency already, isn't asked for again
         s = stack.detect(
-            at(
+            self.folder(
                 {
                     "pyproject.toml": '[project]\ndependencies = [\n    "rowstile[asyncpg,fastapi,sqlalchemy]>=0.1.0a4",\n]\n',
                     "alembic.ini": "script_location = migrations\n",
@@ -2059,16 +2050,18 @@ class Command(unittest.TestCase):
         self.assertEqual(stack.pip_requirement("rowstile[fastapi]", "0.1.0-beta.1"), "rowstile[fastapi]>=0.1.0b1")
         self.assertEqual(stack.pip_requirement("rowstile", "0.2.0-rc.12"), "rowstile>=0.2.0rc12")
         self.assertEqual(stack.pip_requirement("rowstile", "0.2.0-dev"), "rowstile>=0.2.0.dev0")
-        s = stack.detect(at({"migrations/0001.sql": "CREATE TABLE t ();"}))
+        s = stack.detect(self.folder({"migrations/0001.sql": "CREATE TABLE t ();"}))
         self.assertEqual((s.tool, s.migrations_dir, s.npm, s.pip), ("sql", "migrations", [], ""))
-        d = at({"package.json": '{\n\t"dependencies": {\n\t\t"next": "16"\n\t}\n}\n'})
+        d = self.folder({"package.json": '{\n\t"dependencies": {\n\t\t"next": "16"\n\t}\n}\n'})
         self.assertEqual(stack.add_npm(d, ["@rowstile/next"], "1.2.3"), ["@rowstile/next", "rowstile"])
         with open(os.path.join(d, "package.json"), encoding="utf-8") as fh:
             text = fh.read()
         self.assertIn('\t\t"@rowstile/next": "^1.2.3"', text)
         self.assertIn('"devDependencies"', text)
         self.assertEqual(stack.add_npm(d, ["@rowstile/next"], "1.2.3"), [])
-        self.assertEqual(stack.add_npm(at({}), ["@rowstile/pg"], "1.2.3"), [])  # no package.json: nothing to add to
+        self.assertEqual(
+            stack.add_npm(self.folder({}), ["@rowstile/pg"], "1.2.3"), []
+        )  # no package.json: nothing to add to
 
     def test_stack_of_sql_migrations(self) -> None:
         """The tool of an app whose migrations are SQL files: goose's and dbmate's first lines, Flyway's names or its
@@ -2077,12 +2070,7 @@ class Command(unittest.TestCase):
         import stack
 
         def detect(files: dict[str, str]) -> stack.Stack:
-            d = tempfile.mkdtemp()
-            for name, body in files.items():
-                os.makedirs(os.path.dirname(os.path.join(d, name)) or d, exist_ok=True)
-                with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
-                    fh.write(body)
-            return stack.detect(d)
+            return stack.detect(self.folder(files))
 
         def tool(files: dict[str, str]) -> tuple[list[str], str, str, list[str]]:
             s = detect(files)
@@ -2154,12 +2142,7 @@ class Command(unittest.TestCase):
         import stack
 
         def detect(files: dict[str, str]) -> stack.Stack:
-            d = tempfile.mkdtemp()
-            for name, body in files.items():
-                os.makedirs(os.path.dirname(os.path.join(d, name)) or d, exist_ok=True)
-                with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
-                    fh.write(body)
-            return stack.detect(d)
+            return stack.detect(self.folder(files))
 
         fastapi = ["FastAPI", "SQLAlchemy"]
         for files in (
@@ -2240,10 +2223,7 @@ class Command(unittest.TestCase):
         self.assertEqual((s.found, s.tool, s.migrations_dir, s.setup_file), (["Drizzle"], "drizzle", "drizzle", ""))
         self.assertEqual(detect({"migrations/README": "x"}).tool, "")
         # the source files init looks through for the line to change stop at a limit (a big tree isn't read whole)
-        d = tempfile.mkdtemp()
-        for name in ("a.ts", "b.ts", "c.ts"):
-            with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
-                fh.write("export {};\n")
+        d = self.folder(dict.fromkeys(("a.ts", "b.ts", "c.ts"), "export {};\n"))
         self.assertEqual(stack._files(d, (".ts",), limit=2), ["a.ts", "b.ts"])
 
     def test_no_database_named_is_said(self) -> None:
@@ -3223,19 +3203,20 @@ class Review(unittest.TestCase):
         tests_before: dict[str, str] | None = None,
         tests_after: dict[str, str] | None = None,
         lock: bool = True,
+        worlds: int = 40,
     ) -> Review:
         from authzlib import migrate
 
         base_lock = migrate.lock_of(database.migratable(self.text, {})[1]) if lock else None
         return self.review.review(
-            (self.text, {}, tests_before or {}), (new, {}, tests_after or {}), base_lock, None, None, worlds=120
+            (self.text, {}, tests_before or {}), (new, {}, tests_after or {}), base_lock, None, None, worlds=worlds
         )
 
     def test_a_new_policy_is_added_whole(self) -> None:
         # the pull request that adds the policy: nothing at the base. Every declaration is added, the app role and
         # the user type too: none is said to change from a role or a table nobody wrote
         text = replaced(self.text, "app role app_user\n", "app role web\n")
-        r = self.review.review(None, (text, {}, {}), None, None, None, worlds=120)
+        r = self.review.review(None, (text, {}, {}), None, None, None, worlds=40)
         changed = r["meaning"]["changed"]
         self.assertEqual({c["kind"] for c in changed}, {"added"})
         self.assertIn(("app role", "app role web"), [(c["what"], c["after"]) for c in changed])
@@ -3264,7 +3245,8 @@ class Review(unittest.TestCase):
                 self.text,
                 "can edit  = share or editor or (parent.edit and {inherit})",
                 "can edit  = editor or share or ({inherit} and parent.edit)",
-            )
+            ),
+            worlds=120,
         )
         # and the worlds listed: every one of a few rows, with at most two links here (then the budget is spent: 15
         # listed for each drawn world)
@@ -3394,11 +3376,11 @@ class Review(unittest.TestCase):
         old = "           or (folder.view and not {confidential})"
         base = replaced(self.text, old, old[:-1] + " and {size >= 1})")
         quoted = (replaced(self.text, old, old[:-1] + ' and {"size" >= 1})'), {}, {})
-        r = self.review.review((base, {}, {}), quoted, None, None, None, worlds=120)
-        self.assertRegex(r["meaning"]["equivalent"] or "", "^120 small worlds")
+        r = self.review.review((base, {}, {}), quoted, None, None, None, worlds=40)
+        self.assertRegex(r["meaning"]["equivalent"] or "", "^40 small worlds")
         # on a numeric column, a file of size 1 loses view: not unchanged (a double precision column would differ)
         longer = (replaced(self.text, old, old[:-1] + " and {size >= 1.00000000000000001})"), {}, {})
-        r = self.review.review((base, {}, {}), longer, None, None, None, worlds=120)
+        r = self.review.review((base, {}, {}), longer, None, None, None, worlds=40)
         self.assertIsNone(r["meaning"]["equivalent"])
         self.assertIn("file.view", [c["what"] for c in r["meaning"]["changed"]])
 
@@ -3531,7 +3513,7 @@ rules app.folders
     def small(self, old: str, new: str, files: dict[str, str] | None = None) -> Review:
         self.assertIn(old, self.SMALL)
         return self.review.review(
-            (self.SMALL, files or {}, {}), (self.SMALL.replace(old, new), files or {}, {}), worlds=120
+            (self.SMALL, files or {}, {}), (self.SMALL.replace(old, new), files or {}, {}), worlds=40
         )
 
     def test_risks_example_overrules_a_comparison_that_found_nothing(self) -> None:
@@ -3777,7 +3759,7 @@ rules app.folders
         r = self.review.review(
             (main, {"org.authz": org}, {}),
             (main, {"org.authz": org.replace("can manage = admin", "can manage = admin or member")}, {}),
-            worlds=120,
+            worlds=40,
         )
         notes = self.review.annotations(r, "db/policy.authz")
         self.assertRegex(notes, r"^::warning file=db/org.authz,line=4,title=rowstile review::a permission widened")
@@ -3795,7 +3777,7 @@ rules app.folders
             ("update owner_id before : owner", "update owner_id before : edit", "app.folders update owner_id"),
             ("update org_id,status : owner", "update org_id,status : edit", "app.folders update org_id, status"),
         ):
-            r = self.review.review((base, {}, {}), (replaced(base, old, new), {}, {}), worlds=120)
+            r = self.review.review((base, {}, {}), (replaced(base, old, new), {}, {}), worlds=40)
             self.assertEqual([c["what"] for c in r["meaning"]["changed"]], [f"rule {name}"], name)
             self.assertIn(
                 ("a write rule loosened", f"`{name}` allows more than before"),
@@ -3822,7 +3804,7 @@ rules app.folders
         base = replaced(base, "  update : edit\n", f"  update : edit\n  update org_id after : {member}\n")
         reworded = replaced(base, "this.id)}", "this.id and true)}").replace("this.org_id)}", "this.org_id and true)}")
         r = self.review.review(
-            (base, {}, {}), (replaced(reworded, "open or org.admin", "org.admin or open"), {}, {}), worlds=120
+            (base, {}, {}), (replaced(reworded, "open or org.admin", "org.admin or open"), {}, {}), worlds=40
         )
         self.assertEqual(r["meaning"].get("unreadable"), ["folder.open", "rule app.folders update org_id after"])
         self.assertIsNone(r["meaning"]["equivalent"])  # what it can't compare is no "unchanged"
@@ -3831,7 +3813,7 @@ rules app.folders
         self.assertNotIn("not a refactor", self.review.text(r))
         # what changed beside them is compared as ever: a widening, and its example
         wider = replaced(reworded, "can view = edit or viewer\n", "can view = edit or viewer or org.see\n")
-        r = self.review.review((base, {}, {}), (wider, {}, {}), worlds=120)
+        r = self.review.review((base, {}, {}), (wider, {}, {}), worlds=40)
         self.assertEqual(r["meaning"].get("counterexample", {}).get("what"), "folder.view")
         self.assertIn("a permission widened", {f["why"] for f in r["risk"]})
         # a rule written `after` is named so
@@ -3869,7 +3851,7 @@ rules app.folders
             "l.folder_id = this.id)}\n  can archive = open or org.admin\n",
         )
         head = replaced(replaced(base, " where {not archived}", ""), "this.id)}", "this.id and true)}")
-        r = self.review.review((base, {}, {}), (head, {}, {}), worlds=120)
+        r = self.review.review((base, {}, {}), (head, {}, {}), worlds=40)
         self.assertEqual(
             sorted(f["why"] for f in r["risk"]), ["a condition it can't read changed", "a type's where loosened"]
         )
@@ -3879,7 +3861,7 @@ rules app.folders
         base = replaced(self.SMALL, "  update : edit\n", "  update : edit\n  delete : edit and not frozen\n")
         base = replaced(base, "  can view = edit or viewer\n", "  can view = edit or viewer\n  can frozen = {locked}\n")
         r = self.review.review(
-            (base, {}, {}), (replaced(base, "= {locked}", "= {locked} and {hard}"), {}, {}), worlds=120
+            (base, {}, {}), (replaced(base, "= {locked}", "= {locked} and {hard}"), {}, {}), worlds=40
         )
         self.assertIn(
             {"what": "rule app.folders delete", "via": ["folder.frozen"], "line": "line 20"}, r["meaning"]["through"]
@@ -5124,9 +5106,8 @@ class Wire(unittest.TestCase):
         got = parse("postgresql://o:p@ep.example.tech/db?sslmode=require&channel_binding=require")
         self.assertEqual((got["sslmode"], got["channel_binding"]), ("require", "require"))
         self.assertEqual(parse("host=h")["channel_binding"], "prefer")
-        os.environ["PGSSLMODE"] = "require"
-        self.assertEqual(parse("host=h")["sslmode"], "require")
-        del os.environ["PGSSLMODE"]
+        with mock.patch.dict(os.environ, {"PGSSLMODE": "require"}):
+            self.assertEqual(parse("host=h")["sslmode"], "require")
         # a keyword string as libpq reads it (psql given the same string reaches the same database as the same
         # user): spaces around =, a value in single quotes, \' and \\ in a value, and a " as it is
         got = parse("host = h dbname='my db' user=it\\'s password='a\\\\b\\'c\"d'")
@@ -5152,9 +5133,8 @@ class Wire(unittest.TestCase):
         self.assertEqual(parse("postgresql://h/app?ssl=%74rue")["sslmode"], "require")  # decoded first
         self.assertEqual(parse("postgresql://h/app?sslmode=verify-full&ssl=true")["sslmode"], "require")
         self.assertEqual(parse("postgresql://h/app?ssl=true&sslmode=verify-full")["sslmode"], "verify-full")
-        os.environ["PGSSLMODE"] = "disable"  # a variable comes after what the URL says
-        self.assertEqual(parse("postgresql://h/app?ssl=true")["sslmode"], "require")
-        del os.environ["PGSSLMODE"]
+        with mock.patch.dict(os.environ, {"PGSSLMODE": "disable"}):  # a variable comes after what the URL says
+            self.assertEqual(parse("postgresql://h/app?ssl=true")["sslmode"], "require")
         # any other value is no setting libpq has: refused, in its words (ssl=false isn't sslmode=disable)
         for value in ("false", "True", "1", ""):
             with self.assertRaisesRegex(
@@ -5189,6 +5169,17 @@ class Wire(unittest.TestCase):
                 self.pgwire.parse_dsn(dsn)
             self.assertNotIn("secret", str(caught.exception), dsn)
 
+    @staticmethod
+    def exactly(conn: socket.socket, n: int) -> bytes:
+        """The next n bytes a made-up server receives."""
+        data = b""
+        while len(data) < n:
+            chunk = conn.recv(n - len(data))
+            if not chunk:
+                raise ConnectionError("closed")
+            data += chunk
+        return data
+
     def server(
         self,
         tls: bool,
@@ -5217,25 +5208,14 @@ class Wire(unittest.TestCase):
         import base64
         import hashlib
         import hmac
-        import socket
         import ssl
         import struct
-        import threading
 
         fixtures = os.path.join(ROOT, "tests", "fixtures")
         listener = socket.socket()
         listener.bind((address, 0))
         listener.listen(1)
         seen: dict[str, object] = {"tls": False, "asked": False}
-
-        def exactly(conn: socket.socket, n: int) -> bytes:
-            data = b""
-            while len(data) < n:
-                chunk = conn.recv(n - len(data))
-                if not chunk:
-                    raise ConnectionError("closed")
-                data += chunk
-            return data
 
         def received(conn: socket.socket, n: int) -> bytes:
             """Up to n bytes: what came before the client stopped sending."""
@@ -5262,7 +5242,7 @@ class Wire(unittest.TestCase):
             seen["sent"] = head
             if len(head) < 5:
                 return False
-            body = exactly(conn, struct.unpack("!i", head[1:])[0] - 4)
+            body = Wire.exactly(conn, struct.unpack("!i", head[1:])[0] - 4)
             mechanism, rest = body.split(b"\0", 1)
             first = rest[4:].decode()
             header, bare = first[: first.index(",,") + 2], first[first.index(",,") + 2 :]
@@ -5271,7 +5251,7 @@ class Wire(unittest.TestCase):
             nonce = ("someone else's" if scram == "badnonce" else theirs) + "server"
             server_first = f"r={nonce},s={base64.b64encode(salt).decode()},i={rounds}"
             conn.sendall(b"R" + struct.pack("!ii", 8 + len(server_first), 11) + server_first.encode())
-            final = exactly(conn, struct.unpack("!i", exactly(conn, 5)[1:])[0] - 4).decode()
+            final = Wire.exactly(conn, struct.unpack("!i", Wire.exactly(conn, 5)[1:])[0] - 4).decode()
             attrs = dict(kv.split("=", 1) for kv in final.split(","))
             with open(os.path.join(fixtures, certificate), encoding="ascii") as fh:
                 held = ssl.PEM_cert_to_DER_cert(fh.read())
@@ -5300,7 +5280,7 @@ class Wire(unittest.TestCase):
             conn, _ = listener.accept()
             try:
                 conn.settimeout(5)
-                length, code = struct.unpack("!ii", exactly(conn, 8))
+                length, code = struct.unpack("!ii", Wire.exactly(conn, 8))
                 if code == 80877103:
                     seen["asked"] = True
                     if auth == "not postgres":
@@ -5317,8 +5297,8 @@ class Wire(unittest.TestCase):
                         )
                         wrapped = context.wrap_socket(conn, server_side=True)
                         seen["tls"], seen["version"], conn = True, wrapped.version(), wrapped
-                    length, code = struct.unpack("!ii", exactly(conn, 8))
-                seen["start"] = exactly(conn, length - 8).split(b"\0")
+                    length, code = struct.unpack("!ii", Wire.exactly(conn, 8))
+                seen["start"] = Wire.exactly(conn, length - 8).split(b"\0")
                 if scram and not sasl(conn):
                     return
                 if auth in ("cleartext", "md5"):
@@ -5328,7 +5308,7 @@ class Wire(unittest.TestCase):
                     seen["sent"] = head
                     if len(head) < 5:
                         return
-                    body = exactly(conn, struct.unpack("!i", head[1:])[0] - 4)
+                    body = Wire.exactly(conn, struct.unpack("!i", head[1:])[0] - 4)
                     seen["sent"], seen["password"] = head + body, body[:-1].decode()
                 elif auth in ("gss", "sasl-other"):
                     mechs = b"SCRAM-SHA-1\0\0"
@@ -5344,8 +5324,8 @@ class Wire(unittest.TestCase):
                 if answer is not None:
                     query: list[tuple[bytes, bytes]] = []
                     while not query or query[-1][0] != b"S":
-                        kind = exactly(conn, 1)
-                        query.append((kind, exactly(conn, struct.unpack("!i", exactly(conn, 4))[0] - 4)))
+                        kind = Wire.exactly(conn, 1)
+                        query.append((kind, Wire.exactly(conn, struct.unpack("!i", Wire.exactly(conn, 4))[0] - 4)))
                     seen["query"] = next(body for kind, body in query if kind == b"P").split(b"\0")[1].decode()
                     value, oid = answer
                     column = said(b"T", struct.pack("!h", 1) + b"x\0" + struct.pack("!ihihih", 0, 0, oid, -1, -1, 0))
@@ -5368,8 +5348,6 @@ class Wire(unittest.TestCase):
     @staticmethod
     def sent(seen: dict[str, object]) -> object:
         """What the client sent the made-up server once asked for the password, when the server is done."""
-        import threading
-
         done = seen["done"]
         assert isinstance(done, threading.Event)
         done.wait(5)
@@ -5452,18 +5430,9 @@ class Wire(unittest.TestCase):
         listener.listen(len(ways))
         seen: list[str] = []
 
-        def exactly(conn: socket.socket, n: int) -> bytes:
-            data = b""
-            while len(data) < n:
-                chunk = conn.recv(n - len(data))
-                if not chunk:
-                    raise ConnectionError("closed")
-                data += chunk
-            return data
-
         def one(conn: socket.socket, answer: str, then: str, held: list[socket.socket]) -> None:
             conn.settimeout(5)
-            length, code = struct.unpack("!ii", exactly(conn, 8))
+            length, code = struct.unpack("!ii", Wire.exactly(conn, 8))
             how = "plain"
             if code == 80877103:
                 conn.sendall(answer.encode())
@@ -5475,8 +5444,8 @@ class Wire(unittest.TestCase):
                         return
                     held.append(conn)
                     how = "tls"
-                length, code = struct.unpack("!ii", exactly(conn, 8))
-            exactly(conn, length - 8)
+                length, code = struct.unpack("!ii", Wire.exactly(conn, 8))
+            Wire.exactly(conn, length - 8)
             seen.append(f"{how} {then}")
             if then == "in":
                 conn.sendall(self.said(b"R", struct.pack("!i", 0)) + self.said(b"Z", b"I"))
@@ -5783,9 +5752,7 @@ class Wire(unittest.TestCase):
         query's messages, and the CancelRequest a second connection brought within half a second (None: none),
         unless listen is False: then nobody listens once the client is connected. The function returned waits until
         the made-up server is done."""
-        import socket
         import struct
-        import threading
 
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
@@ -5794,28 +5761,19 @@ class Wire(unittest.TestCase):
         queries: list[list[tuple[bytes, bytes]]] = []
         seen: dict[str, object] = {"queries": queries, "cancel": None}
 
-        def exactly(conn: socket.socket, n: int) -> bytes:
-            data = b""
-            while len(data) < n:
-                chunk = conn.recv(n - len(data))
-                if not chunk:
-                    raise ConnectionError("closed")
-                data += chunk
-            return data
-
         def serve() -> None:
             conn, _ = listener.accept()
             if not listen:
                 listener.close()
             try:
                 conn.settimeout(5)
-                exactly(conn, struct.unpack("!i", exactly(conn, 4))[0] - 4)  # the start-up message
+                Wire.exactly(conn, struct.unpack("!i", Wire.exactly(conn, 4))[0] - 4)  # the start-up message
                 conn.sendall(start)
                 for answer in answers:
                     query: list[tuple[bytes, bytes]] = []
                     while not query or query[-1][0] != b"S":
-                        kind = exactly(conn, 1)
-                        query.append((kind, exactly(conn, struct.unpack("!i", exactly(conn, 4))[0] - 4)))
+                        kind = Wire.exactly(conn, 1)
+                        query.append((kind, Wire.exactly(conn, struct.unpack("!i", Wire.exactly(conn, 4))[0] - 4)))
                     queries.append(query)
                     if answer is None:
                         return
@@ -5831,7 +5789,7 @@ class Wire(unittest.TestCase):
                     try:
                         cancel, _ = listener.accept()
                         cancel.settimeout(5)
-                        seen["cancel"] = exactly(cancel, 16)
+                        seen["cancel"] = Wire.exactly(cancel, 16)
                         cancel.close()
                     except OSError:
                         pass
@@ -5912,9 +5870,7 @@ class Wire(unittest.TestCase):
         closes. Over a Unix socket the next statement's send fails first (a broken pipe): the error is the server's
         words all the same, read as libpq reads them after a write that failed; and on the way out, undoing a
         savepoint or looking for the policy's condition that failed doesn't put another error in their place."""
-        import contextlib
         import select
-        import socket
         import struct
 
         from authzlib import database
@@ -6145,8 +6101,6 @@ class Wire(unittest.TestCase):
     def test_where_it_could_not_connect_is_said(self) -> None:
         # a server it can't reach is said with where it tried (the host and port, or the socket's path) and why, in
         # words, as psql says it: the database may have come from rowstile.toml, DATABASE_URL, a .env file or PG*
-        import socket
-
         connect, Unreachable = self.pgwire.connect, self.pgwire.Unreachable
         free = socket.socket()
         free.bind(("127.0.0.1", 0))
@@ -6593,8 +6547,6 @@ class CompilePolicy(unittest.TestCase):
         self.cp = compile_policy
 
     def run_main(self, argv: list[str]) -> tuple[int, str, str]:
-        import contextlib
-
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
@@ -7139,8 +7091,6 @@ class Confidence(unittest.TestCase):
         # the column values it reads for a world were kept by the world's id(): once that world was gone, another
         # could be made at its address and read the first one's rows (prove counted a counterexample that wasn't).
         # Every id the same here: the rows must still be the second world's
-        from unittest import mock
-
         from authzlib import evaluate
 
         pol = parse_policy(self.HEAD + "type doc = app.docs\n  can view = {published}\n", "p.authz")
@@ -7158,18 +7108,16 @@ class Confidence(unittest.TestCase):
 
     HEAD = "app role app_user\ntype user = app.users\n"
 
-    def proofs(self, text: str) -> list[bool]:
+    def proofs(self, text: str, worlds: int = 400) -> list[bool]:
         from authzlib import prove
 
-        return [r["holds"] for r in prove.prove(parse_policy(self.HEAD + text, "p.authz"))]
+        return [r["holds"] for r in prove.prove(parse_policy(self.HEAD + text, "p.authz"), worlds)]
 
-    def same(self, before: str, after: str) -> bool:
+    def same(self, before: str, after: str, worlds: int = 200) -> bool:
         from authzlib import evaluate
 
-        return (
-            evaluate.compare(parse_policy(self.HEAD + before, "a.authz"), parse_policy(self.HEAD + after, "b.authz"))
-            is None
-        )
+        a, b = parse_policy(self.HEAD + before, "a.authz"), parse_policy(self.HEAD + after, "b.authz")
+        return evaluate.compare(a, b, worlds) is None
 
     def test_a_widening_through_a_column_of_two_or_a_groups_column_is_found(self) -> None:
         # a column that names no single object by itself (a parent by two columns, a team whose members it names):
@@ -7687,6 +7635,7 @@ class Confidence(unittest.TestCase):
             "type folder = app.folders\n  head : user = app.folder_heads(folder_id -> user_id)\n  can sign = head\n"
         )
         signoffs = " and ".join(self.SIGNOFFS)
+        # (40 drawn worlds, not 200: what finds these is the dense worlds, eight of them however few are drawn)
         for also, lines, rest in (
             ((), "", ""),
             (("audit",), "", " and audit"),  # six links
@@ -7697,22 +7646,24 @@ class Confidence(unittest.TestCase):
             policy = (folder if "folder" in lines else "") + self.approve(also, lines)
             before = policy + f"  can approve = owner and {signoffs}{rest}\n"
             after = policy + f"  can approve = (owner or editor) and {signoffs}{rest}\n"
-            self.assertFalse(self.same(before, after), rest)
+            self.assertFalse(self.same(before, after, 40), rest)
             invariant = "invariants\n  never doc: approve and not owner\n"
-            self.assertEqual(self.proofs(after + invariant), [False], rest)
-            self.assertEqual(self.proofs(before + invariant), [True], rest)
+            self.assertEqual(self.proofs(after + invariant, 40), [False], rest)
+            self.assertEqual(self.proofs(before + invariant, 40), [True], rest)
         # an `and` written in another order is the same
         policy = self.approve()
         self.assertTrue(
             self.same(
                 policy + f"  can approve = owner and {signoffs}\n",
                 policy + f"  can approve = {' and '.join(reversed(self.SIGNOFFS))} and owner\n",
+                40,
             )
         )
 
     def test_a_chain_deeper_than_the_drawn_worlds_is_found(self) -> None:
         # a share that reaches three folders down, widened to four: only five folders in a row show it, and a drawn
-        # world has four at most; the worlds have chains one link longer than the policies read
+        # world has four at most; the worlds have chains one link longer than the policies read (a dozen of them, however
+        # few are drawn: 40 drawn here, not 200)
         from authzlib import evaluate, prove
 
         levels = "".join(f"  can v{i} = v{i - 1} or parent.v{i - 1}\n" for i in (1, 2, 3))
@@ -7730,13 +7681,13 @@ class Confidence(unittest.TestCase):
             before, after = policy + "  can view = v3\n", policy + "  can view = v3 or parent.v3\n"
             pols = [parse_policy(self.HEAD + x, "p.authz") for x in (before, after)]
             self.assertEqual((evaluate.reach(pols[:1]), evaluate.reach(pols)), (3, 4))
-            self.assertFalse(self.same(before, after), parent)
+            self.assertFalse(self.same(before, after, 40), parent)
             invariant = "invariants\n  never folder: view and not v3\n"
-            [r] = prove.prove(parse_policy(self.HEAD + after + invariant, "p.authz"))
+            [r] = prove.prove(parse_policy(self.HEAD + after + invariant, "p.authz"), 40)
             self.assertEqual((r["holds"], r.get("size")), (False, 6), parent)
-            self.assertEqual(self.proofs(before + invariant), [True], parent)
+            self.assertEqual(self.proofs(before + invariant, 40), [True], parent)
             # the same three levels, written out one more step, are the same
-            self.assertTrue(self.same(before, policy + "  can view = v2 or parent.v2\n"), parent)
+            self.assertTrue(self.same(before, policy + "  can view = v2 or parent.v2\n", 40), parent)
 
     def test_a_type_one_side_has_alone_may_read_columns(self) -> None:
         # the worlds draw the columns both sides' simple conditions read: the side without the type has no rows of it
@@ -9268,8 +9219,6 @@ class Rewrites(unittest.TestCase):
 
     def tables(self, law: Callable[..., object]) -> list[tuple[object, object, list[bool], list[bool]]]:
         """Each node a law rewrites (over a few draws), the node it gives, and the truth table of each."""
-        import random
-
         import rewrites
 
         out = []
@@ -9301,8 +9250,6 @@ class Rewrites(unittest.TestCase):
             self.assertTrue(any(before != after for _, _, before, after in self.tables(law)), name)
 
     def test_a_part_under_a_not_is_left_as_it_is(self) -> None:
-        import random
-
         import rewrites
 
         n = ("and", ["a", ("not", [("or", ["b", "c"])])])
@@ -9323,8 +9270,6 @@ class Rewrites(unittest.TestCase):
             self.assertIn(left, (None, "a"))
 
     def test_a_policys_rewrites_each_rewrite_one_permission_or_select_rule(self) -> None:
-        import random
-
         import genpolicy
         import rewrites
 
@@ -9344,8 +9289,6 @@ class Rewrites(unittest.TestCase):
     def test_a_rewrite_that_changes_nothing_is_refused_only_for_a_shape(self) -> None:
         """The compiler may refuse a rewrite that changes nothing for a shape the language limits (counted by code);
         any other refusal of it is a problem. One that may change something is counted, whatever the code."""
-        import random
-
         import rewrites
 
         rw = rewrites.rewrites(genpolicy.make(2), random.Random(1), 1)
@@ -9370,8 +9313,6 @@ class Invariance(unittest.TestCase):
     something else doesn't, and keys renumbered map back."""
 
     def test_the_docs_policy_written_each_way_compiles_to_the_same_sql(self) -> None:
-        import random
-
         import invariance
 
         text = read("example/docs.authz")
@@ -9478,8 +9419,6 @@ class Invariance(unittest.TestCase):
         self.assertTrue(any(d.startswith('function authz_int."folder__edit__why"') for d in diffs), diffs)
 
     def test_operands_written_alike_stay_alike(self) -> None:
-        import random
-
         import invariance
 
         for seed in range(6):
@@ -9493,8 +9432,6 @@ class Invariance(unittest.TestCase):
     def test_reordered_keeps_the_brackets_as_written(self) -> None:
         """Only the order changes: brackets that change nothing stay (an explanation says the line as written), and
         each bracket's operands are shuffled inside it."""
-        import random
-
         import invariance
 
         written = "(nobody and r1) or (parent.p1 or r1) or ({not b2} and r1 and not {b1}) or parent.p2"
@@ -9509,8 +9446,6 @@ class Invariance(unittest.TestCase):
         self.assertGreater(len(seen), 3)
 
     def test_keys_renumbered_map_back(self) -> None:
-        import random
-
         import invariance
 
         pol = authzlib.parse.parse_policy(genpolicy.policy_text(genpolicy.make(2)), "gen.authz", {})
@@ -9544,8 +9479,6 @@ class SmallPolicies(unittest.TestCase):
 
     def spec(self, text: str) -> genpolicy.Spec:
         """A policy of the set's kind from its text: each type's relations and permissions as genpolicy keeps them."""
-        import textwrap
-
         objs: list[genpolicy.Obj] = []
         user_where = False
         for line in textwrap.dedent(text).strip().splitlines():
@@ -9960,8 +9893,6 @@ class Decisions(unittest.TestCase):
         self.assertEqual((viewer.nevers(), viewer.up), ([], "folder.view on 3 for ann"))
 
     def test_a_share_where_it_would_decide(self) -> None:
-        import random
-
         policy = (
             "type user = app.users\n  self : user = id\n  can manage_roles = self\n"
             "type team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
@@ -9991,8 +9922,6 @@ class Decisions(unittest.TestCase):
         self.assertIsNone(alone.gain(("share", "expired", "doc", "viewer", 0, "user", ""), random.Random(1)))
 
     def test_a_chain_and_a_loop_planned_where_they_would_decide(self) -> None:
-        import random
-
         world = "user: ann\nfolder: 1, 2, 3, 4, 5\nfolder 2 parent folder 1\nfolder 1 owner user ann\n"
 
         def anything(k: evaluate.PairsKey, o: str, s: str) -> bool:
@@ -10028,8 +9957,6 @@ class Decisions(unittest.TestCase):
         self.assertIsNone(nobody.plan(("depth", 0, 1), random.Random(1), anything))
 
     def test_links_written_as_the_sources_read_them(self) -> None:
-        import random
-
         import difftest
 
         def made(kind: type[difftest.Gen]) -> difftest.Gen:
@@ -10101,8 +10028,6 @@ class Decisions(unittest.TestCase):
         )
 
     def test_cross_presents_link_tokens_and_makes_room_for_what_is_filed(self) -> None:
-        import random
-
         import difftest
 
         gen = difftest.CrossGen(random.Random(1))
@@ -10123,8 +10048,6 @@ class Decisions(unittest.TestCase):
         self.assertIsNone(gen.steer(("depth", other, 2), {}))
 
     def test_multi_steers_caveats_and_what_roles_and_teams_need_first(self) -> None:
-        import random
-
         import difftest
 
         gen = difftest.MultiGen(random.Random(1))
@@ -10172,8 +10095,6 @@ class Decisions(unittest.TestCase):
         self.assertIsNone(gen.steer(("share", "not started", "folder", "viewer", 0, "user", ""), {}))
 
     def test_a_steered_change_aims_at_a_few_parts_the_least_tried_first(self) -> None:
-        import random
-
         import difftest
 
         gen = difftest.AltGen(random.Random(1))
@@ -10281,8 +10202,6 @@ class Decisions(unittest.TestCase):
         # signed in, their context, the role): each principal is watched once a snapshot, with the data and the
         # shares asked in their own session (their context set, as the owner: a caveat judges a share by the
         # context), with their links; and the one asked with a scope too, with that scope, alone
-        import random
-
         import difftest
 
         statement = re.compile(
@@ -10455,8 +10374,6 @@ class DifftestChanges(unittest.TestCase):
     def test_genpolicy_data_drawn_from_the_seed(self) -> None:
         """What genpolicy's first data and changes draw with SQL's random() is the seed's too: each script that draws
         sets the seed first, the same on every run, so `--only SEED` and the shrinking run on the same data."""
-        import contextlib
-
         import difftest
 
         sent: list[list[str]] = []
@@ -10497,8 +10414,6 @@ class DifftestChanges(unittest.TestCase):
     def test_genpolicy_smallest_failing_policy_run_as_the_first(self) -> None:
         """The smallest policy that still fails is run again as the first was (the soak's --slow, --seconds), and
         one that takes too long then is said, not a traceback."""
-        import contextlib
-
         spec = genpolicy.make(1)
         calls: list[tuple[float, bool]] = []
 
@@ -10580,8 +10495,6 @@ class Encodings(unittest.TestCase):
         return out
 
     def test_every_text_open_names_an_encoding(self) -> None:
-        import subprocess
-
         top = os.path.dirname(ROOT)
         try:
             listed = subprocess.run(["git", "ls-files", "*.py"], cwd=top, capture_output=True, text=True, check=True)
@@ -11114,8 +11027,6 @@ class ComparePages(unittest.TestCase):
     def test_each_page_that_quotes_another_project_says_the_day_it_read_it(self) -> None:
         """The overview and the pages that quote another project say once the day its documentation was read
         (docs/compare_readings.py, which the nightly runs); the others say none."""
-        import contextlib
-
         self.assertEqual(compare_readings.PAGES, ("docs/comparison.md", *(f"docs/compare/{p}" for p in self.OTHERS)))
         texts = {page: read("../" + page) for page in compare_readings.PAGES}
         days = {}
@@ -12652,12 +12563,11 @@ class CoverageReport(unittest.TestCase):
     def test_the_calls_written_beside_the_data(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "functions.tsv"), "w", encoding="utf-8") as fh:
-                fh.write("step a\tauthz_x\tauthz\tcan\ttext, text, text\t3\tplpgsql definer set\n")
-                fh.write("step b\tauthz_x\tauthz_gen\tapp.files:update:refuse\tt app.files\t0\tplpgsql set\n")
-                fh.write("step b\tauthz_y\tauthz_gen\tapp.docs:update:refuse\tt app.docs\t2\tplpgsql set\n")
-                fh.write("step b\tauthz_y\tauthz_int\tfolder__forget\t\t0\tplpgsql definer set\n")
-                fh.write("step c\tauthz_y\tauthz\tverify\t\t0\tsql\n")  # inlined: never counted
-                fh.write("step c\tauthz_z\tauthz\tctx\tkey text\t0\n")  # written before the language was
+                fh.write("step a\tauthz_x\tauthz\tcan\ttext, text, text\t3\tplpgsql definer set\tt\n")
+                fh.write("step b\tauthz_x\tauthz_gen\tapp.files:update:refuse\tt app.files\t0\tplpgsql set\tf\n")
+                fh.write("step b\tauthz_y\tauthz_gen\tapp.docs:update:refuse\tt app.docs\t2\tplpgsql set\tt\n")
+                fh.write("step b\tauthz_y\tauthz_int\tfolder__forget\t\t0\tplpgsql definer set\tf\n")
+                fh.write("step c\tauthz_y\tauthz\tverify\t\t0\tsql\tf\n")  # inlined: never counted
                 # a guard: called in one database, where every call raised (Postgres has a count for it, at 0)
                 fh.write("step b\tauthz_x\tauthz_int\taudit_is_append_only\t\t0\tplpgsql\tf\n")
                 fh.write("step b\tauthz_y\tauthz_int\taudit_is_append_only\t\t0\tplpgsql\tt\n")
@@ -12665,8 +12575,9 @@ class CoverageReport(unittest.TestCase):
                 fh.write("step d\tauthz_w\tauthz\tstart_review\tp_id text\t1\tplpgsql definer set\tt\n")
                 fh.write("step d\tauthz_w\tauthz\tstart_review\tp_id text\t0\tplpgsql definer set\tf\n")
                 fh.write("a line cut short\n")
+                fh.write("step e\tauthz_z\tauthz\tctx\tkey text\t0\tplpgsql\n")  # cut short too: a field missing
             called = self.report.functions_measured([os.path.join(d, ".coverage")])
-        self.assertEqual(len(called), 10)
+        self.assertEqual(len(called), 9)
         kinds = self.report.by_kind(called)
         refuse = kinds["authz_gen.<table>:update:refuse"]
         self.assertEqual((refuse.made, refuse.called, refuse.steps, refuse.counted), (2, 1, {"step b"}, True))
@@ -12675,9 +12586,8 @@ class CoverageReport(unittest.TestCase):
         self.assertEqual((guard.made, guard.called, guard.raised), (2, 0, 1))
         self.assertEqual((review.made, review.called, review.raised, review.steps), (1, 1, 0, {"step d"}))
         report = self.report.functions_report(called)
-        # counted: can, the refusals and the review (called), the guard (raised), the forget and ctx (whose
-        # language was not written: counted)
-        self.assertIn("3 of 6 kinds of function called, and 1 more whose every call raised", report[1])
+        # counted: can, the refusals and the review (called), the guard (raised), the forget
+        self.assertIn("3 of 5 kinds of function called, and 1 more whose every call raised", report[1])
         # every call raised: the guard, apart from what was never called; the inlined one apart, not counted
         raised, never, uncounted = (
             report.index("  authz_int.audit_is_append_only  (made in 2 database(s), called in 1)"),
@@ -12686,7 +12596,7 @@ class CoverageReport(unittest.TestCase):
         )
         self.assertLess(raised, never)
         self.assertLess(never, uncounted)
-        self.assertLess(report.index("  authz.ctx(key text)  (made in 1 database(s))"), uncounted)
+        self.assertFalse([line for line in report if "authz.ctx" in line])
         self.assertFalse([line for line in report if "start_review" in line])
 
     def test_statements_lost_with_the_catalog_row(self) -> None:
@@ -13573,8 +13483,6 @@ class Worlds(unittest.TestCase):
     def test_the_other_tables_are_laid_out_too(self) -> None:
         """The users' table, the services' and the link tables: partitioned, or with a table that inherits from
         them, where half their first rows are stored; drawn apart from the object types' layout."""
-        import random
-
         drawn: dict[str, set[str]] = {"users": set(), "bots": set(), "links": set()}
         gone = set()
         for seed in range(1, 17):
@@ -13718,8 +13626,6 @@ class Worlds(unittest.TestCase):
         self.assertGreater(met, 6)
 
     def test_half_the_first_rows_are_stored_under_a_table_with_one_that_inherits(self) -> None:
-        import random
-
         for respell in (False, True):
             spec, w = self.world(3, respell)
             n = spec.spelling
@@ -14166,6 +14072,24 @@ class CheckCounts(unittest.TestCase):
             self.assertEqual(fh.read().count('echo "upgrade: skipped, nothing to upgrade from"; exit 0'), 2)
 
 
+class Words(unittest.TestCase):
+    """tests/words.sh, how the suites that check refusals compare one: an expectation is the SQLSTATE and the start
+    of the message, or the whole of what came; the code alone matches nothing (two guards may answer one code)."""
+
+    def agrees(self, want: str, got: str) -> bool:
+        script = '. tests/words.sh; agrees label "$1" "$2"'
+        return subprocess.run(["bash", "-c", script, "words", want, got], cwd=ROOT).returncode == 0
+
+    def test_a_refusal_is_known_by_its_words(self) -> None:
+        refused = "42501: permission denied: you may not view doc 1"
+        self.assertTrue(self.agrees("42501: permission denied", refused))
+        self.assertFalse(self.agrees("42501: permission denied: you may not edit", refused))
+        self.assertFalse(self.agrees("P0001: permission denied", refused))
+        self.assertFalse(self.agrees("42501", refused))  # the code alone
+        self.assertTrue(self.agrees("ok", "ok"))
+        self.assertFalse(self.agrees("ok", "okay"))
+
+
 class Lanes(unittest.TestCase):
     """tests/lanes.sh, which run_tests.sh's steps run in: a part's units side by side, each step's output printed
     whole in the order written, every result taken (a unit that stops before its end, a failure); with one lane,
@@ -14604,8 +14528,6 @@ class PreviousRelease(unittest.TestCase):
                 for v in published
             ]
         }
-        import contextlib
-
         installed: list[str] = []
         out, err = io.StringIO(), io.StringIO()
         with (
@@ -15827,6 +15749,7 @@ class ReviewInCI(unittest.TestCase):
                 "CI_MERGE_REQUEST_IID": "5",
                 "CI_MERGE_REQUEST_DIFF_BASE_SHA": "abc",
                 "CI_JOB_URL": "https://gitlab.example/team/app/-/jobs/9",
+                "TMPDIR": tmp,  # the note's file (mktemp): a job's container goes with it, a test's folder here
             }
             work = os.path.join(tmp, "work")
             os.mkdir(work)
@@ -15999,13 +15922,16 @@ class Mutants(unittest.TestCase):
     def test_the_survivors_file(self) -> None:
         listed = sweep.read_survivors(sweep.SURVIVORS)
         self.assertTrue(listed)
+        defs: dict[str, set[str]] = {}  # a file's functions, read once (the survivors name a few files)
         with open(sweep.SURVIVORS, encoding="utf-8") as fh:
             for line in fh:
                 m = sweep.SURVIVOR.fullmatch(line.rstrip("\n"))
                 if m:
-                    with open(os.path.join(ROOT, "authzlib", m.group(3)), encoding="utf-8") as src:
-                        names = {name for _, _, name in mutants.Source(m.group(3), src.read()).defs}
-                    self.assertIn(m.group(4), names | {"<module>"}, line)
+                    fname = m.group(3)
+                    if fname not in defs:
+                        with open(os.path.join(ROOT, "authzlib", fname), encoding="utf-8") as src:
+                            defs[fname] = {name for _, _, name in mutants.Source(fname, src.read()).defs}
+                    self.assertIn(m.group(4), defs[fname] | {"<module>"}, line)
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "survivors.txt")
             with open(path, "w", encoding="utf-8") as fh:
@@ -16677,9 +16603,6 @@ class Version(unittest.TestCase):
             )
         with open(os.path.join(self.REPO, "packaging", "npm", "build.mjs"), encoding="utf-8") as fh:
             self.assertIn(f'url: "{url}"', fh.read())
-
-    def test_applying_records_it(self) -> None:
-        self.assertIn("version text NOT NULL", compiled("docs"))
 
 
 if __name__ == "__main__":

@@ -88,7 +88,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   (`app.team_members(team_id -> user_id)`, or with the columns named:
   `app.team_members(object: team_id, subject: user_id)`; optionally `where {...}`), from a polymorphic pair of columns `(type_col, id_col)`,
   in the type's table or in a link table (`app.backings(project_id -> (backer_type, backer_id))`),
-  or from shares people make (`shared`). <!-- answer: relation-sources --> In `table(this_col -> subject_col)`, the left column names this row and the right one what it links to: on a team, `app.team_members(team_id -> user_id)` reads the rows whose `team_id` is this team's id, each linking it to a `user_id`; and `app.teams(parent_id -> id)`, a table that links to itself, reads the teams whose `parent_id` is this team's id, the teams inside it. Declare a relation again to add a source. <!-- answer: relation-again --> The type column of a
+  or from shares people make (`shared`). <!-- answer: relation-sources --> In `table(this_col -> subject_col)`, the left column names this row and the right one what it links to: on a team, `app.team_members(team_id -> user_id)` reads the rows whose `team_id` is this team's id, each linking it to a `user_id`; and `app.teams(parent_id -> id)`, a table that links to itself, reads the teams whose `parent_id` is this team's id, the teams inside it. Declare a relation again to add a source, of another type too (`watcher : user` and `watcher : doc`). Named alone, a relation gives the users and groups it links to; the objects it links to give something when it is followed by one of their permissions (`parent.view`), and a relation that links to objects alone must be followed (AZ301). <!-- answer: relation-again --> The type column of a
   polymorphic pair holds the policy's type names (`'folder'`, `'project'`): renaming a type changes what the
   rows link to, and a row naming a type the relation doesn't list links to nothing. <!-- answer: polymorphic-type-names -->
 - **Shares**: a `shared` relation is given with `authz.share()` by whoever holds `share` on the object, so the
@@ -97,12 +97,12 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   its giver doesn't hold. <!-- checked: tests/principals.sh "a viewer may share helper, but not grant assist, which they don't hold"; tests/hand/shares-by.authz "reader gives view, which ed lacks" --> <!-- answer: shares-by --> `shared if {...}` is a
   condition on the share being made (`object_id`, `subject_type`, `subject_id`, `subject_relation`), which
   `authz.share` checks: "only to active users". <!-- checked: tests/multi_scenario.sql "shared if: no sharing with inactive users" --> <!-- answer: shared-if -->
-  Shares may expire or start later. <!-- answer: shares-expire --> A **caveat** is a
+  Shares may expire or start later: `authz.share`'s seventh argument is when it ends, its eighth when it starts. A share counts from its start, that instant included, until its end, that instant not included. <!-- answer: shares-expire --> A share goes with its object: deleting the object deletes its shares, so an object made again with the same id starts with none. <!-- answer: shares-gone --> A **caveat** is a
   condition that goes with one share and is checked at each request:
   `authz.share('folder', 3, 'viewer', 'user', 4, '', NULL, NULL, 'from_ip', '{"ip": "10.0.0.1"}')` gives
   `viewer` while `caveat from_ip` holds, `arg('ip')` being what the share was made with. <!-- answer: caveats -->
 - **Subjects**: `user`, a group such as `team#member` (nested to any depth, loops are
-  fine), `user:*` (any signed-in user), `anyone` (also signed out) and `link` (anyone
+  fine; after the `#`, any relation or permission of the group's type: `team#manage` is whoever holds `manage` on the team), `user:*` (any signed-in user), `anyone` (also signed out) and `link` (anyone
   holding a share link's token). <!-- answer: subjects -->
 - **Principals**: services, API clients and agents can sign in as themselves:
   `type service = app.services principal`. Relations name them like users

@@ -35,6 +35,7 @@ server while a statement of it waits for a lock another session holds, or stoppe
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import io
 import os
@@ -552,6 +553,7 @@ class Files:
 
     def __init__(self) -> None:
         self.dir = tempfile.mkdtemp(prefix="authz_interrupt_")
+        atexit.register(shutil.rmtree, self.dir, ignore_errors=True)  # however the suite ends
         self.old = self.write("old.authz", OLD)
         self.new = self.write("new.authz", NEW)
 
@@ -813,30 +815,32 @@ def others(lab: Lab, seed: int, cuts: int, policies: int) -> None:
 
     rng = random.Random(f"interrupt/{seed}")
     d = tempfile.mkdtemp(prefix="authz_interrupt_")
-    todo = [(g, os.path.join(ROOT, f"tests/{g}.authz"), read(f"tests/{g}_schema.sql")) for g in FIXED]
-    for k in range(policies):
-        s = seed * 1000 + k
-        spec = genpolicy.make(s)
-        path = os.path.join(d, f"p{s}", "policy.authz")
-        os.makedirs(os.path.dirname(path))
-        genpolicy.write_policy(path, genpolicy.policy_text(spec), spec.include)
-        todo.append((f"genpolicy {s}", path, genpolicy.schema_text(spec)))
-    done, skipped, failed = [], [], []
-    for name, path, schema in todo:
-        case = Case(f"{name}: the first apply", setup(schema=schema), run_cli("apply", path), reads=False)
-        r = lab.first(case, quiet=name.startswith("genpolicy"))
-        if r is None:  # a random policy the compiler refuses: not this check's (a fixed one's uncut run fails above)
-            skipped.append(name)
-            continue
-        at = sample(len(r.sent), cuts, rng)
-        checks = lab.cuts(case, r, at, {at[len(at) // 2], at[-1]}, {at[1]})
-        for label, problems in checks:
-            if problems:
-                bad(label, "\n  ".join(problems[:4]))
-        if any(p for _, p in checks):
-            failed.append(name)
-        done.append(f"{name} ({len(at)} of {len(r.sent)})")
-    shutil.rmtree(d, ignore_errors=True)
+    try:
+        todo = [(g, os.path.join(ROOT, f"tests/{g}.authz"), read(f"tests/{g}_schema.sql")) for g in FIXED]
+        for k in range(policies):
+            s = seed * 1000 + k
+            spec = genpolicy.make(s)
+            path = os.path.join(d, f"p{s}", "policy.authz")
+            os.makedirs(os.path.dirname(path))
+            genpolicy.write_policy(path, genpolicy.policy_text(spec), spec.include)
+            todo.append((f"genpolicy {s}", path, genpolicy.schema_text(spec)))
+        done, skipped, failed = [], [], []
+        for name, path, schema in todo:
+            case = Case(f"{name}: the first apply", setup(schema=schema), run_cli("apply", path), reads=False)
+            r = lab.first(case, quiet=name.startswith("genpolicy"))
+            if r is None:  # a random policy the compiler refuses: not this check's (a fixed one's uncut run fails)
+                skipped.append(name)
+                continue
+            at = sample(len(r.sent), cuts, rng)
+            checks = lab.cuts(case, r, at, {at[len(at) // 2], at[-1]}, {at[1]})
+            for label, problems in checks:
+                if problems:
+                    bad(label, "\n  ".join(problems[:4]))
+            if any(p for _, p in checks):
+                failed.append(name)
+            done.append(f"{name} ({len(at)} of {len(r.sent)})")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
     label = (
         f"other policies, the first apply cut at statements seed {seed} draws, the database as it was after each and "
         f"the next run finishing: {', '.join(done)}"
@@ -859,7 +863,6 @@ def main() -> None:
     started = time.monotonic()
     os.chdir(tempfile.gettempdir())  # no rowstile.toml or .env of anyone's read by the command
     lab = Lab()
-    d: Docs | None = None
     try:
         if a.others:
             others(lab, a.seed, a.cuts, a.policies)
@@ -874,8 +877,6 @@ def main() -> None:
         forget(*list(LOOKS))
         for db in (DB, TEMPLATE, WHOLE):
             sh("dropdb", "--if-exists", db, check=False)
-        if d:
-            shutil.rmtree(d.files.dir, ignore_errors=True)
     print(f"interrupt: {'all passed' if not failures else f'{failures} failed'} ({time.monotonic() - started:.0f}s)")
     sys.exit(1 if failures else 0)
 

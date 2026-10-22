@@ -186,12 +186,12 @@ FEATURES: list[Feature] = [
             T("principals.sh", "a viewer may share helper, but not grant assist, which they don't hold"),
         ),
         (
-            T(DIFF, "difftest_app.try_share("),
+            T(DIFF, "authz.share(t, i, r, st, sid)"),
             T(DIFF, "difftest_app.try_list_shares("),
             T("around.py", "def share_problems("),
             T("genpolicy.py", "def shared_if("),
         ),
-        hand=("shared-if", "shares-by", "shares-expire", "runtime-share"),
+        hand=("shared-if", "shares-by", "shares-expire", "shares-gone", "runtime-share"),
         grammar=("Types, keys and sources",),
         note="a link's `shared if` is not tried at random (it would read the token's hash, drawn at random)",
     ),
@@ -653,7 +653,7 @@ FEATURES: list[Feature] = [
             T("studio_test.py", "/api/decide"),
             T("studio_test.py", "it says it can write, and does"),
         ),
-        (T(DIFF, "difftest_app.try_share("),),
+        (T(DIFF, "authz.share(t, i, r, st, sid)"),),
         note="its oracle is authz.share's, which Studio calls as the person viewed as",
     ),
     Feature(

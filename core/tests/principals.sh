@@ -26,9 +26,6 @@ check() {   # $1 label, $2 expected, $3 SQL (run as app_user)
   if [ "$got" = "$2" ]; then echo "ok    $1"; else echo "FAIL  $1: expected '$2', got '$got'"; fails=$((fails + 1)); fi
 }
 state() { psql -X -q -At -d "$DB" -c "SET ROLE app_user;" "$@" 2>&1 | tail -n 1; }
-code() {    # the SQLSTATE of the last statement, or ok
-  psql -X -q -At -d "$DB" -v VERBOSITY=sqlstate -c "SET ROLE app_user;" "$@" 2>&1 | grep -o '^ERROR:  [0-9A-Z]*' | tail -n 1 | cut -c9- || true
-}
 . tests/words.sh
 expect_code() {  # $1 label, $2 expected "SQLSTATE: the message's words" (or ok), rest: -c statements
   local label=$1 want=$2; shift 2

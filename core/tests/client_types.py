@@ -8,6 +8,7 @@ tools_test.py runs the same check where tsc is installed; CI's javascript job ru
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,7 @@ async function main() {
 }
 main();
 """
+WRONG = ("fly", "owner", "robot")  # the names USE gets wrong, one a line
 
 
 def tsc() -> list[str] | None:
@@ -80,28 +82,30 @@ def main() -> None:
     policy = os.path.join(ROOT, "example", "docs.authz")
     ts = compile_policy.load(policy).client("ts", "docs.authz")
     fails = 0
-    for label, use, want in (
-        ("tsc --strict accepts correct calls and refuses wrong names", USE, True),
-        # each @ts-expect-error above must be needed: without them, the wrong names are errors
-        (
-            "... and a wrong name is an error",
-            USE.replace("    // @ts-expect-error: files have no permission 'fly'\n", ""),
-            False,
-        ),
-        (
-            "... as is a relation that isn't shared",
-            USE.replace("    // @ts-expect-error: 'owner' is not a shared relation\n", ""),
-            False,
-        ),
-    ):
-        got = type_check(ts, use)
-        if got is None:
-            raise SystemExit("client_types: tsc not found (install TypeScript, or npm ci at the repository's root)")
-        if got[0] == want:
+
+    def check(label: str, good: bool, detail: str) -> None:
+        nonlocal fails
+        if good:
             print(f"ok    {label}")
         else:
             fails += 1
-            print(f"FAIL  {label}: {got[1]}")
+            print(f"FAIL  {label}: {detail}")
+
+    # an @ts-expect-error whose next line has no error is an error itself: each wrong name above is one
+    got = type_check(ts)
+    if got is None:
+        raise SystemExit("client_types: tsc not found (install TypeScript, or npm ci at the repository's root)")
+    check("tsc --strict accepts correct calls and refuses wrong names", got[0], got[1])
+    # ... and each is refused for its wrong name, not for something else on its line
+    bare = re.sub(r"(?m)^ *// @ts-expect-error.*\n", "", USE)
+    want = {(n, name) for n, line in enumerate(bare.split("\n"), 1) for name in WRONG if f'"{name}"' in line}
+    got = type_check(ts, bare)
+    assert got is not None
+    said = {
+        (int(n), name)
+        for n, name in re.findall(r"use\.ts\((\d+),\d+\): error TS\d+: Argument of type '\"(\w+)\"'", got[1])
+    }
+    check("... a wrong permission, a relation that isn't shared and a type the policy lacks", said == want, got[1])
     print("client_types: all passed" if not fails else f"client_types: {fails} failed")
     sys.exit(1 if fails else 0)
 

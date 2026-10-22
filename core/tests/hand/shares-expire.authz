@@ -1,5 +1,6 @@
 -- answer: shares-expire
--- Shares may expire or start later.
+-- Shares may expire or start later: authz.share's seventh argument is when it ends, its eighth when it starts. A
+-- share counts from its start, that instant included, until its end, that instant not included.
 app role app_user
 
 type user = app.users

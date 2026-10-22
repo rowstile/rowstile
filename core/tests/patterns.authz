@@ -1,6 +1,5 @@
 -- Many patterns in one policy, on the tables in patterns_schema.sql, under an app role that isn't app_user: a
--- fixture for adversarial.sh's catalog check. (It was the cookbook's policy; the cookbook's recipes now each
--- have their own, in docs/cookbook/<name>/.)
+-- fixture for adversarial.sh's catalog check.
 app role cb_app
 
 type user = cb.users

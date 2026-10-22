@@ -259,20 +259,22 @@ class Reference:
             (t.name, name): frozenset() for t in self.types.values() for name in list(t.relations) + list(t.perms)
         }
         for comp in self.order:
-            if names is not None and not names.intersection(comp):
-                continue
-            # a least fixpoint: no `not` in the group reads a name of it (strata), so each round only adds, and the
-            # rounds end
-            changed = True
-            while changed:
-                changed = False
-                for tname, name in comp:
-                    t = self.types[tname]
-                    new = frozenset(self.eval_name(state, t, name) & self.valid(t))
-                    if new != state[(tname, name)]:
-                        state[(tname, name)] = new
-                        changed = True
+            if names is None or names.intersection(comp):
+                self.settle(state, comp)
         return state
+
+    def settle(self, state: State, comp: Sequence[Name]) -> None:
+        """Works out a group of names that depend on each other, in state: a least fixpoint. No `not` in the group
+        reads a name of it (strata), so each round only adds, and the rounds end."""
+        changed = True
+        while changed:
+            changed = False
+            for tname, name in comp:
+                t = self.types[tname]
+                new = frozenset(self.eval_name(state, t, name) & self.valid(t))
+                if new != state[(tname, name)]:
+                    state[(tname, name)] = new
+                    changed = True
 
     def rule(self, state: State, rule: Rule) -> set[str]:
         """The rows (ids) of the rule's table the rule allows, in this state: never one that fails the type's where."""
