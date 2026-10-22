@@ -122,7 +122,7 @@ function authz.review_decide(p_review bigint, p_item int, p_keep boolean) | e7b5
 function authz.review_items(p_review bigint) | 9f111fa185c9 shape=fc0e6cb7
 function authz.revoke_api_key(p_id bigint) | a995821f5205 shape=590521c4
 function authz.revoke_link(p_type text, p_id bigint, p_link text) | 69333105fbd4 shape=4ce00ed3
-function authz.revoke_link(p_type text, p_id text, p_link text) | 7488c637bb10 shape=6418747f
+function authz.revoke_link(p_type text, p_id text, p_link text) | 9f1e3334d1ec shape=6418747f
 function authz.revoke_link(p_type text, p_id uuid, p_link text) | 94e8249bbae8 shape=446fa386
 function authz.roles_of(p_owner_type text, p_owner_id bigint) | 118e4ddbfcfa shape=77be0f38
 function authz.roles_of(p_owner_type text, p_owner_id text) | 8fb1b8f0dfaf shape=e439cd41
