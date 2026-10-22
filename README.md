@@ -24,8 +24,10 @@ type folder = app.folders
   can edit = owner or editor or parent.edit     -- inherited down the tree
   can view = edit
 rules app.folders
-  select : view
-  update : edit
+  select                 : view
+  update                 : edit
+  update owner_id        : owner                -- only the owner gives it away
+  update parent_id after : parent.edit          -- moved only under a folder they may edit
 ```
 
 The app says who is asking in each transaction and queries its tables as usual; RLS

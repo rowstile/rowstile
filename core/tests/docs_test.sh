@@ -119,10 +119,11 @@ dropdb "$BLOG"
 psql -X -q -d postgres -c "DROP ROLE IF EXISTS demo_app" >/dev/null
 
 # the landing pages, README.md and site/index.md: the policy each shows applies to the tables it reads
-# (tests/fixtures/landing.sql, where user 42 owns folder 8 and edits folder 10), and its SQL runs as the app role
-# and does what its comments say, before and after 42 is made an editor of folder 7. A fenced block of another
-# kind says why it isn't run, in a comment right before it (<!-- not run: why -->). (The README's install lines are
-# DocPages': the same as docs/installing.md's, for the version being released.)
+# (tests/fixtures/landing.sql: user 42 owns folder 8 and folder 12 inside it, and edits folder 10), and its SQL runs
+# as the app role and does what its comments say, before and after 42 is made an editor of folder 7. authz.lint()
+# warns of nothing, 42 moves folder 8 only under a folder they may edit, and gives away only a folder they own. A
+# fenced block of another kind says why it isn't run, in a comment right before it (<!-- not run: why -->). (The
+# README's install lines are DocPages': the same as docs/installing.md's, for the version being released.)
 LAND=authz_docs_landing
 landing() {   # page, the SQL's output before, after
   local page=$1 B out
@@ -157,12 +158,24 @@ PY
             PGOPTIONS="-c client_min_messages=warning" psql -X -At -v ON_ERROR_STOP=1 -d "$LAND" -c "SET ROLE app_user" -f "$f" 2>&1
           done; }
   check "$page: its SQL, as user 42" "$(ran)" "$2"
+  check "$page: authz.lint() has no warning" \
+    "$(psql -X -At -d "$LAND" -c "SELECT object || ': ' || problem FROM authz.lint() WHERE severity = 'warning'")" ""
+  as42() { PGOPTIONS="-c client_min_messages=warning" psql -X -At -d "$LAND" -c "SET ROLE app_user" \
+             -c "BEGIN; SELECT authz.act_as('user', '42'); $1; ROLLBACK" 2>&1 | grep -E '^(UPDATE|ERROR)'; }
+  check "$page: 42 can't move folder 8 under folder 7, which they may not edit" \
+    "$(as42 "UPDATE app.folders SET parent_id = 7 WHERE id = 8")" "ERROR:  changing parent_id of app.folders 8 needs: parent.edit"
+  check "$page: ... and moves it under folder 10, which they edit" \
+    "$(as42 "UPDATE app.folders SET parent_id = 10 WHERE id = 8")" "UPDATE 1"
+  check "$page: 42 edits folder 10 and can't give it away" \
+    "$(as42 "UPDATE app.folders SET owner_id = 42 WHERE id = 10")" "ERROR:  changing owner_id of app.folders 10 needs: owner"
+  check "$page: ... and gives away folder 12, which they own (and still edit, through folder 8)" \
+    "$(as42 "UPDATE app.folders SET owner_id = 1 WHERE id = 12")" "UPDATE 1"
   psql -X -q -d "$LAND" -c "INSERT INTO app.folder_editors VALUES (7, 42)"
   check "$page: its SQL, once 42 may edit folder 7" "$(ran)" "$3"
   rm -r "$B"
   dropdb "$LAND"
 }
-FOLDERS=$'8|Home|42|\n9|Photos|1|8\n10|Drafts|1|7\n11|Old|1|10'
+FOLDERS=$'8|Home|42|\n9|Photos|1|8\n10|Drafts|1|7\n11|Old|1|10\n12|Trips|42|8'
 landing README.md $'SET\nBEGIN\n\n'"$FOLDERS"$'\nf\n7|{}\n8|{edit,view}\nCOMMIT' \
   $'SET\nBEGIN\n\n7|Notes|1|\n'"$FOLDERS"$'\nt\n7|{edit,view}\n8|{edit,view}\nCOMMIT'
 landing site/index.md $'SET\nBEGIN\n\n'"$FOLDERS"$'\nUPDATE 0\nCOMMIT' $'SET\nBEGIN\n\n7|Notes|1|\n'"$FOLDERS"$'\nUPDATE 1\nCOMMIT'
