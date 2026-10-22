@@ -15191,6 +15191,12 @@ class Survivors(unittest.TestCase):
             "what they became when the sweep lists it (sweep.py list --since <the change> --ids)",
         )
         self.assertEqual({i: (where, made[i]) for i, where in listed.items() if made.get(i, where) != where}, {})
+        # a reason that reads "as g...": that one is listed too, or the reason leans on nothing
+        reasons = sweep.read_survivors(sweep.SURVIVORS)
+        cited = {
+            i: c for i, (_, why) in reasons.items() for c in re.findall(r"\bg[0-9a-f]{10}\b", why) if c not in reasons
+        }
+        self.assertEqual(cited, {}, "a reason in core/mutants/survivors.txt cites a mutant the file doesn't list")
 
 
 class Editors(unittest.TestCase):
