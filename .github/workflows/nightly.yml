@@ -9,7 +9,7 @@
 # (workflow_dispatch), all of it or one job: `gh workflow run nightly.yml -f only=bench`. And several soaks at
 # once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7` (and
 # `-f part=policies`: one part of each). And every
-# small policy at once, seven jobs side by side (each night's soak checks a seventh): `-f only=small`.
+# small policy at once, fourteen jobs, seven side by side (each night's soak checks a fourteenth): `-f only=small`.
 name: nightly
 on:
   schedule:
@@ -86,13 +86,13 @@ jobs:
       - id: plan
         run: |
           case "${SOAKS:-1}" in [1-9]) ;; *) echo "soaks: a number from 1 to 9, not '$SOAKS'"; exit 1;; esac
-          # (and the seventh of the small policies each checks: the day's, a week covering them all; with several,
-          # one each: seven soaks check them all, as after a change to the language)
+          # (and the fourteenth of the small policies each checks: the day's, two weeks covering them all; with
+          # several, one each: `-f only=small` checks them all, as after a change to the language)
           if [ "${SOAKS:-1}" = 1 ]; then
-            plan="{\"name\": \"soak\", \"pg\": $(( 16 + 10#$(date -u +%j) % 3 )), \"seed\": $GITHUB_RUN_ID, \"slice\": $(( $(date -u +%s) / 86400 % 7 ))}"
+            plan="{\"name\": \"soak\", \"pg\": $(( 16 + 10#$(date -u +%j) % 3 )), \"seed\": $GITHUB_RUN_ID, \"slice\": $(( $(date -u +%s) / 86400 % 14 ))}"
           else
             plan=$(for n in $(seq 1 "$SOAKS"); do
-              echo "{\"name\": \"soak-$n\", \"pg\": $(( 16 + n % 3 )), \"seed\": $(( GITHUB_RUN_ID * 10 + n )), \"slice\": $(( (n - 1) % 7 ))}"
+              echo "{\"name\": \"soak-$n\", \"pg\": $(( 16 + n % 3 )), \"seed\": $(( GITHUB_RUN_ID * 10 + n )), \"slice\": $(( (n - 1) % 14 ))}"
             done | paste -sd, -)
           fi
           echo "soaks=[$plan]" | tee -a "$GITHUB_OUTPUT"
@@ -100,8 +100,8 @@ jobs:
   # The random checks (the parser fuzzer, every random-change run, random policies, races and stress), long and
   # with a new seed, so each night tries new cases. The log is kept either way: it says the seed, to run a
   # failure again. Each soak in the parts run_tests.sh names, side by side, on one version and with one seed:
-  # the night's soak is over when its longest part is. And a seventh of the small policies (tests/small.py),
-  # the day's: a week checks them all.
+  # the night's soak is over when its longest part is. And a fourteenth of the small policies (tests/small.py),
+  # the day's: two weeks check them all.
   soak:
     needs: soak-plan
     name: ${{ matrix.soak.name }} (${{ matrix.soak.pg }}, ${{ matrix.part }})
@@ -131,18 +131,18 @@ jobs:
         with:
           name: ${{ matrix.soak.name }}-${{ matrix.part }}
           path: /tmp/rowstile-ci-*.log
-  # Every small policy (tests/small.py), asked for by hand: the seven slices the nightly soaks check one a night, a job
-  # each, side by side (as after a change to the language: `gh workflow run nightly.yml -f only=small`)
+  # Every small policy (tests/small.py), asked for by hand: the fourteen slices the nightly soaks check one a night, a
+  # job each, seven side by side (as after a change to the language: `gh workflow run nightly.yml -f only=small`)
   small:
     if: ${{ inputs.only == 'small' }}
-    name: small policies (slice ${{ matrix.slice }} of 7)
+    name: small policies (slice ${{ matrix.slice }} of 14)
     runs-on: ubuntu-latest
     timeout-minutes: 220
     strategy:
       fail-fast: false
       max-parallel: 7
       matrix:
-        slice: [0, 1, 2, 3, 4, 5, 6]
+        slice: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {persist-credentials: false}

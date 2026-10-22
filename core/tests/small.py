@@ -3,7 +3,7 @@
 
     python3 tests/small.py --count 7                        # how many policies each size has
     python3 tests/small.py --size 3 --db authz_small        # every policy up to size 3
-    python3 tests/small.py --size 6 --slice 2/7 --jobs 3    # those whose number is 2 modulo 7 (a night's), in 3 jobs
+    python3 tests/small.py --size 6 --slice 2/14 --jobs 3   # those whose number is 2 modulo 14 (a night's), in 3 jobs
     python3 tests/small.py --size 6 --no-db                 # without a database: the evaluator's side only
     python3 tests/small.py --only 5/123 --db authz_small    # one policy (size 5, number 123), printed
 
