@@ -167,10 +167,13 @@ what).
 ## Trees, under load
 
 Inherited permissions are kept in tables by triggers, and those tables must match the tree at every commit. <!-- checked: tests/interleave.py "inheritance tables exact after each"; tests/stress.sh "the inheritance tables match a rebuild" -->
-[`tests/interleave.py`](../core/tests/interleave.py) runs two writes to a folder tree in two sessions (a folder
-created, moved, linked, unlinked, deleted, given a new id, shared, unshared): each of the 36 pairs in every order
-of their steps that Postgres allows (a read, the write, the commit: 558 of the 720 orders written out), with each
-session at each isolation level, 5,022 schedules. It sends one step at a time and asks Postgres which session
+[`tests/interleave.py`](../core/tests/interleave.py) runs two writes to a tree in two sessions, on four trees:
+the docs app's folders (a folder created, moved, linked, unlinked, deleted, given a new id, shared, unshared); a
+tree of two types whose condition reads another table (folders and projects); a tree on a partitioned table,
+whose links and the table its condition reads each have a table that inherits from them; and a tree of two types
+linked by their own columns, whose condition reads the tree's own table. Each of the 88 pairs runs in every order
+of its steps that Postgres allows (a read, the write, the commit: 1,286 of the 1,760 orders written out), with
+each session at each isolation level, 11,574 schedules. It sends one step at a time and asks Postgres which session
 waits for a lock, so no order depends on timing. After each, the tables are compared with a rebuild, what
 `authz.list` says with the reference evaluator, and in SERIALIZABLE the rows with the two transactions run one
 after the other. In READ COMMITTED no write ever needs a retry. <!-- checked: tests/interleave.py "none needing a retry" -->
