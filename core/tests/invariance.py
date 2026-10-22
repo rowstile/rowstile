@@ -83,7 +83,17 @@ from authzlib.parse import (  # noqa: E402
 from authzlib.sqlutil import q, qt  # noqa: E402
 from difftest import DB, SESSIONS, Ids, idsql, lit  # noqa: E402
 from genpolicy import INCLUDED as INCLUDED_BY_GENPOLICY  # noqa: E402
-from genpolicy import UUID, Spec, Spelling, gen_class, make, policy_text, schema_text, write_policy  # noqa: E402
+from genpolicy import (  # noqa: E402
+    UUID,
+    Spec,
+    Spelling,
+    gen_class,
+    make,
+    policy_text,
+    schema_text,
+    too_few,
+    write_policy,
+)
 
 Answer = Any
 Files = dict[str, str]
@@ -1196,7 +1206,10 @@ def main() -> None:
         f"invariance seeds {seeds[0]}..{seeds[-1]}: {checked - failed} policies passed, {failed} failed, "
         f"{skipped} not checked (refused, or slow to plan) ({time.monotonic() - started:.0f} s)"
     )
-    sys.exit(1 if failed else 0)
+    few = too_few(checked, len(seeds))
+    if few:
+        print(few)
+    sys.exit(1 if failed or few else 0)
 
 
 FIXED = [

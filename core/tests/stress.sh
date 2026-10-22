@@ -2,7 +2,9 @@
 # stress.sh: 16 clients writing a folder tree at once (create, move, link, unlink, delete, at random places)
 # for SECONDS seconds at each isolation level, retrying 40001/40P01 as an app would; afterwards the
 # inheritance tables must match a rebuild (authz.verify()). Moves that would make a loop, and deletes of
-# folders that still hold something, are refused and count as done.
+# folders that still hold something, are refused and count as done. So that a tree no write reached can't pass, each
+# level must leave folders created, moved, linked and deleted, and no more than half its transactions failed after
+# 50 tries (a tenth to a seventh on CI's runners, at 100 s a level).
 # Every tree write takes the type-wide lock, so the writes go one at a time and each waits for the queue
 # ahead of it: as the random moves make the tree deep, a write can wait tens of seconds on a slow machine
 # (a move of a big subtree alone takes about a second). So the limit on a statement, 600 s, is there for a
@@ -120,12 +122,17 @@ EOF
 for level in "read committed" "repeatable read" "serializable"; do
   # (PGOPTIONS splits on spaces: "read committed" needs its space escaped)
   rm -f "$W"/tx*
+  # the tree as it is, to count what the level's writes did to it
+  psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "SET client_min_messages = warning; DROP TABLE IF EXISTS stress.folders, stress.links;
+    CREATE TABLE stress.folders AS SELECT id, parent_id FROM app.folders;
+    CREATE TABLE stress.links AS SELECT folder_id, parent_id FROM app.folder_links" >/dev/null || exit 1
   PGOPTIONS="-c default_transaction_isolation=${level// /\\ } -c statement_timeout=600s" pgbench -n -d "$DB" -c 16 -j 4 \
     -T "$SECONDS_EACH" --max-tries=50 -l --log-prefix="$W/tx" -f "$W/create.sql@4" -f "$W/move.sql@2" -f "$W/link.sql@1" \
     -f "$W/unlink.sql@1" -f "$W/delete.sql@1" -f "$W/pair.sql@1" > "$W/out" 2>&1
   tps=$(sed -n 's/^tps = \([0-9.]*\) .*/\1/p' "$W/out")
   retried=$(sed -n 's/^number of transactions retried: \([0-9]*\).*/\1/p' "$W/out")
   failed=$(sed -n 's/^number of failed transactions: \([0-9]*\).*/\1/p' "$W/out")
+  failed_pct=$(sed -n 's/^number of failed transactions: [0-9]* (\([0-9.]*\)%).*/\1/p' "$W/out")
   aborted=$(grep -c "aborted in command" "$W/out")
   if [ -z "$tps" ]; then
     echo "FAIL  $level: pgbench didn't run: $(head -c 300 "$W/out" | tr '\n' ' ')"; fails=$((fails + 1)); continue
@@ -134,6 +141,25 @@ for level in "read committed" "repeatable read" "serializable"; do
   slowest=$(cat "$W"/tx* 2>/dev/null | awk '$3 ~ /^[0-9]+$/ && $3 + 0 > m + 0 { m = $3 } END { printf "%.1f", m / 1000000 }')
   echo "info  $level: $tps writes/s for ${SECONDS_EACH}s, ${retried:-0} retried, ${failed:-0} failed after 50 tries, $aborted clients stopped; the slowest took ${slowest}s"
   [ "$aborted" = 0 ] || { echo "FAIL  $level: a client stopped on an error: $(grep -m1 "aborted in command" -A2 "$W/out" | tr '\n' ' ')"; fails=$((fails + 1)); }
+  if awk -v p="${failed_pct:-0}" 'BEGIN { exit !(p <= 50) }'; then
+    echo "ok    $level: most transactions went through (${failed_pct:-0}% failed after 50 tries)"
+  else
+    echo "FAIL  $level: ${failed_pct}% of the transactions failed after 50 tries"; fails=$((fails + 1))
+  fi
+  # what the writes did (a write refused, or failed after its tries, did nothing): each kind must have done something
+  done_=$(psql -X -At -F ' ' -v ON_ERROR_STOP=1 -d "$DB" -c "SELECT
+      (SELECT count(*) FROM app.folders f WHERE NOT EXISTS (SELECT FROM stress.folders b WHERE b.id = f.id)),
+      (SELECT count(*) FROM app.folders f JOIN stress.folders b USING (id) WHERE f.parent_id IS DISTINCT FROM b.parent_id),
+      (SELECT count(*) FROM (TABLE app.folder_links EXCEPT TABLE stress.links) l),
+      (SELECT count(*) FROM (TABLE stress.links EXCEPT TABLE app.folder_links) l),
+      (SELECT count(*) FROM stress.folders b WHERE NOT EXISTS (SELECT FROM app.folders f WHERE f.id = b.id))" 2>&1)
+  read -r created moved linked unlinked deleted <<< "$done_"
+  said="$created created, $moved moved, $linked links made, $unlinked links gone, $deleted deleted"
+  if [ "${created:-0}" -gt 0 ] && [ "${moved:-0}" -gt 0 ] && [ "${linked:-0}" -gt 0 ] && [ "${deleted:-0}" -gt 0 ] 2>/dev/null; then
+    echo "ok    $level: the writes changed the tree ($said)"
+  else
+    echo "FAIL  $level: a kind of write changed nothing ($(echo "$said" | head -c 300))"; fails=$((fails + 1))
+  fi
   if [ "$(psql -X -At -d "$DB" -c "SELECT authz.verify()")" = t ]; then
     echo "ok    $level: the inheritance tables match a rebuild"
   else

@@ -96,7 +96,7 @@ from authzlib import evaluate  # noqa: E402
 from authzlib.parse import Rule  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
 from difftest import CHANGE, DB, Checker, Snapshot, idsql, lit, pages_sql  # noqa: E402
-from genpolicy import SCHEMA, WORDS_LATIN1, Refused, Slow, Spec, Spelling  # noqa: E402
+from genpolicy import SCHEMA, WORDS_LATIN1, Refused, Slow, Spec, Spelling, refusal, too_few  # noqa: E402
 
 # The login roles of a run, named after its database (name_roles(): these are --db authz_around's)
 MEMBER = "authz_around_member"  # logs in, a member of app_user
@@ -1474,7 +1474,10 @@ def run(
         fh.write(schema_text(spec, w))
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
     if compiled.returncode != 0:
-        raise Refused(compiled.stderr.strip().splitlines()[-1] if compiled.stderr.strip() else "refused")
+        why = refusal(compiled.stderr)
+        if why is None:
+            return ["the compiler failed, refusing nothing:", *compiled.stderr.strip().splitlines()[-12:]]
+        raise Refused(why)
     if SLOW in compiled.stdout and not slow:
         raise Slow("authz.lint() warns that a permission or a select rule is slow to plan")
     started = time.monotonic()
@@ -1662,7 +1665,10 @@ def main() -> None:
                 "  not judged (their world failed, or its policy was too slow): "
                 + "; ".join(f"{a} + {b}" for a, b in sorted(missed))
             )
-    sys.exit(1 if failed else 0)
+    few = too_few(passed + failed, len(seeds))
+    if few:
+        print(few)
+    sys.exit(1 if failed or few else 0)
 
 
 if __name__ == "__main__":

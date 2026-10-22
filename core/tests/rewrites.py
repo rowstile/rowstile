@@ -66,7 +66,19 @@ from authzlib.parse import KEYWORDS, Policy  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
 from difftest import CHANGE, DB, Ids, idsql, lit  # noqa: E402
 from difftest import Reference as Reader  # noqa: E402
-from genpolicy import CONDS, Node, Spec, atoms, gen_class, make, policy_text, schema_text, write_policy  # noqa: E402
+from genpolicy import (  # noqa: E402
+    CONDS,
+    Node,
+    Spec,
+    atoms,
+    gen_class,
+    make,
+    policy_text,
+    refusal,
+    schema_text,
+    too_few,
+    write_policy,
+)
 from small import Unloadable, load_sql  # noqa: E402
 
 Path = tuple[int, ...]
@@ -234,7 +246,8 @@ def rewrites(spec: Spec, r: random.Random, each: int) -> list[Rewrite]:
 # One policy
 # ----------------------------------------------------------------------
 class Refused(Exception):
-    """The compiler refused the policy, or its reads are slow: lint says so, or one diff took more than SLOW."""
+    """The compiler refused the policy, or its reads are slow: lint says so, or one diff took more than SLOW (and
+    none before it, nor that one, found a problem)."""
 
 
 SLOW = 5.0  # seconds for one diff: such a policy's rewrites would take minutes, and say nothing more
@@ -396,6 +409,8 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
     text = policy_text(spec)
     write_policy(policy_path, text, False)
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
+    if compiled.returncode != 0 and refusal(compiled.stderr) is None:
+        return ["the compiler failed, refusing nothing:", *compiled.stderr.strip().splitlines()[-12:]]
     if compiled.returncode != 0 or "view definitions to plan" in compiled.stdout:
         raise Refused
     r = random.Random(f"rewrites/{spec.seed}")
@@ -418,6 +433,7 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
     db.run(gen.grants())
     conn = pgwire.connect(**pgwire.parse_dsn(f"dbname={db.name}"))
     changed: set[str] = set()  # the rewrites the database's answers changed with, on some data
+    slow = False  # (a diff took more than SLOW: the rest isn't asked)
     try:
         for n in range(rounds):
             for rw, new, m in tried:
@@ -427,8 +443,7 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
 
                 started = time.monotonic()
                 rows = rowstile_cli.transaction(conn, diff, keep=False)
-                if time.monotonic() - started > SLOW:
-                    raise Refused
+                slow = time.monotonic() - started > SLOW
                 first = (
                     f"{rows[0]['change']} {rows[0]['what']} on {rows[0]['type']} {rows[0]['id']} "
                     f"for {rows[0]['user_id'] or 'nobody'}"
@@ -447,6 +462,10 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
                         f"{rw.what}: it changes nothing, and in the database {len(rows)} answers change "
                         f"(round {n}): {first}"
                     )
+                if slow:
+                    break
+            if slow:
+                break
             if n + 1 < rounds:
                 for _ in range(changes):
                     ids: Ids = {
@@ -459,6 +478,10 @@ def run(spec: Spec, db: DB, workdir: str, each: int, rounds: int, changes: int, 
                         return [f"round {n}: unexpected error", f"  {sql}", f"  {err.strip()}"]
     finally:
         conn.close()
+    if slow:  # (not checked, unless what was asked already failed: a slow machine hides no problem found)
+        if problems:
+            return [*problems, f"(then a diff took more than {SLOW:.0f} s, and the rest wasn't asked)"]
+        raise Refused
     for rw, new, m in tried:
         if rw.same or not m.get("counterexample"):
             continue
@@ -534,7 +557,18 @@ def main() -> None:
         + "".join(f"; {n}: {why}" for why, n in sorted(tally.unloadable.items()))
         + ")"
     )
-    sys.exit(1 if failed else 0)
+    # the half held against the database: the review's differences must show in its diff somewhere in the run (one
+    # that shows nowhere is held against nothing; a diff that finds nothing passes every other check)
+    blind = tally.unshown > 0 and tally.shown == 0
+    if blind:
+        print(
+            f"FAIL the review shows {tally.unshown} rewrites changing answers, and the database's diff shows none "
+            "of them changing on this data: nothing here held the review against the database"
+        )
+    few = too_few(passed + failed, len(seeds))
+    if few:
+        print(few)
+    sys.exit(1 if failed or blind or few else 0)
 
 
 if __name__ == "__main__":
