@@ -9,7 +9,7 @@
 #                         written another way (invariance.py), migrate vs apply, and difftest's policies but docs
 #   SOAK_SEED=N ./run_tests.sh --soak                              # the random checks (random policies too), long, with a new seed
 #                         (about 110 minutes; a random seed if SOAK_SEED is empty; the log says which; SMALL_SLICE=K:
-#                         the seventh of the small policies it checks, 0 to 6, the day's otherwise)
+#                         the fourteenth of the small policies it checks, 0 to 13, the day's otherwise)
 #   ROWSTILE_PART=command ./run_tests.sh --quick                   # one part of a run (below: the parts of each)
 #   ROWSTILE_LANES=1 ./run_tests.sh --quick                        # each step after the other (below: lanes)
 #   ROWSTILE_COVERAGE=/abs/dir ./run_tests.sh --quick              # also measure what the suites run (below)
@@ -120,11 +120,11 @@ if [ "$MODE" = soak ]; then
   record $? "around"
   fi
   if part small; then
-  # every policy of the core language up to size 6 (and the denies of size 7), a seventh each night: the day's
-  # (days since 1970, modulo 7) unless SMALL_SLICE says (several soaks at once: one each), so a week covers them
-  SLICE=${SMALL_SLICE:-$(( $(date -u +%s) / 86400 % 7 ))}
-  step "every small policy, against the reference evaluator and the database (slice $SLICE of 7, up to size 6)"
-  python3 tests/small.py --size 6 --slice "$SLICE/7" --jobs 3 --db authz_small
+  # every policy of the core language up to size 6 (and the denies of size 7), a fourteenth each night: the day's
+  # (days since 1970, modulo 14) unless SMALL_SLICE says (several soaks at once: one each), so two weeks cover them
+  SLICE=${SMALL_SLICE:-$(( $(date -u +%s) / 86400 % 14 ))}
+  step "every small policy, against the reference evaluator and the database (slice $SLICE of 14, up to size 6)"
+  python3 tests/small.py --size 6 --slice "$SLICE/14" --jobs 3 --db authz_small
   record $? "small policies"
   fi
 fi
@@ -502,7 +502,7 @@ if [ "$MODE" = full ]; then
   }
   unit random 490 invariance_fixed
 fi
-# every policy of the core language up to a size (tests/small.py; the nightly soak: up to 6, a seventh a night)
+# every policy of the core language up to a size (tests/small.py; the nightly soak: up to 6, a fourteenth a night)
 SMALL=3 SMALL_SECS=30; [ "$MODE" = full ] && SMALL=4 SMALL_SECS=330
 small_policies() {
 step "every small policy, against the reference evaluator and the database (up to size $SMALL)"

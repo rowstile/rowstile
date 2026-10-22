@@ -308,8 +308,8 @@ For one suite, start a container and run it inside:
   language changes. The two share the parser, so `HandAnswers` (`tests/unit_test.py`) holds the evaluator to
   answers worked out by hand from the reference: a new language form gets a case there, and, if it belongs to the
   core (a kind of source, an operator), a place in `tests/small.py`'s list (`sources`, `expressions`), whose
-  COUNTS then change (`--count`); seven soaks at once check the whole list (`gh workflow run nightly.yml -f
-  only=soak -f soaks=7`), each night's a seventh of it.
+  COUNTS then change (`--count`); `gh workflow run nightly.yml -f only=small` checks the whole list (fourteen
+  jobs), each night's soak a fourteenth of it.
   A change to generated SQL shows up in `tests/golden/`: update it deliberately and read the diff.
 - Error messages name the policy line and end with a code: `fail(loc, msg, "AZ201")`. A new kind of mistake
   gets a code and a page in `authzlib/errors.py` (the page's mistake must give its code, its fix must compile;

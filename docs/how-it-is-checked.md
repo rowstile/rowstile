@@ -90,8 +90,8 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   is made wrong in turn (held by nobody or by anyone, an `and` for an `or`, a `not` left out, a link read the other
   way round, inheritance one step deep), and the few worlds that tell every such part apart are loaded as rows (two
   or three a policy): forty policies applied as one, and difftest's checks hold every answer of the database's to
-  the evaluator's. Each push checks those up to size three and the denies of four (122); each night, a seventh of
-  them all; each week, the whole list.
+  the evaluator's. Each push checks those up to size three and the denies of four (122); each night, a fourteenth
+  of them all; every two weeks, the whole list.
 - **Answers worked out by hand**: each paragraph of [the language's reference](reference/language.md) that says
   who may do what, given a policy and rows, carries an anchor readers don't see (40 of them), and each anchor has
   a case whose answers were worked out from that paragraph, by hand, and written down before anything ran.
