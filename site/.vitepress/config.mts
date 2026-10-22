@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vitepress";
 import { FEED, FEED_TITLE, LANGUAGES } from "../blog.mjs";
-import { GITHUB, ORIGIN, PAGES, POSTS, REPO, TITLES, blogSidebar, compareSidebar, describe, errorSidebar, notPages, recipeSidebar, siteLink, url } from "../pages.mjs";
+import { GITHUB, ORIGIN, PAGES, POSTS, REPO, TITLES, blogSidebar, checkMenus, compareSidebar, describe, errorSidebar, menuLinks, notPages, recipeSidebar, siteLink, slug, url } from "../pages.mjs";
 
 // The pages are outside site/, and so is Vite's root (the repository), where there is no Vue: the pages' imports of
 // it are resolved from here, and the server bundle leaves Vue out (it imports it at run time, from site/.vitepress)
@@ -67,6 +67,30 @@ const examples = [
   { text: "Messenger", link: "/examples/messenger" },
 ];
 
+const nav = [
+  { text: "Guide", link: "/getting-started" },
+  { text: "Reference", link: "/reference/language" },
+  { text: "Stacks", link: "/stacks/" },
+  { text: "Errors", link: "/errors/" },
+  ...(POSTS.length ? [{ text: "Blog", link: "/blog/" }] : []),
+  { text: "Playground", link: "/playground/", target: "_self" },
+];
+const sidebar = {
+  "/errors/": [{ text: "Error codes", link: "/errors/" }, ...errorSidebar()],
+  "/": [
+    { text: "Guide", items: guide },
+    { text: "Recipes", items: [{ text: "Cookbook", link: "/cookbook/" }, ...recipeSidebar()] },
+    { text: "Compare", items: compare },
+    { text: "Stacks", items: stacks },
+    { text: "SDKs", items: sdks },
+    { text: "Reference", items: reference },
+    { text: "Examples", items: examples },
+    ...(POSTS.length ? [{ text: "Blog", items: [{ text: "All posts", link: "/blog/" }, ...blogSidebar()] }] : []),
+  ],
+};
+// every page is in a menu, and every menu's link goes to a page (pages.mjs)
+checkMenus(menuLinks([nav, Object.values(sidebar)]));
+
 export default defineConfig({
   title: "rowstile",
   description: "Authorization for Postgres apps: access rules in a policy file, compiled into row-level security",
@@ -88,6 +112,8 @@ export default defineConfig({
   vite: { plugins: [vueFromSite] },
   markdown: {
     languages: LANGUAGES,
+    // headings' anchors as GitHub makes them: the links are written for GitHub
+    anchor: { slugify: slug },
     config(md) {
       // indented code blocks (the docs use them for commands) get the fenced blocks' box, which scrolls
       md.core.ruler.push("indented_as_fenced", (state) => {
@@ -129,27 +155,8 @@ export default defineConfig({
   },
   themeConfig: {
     logo: "/mark.svg",
-    nav: [
-      { text: "Guide", link: "/getting-started" },
-      { text: "Reference", link: "/reference/language" },
-      { text: "Stacks", link: "/stacks/" },
-      { text: "Errors", link: "/errors/" },
-      ...(POSTS.length ? [{ text: "Blog", link: "/blog/" }] : []),
-      { text: "Playground", link: "/playground/", target: "_self" },
-    ],
-    sidebar: {
-      "/errors/": [{ text: "Error codes", link: "/errors/" }, ...errorSidebar()],
-      "/": [
-        { text: "Guide", items: guide },
-        { text: "Recipes", items: [{ text: "Cookbook", link: "/cookbook/" }, ...recipeSidebar()] },
-        { text: "Compare", items: compare },
-        { text: "Stacks", items: stacks },
-        { text: "SDKs", items: sdks },
-        { text: "Reference", items: reference },
-        { text: "Examples", items: examples },
-        ...(POSTS.length ? [{ text: "Blog", items: [{ text: "All posts", link: "/blog/" }, ...blogSidebar()] }] : []),
-      ],
-    },
+    nav,
+    sidebar,
     outline: [2, 3],
     search: { provider: "local" },
     socialLinks: [{ icon: "github", link: GITHUB }],

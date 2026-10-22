@@ -204,8 +204,9 @@ jobs:
           node-version: "24"
       - run: docker build -q -t rowstile:16 --build-arg PG_MAJOR=16 -f core/Dockerfile .
       - run: bash core/tests/studio_page.sh
-  # The docs site: the repository's Markdown built with VitePress (a link to a page or a file that isn't there fails
-  # the build), with the playground, llms.txt and llms-full.txt beside it (site/build.mjs)
+  # The docs site: the repository's Markdown built with VitePress (a link to a page, a file or a heading that isn't
+  # there fails the build, and so does a page no menu lists), with the playground, llms.txt and llms-full.txt beside
+  # it (site/build.mjs)
   site:
     needs: unit
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
@@ -215,8 +216,9 @@ jobs:
         with:
           node-version: "24"
       # the blog's checks first (a post's file, the feed), on made-up posts: the build has them only once there is a post;
-      # then what a tag is built from (a release's, the site's), on made-up tags and in a repository made for it
-      - run: cd site && npm ci --no-audit --no-fund && node blog_test.mjs && node source_test.mjs && node build.mjs
+      # then what a tag is built from (a release's, the site's), on made-up tags and in a repository made for it; then
+      # the links (pages.mjs) on made-up pages and menus
+      - run: cd site && npm ci --no-audit --no-fund && node blog_test.mjs && node source_test.mjs && node pages_test.mjs && node build.mjs
   # The JavaScript is typed (JSDoc) and checked strictly by TypeScript, each part with its own dependencies' types
   javascript:
     needs: unit

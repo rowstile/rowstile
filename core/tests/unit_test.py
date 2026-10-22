@@ -10385,6 +10385,23 @@ class RuntimeAnswers(unittest.TestCase):
         for code in runtime:
             self.assertEqual(raised[code], {self.page(code)[0]}, f"{code}: the SQLSTATEs it is raised with")
 
+    def test_each_problem_type_the_sdks_write_is_a_page_of_the_site(self) -> None:
+        # every type URL, not only the codes' map: Refused's (each refused write) and NotFound's are written apart
+        repo = os.path.dirname(ROOT)
+        kinds: list[set[str]] = []
+        for path in (("sdk", "python", "rowstile", "__init__.py"), ("sdk", "typescript", "client", "src", "index.ts")):
+            with open(os.path.join(repo, *path), encoding="utf-8") as fh:
+                kinds.append(set(re.findall(r"https://rowstile\.dev/problems/([a-z-]+)", fh.read())))
+        python, typescript = kinds
+        self.assertEqual(python, typescript, "the two SDKs write the same problem types")
+        self.assertIn("refused", python)  # the reading found Refused's
+        with open(os.path.join(repo, "site", "pages.mjs"), encoding="utf-8") as fh:
+            pages = set(re.findall(r'"site/problems/([a-z-]+)\.md": "problems/\1\.md"', fh.read()))
+        files = {f.removesuffix(".md") for f in os.listdir(os.path.join(repo, "site", "problems")) if f.endswith(".md")}
+        self.assertEqual(sorted(python - files), [], "each problem type has its page, site/problems/<kind>.md")
+        self.assertEqual(sorted(python - pages), [], "each problem type's page is in the site's PAGES (site/pages.mjs)")
+        self.assertEqual(sorted((files | pages) - python), [], "each problem page is a type the SDKs write")
+
     def test_the_sdks_answer_each_code_as_its_page_says(self) -> None:
         from authzlib.errors import CODES
 
