@@ -11111,6 +11111,36 @@ class DocPages(unittest.TestCase):
         ]
         self.assertEqual(wrong, [], "a release's stage in a preview's words, or what is published named as an alpha")
 
+    def test_the_pooler_section_says_what_the_nightly_run_runs(self) -> None:
+        # integrations/pooler.sh: PgBouncer in transaction mode, prepared statements kept, the app's connection alone
+        # (each suite gives it the app role only). The operations page says so, and no more: change one, change both
+        script = self.page("integrations", "pooler.sh")
+        version = search(r"\nPOOLER_IMAGE=\S+:v(\d+\.\d+)\.", script).group(1)
+        self.assertIn("\npool_mode = transaction\n", script)
+        self.assertRegex(script, r"\nmax_prepared_statements = [1-9]")
+        for stack in ("fastapi", "nextjs"):
+            starts = re.findall(r"pooler_start .*", self.page("integrations", stack, "test.sh"))
+            self.assertEqual(starts, ['pooler_start "$NAME" "$APP_PORT" conf_app:app || exit 1'], stack)
+        section = search(r"\n## Behind a pooler\n(.*?)\n## ", self.page("docs", "operations.md"), re.S).group(1)
+        said = " ".join(section.split())
+        self.assertIn(
+            "Every night both SDKs' conformance suites run with the app's connection through PgBouncer "
+            f"{version} in transaction mode, keeping prepared statements (`integrations/pooler.sh`); the owner and "
+            "the change feed connect directly.",
+            said,
+        )
+
+    def test_the_managed_postgres_trials_carry_their_day(self) -> None:
+        # trials by hand on a service, which no check runs again: each says when, and with which release
+        text = self.page("docs", "managed-postgres.md")
+        services = re.findall(r"\n## (.+)\n\n(.+)\n", text)
+        self.assertEqual([name for name, _ in services], ["On any service", "Neon", "Supabase"])
+        for name, first in services[1:]:
+            day = r"\d{4}-\d{2}-\d{2}"
+            self.assertRegex(first, rf"^Tried by hand (?:on {day} with \S+|before \S+ \(released {day}\))", name)
+        # how many checks of a suite passed: the suite grows, the count goes stale
+        self.assertEqual(re.findall(r"passed \d+ of \d+|\d+ of \d+ checks", " ".join(text.split())), [])
+
     def test_each_call_a_page_writes_is_one_the_functions_take(self) -> None:
         sql = Compiler(parse_policy(read("example/docs.authz"))).compile("x")
         made: dict[str, list[list[tuple[str, bool]]]] = {}  # name -> each form's (type, has a default)

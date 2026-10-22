@@ -1,9 +1,11 @@
 #!/bin/bash
 # pooler.sh: PgBouncer in transaction mode in front of a conformance suite's Postgres (POOLER=pgbouncer test.sh).
 #   source ../pooler.sh; pooler_start <postgres container> <host port> <user:password>...
-# The app's URL then goes through it; the owner's (migrations) and the change feed's stay direct, as the
-# operations page says (docs/operations.md, Behind a pooler). It keeps prepared statements per client
-# (max_prepared_statements, PgBouncer 1.21 and newer). pooler_stop removes it.
+# Only the app's URL goes through it (the userlist holds the users given: the suites give the app role alone).
+# The owner's (migrations, the command, rowstile test) and the change feed's stay direct, as the operations page
+# asks (docs/operations.md, Behind a pooler, which says what this runs). It keeps prepared statements per client
+# (max_prepared_statements, PgBouncer 1.21 and newer): a pooler that keeps none, and the drivers' settings for
+# it, aren't run here. pooler_stop removes it.
 POOLER_IMAGE=edoburu/pgbouncer:v1.26.0-p0
 
 pooler_start() {
