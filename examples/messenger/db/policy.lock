@@ -496,7 +496,7 @@ step grant_views | c8e558735372
 step mask_privileges | 0f76f9d7c5d3
 step share_indexes | 8efa8abfe32b
 step sweep | 66b168ba0729
-step tables | 6edf8389694c
+step tables | 5e7fb83cc37e
 table authz_gen.policy_lines | b83b3906ab6b shape=dcfedc96
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | 1779df2cc717 shape=1779df2c
