@@ -12934,6 +12934,35 @@ class Features(unittest.TestCase):
             features.problems([gone if x is f else x for x in features.FEATURES]),
         )
 
+    def test_a_feature_that_grants_outside_tier_one_is_named_on_the_page(self) -> None:
+        # what writes authz.shares, itself or through a call (lint only names signatures in strings)
+        self.assertEqual(
+            features.granting(),
+            {"api.share", "api.unshare", "api.create_link", "api.revoke_link", "api.decide_request"}
+            | {"api.break_glass", "api.close_review"},
+        )
+        self.assertEqual(features.exceptions(), {"api.requests", "api.reviews", "api.audit"})
+        # a granting feature put in tier 2 without the page saying so; one the page stops naming; one it names wrongly
+        links = next(x for x in features.FEATURES if x.id == "api.links")
+        lowered = [dataclasses.replace(x, tier=2) if x is links else x for x in features.FEATURES]
+        self.assertIn(
+            "api.links: tier 2, and it grants or revokes access (api.create_link, api.revoke_link): make it tier 1, or "
+            f"name it on docs/how-it-is-checked.md where it says which features {features.EXCEPTIONS}",
+            features.problems(lowered),
+        )
+        with mock.patch.object(features, "exceptions", return_value={"api.requests", "api.audit", "api.sharing"}):
+            found = features.problems()
+        self.assertIn(
+            "api.reviews: tier 2, and it grants or revokes access (api.close_review): make it tier 1, or name it on "
+            f"docs/how-it-is-checked.md where it says which features {features.EXCEPTIONS}",
+            found,
+        )
+        self.assertIn(
+            f"docs/how-it-is-checked.md names api.sharing among the features {features.EXCEPTIONS}, and it is no "
+            "feature of tier 2 or 3",
+            found,
+        )
+
     def test_the_surface_is_read_from_the_code(self) -> None:
         found = features.surface()
         self.assertIn("api.share", found["the authz.* API"])

@@ -12,7 +12,9 @@ may hold (a suite sets each), the forms of the language (the editors' grammar, w
 to the parser), the error codes (errors.CODES), what the SDKs export, the language server's methods, the MCP
 server's tools and Studio's routes. Each item is in one feature, and each feature names:
 
-- its tier: 1 decides access or keeps data; 2 is an answer shown to people; 3 is delivery;
+- its tier: 1 decides access, grants or revokes it, or keeps data; 2 is an answer shown to people; 3 is delivery.
+  A feature that grants or revokes access (it covers an authz.* function that writes authz.shares, or calls one
+  that does) and isn't tier 1 is named on docs/how-it-is-checked.md, among those its own suites check alone;
 - where the docs say it: a page, and a heading on it (or the bold words a paragraph starts with, or a table's
   first cell);
 - its fixed checks: a suite, and words that suite holds (a check's label as it prints it, a test's name, the call
@@ -1266,6 +1268,47 @@ def surface() -> dict[str, set[str]]:
 # --- what the registry is checked against ---------------------------------------------------------------
 
 
+def granting() -> set[str]:
+    """The authz.* functions that grant or revoke access: those of the docs app's compiled policy that write
+    authz.shares, or call a function that does (`api.share`, ...)."""
+    from authzlib import Compiler, parse_policy, statements
+
+    path = os.path.join(CORE, "example", "docs.authz")
+    with open(path, encoding="utf-8") as fh:
+        sql = Compiler(parse_policy(fh.read(), path)).compile(path)
+    bodies: dict[str, str] = {}
+    for _, st in statements.split(sql):
+        if m := re.match(r'CREATE (?:OR REPLACE )?FUNCTION ((?:authz|authz_int|authz_gen)\.(?:"[^"]+"|\w+))\(', st):
+            name = m[1].replace('"', "")
+            bodies[name] = bodies.get(name, "") + st
+    found = {
+        n for n, body in bodies.items() if re.search(r"\b(?:INSERT INTO|DELETE FROM|UPDATE) authz\.shares\b", body)
+    }
+    while True:  # and what calls them (not a name in a string: lint lists signatures)
+        more = {
+            n
+            for n, body in bodies.items()
+            if n not in found and any(re.search(rf"(?<!')\b{re.escape(f)}\(", body) for f in found)
+        }
+        if not more:
+            return {f"api.{n.removeprefix('authz.')}" for n in found if n.startswith("authz.")}
+        found |= more
+
+
+EXCEPTIONS = "that grant or revoke access are tier 2 instead"
+
+
+def exceptions(page: str = "docs/how-it-is-checked.md") -> set[str]:
+    """The features docs/how-it-is-checked.md names as granting or revoking access outside tier 1 (`api.requests`,
+    in the paragraph that says so)."""
+    text = read(page)
+    at = text.find(EXCEPTIONS)
+    if at < 0:
+        return set()
+    paragraph = text[at : text.find("<!--", at)]
+    return set(re.findall(r"`([a-z]+\.[\w.]+)`", paragraph))
+
+
 def owner(item: str, features: Iterable[Feature] = FEATURES) -> list[str]:
     """The features that cover an item: by name, by a prefix (`sdk.py.*`), or, for a command's flag, the
     feature of its command."""
@@ -1427,6 +1470,11 @@ def problems(features: list[Feature] = FEATURES) -> list[str]:
     out += [f"rowstile.toml: {item}: no suite sets it" for item in unset_settings(every)]
     cases, hands = grammar_cases(), anchors()
     texts: dict[str, str] = {}
+    grant, named_out = granting(), exceptions()
+    out += [
+        f"docs/how-it-is-checked.md names {i} among the features {EXCEPTIONS}, and it is no feature of tier 2 or 3"
+        for i in sorted(named_out - {f.id for f in features if f.tier != 1})
+    ]
     for f in features:
         if f.tier not in (1, 2, 3):
             out.append(f"{f.id}: tier {f.tier}")
@@ -1457,6 +1505,12 @@ def problems(features: list[Feature] = FEATURES) -> list[str]:
                 out.append(f"{f.id}: {c.path} holds it to no other answer (ORACLES)")
         if f.tier == 1 and not f.oracle:
             out.append(f"{f.id}: tier 1, and no check holds it to another answer at random")
+        grants = sorted(set(f.covers) & grant)
+        if f.tier != 1 and grants and f.id not in named_out:
+            out.append(
+                f"{f.id}: tier {f.tier}, and it grants or revokes access ({', '.join(grants)}): make it tier 1, or "
+                f"name it on docs/how-it-is-checked.md where it says which features {EXCEPTIONS}"
+            )
         if not os.path.exists(os.path.join(REPO, f.doc.page)):
             out.append(f"{f.id}: {f.doc.page} is gone")
         elif not any(p.startswith(f.doc.at) for p in places(f.doc.page)):
