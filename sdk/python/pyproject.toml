@@ -37,11 +37,12 @@ Changelog = "https://rowstile.dev/changelog"
 Issues = "https://github.com/rowstile/rowstile/issues"
 
 [project.optional-dependencies]
-fastapi = ["fastapi>=0.100", "sqlalchemy[asyncio]>=2.0"]
+# each floor is the conformance app's too (integrations/fastapi), which runs on them each night (RESOLUTION=lowest-direct)
+fastapi = ["fastapi>=0.110", "sqlalchemy[asyncio]>=2.0"]
 sqlalchemy = ["sqlalchemy>=2.0"]
 # with its own libpq: psycopg alone can't be imported where the system has none (Windows)
-psycopg = ["psycopg[binary]>=3.1"]
-asyncpg = ["asyncpg>=0.28"]
+psycopg = ["psycopg[binary]>=3.1.4"]
+asyncpg = ["asyncpg>=0.29"]
 
 [project.scripts]
 rowstile = "rowstile.command:main"

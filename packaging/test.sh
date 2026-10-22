@@ -72,7 +72,7 @@ docker run --rm -v "$REPO:/repo" node:24-alpine sh -c "
 
 echo "-- PyPI"
 docker run --rm -v "$REPO:/repo" python:3.13-slim bash -c "
-  pip install -q build >/dev/null 2>&1 && mkdir -p /tmp/src/core && cp -r /repo/sdk /tmp/src/     && cp -r /repo/core/authzlib /repo/core/cli /tmp/src/core/     && python -m build -o /tmp/dist /tmp/src/sdk/python >/dev/null && cp /tmp/dist/* /repo/$OUT/"   || bad "the wheel and sdist build"
+  pip install -q build >/dev/null 2>&1 && mkdir -p /tmp/src/core && cp -r /repo/sdk /tmp/src/     && cp -r /repo/core/authzlib /repo/core/cli /tmp/src/core/     && mkdir -p /tmp/src/core/authzlib/__pycache__ && touch /tmp/src/core/authzlib/__pycache__/parse.cpython-313.pyc /tmp/src/core/authzlib/parse.py.orig /tmp/src/core/cli/notes.txt /tmp/src/core/cli/studio/notes.txt     && python -m build -o /tmp/dist /tmp/src/sdk/python >/dev/null && cp /tmp/dist/* /repo/$OUT/"   || bad "the wheel and sdist build"
 ls "$OUT"/rowstile-*.whl "$OUT"/rowstile-*.tar.gz >/dev/null 2>&1 && ok "rowstile: a wheel and an sdist" || bad "no wheel or sdist"
 for dist in whl tar.gz; do
   docker run --rm -v "$REPO:/repo" python:3.11-slim bash -c "
@@ -104,6 +104,18 @@ whl = {n.split("/_command/cli/", 1)[1] for n in zipfile.ZipFile(glob.glob(sys.ar
 missing = {"npm": want - npm, "wheel": want - whl}
 print(missing) if any(missing.values()) else None
 sys.exit(1 if any(missing.values()) else 0)
+EOF
+
+# ... and nothing else of the tree they are built from: the build above put bytecode, a backup and notes beside them
+python3 - "$OUT" <<'EOF' && ok "the wheel and the sdist hold the command's files, and no other file of the tree" || bad "the wheel or the sdist holds another file of the tree"
+import glob, sys, tarfile, zipfile
+want = {f[len("core/"):] for f in glob.glob("core/authzlib/*.py") + glob.glob("core/cli/*.py") + glob.glob("core/cli/studio/*")}
+whl = zipfile.ZipFile(glob.glob(sys.argv[1] + "/rowstile-*.whl")[0]).namelist()
+sdist = tarfile.open(glob.glob(sys.argv[1] + "/rowstile-*.tar.gz")[0]).getnames()
+got = {kind: {n.split("/_command/", 1)[1] for n in names if "/_command/" in n} for kind, names in (("wheel", whl), ("sdist", sdist))}
+wrong = {kind: (sorted(want - files), sorted(files - want)) for kind, files in got.items() if files != want}
+print("(missing, not the command's):", wrong) if wrong else None
+sys.exit(1 if wrong else 0)
 EOF
 
 # each package carries the licence it names

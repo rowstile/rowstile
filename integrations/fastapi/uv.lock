@@ -1020,9 +1020,9 @@ sqlalchemy = [
 
 [package.metadata]
 requires-dist = [
-    { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.28" },
-    { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.100" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'psycopg'", specifier = ">=3.1" },
+    { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.29" },
+    { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.110" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'psycopg'", specifier = ">=3.1.4" },
     { name = "sqlalchemy", marker = "extra == 'sqlalchemy'", specifier = ">=2.0" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'fastapi'", specifier = ">=2.0" },
 ]
@@ -1053,7 +1053,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", specifier = ">=1.10" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.1.4" },
     { name = "pytest", specifier = ">=8" },
     { name = "rowstile", extras = ["fastapi", "sqlalchemy", "psycopg", "asyncpg"], editable = "../../sdk/python" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
