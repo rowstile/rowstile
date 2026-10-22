@@ -124,6 +124,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Fixed
 
+- The npm launcher asks the Python `ROWSTILE_PYTHON` names for its version first, as it asks the one on `PATH`:
+  one older than 3.11, or a path that isn't a Python, is refused with a sentence, where the command failed
+  inside. A bundled Python that isn't executable and can't be made so (a `node_modules` another user
+  installed) is said to be so, not to be missing. `ROWSTILE_PYTHON` has its line in Installing and
+  Troubleshooting.
 - The policy language page's example applies as written: its `shared if` condition had `...` in it, which no
   database runs. It says what an include may name (a file in the policy's folder, once). The identity page and
   the threat model name `view_as` among what signs a session in; the identity page no longer says the SDKs sign

@@ -13,6 +13,16 @@ The ways out: a shorter path for the project,
 long paths turned on in Windows (`LongPathsEnabled`), or a Python of your own (`pip install --pre rowstile`
 gives the same command).
 
+## "rowstile: no Python to run on"
+
+The npm package runs the command on the Python of its platform package, `@rowstile/cli-<platform>`, which npm
+installs as an optional dependency. The message says what is missing: that package isn't installed (`npm i`
+with `--omit=optional`, or `optional=false` in `.npmrc`), there is none for your platform, or its Python isn't
+executable and can't be made so (a `node_modules` another user installed, or a read-only one). Install the
+optional dependencies again, or install Python 3.11 or newer: the command then runs on the one on `PATH`. Or
+set `ROWSTILE_PYTHON` to the Python to run on. The launcher asks that one its version first: a Python older
+than 3.11, or a path that isn't a Python, gets "ROWSTILE_PYTHON is ..., which ...".
+
 ## "can't connect to ..."
 
 The command says where it tried and what the system said: `can't connect to db.example.com port 5433: connection

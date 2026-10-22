@@ -19,7 +19,10 @@ one exists), but the image has no `latest` tag: name its version.
 
 - **npm**: the package brings a Python of its own, built for your machine: Linux (glibc and musl, x64 and
   arm64), macOS (x64 and arm64) and Windows x64. Run it as `npx rowstile`, or from a script in `package.json`.
-  It needs Node 22.12 or newer, as the TypeScript SDK does.
+  It needs Node 22.12 or newer, as the TypeScript SDK does. On another platform, or with optional dependencies
+  turned off (that Python is one), it runs on a Python 3.11 or newer found on `PATH`.
+  `ROWSTILE_PYTHON=/path/to/python3` names the Python to run on instead: 3.11 or newer, or the command says so
+  and stops.
 - **pip**: Python 3.11 or newer. The same package is the [Python SDK](../sdk/python/README.md), and its extras
   bring what each part of it uses: `rowstile[fastapi]`, `rowstile[sqlalchemy]`, `rowstile[psycopg]`,
   `rowstile[asyncpg]`. The command needs none of them.
