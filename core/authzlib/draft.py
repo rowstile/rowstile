@@ -164,9 +164,9 @@ class ForeignKey(TypedDict):
 class Table(TypedDict):
     name: str  # schema.table
     columns: list[tuple[str, str]]  # (column, type), in order
-    pk: list[str]  # the primary key's columns; none: the table has no primary key
+    pk: list[str]  # the primary key's columns (not those it INCLUDEs); none: the table has no primary key
     fks: list[ForeignKey]
-    uniques: NotRequired[list[list[str]]]  # the columns of each unique constraint or index besides the key
+    uniques: NotRequired[list[list[str]]]  # the key columns of each unique constraint or index besides the key
 
 
 def names(value: object) -> list[str]:
@@ -611,7 +611,7 @@ SELECT n.nspname || '.' || c.relname AS name,
   (SELECT json_agg(a.attname ORDER BY k.i)
      FROM pg_catalog.pg_index x CROSS JOIN LATERAL unnest(x.indkey::int2[]) WITH ORDINALITY k(attnum, i)
      JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
-     WHERE x.indrelid = c.oid AND x.indisprimary)::text AS pk,
+     WHERE x.indrelid = c.oid AND x.indisprimary AND k.i <= x.indnkeyatts)::text AS pk,
   (SELECT json_agg(json_build_object(
        'cols', (SELECT json_agg(a.attname ORDER BY k.i) FROM unnest(f.conkey) WITH ORDINALITY k(attnum, i)
                 JOIN pg_catalog.pg_attribute a ON a.attrelid = f.conrelid AND a.attnum = k.attnum),
@@ -623,7 +623,8 @@ SELECT n.nspname || '.' || c.relname AS name,
      WHERE f.conrelid = c.oid AND f.contype = 'f')::text AS fks,
   (SELECT json_agg((SELECT json_agg(a.attname ORDER BY k.i)
                     FROM unnest(x.indkey::int2[]) WITH ORDINALITY k(attnum, i)
-                    JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum))
+                    JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+                    WHERE k.i <= x.indnkeyatts))
      FROM pg_catalog.pg_index x
      WHERE x.indrelid = c.oid AND x.indisunique AND NOT x.indisprimary AND x.indpred IS NULL
        AND NOT 0 = ANY (x.indkey::int2[]))::text AS uniques

@@ -139,6 +139,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   transaction ran as someone else or, for a role that isn't the policy's owner, was not believed (AZ702).
   `authz.explain` for another user left that user signed in the same way. Only administrators get that far
   (the app role may not inspect such an id): both now put the caller back, as they do for any other id.
+- `rowstile init` read the columns a primary key or unique index INCLUDEs as part of the key. A table with
+  `PRIMARY KEY (id) INCLUDE (title)` was drafted as keyed by `(id, title)`: a users table so declared was refused
+  (AZ622), and foreign keys to such a table gave no relation. `authz.lint()` likewise said the app role may choose
+  a primary key the database makes when it may write a column the key's index INCLUDEs. Both read the key's own
+  columns now.
 - The policy language page's example applies as written: its `shared if` condition had `...` in it, which no
   database runs. It says what an include may name (a file in the policy's folder, once). The identity page and
   the threat model name `view_as` among what signs a session in; the identity page no longer says the SDKs sign

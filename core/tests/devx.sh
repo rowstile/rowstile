@@ -494,6 +494,13 @@ CREATE TABLE blog.posts (id bigint PRIMARY KEY, user_id bigint REFERENCES ext.ac
 CREATE TABLE odd."my people" (id bigint PRIMARY KEY);
 CREATE TABLE odd.notes (id bigint PRIMARY KEY, owner_id bigint REFERENCES odd."my people");
 CREATE SCHEMA two; CREATE TABLE two.users (tenant_id bigint, id bigint, PRIMARY KEY (tenant_id, id));
+CREATE SCHEMA inc;
+CREATE TABLE inc.users (id bigint, email text, PRIMARY KEY (id) INCLUDE (email));
+CREATE TABLE inc.orgs (id bigint, name text, PRIMARY KEY (id) INCLUDE (name));
+CREATE TABLE inc.docs (id bigint, title text, org_id bigint REFERENCES inc.orgs, owner_id bigint REFERENCES inc.users,
+  PRIMARY KEY (id) INCLUDE (title));
+CREATE TABLE inc.org_members (id bigserial PRIMARY KEY, org_id bigint REFERENCES inc.orgs, user_id bigint REFERENCES inc.users,
+  note text, UNIQUE (org_id, user_id) INCLUDE (note));
 SQL
 mkdir -p "$T/x1" "$T/x2"
 out=$(cd "$T/x1" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_ext" init --schema blog 2>&1); rc=$?
@@ -507,6 +514,13 @@ out=$(cd "$T/x2" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_ext
 out=$(mkdir -p "$T/x3" && cd "$T/x3" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_ext" init --schema two 2>&1); rc=$?
 [ $rc -eq 1 ] && [ "$out" = "two.users: the user table needs a key of one column (or name another: rowstile init --users schema.table) [AZ622]" ] &&
   ok "... and a users table keyed by two columns: says what it lacks" || bad "init, users keyed by two columns" "$rc $out"
+# a key whose index INCLUDEs other columns is keyed by its own columns alone: the users table's is one column, the
+# docs' foreign key matches the orgs' key, and a pair unique with a column INCLUDEd is a membership's
+out=$(mkdir -p "$T/x4" && cd "$T/x4" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_ext" init --schema inc 2>&1); rc=$?
+draft=$(cat "$T/x4/db/policy.authz" 2>/dev/null)
+case "$rc $draft" in
+  "0 "*$'\ntype doc = inc.docs\n  org : org = org_id\n'*$'\ntype org = inc.orgs\n  member : user = inc.org_members(org_id -> user_id)\n'*)
+  ok "init reads a key's own columns, not those its index INCLUDEs";; *) bad "init, a key with INCLUDE columns" "$rc $out $draft";; esac
 dropdb --if-exists "${DB}_ext" 2>/dev/null
 # shapes real apps have (Chatwoot, GitLab, Documenso, Plausible): accounts beside users, a foreign key declared
 # twice, a loop of foreign keys where only orgs have owners, a membership with an id of its own: the draft takes
