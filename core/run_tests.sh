@@ -161,7 +161,7 @@ fi
 if part policy; then
 if every_version; then
 fuzz_parser() {
-step "broken policies are refused with a line number, never a crash (mutated example policies)"
+step "broken policies are refused with a line number, never a crash (the suites' policies, mutated)"
 FUZZ=5000; [ "$MODE" = quick ] && FUZZ=1500
 python3 tests/fuzz_parser.py --cases "$FUZZ"
 record $? "fuzz parser"

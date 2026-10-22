@@ -3,8 +3,8 @@
 
     python3 tests/fuzz_parser.py [--cases 3000] [--seed 1]
 
-Starts from the example policies and mutates them at random (drop, repeat, swap or replace tokens and
-lines, insert odd characters, cut the text short), then parses and compiles each. A policy may be
+Starts from the suites' policies (seeds()) and mutates them at random (drop, repeat, swap or replace tokens and
+lines, insert odd characters and the language's words, cut the text short), then parses and compiles each. A policy may be
 accepted or refused; what must never happen is any other exception (an IndexError, a KeyError, a
 RecursionError...), a refusal without a line number or at a line the policy doesn't have (rowstile dev shows
 that line), the words a refusal is about (its span, which an editor underlines) outside the policy's text or
@@ -22,55 +22,62 @@ import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from authzlib import Compiler  # noqa: E402
+from authzlib import Compiler, parse  # noqa: E402
 from authzlib.parse import PolicyError, Span, parse_policy  # noqa: E402
 
-SEEDS = ["example/docs.authz", "tests/alt.authz", "tests/multi.authz", "tests/composite.authz"]
-ODD = [
-    "(",
-    ")",
-    "[",
-    "]",
-    "{",
-    "}",
-    "#",
-    ".",
-    ":",
-    "=",
-    ",",
-    "->",
-    "--",
-    "'",
-    '"',
-    "\\",
-    "\t",
-    "é",
-    "​",
-    "and",
-    "or",
-    "not",
-    "can",
-    "type",
-    "rules",
-    "shared",
-    "by",
-    "if",
-    "grant",
-    "scope",
-    "caveat",
-    "include",
-    "test",
-    "invariants",
-    "never",
-    "role",
-    "user:*",
-    "anyone",
-    "link",
-    "{",
-    "select",
-    "update x check",
+# the policies mutated: every fixed policy of the suites, the docs app with its named tests, the hand-answered
+# policies (tests/hand/: tests, principals, caveats, masks, column rules, a link table's where with this., ...) and
+# the example apps' (cascade from, services)
+FIXED = "tests"
+HAND = "tests/hand"
+DOCS = ("example/docs.authz", "example/docs.test.authz")  # one policy: the second is the first's named tests
+APPS = ("../examples/filemanager/db/policy.authz", "../examples/messenger/db/policy.authz")
+
+
+def seeds(root: str) -> list[str]:
+    """The texts the fuzzer starts from."""
+
+    def read(path: str) -> str:
+        with open(os.path.join(root, path), encoding="utf-8") as fh:
+            return fh.read()
+
+    found = [f"{FIXED}/{f}" for f in os.listdir(os.path.join(root, FIXED)) if f.endswith(".authz")]
+    found += [f"{HAND}/{f}" for f in os.listdir(os.path.join(root, HAND)) if f.endswith(".authz")]
+    return ["\n".join(read(p) for p in DOCS), *(read(p) for p in [*sorted(found), *APPS])]
+
+
+# the odd tokens put in: marks, odd characters, and every word of the language, as the parser names them (its lists,
+# and the words it looks for: read from its source, so that a new one is in here as soon as the parser knows it)
+MARKS = ["(", ")", "[", "]", "{", "}", "#", ".", ":", "=", ",", "->", "--", "'", '"', "\\", "\t", "é", "\u200b"]
+MORE = [
+    "$",
+    "$$",
+    "$f$",
+    "E'",
+    "/*",
     "*",
+    "user:*",
+    "shared",
+    "link",
+    "mask",
+    "before",
+    "after",
+    "this.",
+    "user",
+    "include",
 ]
+
+
+def words() -> list[str]:
+    """The language's words: parse.py's lists, and each word it asks a line for (`w.name("given", "as")`)."""
+    with open(parse.__file__, encoding="utf-8") as fh:
+        source = fh.read()
+    named = [w for call in re.findall(r'\.name\(((?:"[A-Za-z_]+",?\s*)+)', source) for w in re.findall(r"\w+", call)]
+    listed = [*parse.TOP_WORDS, *parse.COMMANDS, *parse.KEYWORDS, *parse.RESERVED, parse.ROLES]
+    return sorted({*listed, *named})
+
+
+ODD = list(dict.fromkeys(MARKS + MORE + words()))
 
 
 def tokens(text: str) -> list[str]:
@@ -140,16 +147,12 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args()
     rnd = random.Random(args.seed)
-    root = os.path.dirname(HERE)
-    seeds: list[str] = []
-    for p in SEEDS:
-        with open(os.path.join(root, p), encoding="utf-8") as fh:
-            seeds.append(fh.read())
+    texts = seeds(os.path.dirname(HERE))
     accepted = refused = 0
     problems: list[tuple[int, str, str]] = []
     slowest = 0.0
     for n in range(args.cases):
-        text = rnd.choice(seeds)
+        text = rnd.choice(texts)
         for _ in range(rnd.choice([1, 1, 2, 3, 5])):
             if text:
                 text = mutate(rnd, text)
@@ -166,7 +169,7 @@ def main() -> int:
     for n, what, text in problems[:5]:
         print(f"--- case {n}: {what.strip()}\n{text[:1500]}\n")
     print(
-        f"fuzz_parser: {args.cases} mutated policies, {accepted} accepted, {refused} refused, "
+        f"fuzz_parser: {args.cases} mutated policies (from {len(texts)}), {accepted} accepted, {refused} refused, "
         f"{len(problems)} problems; slowest {slowest * 1000:.0f} ms"
     )
     return 1 if problems else 0

@@ -13262,6 +13262,52 @@ class ScannerSteps(unittest.TestCase):
         self.assertEqual(parse.Scanner().code_end("can view = owner  -- the owner"), 18)
 
 
+class FuzzParser(unittest.TestCase):
+    """tests/fuzz_parser.py, each push's robustness check of the parser: it mutates every fixed policy of the suites,
+    the docs app with its named tests and the hand-answered policies, and puts in the language's words, as the
+    parser looks for them, not the forms it dropped."""
+
+    def test_it_starts_from_the_suites_policies(self) -> None:
+        import fuzz_parser
+
+        texts = fuzz_parser.seeds(ROOT)
+        files = glob.glob(os.path.join(ROOT, "tests", "*.authz")) + glob.glob(
+            os.path.join(ROOT, "tests", "hand", "*.authz")
+        )
+        self.assertEqual(len(texts), len(files) + 3)  # (and the docs app with its named tests, the two example apps)
+        every = "\n".join(texts)
+        # forms only a few of them have: named tests and their lines, scopes in a test, a principal type, dollar
+        # quotes and E'' strings, a link table's where with this., cascade from
+        for form in (
+            'test "',
+            "  given ",
+            " allowed {",
+            " refused {",
+            " sees ",
+            "with scope",
+            " principal ",
+            "$$",
+            "E'",
+        ):
+            self.assertIn(form, every)
+        for form in ("where {this.", "cascade from ", "mask ", " after :", "shared if {"):
+            self.assertIn(form, every)
+
+    def test_it_puts_in_every_word_of_the_language(self) -> None:
+        import fuzz_parser
+
+        for word in ("given", "as", "allowed", "refused", "sees", "with", "scope", "principal", "where", "from"):
+            self.assertIn(word, fuzz_parser.ODD)
+        for word in ("cascade", "view", "object", "subject", "nobody", "signed_in", "anyone", "never", "roles"):
+            self.assertIn(word, fuzz_parser.ODD)
+        for word in ("mask", "before", "after", "shared", "link", "this.", "$$", "E'"):
+            self.assertIn(word, fuzz_parser.ODD)
+        # not the forms the language dropped (the old relation form, the old name of `after`)
+        self.assertNotIn("grant", fuzz_parser.ODD)
+        self.assertNotIn("update x check", fuzz_parser.ODD)
+        self.assertEqual(len(fuzz_parser.ODD), len(set(fuzz_parser.ODD)))  # (each once: none drawn twice as often)
+
+
 class ParseAgreement(unittest.TestCase):
     """tests/parse_agreement.py, which compares the editors' grammar's reading of each policy with parse.py's (the
     editor job runs it on Tree-sitter's XML): it finds them alike when they are, and says where they differ."""
@@ -13303,8 +13349,66 @@ class ParseAgreement(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("/types/doc/perms/view[0]: the parser reads 'or', the grammar 'and'", problems[0])
 
+    # a test's line, and what `tree-sitter parse --xml` writes for it: the id it asks of is where object says
+    TEST_POLICY = "app role app_user\ntype user = app.users\ntest\n  user 3 with scope read can view user 11\n"
+    TEST_XML = (
+        '<sources><source name="{path}"><source_file>'
+        '<app_role>app role<identifier field="name">app_user</identifier></app_role>'
+        '<type>type<identifier field="name">user</identifier>=<table_name field="table">'
+        '<identifier field="schema">app</identifier>.<identifier field="name">users</identifier></table_name></type>'
+        '<test>test<check><identifier field="principal">user</identifier><value field="who" srow="3" scol="7" '
+        'erow="3" ecol="8">3</value><limited>with scope<scope_name field="scope"><identifier>read</identifier>'
+        '</scope_name></limited>can<identifier field="permission">view</identifier><identifier field="type">user'
+        '</identifier><value field="object" srow="3" scol="{scol}" erow="3" ecol="{ecol}">11</value></check></test>'
+        "</source_file></source></sources>"
+    )
+
+    def compare_test(self, scol: int, ecol: int) -> tuple[int, int, list[str]]:
+        import parse_agreement
+
+        with tempfile.TemporaryDirectory() as d:
+            policy, xml = os.path.join(d, "p.authz"), os.path.join(d, "all.xml")
+            with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(self.TEST_POLICY)
+            with open(xml, "w", encoding="utf-8") as fh:
+                fh.write(self.TEST_XML.format(path=policy, scol=scol, ecol=ecol))
+            return parse_agreement.compare(xml)
+
+    def test_a_test_lines_parts_are_compared(self) -> None:
+        # who, the scopes, can or cannot, the permission, the type and the id: a grammar that read the line's id
+        # elsewhere (its 3, not its 11) differs, though the line is a check either way
+        at = self.TEST_POLICY.split("\n")[3].index("11")
+        self.assertEqual(self.compare_test(at, at + 2), (1, 0, []))
+        compared, _, problems = self.compare_test(7, 8)
+        self.assertEqual(compared, 1)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("/tests[0][1][0][7]: the parser reads '11', the grammar '3'", problems[0])
+
+    def test_an_including_policys_own_lines_alone(self) -> None:
+        # what an included file says (its app role, scope, caveat, a rules block's view, tests) is its own: the
+        # including policy's reading has none of it, as the grammar, reading each file apart, has none
+        import parse_agreement
+
+        included = (
+            "app role app_user\nscope s = select\ncaveat c = {true}\ntype user = app.users\n"
+            "rules app.users view app.users_seen\n  select : anyone\ntest\n  user 1 cannot view user 2\n"
+            'test "t"\n  user 1 cannot view user 2\n'
+        )
+        pol = parse_policy('include "more.authz"\n', "p.authz", files={"more.authz": included})
+        self.assertEqual(
+            (pol.role, list(pol.scopes), list(pol.caveats), pol.views),
+            ("app_user", ["s"], ["c"], {"app.users": "app.users_seen"}),
+        )
+        self.assertEqual((len(pol.tests), len(pol.scenarios)), (1, 1))
+        reading = parse_agreement.reading_py(pol, role=False)
+        self.assertEqual(
+            {k: reading[k] for k in ("role", "types", "rules", "views", "scopes", "caveats", "tests")},
+            {"role": None, "types": {}, "rules": [], "views": {}, "scopes": {}, "caveats": {}, "tests": []},
+        )
+
     def test_small_policies_written_two_ways(self) -> None:
-        # small.py's set (to size 3: 96 policies), a slice of it, each as listed and written another way
+        # small.py's set (to size 3: 96 policies), a slice of it, each as listed and written another way; and the
+        # language page's example, which includes a file, beside that file
         import parse_agreement
         import small
 
@@ -13313,7 +13417,12 @@ class ParseAgreement(unittest.TestCase):
             names = sorted(os.listdir(d))
             mine = [k for k in range(len(small.the_set(3))) if k % 4 == 1]
             self.assertEqual(len(mine), 24)
-            want = ["gen_1.authz", "gen_2.authz"] + [f"small_{k}{x}.authz" for k in mine for x in ("", "_other")]
+            want = ["language.authz", "roles.authz", "gen_1.authz", "gen_2.authz"]
+            want += [f"small_{k}{x}.authz" for k in mine for x in ("", "_other")]
+            with open(os.path.join(d, "language.authz"), encoding="utf-8") as fh:
+                example = fh.read()
+            self.assertIn('include "roles.authz"', example)
+            parse_policy(example, "language.authz", files={"roles.authz": read("tests/fixtures/roles.authz")})
             self.assertEqual(names, sorted(want))
             changed = 0
             for k in mine:

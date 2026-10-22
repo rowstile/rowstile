@@ -6,6 +6,7 @@ them both: their answers would agree, and be wrong. The grammar was written apar
 the two read a policy alike, that reading has two witnesses.
 
     python3 tests/parse_agreement.py --write DIR N       # N of genpolicy's random policies, as DIR/gen_<seed>.authz
+                                                         # (and the language page's example, which includes a file)
     python3 tests/parse_agreement.py --write DIR 0 --small 4 [--slice K/N]   # and/or small.py's set up to size 4
     npx tree-sitter parse --xml --paths LIST > all.xml   # in editor/tree-sitter-authz: every file LIST names
     python3 tests/parse_agreement.py all.xml [more.xml]  # each policy parse.py accepts, read alike? (exit 1 if not)
@@ -19,7 +20,9 @@ where that is a policy the parser reads (`tree-sitter parse --xml` writes no XML
 Alike: the app role; the types (table, key, whether they sign in, where); each relation's sources in order, with
 their subjects; the permissions, as expressions (or, and, not, grouped as parentheses say, a run of ors or of ands
 flat); rules and masks, and the view of a table's rules; `cascade from` lines; invariants; scopes; caveats; the
-tests and their steps.
+tests and each of their lines' parts (who, with which scopes; the permission, the type and the id asked of; the SQL;
+allowed, refused or how many rows it sees). Of a policy that includes files, its own lines alone: each file is
+compared as a policy of its own.
 The grammar reads more than the parser takes, as an editor must (`a or b and c`, which the parser refuses): a
 policy the parser refuses is not compared. Both read a condition's text without its -- comments.
 """
@@ -38,7 +41,23 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 from authzlib import parse  # noqa: E402
-from authzlib.parse import And, Arrow, ArrowOn, Cond, Expr, Not, Or, Policy, PolicyError, Ref, Source  # noqa: E402
+from authzlib.parse import (  # noqa: E402
+    And,
+    Arrow,
+    ArrowOn,
+    AsStep,
+    CheckStep,
+    Cond,
+    Expr,
+    GivenStep,
+    Not,
+    Or,
+    Policy,
+    PolicyError,
+    Ref,
+    Source,
+    Step,
+)
 
 Shape = Any  # a reading of a policy, as lists, tuples and dicts that compare with ==
 
@@ -95,8 +114,21 @@ def source_py(s: Source) -> Shape:
     return ("shared", subjects, s.shared_by, condition(s.shared_if) if s.shared_if else None)
 
 
-def reading_py(pol: Policy) -> Shape:
-    """parse.py's reading of the policy's own lines (not those of a file it includes)."""
+def step_py(s: Step) -> Shape:
+    """A test's line: what it is, and each of its parts (who, with which scopes; what is asked or run; what is
+    expected)."""
+    match s:
+        case GivenStep(var=var, sql=sql):
+            return ["given", var, condition(sql)]
+        case CheckStep():
+            return ["check", s.ptype, s.who, list(s.scopes), "can" if s.expect else "cannot", s.perm, s.type, s.obj]
+        case AsStep():
+            return ["as", s.ptype, s.who, list(s.scopes), s.expect, condition(s.sql)]
+
+
+def reading_py(pol: Policy, role: bool = True) -> Shape:
+    """parse.py's reading of the policy's own lines (not those of a file it includes); role: whether its own lines
+    name the app role (the parser keeps no line for it)."""
     own = lambda loc: loc is None or loc.file is None
     types = {}
     for t in pol.types.values():
@@ -116,18 +148,21 @@ def reading_py(pol: Policy) -> Shape:
             "roles": ([(st, sr) for st, sr in t.roles[0]], t.roles_from) if t.roles else None,
         }
     rules = [(r.table, r.command, tuple(r.columns), expr_py(r.expr)) for r in pol.rules if own(r.loc)]
-    tests = [(None, [s.kind for s in pol.tests])] if pol.tests else []
-    tests += [(sc.name, [s.kind for s in sc.steps]) for sc in pol.scenarios if sc.loc is not None and own(sc.loc)]
+    unnamed = [step_py(s) for s in pol.tests if own(s.loc)]
+    tests = [(None, unnamed)] if unnamed else []
+    tests += [(sc.name, [step_py(s) for s in sc.steps]) for sc in pol.scenarios if sc.loc is not None and own(sc.loc)]
     return {
-        "role": pol.role,
+        "role": pol.role if role else None,
         "types": types,
         "rules": rules,
         "cascades": [(c.table, c.parent, c.columns) for c in pol.cascades if own(c.loc)],
-        "views": dict(pol.views),
+        "views": {t: v for t, v in pol.views.items() if own(pol.view_locs.get(t))},
         "invariants": [(i.type, expr_py(i.expr)) for i in pol.invariants if own(i.loc)],
         # (what the parser makes of each item, a command or a permission, is its reading alone: the words compared)
-        "scopes": {s.name: [".".join(x for x in item[1:] if x) for item in s.items] for s in pol.scopes.values()},
-        "caveats": {c.name: condition(c.sql) for c in pol.caveats.values()},
+        "scopes": {
+            s.name: [".".join(x for x in item[1:] if x) for item in s.items] for s in pol.scopes.values() if own(s.loc)
+        },
+        "caveats": {c.name: condition(c.sql) for c in pol.caveats.values() if own(c.loc)},
         "tests": tests,
     }
 
@@ -253,6 +288,38 @@ def source_ts(tree: Tree, rel: ET.Element) -> Shape:
     raise ValueError(f"not a source: {last.tag}")
 
 
+def value_ts(tree: Tree, e: ET.Element | None) -> str | None:
+    """A test's id as the parser reads it: a 'quoted' literal unquoted, anything else as written."""
+    if e is None:
+        return None
+    text = tree.text(e)
+    return text[1:-1].replace("''", "'") if e.tag == "literal" else text
+
+
+def who_ts(tree: Tree, e: ET.Element) -> list[Shape]:
+    """Who a test's line is about: [type, id, scopes]; anyone is ['anyone', None, []]."""
+    if any(k.tag == "anyone" for k in kids(e)):
+        return ["anyone", None, []]
+    limited = next((k for k in kids(e) if k.tag == "limited"), None)
+    scopes = [name_of(k) for k in kids(limited) if k.get("field") == "scope"] if limited is not None else []
+    return [name_of(field(e, "principal")), value_ts(tree, field(e, "who")), scopes]
+
+
+def step_ts(tree: Tree, e: ET.Element) -> Shape:
+    """A test's line, as step_py has it."""
+    sql = next((k for k in kids(e) if k.tag == "sql"), None)
+    if e.tag == "given":
+        return ["given", name_of(field(e, "name")), sql_of(tree, sql) if sql is not None else None]
+    if e.tag == "check":
+        verb = next(w for w in tokens(e) if w in ("can", "cannot"))
+        perm, type_ = name_of(field(e, "permission")), name_of(field(e, "type"))
+        return ["check", *who_ts(tree, e), verb, perm, type_, value_ts(tree, field(e, "object"))]
+    verb = next(w for w in tokens(e) if w in ("allowed", "refused", "sees"))
+    number = next((k for k in kids(e) if k.tag == "number"), None)
+    expect: str | int = int(tree.text(number)) if verb == "sees" and number is not None else verb
+    return ["as", *who_ts(tree, e), expect, sql_of(tree, sql) if sql is not None else None]
+
+
 def reading_ts(tree: Tree) -> Shape:
     out: Shape = {
         "role": None,
@@ -265,7 +332,7 @@ def reading_ts(tree: Tree) -> Shape:
         "caveats": {},
     }
     tests: list[Shape] = []
-    unnamed: list[str] = []
+    unnamed: list[Shape] = []
     for top in kids(tree.root):
         match top.tag:
             case "app_role":
@@ -322,7 +389,7 @@ def reading_ts(tree: Tree) -> Shape:
             case "caveat":
                 out["caveats"][name_of(field(top, "name")) or ""] = sql_of(tree, kids(top)[-1])
             case "test":
-                steps = [s.tag for s in kids(top) if s.tag in ("check", "given", "as")]
+                steps = [step_ts(tree, s) for s in kids(top) if s.tag in ("check", "given", "as")]
                 name = field(top, "name")
                 if name is None:
                     unnamed += steps
@@ -386,17 +453,31 @@ def compare(xml_path: str) -> tuple[int, int, list[str]]:
             problems.append(f"{path}: the parser reads it, the grammar can't")
             continue
         compared += 1
-        problems += [f"{path}{d}" for d in differences(reading_py(pol), reading_ts(Tree(root, data)))]
+        role = re.search(r"^app\s+role\b", text, re.M) is not None  # (its own lines name it, not an included file's)
+        problems += [f"{path}{d}" for d in differences(reading_py(pol, role), reading_ts(Tree(root, data)))]
     return compared, refused, problems
 
 
+REPO = os.path.dirname(os.path.dirname(HERE))
+# a policy that includes another: the language page's example, and the file it includes (as tests/reference.sh has
+# them), written beside each other
+LANGUAGE = os.path.join(REPO, "docs", "reference", "language.md")
+INCLUDED = os.path.join(HERE, "fixtures", "roles.authz")
+
+
 def write(folder: str, n: int, small: int = 0, part: tuple[int, int] = (0, 1)) -> None:
-    """n of genpolicy's random policies, seeds 1 to n, as folder/gen_<seed>.authz; and small.py's set up to size
-    small (those whose number is part[0] modulo part[1]), each as listed and written another way."""
+    """The language page's example and the file it includes (language.authz, roles.authz); n of genpolicy's random
+    policies, seeds 1 to n, as folder/gen_<seed>.authz; and small.py's set up to size small (those whose number is
+    part[0] modulo part[1]), each as listed and written another way."""
     import genpolicy
 
     os.makedirs(folder, exist_ok=True)
-    texts = {f"gen_{seed}": genpolicy.policy_text(genpolicy.make(seed)) for seed in range(1, n + 1)}
+    with open(LANGUAGE, encoding="utf-8") as fh:
+        example = re.search(r"```authz\n(.*?)```", fh.read(), re.S)
+    assert example is not None, "the language page's example"
+    with open(INCLUDED, encoding="utf-8") as fh:
+        texts = {"language": example.group(1), os.path.basename(INCLUDED).removesuffix(".authz"): fh.read()}
+    texts |= {f"gen_{seed}": genpolicy.policy_text(genpolicy.make(seed)) for seed in range(1, n + 1)}
     if small:
         import small as smallset
 

@@ -23,8 +23,9 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   was written apart from the parser. [`tests/parse_agreement.py`](../core/tests/parse_agreement.py) has both
   read every policy in the repository, two hundred random ones and the small policies up to size four (894, each
   written two ways: as listed, and with its names swapped and its parts turned round), and compares what they
-  read: the types, each relation's sources, the permissions with their grouping, the rules, the tests. They read
-  each one alike. Each night they read all 70,983 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
+  read: the types, each relation's sources, the permissions with their grouping, the rules, each line of the tests
+  part by part, and of a policy that includes a file, its own lines. They read each one alike.
+  Each night they read all 70,983 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
   (The grammar takes more than the parser does, as an editor must: what the parser refuses isn't compared.) <!-- checked: tests/parse_agreement.py "policy the parser refuses is not compared" -->
 - **Random data**: [`tests/difftest.py`](../core/tests/difftest.py) fills six policies' tables with random
   rows and makes a hundred random changes to each (moves, links, loops, groups inside groups, inheritance
@@ -233,7 +234,8 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   on that random policy: 76 on PostgreSQL 16, where calling the function for each row made 10,768 and took over a
   second. <!-- checked: tests/unit_test.py "test_starting_points_are_read_in_from"; tests/confidence_test.py "its starting points run once where they are read" -->
 - **The parser**: [`tests/fuzz_parser.py`](../core/tests/fuzz_parser.py) feeds it thousands of broken
-  policies; each is accepted, or refused with a line number, never a crash. <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
+  policies, each made from one of the suites' own with the language's words put in; each is accepted, or refused
+  with a line number, never a crash. <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
   Every night [`tests/fuzz_coverage.py`](../core/tests/fuzz_coverage.py) gives the parser and the compiler
   twenty minutes more under Atheris, a fuzzer that watches which branches each input reaches and works from the
   ones that reach new ground, held to the same rule.
