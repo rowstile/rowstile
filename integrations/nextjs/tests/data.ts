@@ -8,6 +8,7 @@ export const APP = process.env.ROWSTILE_APP_URL ?? "";
 export const FEED = process.env.ROWSTILE_FEED_URL ?? APP;
 export const SERVER = process.env.CONFORMANCE_SERVER ?? "";          // a pool of 5 connections
 export const SERVER_ONE = process.env.CONFORMANCE_SERVER_ONE ?? "";  // a pool of one
+export const SERVER_LOG = process.env.CONFORMANCE_SERVER_LOG ?? "";  // what SERVER logs
 export const EXPECTED: Record<string, number[]> = { "1": [1, 3, 4], "2": [2, 3], "3": [1, 3, 4], "": [3] };
 
 export async function seed(): Promise<void> {

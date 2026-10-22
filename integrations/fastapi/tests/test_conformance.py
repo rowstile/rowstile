@@ -79,11 +79,25 @@ async def test_3_not_signed_in_is_an_error_that_says_how() -> None:
 # 4: one pooled connection, Ann then Bob: Bob never sees Ann's rows
 async def test_4_a_pooled_connection_carries_no_one_over() -> None:
     a = make_app(APP, check_connection=False, pool_size=1)
-    async with client(a) as c:
-        assert (await c.get("/notes", headers=as_("1"))).json() == EXPECTED["1"]
-        assert (await c.get("/notes", headers=as_("2"))).json() == EXPECTED["2"]
-        assert (await c.get("/notes")).json() == EXPECTED[None]
-    await a.state.engine.dispose()
+    try:
+        async with client(a) as c:
+            assert (await c.get("/notes", headers=as_("1"))).json() == EXPECTED["1"]
+            assert (await c.get("/notes", headers=as_("2"))).json() == EXPECTED["2"]
+            assert (await c.get("/notes")).json() == EXPECTED[None]
+            # a transaction that commits (a folder moved where it is): a rollback undoes even a session's settings
+            assert (await c.patch("/folders/2", json={"parent_id": 1}, headers=as_("1"))).status_code == 200
+        # each request signed in again, so the answers alone can't tell: the pool's one connection, as the last
+        # request left it, in a transaction nobody signs in to, holds no one (a sign-in that outlived its
+        # transaction would still be ann's here)
+        async with a.state.engine.connect() as conn:
+            raw = (await conn.get_raw_connection()).driver_connection
+            assert isinstance(raw, asyncpg.Connection)
+            assert await raw.fetchval("SELECT current_setting('authz.user_id', true)") in (None, "")
+            with pytest.raises(asyncpg.PostgresError) as e:
+                await raw.fetchval("SELECT count(*) FROM app.notes")
+            assert rowstile.error_code(e.value) == "AZ701", str(e.value)  # rowstile help AZ701
+    finally:
+        await a.state.engine.dispose()
 
 
 # 5: concurrent requests never mix users
@@ -124,6 +138,38 @@ async def test_7_hidden_is_404_and_not_allowed_is_403(app: FastAPI) -> None:
     assert gone.status_code == 404, gone.text
     assert no.status_code == 403 and no.json()["command"] == "delete" and no.json()["why"], no.text
     assert no.json()["detail"] == "permission denied: user 3 may not delete row 1 of app.notes", no.text
+
+
+# 7: ... and the SDK's own 404: cy's note in ann's project, which ann reads and which is in bo's project by the
+# time her update reaches the database. The app found the row: the 404 is the database's answer, which the SDK
+# turns into one (why_stale)
+async def test_7_a_row_hidden_before_the_update_is_404(app: FastAPI) -> None:
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    moved: list[int] = []
+
+    def move_it(session: Session, *_: object) -> None:
+        if not moved:  # once: someone moves the note meanwhile
+            with psycopg.connect(libpq(OWNER), autocommit=True) as owner:
+                moved.append(owner.execute("UPDATE app.notes SET project_id = 2 WHERE id = 4").rowcount)
+
+    event.listen(Session, "before_flush", move_it)
+    try:
+        async with client(app) as c:
+            hidden = await c.patch("/notes/4", json={"body": "x"}, headers=as_("1"))
+    finally:
+        event.remove(Session, "before_flush", move_it)
+        with psycopg.connect(libpq(OWNER), autocommit=True) as owner:
+            owner.execute("UPDATE app.notes SET project_id = 1 WHERE id = 4")
+    assert moved == [1]
+    assert hidden.headers["content-type"] == "application/problem+json", hidden.text
+    assert hidden.json() == {
+        "type": "https://rowstile.dev/problems/not-found",
+        "title": "Not Found",
+        "status": 404,
+        "detail": "app.notes 4 not found",
+    }, hidden.text
 
 
 # 8: an insert read back works when the select rule allows it, and is explained when not
@@ -168,7 +214,7 @@ async def test_16_not_there_is_404_and_a_wrong_argument_400(app: FastAPI) -> Non
         }, r.text
         assert r.status_code == 400
     assert revoked.status_code == 204, revoked.text
-    # the database says it with a refusal's SQLSTATE (42501), but it is none: the key isn't there for this user
+    # no refusal: for this user the key isn't there (bo's own keys don't hold it; ann's no longer do)
     for r in (others, again):
         assert r.headers["content-type"] == "application/problem+json", r.text
         assert r.json() == {
@@ -212,6 +258,7 @@ async def test_16_each_code_answers_as_its_page_says(app: FastAPI) -> None:
         not_shared = await c.get("/projects/1/shares", headers=as_("2"))
         inside = await c.patch("/folders/1", json={"parent_id": 2}, headers=as_("1"))
         stays = await c.patch("/folders/2", json={"parent_id": 1}, headers=as_("1"))
+        service = await c.post("/keys", json={"name": "mine"}, headers={"x-service": "1"})  # a key for itself
         errors = []
         for call in (
             c.post("/projects/1/requests", json={"relation": "member", "reason": "the review"}, headers=as_("2")),
@@ -242,12 +289,8 @@ async def test_16_each_code_answers_as_its_page_says(app: FastAPI) -> None:
         assert got["type"] == "https://rowstile.dev/problems/refused" and got["code"] == code, got
         assert got["detail"].startswith(detail) and got["table"] is None and got["command"] is None, got
     # a call that is for users, made by a service (rowstile help AZ715): a refusal too, 403
-    with psycopg.connect(libpq(APP)) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege) as e:
-        conn.execute("SELECT authz.act_as('service', '1')")
-        conn.execute("SELECT authz.create_api_key('mine')")
-    users_only = rowstile.refusal(e.value)
-    assert users_only is not None
-    assert users_only.problem() == {
+    assert service.headers["content-type"] == "application/problem+json", service.text
+    assert service.json() == {
         "type": "https://rowstile.dev/problems/refused",
         "title": "Forbidden",
         "status": 403,
@@ -256,7 +299,8 @@ async def test_16_each_code_answers_as_its_page_says(app: FastAPI) -> None:
         "command": None,
         "why": [],
         "code": "AZ715",
-    }
+    }, service.text
+    assert service.status_code == 403
     said = [(rowstile.error_code(e), rowstile.sqlstate(e)) for e in errors]
     assert said == [("AZ706", "P0001"), ("AZ707", "P0001"), ("AZ702", "28000")], said
     for e, words in zip(
@@ -273,7 +317,16 @@ async def test_16_each_code_answers_as_its_page_says(app: FastAPI) -> None:
 
 # 9: the generated names type-check, and a wrong permission name doesn't
 def test_9_generated_names_type_check(tmp_path: Path) -> None:
-    subprocess.run([sys.executable, "-m", "rowstile", "client"], cwd=HERE, check=True, capture_output=True)
+    # the committed client is the one the policy makes (rowstile client py POLICY prints it, and writes nothing)
+    made = subprocess.run(
+        [sys.executable, "-m", "rowstile", "client", "py", "db/policy.authz"],
+        cwd=HERE,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    committed = Path(HERE, "app", "authz_client.py").read_text()
+    assert made.stdout == committed, "app/authz_client.py is out of date: run rowstile client"
     good = tmp_path / "good.py"
     bad = tmp_path / "bad.py"
     use = "from app.authz_client import Authz\n\ndef f(a: Authz) -> bool:\n    return a.can('note', 1, {!r})\n"
@@ -710,8 +763,13 @@ async def test_the_pytest_helpers(
         assert (await assert_refused(insert_later, command="insert")).table == "app.notes"
 
 
-# 14: after a policy change and a new migration, the app works with the new generated names
+# 14: after a policy change and a new migration, the app works with the new generated names. On this worker's copy
+# of the migrated test database (check 12's), copied again after: the checks after this one see the policy as it is
 def test_14_a_policy_change_ships_as_the_next_migration(tmp_path: Path) -> None:
+    import importlib.util
+
+    tests = os.environ["ROWSTILE_TESTS_URL"]
+    copy = database_per_worker(tests, app_url=APP)
     work = tmp_path / "app"
     shutil.copytree(HERE, work, ignore=shutil.ignore_patterns(".venv", "__pycache__", ".pytest_cache", ".mypy_cache"))
     policy = work / "db" / "policy.authz"
@@ -719,11 +777,31 @@ def test_14_a_policy_change_ships_as_the_next_migration(tmp_path: Path) -> None:
         policy.read_text().replace("  can read = recipient\n", "  can read = recipient\n  can reply = recipient\n")
     )
     cli = "-m", "rowstile"  # the command, as the rowstile package installs it
-    subprocess.run([sys.executable, *cli, "migrate"], cwd=work, check=True, capture_output=True)
-    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=work, check=True, capture_output=True)
-    subprocess.run([sys.executable, *cli, "client"], cwd=work, check=True, capture_output=True)
-    assert '"reply"' in (work / "app" / "authz_client.py").read_text()
-    with psycopg.connect(libpq(APP)) as conn, conn.transaction():
-        conn.execute("SELECT authz.act_as(%s, %s)", rowstile.act_as_args(2))
-        got = conn.execute("SELECT authz.perms('message', id::text) FROM app.inbox WHERE recipient_id = 2").fetchall()
-    assert got and all("reply" in r[0] for r in got), got
+    env = {**os.environ, "ROWSTILE_OWNER_URL": copy.url}  # what Alembic migrates (migrations/env.py)
+    try:
+        with psycopg.connect(libpq(copy.url), autocommit=True) as owner:  # ann sends bo a message
+            owner.execute("INSERT INTO app.users VALUES (1, 'ann'), (2, 'bo')")
+            message = owner.execute(
+                "INSERT INTO app.inbox (sender_id, recipient_id, body) VALUES (1, 2, 'hi') RETURNING id"
+            ).fetchone()
+        assert message is not None
+        subprocess.run([sys.executable, *cli, "migrate"], cwd=work, check=True, capture_output=True)
+        subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"], cwd=work, env=env, check=True, capture_output=True
+        )
+        subprocess.run([sys.executable, *cli, "client"], cwd=work, check=True, capture_output=True)
+        # the app's code, with the client the policy now makes: it names reply, and the database answers it
+        spec = importlib.util.spec_from_file_location("regenerated_client", work / "app" / "authz_client.py")
+        assert spec is not None and spec.loader is not None
+        regenerated = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(regenerated)
+        said: list[tuple[bool, bool]] = []
+        with psycopg.connect(libpq(copy.app_url or "")) as conn:
+            for user in (2, 1):  # bo, to whom it is sent, may reply; ann, who sent it, may not even read it
+                with conn.transaction():
+                    authz = regenerated.Authz(conn)
+                    authz.sign_in(user)
+                    said.append((authz.can("message", message[0], "reply"), authz.can("message", message[0], "read")))
+        assert said == [(True, True), (False, False)], said
+    finally:
+        database_per_worker(tests)  # as migrated, for what comes after

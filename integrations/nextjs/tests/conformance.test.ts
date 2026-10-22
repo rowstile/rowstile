@@ -3,7 +3,7 @@
 // test.sh does check 11 (a fresh database: migrate, the policy's tests, then Prisma's own diff shows no
 // change) and starts the servers these checks call, before they run.
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
@@ -28,8 +28,7 @@ import { authz, signedIn } from "@rowstile/prisma";
 import { PrismaClient } from "@/generated/prisma/client.ts";
 import { db, pool } from "@/db";
 import { digest } from "@/jobs";
-import { renameNote } from "../app/actions";
-import { APP, EXPECTED, FEED, OWNER, SERVER, SERVER_ONE, as, seed } from "./data";
+import { APP, EXPECTED, FEED, OWNER, SERVER, SERVER_LOG, SERVER_ONE, as, seed } from "./data";
 
 const HERE = dirname(dirname(fileURLToPath(import.meta.url)));
 const ROOT = join(HERE, "..", "..");
@@ -413,31 +412,90 @@ test("15: signed-in pages are never cached for another user", async () => {
     expect(r.status).toBe(200);
     expect(ids(await r.text()), user).toEqual(EXPECTED[user]);
   }
-  // a page that caches what the user may see fails, instead of serving it to the next user
-  const cached = await fetch(`${SERVER}/cached-notes`, as("1"));
-  expect(cached.status).toBe(500);
-  const other = await fetch(`${SERVER}/cached-notes`, as("2"));
-  expect(ids(await other.text())).not.toEqual(EXPECTED["1"]);
-  // the same with the "use cache" directive: the page whose user comes from the request, and the one whose
-  // user is known without it (only @rowstile/next's connection() stops that one)
-  for (const page of ["use-cache-notes", "use-cache-known-user"]) {
+  // a page that caches what the user may see fails, instead of serving it to the next user. Why it failed is in the
+  // server's log, under the digest the page shows (Next.js shows a production error by its digest alone): Next
+  // refused @rowstile/next's connection() call inside the cache, which only the SDK makes. With the "use cache"
+  // directive too: the page whose user comes from the request (there Next refuses the app's headers() first), and
+  // the one whose user is known without it (only @rowstile/next stops that one)
+  const refusedBy: Record<string, RegExp> = {
+    "cached-notes": /`connection\(\)` can't be called inside `unstable_cache\(\)`/,
+    "use-cache-notes": /`headers\(\)` can't be read inside `"use cache"`/,
+    "use-cache-known-user": /`connection\(\)` can't be called inside `"use cache"`/,
+  };
+  for (const [page, why] of Object.entries(refusedBy)) {
     for (const user of ["1", "2", "1"]) {
-      const r = await fetch(`${SERVER}/${page}`, as(user));
-      expect(r.status, `${page} as ${user}`).toBe(500);
-      expect(ids(await r.text()), `${page} as ${user}`).toEqual([]);
+      const { status, body, logged } = await served(page, user);
+      expect(status, `${page} as ${user}`).toBe(500);
+      expect(ids(body), `${page} as ${user}`).toEqual([]);
+      const errors = logged.split(/^(?=⨯ )/m).filter((e) => e.includes("digest"));
+      expect(errors.length, `${page} as ${user}: ${logged}`).toBe(1);
+      expect(errors[0], `${page} as ${user}`).toMatch(why);
+      const digest = /digest: '(\w+)'/.exec(errors[0])?.[1];
+      expect(digest && body.includes(digest), `${page} as ${user}: the page shows digest ${digest}`).toBe(true);
     }
   }
 });
 
-// server actions: a refusal comes back as a problem, not a hidden error
-test("server actions answer with the problem", async () => {
-  expect(await actingAs("3", () => renameNote(4, "mine"))).toEqual({ ok: true, value: 4 });
-  const refused = await actingAs("3", () => renameNote(1, "x"));
-  expect(refused.ok).toBe(false);
-  expect(!refused.ok && refused.problem.status).toBe(403);
-  const hidden = await actingAs("2", () => renameNote(1, "x"));
-  expect(!hidden.ok && hidden.problem.status).toBe(404);
+/** A page of the first server as the user gets it, and what the server logged while it answered */
+async function served(page: string, user: string | null): Promise<{ status: number; body: string; logged: string }> {
+  const start = statSync(SERVER_LOG).size;
+  const r = await fetch(`${SERVER}/${page}`, as(user));
+  const body = await r.text();
+  let logged = "";
+  for (let i = 0; i < 40 && !logged.includes("digest"); i++) {      // (written as it renders; read once it is there)
+    if (i) await new Promise((wait) => setTimeout(wait, 50));
+    logged = readFileSync(SERVER_LOG).subarray(start).toString("utf8");
+  }
+  return { status: r.status, body, logged };
+}
+
+// server actions, called through the server as the page's form calls one (app/rename): the action reads who the
+// request is, and a refusal comes back as { ok: false, problem }, across to the browser (Next.js would hide a thrown
+// error's message)
+test("server actions answer with the problem, as the request's user", async () => {
+  const manifest = JSON.parse(readFileSync(join(HERE, ".next", "server", "server-reference-manifest.json"), "utf8")) as {
+    node: Record<string, { exportedName?: string }>;
+  };
+  const action = Object.entries(manifest.node).find(([, a]) => a.exportedName === "renameNote")?.[0];
+  expect(action, "renameNote in the build's server actions").toBeTruthy();
+  const rename = async (user: string, id: number, body: string) => {
+    const r = await fetch(`${SERVER}/rename`, {
+      method: "POST",
+      headers: { "x-user": user, "next-action": action!, accept: "text/x-component", "content-type": "text/plain;charset=UTF-8" },
+      body: JSON.stringify([id, body]),                             // the arguments, as React sends them
+    });
+    const flight = await r.text();
+    expect([r.status, r.headers.get("content-type")], flight).toEqual([200, "text/x-component"]);
+    return returned(flight);
+  };
+  expect(await rename("3", 4, "mine")).toEqual({ ok: true, value: 4 });
+  expect(await rename("3", 1, "x")).toEqual({ ok: false, problem: expect.objectContaining({
+    status: 403, detail: "permission denied: user 3 may not update row 1 of app.notes", command: "update", code: "AZ709",
+  }) });
+  expect(await rename("2", 1, "x")).toEqual({ ok: false, problem: {
+    type: "https://rowstile.dev/problems/not-found", title: "Not Found", status: 404, detail: "app.notes 1 not found",
+  } });
+  const owner = new pg.Client({ connectionString: OWNER });
+  await owner.connect();
+  try {
+    expect((await owner.query("SELECT id, body FROM app.notes WHERE id IN (1, 4) ORDER BY id")).rows).toEqual(
+      [{ id: 1, body: "plan" }, { id: 4, body: "mine" }]);
+  } finally {
+    await owner.end();
+  }
 });
+
+/** What a server action returned, read from Next's answer: React's rows, `0:{"a":"$@1",...}` naming the row
+ *  that holds it, `1:{"ok":true,...}` */
+function returned(flight: string): unknown {
+  const rows = new Map(flight.split("\n").filter(Boolean).map((line) => {
+    const colon = line.indexOf(":");
+    return [line.slice(0, colon), line.slice(colon + 1)] as const;
+  }));
+  const ref = (JSON.parse(rows.get("0") ?? "{}") as { a?: string }).a ?? "";
+  expect(ref, flight).toMatch(/^\$@\w+$/);
+  return JSON.parse(rows.get(ref.slice(2)) ?? "null");
+}
 
 describe("without Prisma", () => {
   test("pg: transactions signed in, refusals as errors", async () => {
