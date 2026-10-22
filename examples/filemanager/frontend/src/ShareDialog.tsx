@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Group, Kind, Relation, ShareRow, User } from "./api";
+import { endOfDay, lastDay } from "./dates";
 
 /** Who it is shared with, sharing it with more people or groups, who has access and why. */
 export function ShareDialog({ kind, id, name, onClose }: { kind: Kind; id: number; name: string; onClose: () => void }) {
@@ -31,7 +32,7 @@ export function ShareDialog({ kind, id, name, onClose }: { kind: Kind; id: numbe
     try { await fn(); await load(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   const add = (subject_type: "user" | "group", subject_id: string) => run(async () => {
-    await api.share(kind, id, { relation, subject_type, subject_id, expires_at: expires ? new Date(expires).toISOString() : null });
+    await api.share(kind, id, { relation, subject_type, subject_id, expires_at: expires ? endOfDay(expires) : null });
     setQ("");
   });
 
@@ -46,7 +47,7 @@ export function ShareDialog({ kind, id, name, onClose }: { kind: Kind; id: numbe
               <tr key={`${s.relation}${s.subject_type}${s.subject_id}`}>
                 <td>{s.subject_type === "group" ? "👥 " : ""}{s.subject_name ?? s.subject_id}</td>
                 <td>{s.relation === "editor" ? "can edit" : "can view"}</td>
-                <td className="hint">{s.expires_at ? `until ${new Date(s.expires_at).toLocaleDateString()}` : ""}</td>
+                <td className="hint">{s.expires_at ? `until ${lastDay(s.expires_at)}` : ""}</td>
                 <td className="actions"><button className="link" onClick={() => run(() => api.unshare(kind, id, {
                   relation: s.relation, subject_type: s.subject_type, subject_id: s.subject_id }))}>Remove</button></td>
               </tr>))}
@@ -71,13 +72,13 @@ export function ShareDialog({ kind, id, name, onClose }: { kind: Kind; id: numbe
       {links.map((l) => (
         <div className="row" key={l.id}>
           <span className="hint">Link made by {l.created_by} on {new Date(l.created_at).toLocaleDateString()}
-            {l.expires_at ? `, until ${new Date(l.expires_at).toLocaleDateString()}` : ""}</span>
+            {l.expires_at ? `, until ${lastDay(l.expires_at)}` : ""}</span>
           <button className="link" onClick={() => run(() => api.revokeLink(kind, id, l.id))}>Turn off</button>
         </div>))}
       {newLink && <div className="row"><input readOnly value={newLink} onFocus={(e) => e.target.select()} />
         <span className="hint">Copy it now: it is shown only once.</span></div>}
       <button className="link" onClick={() => run(async () => {
-        const l = await api.createLink(kind, id, expires ? new Date(expires).toISOString() : null);
+        const l = await api.createLink(kind, id, expires ? endOfDay(expires) : null);
         setNewLink(`${window.location.origin}${window.location.pathname}${l.path}`);
       })}>Make a link{expires ? " (until the date above)" : ""}</button>
       {error && shares !== null && <p className="error">{error}</p>}

@@ -10,13 +10,14 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, LiteralString, TypedDict
 
 import httpx
 import psycopg
 import pytest
-from app.main import app
+from app.main import app, in_words
 from fastapi.testclient import TestClient
 from psycopg import errors
 from psycopg.abc import Params
@@ -176,6 +177,28 @@ def test_moving_a_folder_needs_share() -> None:
     assert (on_top[shared["id"]], on_top[his["id"]]) == (False, True)
 
 
+def test_listings_say_what_the_user_may_do_with_each_row() -> None:
+    """The web app shows a row's buttons from these: renaming, moving, deleting and new versions need edit."""
+    olga, vic, ed = person("olga"), person("vic"), person("ed")
+    top = olga.post("/api/folders", json={"name": f"Rows {uuid.uuid4().hex[:6]}"}).json()
+    olga.post("/api/folders", json={"name": "Inner", "parent_id": top["id"]})
+    f = olga.post(f"/api/folders/{top['id']}/files", files={"file": ("a.txt", b"a", "text/plain")}).json()
+    for who, relation, path in ((vic, "viewer", f"folders/{top['id']}"), (ed, "editor", f"files/{f['id']}")):
+        r = olga.post(
+            f"/api/{path}/shares", json={"relation": relation, "subject_type": "user", "subject_id": who.me["id"]}
+        )
+        assert r.status_code == 201, r.text
+
+    def rows(c: TestClient, path: str) -> dict[str, tuple[bool, bool]]:
+        page = c.get(path).json()
+        return {x["name"]: (x["can_edit"], x["can_share"]) for x in page["folders"] + page["files"]}
+
+    assert rows(olga, f"/api/folders/{top['id']}") == {"Inner": (True, True), "a.txt": (True, True)}
+    assert rows(vic, f"/api/folders/{top['id']}") == {"Inner": (False, False), "a.txt": (False, False)}
+    assert rows(vic, "/api/home")[top["name"]] == (False, False)
+    assert rows(ed, "/api/home") == {"a.txt": (True, False)}  # the file on its own: its folder isn't shared with him
+
+
 def test_a_folder_cannot_go_inside_itself(world: World) -> None:
     alice, top, sub = world["alice"], world["top"], world["sub"]
     assert alice.patch(f"/api/folders/{top['id']}", json={"parent_id": sub["id"]}).status_code == 400
@@ -303,10 +326,18 @@ def test_asking_for_access(world: World) -> None:
     ).json()["id"]
     mine = [r for r in dave.get("/api/requests").json() if r["id"] == rid]
     assert mine and mine[0]["mine"]
+    assert mine[0]["duration"] == "7 days"  # as it was asked for, not as JSON writes a timedelta ("P7D")
     assert [r["id"] for r in alice.get("/api/requests").json() if not r["mine"]] == [rid]
     assert dave.post(f"/api/requests/{rid}/decision", json={"approve": True}).status_code == 403  # not his to decide
     assert alice.post(f"/api/requests/{rid}/decision", json={"approve": True, "note": "ok"}).status_code == 200
     assert dave.get(f"/api/folders/{sub['id']}").status_code == 200
+
+
+def test_a_duration_in_words() -> None:
+    assert in_words(timedelta(days=1)) == "1 day"
+    assert in_words(timedelta(days=30, hours=2, minutes=1, seconds=5)) == "30 days 2 hours 1 minute 5 seconds"
+    assert in_words(timedelta(microseconds=5)) == "under a second"
+    assert in_words(None) is None
 
 
 def test_asking_about_a_folder_that_does_not_exist_looks_the_same(world: World) -> None:
@@ -519,6 +550,10 @@ def test_share_links(world: World) -> None:
     assert stranger.delete(f"/api/folders/{sub['id']}/links/{link_id}").status_code == 404
     assert alice.delete(f"/api/folders/{sub['id']}/links/nothing").status_code == 404
     assert alice.delete(f"/api/folders/{top['id']}/links/{link_id}").status_code == 404  # it is the folder below's
+    # the dialog's people: a link is not among them (it has its own list, above, and its own Turn off)
+    shares = alice.get(f"/api/folders/{sub['id']}/shares").json()
+    assert viewer.me["id"] in [s["subject_id"] for s in shares]
+    assert [s for s in shares if s["subject_type"] == "link"] == []
     assert alice.delete(f"/api/folders/{sub['id']}/links/{link_id}").status_code == 204
     assert alice.get(f"/api/folders/{sub['id']}/links").json() == []
     assert anon.get(f"/api/public/folders/{sub['id']}", headers=hdr).status_code == 404  # revoked

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, Group, Member, User } from "./api";
 
 /** Groups: everyone sees them (to share with them); owners and admins run them. */
-export function Groups() {
+export function Groups({ me }: { me: User }) {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -33,7 +33,7 @@ export function Groups() {
         </>}
       </td>
     </tr>,
-    ...(open === g.id ? [<tr key={`${g.id}-m`}><td colSpan={2}><Members group={g} onChange={load} /></td></tr>] : []),
+    ...(open === g.id ? [<tr key={`${g.id}-m`}><td colSpan={2}><Members group={g} me={me} onChange={load} /></td></tr>] : []),
     ...tree(g.id, depth + 1),
   ]);
   return (
@@ -45,7 +45,7 @@ export function Groups() {
   );
 }
 
-function Members({ group, onChange }: { group: Group; onChange: () => void }) {
+function Members({ group, me, onChange }: { group: Group; me: User; onChange: () => void }) {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [manage, setManage] = useState(false);
   const [q, setQ] = useState("");
@@ -75,9 +75,7 @@ function Members({ group, onChange }: { group: Group; onChange: () => void }) {
           </>}
         </li>))}
       </ul>
-      {group.member && <button className="link" onClick={async () => {
-        const me = await api.me(); run(() => api.removeMember(group.id, me.id));
-      }}>Leave this group</button>}
+      {group.member && <button className="link" onClick={() => run(() => api.removeMember(group.id, me.id))}>Leave this group</button>}
       {manage && <>
         <input placeholder="Add people by email or name" value={q} onChange={(e) => setQ(e.target.value)} />
         <ul className="pick">{found.map((u) => (

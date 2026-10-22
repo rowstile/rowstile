@@ -10,8 +10,14 @@ export interface Group { id: string; name: string; parent_id: string | null; mem
 export interface Member { id: string; email: string; name: string; is_admin: boolean }
 export interface Folder { id: number; parent_id: number | null; name: string; owner_id: string; inherit: boolean; created_at: string; mine?: boolean;
                           /** in a listing: whether the user may share it, which moving and deleting it need too */
-                          can_share?: boolean }
-export interface FileRow { id: number; folder_id: number; name: string; owner_id: string; size: number; content_type: string; created_at: string; updated_at: string }
+                          can_share?: boolean;
+                          /** in a listing: whether the user may edit it (rename it) */
+                          can_edit?: boolean }
+export interface FileRow { id: number; folder_id: number; name: string; owner_id: string; size: number; content_type: string; created_at: string; updated_at: string;
+                           /** in a listing: whether the user may edit it (rename, move, delete, new versions) */
+                           can_edit?: boolean;
+                           /** in a listing: whether the user may share it */
+                           can_share?: boolean }
 /** A page of search results: each list's next page starts at its cursor in `next` (null: no more). */
 export interface SearchPage { folders: Folder[]; files: FileRow[]; next: { folder: string | null; file: string | null } }
 export interface FolderPage { folder: Folder; path: { id: number; name: string }[]; folders: Folder[]; files: FileRow[]; perms: string[] }

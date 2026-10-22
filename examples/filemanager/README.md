@@ -26,6 +26,7 @@ and in another terminal, `cd frontend && npm ci && npm run dev`: the web app on 
 sends `/api` to the backend. The tests, from this folder:
 
     ./test.sh                           # the tests: public surface, client up to date, API against the real services
+    (cd frontend && npm ci && npm test) # the web app's tests, against a fake API
 
 ## How it fits together
 

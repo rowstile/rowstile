@@ -12,6 +12,10 @@ export function PreviewDialog({ id, name, onClose }: { id: number; name: string;
       if (p.content_type === "text/plain") setText(await (await fetch(p.url)).text());
     }, (e) => setError(e.message));
   }, [id]);
+  const download = async () => {
+    setError("");
+    try { window.location.href = (await api.downloadUrl(id)).url; } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
   const t = shown?.content_type ?? "";
   return (
     <div className="modal" onClick={onClose}><div className="box wide" onClick={(e) => e.stopPropagation()}>
@@ -25,7 +29,7 @@ export function PreviewDialog({ id, name, onClose }: { id: number; name: string;
         {t === "text/plain" && <pre>{text ?? "Loading..."}</pre>}
       </div>}
       <div className="buttons">
-        <button className="link" onClick={async () => { window.location.href = (await api.downloadUrl(id)).url; }}>Download</button>
+        <button className="link" onClick={download}>Download</button>
         <button onClick={onClose}>Close</button>
       </div>
     </div></div>

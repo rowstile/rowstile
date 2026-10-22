@@ -575,6 +575,13 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   (`permission denied to set role "demo_app"`): it now grants that role to whoever runs it, so a role with
   CREATEROLE runs it on a stock server too. Its header says it drops an earlier `demo` schema and
   `demo_app` role first, and to read the middle of each query's three timings, as the post's figures are.
+  Its web app shows a file's Share, Rename, Move and Delete, a folder's Rename, and a file's "Upload a new version"
+  and "Make current" only where the API says the user may (`can_edit`, `can_share` in each listing, from
+  `authz.can`): on the home page they showed on files shared for viewing, where they could only fail. A share
+  link was listed twice in the share dialog, once among the people with a Remove button that could only fail.
+  A share or link "until" a day ended as that day began in UTC (the evening before, west of UTC); it now lasts
+  to the end of that day where the person is. A request's duration reads "7 days", not "P7D". Cancel on "Why
+  not?" no longer denies the request, and a preview's Download or "Leave this group" that fails says why.
 
 ## 0.1.0 (alpha)
 

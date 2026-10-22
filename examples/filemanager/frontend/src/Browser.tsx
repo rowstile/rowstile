@@ -35,6 +35,7 @@ export function Browser({ folderId, me }: { folderId: number | null; me: User })
 
   if (missing && folderId !== null) return <NoAccess folderId={folderId} me={me} onGranted={load} />;
   const perms = new Set(page?.perms ?? []);
+  // what the toolbar adds here: a folder at the top is anyone's to make; each row's buttons follow its own permissions
   const canEdit = folderId === null || perms.has("edit");
   const folders = page?.folders ?? home?.folders ?? [];
   const files = page?.files ?? home?.files ?? [];
@@ -96,7 +97,7 @@ export function Browser({ folderId, me }: { folderId: number | null; me: User })
               <td />
               <td className="actions">
                 {f.can_share && <button className="link" onClick={() => setDialog({ share: { kind: "folder", id: f.id, name: f.name } })}>Share</button>}
-                <button className="link" onClick={() => rename("folder", f.id, f.name)}>Rename</button>
+                {f.can_edit && <button className="link" onClick={() => rename("folder", f.id, f.name)}>Rename</button>}
                 {f.can_share && <>
                   <button className="link" onClick={() => setDialog({ move: { kind: "folder", id: f.id, name: f.name } })}>Move</button>
                   <button className="link" onClick={() => remove("folder", f.id, f.name)}>Delete</button>
@@ -110,11 +111,14 @@ export function Browser({ folderId, me }: { folderId: number | null; me: User })
                 {home && f.owner_id !== me.id && <span className="tag">shared with you</span>}</td>
               <td className="size">{size(f.size)}</td>
               <td className="actions">
-                <button className="link" onClick={() => setDialog({ share: { kind: "file", id: f.id, name: f.name } })}>Share</button>
-                <button className="link" onClick={() => setDialog({ versions: { id: f.id, name: f.name, canEdit } })}>Versions</button>
-                <button className="link" onClick={() => rename("file", f.id, f.name)}>Rename</button>
-                <button className="link" onClick={() => setDialog({ move: { kind: "file", id: f.id, name: f.name } })}>Move</button>
-                <button className="link" onClick={() => remove("file", f.id, f.name)}>Delete</button>
+                {f.can_share && <button className="link" onClick={() => setDialog({ share: { kind: "file", id: f.id, name: f.name } })}>Share</button>}
+                <button className="link" onClick={() =>
+                  setDialog({ versions: { id: f.id, name: f.name, canEdit: f.can_edit ?? false } })}>Versions</button>
+                {f.can_edit && <>
+                  <button className="link" onClick={() => rename("file", f.id, f.name)}>Rename</button>
+                  <button className="link" onClick={() => setDialog({ move: { kind: "file", id: f.id, name: f.name } })}>Move</button>
+                  <button className="link" onClick={() => remove("file", f.id, f.name)}>Delete</button>
+                </>}
               </td>
             </tr>))}
         </tbody>
