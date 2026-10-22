@@ -11,16 +11,28 @@ shares, to users, the service, `user:*`, `anyone` and other types' members; perm
 across two types or not) and a deny that inherits; rules, the write rules sometimes with a condition that reads
 another governed table (a subquery, a function called by a quoted name, an operator the app made); invariants.
 Some also say what no draw above does, drawn apart so that the rest stays as it was (also(), own_links(),
-shared_if(), masks(), across(), perm_groups(), custom_roles(), share_links(), before_after()): a starting point with
-a `not` in a permission that inherits, a relation declared again for an earlier type through a link table (a
+shared_if(), masks(), whose(), across(), perm_groups(), custom_roles(), share_links(), before_after(),
+named_columns(), plain_shares(), every_service(), shared_trees(), typed_links(), column_pairs()): a starting point
+with a `not` in a permission that inherits, a relation declared again for an earlier type through a link table (a
 `parent`, or a relation to users), `parent` declared again for a type's own rows through a link table, a condition
 on the shares made of a relation (`shared by p1 if {...}`, which around.py's calls of authz.share() judge), a table
-read through a view the policy makes, a column masked there, a recursion through two types (an earlier type's rows
+read through a view the policy makes, a column masked there, a condition in a permission on who is signed in
+(`{c_r1 = authz.uid()}`) or reading another governed table, a recursion through two types (an earlier type's rows
 inside a later one's too, through a link table, inheriting back what the later type inherits from it: one tree
 across both), a group named by a permission (`t1#p2`), custom roles, with and without `from` (roles, permissions
 that give them, manage_roles where they are made, and some given in the data), `link` among a shared relation's
-subjects (shares to a token's hash, TOKENS in each user's context), and rules that say when they are checked
-(`update after`, `update b1 before`, `update b1 after`).
+subjects (shares to a token's hash, TOKENS in each user's context), rules that say when they are checked
+(`update after`, `update b1 before`, `update b1 after`), link tables with their columns named, relations shared by
+the type's `share` (plain `shared`), `bot:*` among a shared relation's subjects, `parent` declared again for a
+type's own rows through shares (a share as a link of the tree), link tables that name their subjects' type
+(`(subj_type, subj_id)`: to users and services, or a parent of the type's own or an earlier type), and rules on
+two columns (`update b1, b2`).
+Forms of the language that only fixed policies, hand answers or other suites hold, not these: types whose keys
+differ in type in one policy (multi.authz, composite.authz: one Spelling, one key type, writes a whole policy here),
+a composite key with a text column (composite.authz), permissions on the user type and arrows to them (docs.authz,
+alt.authz, hand answers), several masked columns (masks.sh), a rules block with no select rule (cross.authz), scope
+names with `-` or `:` (policy_errors.py), a link table's `where` with `this.` (alt.authz), `cascade from` (apply.sh,
+the example apps), named tests (the suites' own, the hand answers).
 Then the tables it reads and their data. A third of the seeds name those tables and columns as an app's own may be
 (AWKWARD: capitals, words SQL reserves, a double quote, a letter outside ASCII, 63 bytes), the policy otherwise the
 same; nearly half give every key another type than bigint (KEYS: int, text or uuid), said on each type line, and half
@@ -103,6 +115,7 @@ AWKWARD = {
     "org_id": "OrgId",
     "obj_id": "Obj",
     "subj_id": "Subj",
+    "subj_type": "SubjType",
     "active": "Activé",  # a letter outside ASCII
     "note": "Note",
 }
@@ -230,16 +243,16 @@ class Spelling:
             .replace(f"{SCHEMA}.t1", self.table("t1"))
         )
         text = text.replace(f"{SCHEMA}.users", self.table("users"))
-        return re.sub(r"\b(id|b1|b2|b3|active)\b", lambda m: self.sql(m.group(1)), text)
+        return re.sub(r"\b(id|b1|b2|b3|active|c_[a-z0-9]+)\b", lambda m: self.sql(m.group(1)), text)
 
 
 @dataclass
 class Rel:
     name: str
     kind: str  # column | table | shared
-    subjects: list[str]  # user, bot, user:*, anyone, tN#member, or an object type (links: up, parent)
+    subjects: list[str]  # user, bot, user:*, bot:*, anyone, link, tN#member, or an object type (up, parent)
     where: bool = False  # a link table's `where {active}`
-    by: str = ""  # shared: `shared by <permission>`
+    by: str = ""  # shared: `shared by <permission>`; none: plain `shared`, by the type's `share` (plain_shares())
     shared_if: str = ""  # shared: `if {...}`, one of SHARED_IFS
     named: bool = False  # table: its columns named, `(object: obj_id, subject: subj_id)` (named_columns())
 
@@ -521,12 +534,18 @@ def make_plain(seed: int) -> Spec:
     own_links(spec, random.Random(f"genpolicy/{seed}/own-links"))
     shared_if(spec, random.Random(f"genpolicy/{seed}/shared-if"))
     masks(spec, random.Random(f"genpolicy/{seed}/masks"))
+    whose(spec, random.Random(f"genpolicy/{seed}/whose"))
     across(spec, random.Random(f"genpolicy/{seed}/across"))
     perm_groups(spec, random.Random(f"genpolicy/{seed}/perm-groups"))
     custom_roles(spec, random.Random(f"genpolicy/{seed}/roles"))
     share_links(spec, random.Random(f"genpolicy/{seed}/links"))
     before_after(spec, random.Random(f"genpolicy/{seed}/before-after"))
     named_columns(spec, random.Random(f"genpolicy/{seed}/named-columns"))
+    plain_shares(spec, random.Random(f"genpolicy/{seed}/plain-shares"))
+    every_service(spec, random.Random(f"genpolicy/{seed}/every-service"))
+    shared_trees(spec, random.Random(f"genpolicy/{seed}/shared-trees"))
+    typed_links(spec, random.Random(f"genpolicy/{seed}/typed-links"))
+    column_pairs(spec, random.Random(f"genpolicy/{seed}/column-pairs"))
     return spec
 
 
@@ -665,6 +684,92 @@ def before_after(spec: Spec, x: random.Random) -> None:
         ]
 
 
+# conditions that read who is signed in, on a column that names a user: whose() puts one, or one of READS, in a
+# permission (the column's relation names the same users: a condition beside it, as an app may write its own row)
+WHOSE = "{c_%s = authz.uid()}"
+
+
+def whose(spec: Spec, x: random.Random) -> None:
+    """Now and then a condition that reads more than the row's own flags in a permission, drawn apart from the rest
+    (x): who is signed in, against a column naming a user (WHOSE), or another governed table (READS, which the
+    rules take too). An `or` beside the permission's other parts (beside what a condition or a deny narrows, where
+    one does): in one that inherits, it holds on the row the permission is read on, at every level."""
+    for o in spec.objs:
+        users = [rel.name for rel in o.rels if rel.kind == "column" and rel.subjects == ["user"]]
+        if x.random() >= 0.3:
+            continue
+        p = x.choice(["p1", "p2", "p3"])
+        cond = WHOSE % x.choice(users) if users and x.random() < 0.6 else x.choice(READS)
+        e = o.perms[p]
+        if not isinstance(e, str) and e[0] == "and" and not isinstance(e[1][0], str) and e[1][0][0] == "or":
+            # (what a condition or a deny narrows: beside what is narrowed, so that it is narrowed too)
+            o.perms[p] = ("and", [("or", [*e[1][0][1], cond]), *e[1][1:]])
+        else:
+            o.perms[p] = ("or", [*e[1], cond]) if not isinstance(e, str) and e[0] == "or" else ("or", [e, cond])
+
+
+def plain_shares(spec: Spec, x: random.Random) -> None:
+    """Now and then a type whose shared relations are shared by `share` (`r1 : user shared`, the type then
+    `can share = p2`), each of them or some, drawn apart from the rest (x)."""
+    for o in spec.objs:
+        shared = [rel for rel in o.rels if rel.kind == "shared"]
+        if not shared or x.random() >= 0.3:
+            continue
+        o.perms["share"] = x.choice(["p1", "p2", "p3"])
+        for k, rel in enumerate(shared):
+            if k == 0 or x.random() < 0.5:
+                rel.by = ""
+
+
+def every_service(spec: Spec, x: random.Random) -> None:
+    """`bot:*`, every service signed in, among the subjects of some shared relations where there is a service,
+    drawn apart from the rest (x)."""
+    for o in spec.objs:
+        for rel in o.rels:
+            if spec.bot and rel.kind == "shared" and x.random() < 0.3:
+                rel.subjects.append("bot:*")
+
+
+def shared_trees(spec: Spec, x: random.Random) -> None:
+    """`parent` declared again for a type's own rows through shares (`parent : t2 shared by p1`), drawn apart from
+    the rest (x): a share as a link of the tree, made at run time (alt.authz's shortcut)."""
+    for o in spec.objs:
+        if has(o, "parent") and x.random() < 0.2:
+            o.rels.append(Rel("parent", "shared", [o.name], by=x.choice(["p1", "p2", "p3"])))
+
+
+def typed_links(spec: Spec, x: random.Random) -> None:
+    """Link tables that name their subjects' type as well as their id (`t1_r1(obj_id -> (subj_type, subj_id))`),
+    drawn apart from the rest (x): one to users that names services too, where there is a service; and `parent`
+    declared again for an earlier type (also()), naming the type's own rows too."""
+    base = x.random()
+    for o in spec.objs:
+        for rel in o.rels:
+            if rel.kind != "table" or rel.name == "inside":
+                continue
+            # (each by a draw of its own, as named_columns()'s: a link table another draw adds changes no other's)
+            own = random.Random(f"{base}/{o.name}/{rel.name}/{','.join(rel.subjects)}").random()
+            if rel.subjects == ["user"] and spec.bot and own < 0.4:
+                rel.subjects = ["user", "bot"]
+            elif rel.name == "parent" and rel.subjects != [o.name] and not denies(o) and own < 0.4:
+                rel.subjects = [o.name, *rel.subjects]
+
+
+def typed(rel: Rel) -> bool:
+    """Whether a link table names its subjects' type (typed_links())."""
+    return rel.kind == "table" and len(rel.subjects) > 1
+
+
+def column_pairs(spec: Spec, x: random.Random) -> None:
+    """Some rules on a column said on two (`update b1, b2 : ...`, before or after the change), drawn apart from the
+    rest (x)."""
+    for o in spec.objs:
+        o.rules = [
+            (h.replace("update b1", "update b1,b2", 1) if h.startswith("update b1") and x.random() < 0.4 else h, e)
+            for h, e in o.rules
+        ]
+
+
 def share_links(spec: Spec, x: random.Random) -> None:
     """`link` among the subjects of some shared relations, drawn apart from the rest (x)."""
     for o in spec.objs:
@@ -751,6 +856,8 @@ def policy_text(spec: Spec) -> str:
                 src = s.ref(f"c_{rel.name}") if to_objects else s.name(f"c_{rel.name}")
             elif rel.kind == "table":
                 subj_col = s.ref("subj_id") if to_objects else s.name("subj_id")
+                if typed(rel):  # (the type's name, then the id: of a row of that type)
+                    subj_col = f"({s.name('subj_type')}, {subj_col})"
                 cols = (
                     f"object: {s.ref('obj_id')}, subject: {subj_col}"
                     if rel.named
@@ -760,7 +867,9 @@ def policy_text(spec: Spec) -> str:
             else:
                 src = "shared"
             if src == "shared":
-                src = f"shared by {rel.by}" + (f" if {s.cond(rel.shared_if)}" if rel.shared_if else "")
+                src = f"shared{f' by {rel.by}' if rel.by else ''}" + (
+                    f" if {s.cond(rel.shared_if)}" if rel.shared_if else ""
+                )
                 out.append(f"  {rel.name} : {subj} {src}")
             else:
                 out.append(f"  {rel.name} : {subj} = {src}")
@@ -781,14 +890,17 @@ def policy_text(spec: Spec) -> str:
             view = f" view {s.policy_table(f'{o.name}_seen')}" if o.mask else ""
             out.append(f"rules {s.policy_table(o.name)}{view}")
             out += [f"  mask {s.name('note')} : {o.mask}"] if o.mask else []
-            out += [
-                f"  {' '.join([head.split()[0], *map(s.name, head.split()[1:])])} : {text(e, s=s)}"
-                for head, e in o.rules
-            ]
+            out += [f"  {head_text(head, s)} : {text(e, s=s)}" for head, e in o.rules]
     if spec.invariants:
         out.append("invariants")
         out += [f"  never {t}: {text(e, s=s)}" for t, e in spec.invariants]
     return "\n".join(out) + "\n"
+
+
+def head_text(head: str, s: Spelling) -> str:
+    """A rule's head as the policy writes it: its columns spelled (`update b1,b2 after`: `update B1, "order" after`)."""
+    command, *rest = head.split()
+    return " ".join([command, *(", ".join(map(s.name, word.split(","))) for word in rest)])
 
 
 def schema_text(spec: Spec) -> str:
@@ -820,20 +932,22 @@ def schema_text(spec: Spec) -> str:
                 follow = "ON DELETE CASCADE ON UPDATE CASCADE"
                 group = rel.subjects[0].split("#")[0] if "#" in rel.subjects[0] else ""
                 obj, subj = n.sql("obj_id"), n.sql("subj_id")
+                # (a table naming its subjects' type has the type's name last, and one link to each type's row)
+                kind, kinds = (f", {n.sql('subj_type')} text", f"{n.sql('subj_type')}, ") if typed(rel) else ("", "")
                 if n.composite:  # one org for the object and an object it names
                     s.append(
                         f"CREATE TABLE {n.table(f'{o.name}_{rel.name}')} ({org} bigint, {obj} bigint, {subj} {k}, "
-                        f"{active} boolean NOT NULL DEFAULT true, "
+                        f"{active} boolean NOT NULL DEFAULT true{kind}, "
                         f"FOREIGN KEY ({org}, {obj}) REFERENCES {n.table(o.name)} {follow}, "
                         + (f"FOREIGN KEY ({org}, {subj}) REFERENCES {n.table(group)} {follow}, " if group else "")
-                        + f"UNIQUE ({org}, {obj}, {subj}));"
+                        + f"UNIQUE ({org}, {obj}, {kinds}{subj}));"
                     )
                     continue
                 s.append(
                     f"CREATE TABLE {n.table(f'{o.name}_{rel.name}')} ("
                     f"{n.sql('obj_id')} {k} REFERENCES {n.table(o.name)} {follow}, "
                     f"{n.sql('subj_id')} {k}{f' REFERENCES {n.table(group)} {follow}' if group else ''}, "
-                    f"{active} boolean NOT NULL DEFAULT true, UNIQUE ({n.sql('obj_id')}, {n.sql('subj_id')}));"
+                    f"{active} boolean NOT NULL DEFAULT true{kind}, UNIQUE ({n.sql('obj_id')}, {kinds}{n.sql('subj_id')}));"
                 )
     # what READS calls: t1's b2, read by a function with a quoted name and by an operator made on it (where there is
     # a t1: tests/small.py names its types otherwise); and the next row's key, where keys are text or uuids
@@ -958,19 +1072,22 @@ class GenPolicyGen(Gen):
 
     def link(self, o: Obj, rel: Rel, ids: Ids | None) -> str:
         r = self.r
+        # (a table naming its subjects' type: one of them, and the type's name last)
+        subject = r.choice(rel.subjects) if typed(rel) else rel.subjects[0]
+        kind = f", {lit(subject)}" if typed(rel) else ""
         if self.spec.spelling.composite:  # the object's org, and an object of that org
             ident = r.choice(self.subject_ids(o.name, ids))
             org = self.org(ident)
-            subj = self.pointer(rel.subjects[0], ids, org)
+            subj = self.pointer(subject, ids, org)
             return (
                 f"INSERT INTO {self.spec.spelling.table(f'{o.name}_{rel.name}')} VALUES ({org}, {self.part(ident)}, "
-                f"{subj}, {str(r.random() < 0.8).lower()}) ON CONFLICT DO NOTHING;"
+                f"{subj}, {str(r.random() < 0.8).lower()}{kind}) ON CONFLICT DO NOTHING;"
             )
         obj = self.subject_id(o.name, ids)
-        subj = self.subject_id(rel.subjects[0], ids)
+        subj = self.subject_id(subject, ids)
         return (
             f"INSERT INTO {self.spec.spelling.table(f'{o.name}_{rel.name}')} VALUES ({obj}, {subj}, "
-            f"{str(r.random() < 0.8).lower()}) ON CONFLICT DO NOTHING;"
+            f"{str(r.random() < 0.8).lower()}{kind}) ON CONFLICT DO NOTHING;"
         )
 
     def context(self, u: str) -> dict[str, str]:
@@ -1052,16 +1169,22 @@ class GenPolicyGen(Gen):
             subject.split("#")[1] if "#" in subject else "",
         )
         on = self.shareable(o.name, ids)
-        to = [] if subject in ("link", "user:*", "anyone") else self.shareable(subject, ids)
-        if not on or (subject not in ("link", "user:*", "anyone") and not to):
+        anybody = ("link", "user:*", "bot:*", "anyone")  # (to whoever: no subject's row)
+        to = [] if subject in anybody else self.shareable(subject, ids)
+        if not on or (subject not in anybody and not to):
             return difftest.NOTHING
         if subject == "link":  # a token's hash, as authz.share_link() writes it
             sid = f"encode(sha256(convert_to({lit(r.choice(TOKENS))}, 'UTF8')), 'hex')"
         else:
-            sid = lit("*" if subject in ("user:*", "anyone") else r.choice(to))
-        expires, starts = self.when()
+            sid = lit("*" if subject in anybody else r.choice(to))
+        # a share to an object is a link of a tree (shared_trees()): it neither ends nor starts later, nor carries
+        # a caveat
+        tree = subject in {x.name for x in self.spec.objs}
+        expires, starts = ("NULL", "NULL") if tree else self.when()
         oid = lit(r.choice(on))
-        if self.spec.caveats:  # most carry none; some one of the policy's (with what it was made with), or another
+        if (
+            self.spec.caveats and not tree
+        ):  # most carry none; some one of the policy's (with what it was made with), or another
             caveat, args = r.choice(
                 [("NULL", "NULL")] * 3
                 + [("'c_mode'", "NULL"), ("'c_ip'", f'\'{{"ip": "10.0.0.{r.randint(0, 2)}"}}\''), ("'c_gone'", "NULL")]
@@ -1361,6 +1484,22 @@ FEATURES: dict[str, Callable[[Spec], bool]] = {
     "three types": lambda s: len(s.objs) == 3,
     "a type's where": lambda s: any(o.where for o in s.objs),
     "inheritance": lambda s: any(f"parent.{p}" in atoms(e) for o in s.objs for p, e in o.perms.items()),
+    "inheritance stopped by a condition": lambda s: any(
+        not isinstance(e, str)
+        and e[0] == "and"
+        and "{not b3}" in e[1]
+        and any(a.startswith("parent.") for a in atoms(e))
+        for o in s.objs
+        for e in o.perms.values()
+    ),
+    "a not first": lambda s: any(
+        not isinstance(e, str)
+        and e[0] == "or"
+        and not isinstance(e[1][0], str)
+        and e[1][0][1][1:] == [("not", ["{b1}"])]
+        for o in s.objs
+        for e in o.perms.values()
+    ),
     "a deny": lambda s: any(denies(o) for o in s.objs),
     "an arrow to another type": lambda s: any(a.startswith("up.") for a in _atoms(s)),
     "a polymorphic parent": lambda s: any(r.name == "parent" and len(r.subjects) == 2 for _, r in _rels(s)),
@@ -1371,12 +1510,20 @@ FEATURES: dict[str, Callable[[Spec], bool]] = {
         r.name == "parent" and r.kind == "table" and r.subjects == [o.name] for o, r in _rels(s)
     ),
     "recursion through two types": lambda s: any(r.name == "inside" for _, r in _rels(s)),
+    "a relation to users again": lambda s: any(
+        r.kind == "table" and any(x.name == r.name and x.kind == "column" and x.subjects == ["user"] for x in o.rels)
+        for o, r in _rels(s)
+    ),
+    "a link table naming its subjects' type": lambda s: any(typed(r) for _, r in _rels(s)),
     "a link table's where": lambda s: any(r.kind == "table" and r.where for _, r in _rels(s)),
     "named link columns": lambda s: any(r.named for _, r in _rels(s)),
     "shares": lambda s: any(r.kind == "shared" for _, r in _rels(s)),
+    "shares by share": lambda s: any(r.kind == "shared" and not r.by for _, r in _rels(s)),
+    "a share as a tree's link": lambda s: any(r.kind == "shared" and r.subjects == [o.name] for o, r in _rels(s)),
     "groups": lambda s: any(x.endswith("#member") for _, r in _rels(s) for x in r.subjects),
     "groups by a permission": lambda s: any("#p" in x for _, r in _rels(s) for x in r.subjects),
     "user:*": lambda s: any("user:*" in r.subjects for _, r in _rels(s)),
+    "bot:*": lambda s: any("bot:*" in r.subjects for _, r in _rels(s)),
     "anyone": lambda s: any("anyone" in r.subjects for _, r in _rels(s)),
     "share links": links,
     "shared if": lambda s: any(r.shared_if for _, r in _rels(s)),
@@ -1387,7 +1534,16 @@ FEATURES: dict[str, Callable[[Spec], bool]] = {
     "custom roles from": lambda s: any(o.roles and o.roles[1] for o in s.objs),
     "update after": lambda s: any(h == "update after" for o in s.objs for h, _ in o.rules),
     "a column rule": lambda s: any(h.startswith("update b1") for o in s.objs for h, _ in o.rules),
+    "a rule on two columns": lambda s: any(h.startswith("update b1,b2") for o in s.objs for h, _ in o.rules),
+    "an insert rule": lambda s: any(h == "insert" for o in s.objs for h, _ in o.rules),
     "a rule reading another table": lambda s: any(a in READS for o in s.objs for _, e in o.rules for a in atoms(e)),
+    "a permission reading another table": lambda s: any(
+        a in READS for o in s.objs for e in o.perms.values() for a in atoms(e)
+    ),
+    "a condition on who is signed in": lambda s: any(
+        "authz.uid()" in a for o in s.objs for e in o.perms.values() for a in atoms(e)
+    ),
+    "signed_in, anyone or nobody": lambda s: any(a in CONDS[3:] for a in _atoms(s)),
     "invariants": lambda s: bool(s.invariants),
     "two files": lambda s: s.include,
 }

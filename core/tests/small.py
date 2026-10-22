@@ -14,22 +14,28 @@ every policy of the core language up to a size is listed, once each, and checked
 The core language, as listed (the policies are genpolicy's Spec, so its tables, its schema and its checks serve):
   - the user type, with or without `where {active}`; one object type, or two where the second names the first
     (two that don't are two smaller policies), each with or without `where {not b3}`;
-  - relations from each kind of source (sources()): a column, a link table or shares, to users; shares to `user:*`
-    and to `anyone`; a group's members from a link table, or from shares that may name the group's own members
-    (groups in groups); a group of the first type named by the second, through a link table or shares; `parent`,
-    from a column or a link table to the type's own rows, or a pair of columns naming either type (a polymorphic
-    parent); `up`, a column naming a row of the first type;
+  - relations from each kind of source (sources()): a column, a link table or shares, to users; shares to `user:*`,
+    to `anyone` and to `link` (TOKENS, which HOLDS gives each one asked); a group's members from a link table, or
+    from shares that may name the group's own members (groups in groups); a group of the first type named by the
+    second, through a link table or shares; `parent`, from a column or a link table to the type's own rows, from a
+    link table to the first type's, or a pair of columns or a link table naming the type of each row it names,
+    either type (a polymorphic parent); `up`, naming a row of the first type, from a column, a link table or shares
+    (a share to an object);
   - one or two permissions a type, each of up to three of: a relation, the other permission, a relation followed
     (`parent.p1`, `up.p2`), a condition (`{b1}`), joined by `or`, `and` and `and not`, with parentheses where they
-    meet: inheritance, inheritance stopped by a condition, and a deny (`(r1 or parent.p2) and not p1`). Where a
+    meet: inheritance, inheritance stopped by a condition, and a deny (`(r1 or parent.p2) and not p1`); or one of
+    the keyword conditions alone (`signed_in`, `anyone`, `nobody`), which the other permission then names. Where a
     type has two, one names the other: two that don't are two smaller policies.
+  Left out, each of which would double the list or more: a principal type besides the user (a service, `bot:*`:
+  genpolicy draws them, with principals.sh and the hand answers), and the keyword conditions as parts of a larger
+  permission (genpolicy draws them so).
   - each type with permissions is read through a select rule (its last permission) and an update rule (its first):
     the rules' row checks, as well as the permissions' views. A shared relation is shared by the first permission.
 The size of a policy is how many sources, parts of permissions and `where`s it has. Two policies that differ only
 in their names (r1 for r2, p1 for p2) or in the order of an `or`'s or an `and`'s parts are one: only the first of
 them is listed (canonical(), which tests/unit_test.py holds to that). Every policy up to a size is listed, and those
 of the next size that have a deny inside inheritance: the smallest is of size 7, where the whole size is out of
-reach (334,846 policies). COUNTS and DENIES say how many there are; a run that lists another number fails: the
+reach (736,644 policies). COUNTS and DENIES say how many there are; a run that lists another number fails: the
 language changed, and the counts are written again (--count).
 
 For each policy (the compiler refusing it: counted, by its code):
@@ -57,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import itertools
 import os
 import random
@@ -88,6 +95,7 @@ MAX_TYPES = 2  # object types
 MAX_PERMS = 2  # permissions a type
 MAX_PARTS = 3  # parts of one permission
 NAMED = ("member", "parent", "up")  # relations named by what they are; the others are r1, r2, ... in order
+KEYWORD_ATOMS = ("signed_in", "anyone", "nobody")  # the keyword conditions: a permission of one part may be one
 
 
 class Decl(NamedTuple):
@@ -101,15 +109,18 @@ class Decl(NamedTuple):
 
 def sources(me: str, earlier: Sequence[Obj]) -> list[Decl]:
     """The sources a type's relations may have, in the order they are listed: to users from a column, a link table or
-    shares; shares to user:* and to anyone; another type's group from a link table or shares; a group's members
-    from a link table, or from shares that may name the group's own members (groups in groups); parent from a
-    column or a link table to the type's own rows, or a pair of columns naming them or another type's; up."""
+    shares; shares to user:*, to anyone and to a link; another type's group from a link table or shares; a group's
+    members from a link table, or from shares that may name the group's own members (groups in groups); parent from
+    a column or a link table to the type's own rows; and to another type's: parent from a pair of columns naming
+    them or the type's own, from a link table, or from a link table that names their type too; up, from a column, a
+    link table or shares (a share to an object)."""
     out = [
         Decl("r", "column", ("user",)),
         Decl("r", "table", ("user",)),
         Decl("r", "shared", ("user",)),
         Decl("r", "shared", ("user:*",)),
         Decl("r", "shared", ("anyone",)),
+        Decl("r", "shared", ("link",)),
     ]
     for e in earlier:
         if any(rel.name == "member" for rel in e.rels):
@@ -117,7 +128,9 @@ def sources(me: str, earlier: Sequence[Obj]) -> list[Decl]:
     out += [Decl("member", "table", ("user",)), Decl("member", "shared", ("user", f"{me}#member"))]
     out += [Decl("parent", "column", (me,)), Decl("parent", "table", (me,))]
     for e in earlier:
-        out += [Decl("parent", "column", (me, e.name)), Decl("up", "column", (e.name,))]
+        out += [Decl("parent", "column", (me, e.name)), Decl("parent", "table", (e.name,))]
+        out += [Decl("parent", "table", (me, e.name))]
+        out += [Decl("up", "column", (e.name,)), Decl("up", "table", (e.name,)), Decl("up", "shared", (e.name,))]
     return out
 
 
@@ -183,16 +196,23 @@ def types(k: int, budget: int, earlier: Sequence[Obj]) -> Iterator[Obj]:
 
 
 def perms(o: Obj, sizes: tuple[int, ...], earlier: Sequence[Obj]) -> Iterator[Obj]:
-    """o with permissions of these sizes: p2 may name p1 (and either may follow a relation to either)."""
+    """o with permissions of these sizes: p2 may name p1 (and either may follow a relation to either). A permission
+    of one part may be a keyword condition too (signed_in, anyone, nobody): the other names it to meet the rest."""
     names = [f"p{i + 1}" for i in range(len(sizes))]
     refs = list(dict.fromkeys(rel.name for rel in o.rels if rel.name not in ("parent", "up")))
     follow: list[str] = []
-    if any(rel.name == "parent" for rel in o.rels):
+    parents = {s for rel in o.rels if rel.name == "parent" for s in rel.subjects}
+    if o.name in parents:  # (to the type's own rows: its own permissions; to both, those of both)
         follow += [f"parent.{p}" for p in names]
+    elif parents:  # (to another type's rows alone: that type's)
+        follow += [f"parent.{p}" for p in next(e for e in earlier if e.name in parents).perms]
     up = next((rel.subjects[0] for rel in o.rels if rel.name == "up"), None)
     if up is not None:
         follow += [f"up.{p}" for p in next(e for e in earlier if e.name == up).perms]
-    choices = [list(expressions([*refs, *names[:i], *follow, "{b1}"], size)) for i, size in enumerate(sizes)]
+    choices = [
+        list(expressions([*refs, *names[:i], *follow, "{b1}"], size)) + (list(KEYWORD_ATOMS) if size == 1 else [])
+        for i, size in enumerate(sizes)
+    ]
     for exprs in itertools.product(*choices):
         o2 = dataclasses.replace(o, perms=dict(zip(names, exprs, strict=True)))
         if used(o2, last=int(o.name[1:]) == MAX_TYPES):
@@ -394,8 +414,8 @@ def the_set(n: int) -> list[Spec]:
 
 # how many policies the set has (the_set's, by size, its last line those of size n + 1 with a deny): a language
 # change that changes them changes these (python3 tests/small.py --count N)
-COUNTS: dict[int, int] = {1: 0, 2: 9, 3: 75, 4: 596, 5: 5416, 6: 45059}
-DENIES: dict[int, int] = {1: 0, 2: 0, 3: 0, 4: 12, 5: 214, 6: 2386, 7: 19828}
+COUNTS: dict[int, int] = {1: 0, 2: 10, 3: 88, 4: 925, 5: 9128, 6: 84448}
+DENIES: dict[int, int] = {1: 0, 2: 0, 3: 0, 4: 24, 5: 356, 6: 3890, 7: 35832}
 
 
 # ----------------------------------------------------------------------
@@ -403,6 +423,10 @@ DENIES: dict[int, int] = {1: 0, 2: 0, 3: 0, 4: 12, 5: 214, 6: 2386, 7: 19828}
 # ----------------------------------------------------------------------
 USERS = ("1", "2")  # the users: the second fails the user type's where, if it has one
 PRINCIPALS = (*USERS, "")  # who is asked: each user, and nobody
+# share links: the tokens a world's links may name, and who holds which (in the session's context: authz_ctx.links);
+# the database stores a token's hash, which a link's subject is once loaded (hashed())
+TOKENS = ("k1", "k2")
+HOLDS: dict[str, tuple[str, ...]] = {"1": ("k1",), "2": (), "": ("k2",)}
 WORLDS = 400  # worlds of one size tried at most: every combination up to that many, else as many drawn
 DEEP = 60  # worlds of three rows of each type, drawn
 Fact: TypeAlias = "tuple[str, str, str, str, Scalar]"  # ('col', type, id, column, value) or ('pair', key, o, s, None)
@@ -413,6 +437,8 @@ def subject_ids(pol: Policy, ids: dict[str, list[str]], st: str, sr: str | None)
     """The ids a link to subjects st#sr may name in a world with these rows."""
     if st == "anyone" or sr == "*":
         return ["*"]
+    if st == "link":
+        return list(TOKENS)
     return list(USERS) if st == "user" else ids[st]
 
 
@@ -551,7 +577,7 @@ def reference(
     def answers(data: evaluate.Data) -> Answers:
         out: Answers = {}
         for u in PRINCIPALS:
-            state = ref.evaluate(data, u)
+            state = ref.evaluate(data, u, HOLDS[u])
             for t, p in perms:
                 out[(u, t, p)] = state[(t, p)]
         return out
@@ -698,8 +724,9 @@ def wrong_data(pol: Policy) -> Iterator[tuple[str, Callable[[evaluate.Data], eva
 
                     def every_subject(d: evaluate.Data, key: evaluate.PairsKey = key, st: str = st) -> evaluate.Data:
                         objs = {o for o, _ in d.pairs[key]}
+                        subjects = list(TOKENS) if st == "link" else d.ids[st]
                         return dataclasses.replace(
-                            d, pairs={**d.pairs, key: [(o, s) for o in sorted(objs) for s in d.ids[st]]}
+                            d, pairs={**d.pairs, key: [(o, s) for o in sorted(objs) for s in subjects]}
                         )
 
                     def every_object(d: evaluate.Data, key: evaluate.PairsKey = key, t: str = t.name) -> evaluate.Data:
@@ -853,11 +880,13 @@ def load_sql(pol: Policy, data: evaluate.Data, principals: bool = True, rows_dec
                             if src.type_col:
                                 values[o][src.type_col] = lit(st)
                     elif src.kind == "table":
-                        if not isinstance(src.obj_col, str) or not isinstance(src.subj_col, str) or src.type_col:
-                            raise Unloadable("a link table with keys of several columns, or naming types")
+                        if not isinstance(src.obj_col, str) or not isinstance(src.subj_col, str):
+                            raise Unloadable("a link table with keys of several columns")
+                        # (one that names its subjects' type: the type's name beside the id)
+                        typed = (f", {q(src.type_col)}", f", {lit(st)}") if src.type_col else ("", "")
                         links += [
-                            f"INSERT INTO {qt(src.table or '')} ({q(src.obj_col)}, {q(src.subj_col)}) "
-                            f"VALUES ({ident(t.name, o)}, {ident(st, s)});"
+                            f"INSERT INTO {qt(src.table or '')} ({q(src.obj_col)}, {q(src.subj_col)}{typed[0]}) "
+                            f"VALUES ({ident(t.name, o)}, {ident(st, s)}{typed[1]});"
                             for o, s in pairs
                         ]
                     elif src.kind == "shared":
@@ -902,6 +931,17 @@ def moved(data: evaluate.Data, names: dict[str, str], shift: int, principals: se
     }
     out.cond = {(t(a), c): [i(a, x) for x in v] for (a, c), v in data.cond.items()}
     return out
+
+
+def hashed(data: evaluate.Data) -> evaluate.Data:
+    """A world with its links' tokens as the database stores them, hashed (as authz.share_link() writes them)."""
+    return dataclasses.replace(
+        data,
+        pairs={
+            k: [(o, hashlib.sha256(s.encode()).hexdigest()) for o, s in v] if k[3] == "link" else v
+            for k, v in data.pairs.items()
+        },
+    )
 
 
 def union(datas: Sequence[evaluate.Data]) -> evaluate.Data:
@@ -952,9 +992,13 @@ SHRUNK = 3  # the failing policies whose world is made smaller (each takes many 
 
 
 class SmallGen(Gen):
-    """Who difftest's checks ask as: USERS (and nobody)."""
+    """Who difftest's checks ask as: USERS (and nobody), each holding HOLDS' share links where the policy has links."""
 
     users: ClassVar[list[str]] = list(USERS)
+    links: bool = False
+
+    def context(self, u: str) -> dict[str, str]:
+        return {"links": ",".join(HOLDS[u])} if self.links else {}
 
 
 def retyped(spec: Spec, prefix: str) -> tuple[Spec, dict[str, str]]:
@@ -1001,7 +1045,12 @@ def check_batch(db: DB, items: Sequence[Item], workdir: str, before: bool) -> di
     pol = parse_policy(text, path)
     sql = Compiler(parse_policy(text, path)).compile(path)
     principals = {t.name for t in pol.types.values() if t.principal}
-    datas = [moved(w, names[j], APART * k, principals) for j, it in enumerate(items) for k, w in enumerate(it.worlds)]
+    # (a link's subject is a token, the same in every world: not moved, as the principals' ids aren't)
+    datas = [
+        moved(w, names[j], APART * k, principals | {"link"})
+        for j, it in enumerate(items)
+        for k, w in enumerate(it.worlds)
+    ]
     world = union(datas)
     principals_rows = users(pol)
     loads = [load_sql(pol, d, principals=False) for d in datas]
@@ -1016,11 +1065,19 @@ def check_batch(db: DB, items: Sequence[Item], workdir: str, before: bool) -> di
     else:
         db.run(sql)
         db.run(rows + "\n" + shares)
-    checker = Checker(db, path, SmallGen(random.Random(0)))
+    gen = SmallGen(random.Random(0))
+    gen.links = any(
+        st == "link"
+        for t in pol.types.values()
+        for r in t.relations.values()
+        for src in r.sources
+        for st, _ in src.subjects
+    )
+    checker = Checker(db, path, gen)
     problems = checker.check()
     snap = checker.snapshot_data_only()
     read = evaluate.Data.of({tuple(k[2:]): v for k, v in snap.items() if k[0] == USERS[0] and k[1] == "data"})
-    want, got = facts(pol, world), facts(pol, read)
+    want, got = facts(pol, hashed(world)), facts(pol, read)
     for k in sorted(set(want) | set(got)):
         if want.get(k, frozenset()) != got.get(k, frozenset()):
             problems.append(

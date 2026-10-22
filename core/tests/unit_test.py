@@ -14,6 +14,7 @@ import dataclasses
 import datetime
 import fnmatch
 import glob
+import hashlib
 import io
 import itertools
 import json
@@ -9632,6 +9633,82 @@ class SmallPolicies(unittest.TestCase):
         with self.assertRaises(self.s.Unloadable):
             self.s.load_sql(pol, dataclasses.replace(data, cond={("t1", "exists (select 1)"): ["1"]}))
 
+    def test_the_core_forms_are_listed(self) -> None:
+        # each kind of source and subject of the core language has policies in the list: shares to a link, a parent
+        # through a link table to the first type's rows or naming each row's type, up from a link table or shares
+        # (a share to an object), and a keyword condition as a permission of its own
+        found: set[str] = set()
+        for spec in self.s.listed(4):
+            for o in spec.objs:
+                for rel in o.rels:
+                    if "link" in rel.subjects:
+                        found.add("link")
+                    if rel.name == "parent" and rel.kind == "table":
+                        found.add("parent table, typed" if len(rel.subjects) > 1 else "parent table")
+                        found |= (
+                            {"parent table to the first type"} if rel.subjects == ["t1"] and o.name == "t2" else set()
+                        )
+                    if rel.name == "up":
+                        found.add(f"up {rel.kind}")
+                found |= {f"a permission {e}" for e in o.perms.values() if e in ("signed_in", "anyone", "nobody")}
+        self.assertEqual(
+            found,
+            {
+                "link",
+                "parent table",
+                "parent table, typed",
+                "parent table to the first type",
+                "up column",
+                "up table",
+                "up shared",
+                "a permission signed_in",
+                "a permission anyone",
+                "a permission nobody",
+            },
+        )
+
+    def test_links_and_typed_link_tables_as_rows(self) -> None:
+        spec = self.s.decorated(
+            self.spec("""
+            type user
+            type t1
+              r1 : link shared
+              can p1 = r1
+            type t2
+              parent : t2, t1 table
+              can p1 = parent.p1 or {b1}
+        """)
+        )
+        pol = parse_policy(genpolicy.policy_text(spec), "small.authz")
+        self.assertIn("parent : t2, t1 = gp.t2_parent(obj_id -> (subj_type, subj_id))", genpolicy.policy_text(spec))
+        self.assertIn(
+            "subj_id bigint, active boolean NOT NULL DEFAULT true, subj_type text, UNIQUE (obj_id, subj_type, subj_id)",
+            genpolicy.schema_text(spec),
+        )
+        ids, _ = self.s.dims(pol, 1)
+        self.assertEqual(self.s.subject_ids(pol, ids, "link", None), ["k1", "k2"])
+        data = self.s.data_of(
+            pol,
+            ids,
+            [("pair", "t1\tr1\t0\tlink\t", "1", "k1", None), ("pair", "t2\tparent\t0\tt1\t", "1", "1", None)],
+        )
+        rows, shares = self.s.load_sql(pol, data)
+        self.assertIn(
+            'INSERT INTO "gp"."t2_parent" ("obj_id", "subj_id", "subj_type") VALUES (1, 1, \'t1\');', rows.splitlines()
+        )
+        self.assertIn("encode(sha256(convert_to('k1', 'UTF8')), 'hex')", shares)
+        # the database stores the token's hash, which user 1 holds the token of, and nobody another's
+        k1 = hashlib.sha256(b"k1").hexdigest()
+        self.assertEqual(self.s.hashed(data).pairs[("t1", "r1", 0, "link", "")], [("1", k1)])
+        answers = self.s.reference(genpolicy.policy_text(spec))(data)
+        self.assertEqual(
+            (answers[("1", "t1", "p1")], answers[("2", "t1", "p1")], answers[("", "t1", "p1")]),
+            (frozenset({"1"}), frozenset(), frozenset()),
+        )
+        # moved beside another world: a token stays the token it is
+        moved = self.s.moved(data, {"t1": "s0t1"}, 10, {"user", "link"})
+        self.assertEqual(moved.pairs[("s0t1", "r1", 0, "link", "")], [("11", "k1")])
+
     def test_a_world_whose_conditions_the_rows_decide(self) -> None:
         # tests/rewrites.py replays a difference the review shows: the world is made as rows, but a condition that
         # reads other tables holds where they say, not where the world says. So what the rows hold is read back: the
@@ -13407,7 +13484,7 @@ class ParseAgreement(unittest.TestCase):
         )
 
     def test_small_policies_written_two_ways(self) -> None:
-        # small.py's set (to size 3: 96 policies), a slice of it, each as listed and written another way; and the
+        # small.py's set (to size 3: 122 policies), a slice of it, each as listed and written another way; and the
         # language page's example, which includes a file, beside that file
         import parse_agreement
         import small
@@ -13416,7 +13493,7 @@ class ParseAgreement(unittest.TestCase):
             parse_agreement.write(d, 2, 3, (1, 4))
             names = sorted(os.listdir(d))
             mine = [k for k in range(len(small.the_set(3))) if k % 4 == 1]
-            self.assertEqual(len(mine), 24)
+            self.assertEqual(len(mine), 31)
             want = ["language.authz", "roles.authz", "gen_1.authz", "gen_2.authz"]
             want += [f"small_{k}{x}.authz" for k in mine for x in ("", "_other")]
             with open(os.path.join(d, "language.authz"), encoding="utf-8") as fh:
@@ -13922,9 +13999,11 @@ class Worlds(unittest.TestCase):
 class GeneratedShapes(unittest.TestCase):
     """genpolicy's policies say now and then what no other draw does (also(), across(), perm_groups(), keys other than
     bigint, composite keys, caveats, scopes, masks, custom roles, share links, rules before and after, named link
-    columns, a policy in two files, and the twins of variants()), drawn apart from the rest: a seed's policy keeps
-    all it drew before, the first twelve seeds draw each of them (but across()), and their twins compile (one that
-    didn't would only be counted as refused)."""
+    columns, a policy in two files, the twins of variants(), and those drawn since: plain shares, bot:*, a share as
+    a tree's link, link tables naming their subjects' type, conditions on who is signed in or reading another table
+    in a permission, a rule on two columns), drawn apart from the rest: a seed's policy keeps all it drew before,
+    the first twelve seeds draw each of them (but across(), and the first thirty those drawn since), and their twins
+    compile (one that didn't would only be counted as refused)."""
 
     def setUp(self) -> None:
         sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -13941,6 +14020,7 @@ class GeneratedShapes(unittest.TestCase):
                 mock.patch.object(self.g, "across", lambda spec, x: None),
                 mock.patch.object(self.g, "custom_roles", lambda spec, x: None),
                 mock.patch.object(self.g, "own_links", lambda spec, x: None),
+                mock.patch.object(self.g, "shared_trees", lambda spec, x: None),
             ):
                 before = self.g.make(seed)
             after = self.g.make(seed)
@@ -14018,6 +14098,23 @@ class GeneratedShapes(unittest.TestCase):
         # a column rule said to be checked before or after the change: rarer, in the first sixty seeds
         heads = {h for seed in range(1, 61) for o in self.g.make(seed).objs for h, _ in o.rules}
         self.assertLessEqual({"update b1 before", "update b1 after"}, heads)
+        # what the draws apart since then say (plain_shares(), every_service(), shared_trees(), typed_links(),
+        # whose(), column_pairs()), and the shapes drawn before them that FEATURES names: each in the first thirty
+        since = {
+            "shares by share",
+            "bot:*",
+            "a share as a tree's link",
+            "a link table naming its subjects' type",
+            "a condition on who is signed in",
+            "a permission reading another table",
+            "a rule on two columns",
+            "a not first",
+            "a relation to users again",
+            "inheritance stopped by a condition",
+            "an insert rule",
+            "signed_in, anyone or nobody",
+        }
+        self.assertLessEqual(since, set().union(*(self.g.features(self.g.make(seed)) for seed in range(1, 31))))
         # around.py's four seeds of each push have caveats too, which its sessions read from their context
         self.assertTrue(any(self.g.make(seed).caveats for seed in range(1, 5)))
 
@@ -14057,7 +14154,7 @@ class GeneratedShapes(unittest.TestCase):
         """--pairs 1000, what the full run checks: a few seeds the compiler takes, in which every two FEATURES meet
         (all but APART meet in some policy of the pool), each feature drawn."""
         seeds, unmet, never = self.g.covering(1000)
-        self.assertLessEqual(len(seeds), 20)
+        self.assertLessEqual(len(seeds), 24)
         self.assertEqual((unmet, never), (set(), set()))
         for seed in seeds:  # each one's policy can be checked: not slow to plan (run() would set it aside)
             sql = Compiler(parse_policy(self.g.policy_text(self.g.make(seed)), "g.authz")).compile("g.authz")
