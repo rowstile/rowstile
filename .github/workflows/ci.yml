@@ -249,12 +249,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash editor/test.sh
-  # The ways rowstile is installed, each on a clean machine: npm (no Python there), PyPI, the command's image
+  # The ways rowstile is installed, each on a clean machine: npm (no Python there), PyPI, the command's image (on
+  # each platform release.yml publishes it for, arm64 under emulation)
   packaging:
     needs: unit
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    env:
+      ROWSTILE_IMAGE_PLATFORMS: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      # the binfmt image by digest (Dependabot doesn't move it)
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1   # v4.4.0
+        with: {platforms: arm64, cache-image: false, image: "docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"}
       - run: flock /tmp/rowstile-ci-packaging.lock bash packaging/test.sh
   # The file manager against the rowstile image built from the same commit: its public-surface
   # check, the generated client matching its policy, the API tests with RustFS, and the web app's build and tests.

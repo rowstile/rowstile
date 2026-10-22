@@ -5,7 +5,7 @@
 #     size budget, 40 MB), and a command
 #     stopped by a signal ends the launcher the same way; on Alpine (musl) with `@rowstile/cli-linux-x64-musl`
 #   - PyPI: the `rowstile` wheel and sdist (the command and the Python SDK), installed with pip
-#   - the command's image (packaging/docker/Dockerfile)
+#   - the command's image (packaging/docker/Dockerfile), on each platform the release publishes it for, and its version label
 # Each compiles a policy, writes its migration and its generated names, with no database.
 set -u
 cd "$(dirname "$0")/.."
@@ -142,15 +142,36 @@ sys.exit(1 if bare or not packages else 0)
 EOF
 
 echo "-- the image"
-docker build -q -t rowstile-cli:test -f packaging/docker/Dockerfile . >/dev/null || bad "the image builds"
-docker run --rm -v "$REPO:/repo" --entrypoint bash rowstile-cli:test -c "git --version >/dev/null || exit 1
-${SCRIPT//PGA/rowstile}" >"$OUT/image.log" 2>&1 \
-  && ok "the image: rowstile, and git for reviews" || { cat "$OUT/image.log"; bad "the image"; }
-# as the developer, not root (the README's line): what it writes into the project is theirs
-docker run --rm -u 1000:1000 --tmpfs /work:uid=1000,gid=1000 -v "$REPO:/repo" --entrypoint bash rowstile-cli:test -c "
-  mkdir db && cp /repo/integrations/nextjs/db/policy.authz db/ || exit 1
-  printf 'policy = \"db/policy.authz\"\n[migrations]\ntool = \"sql\"\ndir = \"db/migrations\"\n' > rowstile.toml
-  rowstile migrate --name first >/dev/null || exit 1
-  [ \"\$(stat -c %u db/migrations/*authz_first.sql)\" = 1000 ]" >"$OUT/image-user.log" 2>&1 \
-  && ok "the image as another user (-u): the migration is that user's" || { cat "$OUT/image-user.log"; bad "the image as another user"; }
+# on each platform the release publishes it for (release.yml's `platforms`): CI names them in
+# ROWSTILE_IMAGE_PLATFORMS and runs arm64 under QEMU; elsewhere on the machine's own
+version=$(python3 packaging/version.py)
+IFS=, read -ra platforms <<<"${ROWSTILE_IMAGE_PLATFORMS:-linux/$(docker version -f '{{.Server.Arch}}')}"
+for platform in "${platforms[@]}"; do
+  arch=${platform#linux/}
+  image=rowstile-cli:test-$arch
+  case $arch in amd64) machine=x86_64 ;; arm64) machine=aarch64 ;; *) machine=$arch ;; esac
+  docker build -q --platform "$platform" --build-arg VERSION="$version" -t "$image" -f packaging/docker/Dockerfile . \
+    >/dev/null || bad "the image builds ($platform)"
+  label=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image" 2>&1)
+  [ "$label" = "$version" ] && ok "the image ($platform) is labelled with its version, $version" \
+    || bad "the image ($platform): its version label is '$label', not $version"
+  docker run --rm --platform "$platform" -v "$REPO:/repo" --entrypoint bash "$image" -c "git --version >/dev/null || exit 1
+echo \"machine \$(uname -m)\"
+${SCRIPT//PGA/rowstile}" >"$OUT/image-$arch.log" 2>&1 && grep -qx "machine $machine" "$OUT/image-$arch.log" \
+    && ok "the image ($platform): rowstile on $machine, and git for reviews" \
+    || { cat "$OUT/image-$arch.log"; bad "the image ($platform)"; }
+  # as the developer, not root (the README's line): what it writes into the project is theirs
+  docker run --rm --platform "$platform" -u 1000:1000 --tmpfs /work:uid=1000,gid=1000 -v "$REPO:/repo" --entrypoint bash "$image" -c "
+    mkdir db && cp /repo/integrations/nextjs/db/policy.authz db/ || exit 1
+    printf 'policy = \"db/policy.authz\"\n[migrations]\ntool = \"sql\"\ndir = \"db/migrations\"\n' > rowstile.toml
+    rowstile migrate --name first >/dev/null || exit 1
+    [ \"\$(stat -c %u db/migrations/*authz_first.sql)\" = 1000 ]" >"$OUT/image-user-$arch.log" 2>&1 \
+    && ok "the image ($platform) as another user (-u): the migration is that user's" \
+    || { cat "$OUT/image-user-$arch.log"; bad "the image ($platform) as another user"; }
+done
+# a version that isn't the package's stops the build: the label never says another
+! docker build --progress=plain --build-arg VERSION=0.0.0 -f packaging/docker/Dockerfile . >"$OUT/image-version.log" 2>&1 \
+  && grep -qF "the image is labelled with the package's version: --build-arg VERSION=$version (it is '0.0.0')" "$OUT/image-version.log" \
+  && ok "the image: a build given another version than the package's stops, and says which" \
+  || { cat "$OUT/image-version.log"; bad "the image built with another version than the package's"; }
 exit $rc

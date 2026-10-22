@@ -79,7 +79,8 @@ Only pre-releases are published so far: ask for the newest.
     docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-alpha.9 migrate
 
 `npm` brings the Python for Linux (glibc and musl, x64 and arm64), macOS (x64 and arm64) and Windows x64. The
-image runs as root unless told otherwise: `-u` makes the files it writes yours. [Installing](docs/installing.md)
+image is for Linux on x64 and arm64, and runs as root unless told otherwise: `-u` makes the files it writes
+yours. [Installing](docs/installing.md)
 has the rest: pre-releases, the extras, the repository.
 
 From this repository, put `core/cli` on `PATH`. `rowstile init` then finds the stack (Next.js, Prisma,

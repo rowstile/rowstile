@@ -14199,6 +14199,42 @@ class Delivery(unittest.TestCase):
         self.assertEqual(loose, [], "an image by tag alone: add its digest (tag@sha256:...)")
         self.assertIn("FROM pg${PG_MAJOR}\n", read("Dockerfile"))
 
+    def test_the_image_is_checked_on_each_platform_it_is_published_for(self) -> None:
+        # the release builds the command's image for these platforms, and the packaging tests (packaging/test.sh)
+        # run it on each of them first, in CI and in the release's own check job: arm64 under QEMU
+        release, ci = read("../.github/workflows/release.yml"), read("../.github/workflows/ci.yml")
+        platforms = search(r"(?m)^  ROWSTILE_IMAGE_PLATFORMS: (\S+)$", release).group(1)
+        self.assertEqual(platforms.split(","), ["linux/amd64", "linux/arm64"])
+        image = search(r"(?ms)^  image:\n(.*?)\n\n", release).group(1)
+        self.assertIn("          platforms: ${{ env.ROWSTILE_IMAGE_PLATFORMS }}\n", image)
+        self.assertIn("uses: docker/setup-buildx-action@", image, "the docker driver builds one platform")
+        # its label says its version, the package's (the Dockerfile stops otherwise; packaging/test.sh checks both)
+        self.assertIn("          build-args: VERSION=${{ needs.check.outputs.version }}\n", image)
+        dockerfile = read("../packaging/docker/Dockerfile")
+        self.assertEqual(dockerfile.count("\nARG VERSION\n"), 2, "the build stage checks it, the last labels it")
+        self.assertIn('org.opencontainers.image.version="$VERSION"', dockerfile)
+        for path, text in ((".github/workflows/release.yml", release), (".github/workflows/ci.yml", ci)):
+            tested = [job for job in re.split(r"(?m)^  (?=[\w-]+:\n)", text) if "bash packaging/test.sh" in job]
+            self.assertTrue(tested, path)
+            for job in tested:
+                self.assertIn("uses: docker/setup-qemu-action@", job, path)
+                if path.endswith("ci.yml"):
+                    self.assertIn(f"\n      ROWSTILE_IMAGE_PLATFORMS: {platforms}\n", job, path)
+        # what the emulator and BuildKit run, by digest: Dependabot doesn't move these, and the release's image
+        # job may push. The binfmt image isn't taken from the Actions cache
+        for path, lines in self.workflows().items():
+            for n, line in enumerate(lines):
+                if re.match(r"\s*(?:- )?uses: docker/setup-qemu-action@", line):
+                    self.assertRegex(
+                        lines[n + 1],
+                        r'^\s+with: \{platforms: arm64, cache-image: false, image: "\S+@sha256:[0-9a-f]{64}"\}$',
+                        f"{path}:{n + 2}",
+                    )
+                if re.match(r"\s*(?:- )?uses: docker/setup-buildx-action@", line):
+                    self.assertRegex(
+                        lines[n + 1], r'^\s+with: \{driver-opts: "image=\S+@sha256:[0-9a-f]{64}"\}$', f"{path}:{n + 2}"
+                    )
+
     def test_uv_and_vsce_have_a_version(self) -> None:
         # setup-uv without one asks GitHub for uv's latest release on each run; npx takes the newest in a range
         for path, lines in self.workflows().items():
