@@ -5,7 +5,7 @@ Who may read a chat, post in it, add people, edit or delete a message, join with
 someone who blocked them is decided by row-level security from db/policy.authz: there is not one
 permission check in this file. Something you may not see answers 404, as if it didn't exist; something
 you see but may not do answers 403, with the database's own explanation of why: a refused write raises it
-(the rule, and what is missing), and an update or delete that changed nothing asks for it (authz.expect).
+(the rule, and what is missing), and an update or delete that changed nothing asks for it (tx.authz.expect).
 """
 
 import asyncio

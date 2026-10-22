@@ -28,6 +28,7 @@ import types
 import unittest
 from collections.abc import Callable, Iterable, Sequence
 from decimal import Decimal
+from pathlib import Path
 from typing import ClassVar, Protocol, cast
 from unittest import mock
 
@@ -65,6 +66,9 @@ import sweep  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(ROOT), "docs"))
 import compare_readings  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(ROOT), "examples"))
+import public_surface  # noqa: E402
 
 GOLDEN = os.path.join(ROOT, "tests", "golden")
 UPDATE = "--update" in sys.argv
@@ -13715,6 +13719,172 @@ class FilemanagerTestScript(unittest.TestCase):
         rc, calls, out = run_example_test_script("filemanager", uv=0)  # every step passes
         self.assertEqual((rc, calls), (0, [*self.UP, "<app> docker compose down"]), out)
         self.assertEqual(run_example_test_script("filemanager", uv=1, keep="1")[:2], (1, [*self.UP]))
+
+
+class PublicSurface(unittest.TestCase):
+    """examples/public_surface.py, which each example's check_public_surface.py runs: the app uses only rowstile's
+    public surface. It reads every text file, matches names as Postgres reads them, and leaves alone only what
+    rowstile migrate writes."""
+
+    REPO = os.path.dirname(ROOT)
+
+    def problems(self, files: dict[str, str | bytes]) -> tuple[int, list[str]]:
+        """What the check finds in an app made of these files (each path from the app's folder)."""
+        with tempfile.TemporaryDirectory() as d:
+            for rel, text in files.items():
+                path = os.path.join(d, *rel.split("/"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as fh:
+                    fh.write(text if isinstance(text, bytes) else text.encode("utf-8"))
+            n, found = public_surface.check(Path(d))
+        return n, [p.split(": ", 1)[1] for p in found]
+
+    def found(self, text: str, name: str = "db/a.sql") -> list[str]:
+        return self.problems({name: text})[1]
+
+    PRIVATE = "uses rowstile's private schemas"
+    SEARCH_PATH = "puts a schema of rowstile's in the search_path"
+    SETS = "sets a setting of rowstile's (only authz.act_as() and the logins do)"
+
+    def test_names_as_postgres_reads_them(self) -> None:
+        self.assertEqual(self.found("SELECT AUTHZ_INT.canon(1);"), [f"{self.PRIVATE}: SELECT AUTHZ_INT.canon(1);"])
+        self.assertEqual(
+            self.found('SELECT * FROM "authz_gen"."v";'), [f'{self.PRIVATE}: SELECT * FROM "authz_gen"."v";']
+        )
+        table = "reads or writes authz.{} directly (call an authz.* function instead): {}"
+        for line, name in (
+            ('SELECT * FROM "authz"."shares";', "shares"),
+            ("SELECT * FROM authz . audit;", "audit"),
+            ("SELECT * FROM Authz.Changes;", "changes"),
+            ('SELECT * FROM authz."review_items";', "review_items"),
+        ):
+            self.assertEqual(self.found(line), [table.format(name, line)])
+        # over two lines: the line the name starts on
+        self.assertEqual(self.found("SELECT * FROM authz\n  .shares;"), [table.format("shares", "SELECT * FROM authz")])
+        # a function that shares its name with a table, called, is the function
+        self.assertEqual(self.found("SELECT * FROM authz.review_items(1);"), [])
+
+    def test_comments_and_strings_are_read(self) -> None:
+        self.assertEqual(self.found("SELECT '--', authz_gen.x();"), [f"{self.PRIVATE}: SELECT '--', authz_gen.x();"])
+        self.assertEqual(
+            self.found("-- authz_int.canon() would do"), [f"{self.PRIVATE}: -- authz_int.canon() would do"]
+        )
+
+    def test_every_text_file(self) -> None:
+        line = "psql -c 'SELECT * FROM authz_int.perms'"
+        for name in ("test.sh", "docker-compose.yml", "web/x.mjs", "web/x.js", "Makefile", "notes.md"):
+            self.assertEqual(self.found(line, name), [f"{self.PRIVATE}: {line}"], name)
+        # what isn't text, and what isn't the app's own, are not read
+        n, found = self.problems(
+            {
+                "logo.png": b"\x89PNG\r\n\x1a\n\xff authz_int.x",
+                "zeros.bin": b"authz_int.x\0",
+                "frontend/node_modules/x/index.js": "authz_int.x",
+                "backend/.venv/lib/x.py": "authz_int.x",
+                "frontend/dist/app.js": "authz_int.x",
+                "app.py": "x = 1",
+            }
+        )
+        self.assertEqual((n, found), (1, []))
+
+    def test_only_what_rowstile_migrate_writes_is_left_alone(self) -> None:
+        private = "SELECT * FROM authz_int.perms;"
+        n, found = self.problems(
+            {
+                # by its name, as rowstile migrate names its files: a header the app wrote is no exemption
+                "db/migrations/0099_handwritten.sql": f"-- rowstile makes this easy\n{private}\n",
+                "db/migrations/0100_authz_policy.sql": f"-- rowstile 0.1.0: policy. Generated\n{private}\n",
+                "db/policy.lock": private,
+                # the same name elsewhere is the app's, a folder's too
+                "db/0101_authz_mine.sql": private,
+                "db/migrations/0102_authz_folder/mine.sql": private,
+            }
+        )
+        self.assertEqual((n, found), (3, [f"{self.PRIVATE}: {private}"] * 3))
+        # the files the apps' .gitattributes mark as rowstile's
+        for app in ("filemanager", "messenger"):
+            with open(os.path.join(self.REPO, "examples", app, ".gitattributes"), encoding="utf-8") as fh:
+                marked = [line.split()[0] for line in fh if line.strip().endswith("linguist-generated=true")]
+            self.assertEqual(sorted(marked), sorted(public_surface.GENERATED), app)
+
+    def test_only_documented_functions(self) -> None:
+        line = "SELECT authz.not_documented_anywhere();"
+        self.assertEqual(
+            self.found(line),
+            [
+                "authz.not_documented_anywhere is not public (docs/reference/ documents no function or setting by "
+                f"that name): {line}"
+            ],
+        )
+        # a setting is no function
+        self.assertEqual(
+            self.found("SELECT authz.scopes();"),
+            [
+                "authz.scopes is not public (docs/reference/ documents no function or setting by that name): "
+                "SELECT authz.scopes();"
+            ],
+        )
+        self.assertEqual(
+            self.found("x = authz.nope"),
+            [
+                "authz.nope is not public (docs/reference/ documents no function or setting by that name): x = authz.nope"
+            ],
+        )
+        # documented ones, called or named; the settings, named; the generated client's methods (an attribute)
+        fine = (
+            "SELECT authz.can('folder', '1', 'view'), AUTHZ.LIST('folder', 'view'), \"authz\".\"perms\"('f', '1');\n"
+            "-- authz.lint() and authz.trim_changes(), as the owner\n"
+            "tx.authz.expect(row, 'app.t', 'update', 1)  # who is signed in: authz.user_id, authz.scopes\n"
+            "the policy is db/policy.authz. It says\n"
+        )
+        self.assertEqual(self.found(fine), [])
+        documented = public_surface.documented()
+        self.assertLessEqual({"can", "list", "perms", "act_as", "lint", "verify", "trim_changes"}, documented)
+        self.assertFalse({"shares", "audit", "expect"} & documented)
+
+    def test_search_path(self) -> None:
+        for line in (
+            "SET search_path TO authz; SELECT * FROM shares;",
+            'SET search_path = app, "authz";',
+            "SELECT set_config('search_path', 'app, authz', true);",
+            "postgresql://app@db/x?options=-csearch_path%3Dauthz",
+        ):
+            self.assertEqual(self.found(line), [f"{self.SEARCH_PATH}: {line}"], line)
+        line = "SET search_path = authz_int;"
+        self.assertEqual(self.found(line), [f"{self.PRIVATE}: {line}", f"{self.SEARCH_PATH}: {line}"])
+        self.assertEqual(self.found("SET search_path = app, public; SELECT authz.uid();"), [])
+
+    def test_settings(self) -> None:
+        for line in (
+            "SET LOCAL authz.user_id = '1';",
+            "set \"authz.principal_type\" = 'bot';",
+            "SELECT set_config('authz.scopes', 'read', true);",
+            "postgresql://app@db/x?options=-c authz.acting_user=1",
+            "RESET authz.user_id;",
+        ):
+            self.assertEqual(self.found(line), [f"{self.SETS}: {line}"], line)
+        line = "SELECT current_setting('authz.session');"
+        self.assertEqual(self.found(line), [f"names the setting rowstile signs sessions with: {line}"])
+
+    def test_the_examples_pass(self) -> None:
+        for app in ("filemanager", "messenger"):
+            script = os.path.join(self.REPO, "examples", app, "check_public_surface.py")
+            p = subprocess.run([sys.executable, script], capture_output=True, text=True, timeout=60)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            self.assertRegex(p.stdout, r"^public surface: [1-9][0-9]* files checked, 0 problems\n$")
+        # and a problem fails it, with the place
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "a.sql"), "w", encoding="utf-8") as fh:
+                fh.write("SELECT 1;\nSELECT * FROM authz.shares;\n")
+            out = io.StringIO()
+            with mock.patch("sys.stdout", out):
+                rc = public_surface.main(Path(d))
+        self.assertEqual(rc, 1)
+        self.assertEqual(
+            out.getvalue(),
+            "a.sql:2: reads or writes authz.shares directly (call an authz.* function instead): "
+            "SELECT * FROM authz.shares;\npublic surface: 1 files checked, 1 problems\n",
+        )
 
 
 class PreviousRelease(unittest.TestCase):

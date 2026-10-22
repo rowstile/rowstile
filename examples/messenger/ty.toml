@@ -6,7 +6,7 @@ include = ["backend/app", "backend/tests", "db", "check_public_surface.py"]
 [environment]
 python-version = "3.12"
 python = "backend/.venv"
-extra-paths = ["backend"]
+extra-paths = ["backend", ".."]
 
 [rules]
 all = "error"

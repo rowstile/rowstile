@@ -68,7 +68,7 @@ test` runs them: 71 checks, in about a second.
   returns only the chats you may read. A chat you're not in answers 404, as if it didn't exist.
 - **No "why can't I?" logic.** When the database refuses a write, its error says which rule refused it and
   what is missing. The API passes that on (`refusal(error)` from the generated client), and an update that
-  changed nothing asks for the same (`authz.expect`). The web app shows it behind a "why?" link:
+  changed nothing asks for the same (`tx.authz.expect`). The web app shows it behind a "why?" link:
 
   ```
   no   insert : chat.post and ((sender and {bot_id is null}) or (from_bot and {sender_id is null}))  (line 105)
