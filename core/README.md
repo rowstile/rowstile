@@ -146,8 +146,9 @@ the fixed policies, the cookbook's, the four apps', the docs app's diagram, clie
 `tests/migrate_test.py` checks. A mutant that changes none of them is equivalent for all of them and doesn't run
 (`same`); one that breaks a compile is caught there. The others run the suites. Those that called a function whose
 SQL changed, or ran the mutated line (CI's coverage run on `main`: `functions.tsv` and coverage.py's contexts),
-run first, then the rest; each group the most catches per second first. A catch counts when the suite is red
-twice, and only if it is green unmutated on the same machine.
+run first, then the rest; each group the most catches per second first. Each suite's catches and seconds come
+from the newest run that kept them (no copy is kept here: it would go stale), and the report names that run. A
+catch counts when the suite is red twice, and only if it is green unmutated on the same machine.
 
 It runs on GitHub's runners (`.github/workflows/mutants.yml`), weekly and by hand, never on a push: a job prepares
 the queue, up to eight jobs run a share of it each, side by side, and a last one collects the results. Each run

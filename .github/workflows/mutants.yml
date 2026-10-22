@@ -2,9 +2,10 @@
 # run until one goes red. Weekly, and by hand; never on a push or a pull request (a full sweep takes many
 # runner-hours). Three jobs:
 # - prepare: every mutant (each has an id that stays while its line is unchanged), the results of the last run
-#   that still hold (resume), the cheap phase (each candidate's policies compiled before and after, no Postgres:
-#   what changed selects the suites, from the call data of main's latest CI coverage run), and the queue dealt
-#   into shards, the longest first;
+#   that still hold (resume), the newest run's stats (each suite's catches and seconds, which order the suites;
+#   whatever resume says, and never a copy in the repository), the cheap phase (each candidate's policies compiled
+#   before and after, no Postgres: what changed selects the suites, from the call data of main's latest CI
+#   coverage run), and the queue dealt into shards, the longest first;
 # - sweep: a shard each, side by side (8 at most, so pull requests keep runners), each in a Postgres container of
 #   its own, until its budget of minutes is used (what is left waits for the next run);
 # - collect: the results together (an artifact, mutants-results, that the next run resumes from), and the report
@@ -89,6 +90,20 @@ jobs:
             fi
           done
           echo "no results to carry over"
+      # the stats the suites' order starts from: the newest run's that kept them, this branch's or else main's
+      - run: |
+          for branch in "$BRANCH" main; do
+            for id in $(gh run list --workflow mutants.yml --branch "$branch" --status completed --limit 20 \
+                        --json databaseId --jq '.[].databaseId'); do
+              for name in mutants-results mutants-results-partial; do
+                if gh run download "$id" -n "$name" -D .mutants/stats 2>/dev/null && [ -f .mutants/stats/stats.json ]; then
+                  echo "the suites' order starts from the stats of run $id"; exit 0
+                fi
+                rm -rf .mutants/stats
+              done
+            done
+          done
+          echo "no run kept stats: every suite counts the same until this run learns"
       - id: prepare
         run: |
           case "$SHARDS" in [1-9]|[1-5][0-9]|6[0-4]) ;; *) echo "shards: a number from 1 to 64, not '$SHARDS'"; exit 1;; esac
@@ -98,6 +113,7 @@ jobs:
           [ -z "$ONLY" ] || args+=(--only "$ONLY")
           [ ! -f .mutants/carried/results.jsonl ] || args+=(--carried .mutants/carried)
           [ ! -f .mutants/prepared/calls.json ] || args+=(--calls .mutants/prepared/calls.json)
+          [ ! -f .mutants/stats/stats.json ] || args+=(--stats .mutants/stats/stats.json)
           python3 core/mutants/sweep.py prepare "${args[@]}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
