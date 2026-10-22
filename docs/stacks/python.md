@@ -75,6 +75,11 @@ An UPDATE or DELETE the rules refuse changes 0 rows, without an error; `expect` 
 
 A refused INSERT is an error already: `rowstile.refusal(exc)` reads it as `Refused`.
 
+A query in a transaction nobody signed in to (a connection the SDK doesn't sign in, an engine in `AUTOCOMMIT`)
+fails with the not-signed-in error (AZ701), a bug in the app: `rowstile.not_signed_in(exc)` says whether an
+error is that one. A login the database refuses (AZ703) and settings changed by hand (AZ702) have its
+SQLSTATE, 28000, but are not it.
+
 ## asyncpg
 
 ```python

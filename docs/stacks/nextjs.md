@@ -140,7 +140,9 @@ export default async function Notes() {
 ```
 
 `route()` answers a refusal with a problem body: 404 for a row the user can't see, 403 with the rule and the
-reason for one they may not change (its fields: <https://rowstile.dev/problems/refused>). A call the database
+reason for one they may not change (its fields: <https://rowstile.dev/problems/refused>). Its `table` is the
+table as the policy names it, with its schema (`public.Note` for a model `Note`), whichever rule refused:
+`tableName("Note")` on `db.$authz` gives that name, for code that compares. A call the database
 says names something that isn't there (a share with someone who doesn't exist) is 404 too, one it says
 lacks an argument or has a wrong one (a negative page size) 400, one that needs someone signed in, from a
 visitor who isn't, 401, and a folder moved into one of its own subfolders 409, each with the database's words.

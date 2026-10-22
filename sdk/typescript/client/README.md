@@ -36,7 +36,11 @@ export const digest = job(["service", 1], async () => ({ count: await db.project
   for a missing or wrong argument, AZ710; 401 for a call that needs someone signed in or a login refused,
   AZ714 and AZ703; 409 for a move inside itself, AZ713).
 - `errorCode(e)`: rowstile's code for an error (`AZ709`; `rowstile help AZ709` explains it).
-- `calls(queryable)`: the runtime's functions over anything with `query(text, values)`.
+- `notSignedIn(e)`: whether an error is the not-signed-in one (AZ701: a query in a transaction nobody signed
+  in to). A login refused (AZ703) and settings changed by hand (AZ702) have its SQLSTATE, 28000, but are not it.
+- `calls(queryable)`: the runtime's functions over anything with `query(text, values)`; with them
+  `tableName(table)`, the table as the policy names it, with its schema (`public.Note` for `Note`), as a
+  refusal's `table` names it.
 - `Register`: the interface the generated names fill in (`rowstile client`), so a wrong permission name
   doesn't type-check.
 

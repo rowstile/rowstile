@@ -599,6 +599,15 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   work. A negative `limit`, or a number past bigint's range, answered 500 (now 422 or 400). The chat list counts
   unread messages from their numbers (it read each one: 5.5 s for 100,000). A direct chat whose other person
   left no longer disappears from the list, and a button whose request failed says why.
+- Some things only the alphas' release notes said are now in the docs: the SDKs' `not_signed_in(e)` and
+  `notSignedIn(e)` (the not-signed-in error, AZ701, and not a refused login), `db.$authz.tableName()` and the
+  Python SDK's `verdict(..., named=)`; the `CREATE INDEX CONCURRENTLY` that `rowstile indexes` gives goose and
+  dbmate in a migration of their own, a partitioned table's index without it, and the unfinished index a failed
+  build leaves, named first; that `rowstile prove --worlds N` tries more worlds than N; what `rowstile sql --as`
+  says of a write that changed no row; and a key that two rows hold through a table that inherits (the limits
+  page).
+- A relative link in a release's notes on GitHub (`[Installing](docs/installing.md)`) led nowhere: the release's
+  page reads it from its own address. The notes now link to the file at the release's tag.
 
 ## Before the beta
 

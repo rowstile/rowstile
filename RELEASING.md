@@ -86,6 +86,9 @@ layout, which `Delivery` in `core/tests/unit_test.py` checks (`layout()` in `pac
   come before the first part.
 - A part's lines are a list, one line a change, with no blank line inside it. A line says what users see, in
   plain words; what they won't notice belongs in the commit message.
+- A link to a file of the repository is written from its root, as GitHub reads this file:
+  `[Installing](docs/installing.md)`. A release's notes get it as a link to that file at the release's tag
+  (`changelog.py` writes it so), since a release's page reads a relative link from its own address.
 - Last, `## Before the beta`: what the alphas were, and a link to each one's GitHub release, which keeps its
   notes.
 
