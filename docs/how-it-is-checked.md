@@ -265,10 +265,14 @@ names the page that documents it, its fixed checks, and the checks that hold it 
 the reference evaluator, a rebuild, the policy applied whole, Postgres. The list is read against the code, and
 `Features` in [`tests/unit_test.py`](../core/tests/unit_test.py) fails on each push when a part of the surface is in
 no feature, when a check the list names is gone from its suite (or left in a comment), when no suite gives a flag to
-its command or sets a setting, when a feature of tier 1 (it decides access or keeps data) has no check against
-another answer, or when a refusal isn't asked for by its words. <!-- checked: tests/unit_test.py "test_every_item_is_in_a_feature_and_every_check_is_there"; tests/unit_test.py "test_each_refusal_is_asked_for_by_its_words"; tests/unit_test.py "test_a_check_gone_and_a_tier_one_feature_without_an_oracle_are_said"; tests/unit_test.py "test_a_check_in_comments_and_a_flag_or_setting_no_suite_runs_are_said" -->
-Tier 2 is an answer shown to people, tier 3 the tools around them. `python3 core/tests/features.py --matrix` prints
-each feature against each suite.
+its command or sets a setting, when a feature of tier 1 (it decides access, grants or revokes it, or keeps data)
+has no check against another answer, or when a refusal isn't asked for by its words. <!-- checked: tests/unit_test.py "test_every_item_is_in_a_feature_and_every_check_is_there"; tests/unit_test.py "test_each_refusal_is_asked_for_by_its_words"; tests/unit_test.py "test_a_check_gone_and_a_tier_one_feature_without_an_oracle_are_said"; tests/unit_test.py "test_a_check_in_comments_and_a_flag_or_setting_no_suite_runs_are_said" -->
+Three features that grant or revoke access are tier 2 instead: access requests and breaking the glass
+(`api.requests`), access reviews (`api.reviews`), and the audit trail of what they and sharing do (`api.audit`). Their
+own suites check them, with answers worked out by hand, not against the reference evaluator, which checks what a
+share gives once it is made, whoever made it. <!-- checked: tests/governance.sh "carol breaks the glass, and the alert goes out"; tests/governance.sh "closing the review revokes what was marked"; tests/governance.sh "a share is recorded, with who made it"; tests/unit_test.py "test_a_feature_that_grants_outside_tier_one_is_named_on_the_page" -->
+Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `python3 core/tests/features.py
+--matrix` prints each feature against each suite.
 
 <!-- features: the table below is written by core/tests/features.py -->
 
