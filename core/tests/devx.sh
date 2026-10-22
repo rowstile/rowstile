@@ -2,7 +2,7 @@
 # devx.sh: what developers use day to day. Named tests that bring their own data, refusals that say why
 # (the error, authz.explain_rule), authz.who_among, applying only when changed, the warning for rule
 # conditions that read governed tables, drafting a policy, and the rowstile command: dev, test, init, --as.
-#   PGHOST=... PGUSER=postgres tests/devx.sh [database]
+#   PGHOST=... PGUSER=authz_owner tests/devx.sh [database]
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_devx}

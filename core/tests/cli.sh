@@ -1,7 +1,8 @@
 #!/bin/bash
-# cli.sh: the rowstile command: apply (with included files read from disk), check, diff, test,
-# graph, client, reapply, remove, and its exit codes.
-#   PGHOST=... PGUSER=postgres tests/cli.sh
+# cli.sh: the rowstile command as a user runs it: apply (with included files read from disk), check, diff, test,
+# sql, perms, can, why and explain-rule (--as), graph, client, fmt, prove, migrate, snapshot, lint, dev, reapply,
+# remove, help and --version; what rowstile.toml and .env give it, how it connects, its messages and exit codes.
+#   PGHOST=... PGUSER=authz_owner tests/cli.sh
 set -u
 cd "$(dirname "$0")/.."
 DB=authz_cli

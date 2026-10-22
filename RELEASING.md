@@ -77,6 +77,10 @@ a fix in CPython or OpenSSL reaches npm users only when it moves. When the newes
 (`gh release view -R astral-sh/python-build-standalone --json tagName`) is newer than `RELEASE`, move to it in a
 pull request of its own, before the release's (the comment above `RELEASE` says what changes with it).
 
+Then the demo at the top of the README (`demo/demo.gif`): record it again from `main` with `demo/record.sh`
+([demo/README.md](demo/README.md)). If what the commands print has changed, land the new recording in a pull
+request of its own, before the release's.
+
 1. **The release pull request**, from a branch `release-X.Y.Z` (or `release-X.Y.Z-rc.N`, `release-X.Y.Z-beta.N`,
    `release-X.Y.Z-alpha.N`), with two commits:
    1. the release itself, with the subject line `X.Y.Z-rc.N` (or `X.Y.Z-alpha.N`, `X.Y.Z-beta.N`, `X.Y.Z`):

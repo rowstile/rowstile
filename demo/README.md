@@ -14,8 +14,8 @@ and what the recording shows is what they printed.
 Look at the result, then copy `demo/out/demo.gif` over `demo/demo.gif` and commit it. The MP4 is the same
 recording as a video file, for where a GIF isn't taken; it isn't kept in the repository.
 
-Record it again when what the commands print changes, and at each release at least: a recording that shows
-last year's output is worse than none.
+Record it again when what the commands print changes, and at each release at least ([RELEASING.md](../RELEASING.md)):
+a recording that shows last year's output is worse than none.
 
 | file | what |
 |---|---|

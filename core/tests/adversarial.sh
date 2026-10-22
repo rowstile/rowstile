@@ -1,6 +1,6 @@
 #!/bin/bash
 # adversarial.sh: the app role trying every way around the policy (docs/threat-model.md).
-#   PGHOST=... PGUSER=postgres tests/adversarial.sh [database]
+#   PGHOST=... PGUSER=authz_owner tests/adversarial.sh [database]
 # The attacker logs in as its own role, a member of app_user (so it can't RESET ROLE its way out),
 # signs in as carol (who may view Company but not Secrets, Keys or confidential files) with authz.act_as(),
 # and tries to read, change, share or learn about what it may not. Each attempt is one transaction, since a

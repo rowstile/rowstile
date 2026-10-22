@@ -6,9 +6,8 @@
 # whose commands read it; the settings that start the MCP server (```json) start it, in that project;
 # and the lines of a block indented four spaces, a `rowstile` command each, run there in the pages' order, each
 # doing what its comment says. A block that can't run says why in a comment right before it
-# (<!-- not run: why -->); a block that does neither fails. And what the pages' tables say of the compiler
-# without a database, which no other suite asks.
-#   PGHOST=... PGUSER=postgres tests/reference.sh
+# (<!-- not run: why -->); a block that does neither fails.
+#   PGHOST=... PGUSER=authz_owner tests/reference.sh
 set -u
 cd "$(dirname "$0")/.."
 CORE=$PWD

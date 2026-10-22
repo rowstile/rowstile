@@ -1,7 +1,7 @@
 #!/bin/bash
 # keep.sh: applying keeps inheritance tables whose definition didn't change (and whose tables
 # weren't recreated) instead of rebuilding them under lock; what did change is rebuilt.
-#   PGHOST=... PGUSER=postgres tests/keep.sh [database]
+#   PGHOST=... PGUSER=authz_owner tests/keep.sh [database]
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_keep}

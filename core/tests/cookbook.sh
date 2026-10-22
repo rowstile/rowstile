@@ -8,7 +8,7 @@
 # the playground asks first), runs as the app role. Then the steps docs/cookbook.md gives: `rowstile dev` in a
 # copy of the folder, on a database with only the tables and the rows, applies it and passes its tests. A page
 # without its folder, or a folder without its page, fails.
-#   PGHOST=... PGUSER=postgres tests/cookbook.sh
+#   PGHOST=... PGUSER=authz_owner tests/cookbook.sh
 set -u
 cd "$(dirname "$0")/.."
 BOOK=../docs/cookbook

@@ -1,6 +1,6 @@
 #!/bin/bash
 # masks.sh: masked columns stay masked: at apply time, in lint (later GRANTs), and in --diff.
-#   PGHOST=... PGPORT=... PGUSER=postgres tests/masks.sh [database]
+#   PGHOST=... PGPORT=... PGUSER=authz_owner tests/masks.sh [database]
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_masks}

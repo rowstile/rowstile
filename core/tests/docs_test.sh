@@ -2,7 +2,7 @@
 # docs_test.sh: docs/getting-started.md runs as written and does what the guide says (its Python too, against the
 # client it writes: tests/guide_app.py), the blog post's experiment.sql runs as its header says, and the code of the
 # landing pages (README.md, site/index.md) runs and does what its comments say.
-#   PGHOST=... PGUSER=postgres tests/docs_test.sh
+#   PGHOST=... PGUSER=authz_owner tests/docs_test.sh
 # Walks the guide's blocks in order, in a fresh database and an empty folder: ```sql blocks run in psql,
 # ```authz <file> blocks are written to that file, ```sh blocks run (with rowstile on the PATH, and
 # DATABASE_URL naming the database). Then checks what the guide's comments promise.
