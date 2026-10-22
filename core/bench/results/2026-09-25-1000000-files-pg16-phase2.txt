@@ -1,7 +1,0 @@
-# rowfence scale benchmark (2026-09-25, 16.15, rowfence 0.1.0)
-# 1000000 files, 50000 folders 20 levels deep, 2000 users, 200 nested teams; 16 CPUs shared by server and pgbench
-# jit=off, max_connections=300, shared_buffers=1GB, synchronous_commit=on, work_mem=16MB
-
-== Loading and applying (seconds)
-load the app data                       13.26
-authz.apply(docs.authz), with backfill  11.00

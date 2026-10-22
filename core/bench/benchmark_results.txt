@@ -1,3 +1,7 @@
+# Measured on 2026-10-03 by the build of that day, before the project took the name rowstile (rowfence
+# 0.1.0-dev), on the laptop it was developed on then, which is out of use; not measured again since.
+# Query 4's two rows ran the same call: authz.can reads the policy whoever calls it, so its "no RLS" row measured
+# nothing more. benchmark.sql now runs it once, with the compiled policy.
 # bench/benchmark.sql on PostgreSQL 16 (2026-10-03), the dev laptop with nothing else running: 16 CPUs, 128 MB of
 # shared buffers, as the tables' owner (not a superuser). 200,000 files, 10,000 folders, 2,000 users, 200 teams nested
 # several levels deep (and 20,000 more in chains for the nested teams), 500 folders also linked into a second folder.

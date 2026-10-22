@@ -85,6 +85,9 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   migrations on the direct URL or a pooler in session mode, as the change feed (it said they ran through a pooler
   too). What was tried by hand on Supavisor, PgCat, Neon and Supabase says when, and no longer counts a suite's
   checks.
+- The speed figures on the limits page and the benchmark's page say what measured them: a build of 2026-10-03,
+  from before the rename, on the laptop the project was developed on then. No build since has run those sizes.
+  The benchmark's "reads alone" row shows the end-to-end p95 at every size, as its other rows do.
 
 ### Removed
 

@@ -4,6 +4,7 @@ __pycache__/
 *.so
 *.bc
 core/bench/results/regress-latest.txt
+core/bench/baseline.txt
 node_modules/
 examples/filemanager/frontend/node_modules/
 examples/filemanager/frontend/dist/

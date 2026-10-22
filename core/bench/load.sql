@@ -1,5 +1,6 @@
 -- load.sql: the example app at scale, for bench/scale.sh.
---   psql -v files=20000000 -v folders=1000000 -v levels=20 -v users=20000 -v teams=2000 -f bench/load.sql
+--   psql -v files=400000 -v folders=20000 -v levels=20 -v users=1000 -v teams=100 -f bench/load.sql
+--   (scale.sh sets them for each size; these are its dev size)
 -- Folders form a tree exactly `levels` deep: level 1 holds a few roots and each level is about 1.5
 -- times wider than the one above, so most folders sit deep down, as in real file trees. Folder ids
 -- are contiguous per level (bench.levels), which lets the write workload pick targets that can't
