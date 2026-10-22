@@ -189,7 +189,8 @@ jobs:
           path: ${{ runner.temp }}/rowstile-ci-16.log
   # The SDKs' conformance suites on 17 and 18 (ci.yml runs them on 16), and on 16 with the app through PgBouncer in
   # transaction mode (integrations/pooler.sh), one after the other: on a self-hosted runner each holds the lock its
-  # CI job holds (one container name and port for the machine)
+  # CI job holds (one container name and port for the machine). On 17 the TypeScript one runs on the lowest Node
+  # the packages' engines state (sdk/typescript/*/package.json), the others on the Node CI uses
   conformance:
     if: ${{ !inputs.only || inputs.only == 'conformance' }}
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
@@ -197,10 +198,10 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        pg: ["17", "18"]
-        pooler: [""]
         include:
-          - {pg: "16", pooler: "pgbouncer"}
+          - {pg: "17", pooler: "", node: "22.12.0"}
+          - {pg: "18", pooler: "", node: "24"}
+          - {pg: "16", pooler: "pgbouncer", node: "24"}
     env:
       PG_MAJOR: ${{ matrix.pg }}
       POOLER: ${{ matrix.pooler }}
@@ -209,7 +210,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
-        with: {node-version: "24"}
+        with: {node-version: "${{ matrix.node }}"}
       - run: flock /tmp/rowstile-ci-conformance-python.lock bash integrations/fastapi/test.sh
       - run: npm ci --no-audit --no-fund
       - run: flock /tmp/rowstile-ci-conformance-typescript.lock bash integrations/nextjs/test.sh

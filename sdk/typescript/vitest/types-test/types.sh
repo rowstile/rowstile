@@ -1,7 +1,8 @@
 #!/bin/bash
-# The matchers' types with each Vitest the package supports (peerDependencies: 4 and 5): use.ts compiled,
-# strict, in a folder with that Vitest and the built packages (npx tsc -b sdk/typescript first). Each Vitest comes
-# from its folder's lock file (vitest-4/, vitest-5/: the newest of that major, kept so by Dependabot), by its hash.
+# The matchers with each Vitest the package supports (peerDependencies: 4 and 5): use.ts compiled, strict, for
+# their types, then matchers.test.ts run by that Vitest, in a folder with it and the built packages (npx tsc -b
+# sdk/typescript first). Each Vitest comes from its folder's lock file (vitest-4/, vitest-5/: the newest of that
+# major, kept so by Dependabot), by its hash.
 #   bash sdk/typescript/vitest/types-test/types.sh [4 5]
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -14,7 +15,7 @@ trap 'rm -rf "$work"' EXIT
 for v in $VERSIONS; do
   dir="$work/vitest-$v"
   mkdir "$dir"
-  cp "$HERE/use.ts" "$dir/"
+  cp "$HERE/use.ts" "$HERE/matchers.test.ts" "$dir/"
   printf '{"compilerOptions": {"strict": true, "noEmit": true, "target": "ES2022", "module": "NodeNext",
     "moduleResolution": "NodeNext", "skipLibCheck": false, "types": []}, "files": ["use.ts"]}\n' > "$dir/tsconfig.json"
   cp "$HERE/vitest-$v/package.json" "$HERE/vitest-$v/package-lock.json" "$dir/"
@@ -28,6 +29,8 @@ for v in $VERSIONS; do
   got=$(cd "$dir" && node -p 'require("./node_modules/vitest/package.json").version')
   if (cd "$dir" && npx tsc -p .); then echo "ok    the matchers' types with Vitest $got"
   else echo "FAIL  the matchers' types with Vitest $got"; fails=$((fails + 1)); fi
+  if (cd "$dir" && npx vitest run matchers.test.ts >run.log 2>&1); then echo "ok    the matchers at run time with Vitest $got"
+  else cat "$dir/run.log"; echo "FAIL  the matchers at run time with Vitest $got"; fails=$((fails + 1)); fi
   rm -rf "$dir"
 done
 exit $((fails > 0))

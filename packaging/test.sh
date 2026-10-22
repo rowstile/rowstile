@@ -1,7 +1,8 @@
 #!/bin/bash
 # packaging/test.sh: the ways rowstile is installed, each checked on a clean machine (a container):
 #   - npm: `rowstile` and `@rowstile/cli-linux-x64` from `npm pack`, installed where there is no Python at
-#     all; the command runs on the Python that came with it (and fits the size budget, 40 MB), and a command
+#     all, on the lowest Node its engines state; the command runs on the Python that came with it (and fits the
+#     size budget, 40 MB), and a command
 #     stopped by a signal ends the launcher the same way; on Alpine (musl) with `@rowstile/cli-linux-x64-musl`
 #   - PyPI: the `rowstile` wheel and sdist (the command and the Python SDK), installed with pip
 #   - the command's image (packaging/docker/Dockerfile)
@@ -36,12 +37,14 @@ docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo node:24 bash -c \
   || bad "the npm packages build"
 size=$(stat -c %s "$OUT"/rowstile-cli-linux-x64-[0-9]*.tgz 2>/dev/null || echo 0)
 [ "$size" -gt 0 ] && [ "$size" -lt 40000000 ] && ok "@rowstile/cli-linux-x64 is $((size / 1000000)) MB (under 40)" || bad "@rowstile/cli-linux-x64 is $size bytes"
-docker run --rm -v "$REPO:/repo" node:24-slim bash -c "
+# on the lowest Node the package's engines state (packaging/npm/rowstile/package.json); the others on Node 24
+docker run --rm -v "$REPO:/repo" node:22.12.0-slim bash -c "
   ! command -v python3 >/dev/null && ! command -v python >/dev/null || { echo 'python is here'; exit 1; }
+  echo node \$(node --version)
   mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
-  npm i --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  npm i --no-audit --no-fund --engine-strict /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
   ${SCRIPT//PGA/npx rowstile}" >"$OUT/npm.log" 2>&1 && grep -q "Python 3.13" "$OUT/npm.log" \
-  && ok "npm: runs where there is no Python, on its own ($(grep -o 'Python [0-9.]*' "$OUT/npm.log"))" \
+  && ok "npm: runs where there is no Python, on its own ($(grep -o 'Python [0-9.]*' "$OUT/npm.log")), on $(grep -o '^node v[0-9.]*' "$OUT/npm.log")" \
   || { cat "$OUT/npm.log"; bad "npm"; }
 # a command that is stopped (SIGTERM, Ctrl-C, a hang-up, a kill) never looks finished to what started it
 docker run --rm -v "$REPO:/repo" node:24-slim bash -c "

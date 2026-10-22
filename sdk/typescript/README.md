@@ -40,6 +40,10 @@ export const PATCH = route(async (req: Request, { params }: { params: Promise<{ 
 | `@rowstile/react` | `<AuthzProvider>`, `usePerms(type, ids)` (one call for a list), `<Can>`, `useShares` and a headless `<ShareDialog>`, `useAccessRequest`; kept current over server-sent events |
 | `@rowstile/vitest` | `expect.extend(matchers)`: `toBeRefused(command, reason)`, `toBeNotFound()`; `asUser(who, fn)`; `databasePerWorker(url)`. Vitest 4 or 5 |
 
+They run on Node 22.12 or newer, with Next.js 16, React 19, Prisma 7, node-postgres 8, postgres.js 3, Drizzle
+0.45 and Vitest 4 or 5. Each package's `peerDependencies` names the majors the checks run, from the version they
+ran (`"next": "^16.4.0"`), so npm refuses another unless told to.
+
 Who a transaction acts for: `42` or `"42"` (a user), `["service", 3]` (another principal type of the policy),
 or `null` (nobody: only what `anyone` may see). A plain id is always a user's, whatever it holds: `"service:3"`
 is the user with that id, so an id from outside (a username, an identity provider's subject) can't name a

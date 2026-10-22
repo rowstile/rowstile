@@ -10824,6 +10824,86 @@ class SdkPackages(unittest.TestCase):
         self.assertIn('for d in sdk/typescript/*/; do cp LICENSE "$d"; done', release)
         self.assertNotIn("cp sdk/typescript/README.md", release, "it would replace each package's own page")
 
+    def manifests(self) -> dict[str, dict[str, object]]:
+        """Each npm package rowstile publishes by hand (the SDK's, the command's launcher): its package.json."""
+        paths = [
+            *sorted(glob.glob("sdk/typescript/*/package.json", root_dir=self.REPO)),
+            "packaging/npm/rowstile/package.json",
+        ]
+        out: dict[str, dict[str, object]] = {}
+        for path in paths:
+            with open(os.path.join(self.REPO, path), encoding="utf-8") as fh:
+                out[path] = json.load(fh)
+        return out
+
+    def test_one_lowest_node_and_it_runs(self) -> None:
+        # one Node floor for the SDK's packages and the command's launcher, and it is one that runs: the launcher
+        # is installed on it (packaging/test.sh), and nightly runs the TypeScript conformance suite on it
+        floors = {path: cast(dict[str, str], m.get("engines", {})).get("node") for path, m in self.manifests().items()}
+        self.assertEqual(len(floors), 9, floors)
+        self.assertEqual(len(set(floors.values())), 1, floors)
+        m = re.fullmatch(r">=((\d+\.\d+)\.\d+)", str(next(iter(floors.values()))))
+        assert m, floors
+        floor, short = m.groups()
+        with open(os.path.join(self.REPO, "packaging", "test.sh"), encoding="utf-8") as fh:
+            self.assertTrue(
+                f" node:{floor}-slim " in fh.read(), f"packaging/test.sh installs the launcher on Node {floor}"
+            )
+        with open(os.path.join(self.REPO, ".github", "workflows", "nightly.yml"), encoding="utf-8") as fh:
+            on = re.search(rf'- \{{pg: "\d+", pooler: "", node: "{re.escape(floor)}"\}}', fh.read())
+            self.assertTrue(on, f"nightly.yml runs the TypeScript conformance suite on Node {floor}")
+        for doc in ("docs/installing.md", "sdk/typescript/README.md"):
+            with open(os.path.join(self.REPO, doc), encoding="utf-8") as fh:
+                self.assertTrue(
+                    f"Node {short} or newer" in " ".join(fh.read().split()), f"{doc}: Node {short} or newer"
+                )
+
+    def test_each_peer_range_holds_a_version_the_checks_run(self) -> None:
+        # a peer range is what an app may install beside a package: one major or more (^x.y.z each, never >= or
+        # *), each holding a version a lock file installs for the checks (the conformance app's, the Vitest folders')
+        locks: dict[str, set[str]] = collections.defaultdict(set)
+        for lock in [
+            "package-lock.json",
+            *glob.glob("sdk/typescript/vitest/types-test/*/package-lock.json", root_dir=self.REPO),
+        ]:
+            with open(os.path.join(self.REPO, lock), encoding="utf-8") as fh:
+                for key, entry in json.load(fh)["packages"].items():
+                    if key.startswith("node_modules/") and "/node_modules/" not in key and "version" in entry:
+                        locks[key.removeprefix("node_modules/")].add(entry["version"])
+
+        def holds(floor: str, version: str) -> bool:
+            # npm's caret: the same major (the same minor below 1.0), and not older
+            f = [int(x) for x in floor.split(".")]
+            v = [int(x) for x in re.split(r"[.+-]", version)[:3]]
+            same = 2 if f[0] == 0 else 1
+            return v[:same] == f[:same] and v >= f
+
+        seen = 0
+        for path, manifest in self.manifests().items():
+            for dep, spec in cast(dict[str, str], manifest.get("peerDependencies", {})).items():
+                for alternative in spec.split(" || "):
+                    m = re.fullmatch(r"\^(\d+\.\d+\.\d+)", alternative)
+                    self.assertTrue(m, f"{path}: {dep} {spec}: ^x.y.z for each major, nothing open-ended")
+                    assert m
+                    ran = sorted(v for v in locks[dep] if holds(m.group(1), v))
+                    self.assertTrue(
+                        ran, f"{path}: {dep} {alternative}: no lock file installs it ({sorted(locks[dep])})"
+                    )
+                    seen += 1
+        self.assertEqual(seen, 9)
+
+    def test_the_lock_file_says_what_each_package_json_does(self) -> None:
+        # npm ci doesn't compare a workspace package's engines and peers with its entry in the lock
+        with open(os.path.join(self.REPO, "package-lock.json"), encoding="utf-8") as fh:
+            packages = json.load(fh)["packages"]
+        for path, manifest in self.manifests().items():
+            if path.startswith("sdk/"):
+                entry = packages[os.path.dirname(path)]
+                for field in ("engines", "peerDependencies"):
+                    self.assertEqual(
+                        entry.get(field), manifest.get(field) or None, f"package-lock.json: {path} {field}"
+                    )
+
 
 def calls(text: str, opener: str) -> list[tuple[str, list[str]]]:
     """(name, arguments) for each `<opener>name(...)` in text: parentheses, brackets and quotes balanced."""

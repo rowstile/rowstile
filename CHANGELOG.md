@@ -34,6 +34,10 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - The VS Code extension (0.1.3) is no longer marked a preview on the Marketplace and Open VSX.
 - The VS Code extension (0.1.3) asks for VS Code 1.82 or newer, the oldest its language client runs on (it
   said 1.75).
+- The npm packages ask for Node 22.12 or newer: the `rowstile` command said Node 18, and the TypeScript SDK's
+  packages said nothing. The SDK's peer ranges name the majors its checks run, no longer any later one:
+  `@rowstile/next` Next.js 16 (it said 15 or later), `@rowstile/react` React 19 (18 or later), `@rowstile/prisma`
+  Prisma 7 (7 or later), `@rowstile/postgres` postgres.js 3 (3.4 or later), each from the version the checks ran.
 - The beta starts afresh: a database an alpha (0.1.0-alpha.9 or earlier) made is not upgraded to it. Apply the
   policy from scratch, on a new database, or on the same one after `rowstile remove --yes` (shares and history
   stay), then `rowstile apply`. Each release from the beta on upgrades from the one before it, and the upgrade

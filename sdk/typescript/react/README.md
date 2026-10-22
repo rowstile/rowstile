@@ -45,7 +45,7 @@ export const { GET, POST } = authzRoutes({ calls: db.$authz, changes: feed });
 - Give `<AuthzProvider>` `user={id}` if the user can change without a page load: the hooks forget what they had
   and ask again.
 - The answers are for the page only. A user who edits the page still meets the database, which refuses.
-- React 18 or later.
+- React 19, from 19.3.
 
 ## More
 
