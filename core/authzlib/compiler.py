@@ -1273,8 +1273,8 @@ class Core:
 
     def dispatch_type(self, per_type: Callable[[Type], str], invalid: str, missing_type: str = NO_SUCH_TYPE) -> str:
         """CASE over types, with p_id checked and converted to the type's key in v_<pktype>. invalid: the statement
-        that returns for an id that isn't one of the type's (`RETURN false;`, or `RETURN;` in a function that
-        returns a set)."""
+        that runs for an id that isn't one of the type's (`RETURN false;`, or `EXIT <label>;` to leave a block
+        and put back what the function changed)."""
         branches = []
         for t in self.types.values():
             body = per_type(t)

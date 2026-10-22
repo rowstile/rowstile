@@ -134,6 +134,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   inside. A bundled Python that isn't executable and can't be made so (a `node_modules` another user
   installed) is said to be so, not to be missing. `ROWSTILE_PYTHON` has its line in Installing and
   Troubleshooting.
+- `authz.who` asked about an id that isn't one of the type's (`authz.who('doc', 'abc', 'view')` for a numeric
+  key) put back neither the caller's scopes nor its principal type, nor signed again, so the rest of the
+  transaction ran as someone else or, for a role that isn't the policy's owner, was not believed (AZ702).
+  `authz.explain` for another user left that user signed in the same way. Only administrators get that far
+  (the app role may not inspect such an id): both now put the caller back, as they do for any other id.
 - The policy language page's example applies as written: its `shared if` condition had `...` in it, which no
   database runs. It says what an include may name (a file in the policy's folder, once). The identity page and
   the threat model name `view_as` among what signs a session in; the identity page no longer says the SDKs sign

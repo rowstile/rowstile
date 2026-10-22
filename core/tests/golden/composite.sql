@@ -5591,9 +5591,10 @@ BEGIN
   -- the transaction, or the savepoint the error is caught at, as for explain, check_invariants and the logins)
   PERFORM set_config('authz.scopes', '', true);   -- each candidate is checked with full rights
   PERFORM set_config('authz.principal_type', '', true);   -- candidates are users
+  <<asking>> BEGIN
   CASE p_type
     WHEN 'user' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'oversee' THEN
@@ -5605,7 +5606,7 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'bot' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'manage_keys' THEN
@@ -5617,11 +5618,11 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'org' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
     WHEN 'team' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."team__key"') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."team__key"') THEN EXIT asking; END IF;
       v_text := p_id::authz_gen."team__key"::text;
       CASE p_perm
         WHEN 'share' THEN
@@ -5633,7 +5634,7 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'project' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."project__key"') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."project__key"') THEN EXIT asking; END IF;
       v_text := p_id::authz_gen."project__key"::text;
       CASE p_perm
         WHEN 'edit' THEN
@@ -5657,7 +5658,7 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'folder' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."folder__key"') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."folder__key"') THEN EXIT asking; END IF;
       v_text := p_id::authz_gen."folder__key"::text;
       CASE p_perm
         WHEN 'share' THEN
@@ -5681,7 +5682,7 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'file' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."file__key"') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."file__key"') THEN EXIT asking; END IF;
       v_text := p_id::authz_gen."file__key"::text;
       CASE p_perm
         WHEN 'edit' THEN
@@ -5701,6 +5702,7 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';
   END CASE;
+  END asking;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);
@@ -5737,34 +5739,35 @@ BEGIN
   v_ok := authz.can(p_type, p_id, p_perm);
   RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
     || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
+  <<asking>> BEGIN
   CASE p_type
     WHEN 'user' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'oversee' THEN RETURN QUERY SELECT * FROM authz_int."user__oversee__why"(v_bigint, 1, '{}');
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'bot' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'manage_keys' THEN RETURN QUERY SELECT * FROM authz_int."bot__manage_keys__why"(v_bigint, 1, '{}');
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'org' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
     WHEN 'team' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."team__key"') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."team__key"') THEN EXIT asking; END IF;
       v_text := p_id::authz_gen."team__key"::text;
       CASE p_perm
         WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."team__share__why"(v_text, 1, '{}');
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'project' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."project__key"') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."project__key"') THEN EXIT asking; END IF;
       v_text := p_id::authz_gen."project__key"::text;
       CASE p_perm
         WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."project__edit__why"(v_text, 1, '{}');
@@ -5773,7 +5776,7 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'folder' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."folder__key"') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."folder__key"') THEN EXIT asking; END IF;
       v_text := p_id::authz_gen."folder__key"::text;
       CASE p_perm
         WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."folder__share__why"(v_text, 1, '{}');
@@ -5782,7 +5785,7 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'file' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."file__key"') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'authz_gen."file__key"') THEN EXIT asking; END IF;
       v_text := p_id::authz_gen."file__key"::text;
       CASE p_perm
         WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."file__edit__why"(v_text, 1, '{}');
@@ -5792,6 +5795,7 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';
   END CASE;
+  END asking;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);

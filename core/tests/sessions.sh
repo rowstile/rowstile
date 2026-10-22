@@ -231,6 +231,27 @@ got=$(psql -X -q -At -U "$APP" -d "$H" -v VERBOSITY=sqlstate -c "BEGIN" -c "SELE
   -c "SELECT count(*) FROM authz.who('doc', '1', 'view')" -c "COMMIT" -c "SELECT count(*) FROM sh.docs" 2>&1 | tail -n 1)
 [ "$got" = "ERROR:  28000" ] && ok "... not caught: the next transaction has nobody signed in" || bad "who not caught" "$got"
 
+echo "-- ... and when they answer, who is signed in is as it was for the rest of the transaction"
+# doc 5: user 2 owns it and bot 1 keeps it, so bot 1 may ask who has access, and the answer is someone else
+psql -X -q -d "$H" -c "INSERT INTO sh.docs VALUES (5, 2, 1, 'five')" >/dev/null
+AFTER="SELECT concat_ws('|', coalesce(authz.uid()::text, 'no user'),
+  (SELECT principal_type || ':' || principal_id FROM authz.principal()), current_setting('authz.scopes', true))"
+got=$(psql -X -q -At -U "$APP" -d "$H" -1 -v VERBOSITY=sqlstate -c "$(ACT "'bot', '1'")" \
+  -c "SELECT string_agg(x, ',') FROM authz.who('doc', '5', 'edit') x" -c "$AFTER" 2>&1 | paste -sd ' ')
+[ "$got" = "2 no user|bot:1|" ] && ok "a service asks who may edit (user 2), and is still the service afterwards" ||
+  bad "a service after who" "$got"
+# an id that isn't the type's: who has no one to ask about, explain nothing more to say, and both put back the
+# caller's settings (only an administrator gets that far: the app role may not inspect such an id)
+got=$(psql -X -q -At -U "$OWNER" -d "$H" -1 -v VERBOSITY=sqlstate -c "$(ACT "'bot', '1'")" \
+  -c "SELECT count(*) FROM authz.who('doc', 'abc', 'view')" -c "SELECT count(*) FROM authz.explain('doc', 'abc', 'view', '2')" \
+  -c "$AFTER" 2>&1 | paste -sd ' ')
+[ "$got" = "0 1 no user|bot:1|" ] && ok "who and explain on an id that isn't a doc's: still the service afterwards" ||
+  bad "a service after who on a bad id" "$got"
+got=$(psql -X -q -At -U "$OWNER" -d "$H" -1 -v VERBOSITY=sqlstate -c "SELECT authz.login_key('$look') IS NOT NULL" \
+  -c "SELECT count(*) FROM authz.who('doc', 'abc', 'view')" -c "$AFTER" 2>&1 | paste -sd ' ')
+[ "$got" = "t 0 1|user:1|look" ] && ok "... and a key's scopes, which who clears while it asks, are the key's again" ||
+  bad "a key's scopes after who on a bad id" "$got"
+
 echo "-- what is wrong with a connection (authz.connection_check)"
 expect "the app's role: nothing to report" "0" -c "SELECT count(*) FROM authz.connection_check()"
 got=$(PSQL -c "SELECT string_agg(severity || ': ' || problem, '; ') FROM authz.connection_check()")
