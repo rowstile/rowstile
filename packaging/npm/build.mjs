@@ -61,7 +61,7 @@ const UNUSED = ["test", "idlelib", "tkinter", "turtledemo", "turtle.py", "ensure
 // uses it: _zstd came in 3.14); zlib-ng (each target's zlib is zlib's own, or on macOS the system's)
 /** @type {Record<string, string>} */
 const LICENSES = {
-  "LICENSE.cpython.txt": "PSF-2.0", "LICENSE.openssl-3.txt": "Apache-2.0", "LICENSE.sqlite.txt": "blessing",
+  "LICENSE.cpython.txt": "Python-2.0", "LICENSE.openssl-3.txt": "Apache-2.0", "LICENSE.sqlite.txt": "blessing",
   "LICENSE.zlib.txt": "Zlib", "LICENSE.bzip2.txt": "bzip2-1.0.6", "LICENSE.liblzma.txt": "0BSD",
   "LICENSE.libffi.txt": "MIT", "LICENSE.expat.txt": "MIT", "LICENSE.mpdecimal.txt": "BSD-2-Clause",
   "LICENSE.libuuid.txt": "BSD-3-Clause", "LICENSE.libedit.txt": "BSD-3-Clause",

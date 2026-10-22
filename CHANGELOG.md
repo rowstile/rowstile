@@ -9,6 +9,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+### Fixed
+
+- The npm packages that hold the command's Python name its licence `Python-2.0` in their `license`, where they
+  said `PSF-2.0`: the licence file they carry is CPython's whole licence (the PSF, BeOpen, CNRI and CWI
+  agreements), which SPDX names `Python-2.0`; `PSF-2.0` is only the first of them.
+
 ## 0.1.0-beta.1 (2026-10-22)
 
 ### Added
