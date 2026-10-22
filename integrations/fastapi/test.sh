@@ -3,7 +3,6 @@
 #   integrations/fastapi/test.sh            # PG_MAJOR=17 or 18 for another version; KEEP=1 keeps the database
 #   POOLER=pgbouncer integrations/fastapi/test.sh     # the app through PgBouncer in transaction mode
 #   RESOLUTION=lowest-direct integrations/fastapi/test.sh     # the oldest versions the bounds allow, not uv.lock's
-# (to look at: check 14 migrates it once more, so the tests run again only on a new one, which this script makes)
 # Check 11 first: a fresh database, migrated with Alembic (rowstile's policy is one of the revisions), then
 # the policy's tests, then Alembic's own diff, which must show no change. Then the other checks (pytest).
 set -u

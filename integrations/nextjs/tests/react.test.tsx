@@ -267,22 +267,29 @@ test("live updates: the change feed says when access may have changed", async ()
   const events = await nodeFetch(`${SERVER}/api/authz/events`, as("2", { signal: controller.signal }));
   expect(events.headers.get("content-type")).toContain("text/event-stream");
   const reader = events.body!.getReader();
-  const seen: string[] = [];
-  const reading = (async () => {
-    const decoder = new TextDecoder();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      seen.push(decoder.decode(value));
-      if (seen.join("").includes("event: changed")) return;
+  const decoder = new TextDecoder();
+  let seen = "";
+  // until the stream has said "changed" n times in all
+  const changed = async (n: number) => {
+    while (seen.split("event: changed").length - 1 < n) {
+      const next = await reader.read().catch(() => ({ done: true as const, value: undefined }));
+      if (next.done) throw new Error(`no change event (${n} wanted): ${seen}`);
+      seen += decoder.decode(next.value);
     }
-  })();
-  await new Promise((r) => setTimeout(r, 300));                 // the server is listening
-  const share = await nodeFetch(`${SERVER}/api/authz/share`, as("1", {
-    method: "POST", body: JSON.stringify({ type: "project", id: "1", relation: "viewer", subjectType: "user", subjectId: "2" }),
-  }));
-  expect(share.status).toBe(200);
-  await Promise.race([reading, new Promise((_, no) => setTimeout(() => no(new Error("no change event: " + seen.join(""))), 10_000))]);
-  expect(seen.join("")).toContain("event: changed");
-  controller.abort();
+  };
+  const giveUp = setTimeout(() => controller.abort(), 20_000);
+  try {
+    // the first stream starts the server's feed listening, and the feed tells it at once (what changed while nobody
+    // listened): the share's own change is the one after that
+    await changed(1);
+    expect(seen.startsWith(": connected\n\n"), seen).toBe(true);
+    const share = await nodeFetch(`${SERVER}/api/authz/share`, as("1", {
+      method: "POST", body: JSON.stringify({ type: "project", id: "1", relation: "viewer", subjectType: "user", subjectId: "2" }),
+    }));
+    expect(share.status).toBe(200);
+    await changed(2);
+  } finally {
+    clearTimeout(giveUp);
+    controller.abort();
+  }
 });

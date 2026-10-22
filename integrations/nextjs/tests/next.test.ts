@@ -145,12 +145,10 @@ describe("route handlers and server actions", () => {
   // 16: a refusal by the database's own code is 403 (AZ705: the shares of a project bo may not share; AZ704: a key
   // made in a session signed in with a key that may only read; AZ715: a key a service makes for itself); the app's
   // mistakes stay errors: a share the policy doesn't declare (AZ706), a name not in the policy (AZ707), who is
-  // signed in changed by hand (AZ702, not NotSignedIn)
-  test("16: a refusal by the database's code is 403; the app's mistakes are thrown", async () => {
+  // signed in changed by hand (AZ702, not NotSignedIn). Through route() and action() alike
+  test("16: a refusal by the database's code is 403; the app's mistakes are thrown: route and action", async () => {
     const refused = (detail: string, code: string) => ({ type: "https://rowstile.dev/problems/refused", title: "Forbidden",
       status: 403, detail, table: null, command: null, why: [], code });
-    const shares = await actingAs("2", () => route(async () => Response.json(await db.$authz.listShares("project", 1)))());
-    expect([shares.status, await shares.json()]).toEqual([403, refused("you cannot see the shares of project 1", "AZ705")]);
     const owner = new pg.Client({ connectionString: OWNER });      // a key of ann's that may only read
     await owner.connect();
     let key: string;
@@ -162,38 +160,40 @@ describe("route handlers and server actions", () => {
     } finally {
       await owner.end();
     }
-    const scoped = await actingAs("1", () => route(async () => {
-      await rowstile(one).transaction(async (c) => {
+    const refusals: Record<string, [string, () => Promise<unknown>, ReturnType<typeof refused>]> = {
+      shares: ["2", () => db.$authz.listShares("project", 1), refused("you cannot see the shares of project 1", "AZ705")],
+      scoped: ["1", () => rowstile(one).transaction(async (c) => {
         await c.query("SELECT authz.login_key($1)", [key]);
         return c.query("SELECT authz.create_api_key('more')");
-      });
-      return new Response(null, { status: 204 });
-    })());
-    expect([scoped.status, await scoped.json()]).toEqual(
-      [403, refused("this session is read-only (viewing as someone else, or a read-only token)", "AZ704")]);
-    // a call that is for users, made by a service (rowstile help AZ715): a refusal too
-    const service = await actingAs("1", () => route(async () => {
-      await rowstile(one).transaction(async (c) => {
+      }), refused("this session is read-only (viewing as someone else, or a read-only token)", "AZ704")],
+      // a call that is for users, made by a service (rowstile help AZ715): a refusal too
+      service: ["1", () => rowstile(one).transaction(async (c) => {
         await c.query("SELECT authz.act_as('service', '1')");
         return c.query("SELECT authz.create_api_key('mine')");
-      });
-      return new Response(null, { status: 204 });
-    })());
-    expect([service.status, await service.json()]).toEqual(
-      [403, refused("authz.create_api_key for oneself is for users, not services (service 1 is signed in)", "AZ715")]);
-    const thrown = async (who: string, call: () => Promise<unknown>) => {
-      const e = await actingAs(who, () => route(async () => { await call(); return new Response(null, { status: 204 }); })())
-        .catch((err: unknown) => err);
-      return [e instanceof NotSignedIn, errorCode(e), sqlstate(e), (e as Error).message];
+      }), refused("authz.create_api_key for oneself is for users, not services (service 1 is signed in)", "AZ715")],
     };
-    expect(await thrown("1", () => db.$authz.share("project", 1, "member" as never, "user", 2))).toEqual(
-      [false, "AZ706", "P0001", expect.stringContaining("the policy does not allow sharing project.member with user")]);
-    expect(await thrown("1", () => db.$authz.list("nosuch" as never, "view" as never))).toEqual(
-      [false, "AZ707", "P0001", expect.stringContaining("no permission nosuch.view in the policy")]);
-    expect(await thrown("1", () => rowstile(one).transaction(async (c) => {
-      await c.query("SELECT set_config('authz.user_id', '2', true)");
-      return c.query("SELECT count(*) FROM app.notes");
-    }))).toEqual([false, "AZ702", "28000", "who is signed in was changed after signing in"]);
+    for (const [name, [who, call, want]] of Object.entries(refusals)) {
+      const r = await actingAs(who, () => route(async () => { await call(); return new Response(null, { status: 204 }); })());
+      expect([r.status, r.headers.get("content-type"), await r.json()], `route: ${name}`).toEqual([403, "application/problem+json", want]);
+      expect(await actingAs(who, () => action(call)()), `action: ${name}`).toEqual({ ok: false, problem: want });
+    }
+    const mistakes: [string, () => Promise<unknown>, unknown[]][] = [
+      ["1", () => db.$authz.share("project", 1, "member" as never, "user", 2),
+        [false, "AZ706", "P0001", expect.stringContaining("the policy does not allow sharing project.member with user")]],
+      ["1", () => db.$authz.list("nosuch" as never, "view" as never),
+        [false, "AZ707", "P0001", expect.stringContaining("no permission nosuch.view in the policy")]],
+      ["1", () => rowstile(one).transaction(async (c) => {
+        await c.query("SELECT set_config('authz.user_id', '2', true)");
+        return c.query("SELECT count(*) FROM app.notes");
+      }), [false, "AZ702", "28000", "who is signed in was changed after signing in"]],
+    ];
+    const thrown = (e: unknown) => [e instanceof NotSignedIn, errorCode(e), sqlstate(e), (e as Error).message];
+    for (const [who, call, want] of mistakes) {
+      const byRoute = await actingAs(who, () => route(async () => { await call(); return new Response(null, { status: 204 }); })())
+        .catch((e: unknown) => e);
+      expect(thrown(byRoute), "route").toEqual(want);
+      expect(thrown(await actingAs(who, () => action(call)()).catch((e: unknown) => e)), "action").toEqual(want);
+    }
   });
 });
 
@@ -249,8 +249,11 @@ describe("authzRoutes, for @rowstile/react", () => {
       type: "https://rowstile.dev/problems/not-found", title: "Not Found", status: 404, detail: "there is no user 99",
       code: "AZ708",
     }]);
-    // a share the policy doesn't declare (AZ706) is the app's mistake, not the user's: it stays an error
+    // a share the policy doesn't declare (AZ706) is the app's mistake, not the user's: it stays an error; so does a
+    // type not in the policy (AZ707)
     await expect(post("1", "share", { ...share, relation: "member" })).rejects.toThrow("does not allow sharing project.member");
+    const noType = await post("1", "perms", { type: "nosuch", ids: [1] }).catch((e: unknown) => e);
+    expect([noType instanceof Response, errorCode(noType)]).toEqual([false, "AZ707"]);
     expect((await post("1", "nothing", {})).status).toBe(404);
   });
 

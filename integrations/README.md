@@ -29,6 +29,7 @@ this list.
     someone signed in (AZ714) or a login refused (AZ703) 401, a move inside itself (AZ713) 409. A refusal by the
     database's own code (AZ704, AZ705, AZ715) is 403. The app's mistakes stay errors, a 500: a share the policy
     doesn't declare (AZ706), a name not in the policy (AZ707), who is signed in changed by hand (AZ702). In
-    every integration that answers HTTP (Next.js: `route()`, `action()`, `authzRoutes()`).
+    every integration that answers HTTP, each code through each (Next.js: `route()` and `action()`), and through
+    `authzRoutes()` the codes its calls can meet (AZ705, AZ706, AZ707, AZ708, AZ710, AZ714).
 
 A new stack gets its own folder here, with every check that applies to it.

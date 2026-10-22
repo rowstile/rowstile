@@ -38,6 +38,7 @@ export ROWSTILE_APP_URL="postgresql://conf_app:app@localhost:$APP_PORT/conf"
 export ROWSTILE_FEED_URL="postgresql://conf_app:app@localhost:$PORT/conf"
 export CONFORMANCE_SERVER="http://localhost:$WEB" CONFORMANCE_SERVER_ONE="http://localhost:$((WEB + 1))"
 LOG=$(mktemp -d)
+export CONFORMANCE_SERVER_LOG="$LOG/server.log"   # what the first server logs: why a page failed (check 15)
 rc=0
 servers=()
 stop() { for p in "${servers[@]}"; do kill "$p" 2>/dev/null; done; }
