@@ -6,7 +6,8 @@
 # asks (docs/operations.md, Behind a pooler, which says what this runs). It keeps prepared statements per client
 # (max_prepared_statements, PgBouncer 1.21 and newer): a pooler that keeps none, and the drivers' settings for
 # it, aren't run here. pooler_stop removes it.
-POOLER_IMAGE=edoburu/pgbouncer:v1.26.0-p0
+# PgBouncer's image, pinned in images/Dockerfile beside this file
+POOLER_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS pgbouncer$/\1/p' "$(dirname "${BASH_SOURCE[0]}")/images/Dockerfile")
 
 pooler_start() {
   local pg=$1 port=$2; shift 2

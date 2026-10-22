@@ -808,7 +808,7 @@ async def test_not_found_never_awaited(assert_not_found):
 def test_the_helpers_load_by_themselves_and_fail_a_test_that_never_awaits_them(tmp_path: pathlib.Path) -> None:
     # installed, the package's entry point loads the fixtures: a test file and nothing else (no pytest_plugins). An
     # async function's check runs when it is awaited: a test that never awaits it fails, it doesn't pass unchecked
-    (tmp_path / "test_helpers.py").write_text(HELPERS)
+    (tmp_path / "test_helpers.py").write_text(HELPERS, encoding="utf-8")
     got = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(tmp_path)],
         capture_output=True,

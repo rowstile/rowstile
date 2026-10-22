@@ -6,7 +6,7 @@
   on, in `authz_int`. The rules read these; the app role can't name them, nor raw shares or internals. <!-- checked: tests/adversarial.sh "the shares table"; tests/adversarial.sh "internal views"; tests/adversarial.sh "the views the rules read: the app role can't name them"; tests/adversarial.sh "the app role reads no view of rowstile's" -->
 - Inheritance becomes a closure table per set of links, kept current by triggers on
   the object table, every link table, the shares table, and any table an inheritance
-  condition reads. <!-- checked: tests/difftest.py "CrossGen"; tests/scenario.sql "TRUNCATE of the link table: carol loses the Joint project at once" -->
+  condition reads. <!-- checked: tests/difftest.py "TRUNCATE cx.frozen"; tests/difftest.py "DELETE FROM cx.frozen WHERE folder_id"; tests/scenario.sql "TRUNCATE of the link table: carol loses the Joint project at once" -->
   It is backfilled when applying; `authz.verify()` compares it with
   a rebuild. <!-- checked: tests/scenario.sql "every inheritance table matches a from-scratch rebuild" -->
   Moving a folder, or linking it, shifts the stored rows of everything below

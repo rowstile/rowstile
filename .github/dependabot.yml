@@ -29,7 +29,7 @@ updates:
   # is the newest patch release of that Postgres major: the suites run on what users get
   - package-ecosystem: docker
     directories: ["/core", "/demo", "/examples/filemanager/backend", "/examples/messenger/backend", "/packaging/docker",
-                  "/packaging/machines"]
+                  "/packaging/machines", "/editor/images", "/integrations/images"]
     schedule: {interval: monthly}
     cooldown: {default-days: 7}
     ignore:

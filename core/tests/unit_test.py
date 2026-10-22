@@ -112,17 +112,54 @@ class KeyTypeChecks(unittest.TestCase):
     line, so a function that checks a bigint key and then a uuid key in one transaction finds the uuid invalid
     (authz.break_glass refused a support user of an app whose users have uuid keys and folders bigint ones)."""
 
+    # what the type may be: a literal ('bigint'), or a subquery that reads it each time
+    TYPE = re.compile(r"'[^']*'|\(\s*SELECT\b.*\)", re.S)
+
+    @staticmethod
+    def types(sql: str) -> list[str]:
+        """The second argument of each pg_input_is_valid call, as written (its parentheses and quotes balanced)."""
+        out: list[str] = []
+        for m in re.finditer(r"pg_input_is_valid\(", sql):
+            depth, quoted, args, start = 1, False, [], m.end()
+            for i in range(m.end(), len(sql)):
+                ch = sql[i]
+                if ch == "'":
+                    quoted = not quoted
+                elif quoted:
+                    continue
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        args.append(sql[start:i].strip())
+                        break
+                elif ch == "," and depth == 1:
+                    args.append(sql[start:i].strip())
+                    start = i + 1
+            out.append(args[1] if len(args) > 1 else "")
+        return out
+
     def test_no_type_comes_from_a_variable(self) -> None:
         for name in POLICIES:
-            for m in re.finditer(r"pg_input_is_valid\(([^()]|\([^()]*\))*?,\s*(\w+)\s*\)", compiled(name)):
-                self.assertFalse(m.group(2).startswith(("v_", "p_")), f"{name}: {m.group(0)}")
+            types = self.types(compiled(name))
+            self.assertGreater(len(types), 10, f"{name}: the calls aren't found")
+            for t in types:
+                self.assertIsNotNone(self.TYPE.fullmatch(t), f"{name}: pg_input_is_valid(..., {t})")
 
     def test_the_rule_finds_a_variable(self) -> None:
-        sql = "IF NOT pg_catalog.pg_input_is_valid(p_id, v_keytype) THEN"
-        m = re.search(r"pg_input_is_valid\(([^()]|\([^()]*\))*?,\s*(\w+)\s*\)", sql)
-        self.assertIsNotNone(m)
-        assert m is not None
-        self.assertEqual(m.group(2), "v_keytype")
+        # a name of any form: in PL/pgSQL a bare name there is a variable or a parameter
+        for var in ("v_keytype", "keytype", "t"):
+            sql = f"IF NOT pg_catalog.pg_input_is_valid(p_id, {var}) THEN"
+            self.assertEqual(self.types(sql), [var])
+            self.assertIsNone(self.TYPE.fullmatch(var), var)
+        sql = (
+            "IF pg_input_is_valid(p_id, 'a,b') AND pg_input_is_valid(left(p_id, 4),\n"
+            "  (SELECT t.keytype FROM authz_int.types t WHERE t.name = p_type)) THEN"
+        )
+        types = self.types(sql)
+        self.assertEqual(types, ["'a,b'", "(SELECT t.keytype FROM authz_int.types t WHERE t.name = p_type)"])
+        self.assertTrue(all(self.TYPE.fullmatch(t) for t in types))
 
 
 class ThisRow(unittest.TestCase):
@@ -427,6 +464,30 @@ class Golden(unittest.TestCase):
         c = Compiler(parse_policy(read(POLICIES["multi"]), POLICIES["multi"]))
         self.check("multi.diff.sql", c.compile_diff(POLICIES["multi"], ["1", "2"]))
 
+    def test_policy_tests(self) -> None:
+        # the docs app's tests, its named tests and its invariants, as rowstile test runs them
+        c = Compiler(parse_policy(read(POLICIES["docs"]), POLICIES["docs"]))
+        c.add_test_files({"example/docs.test.authz": read("example/docs.test.authz")})
+        sql = c.compile_tests(POLICIES["docs"])
+        self.assertIn("authz_policy_tests", sql)
+        self.check("docs.tests.sql", sql)
+
+    def test_a_migration(self) -> None:
+        # a permission added to the docs app, as rowstile migrate writes it after the first; the build it names
+        # changes with every change to authzlib/, and isn't kept
+        from authzlib import migrate
+
+        text = read(POLICIES["docs"])
+        lock = migrate.lock_of(database.migratable(text, {})[1])
+        new = replaced(
+            text,
+            "  can share = owner or folder.share\n",
+            "  can share = owner or folder.share\n  can comment = folder.view\n",
+        )
+        sql = database.migration(new, {}, lock).sql
+        self.assertIn(authzlib.BUILD, sql)
+        self.check("docs.migration.sql", sql.replace(authzlib.BUILD, "BUILD").replace(authzlib.__version__, "VERSION"))
+
     def test_the_functions_each_apply_makes_again(self) -> None:
         # base.GENERATED_FUNCTIONS (dropped whatever their signature, then made again) names what compiling makes in
         # authz, but the base's own (made or replaced, never dropped) and uid (its type is checked first)
@@ -619,12 +680,19 @@ class PointChecks(unittest.TestCase):
         rows, so they must keep the views (a function call per row would make lists slow)."""
         sql = compiled("docs")
         self.assertIn('authz_int."folder__edit__has"', self.policy(sql, '"app"."folders"', "insert"))
-        self.assertNotIn("__has", self.policy(sql, '"app"."folders"', "select"))
-        self.assertNotIn("__has", self.policy(sql, '"app"."files"', "select"))
         can = sql[sql.index("CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id text") :]
         self.assertIn("__has", can[: can.index("END $f$;")])
-        lst = sql[sql.index("CREATE OR REPLACE FUNCTION authz.list(p_type text") :]
-        self.assertNotIn("__has", lst[: lst.index("END $f$;")])
+        # every select rule and authz.list of every policy: each form a select rule may reach (a (type, id) parent,
+        # a composite key, a loop of types, a deny inside inheritance) is in one of them
+        selects = 0
+        for name in POLICIES:
+            sql = compiled(name)
+            for rule in re.findall(r'CREATE POLICY "authz_select" ON .*?;\n', sql, re.S):
+                selects += 1
+                self.assertNotIn("__has", rule, f"{name}: {rule[:80]}")
+            lst = sql[sql.index("CREATE OR REPLACE FUNCTION authz.list(p_type text") :]
+            self.assertNotIn("__has", lst[: lst.index("END $f$;")], name)
+        self.assertGreaterEqual(selects, 14, "the select rules aren't found")
 
     def test_starting_points_are_read_in_from(self) -> None:
         """A recursive permission's starting points (its __start function) are read in FROM: a nested loop that
@@ -2551,28 +2619,77 @@ class Command(unittest.TestCase):
 class Imports(unittest.TestCase):
     """Each run of the command imports only what it uses: importing all of it cost every run ~50 ms of its ~150."""
 
-    WATCH = (
+    # what the standard library has that the command loads only when a command needs it; every module of authzlib
+    # and of cli/ is watched besides
+    STDLIB = (
         "ssl",
         "socket",
         "hashlib",
+        "hmac",
+        "secrets",
         "urllib.parse",
-        "authzlib.assembled",
-        "authzlib.migrate",
-        "authzlib.statements",
+        "subprocess",
+        "tomllib",
+        "threading",
+        "http.server",
+        "tempfile",
+        "shutil",
+        "decimal",
+        "datetime",
+    )
+    # what every run loads: the command, its connection, and what reading a policy needs
+    START = frozenset(
+        {
+            "rowstile_cli",
+            "pgwire",
+            "authzlib",
+            "authzlib.connection",
+            "authzlib.database",
+            "authzlib.parse",
+            "authzlib.sqlutil",
+            "authzlib.versions",
+        }
+    )
+    # and what compiling does (the compiler hashes long names)
+    COMPILER = frozenset(
+        {
+            "authzlib.assembled",
+            "authzlib.base",
+            "authzlib.compiler",
+            "authzlib.devtools",
+            "authzlib.governance",
+            "authzlib.hardening",
+            "authzlib.identity",
+            "authzlib.insight",
+            "authzlib.output",
+            "authzlib.refusals",
+            "authzlib.statements",
+            "authzlib.testing",
+            "authzlib.trees",
+            "hashlib",
+        }
     )
 
+    @classmethod
+    def watched(cls) -> list[str]:
+        """The modules of authzlib and cli/, and STDLIB."""
+        ours = [f"authzlib.{n[:-3]}" for n in os.listdir(os.path.join(ROOT, "authzlib")) if n.endswith(".py")]
+        ours += [n[:-3] for n in os.listdir(os.path.join(ROOT, "cli")) if n.endswith(".py")]
+        return sorted({m.removesuffix(".__init__") for m in ours} | set(cls.STDLIB))
+
     def loaded(self, *argv: str) -> tuple[set[str], set[str]]:
-        """Which of WATCH a fresh interpreter holds after running the command with argv and didn't before, and which
-        it held before (what starts with the interpreter isn't the command's: coverage.py, started by a .pth where
-        the suites measure)."""
+        """Which watched modules a fresh interpreter holds after running the command with argv and didn't before,
+        and which it held before (what starts with the interpreter isn't the command's: coverage.py, started by a
+        .pth where the suites measure)."""
+        watch = self.watched()
         code = (
             "import contextlib, io, sys\n"
             "before = set(sys.modules)\n"
             "import rowstile_cli\n"
             "with contextlib.redirect_stdout(io.StringIO()), contextlib.suppress(SystemExit):\n"
             f"    rowstile_cli.main({list(argv)!r})\n"
-            f"print(' '.join(m for m in {self.WATCH!r} if m in sys.modules and m not in before))\n"
-            f"print(' '.join(m for m in {self.WATCH!r} if m in before))\n"
+            f"print(' '.join(m for m in {watch!r} if m in sys.modules and m not in before))\n"
+            f"print(' '.join(m for m in {watch!r} if m in before))\n"
         )
         env = dict(os.environ, PYTHONPATH=os.pathsep.join([os.path.join(ROOT, "cli"), ROOT]))
         run = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True)
@@ -2581,13 +2698,25 @@ class Imports(unittest.TestCase):
         return added, started
 
     def test_each_command_imports_what_it_uses(self) -> None:
-        # the version: no compiler, no TLS, no hashes (pgwire imports them as a connection needs them)
-        self.assertEqual(self.loaded("--version")[0], set())
-        # formatting parses: no compiler
-        self.assertEqual(self.loaded("fmt", "--check", "example/docs.authz")[0], set())
-        # checking compiles (and the compiler hashes long names): no migrations, no connection
-        added, started = self.loaded("check", "example/docs.authz")
-        self.assertEqual(added, {"hashlib", "authzlib.assembled", "authzlib.statements"} - started)
+        for argv, want in (
+            # the version: no compiler, no TLS, no hashes (pgwire imports them as a connection needs them)
+            (["--version"], self.START),
+            # formatting parses: no compiler
+            (["fmt", "--check", "example/docs.authz"], self.START | {"authzlib.fmt"}),
+            # checking compiles: no migrations, no connection, no evaluator
+            (["check", "example/docs.authz"], self.START | self.COMPILER),
+            (["graph", "example/docs.authz"], self.START | self.COMPILER),
+            # a code's page compiles its example, to show what the compiler says
+            (["help", "AZ201"], self.START | self.COMPILER | {"authzlib.errors"}),
+        ):
+            added, started = self.loaded(*argv)
+            self.assertEqual(added, set(want) - started, f"rowstile {' '.join(argv)}")
+
+    def test_every_module_is_watched(self) -> None:
+        watch = self.watched()
+        for name in ("authzlib", "authzlib.evaluate", "authzlib.review", "authzlib.prove", "rowstile_cli", "studio"):
+            self.assertIn(name, watch)
+        self.assertLessEqual(self.START | self.COMPILER, set(watch))
 
     def test_names_made_when_first_asked_for(self) -> None:
         for name in authzlib.__all__:
@@ -10123,10 +10252,51 @@ class Decisions(unittest.TestCase):
 
 
 class Encodings(unittest.TestCase):
-    """Text files are read and written as UTF-8 whatever the platform (Windows' locale is cp1252)."""
+    """Text files are read and written as UTF-8 whatever the platform (Windows' locale is cp1252): every call that
+    opens one names its encoding. These open text by default: open(), io.open, os.fdopen, a Path's open,
+    read_text and write_text; these when their mode says text: tempfile's files, and gzip's, bz2's and lzma's (binary
+    by default)."""
+
+    TEXT_BY_DEFAULT = frozenset({"open", "fdopen", "read_text", "write_text"})
+    BINARY_BY_DEFAULT = frozenset({"NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile"})
+
+    @classmethod
+    def unnamed(cls, source: str) -> list[int]:
+        """The lines of the calls in source that open a text file without naming its encoding."""
+        import ast
+
+        out = []
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+            # os.open is a file descriptor's, no text; webbrowser.open opens a page, tarfile.open and zipfile's an
+            # archive; read_text and write_text are a Path's (the command has a read_text of its own, which names it)
+            on = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else ""
+            if (
+                name not in cls.TEXT_BY_DEFAULT | cls.BINARY_BY_DEFAULT
+                or (name == "open" and on in ("os", "webbrowser", "tarfile", "zipfile"))
+                or (isinstance(func, ast.Name) and name in ("read_text", "write_text"))
+            ):
+                continue
+            compressed = name == "open" and on in ("gzip", "bz2", "lzma")  # text only with a t: 'w' is 'wb'
+            modes = [
+                a.value
+                for a in [*node.args, *(k.value for k in node.keywords if k.arg == "mode")]
+                if isinstance(a, ast.Constant) and isinstance(a.value, str) and re.fullmatch(r"[rwxabt+]+", a.value)
+            ]
+            if compressed:
+                text = any("t" in m for m in modes)
+            elif name in cls.BINARY_BY_DEFAULT:
+                text = bool(modes) and "b" not in modes[0]
+            else:
+                text = not any("b" in m for m in modes)
+            if text and not any(k.arg == "encoding" for k in node.keywords):
+                out.append(node.lineno)
+        return out
 
     def test_every_text_open_names_an_encoding(self) -> None:
-        import ast
         import subprocess
 
         top = os.path.dirname(ROOT)
@@ -10137,19 +10307,36 @@ class Encodings(unittest.TestCase):
         missing = []
         for rel in listed.stdout.split():
             with open(os.path.join(top, rel), encoding="utf-8") as fh:
-                tree = ast.parse(fh.read())
-            for node in ast.walk(tree):
-                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open"):
-                    continue
-                mode = (
-                    node.args[1]
-                    if len(node.args) > 1
-                    else next((k.value for k in node.keywords if k.arg == "mode"), None)
-                )
-                binary = isinstance(mode, ast.Constant) and "b" in str(mode.value)
-                if not binary and not any(k.arg == "encoding" for k in node.keywords):
-                    missing.append(f"{rel} line {node.lineno}")
-        self.assertEqual(missing, [], 'open() without encoding="utf-8"')
+                missing += [f"{rel} line {n}" for n in self.unnamed(fh.read())]
+        self.assertEqual(missing, [], 'a text file opened without encoding="utf-8"')
+
+    def test_the_calls_that_open_text(self) -> None:
+        source = "\n".join(
+            [
+                "open(p)",  # 1
+                "open(p, 'rb')",
+                "open(p, encoding='utf-8')",
+                "io.open(p, mode='w')",  # 4
+                "os.fdopen(fd, 'w')",  # 5
+                "os.open(p, os.O_RDONLY)",
+                "webbrowser.open(url)",
+                "path.read_text()",  # 8
+                "path.write_text(s, encoding='utf-8')",
+                "Path(p).write_text(s)",  # 10
+                "path.read_bytes()",
+                "path.open('rb')",
+                "tempfile.NamedTemporaryFile()",
+                "tempfile.NamedTemporaryFile('w', suffix='.authz')",  # 14
+                "NamedTemporaryFile(mode='w+', encoding='utf-8')",
+                "tempfile.TemporaryFile('w+b')",
+                "read_text(path)",
+                "tarfile.open(p)",
+                "gzip.open(p)",
+                "gzip.open(p, 'rt')",  # 20
+                "gzip.open(p, 'w')",
+            ]
+        )
+        self.assertEqual(self.unnamed(source), [1, 4, 5, 8, 10, 14, 20])
 
 
 class SearchPath(unittest.TestCase):
@@ -11255,7 +11442,10 @@ class DocPages(unittest.TestCase):
         # integrations/pooler.sh: PgBouncer in transaction mode, prepared statements kept, the app's connection alone
         # (each suite gives it the app role only). The operations page says so, and no more: change one, change both
         script = self.page("integrations", "pooler.sh")
-        version = search(r"\nPOOLER_IMAGE=\S+:v(\d+\.\d+)\.", script).group(1)
+        self.assertIn(" AS pgbouncer$/", script)  # its image, by its stage's name
+        version = search(
+            r"\nFROM \S+:v(\d+\.\d+)\.\S* AS pgbouncer\n", self.page("integrations", "images", "Dockerfile")
+        ).group(1)
         self.assertIn("\npool_mode = transaction\n", script)
         self.assertRegex(script, r"\nmax_prepared_statements = [1-9]")
         for stack in ("fastapi", "nextjs"):
@@ -11470,9 +11660,26 @@ class Promises(unittest.TestCase):
                 problems.append(f"{tag}: no file {path}, under core/ or the repository's root")
                 continue
             with open(there[0], encoding="utf-8") as fh:
-                if label not in fh.read():
-                    problems.append(f"{tag}: {path} holds no {label!r}")
+                text = fh.read()
+            if label not in text:
+                problems.append(f"{tag}: {path} holds no {label!r}")
+            elif said := self.no_check(text, label):
+                problems.append(f"{tag}: in {path}, {label!r} {said}: no check, it stays whatever the checks become")
         return problems
+
+    @staticmethod
+    def no_check(text: str, label: str) -> str:
+        """Why label, which text holds, names no check ('' if it may): it is a class's name or a function's that
+        isn't a test, or each line that holds it is a comment."""
+        name = re.sub(r"^(?:class|def) |\($", "", label)
+        if re.fullmatch(r"\w+", name):
+            if re.search(rf"(?m)^\s*class {name}\b", text):
+                return "names a class"
+            if not name.startswith("test") and re.search(rf"(?m)^\s*(?:async )?def {name}\b", text):
+                return "names a function that is no test"
+        if all(re.match(r"\s*(?:#|--(?:\s|$)|//)", line) for line in text.split("\n") if label in line):
+            return "is in comments only"
+        return ""
 
     def test_every_promise_says_what_holds_it(self) -> None:
         untagged: list[str] = []
@@ -11549,10 +11756,19 @@ class Promises(unittest.TestCase):
         good = '<!-- checked: tests/apply.sh "rowstile apply, on a database with no extension" -->'
         self.assertEqual(self.tag_problems(good), [])
         self.assertEqual(self.tag_problems(good.replace("-->", '; tests/cli.sh "check: ok, exit 0" -->')), [])
+        self.assertEqual(
+            self.no_check("# the words\n  -- the words\n// the words, again\n", "the words"), "is in comments only"
+        )
+        self.assertEqual(self.no_check("# the words\nok 'the words'\n", "the words"), "")
+        self.assertEqual(self.no_check("def test_x():\n", "test_x"), "")
+        self.assertEqual(self.no_check("class X:\n  y = X()\n", "X("), "names a class")
         for bad, said in (
             ('<!-- checked: tests/apply.sh "apply --force" -->', "holds --"),
             ('<!-- checked: tests/apply.sh "a -> b" -->', "holds >"),
             ('<!-- checked: tests/apply.sh "no check says this" -->', "tests/apply.sh holds no"),
+            ('<!-- checked: tests/around.py "class World" -->', "names a class"),
+            ('<!-- checked: tests/difftest.py "CrossGen" -->', "names a class"),
+            ('<!-- checked: tests/around.py "def drift(" -->', "names a function that is no test"),
             ('<!-- checked: tests/nowhere.sh "y" -->', "no file tests/nowhere.sh"),
             ("<!-- checked: tests/apply.sh -->", "name each check as"),
             ("<!-- unchecked: because -->", "say why none does"),
@@ -12659,7 +12875,7 @@ class Guards(unittest.TestCase):
 
 class Features(unittest.TestCase):
     """tests/features.py, the registry of features, against the code: every item of the surface (the authz.*
-    functions, the command's commands and flags, the language's forms, the error codes, what the SDKs export, the
+    functions, the command's commands and flags, the settings of rowstile.toml, the language's forms, the error codes, what the SDKs export, the
     language server's methods, the MCP tools, Studio's routes) is in one feature; every check a feature names is
     still in its suite; a feature that decides access or keeps data is held to another answer at random; each
     refusal is asked for by its words. docs/how-it-is-checked.md shows its table (--update writes it)."""
@@ -12735,6 +12951,38 @@ class Features(unittest.TestCase):
         self.assertEqual(features.owner("sdk.py.fastapi.Rowstile"), ["sdk.python.stacks"])
         self.assertEqual(features.owner("sdk.py.Refused"), ["sdk.python"])
         self.assertEqual(features.owner("cli.migrate --check"), ["cli.migrate"])
+        # a flag several commands take is an item of each (the usage names --downgrade once, under apply)
+        for item in ("cli.push --downgrade", "cli.remove --downgrade", "cli.migrate --downgrade", "cli.--db"):
+            self.assertIn(item, found["the command"])
+        self.assertNotIn("cli.lint --db", found["the command"])  # --db is every command's that reads a database
+        self.assertEqual(features.owner("cli.push --downgrade"), ["cli.apply"])
+        self.assertIn("toml.migrations.lock", found["rowstile.toml"])
+        self.assertEqual(features.owner("toml.migrations.lock"), ["cli.migrate"])
+
+    def test_a_check_in_comments_and_a_flag_or_setting_no_suite_runs_are_said(self) -> None:
+        f = next(x for x in features.FEATURES if x.id == "lang.caveats")
+        changed = dataclasses.replace(
+            f, checks=(features.Check("tests/multi_scenario.sql", "shares that start later"),)
+        )
+        self.assertIn(
+            "lang.caveats: tests/multi_scenario.sql says 'shares that start later' in comments only",
+            features.problems([changed if x is f else x for x in features.FEATURES]),
+        )
+        texts = {
+            "a.sh": "run push --development\n# push --downgrade\nrun apply --downgrade\nrun --db x lint\n",
+            "b.py": 'def serving(db, *flags):\n    run(["studio", *flags])\nserving(db, "--write")\n',
+            "c.sh": 'printf \'policy = "p"\\n[migrations]\\nlock = "x"\\n\' > rowstile.toml\n',
+            "d.py": "dir = 1\n",
+        }
+        items = {"cli.push --downgrade", "cli.apply --downgrade", "cli.studio --write", "cli.studio --port"}
+        items |= {"toml.policy", "toml.migrations.lock", "toml.migrations.dir"}
+        with (
+            mock.patch.object(features, "suite_texts", return_value=texts),
+            mock.patch.object(glob, "glob", return_value=[]),
+        ):
+            self.assertEqual(features.unused_flags(items), ["cli.push --downgrade", "cli.studio --port"])
+            # dir = 1 is in a text with no [migrations]
+            self.assertEqual(features.unset_settings(items), ["toml.migrations.dir"])
 
 
 class ScannerSteps(unittest.TestCase):
@@ -13514,7 +13762,7 @@ class CheckCounts(unittest.TestCase):
     LOG = (
         "=== the share API\nok    one\nok    two\n--- passed: multi scenario (1s)\n"
         "=== the scenario\n93 checks passed\n--- passed: scenario (1s)\n"
-        "Ran 216 tests in 69.120s\n\nOK\n--- passed: unit (69s)\n"
+        "Ran 218 tests in 69.120s\n\nOK (skipped=2)\n--- passed: unit (69s)\n"
         "policy errors: 132 of 133 cases\n--- FAILED: policy errors (2s)\n"
         "ok    drawn at random\n--- passed: difftest docs (14s)\n"
         "--- passed: re-apply (0s)\n"
@@ -13558,13 +13806,32 @@ class CheckCounts(unittest.TestCase):
                 self.assertEqual(fh.read(), "# what this is\nscenario 93\nunit 216\n")
             self.assertEqual(self.c.expected(path), {"scenario": 93, "unit": 216})
 
+    def test_skipped_tests_are_not_passed(self) -> None:
+        # a test that starts skipping (a check of the environment gone wrong) makes the count fall short
+        for summary, n in (("OK", 5), ("OK (skipped=2)", 3), ("FAILED (failures=1, skipped=1)", 4)):
+            self.assertEqual(self.c.counted(f"Ran 5 tests in 1.0s\n\n{summary}\n--- passed: unit (1s)\n"), {"unit": n})
+
+    @staticmethod
+    def recorded(run: str) -> set[str]:
+        """The names run_tests.sh records its steps under, but the soak's (random suites, longer: not counted)."""
+        soak = re.search(r'(?ms)^if \[ "\$MODE" = soak \]; then\n.*?^fi\n', run)
+        assert soak is not None, "run_tests.sh's soak isn't where it was"
+        run = run[: soak.start()] + run[soak.end() :]
+        return set(re.findall(r'^\s*record \S+ "([^"$]+)"$', run, re.M))
+
     def test_each_suite_written_is_one_run_tests_records(self) -> None:
+        # a step taken out of run_tests.sh, or recorded under another name, would be asked by no log
         with open(os.path.join(ROOT, "run_tests.sh"), encoding="utf-8") as fh:
-            recorded = set(re.findall(r'^\s*record \S+ "([^"$]+)"$', fh.read(), re.M))
+            recorded = self.recorded(fh.read())
         written = self.c.expected()
         self.assertEqual(sorted(set(written) - recorded), [])
         self.assertEqual(sorted(k for k in written if not self.c.FIXED.match(k)), [])  # random ones aren't counted
         self.assertNotIn(0, written.values())
+        # the soak's steps are not run_tests.sh's own: a name it alone records doesn't count
+        run = 'if [ "$MODE" = soak ]; then\n  record $? "fuzz parser"\nfi\nrecord $? "unit"\n'
+        self.assertEqual(self.recorded(run), {"unit"})
+        for name in ("difftest docs", "genpolicy", "around", "invariance", "rewrites", "conditions", "fuzz parser"):
+            self.assertIsNone(self.c.FIXED.match(name), name)
 
     def test_an_upgrade_with_nothing_to_upgrade_from(self) -> None:
         # until a release from the beta on is older than this version, tests/upgrade.sh says so and checks nothing:
@@ -14421,6 +14688,145 @@ class Delivery(unittest.TestCase):
         # pip's pinned requirements (Atheris, for the fuzz job) are Dependabot's too
         pip = search(r"package-ecosystem: pip\n    directory: (\S+)", dependabot).group(1)
         self.assertTrue(glob.glob(os.path.join(self.REPO, pip.lstrip("/"), "*requirements*.txt")), pip)
+
+    # files that start containers from an image by its tag alone, and why (images built here aside)
+    BY_TAG: ClassVar[dict[str, str]] = {
+        "review-ci/gitlab/rowstile-review.gitlab-ci.yml": "users' pipelines include it, and Dependabot reads no "
+        "GitLab file: a tag gets them the image's fixes, which a digest no one moves would hold back",
+    }
+    # docker run's options that take a value
+    VALUED = frozenset(
+        {
+            *("-e", "--env", "-v", "--volume", "-w", "--workdir", "-p", "--publish", "-u", "--user", "--name"),
+            *("--network", "--entrypoint", "--platform", "--label", "--shm-size", "--tmpfs", "--mount", "--env-file"),
+            *("--add-host", "--cpus", "--memory"),
+        }
+    )
+
+    @classmethod
+    def started_images(cls, text: str) -> list[tuple[int, str]]:
+        """(line, image) of each container a script starts (`docker run`) or a YAML file names (`image:`), an image
+        held in a variable read from where the file sets it."""
+        token = re.compile(r"""(?:"[^"]*"|'[^']*'|[^\s"'])+""")
+        found: list[tuple[int, str]] = []
+        lines = text.split("\n")
+        n = 0
+        while n < len(lines):
+            start, line = n + 1, lines[n]
+            while line.endswith("\\") and n + 1 < len(lines):
+                n += 1
+                line = line[:-1] + " " + lines[n]
+            n += 1
+            if m := re.match(r"\s*(?:- )?image:\s*(\S+)\s*$", line):
+                found.append((start, m.group(1).strip("\"'")))
+            for m in re.finditer(r"\bdocker run\b(.*)", line):
+                # its words, quotes taken off, a command's output as one ($(dirname "$HERE")), up to a quote a later
+                # line closes (the image is before it)
+                rest = m.group(1)
+                while (inner := re.sub(r"\$\([^()]*\)", "X", rest)) != rest:
+                    rest = inner
+                words = [re.sub(r"\"([^\"]*)\"|'([^']*)'", r"\1\2", w) for w in token.findall(rest)]
+                take = False
+                for word in words:
+                    if take:
+                        take = False
+                    elif word in cls.VALUED:
+                        take = True
+                    elif not word.startswith("-") and not word.startswith("${") and "=" not in word.split(":")[0]:
+                        found.append((start, word))
+                        break
+        out = []
+        for line, image in found:
+            at = len("\n".join(lines[: line - 1]))
+            # a variable: what the file last set it to before the line (or first, after it: a function's), in turn
+            for _ in range(3):
+                if not (v := re.fullmatch(r"\$\{?(\w+)\}?", image)):
+                    break
+                value = r"(\$\((?:[^()]|\([^()]*\))*\)|\"[^\"]*\"|\S+)"
+                sets = list(re.finditer(rf"(?:^|\s){v.group(1)}={value}", text, re.M))
+                before = [m for m in sets if m.start() < at]
+                if not sets:
+                    break
+                image = (before or sets)[-1 if before else 0].group(1).strip("\"'")
+            # read from a Dockerfile's stage (by a function that reads one), whose image the test above holds to
+            # its digest
+            called = re.match(r"\$\((\w+)", image)
+            if called and (
+                "Dockerfile" in image or re.search(rf"(?m)^{called.group(1)}\(\) \{{[^}}\n]*Dockerfile", text)
+            ):
+                image = "(a Dockerfile's stage)"
+            out.append((line, image))
+        return out
+
+    @staticmethod
+    def built_here(image: str) -> bool:
+        return re.match(r"rowstile[\w-]*(:|$)|\(a Dockerfile's stage\)$", image) is not None
+
+    def test_containers_are_started_from_images_pinned_by_digest(self) -> None:
+        # what the scripts and the YAML start: by digest, an image built here, or a file BY_TAG names and says why
+        loose: dict[str, list[str]] = {}
+        seen = 0
+        for root, dirs, files in os.walk(self.REPO):
+            dirs[:] = sorted(d for d in dirs if d not in {".git", "node_modules", ".venv", ".ci", "dist"})
+            for f in sorted(files):
+                if not f.endswith((".sh", ".yml", ".yaml")):
+                    continue
+                path = os.path.relpath(os.path.join(root, f), self.REPO).replace(os.sep, "/")
+                with open(os.path.join(root, f), encoding="utf-8") as fh:
+                    for n, image in self.started_images(fh.read()):
+                        seen += 1
+                        if not self.built_here(image) and "@sha256:" not in image:
+                            loose.setdefault(path, []).append(f"{path}:{n}: {image}")
+        self.assertGreater(seen, 20, "the containers the scripts start aren't found")
+        self.assertEqual(
+            [x for path, found in sorted(loose.items()) if path not in self.BY_TAG for x in found],
+            [],
+            "an image by tag alone: add its digest (tag@sha256:...), or say in BY_TAG why not",
+        )
+        self.assertEqual(sorted(set(self.BY_TAG) - set(loose)), [], "BY_TAG names a file that pins every image now")
+
+    def test_the_images_a_script_starts(self) -> None:
+        script = "\n".join(
+            [
+                'docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo node:24 bash -c \\',
+                '  "npm ci"',
+                'docker run -d --name "$NAME" -p 127.0.0.1::5432 -e A=b \\',
+                '  -v "$(dirname "$(dirname "$HERE")"):/src" rowstile:16 >/dev/null',
+                "IMG=edoburu/pgbouncer:v1@sha256:" + "0" * 64,
+                'docker run -d -p "$port:6432" "$IMG" >/dev/null || return 1',
+                "docker run --rm -u 1000:1000 alpine:3 sh -c 'echo",
+                "  it'\"'\"'s here'",
+                "jobs:",
+                "  image: python:3.12-slim",
+                "  image:",
+                'machine() { sed -n "s/^FROM \\([^ ]*\\) AS $1\\$/\\1/p" packaging/machines/Dockerfile; }',
+                "NODE=$(machine node) PY=$(other python)",
+                'docker run "$NODE" true',  # 14
+                'docker run "$PY" true',
+                "IMG=busybox:1",
+                'docker run "$IMG" true',  # 17
+            ]
+        )
+        self.assertEqual(
+            self.started_images(script),
+            [
+                (1, "node:24"),
+                (3, "rowstile:16"),
+                (6, "edoburu/pgbouncer:v1@sha256:" + "0" * 64),
+                (7, "alpine:3"),
+                (10, "python:3.12-slim"),
+                (14, "(a Dockerfile's stage)"),
+                (15, "$(other python)"),
+                (17, "busybox:1"),
+            ],
+        )
+        self.assertEqual(
+            [
+                self.built_here(i)
+                for i in ("rowstile:16", "rowstile-cli:test-amd64", "(a Dockerfile's stage)", "node:24")
+            ],
+            [True, True, True, False],
+        )
 
     def test_the_image_is_checked_on_each_platform_it_is_published_for(self) -> None:
         # the release builds the command's image for these platforms, and the packaging tests (packaging/test.sh)
@@ -15524,8 +15930,9 @@ class Private(unittest.TestCase):
 
     REPO = os.path.dirname(ROOT)
     SKIP: ClassVar[set[str]] = {"node_modules", "generated", "__pycache__", "dist", "out", "grammars"}
-    # folders whose name starts with a dot are a tool's own (git's, an editor's, a cache), but for these two
-    DOTTED: ClassVar[set[str]] = {".github", ".vitepress"}
+    # where git isn't asked (a checkout the suites' containers don't trust), the folders are walked: those whose
+    # name starts with a dot are a tool's own (git's, an editor's, a cache), but for these
+    DOTTED: ClassVar[set[str]] = {".github", ".vitepress", ".githooks"}
     # (two names that stay out of the repository too, in a file or a pull request; the conventions file keeps its own)
     WORDS = re.compile(
         r"\bADRs?" + r" ?\d{4}|docs/" + r"adr\b|\b(roadmap|v1-design|developer-experience|"
@@ -15537,17 +15944,51 @@ class Private(unittest.TestCase):
             os.path.isdir(os.path.join(self.REPO, "docs", "adr")), "decisions are kept outside this repository"
         )
         found = []
+        for path in self.files():
+            if os.path.getsize(path) > 4_000_000:
+                continue
+            with open(path, encoding="utf-8", errors="ignore") as fh:
+                for n, line in enumerate(fh, 1):
+                    if self.WORDS.search(line):
+                        found.append(f"{os.path.relpath(path, self.REPO)}:{n}: {line.strip()[:100]}")
+        self.assertEqual(found, [])
+
+    def tracked(self) -> list[str] | None:
+        """The files git tracks here, or None where git can't say."""
+        try:
+            out = subprocess.run(
+                ["git", "ls-files", "-z"], cwd=self.REPO, capture_output=True, text=True, check=True
+            ).stdout
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        return [p for p in out.split("\0") if p]
+
+    def files(self) -> list[str]:
+        """Every file of the repository: what git tracks, else the folders walked."""
+        tracked = self.tracked()
+        if tracked is not None:
+            return [p for p in (os.path.join(self.REPO, t) for t in tracked) if os.path.isfile(p)]
+        out = []
         for d, dirs, files in os.walk(self.REPO):
             dirs[:] = [x for x in dirs if x not in self.SKIP and (not x.startswith(".") or x in self.DOTTED)]
-            for f in files:
-                path = os.path.join(d, f)
-                if os.path.getsize(path) > 4_000_000:
-                    continue
-                with open(path, encoding="utf-8", errors="ignore") as fh:
-                    for n, line in enumerate(fh, 1):
-                        if self.WORDS.search(line):
-                            found.append(f"{os.path.relpath(path, self.REPO)}:{n}: {line.strip()[:100]}")
-        self.assertEqual(found, [])
+            out += [os.path.join(d, f) for f in files]
+        return out
+
+    def test_the_walk_reads_every_folder_git_tracks(self) -> None:
+        # where git isn't asked, the walk must still read each tracked file: no folder of one is skipped
+        tracked = self.tracked()
+        if tracked is None:
+            self.skipTest("no git here")
+        skipped = sorted(
+            {
+                d
+                for t in tracked
+                for d in t.split("/")[:-1]
+                if d in self.SKIP or (d.startswith(".") and d not in self.DOTTED)
+            }
+        )
+        self.assertEqual(skipped, [], "folders git tracks files in, which the walk skips (DOTTED, SKIP)")
+        self.assertIn(os.path.join(self.REPO, ".githooks", "pre-commit"), self.files())
 
 
 class Version(unittest.TestCase):

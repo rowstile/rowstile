@@ -5,12 +5,16 @@
     python3 tests/check_counts.py --write LOG [...]  # after adding or taking away checks on purpose
 
 A suite that stops checking something can stay green: a glob that matches nothing, a loop over an empty list, a
-suite cut short. run_tests.sh's log says how many checks each one passed (a line `ok ...` each, `N checks passed`,
-`Ran N tests`, `N of N cases`) before the step's `--- passed: NAME` line, and check_counts.txt says how many each
-one passes: no fewer and no more, so that a count that changes is in the diff, like the golden SQL. A suite a log
-doesn't have (a part of the run, a shorter mode) isn't asked. The random ones (difftest, genpolicy, around, the
-invariance, the conditions, the parser fuzzer, the stress test) check as many things as their seeds draw: they
-aren't counted (the invariance of the fixed policies is, but not the full run's answers to them). Nor
+suite cut short, a test that skips. run_tests.sh's log says how many checks each one passed (a line `ok ...` each,
+`N checks passed`, `Ran N tests` less the `skipped=K` after it, `N of N cases`) before the step's `--- passed: NAME`
+line, and check_counts.txt says how many each one passes: no fewer and no more, so that a count that changes is in
+the diff, like the golden SQL. The unit tests' count is what they pass where ci.sh runs them, in its container:
+there git can't be asked of the checkout, and the tests that need it skip (as do those for Windows alone, and the
+install lines' on main between releases). A suite a log doesn't have (a part of the run, a shorter mode) isn't
+asked; a unit test checks that each suite check_counts.txt names is a step run_tests.sh runs. The random ones
+(difftest, genpolicy, around, the invariance, the conditions, the parser fuzzer, the rewrites, the stress test) check
+as many things as their seeds draw: they aren't counted (the invariance of the fixed policies is, but not the full
+run's answers to them). Nor
 are the upgrades from every release (nightly), as many as PyPI has releases: that suite checks each passes as many.
 An upgrade with nothing to upgrade from (no release from the beta on is older than this version yet) checks nothing:
 run_tests.sh records it under a name of its own, which check_counts.txt doesn't name.
@@ -28,11 +32,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXPECTED = os.path.join(HERE, "check_counts.txt")
 # the suites that check as many things on every run: not the random ones
 FIXED = re.compile(
-    r"^(?!difftest|genpolicy|around|invariance(?! of the fixed policies$)|conditions|fuzz parser|stress|upgrade from every release)"
+    r"^(?!difftest|genpolicy|around|invariance(?! of the fixed policies$)|conditions|fuzz parser|rewrites|stress|"
+    r"upgrade from every release)"
 )
 # a line that says how many checks passed: a scenario's, a filtered suite's (run_tests.sh's quiet_ok), the unit
 # tests', the policy errors'
 COUNT = re.compile(r"^\s*(\d+) checks passed$|^Ran (\d+) tests? in |^policy errors: (\d+) of \d+ cases")
+# what the unit tests skipped, after their `Ran N tests`: not passed
+SKIPPED = re.compile(r"^(?:OK|FAILED) \((?:.*, )?skipped=(\d+)")
 
 
 def counted(log: str) -> dict[str, int]:
@@ -44,6 +51,8 @@ def counted(log: str) -> dict[str, int]:
             n += 1
         elif c := COUNT.match(line):
             n += int(next(g for g in c.groups() if g is not None))
+        elif k := SKIPPED.match(line):
+            n -= int(k.group(1))
         elif m := re.match(r"^--- (?:passed|FAILED): (.+?) \(\d+s\)$", line):
             if FIXED.match(m.group(1)):
                 out[m.group(1)] = n

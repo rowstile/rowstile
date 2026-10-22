@@ -66,7 +66,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   with `authz.act_as` or with the user's own API key or JWT (limited to a scope, for the one asked with a scope);
   planner settings, a read-only transaction, a search path that starts with a schema of decoys; and, halfway,
   something changed behind the policy's back (a grant on rowstile's own tables, row-level security turned
-  off, a new partition). <!-- checked: tests/around.py "class World"; tests/around.py "read-only reads" --> Besides the comparisons above, asked in that session, it tries real writes as the
+  off, a new partition). <!-- checked: tests/around.py "decoys first on the search path"; tests/around.py "read-only reads" --> Besides the comparisons above, asked in that session, it tries real writes as the
   app role on every row and undoes them (updates, deletes, and inserts of rows like the ones there), shares too (against who may share and what the relation's
   `shared if` says of the share), checks that no share outlives its row, that a role the policy
   doesn't name gets nothing, and that `authz.lint()` reports what changed and `rowstile apply` puts it right.
@@ -242,8 +242,8 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   random policies.
 - **The suites themselves**: each passes as many checks as
   [`tests/check_counts.txt`](../core/tests/check_counts.txt) says, no fewer and no more, or the run fails. A
-  suite that stopped checking something (a glob that matches nothing, a loop over an empty list) can't stay
-  green unseen. <!-- checked: tests/unit_test.py "test_fewer_or_more_is_said"; tests/unit_test.py "test_each_suite_written_is_one_run_tests_records" -->
+  suite that stopped checking something (a glob that matches nothing, a loop over an empty list, a test that
+  skips) can't stay green unseen. <!-- checked: tests/unit_test.py "test_fewer_or_more_is_said"; tests/unit_test.py "test_skipped_tests_are_not_passed"; tests/unit_test.py "test_each_suite_written_is_one_run_tests_records" -->
 - **What the database runs**: [every night](../.github/workflows/nightly.yml) the suites run on PostgreSQL 16 with
   plpgsql_check's profiler on (in the test image: rowstile itself needs no extension), and
   [`tests/coverage_report.py`](../core/tests/coverage_report.py) lists each statement and branch of rowstile's
@@ -259,13 +259,14 @@ not a proof for worlds of any size, and it reads the policy, not your data.
 ## Every feature, and what checks it
 
 Every feature is in one list, [`tests/features.py`](../core/tests/features.py): each `authz.*` function, each
-command and its flags, each form of the language, each error code, what each SDK exports, the language server's
-methods, the MCP server's tools and Studio's routes, each in one feature. A feature names the page that documents
-it, its fixed checks, and the checks that hold it to an answer the code didn't give: the reference evaluator, a
-rebuild, the policy applied whole, Postgres. The list is read against the code, and `Features` in
-[`tests/unit_test.py`](../core/tests/unit_test.py) fails on each push when a part of the surface is in no feature,
-when a check the list names is gone from its suite, when a feature of tier 1 (it decides access or keeps data) has
-no check against another answer, or when a refusal isn't asked for by its words. <!-- checked: tests/unit_test.py "test_every_item_is_in_a_feature_and_every_check_is_there"; tests/unit_test.py "test_each_refusal_is_asked_for_by_its_words"; tests/unit_test.py "test_a_check_gone_and_a_tier_one_feature_without_an_oracle_are_said" -->
+command and its flags, each setting of `rowstile.toml`, each form of the language, each error code, what each SDK
+exports, the language server's methods, the MCP server's tools and Studio's routes, each in one feature. A feature
+names the page that documents it, its fixed checks, and the checks that hold it to an answer the code didn't give:
+the reference evaluator, a rebuild, the policy applied whole, Postgres. The list is read against the code, and
+`Features` in [`tests/unit_test.py`](../core/tests/unit_test.py) fails on each push when a part of the surface is in
+no feature, when a check the list names is gone from its suite (or left in a comment), when no suite gives a flag to
+its command or sets a setting, when a feature of tier 1 (it decides access or keeps data) has no check against
+another answer, or when a refusal isn't asked for by its words. <!-- checked: tests/unit_test.py "test_every_item_is_in_a_feature_and_every_check_is_there"; tests/unit_test.py "test_each_refusal_is_asked_for_by_its_words"; tests/unit_test.py "test_a_check_gone_and_a_tier_one_feature_without_an_oracle_are_said"; tests/unit_test.py "test_a_check_in_comments_and_a_flag_or_setting_no_suite_runs_are_said" -->
 Tier 2 is an answer shown to people, tier 3 the tools around them. `python3 core/tests/features.py --matrix` prints
 each feature against each suite.
 

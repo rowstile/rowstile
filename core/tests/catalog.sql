@@ -11,13 +11,21 @@ rels AS (SELECT c.oid, c.oid::regclass::text AS name, n.nspname AS nsp, c.relown
          WHERE n.nspname IN ('authz', 'authz_gen', 'authz_int') AND c.relkind IN ('r', 'v', 'm', 'S', 'p', 'f')),
 api AS (SELECT x::regprocedure AS oid FROM unnest(string_to_array(:'api', '|')) x),
 -- what the app role may read: policy_lines, and the views its rules look up (in authz_int: only its rules can name them)
-views AS (SELECT x::regclass AS oid FROM unnest(string_to_array(:'views', '|')) x)
+views AS (SELECT x::regclass AS oid FROM unnest(string_to_array(:'views', '|')) x),
+-- the path applying gave the functions that run the policy's own SQL (SET search_path FROM CURRENT): the schemas on
+-- the owner's path, then pg_temp, as this session (the owner's, as applying's) has it
+path AS (SELECT 'search_path=' || concat_ws(', ', (SELECT string_agg(quote_ident(s.name), ', ' ORDER BY s.i)
+                                                    FROM unnest(current_schemas(false)) WITH ORDINALITY s(name, i)
+                                                    WHERE s.name !~ '^pg_temp_'), 'pg_temp') AS c)
 SELECT problem || ': ' || name FROM (
   SELECT 'a definer function without its own search_path' AS problem, name FROM fns
     WHERE prosecdef AND NOT EXISTS (SELECT 1 FROM unnest(proconfig) c WHERE c LIKE 'search_path=%')
   -- "$user" in a captured search path is a schema anyone allowed to create schemas could make later
   UNION ALL SELECT 'its search_path names "$user"', name FROM fns
     WHERE EXISTS (SELECT 1 FROM unnest(proconfig) c WHERE c LIKE 'search_path=%$user%')
+  -- and it is pg_catalog's alone, or the policy's path: any other may hold a schema others create functions in
+  UNION ALL SELECT 'its search_path is ' || substr(c, 13) || ', not pg_catalog''s nor the policy''s', name FROM fns, unnest(proconfig) c
+    WHERE prosecdef AND c LIKE 'search_path=%' AND c <> 'search_path=pg_catalog, pg_temp' AND c <> (SELECT c FROM path)
   UNION ALL SELECT 'owned by ' || proowner::regrole, name FROM fns WHERE proowner <> (SELECT owner FROM o)
   UNION ALL SELECT 'leakproof', name FROM fns WHERE proleakproof
   -- a session's signature is bound to its backend, which a parallel worker isn't: reads through the rules run in
