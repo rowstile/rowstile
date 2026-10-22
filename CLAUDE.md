@@ -128,7 +128,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
 - `docs/` — `reference/` (the reference by subject: `language.md`, `app-code.md`, `identity.md`,
   `governance.md`, `tools.md`, `migrations.md`, `review.md`, `guarantees.md`, `limits.md`),
   `installing.md` (the site's Installing page: it holds the README's install lines, `DocPages` checks),
-  `getting-started.md` (run as written by `tests/docs_test.sh`), `cookbook.md` + `cookbook/` (the index, and
+  `getting-started.md` (run as written by `tests/docs_test.sh`, its Python too, with the README's and the home page's
+  policy and SQL), `cookbook.md` + `cookbook/` (the index, and
   the recipes: each is `cookbook/<name>.md` beside `cookbook/<name>/` with `schema.sql`, `policy.authz`,
   `tests.authz`, `rows.sql` for the playground, `rowstile.toml` (so `rowstile dev` runs in a copy of the folder)
   and, where `SELECT *` on the first governed table isn't the question to ask there, `ask.sql`;
