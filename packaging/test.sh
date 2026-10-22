@@ -7,7 +7,8 @@
 #     command stopped by a signal ends the launcher the same way, and on Alpine (musl) it runs on
 #     `@rowstile/cli-linux-x64-musl`. On Linux arm64, glibc and musl alike, the same, where this machine runs
 #     arm64 containers (emulated, as CI sets up: required there, skipped elsewhere). Without its platform
-#     package (optional dependencies off), on the Python found on PATH. The macOS and Windows packages can't be
+#     package (optional dependencies off), on the Python found on PATH; with ROWSTILE_PYTHON, on that one, a 3.11
+#     or later; a bundled Python it can't make executable is said to be so. The macOS and Windows packages can't be
 #     started on Linux: packaging/npm/platforms.py reads every package instead (its Python is built for the
 #     package's system and CPU, every library a binary loads is there, and every module the command imports)
 #   - PyPI: the `rowstile` wheel and sdist (the command and the Python SDK), installed with pip
@@ -125,6 +126,34 @@ docker run --rm -v "$REPO:/repo" "$NODE" bash -c "
   && grep -qF "(Python $(sed -n 's/^on PATH: Python //p' "$OUT/npm-path.log"))" "$OUT/npm-path.log" \
   && ok "npm without its platform package: runs on the Python on PATH ($(sed -n 's/^on PATH: //p' "$OUT/npm-path.log"))" \
   || { cat "$OUT/npm-path.log"; bad "npm without its platform package"; }
+# ROWSTILE_PYTHON: the Python to run on instead, asked its version first: one older than 3.11, or no Python, is
+# refused with a sentence
+docker run --rm -v "$REPO:/repo" "$NODE" bash -c "
+  echo \"on PATH: \$(python3 --version)\"
+  mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
+  npm i --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  ROWSTILE_PYTHON=\$(command -v python3) npx rowstile --version || exit 1
+  printf '#!/bin/sh\necho 3.10.12\n' > /tmp/python3.10 && chmod +x /tmp/python3.10
+  for p in /tmp/python3.10 /bin/echo /nowhere/python; do ROWSTILE_PYTHON=\$p npx rowstile --version; echo \"exit \$?\"; done" \
+  >"$OUT/npm-chosen.log" 2>&1 \
+  && grep -qF "(Python $(sed -n 's/^on PATH: Python //p' "$OUT/npm-chosen.log"))" "$OUT/npm-chosen.log" \
+  && grep -qF "rowstile: ROWSTILE_PYTHON is /tmp/python3.10, which is Python 3.10.12: name a Python 3.11 or later" "$OUT/npm-chosen.log" \
+  && grep -qF "rowstile: ROWSTILE_PYTHON is /bin/echo, which isn't a Python: name" "$OUT/npm-chosen.log" \
+  && grep -qF "rowstile: ROWSTILE_PYTHON is /nowhere/python, which can't be run (spawnSync /nowhere/python ENOENT): name" "$OUT/npm-chosen.log" \
+  && [ "$(grep -c '^exit 1$' "$OUT/npm-chosen.log")" = 3 ] \
+  && ok "npm: ROWSTILE_PYTHON runs it on that Python, and refuses one older than 3.11, or none, saying why" \
+  || { cat "$OUT/npm-chosen.log"; bad "npm with ROWSTILE_PYTHON"; }
+# the bundled Python not executable, and this user can't change that (a node_modules another user installed): said
+# as such, not as a package that isn't installed
+docker run --rm -v "$REPO:/repo" "$NODE_SLIM" bash -c "
+  mkdir -p /tmp/app && cd /tmp/app && npm init -y >/dev/null
+  npm i --no-audit --no-fund /repo/$OUT/rowstile-cli-linux-x64-[0-9]*.tgz /repo/$OUT/rowstile-[0-9]*.tgz >/dev/null 2>&1 || exit 1
+  chmod -x node_modules/@rowstile/cli-linux-x64/python/bin/python3.*
+  su node -s /bin/sh -c 'node /tmp/app/node_modules/rowstile/bin/rowstile.js --version'" >"$OUT/npm-mode.log" 2>&1; \
+  grep -q "^rowstile: no Python to run on. The Python of @rowstile/cli-linux-x64 (.*python3\.[0-9]*) isn't executable, and can't be made so (EPERM" "$OUT/npm-mode.log" \
+  && ! grep -q "isn't installed" "$OUT/npm-mode.log" \
+  && ok "npm: a bundled Python this user can't make executable is said to be so" \
+  || { cat "$OUT/npm-mode.log"; bad "npm with a bundled Python that isn't executable"; }
 
 echo "-- PyPI"
 docker run --rm -v "$REPO:/repo" "$PYTHON" bash -c "

@@ -7,8 +7,9 @@ gets into `main`.
 
 rowstile follows [semantic versioning](https://semver.org/). One version covers everything a release ships:
 the `rowstile` command, the Python package, the TypeScript packages (`@rowstile/*` and the command's
-platform packages), the image, and the review for CI. `packaging/version.py` sets it in every file, and a
-unit test fails if two files disagree. The editor extensions (VS Code, Zed) have their own versions, raised
+platform packages), the image, and the review for CI. `packaging/version.py` sets it in every file but the
+install lines that name the image's tag (the release pull request edits those), and a unit test fails if two
+files disagree. The editor extensions (VS Code, Zed) have their own versions, raised
 when they change: the Marketplace takes no alphas, betas or release candidates. A release publishes the VS Code extension
 on the Marketplace and Open VSX when its version isn't there yet, each once its token is set (`VSCE_PAT`,
 `OVSX_PAT`, in the environment `vscode`). `VSCE_PAT` isn't set: a new version goes to the Marketplace by hand,
@@ -80,6 +81,8 @@ pull request of its own, before the release's (the comment above `RELEASE` says 
    `release-X.Y.Z-alpha.N`), with two commits:
    1. the release itself, with the subject line `X.Y.Z-rc.N` (or `X.Y.Z-alpha.N`, `X.Y.Z-beta.N`, `X.Y.Z`):
       - `python3 packaging/version.py X.Y.Z-rc.N`
+      - the install lines that name the image's tag, `ghcr.io/rowstile/rowstile:X.Y.Z-rc.N`, in `README.md` and
+        `docs/installing.md`: version.py leaves them, and the unit tests (`DocPages`) fail until they name it
       - `CHANGELOG.md`: for the version's first alpha, beta or candidate, **Unreleased** becomes
         `## X.Y.Z (alpha)`, `## X.Y.Z (beta)` or `## X.Y.Z (release candidate)`, with a new empty
         **Unreleased** above it. For a later one, **Unreleased**'s lines move into that section, and the first
