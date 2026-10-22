@@ -10,8 +10,9 @@ the tables; everything else here is plain SQL.
   its members) may call `act_as`, and services sign in with `authz.login_key()` or `authz.login_jwt()`.
   `SELECT * FROM authz.connection_check()` at start-up says what is wrong with the app's connection.
 - **Memory**: the inheritance tables are read on every check. Give Postgres enough shared buffers for
-  the database's hot part; on the benchmark, 250k folders needed more than 1 GB and a million (a 6 GB
-  database, 3.4 GB of it inheritance tables) more than 4 GB (`core/bench/`).
+  the database's hot part; on the benchmark of 2026-10-03 (a build from before the rename, `core/bench/README.md`),
+  250k folders needed more than 1 GB and a million (a 6 GB database, 3.4 GB of it inheritance tables:
+  `core/bench/results/2026-10-03-20000000-files-pg16.txt`) more than 4 GB.
 - **Check your setup**: `SELECT * FROM authz.lint()` lists ways around the rules it can see.
 
 ## Behind a pooler
@@ -148,6 +149,6 @@ must read everything again, then follow from where the feed was when it started 
 |---|---|
 | the inheritance tables are exact | `SELECT authz.verify()` (reads everything, a batch of rows at a time: about two and a half minutes for a million folders; run it off-peak); false: `rowstile reapply --force` |
 | the policy's invariants hold | `SELECT * FROM authz.check_invariants()` |
-| a tree write waits | `pg_locks` on `authz_int.locks`; a big move holds it for half a second to a second per 20k folders below (`core/bench/`) |
+| a tree write waits | `pg_locks` on `authz_int.locks`; a big move holds it for half a second to a second per 20k folders below (on the benchmark of 2026-10-03, a build from before the rename: `core/bench/results/2026-10-03-*.txt`) |
 | slow checks | `pg_stat_statements` on your app's queries; `EXPLAIN` shows the policy's subplans |
 | who did what | `authz.audit`; break-glass use is also announced on channel `authz_alerts` |
