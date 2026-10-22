@@ -9,7 +9,7 @@ A policy written another way says the same, and data renumbered is the same data
 
   reordered     its declarations, its blocks, the lines of each block (relations and their sources, permissions,
                 rules, invariants) and the operands of every `or` (and of every `and`, what a `not` takes away
-                staying after what it takes from) in another order
+                staying after what it takes from) in another order, written as they were (brackets kept)
   included      its blocks spread over files the policy includes, one of them included by another, from a
                 folder below
   laid out      its expressions broken over lines, blank lines and comments between, then `rowstile fmt`
@@ -69,18 +69,14 @@ sys.path.insert(0, ROOT)
 import difftest  # noqa: E402
 from authzlib import Compiler, PolicyError, database, evaluate, fmt, migrate  # noqa: E402
 from authzlib.parse import (  # noqa: E402
-    And,
-    Expr,
-    ExprParser,
     Loc,
-    Not,
-    Or,
     Policy,
+    Token,
     Type,
     cols,
     parse_policy,
     read_lines,
-    written,
+    tokenize,
 )
 from authzlib.sqlutil import q, qt  # noqa: E402
 from difftest import DB, SESSIONS, Ids, idsql, lit  # noqa: E402
@@ -115,23 +111,47 @@ def is_test(b: Block) -> bool:
     return b[0] == "test" or b[0].startswith("test ")
 
 
-def shuffled_expr(node: Expr, rank: Callable[[str], float]) -> Expr:
-    """The operands of every `or` and `and` in another order (by rank, of each as written: two written alike stay
-    alike, as the compiler checks an operand said twice once); in an `and`, what a `not` takes away stays after
-    what it takes away from."""
-    match node:
-        case Or(items=items):
-            return Or(sorted((shuffled_expr(x, rank) for x in items), key=lambda x: rank(written(x))))
-        case And(items=items):
-            plain = sorted(
-                (shuffled_expr(x, rank) for x in items if not isinstance(x, Not)), key=lambda x: rank(written(x))
-            )
-            nots = sorted((shuffled_expr(x, rank) for x in items if isinstance(x, Not)), key=lambda x: rank(written(x)))
-            return And(plain + nots)
-        case Not(item=item):
-            return Not(shuffled_expr(item, rank))
-        case _:
-            return node
+Nested = list["Token | Nested"]  # an expression's words, what brackets hold as a list
+
+
+def shuffled_text(text: str, rank: Callable[[str], float]) -> str:
+    """The expression with the operands of every `or` and `and` in another order (by rank, of each as written: two
+    written alike stay alike, as the compiler checks an operand said twice once); in an `and`, what a `not` takes
+    away stays after what it takes away from. Written as it was but for that order: its brackets kept, those that
+    change nothing too (the parser reads `a or (b or c)` as `a or b or c`, and an explanation says it as written)."""
+    stack: list[Nested] = [[]]
+    for tok in tokenize(text, Loc(None, 0)):
+        if tok.kind == "(":
+            stack.append([])
+        elif tok.kind == ")":
+            inner = stack.pop()
+            stack[-1].append(inner)
+        else:
+            stack[-1].append(tok)
+
+    def say(items: Nested) -> str:
+        """The words in order, each bracket's in another."""
+        out: list[str] = []
+        for x in items:
+            out.append(f"({level(x)})" if isinstance(x, list) else "{" + x.text + "}" if x.kind == "cond" else x.text)
+        return " ".join(out)
+
+    def level(items: Nested) -> str:
+        """One level of brackets: its `or`'s operands, else its `and`'s, in another order."""
+        for word in ("or", "and"):
+            parts: list[Nested] = [[]]
+            for x in items:
+                if isinstance(x, Token) and x.kind == word:
+                    parts.append([])
+                else:
+                    parts[-1].append(x)
+            if len(parts) > 1:
+                said = sorted((say(p) for p in parts), key=rank)
+                nots = [s for s in said if s.startswith("not ")] if word == "and" else []
+                return f" {word} ".join([s for s in said if s not in nots] + nots)
+        return say(items)
+
+    return level(stack[0])
 
 
 def ranks(r: random.Random) -> Callable[[str], float]:
@@ -147,7 +167,7 @@ def shuffled_line(line: str, block: str, rank: Callable[[str], float]) -> str:
         m = re.fullmatch(r"([^:{]+:\s*)(.+)", line)
     if not m:
         return line
-    return m.group(1) + written(shuffled_expr(ExprParser(m.group(2), Loc(None, 0)).parse(), rank))
+    return m.group(1) + shuffled_text(m.group(2), rank)
 
 
 def reordered(text: str, files: Files, r: random.Random) -> tuple[str, Files]:
