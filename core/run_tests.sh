@@ -473,7 +473,7 @@ if [ "$MODE" = full ]; then
   record $? "genpolicy"
   dropdb --if-exists authz_genpolicy >/dev/null 2>&1
   }
-  unit random 430 genpolicy   # 7 minutes on pgdev, 2026-10-11
+  unit random 660 genpolicy   # 23 seeds: 11 minutes on pgdev (15 took 7, 2026-10-11)
 fi
 # the review reads no database for its "grants the same"; the diff it is held against is the database's own
 REWRITES=4; [ "$MODE" = full ] && REWRITES=12
@@ -503,7 +503,7 @@ if [ "$MODE" = full ]; then
   unit random 490 invariance_fixed
 fi
 # every policy of the core language up to a size (tests/small.py; the nightly soak: up to 6, a seventh a night)
-SMALL=3 SMALL_SECS=30; [ "$MODE" = full ] && SMALL=4 SMALL_SECS=300
+SMALL=3 SMALL_SECS=30; [ "$MODE" = full ] && SMALL=4 SMALL_SECS=330
 small_policies() {
 step "every small policy, against the reference evaluator and the database (up to size $SMALL)"
 python3 tests/small.py --size "$SMALL" --db authz_small

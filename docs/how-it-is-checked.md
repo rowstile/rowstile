@@ -21,11 +21,11 @@ they would agree. So the evaluator is held to answers that neither of them wrote
 
 - **A second reading of the language**: the editors' grammar ([`editor/tree-sitter-authz`](../editor/tree-sitter-authz))
   was written apart from the parser. [`tests/parse_agreement.py`](../core/tests/parse_agreement.py) has both
-  read every policy in the repository, two hundred random ones and the small policies up to size four (894, each
+  read every policy in the repository, two hundred random ones and the small policies up to size four (1,379, each
   written two ways: as listed, and with its names swapped and its parts turned round), and compares what they
   read: the types, each relation's sources, the permissions with their grouping, the rules, each line of the tests
   part by part, and of a policy that includes a file, its own lines. They read each one alike.
-  Each night they read all 70,983 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
+  Each night they read all 130,431 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
   (The grammar takes more than the parser does, as an editor must: what the parser refuses isn't compared.) <!-- checked: tests/parse_agreement.py "policy the parser refuses is not compared" -->
 - **Random data**: [`tests/difftest.py`](../core/tests/difftest.py) fills six policies' tables with random
   rows and makes a hundred random changes to each (moves, links, loops, groups inside groups, inheritance
@@ -44,7 +44,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   the run's log, and fails nothing. <!-- unchecked: a report in the log, which no check reads -->
 - **Random policies**: [`tests/genpolicy.py`](../core/tests/genpolicy.py) writes policies at random, with their
   tables and data, and checks them the same way: in the full run each night, the few policies, of a thousand, in which
-  every two of the shapes below meet (sixteen), and a hundred with new seeds every night. A third of them name
+  every two of the shapes below meet (twenty-three), and a hundred with new seeds every night. A third of them name
   their tables and columns as an app's own may be: with capitals, with words SQL reserves (`select`, `order`,
   `user`), with a quote or an accent, or as long as Postgres allows. Every name the compiler writes into SQL is
   then one it must quote.
@@ -55,8 +55,10 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   to lower case, or compared in another collation than the database's, then changes an answer. Some put two types' rows inside each other, so that one recursion runs
   through both. Some have caveats, which some of their shares carry, and some scopes, with which one user is
   asked again after each change. Some mask a column in a view, and some give permissions by custom roles, or
-  share by links; some rules say they are checked before or after the change. A quarter are written in two
-  files, one including the other.
+  share by links; some rules say they are checked before or after the change, some are on two columns. Some
+  share by the type's `share`, to every service (`bot:*`), or make a share a link of a tree; some link tables
+  name the type of the row they link to; some permissions read who is signed in, or another table. A quarter are
+  written in two files, one including the other.
 - **Random worlds**: the two above compare answers in one setting: plain tables, and the owner's session
   switched to the app role. [`tests/around.py`](../core/tests/around.py) takes the random policies again and
   draws what is around each one too, under the names and with the keys the policy drew (the awkward names,
@@ -77,17 +79,18 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   mistake needs. [`tests/small.py`](../core/tests/small.py) lists every policy of the core language up to a size
   instead, each once (two that differ in their names alone, or in the order of an `or`'s or an `and`'s parts, are
   one): the user type with or without a `where`; one object type, or two, the second naming the first; relations
-  from each kind of source (a column, a link table or shares; to users, to `user:*`, to `anyone`, to a group's
-  members; a `parent` from a column, from a link table or from a pair of columns naming two types; an `up`); one
-  or two permissions a type, each of up to three parts joined by `or`, `and` and `and not`: inheritance, and
-  denies. Up to six sources, parts and `where`s there are 51,155, and 19,828 of seven with a deny, the smallest a
-  deny can be; the compiler takes 29,738 of them. For each, the reference evaluator answers in every world of
+  from each kind of source (a column, a link table or shares; to users, to `user:*`, to `anyone`, to a link, to a
+  group's members; a `parent` from a column, from a link table, or from a pair of columns or a link table naming
+  two types; an `up` from a column, a link table or shares); one or two permissions a type, each of up to three
+  parts joined by `or`, `and` and `and not`, or one of `signed_in`, `anyone` and `nobody` alone: inheritance, and
+  denies. Up to six sources, parts and `where`s there are 94,599, and 35,832 of seven with a deny, the smallest a
+  deny can be. For each, the reference evaluator answers in every world of
   one and two rows of each type (up to 400 of each), and in some of three; in each, the same policy written
   another way (its names swapped, its parts turned round) must get the same answers. Then each part of the policy
   is made wrong in turn (held by nobody or by anyone, an `and` for an `or`, a `not` left out, a link read the other
   way round, inheritance one step deep), and the few worlds that tell every such part apart are loaded as rows (two
   or three a policy): forty policies applied as one, and difftest's checks hold every answer of the database's to
-  the evaluator's. Each push checks those up to size three and the denies of four (96); each night, a seventh of
+  the evaluator's. Each push checks those up to size three and the denies of four (122); each night, a seventh of
   them all; each week, the whole list.
 - **Answers worked out by hand**: each paragraph of [the language's reference](reference/language.md) that says
   who may do what, given a policy and rows, carries an anchor readers don't see (40 of them), and each anchor has
