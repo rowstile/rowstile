@@ -114,9 +114,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   `server.json` (the repository's root) is the MCP server's entry in the official registry: it names the npm
   package, whose `mcpName` must be its name (`Version` in `unit_test.py`), and the release publishes it last.
   `.github/workflows/release.yml` publishes them on a tag: to private places while the repository is private
-  (GitHub Packages, the GitHub release), to PyPI, npm and ghcr.io once public. The workflows run on the
-  runner the repository variable `RUNNER` names, else `ubuntu-latest` (GitHub's runners since 2026-10-03; `RUNNER`
-  is unset)
+  (GitHub Packages, the GitHub release), to PyPI, npm and ghcr.io once public. The workflows run on
+  GitHub's runners (`ubuntu-latest`)
 - `demo/` — the recording at the top of the README (`demo.gif`): `record.sh` runs `demo.tape` in a terminal
   recorder in a container, on the guide's own app (`files.py` takes it from `docs/getting-started.md`); made
   again by hand when what the commands print changes (`Demo` in `unit_test.py` checks the tape still fits)
@@ -179,9 +178,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   nightly.yml -f only=soak -f soaks=7`), the conformance suites on 17 and 18 and on 16
   through PgBouncer (`integrations/pooler.sh`), the migrations `rowstile migrate` writes run by goose,
   dbmate and Flyway (`tests/migration_tools.sh`), then
-  the benchmark check, last (`gh workflow run nightly.yml -f only=bench` runs it alone; it judges speed against
-  the runners' own baseline, not the gate's limits). On self-hosted runners sharing one machine, jobs with fixed container
-  names or ports hold a `flock` of their own, and `ci.sh` writes its logs where `ROWSTILE_CI_LOGS` says
+  the benchmark check (`gh workflow run nightly.yml -f only=bench` runs it alone; it judges speed against
+  the runners' own baseline, not the gate's limits). `ci.sh` writes its logs to `/tmp`
 - `.github/workflows/scorecard.yml` — the OpenSSF Scorecard, weekly and on `main`: published at scorecard.dev
   (the README's badge), each check's reason in the run's files, the findings under Security, Code scanning.
   Publishing restricts the workflow: only its listed actions, no `run` steps, no `env`
