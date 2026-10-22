@@ -74,6 +74,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   has is a `ValueError`, where the first one stayed without a word.
 - In `rowstile.testing`, a test that never awaits what `assert_refused` or `assert_not_found` returned for an
   async function fails at teardown and says to await it. It passed without checking anything.
+- The operations page (Behind a pooler) says what runs every night: both SDKs' conformance suites with the app's
+  connection through PgBouncer in transaction mode, keeping prepared statements. It asks for the command and
+  migrations on the direct URL or a pooler in session mode, as the change feed (it said they ran through a pooler
+  too). What was tried by hand on Supavisor, PgCat, Neon and Supabase says when, and no longer counts a suite's
+  checks.
 
 ### Removed
 

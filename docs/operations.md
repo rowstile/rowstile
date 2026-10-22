@@ -16,9 +16,12 @@ the tables; everything else here is plain SQL.
 
 ## Behind a pooler
 
-rowstile signs in each transaction, so a pooler in transaction mode works: PgBouncer and Supavisor (Supabase's)
-pass both SDKs' conformance suites and the example apps. Session mode works as plain connections do.
-Statement mode can't: signing in and the queries after it are one transaction, and it refuses transactions.
+rowstile signs in each transaction, so a pooler in transaction mode works for the app's connection. Every
+night both SDKs' conformance suites run with the app's connection through PgBouncer 1.26 in transaction mode,
+keeping prepared statements (`integrations/pooler.sh`); the owner and the change feed connect directly.
+Supavisor (Supabase's pooler) was tried by hand, before 0.1.0-alpha.1: [Managed Postgres](managed-postgres.md).
+Session mode works as plain connections do. Statement mode can't: signing in and the queries after it are one
+transaction, and it refuses transactions.
 
 - **The change feed needs its own connection to Postgres.** `LISTEN` lasts as long as the session, and a pooler
   in transaction mode gives the session to other clients between transactions: the feed connects and hears
@@ -36,16 +39,20 @@ Statement mode can't: signing in and the queries after it are one transaction, a
   Without it, requests fail with "prepared statement ... does not exist" or "already exists". They fail; nobody
   is signed in as someone else. With no prepared statements, each query is planned anew, the policy's checks
   with it: [what that costs](reference/limits.md#limits).
+
+  These settings come from trials by hand on Supabase's transaction pooler, before 0.1.0-alpha.1 ([Managed
+  Postgres](managed-postgres.md)). The nightly run keeps prepared statements, so no check runs them.
 - **Nothing may outlive a transaction.** The next transaction on that server connection may be another
   client's. A session-level `SET`, a temporary table, a statement prepared by name, or a `WITH HOLD` cursor in
   your own code reaches it: a cursor declared while signed in as one user is read by the next client, signed
   in or not. This holds for any pool. rowstile's own sign-in lasts one transaction.
-- **Migrations and the command** run through a pooler too, each in one transaction. The pooler logs in as
-  the role it is given: the owner for migrations, the app role for the app (`authz.connection_check()` judges
-  the role the app's connection logs in as).
-- **PgCat** (1.2) doesn't serve asyncpg or postgres.js: it doesn't handle a message they send when they
-  prepare, and their first query never returns. It also drops a connection's `options`. node-postgres and
-  Prisma work through it.
+- **Migrations and the command** log in as the owner. Give them the database's direct URL, or a pooler in
+  session mode, as the change feed: that is how the nightly run connects them, and how [Managed
+  Postgres](managed-postgres.md) sets them up. No check runs them through a pooler in transaction mode. The
+  app logs in as the app role (`authz.connection_check()` judges the role the app's connection logs in as).
+- **PgCat** (1.2, tried by hand before 0.1.0-alpha.1) doesn't serve asyncpg or postgres.js: it doesn't handle
+  a message they send when they prepare, and their first query never returns. It also drops a connection's
+  `options`. node-postgres and Prisma work through it.
 
 ## On managed Postgres
 

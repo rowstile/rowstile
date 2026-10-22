@@ -3,7 +3,9 @@
 rowstile needs no extension and no superuser, so it runs on a managed Postgres as it does on your own. This
 page is what we found running it on Neon and Supabase: the command, both SDKs' conformance suites (the
 [FastAPI](stacks/fastapi.md) and [Next.js](stacks/nextjs.md) apps), direct and through each service's pooler.
-We haven't run it on the other services (RDS, Cloud SQL, Azure); the first part applies to them too.
+These trials were run by hand, before 0.1.0-alpha.1 (released 2026-10-04); no check runs them again, so a later
+release or a change on the service may differ. We haven't run it on the other services (RDS, Cloud SQL,
+Azure); the first part applies to them too.
 
 ## On any service
 
@@ -33,11 +35,11 @@ GRANT app_user TO CURRENT_USER;
 
 ## Neon
 
-Tried on PostgreSQL 18, a free project, from 120 ms away. Everything works with the setup above: apply,
-migrations (Alembic, Prisma Migrate), the policy's tests, signed sessions, direct and through the pooler. The
-FastAPI suite passed 23 of 23 checks direct, and 22 through the pooler (the one left sets `options`). The
-Next.js suite passed 32 of 37: the others were Prisma's wait, the test database's copy, and two that waited
-for answers as if the database were on the same machine (below).
+Tried by hand before 0.1.0-alpha.1 (released 2026-10-04), on PostgreSQL 18, a free project, from 120 ms away.
+Everything worked with the setup above: apply, migrations (Alembic, Prisma Migrate), the policy's tests, signed
+sessions, direct and through the pooler. The FastAPI suite passed direct, and through the pooler all but the
+check that sets `options`. The Next.js suite failed only on Prisma's wait, the test database's copy, and two
+checks that waited for answers as if the database were on the same machine (below).
 
 **Connecting.** The dashboard gives two strings, both with `sslmode=require&channel_binding=require`. Use them
 as they are:
@@ -68,10 +70,10 @@ The owner is the role the project was made with (`neondb_owner`, or the one you 
 
 ## Supabase
 
-Tried on PostgreSQL 17, a free project, from 55 ms away. Everything works with the setup above and one more
-setting, the owner's search path. The FastAPI suite passed 23 of 23 checks through the session pooler. The
-Next.js suite passed 34 of 37 through either pooler: the three left were Prisma's wait (as on Neon) and the
-test database's copy (below).
+Tried by hand before 0.1.0-alpha.1 (released 2026-10-04), on PostgreSQL 17, a free project, from 55 ms away.
+Everything worked with the setup above and one more setting, the owner's search path. The FastAPI suite passed
+through the session pooler. Through either pooler, the Next.js suite failed only on Prisma's wait (as on Neon)
+and the test database's copy (below).
 
 **Connecting.** The direct host (`db.<project>.supabase.co`) has only an IPv6 address on the free plan; from a
 network without IPv6 it can't be reached. Supabase's pooler (Supavisor) serves both modes on one host, and the
