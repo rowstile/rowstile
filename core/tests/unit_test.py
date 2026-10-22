@@ -480,15 +480,20 @@ class Golden(unittest.TestCase):
         from authzlib import migrate
 
         text = read(POLICIES["docs"])
-        lock = migrate.lock_of(database.migratable(text, {})[1])
         new = replaced(
             text,
             "  can share = owner or folder.share\n",
             "  can share = owner or folder.share\n  can comment = folder.view\n",
         )
-        sql = database.migration(new, {}, lock).sql
-        self.assertIn(authzlib.BUILD, sql)
-        self.check("docs.migration.sql", sql.replace(authzlib.BUILD, "BUILD").replace(authzlib.__version__, "VERSION"))
+        # the build and the version as a -dev build has them, whatever this checkout's are: on a release they are
+        # one string, and which of the two a line names couldn't be told apart
+        with (
+            mock.patch.object(migrate, "BUILD", "0.0.0-dev+build"),
+            mock.patch.object(migrate, "__version__", "0.0.0-dev"),
+        ):
+            sql = database.migration(new, {}, migrate.lock_of(database.migratable(text, {})[1])).sql
+        self.assertIn("0.0.0-dev+build", sql)
+        self.check("docs.migration.sql", sql.replace("0.0.0-dev+build", "BUILD").replace("0.0.0-dev", "VERSION"))
 
     def test_the_functions_each_apply_makes_again(self) -> None:
         # base.GENERATED_FUNCTIONS (dropped whatever their signature, then made again) names what compiling makes in
@@ -11694,7 +11699,8 @@ class DocPages(unittest.TestCase):
                 npm = re.search(r"\bnpm (?:i|install)\b.*?(?<![\w/@-])rowstile(@\w+)?(?![\w/-])", line.split("#")[0])
                 pip = re.search(r"\bpip install\b.*\browstile\b", line)
                 uv = re.search(r"\buv add\b.*\browstile\b", line)
-                image = re.search(r"ghcr\.io/rowstile/rowstile(:[\w.-]+)?", line)
+                # (a line that names the image by a placeholder, `:<version>`, shows a form, not an install)
+                image = re.search(r"ghcr\.io/rowstile/rowstile(?!:<)(:[\w.-]+)?", line)
                 # the SDK's packages, each with its own tag: once a final release exists, a plain
                 # `npm install @rowstile/prisma` gets it, not the pre-release
                 sdk = (
