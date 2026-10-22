@@ -78,7 +78,7 @@ Only pre-releases are published so far: ask for the newest.
 
     npm i -D rowstile@next         # the command with its own Python: a TypeScript app needs none
     pip install --pre rowstile     # the command and the Python SDK: rowstile[fastapi], [sqlalchemy], ...
-    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-alpha.9 migrate
+    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-beta.1 migrate
 
 `npm` brings the Python for Linux (glibc and musl, x64 and arm64), macOS (x64 and arm64) and Windows x64. The
 image is for Linux on x64 and arm64, and runs as root unless told otherwise: `-u` makes the files it writes

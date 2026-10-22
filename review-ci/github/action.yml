@@ -6,7 +6,7 @@
 #   ...
 #   - uses: actions/checkout@v7
 #     with: {fetch-depth: 0}                      # the base branch's policy is read with git
-#   - uses: rowstile/rowstile/review-ci/github@v0.1.0-dev
+#   - uses: rowstile/rowstile/review-ci/github@v0.1.0-beta.1
 #     with:
 #       database-url: ${{ env.REVIEW_DATABASE_URL }}   # optional: the base branch's migrations and review data
 #
@@ -28,7 +28,7 @@ description: Says in the pull request what a rowstile policy change does
 inputs:
   version:
     description: the rowstile release to review with (PyPI), or `source` for the repository that holds this action
-    default: "0.1.0-dev"
+    default: "0.1.0-beta.1"
   base:
     description: the commit to compare with (default the pull request's base)
     default: ""
