@@ -1,7 +1,0 @@
-# gitleaks (https://github.com/gitleaks/gitleaks): the default rules, and the test fixtures that look like secrets.
-[extend]
-useDefault = true
-
-[allowlist]
-description = "Test fixtures: the wire client's TLS tests use a throwaway key and certificate made for them"
-paths = ['''(^|/)core/tests/fixtures/wire_test\.key$''']

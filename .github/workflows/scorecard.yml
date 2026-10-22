@@ -3,8 +3,8 @@
 # Every Monday, on each push to main, and by hand. The score is published at scorecard.dev (the README's badge
 # reads it); each check's reason is also in the run's files (scorecard.json), and what a check finds is listed
 # under Security, Code scanning.
-# Publishing has its rules: GitHub's own Ubuntu runner whatever the repository variable RUNNER says, no steps but
-# these actions, no `env`, and `id-token: write` in this job only.
+# Publishing has its rules: GitHub's own Ubuntu runner, no steps but these actions, no `env`, and `id-token: write`
+# in this job only.
 name: scorecard
 on:
   schedule:

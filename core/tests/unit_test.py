@@ -14552,6 +14552,19 @@ class Delivery(unittest.TestCase):
         # ci.sh hands the part to the run in the container
         self.assertIn('-e ROWSTILE_PART="${ROWSTILE_PART:-}"', read("ci.sh"))
 
+    def test_jobs_run_on_githubs_own_runners(self) -> None:
+        # each job on a machine of its own, GitHub's ubuntu-latest: no repository variable picks another runner (on a
+        # public repository, a fork's pull request would run on it), and no job waits on a lock for another's containers.
+        # The sweep's workflow still names the variable: its own change takes it out
+        for path, lines in self.workflows().items():
+            if path == ".github/workflows/mutants.yml":
+                continue
+            for n, line in enumerate(lines, 1):
+                m = re.match(r"\s*runs-on: (.*)$", line)
+                if m:
+                    self.assertRegex(m.group(1), r"^ubuntu-latest(\s+#.*)?$", f"{path}:{n}")
+                self.assertNotRegex(line, r"\bflock\b|vars\.RUNNER|ROWSTILE_CI_", f"{path}:{n}")
+
     def test_a_command_on_one_line_is_one_yaml_value(self) -> None:
         # `run: echo "a: b"` is not a string to YAML but a mapping inside one, and the whole workflow is refused
         # when it is pushed (no job runs): a command with ": " or " #" in it goes in a block (`run: |`)

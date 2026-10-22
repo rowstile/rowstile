@@ -4,8 +4,8 @@
 # SDKs' conformance suites on 17 and 18, rowstile's migrations run by goose, dbmate and Flyway (tools), the grammar
 # and the parser on more policies (grammar), each statement of rowstile's PL/pgSQL the suites run (statements), the
 # parser and the compiler under a coverage-guided fuzzer (fuzz), whether a comparison page's reading of another
-# project's documentation is more than a quarter old (readings), and the scale benchmark last.
-# On GitHub's runners, as ci.yml (or the one the repository variable RUNNER names). Run by hand too
+# project's documentation is more than a quarter old (readings), and the scale benchmark.
+# On GitHub's runners, as ci.yml. Run by hand too
 # (workflow_dispatch), all of it or one job: `gh workflow run nightly.yml -f only=bench`. And several soaks at
 # once, each on a runner and with a seed of its own: `gh workflow run nightly.yml -f only=soak -f soaks=7` (and
 # `-f part=policies`: one part of each). And every
@@ -36,10 +36,7 @@ jobs:
   # in the parts run_tests.sh names, side by side, as ci.yml runs them
   suites:
     if: ${{ !inputs.only || inputs.only == 'suites' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    env:
-      # the label on this job's containers: its run, attempt, job, version and part
-      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.pg }}-${{ matrix.part }}"
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -50,21 +47,15 @@ jobs:
       # (the part command upgrades from every release on PyPI from 0.1.0-beta.1 on, not only the one before:
       # core/tests/upgrade.sh --every)
       - run: bash core/ci.sh ${{ matrix.pg }}
-        env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}", ROWSTILE_PART: "${{ matrix.part }}", ROWSTILE_UPGRADES: every}
-      # a cancelled job may stop before ci.sh removes its container: this job's own (the label names the job)
-      - if: always()
-        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
+        env: {ROWSTILE_PART: "${{ matrix.part }}", ROWSTILE_UPGRADES: every}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: suites-pg${{ matrix.pg }}-${{ matrix.part }}
-          path: ${{ runner.temp }}/rowstile-ci-${{ matrix.pg }}.log
+          path: /tmp/rowstile-ci-${{ matrix.pg }}.log
   proofs:
     if: ${{ !inputs.only || inputs.only == 'proofs' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    env:
-      # the label on this job's containers: its run, attempt, job and version
-      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.pg }}"
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -72,19 +63,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash core/ci.sh --proofs ${{ matrix.pg }}
-        env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}"}
-      - if: always()
-        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: proofs-pg${{ matrix.pg }}
-          path: ${{ runner.temp }}/rowstile-ci-${{ matrix.pg }}.log
+          path: /tmp/rowstile-ci-${{ matrix.pg }}.log
   # Which soaks this run makes: one a night, on one version in turn, with the run's id as its seed. Asked for
   # by hand (soaks), several: each with a seed of its own (the run's id and its number), on 16, 17 and 18 in turn.
   soak-plan:
     if: ${{ !inputs.only || inputs.only == 'soak' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     outputs:
       soaks: ${{ steps.plan.outputs.soaks }}
     steps:
@@ -110,15 +98,13 @@ jobs:
   soak:
     needs: soak-plan
     name: ${{ matrix.soak.name }} (${{ matrix.soak.pg }}, ${{ matrix.part }})
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 8   # (several soaks asked for at once: pull requests keep runners)
       matrix:
         soak: ${{ fromJSON(needs.soak-plan.outputs.soaks) }}
         part: [changes-1, changes-2, policies, around, small, races]
-    env:
-      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.soak.name }}-${{ matrix.part }}"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       # (`-f part=policies`: the other parts' jobs run nothing)
@@ -127,52 +113,42 @@ jobs:
           echo "PostgreSQL $PG, seed $SOAK_SEED, part $ROWSTILE_PART"
           bash core/ci.sh --soak "$PG"
         env:
-          ROWSTILE_CI_LOGS: "${{ runner.temp }}"
           SOAK_SEED: "${{ matrix.soak.seed }}"
           SMALL_SLICE: "${{ matrix.soak.slice }}"
           PG: "${{ matrix.soak.pg }}"
           ROWSTILE_PART: "${{ matrix.part }}"
-      - if: always()
-        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
       - if: ${{ always() && (!inputs.part || inputs.part == matrix.part) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: ${{ matrix.soak.name }}-${{ matrix.part }}
-          path: ${{ runner.temp }}/rowstile-ci-*.log
+          path: /tmp/rowstile-ci-*.log
   # Every small policy (tests/small.py), asked for by hand: the seven slices the nightly soaks check one a night, a job
   # each, side by side (as after a change to the language: `gh workflow run nightly.yml -f only=small`)
   small:
     if: ${{ inputs.only == 'small' }}
     name: small policies (slice ${{ matrix.slice }} of 7)
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 7
       matrix:
         slice: [0, 1, 2, 3, 4, 5, 6]
-    env:
-      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.slice }}"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash core/ci.sh --soak 16
         env:
-          ROWSTILE_CI_LOGS: "${{ runner.temp }}"
           ROWSTILE_PART: small
           SMALL_SLICE: "${{ matrix.slice }}"
-      - if: always()
-        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: small-${{ matrix.slice }}
-          path: ${{ runner.temp }}/rowstile-ci-*.log
+          path: /tmp/rowstile-ci-*.log
   # The full run (run_tests.sh without --quick: the random checks' longer runs among it) on 16, asked for by hand, in
   # its parts side by side (as after a change to what the full run checks: `gh workflow run nightly.yml -f only=full`)
   full:
     if: ${{ inputs.only == 'full' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    env:
-      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-16-${{ matrix.part }}"
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -180,26 +156,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash core/ci.sh --full 16
-        env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}", ROWSTILE_PART: "${{ matrix.part }}"}
-      - if: always()
-        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
+        env: {ROWSTILE_PART: "${{ matrix.part }}"}
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: full-16-${{ matrix.part }}
-          path: ${{ runner.temp }}/rowstile-ci-16.log
+          path: /tmp/rowstile-ci-16.log
   # The SDKs' conformance suites on 17 and 18 (ci.yml runs them on 16), and on 16 with the app through PgBouncer in
-  # transaction mode (integrations/pooler.sh), one after the other: on a self-hosted runner each holds the lock its
-  # CI job holds (one container name and port for the machine). On 17 the TypeScript one runs on the lowest Node
+  # transaction mode (integrations/pooler.sh), side by side. On 17 the TypeScript one runs on the lowest Node
   # the packages' engines state (sdk/typescript/*/package.json), the others on the Node CI uses. The Python one also
   # on 16 with the oldest versions of FastAPI, SQLAlchemy, psycopg and asyncpg the Python package's extras allow, not
   # uv.lock's
   conformance:
     if: ${{ !inputs.only || inputs.only == 'conformance' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         include:
           - {pg: "17", pooler: "", node: "22.12.0"}
@@ -216,16 +188,16 @@ jobs:
         with: {version: "0.12.21"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with: {node-version: "${{ matrix.node }}"}
-      - run: flock /tmp/rowstile-ci-conformance-python.lock bash integrations/fastapi/test.sh
+      - run: bash integrations/fastapi/test.sh
       - if: ${{ !matrix.resolution }}
         run: npm ci --no-audit --no-fund
       - if: ${{ !matrix.resolution }}
-        run: flock /tmp/rowstile-ci-conformance-typescript.lock bash integrations/nextjs/test.sh
+        run: bash integrations/nextjs/test.sh
   # The migrations rowstile migrate writes for goose, dbmate and Flyway, run by each tool, in an empty folder and in
   # one numbered by hand, then the app's next migration after them (core/tests/migration_tools.sh)
   tools:
     if: ${{ !inputs.only || inputs.only == 'tools' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash core/tests/migration_tools.sh
@@ -233,7 +205,7 @@ jobs:
   # in four parts side by side, a quarter each (editor/test.sh --agree; each push: up to size 4)
   grammar:
     if: ${{ !inputs.only || inputs.only == 'grammar' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -247,7 +219,7 @@ jobs:
   # (fuzz-found: crash-<hash>, which the script runs again when given it)
   fuzz:
     if: ${{ !inputs.only || inputs.only == 'fuzz' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: |
@@ -263,7 +235,7 @@ jobs:
   # request red on the day it passed
   readings:
     if: ${{ !inputs.only || inputs.only == 'readings' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: python3 docs/compare_readings.py --github
@@ -272,10 +244,7 @@ jobs:
   # parts run_tests.sh names, side by side. The counts are kept when a check fails too: they are worth reading then
   statements:
     if: ${{ !inputs.only || inputs.only == 'statements' }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    env:
-      # the label on this job's containers: its run, attempt, job and part
-      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.part }}"
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -283,14 +252,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash core/ci.sh --statements 16
-        env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}", ROWSTILE_PART: "${{ matrix.part }}"}
-      - if: always()
-        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
+        env: {ROWSTILE_PART: "${{ matrix.part }}"}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: statements-logs-${{ matrix.part }}
-          path: ${{ runner.temp }}/rowstile-ci-16.log
+          path: /tmp/rowstile-ci-16.log
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
@@ -308,7 +275,7 @@ jobs:
   statements-report:
     needs: statements
     if: ${{ !cancelled() && (!inputs.only || inputs.only == 'statements') }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
@@ -328,11 +295,9 @@ jobs:
   # intended change or on other runners; the key's name changes with what a baseline holds: by-table, since
   # step 3's writes and reads are keyed apart), when a write fails, or when verify() doesn't say true. The gate's
   # speed limits are shown, not judged: they are for its size on a machine of its own. See core/bench/regress.sh.
-  # Last, once the others are done: on a self-hosted runner, timings need the machine to themselves.
   bench:
-    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'bench') }}
-    needs: [suites, proofs, soak, conformance, tools, statements, fuzz]
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    if: ${{ !inputs.only || inputs.only == 'bench' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
@@ -340,7 +305,7 @@ jobs:
           path: core/bench/baseline.txt
           key: bench-baseline-by-table-${{ github.sha }}
           restore-keys: bench-baseline-by-table-
-      - run: flock /tmp/rowstile-ci-bench.lock bash core/bench/regress.sh
+      - run: bash core/bench/regress.sh
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
         with:
           path: core/bench/baseline.txt

@@ -16,7 +16,7 @@ permissions: {contents: read}
 concurrency: {group: pages, cancel-in-progress: false}
 jobs:
   build:
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     outputs:
       deploy: ${{ steps.which.outputs.deploy }}
     env:

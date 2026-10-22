@@ -2,21 +2,14 @@ __pycache__/
 *.pyc
 *.o
 *.so
-*.bc
 core/bench/results/regress-latest.txt
 core/bench/baseline.txt
 node_modules/
-examples/filemanager/frontend/node_modules/
 examples/filemanager/frontend/dist/
-examples/filemanager/backend/.venv/
-__pycache__/
+.venv/
 .pytest_cache/
-examples/messenger/frontend/node_modules/
 examples/messenger/frontend/dist/
-examples/messenger/backend/.venv/
-editor/node_modules/
 editor/*.vsix
-integrations/*/.venv/
 .mypy_cache/
 sdk/typescript/*/dist/
 sdk/typescript/*/tsconfig.tsbuildinfo
@@ -30,12 +23,11 @@ packaging/npm/out/
 packaging/npm/.cache/
 packaging/out/
 playground/dist/
-site/node_modules/
 site/dist/
 site/.vitepress/cache/
 llms-full.txt
 
-# ci.sh: the suites log and exit code, written by the container
+# core/ci.sh --coverage: what the suites measured, and the report
 .ci/
 
 # core/mutants/sweep.py: what a sweep prepares, runs and collects (the mutants workflow)
