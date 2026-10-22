@@ -1,0 +1,39 @@
+-- answer: relation-sources, inheritance
+-- Inheritance across two types whose only condition is a link table's where: a doc's project is linked by
+-- app.doc_projects where {active}, and a link it leaves out passes nothing. Project 1 is user 3's; project 2 holds
+-- doc 1, user 1's.
+app role app_user
+
+type user = app.users
+type project = app.projects
+  owner : user = owner_id
+  docs  : doc = app.project_docs(project_id -> doc_id)
+  can view = owner or docs.view
+type doc = app.docs
+  owner   : user = owner_id
+  parent  : doc = up
+  project : project = app.doc_projects(doc_id -> project_id) where {active}
+  can view = owner or parent.view or project.view
+
+test "a link the where leaves out passes nothing"
+  given {INSERT INTO app.users (id) VALUES (1), (2), (3)}
+  given {INSERT INTO app.projects (id, owner_id) VALUES (1, 3), (2, NULL)}
+  given {INSERT INTO app.docs (id, owner_id) VALUES (1, 1), (2, NULL), (3, NULL), (4, NULL)}
+  given {INSERT INTO app.project_docs (project_id, doc_id) VALUES (2, 1)}
+  given {INSERT INTO app.doc_projects (doc_id, project_id, active) VALUES (2, 1, true), (3, 1, false), (4, 2, true)}
+  user 1 can view doc 1
+  user 1 can view doc 4
+  user 1 cannot view doc 2
+  user 1 can view project 2
+  user 1 cannot view project 1
+  as user 1 sees 1 {SELECT WHERE ARRAY(SELECT x FROM authz.list('doc', 'view') x ORDER BY x) = '{1,4}'}
+  user 3 can view doc 2
+  user 3 cannot view doc 3
+  user 3 can view project 1
+  user 3 cannot view project 2
+  as user 3 sees 1 {SELECT WHERE ARRAY(SELECT x FROM authz.list('doc', 'view') x ORDER BY x) = '{2}'}
+  user 2 cannot view doc 2
+  as user 2 sees 0 {SELECT FROM authz.list('doc', 'view')}
+  given {UPDATE app.doc_projects SET active = true WHERE doc_id = 3}
+  user 3 can view doc 3
+  as user 3 sees 1 {SELECT WHERE ARRAY(SELECT x FROM authz.list('doc', 'view') x ORDER BY x) = '{2,3}'}

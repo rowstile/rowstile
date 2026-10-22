@@ -1,0 +1,20 @@
+-- answer: rules-commands, relation-again
+-- No permission at all, and a rule on a relation declared for users and again for docs: the rule holds for the
+-- relation's users. Doc 1 watches docs 2 and 3: that gives doc 1's owner nothing on them.
+app role app_user
+
+type user = app.users
+type doc = app.docs
+  watcher : user = owner_id
+  watcher : doc = app.doc_links(child -> parent)
+
+rules app.docs
+  select : watcher
+
+test "a rule on a relation reads its users"
+  given {INSERT INTO app.users (id) VALUES (1), (2)}
+  given {INSERT INTO app.docs (id, owner_id) VALUES (1, 1), (2, NULL), (3, 2)}
+  given {INSERT INTO app.doc_links (child, parent) VALUES (2, 1), (3, 1)}
+  as user 1 sees 1 {SELECT WHERE ARRAY(SELECT id FROM app.docs ORDER BY id) = '{1}'}
+  as user 2 sees 1 {SELECT WHERE ARRAY(SELECT id FROM app.docs ORDER BY id) = '{3}'}
+  as anyone sees 0 {SELECT FROM app.docs}

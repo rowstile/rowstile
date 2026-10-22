@@ -41,6 +41,20 @@ CREATE TABLE app.org_folders (
   org_id bigint NOT NULL, id bigint NOT NULL, parent_id bigint, owner_id bigint, PRIMARY KEY (org_id, id));
 -- a mark on a row of some kind (ref_id), or for a subject (subject_id): conditions read it in subqueries
 CREATE TABLE app.marks (id bigint PRIMARY KEY, ref_id bigint, kind text NOT NULL, subject_id text);
+-- documents: a parent in a column (up) or a link table, a project in a column or a link table whose row says
+-- whether it is active, and the projects' own documents
+CREATE TABLE app.docs (
+  id bigint PRIMARY KEY, owner_id bigint, up bigint, project_id bigint, locked boolean NOT NULL DEFAULT false);
+CREATE TABLE app.doc_links (child bigint NOT NULL, parent bigint NOT NULL);
+CREATE TABLE app.doc_projects (doc_id bigint NOT NULL, project_id bigint NOT NULL, active boolean NOT NULL DEFAULT true);
+CREATE TABLE app.project_docs (project_id bigint NOT NULL, doc_id bigint NOT NULL);
+-- keys that are text
+CREATE TABLE app.text_users (id text PRIMARY KEY);
+CREATE TABLE app.text_docs (id text PRIMARY KEY, owner_id text, parent_id text);
+-- objects of two types keyed by two columns, which a link table names by a type column and both
+CREATE TABLE app.spaces (org_id bigint NOT NULL, id bigint NOT NULL, keeper_id bigint, PRIMARY KEY (org_id, id));
+CREATE TABLE app.rooms (org_id bigint NOT NULL, id bigint NOT NULL, keeper_id bigint, PRIMARY KEY (org_id, id));
+CREATE TABLE app.pins (doc_id bigint NOT NULL, kind text NOT NULL, org_id bigint NOT NULL, ref_id bigint NOT NULL);
 GRANT USAGE ON SCHEMA app TO app_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA app TO app_user;
 GRANT INSERT, UPDATE, DELETE ON app.folders, app.files TO app_user;

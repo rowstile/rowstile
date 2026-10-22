@@ -716,7 +716,7 @@ FEATURES: list[Feature] = [
         Doc(LANG, "Keys"),
         (T("unit_test.py", "class CompositeKeys("), T("unit_test.py", "class KeyTypeChecks(")),
         (T(DIFF, "class CompositeGen("), T("genpolicy.py", "keytype"), T("around.py", "keys: two columns")),
-        hand=("keys-composite",),
+        hand=("keys", "keys-composite"),
         grammar=("Types, keys and sources",),
     ),
     Feature(

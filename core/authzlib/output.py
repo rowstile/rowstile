@@ -152,9 +152,17 @@ def cascade_check(c: Cascade) -> str:
         "SET NULL or SET DEFAULT, ON UPDATE SET NULL or SET DEFAULT): remove the line [AZ625]"
     )
     several = f" foreign keys of {c.table} to {c.parent}{on} delete or change rows of {c.table}: {which} [AZ625]"
+    # a column the line names that isn't there is said once, as one (AZ601), not as a reason to remove the line
+    there = (
+        f" AND (SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass({lit(qt(c.table))}) AND attnum > 0"
+        f" AND NOT attisdropped AND attname = ANY (ARRAY[{', '.join(lit(x) for x in c.columns)}]::name[]))"
+        f" = {len(c.columns)}"
+        if c.columns
+        else ""
+    )
     return (
         f"  SELECT count(*) INTO v_n FROM pg_constraint con WHERE con.contype = 'f' AND {FK_ACTS} AND {fk_named(c)};\n"
-        f"  IF v_n = 0 THEN\n"
+        f"  IF v_n = 0{there} THEN\n"
         f"    missing := missing || {NEXT} || {lit(none)};\n"
         f"  ELSIF v_n > 1 THEN\n"
         f"    missing := missing || {NEXT} || {lit(said)} || v_n || {lit(several)};\n"

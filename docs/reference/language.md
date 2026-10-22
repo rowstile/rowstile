@@ -73,7 +73,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
 - **Keys**: a type's key is `id bigint` unless the type line says otherwise: `(gid)`,
   `(id uuid)`, or several columns for a composite key: `type folder = app.folders (org_id, id)`.
   The type is the column's own: a 32-bit key, as Prisma's `Int` or a `serial` makes, is `(id int)`.
-  `rowstile init` writes it, and applying says so when it is missing (AZ602).
+  `rowstile init` writes it, and applying says so when it is missing (AZ602). <!-- answer: keys -->
   A relation points at such an object with its columns in square brackets:
   `parent : folder = [org_id, parent_id]`, `app.folder_teams([org_id, folder_id] -> user_id)`,
   `(parent_type, [org_id, parent_id])`. <!-- answer: keys-composite --> The user type's key is one column.

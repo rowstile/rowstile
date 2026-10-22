@@ -730,8 +730,7 @@ CODES = {
         "(`CREATE ROLE app_user LOGIN`), grant it what the app needs on the tables, name it in the policy (`app "
         "role app_user`), and apply as the tables' owner. `authz.lint()` reports an app role that became a member "
         "of the owner since, and `authz.connection_check()` a connection that logs in as one.",
-        "",
-        "",
+        when="apply",
     ),
     "AZ625": Code(
         "A cascade line that names no foreign key",

@@ -1,0 +1,29 @@
+-- answer: keys-composite, relation-sources
+-- A link table naming objects of two types keyed by two columns, by a type column and both: (kind, [org_id,
+-- ref_id]). Doc 10 is pinned to space (1, 2), user 1's; doc 11 to room (1, 2), user 2's.
+app role app_user
+
+type user = app.users
+type space = app.spaces (org_id, id)
+  keeper : user = keeper_id
+  can see = keeper
+type room = app.rooms (org_id, id)
+  keeper : user = keeper_id
+  can see = keeper
+type doc = app.docs
+  owner  : user = owner_id
+  pinned : space, room = app.pins(doc_id -> (kind, [org_id, ref_id]))
+  can view = owner or pinned.see
+
+test "pinned to a space or a room"
+  given {INSERT INTO app.users (id) VALUES (1), (2)}
+  given {INSERT INTO app.spaces (org_id, id, keeper_id) VALUES (1, 2, 1)}
+  given {INSERT INTO app.rooms (org_id, id, keeper_id) VALUES (1, 2, 2)}
+  given {INSERT INTO app.docs (id) VALUES (10), (11)}
+  given {INSERT INTO app.pins (doc_id, kind, org_id, ref_id) VALUES (10, 'space', 1, 2), (11, 'room', 1, 2)}
+  user 1 can view doc 10
+  user 1 cannot view doc 11
+  user 2 can view doc 11
+  user 2 cannot view doc 10
+  as user 1 sees 1 {SELECT FROM authz.list('doc', 'view')}
+  as user 2 sees 1 {SELECT FROM authz.list('doc', 'view')}

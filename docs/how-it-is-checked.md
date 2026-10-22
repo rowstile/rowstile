@@ -37,7 +37,10 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   each user too: about a row they can't see, it must say nothing more than about a missing one. <!-- checked: tests/difftest.py "explain self"; tests/adversarial.sh "explaining a folder she can't see (but may break the glass on) reads as a missing one" -->
   So is
   `authz.explain_rule`: nothing about such a row, and on the others, for an update or a delete, the rules' own
-  answer.
+  answer. A quarter of the changes aim at the parts of the policy (a source, a part of a permission, a depth of
+  inheritance) that haven't yet decided an answer. The run ends with a report of the parts that never did, whose
+  SQL was never judged there ([`tests/decisions.py`](../core/tests/decisions.py)): it is for people to read, in
+  the run's log, and fails nothing. <!-- unchecked: a report in the log, which no check reads -->
 - **Random policies**: [`tests/genpolicy.py`](../core/tests/genpolicy.py) writes policies at random, with their
   tables and data, and checks them the same way: on each full run, the few policies, of a thousand, in which
   every two of the shapes below meet (sixteen), and a hundred with new seeds every night. A third of them name
@@ -97,7 +100,8 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   its alone to answer (143 checks), as named tests in `tests/hand/`: a share that expires or starts later, a caveat,
   `shared if`, who may share, a write checked before and after, column rules, an insert, a masked column, `this` and a
   bare column in a subquery, conditions read with the policy's rights, a polymorphic pair naming a type the policy
-  doesn't have, a key of two columns. A unit test fails when an anchor has no case, or a case names none. <!-- checked: tests/unit_test.py "test_every_answering_paragraph_has_a_case" -->
+  doesn't have, keys of two columns and keys that are text, a group named by a permission (`team#manage`), a
+  relation declared again for another type. A unit test fails when an anchor has no case, or a case names none. <!-- checked: tests/unit_test.py "test_every_answering_paragraph_has_a_case" -->
 - **Conditions, against Postgres**: `rowstile prove` and the review read simple conditions (`{not archived}`,
   `{size > 10}`, `{owner_id = authz.uid()}`) themselves, in worlds they make up. difftest never does: it
   asks the database. <!-- unchecked: how difftest is written, which reading it shows -->
