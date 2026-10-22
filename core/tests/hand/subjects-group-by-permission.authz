@@ -1,0 +1,44 @@
+-- answer: subjects
+-- A group named by a permission (team#manage): a share to it gives the relation to those who hold the permission
+-- on the team, here its admins, not its members; a share to team#member gives the members, not the admins.
+app role app_user
+
+type user = app.users
+type team = app.orgs
+  admin  : user = app.org_admins(org_id -> user_id)
+  member : user = app.org_members(org_id -> user_id)
+  can manage = admin
+type folder = app.folders
+  owner   : user = owner_id
+  reader  : team#member shared
+  watcher : user, team#manage shared
+  can share = owner
+  can view  = owner or reader or watcher
+
+test "shared to those who manage a team, and to a team's members"
+  given ann = {INSERT INTO app.users (id) VALUES (1) RETURNING id}
+  given bo  = {INSERT INTO app.users (id) VALUES (2) RETURNING id}
+  given cy  = {INSERT INTO app.users (id) VALUES (3) RETURNING id}
+  given dee = {INSERT INTO app.users (id) VALUES (4) RETURNING id}
+  given {INSERT INTO app.orgs (id) VALUES (1), (2)}
+  given {INSERT INTO app.org_admins (org_id, user_id) VALUES (1, $ann), (2, $cy)}
+  given {INSERT INTO app.org_members (org_id, user_id) VALUES (1, $bo), (2, $dee)}
+  given a   = {INSERT INTO app.folders DEFAULT VALUES RETURNING id}
+  given b   = {INSERT INTO app.folders DEFAULT VALUES RETURNING id}
+  given c   = {INSERT INTO app.folders DEFAULT VALUES RETURNING id}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES ('folder', $a, 'watcher', 'team', '1', 'manage'), ('folder', $b, 'reader', 'team', '1', 'member'), ('folder', $c, 'watcher', 'team', '2', 'manage')}
+  user $ann can view folder $a
+  user $ann cannot view folder $b
+  user $ann cannot view folder $c
+  user $bo can view folder $b
+  user $bo cannot view folder $a
+  user $cy can view folder $c
+  user $cy cannot view folder $a
+  user $dee cannot view folder $b
+  user $dee cannot view folder $c
+  anyone cannot view folder $a
+  user $ann can manage team 1
+  user $ann cannot manage team 2
+  as user $ann sees 1 {SELECT FROM authz.list('folder', 'view') x WHERE x = $a::text}
+  as user $ann sees 1 {SELECT FROM authz.list('folder', 'view')}
+  as user $dee sees 0 {SELECT FROM authz.list('folder', 'view')}

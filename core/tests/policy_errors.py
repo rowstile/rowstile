@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""policy_errors: mistakes in a policy are reported clearly, with a line number.
+"""policy_errors: mistakes in a policy are reported clearly. Each case asks for the message's words, the line it
+names and its code, the one whose page `rowstile help` shows.
 
     python3 tests/policy_errors.py [--db authz_errors]
 
 Compile-time cases need nothing else. Apply-time cases (the database is the only
-one who knows) run against tests/alt_schema.sql in a scratch database.
+one who knows) run against tests/alt_schema.sql in a scratch database, and so do policies that must apply although
+their names are awkward. Answers worked out by hand from the reference are in tests/hand/, not here.
 """
 
 import os
@@ -20,9 +22,11 @@ from authzlib.errors import CODES, split  # noqa: E402
 from authzlib.governance import trigger_if_table  # noqa: E402
 
 
-def coded(message: str) -> bool:
-    """The message ends with a known code (authzlib/errors.py)."""
-    return split(message.strip())[1] in CODES
+def coded(message: str, code: str) -> bool:
+    """The message ends with the code the case is about (authzlib/errors.py): `rowstile help` sends the user to that
+    code's page."""
+    assert code in CODES, code
+    return split(message.strip())[1] == code
 
 
 BASE = """app role app_user
@@ -36,134 +40,172 @@ type doc = alt.docs (doc_no)
   can share = owner or parent.owner
 """
 
-# (what, policy text appended to BASE, expected piece of the message, expected line or None)
+# (what, policy text appended to BASE, expected piece of the message, the line it names, its code)
 COMPILE = [
     (
         "custom roles held by a group through a relation named shared: read as the relation, which isn't there",
         "  roles : grp#shared\n  can edit = roles\n",
         "doc.roles:edit: grp has no relation or permission 'shared'",
         10,
+        "AZ203",
     ),
     (
         "custom roles with `from` written against a comma: no from, a subject that isn't one",
         "  roles : user,from grp\n  can edit = roles\n",
         "bad subject 'from grp'",
         10,
+        "AZ103",
     ),
     (
         "a relation shared by no subjects, two spaces after its colon",
         "  watcher :  shared\n  can edit = watcher\n",
         "bad subject ''",
         10,
+        "AZ103",
     ),
     (
         "a dollar-quote tag in a condition",
         "  can see = owner and {up <> 0 or '$f$' = ''}\n",
         "contains $f$, which ends the generated function it goes in",
         10,
+        "AZ110",
     ),
     (
         "a name that starts with authz__ in a condition",
         '  can see = owner and {not exists (select 1 from alt.holds "authz__h" where "authz__h".target = this.doc_no)}\n',
         'names "authz__h": names that start with authz__ are rowstile\'s own',
         10,
+        "AZ113",
     ),
     (
         "a character that doesn't print, shown escaped",
         "  can see = owner \x01\n",
         "unexpected '\\x01' in expression",
         10,
+        "AZ102",
     ),
     (
         "a typo in a relation's only use: the typo is named, not the relation as unused",
         "  editor : user = owner_id\n  can edit = editr\n",
         "doc has no relation or permission 'editr'",
         11,
+        "AZ203",
     ),
     (
         "custom roles from a shared relation",
         "  roles : user from reader\n  can view = owner or roles\n",
         "custom roles on doc come from 'reader', which must be a relation of doc kept in a column or a table",
         10,
+        "AZ211",
     ),
     (
         "custom roles from a relation that isn't there",
         "  roles : user from org\n  can view = owner or roles\n",
         "custom roles on doc come from 'org'",
         10,
+        "AZ211",
     ),
     (
         "roles under a not",
         "  roles : user\n  can view = owner and not roles\n",
         "doc.view: `not roles` would take a permission away",
         11,
+        "AZ210",
     ),
-    ("a roles line no permission uses", "  roles : user\n", "no permission writes `roles`", 10),
+    ("a roles line no permission uses", "  roles : user\n", "no permission writes `roles`", 10, "AZ210"),
     (
         "roles in a type without a roles line",
         "  can view = owner or roles\n",
         "doc.view writes `roles`, but doc has no `roles : ...` line",
         10,
+        "AZ210",
     ),
     (
         "roles in a rule",
         "  roles : user\n  can view = owner or roles\nrules alt.docs\n  select : view or roles\n",
         "`roles` goes in a permission, which says what a custom role gives",
         13,
+        "AZ210",
     ),
     (
         "roles in an invariant",
         "  roles : user\n  can view = owner or roles\ninvariants\n  never doc: roles\n",
         "`roles` goes in a permission",
         13,
+        "AZ210",
     ),
     (
         "roles followed by a dot",
         "  roles : user\n  can view = owner or roles.view\n",
         "doc.view: `roles` gives the permission it is written in; it isn't a relation to follow",
         11,
+        "AZ210",
     ),
     (
         "a relation named roles",
         "  roles : user = owner_id\n",
         "`roles : ...` says who may hold custom roles; name the relation something else",
         10,
+        "AZ107",
     ),
-    ("a permission named roles", "  can roles = owner\n", "'roles' is where custom roles give a permission", 10),
+    (
+        "a permission named roles",
+        "  can roles = owner\n",
+        "'roles' is where custom roles give a permission",
+        10,
+        "AZ107",
+    ),
     (
         "a relation named like a word that continues a line",
         "  where : user = owner_id\n",
         "'where' is a word of the language",
         10,
+        "AZ107",
     ),
-    ("a relation named and", "  and : user = owner_id\n", "'and' is a word of the language", 10),
-    ("a permission named or", "  can or = owner\n", "'or' is a word of the language", 10),
+    ("a relation named and", "  and : user = owner_id\n", "'and' is a word of the language", 10, "AZ107"),
+    ("a permission named or", "  can or = owner\n", "'or' is a word of the language", 10, "AZ107"),
     (
         "a plain update rule written with before",
         "rules alt.docs\n  update before : share\n",
         "a plain update rule is checked on the row before and after",
         11,
+        "AZ105",
     ),
     (
         "anyone or link with a relation",
         "type thing = alt.docs (doc_no)" + chr(10) + "  viewer : user, link#member  shared" + chr(10),
         "link stands alone",
         11,
+        "AZ204",
     ),
-    ("a type named like a special subject", "type anyone = alt.docs (doc_no)" + chr(10), "subject of its own", 10),
-    ("unknown subject type", "  editor : robot = owner_id\n", "unknown type 'robot'", 10),
-    ("unknown group relation", "  editor : grp#admin shared\n", "grp has no relation or permission 'admin'", 10),
+    (
+        "a type named like a special subject",
+        "type anyone = alt.docs (doc_no)" + chr(10),
+        "subject of its own",
+        10,
+        "AZ204",
+    ),
+    ("unknown subject type", "  editor : robot = owner_id\n", "unknown type 'robot'", 10, "AZ201"),
+    (
+        "unknown group relation",
+        "  editor : grp#admin shared\n",
+        "grp has no relation or permission 'admin'",
+        10,
+        "AZ203",
+    ),
     (
         "unknown name in a permission",
         "  can view = owner or viewer\n",
         "doc has no relation or permission 'viewer'",
         10,
+        "AZ203",
     ),
     (
         "following a permission with a dot",
         "  can view = owner\n  can edit = view.x\n",
         "'view' is a permission; only relations can be followed",
         11,
+        "AZ301",
     ),
     (
         "a permission with a deny that depends on itself through another of its type: named as written",
@@ -171,91 +213,112 @@ COMPILE = [
         "  can view = (owner or edit or parent.view) and not blocked\n",
         "doc.view depends on itself; a permission can only recurse as 'or rel.perm'",
         12,
+        "AZ302",
     ),
     (
         "following a relation to users, to something they don't have (they have nothing)",
         "  can view = owner.view\n",
         "user has no relation or permission 'view' (it has none)",
         10,
+        "AZ203",
     ),
     (
         "following a relation to groups",
         "  can view = reader.member\n",
         "doc.reader links to groups, anyone or links, so there is nothing to follow",
         10,
+        "AZ301",
     ),
     (
         "following a relation shared with anyone",
         "  pub : anyone shared by share\n  can see = owner\n  can view = pub.see\n",
         "doc.pub links to groups, anyone or links, so there is nothing to follow",
         12,
+        "AZ301",
     ),
     (
         "... with a link",
         "  pub : link shared by share\n  can see = owner\n  can view = pub.see\n",
         "doc.pub links to groups, anyone or links, so there is nothing to follow",
         12,
+        "AZ301",
     ),
     (
         "... with every signed-in user",
         "  pub : user:* shared by share\n  can see = owner\n  can view = pub.see\n",
         "doc.pub links to groups, anyone or links, so there is nothing to follow",
         12,
+        "AZ301",
     ),
     (
         "using a link as if it held users",
         "  can view = parent\n",
         "doc.parent links to doc objects, not users; follow it with a dot",
         10,
+        "AZ301",
     ),
-    ("permissions that depend on each other", "  can a = owner or b\n  can b = a\n", "depends on itself", None),
+    (
+        "permissions that depend on each other",
+        "  can a = owner or b\n  can b = a\n",
+        "doc.b depends on itself",
+        11,
+        "AZ302",
+    ),
     (
         "inheritance with no starting point",
         "  can view = parent.view\n",
         "doc.view needs a starting point besides inheritance",
         10,
+        "AZ303",
     ),
     (
         "inheritance narrowed by something other than a condition",
         "  can view = owner or (parent.view and reader)\n",
         "inheritance through parent can only be narrowed with {conditions}",
         10,
+        "AZ304",
     ),
     (
         "inheritance that depends on the time",
         "  can view = owner or (parent.view and {created_at > now() - interval '1 day'})\n",
         "can't limit inheritance: it depends on now",
         10,
+        "AZ305",
     ),
     (
         "inheritance that depends on the time, after a $$ string holding an apostrophe",
         "  can view = owner or (parent.view and {title <> $$it's$$ and created_at > now() and title <> 'x'})\n",
         "can't limit inheritance: it depends on now",
         10,
+        "AZ305",
     ),
     (
         "inheritance that depends on the time, after an E'' string holding an escaped quote",
         "  can view = owner or (parent.view and {title <> E'it\\'s' and created_at > now() and title <> 'x'})\n",
         "can't limit inheritance: it depends on now",
         10,
+        "AZ305",
     ),
     (
         "inheritance that depends on the time, after names and a dollar quote past ASCII",
         "  can view = owner or (parent.view and {titré$$ <> $é$it's$é$ and créé > now() and titré$$ <> 'x'})\n",
         "can't limit inheritance: it depends on now",
         10,
+        "AZ305",
     ),
     (
         "inheritance that depends on the time, written as a $$ string",
         "  can view = owner or (parent.view and {created_at > $$ today $$::date})\n",
         "can't limit inheritance: 'today' means the current time",
         10,
+        "AZ305",
     ),
     (
         "inheritance that depends on the user",
         "  can view = owner or (parent.view and {owner_id <> authz.uid()})\n",
         "can't limit inheritance: it depends on authz.uid",
         10,
+        "AZ305",
     ),
     (
         "inheritance that depends on the time through age(), beside a subquery, where applying wouldn't find it",
@@ -263,79 +326,92 @@ COMPILE = [
         "(select 1 from alt.holds h where h.target = this.doc_no)})\n",
         "can't limit inheritance: it depends on age() with one argument, which counts from today",
         10,
+        "AZ305",
     ),
     (
         "a group made only of itself",
         "type team = alt.groups (gid)\n  member : team#member shared by x\n  can x = member\n",
         "team.member only contains itself; add a source of users",
         11,
+        "AZ209",
     ),
     (
         "a relation defined as a permission too",
         "  can view = owner\n  view : user = owner_id\n",
         "doc.view is already a permission",
         11,
+        "AZ109",
     ),
     (
         "two kinds of subject on a column",
         "  editor : user, grp#member = owner_id\n",
         "a column or table source links to exactly one kind of subject",
         10,
+        "AZ205",
     ),
     (
         "a rule for a table with no type",
         "rules alt.nothing\n  select : view\n",
         "rules for alt.nothing, but no type maps to that table",
         11,
+        "AZ401",
     ),
     (
         "update after without update",
         "  can view = owner\nrules alt.docs\n  select : view\n  update after : view\n",
         "'update after' refines updates, so alt.docs needs an 'update' rule too",
         13,
+        "AZ403",
     ),
     (
         "a relation named like a word of the language",
         "  nobody : user = owner_id\n  can view = nobody\n",
         "'nobody' is a word of the language",
         10,
+        "AZ107",
     ),
-    ("a permission named anyone", "  can anyone = owner\n", "'anyone' is a word of the language", 10),
+    ("a permission named anyone", "  can anyone = owner\n", "'anyone' is a word of the language", 10, "AZ107"),
     (
         "and next to or",
         "  can view = owner or parent.owner and {not locked}\n",
         "`and` and `or` meet without parentheses, which reads two ways: write owner or (parent.owner and {not locked})",
         10,
+        "AZ102",
     ),
     (
         "and next to or, the other way",
         "  can view = not {locked} and owner or anyone\n",
         "write (not {locked} and owner) or anyone",
         10,
+        "AZ102",
     ),
     (
         "and next to or across a continuation line",
         "  can view = owner\n           or parent.owner and {not locked}\n",
         "write owner or (parent.owner and {not locked})",
         10,
+        "AZ102",
     ),
     (
         "a word after an update rule's column that is neither before nor after",
         "  can view = owner\nrules alt.docs\n  select : view\n  update : view\n  update up check : view\n",
         "write column rules as: update col1, col2 : expression   (or: update col after : expression)",
         14,
+        "AZ105",
     ),
     (
         "custom roles with grant after their subjects: a subject that isn't one",
         "  roles : user grant view\n  can view = owner or roles\n",
         "bad subject 'user grant view'",
         10,
+        "AZ103",
     ),
     (
         "before or after on a command other than update",
         "  can view = owner\nrules alt.docs\n  select after : view\n",
         "only update rules can name columns, 'before' or 'after'",
         12,
+        "AZ105",
     ),
     (
         "a relation nothing uses (a typo for a second source)",
@@ -343,76 +419,94 @@ COMPILE = [
         "  can view = owner or reader\n",
         "doc.raeder is declared but nothing uses it",
         11,
+        "AZ208",
     ),
     (
         "shared without a share permission to share it",
         "type memo = alt.docs (doc_no)\n  owner : user = owner_id\n  reader : user  shared\n  can view = owner or reader\n",
         "memo.reader is shared, which needs a share permission on memo",
         12,
+        "AZ207",
     ),
     (
         "a column rule on select",
         "  can view = owner\nrules alt.docs\n  select owner_id : view\n",
         "only update rules can name columns",
         12,
+        "AZ105",
     ),
     (
         "the same rule twice",
         "  can view = owner\nrules alt.docs\n  select : view\n  select : owner\n",
         "alt.docs has two 'select' rules",
         13,
+        "AZ109",
     ),
-    ("an expression that doesn't parse", "  can view = owner or (parent.view and {x}\n", "missing )", 10),
-    ("an unclosed condition", "  can view = owner or {x = 1\n", "a { condition is missing its closing }", 10),
-    ("a badly written relation", "  editor user = owner_id\n", "write relations as", 10),
+    ("an expression that doesn't parse", "  can view = owner or (parent.view and {x}\n", "missing )", 10, "AZ102"),
+    ("an unclosed condition", "  can view = owner or {x = 1\n", "a { condition is missing its closing }", 10, "AZ102"),
+    ("a badly written relation", "  editor user = owner_id\n", "write relations as", 10, "AZ103"),
     (
         "a name with the separator generated names use",
         "type my__doc = alt.docs (doc_no)\n",
         "'my__doc': names with '__' are generated ones, which a policy can't use",
         10,
+        "AZ107",
     ),
     (
         "brackets for a key of one column",
         "  dp : grp = [owner_id, up]\n",
         "the subject is of type grp, whose key is one column, but this source gives 2 columns [AZ206]",  # (no brackets)
         10,
+        "AZ206",
     ),
     (
         "one column for a composite key",
         "type pair = alt.doc_links (child, parent)\ntype thing = alt.docs (doc_no)\n  p : pair = up\n  can view = p.x\n",
         "the subject is of type pair, whose key is [child, parent], but this source gives 1 column: write them in square brackets",
         12,
+        "AZ206",
     ),
     (
         "a composite key with a timestamp",
         "type ev = alt.docs (doc_no, created timestamptz)\n",
         "created is timestamptz: a composite key's columns must be",
         10,
+        "AZ206",
     ),
-    ("a badly written key", "type ev = alt.docs (doc_no bigint uuid)\n", "write the key as (column [type])", 10),
+    (
+        "a badly written key",
+        "type ev = alt.docs (doc_no bigint uuid)\n",
+        "write the key as (column [type])",
+        10,
+        "AZ206",
+    ),
     (
         "type:* of a type that doesn't sign in",
         "  sh : user, grp:*  shared\n  can view = owner or sh\n",
         "grp:* means any signed-in grp, but grp doesn't sign in",
         10,
+        "AZ204",
     ),
     (
         "a principal type with a composite key",
         "type svc = alt.doc_links (child, parent) principal\n",
         "the svc type signs in, so it needs a key of one column",
         10,
+        "AZ206",
     ),
     (
         "referring to a generated name",
         "  can view = owner or parent.view__base\n",
         "names with '__' are generated ones",
         10,
+        "AZ107",
     ),
     (
         "a deny that doesn't cover what is below",
         "  can denied = owner\n  can view = (reader or parent.view) and not denied\n",
         "`not denied` must cover everything below, so denied must inherit through parent",
         11,
+        "AZ306",
     ),
     (
         "a deny that inherits through the same relation on another condition",
@@ -421,6 +515,7 @@ COMPILE = [
         "so denied must inherit through parent wherever view does, and its conditions there are not view's: "
         "view inherits with {inherit}, denied with {INHERIT}. Write them as view's are written, or leave them out",
         11,
+        "AZ306",
     ),
     (
         "a deny that inherits through the same relation on more conditions",
@@ -428,12 +523,14 @@ COMPILE = [
         "  can view = (reader or (parent.view and {inherit})) and not denied\n",
         "view inherits with {inherit}, denied with {inherit} and {up > 0}",
         11,
+        "AZ306",
     ),
     (
         "a deny by a relation",
         "  blocked : user = owner_id\n  can view = (reader or parent.view) and not blocked\n",
         "blocked is a relation: make a permission that inherits",
         11,
+        "AZ306",
     ),
     (
         "a deny that has a deny of its own",
@@ -441,60 +538,70 @@ COMPILE = [
         "  can view = (owner or parent.view) and not denied\n",
         "denied has a deny of its own, which can cut it below a denied object",
         12,
+        "AZ306",
     ),
     (
         "rules for a table two types map to",
         "type doc2 = alt.docs (doc_no)\n  owner : user = owner_id\n  can see = owner\nrules alt.docs\n  select : see\n",
         "rules for alt.docs, which types doc and doc2 both map to",
         14,
+        "AZ401",
     ),
     (
         "a scope naming a generated permission",
         "  can view = (owner or parent.view) and not share\nscope s = doc.view__base\n",
         "names with '__' are generated ones",
         11,
+        "AZ107",
     ),
     (
         "a deny through a link, not a permission",
         "  can denied = owner or parent.denied\n  can view = (reader or parent.view) and not parent.denied\n",
         "a deny on it is `not <permission of doc>`",
         11,
+        "AZ306",
     ),
     (
         "inheritance joined with another permission",
         "  can view = (reader or parent.view) and owner\n",
         "can only join its inheritance with {conditions} and `not <permission>`",
         10,
+        "AZ304",
     ),
     (
         "inheritance limited by the literal 'now'",
         "  can view = owner or (parent.view and {'now'::timestamptz > created})\n",
         "'now' means the current time",
         10,
+        "AZ305",
     ),
     (
         "an inheritance link table filtered by time",
         "  linked : doc = alt.doc_links(child -> parent) where {now() > '2000-01-01'}\n  can view = owner or linked.view\n",
         "can't limit inheritance: it depends on now",
         10,
+        "AZ305",
     ),
     (
         "following a relation to two types when one lacks the permission",
         "  holder : doc, grp = (holder_type, holder_id)\n  can view = owner or holder.view\n",
         "grp has no relation or permission 'view'",
         11,
+        "AZ203",
     ),
     (
         "user:* on a column",
         "  editor : user:* = owner_id\n",
         "user:* (or another type:*), anyone and link can only be used with 'shared'",
         10,
+        "AZ204",
     ),
     (
         "inheritance through a relation shared with anyone",
         "  shortcut : doc, anyone shared\n  can view = owner or shortcut.view\n",
         "doc.shortcut links to groups, anyone or links, so there is nothing to follow",
         11,
+        "AZ301",
     ),
     (
         "a type whose where depends on the time, with inheritance",
@@ -502,18 +609,21 @@ COMPILE = [
         "  up : doc2 = up\n  owner : user = owner_id\n  can see = owner or up.see\n",
         "can't decide who inherits (the type's where): it depends on now",
         11,
+        "AZ305",
     ),
     (
         "sharing by a permission that does not exist",
         "  writer : user shared by edit\n",
         "doc.writer is shared by 'edit', but doc has no such permission",
         10,
+        "AZ207",
     ),
     (
         "two permissions of one type inheriting through each other",
         "  can a = owner or parent.b\n  can b = parent.a\n",
-        "inherit through each other",
-        None,
+        "permissions doc.a, doc.b inherit through each other",
+        11,
+        "AZ302",
     ),
     (
         "an inheritance link table filtered by another table",
@@ -521,62 +631,78 @@ COMPILE = [
         "  can view = owner or linked.view\n",
         "doc.linked is used for inheritance, so its where {...} can only use the columns of alt.doc_links",
         10,
+        "AZ305",
     ),
     (
         "a mask without a view",
         "  can view = owner\nrules alt.docs\n  select : view\n  mask title : owner\n",
         "masks are applied by a view: write 'rules alt.docs view <schema.view_name>'",
         13,
+        "AZ402",
     ),
     (
         "a masked view without a select rule",
         "  can view = owner\nrules alt.docs view alt.docs_v\n  update : view\n",
         "the view alt.docs_v shows the rows 'select' allows, so alt.docs needs a select rule",
         11,
+        "AZ402",
     ),
     (
         "a column masked twice",
         "  can view = owner\nrules alt.docs view alt.docs_v\n  select : view\n  mask title : owner\n  mask title : view\n",
         "alt.docs.title is masked twice",
         14,
+        "AZ109",
     ),
     (
         "an invariant on an unknown type",
         "  can view = owner\ninvariants\n  never robot: view\n",
         "unknown type 'robot'",
         12,
+        "AZ201",
     ),
-    ("the app role named twice", "app role other_app\n", "the app role is named twice (app_user and other_app)", 10),
-    ("a scope named twice", "scope s = select\nscope s = delete\n", "scope s is defined twice", 11),
+    (
+        "the app role named twice",
+        "app role other_app\n",
+        "the app role is named twice (app_user and other_app)",
+        10,
+        "AZ109",
+    ),
+    ("a scope named twice", "scope s = select\nscope s = delete\n", "scope s is defined twice", 11, "AZ109"),
     (
         "a test's name with no closing quote",
         'test "owners\n  user 1 can share doc 1\n',
         'the test\'s name has no closing ": test "owners"',
         10,
+        "AZ106",
     ),
     (
         "impersonate on a type other than user",
         "  can impersonate = owner\n",
         "doc.impersonate: authz.view_as asks for `impersonate` on the user type",
         10,
+        "AZ307",
     ),
     (
         "manage_keys on a type that doesn't sign in",
         "  can manage_keys = owner\n",
         "doc.manage_keys: API keys are made for types that sign in, and doc doesn't",
         10,
+        "AZ307",
     ),
     (
         "break_glass with nothing to give",
         "type grp2 = alt.groups (gid)\n  boss : user = owner_id\n  can break_glass = boss\n",
         "grp2.break_glass: authz.break_glass gives its holder a relation of grp2 shared with a user",
         12,
+        "AZ307",
     ),
     (
         "manage_roles with no roles to make",
         "  can manage_roles = owner\n",
         "doc.manage_roles lets people create custom roles owned by the doc, but no roles line counts them",
         10,
+        "AZ307",
     ),
     (
         "roles from an owner nobody may make roles for",
@@ -584,91 +710,140 @@ COMPILE = [
         "custom roles on doc are the roles of its parent, which people with manage_roles on it create, and doc has "
         "no `can manage_roles`",
         10,
+        "AZ307",
     ),
-    ("this in a caveat", "caveat near = {this.up = 1}\n", "caveat near: a caveat is checked with each request", 10),
+    (
+        "this in a caveat",
+        "caveat near = {this.up = 1}\n",
+        "caveat near: a caveat is checked with each request",
+        10,
+        "AZ112",
+    ),
     (
         "this as a table's name in a condition",
         "  can view = owner or {exists (select 1 from alt.holds this where this.target = doc_no)}\n",
         "`this` is the row the condition is about (this.column); call the table something else",
         10,
+        "AZ112",
     ),
     (
         "roles nobody may make",
         "  roles : user\n  can view = owner or roles\n",
         "custom roles on doc are made by people with manage_roles on their owner, and no type has `can manage_roles`",
         10,
+        "AZ307",
     ),
     # mistakes the parser reports that no case met (the coverage report)
-    ("an empty condition", "  can see = owner and {   }\n", "empty {} condition", 10),
-    ("a key column named twice", "type t2 = alt.docs (doc_no, doc_no)\n", "a key column is named twice", 10),
+    ("an empty condition", "  can see = owner and {   }\n", "empty {} condition", 10, "AZ102"),
+    ("a key column named twice", "type t2 = alt.docs (doc_no, doc_no)\n", "a key column is named twice", 10, "AZ206"),
     (
         "a link table's object side named as two columns",
         "  x : user = alt.group_members(object: (a, b), subject: user_id)\n",
         "the object side is one column",
         10,
+        "AZ103",
     ),
     (
         "a link table's sides named, but not one object and one subject",
         "  x : user = alt.group_members(object: group_id, object: user_id)\n",
         "name one 'object' column and one 'subject' column",
         10,
+        "AZ103",
     ),
     (
         "a table given a second view",
         "rules alt.docs view alt.v1\n  select : share\nrules alt.docs view alt.v2\n  select : share\n",
         "alt.docs already has the view alt.v1",
         12,
+        "AZ109",
     ),
     (
         "two tables given the same view (applying would make it twice)",
         "rules alt.docs view alt.v\n  select : share\nrules alt.groups view alt.v\n  select : member\n",
         "alt.v is already the view of alt.docs (line 10): give alt.groups a view of its own",
         12,
+        "AZ109",
     ),
-    ("a caveat defined twice", "caveat c = {true}\ncaveat c = {true}\n", "caveat c is defined twice", 11),
-    ("a test's given without a statement", 'test "t"\n  given x = { }\n', "given {...} needs a statement", 11),
-    ("a test's as without a statement", 'test "t"\n  as user 1 allowed { }\n', "as ... {...} needs a statement", 11),
+    ("a caveat defined twice", "caveat c = {true}\ncaveat c = {true}\n", "caveat c is defined twice", 11, "AZ109"),
+    ("a test's given without a statement", 'test "t"\n  given x = { }\n', "given {...} needs a statement", 11, "AZ106"),
+    (
+        "a test's as without a statement",
+        'test "t"\n  as user 1 allowed { }\n',
+        "as ... {...} needs a statement",
+        11,
+        "AZ106",
+    ),
     (
         "a test named in single quotes",
         "test 'sharers'\n  user 1 can share doc 1\n",
         'line 10: write a test\'s name in double quotes: test "sharers" [AZ101]',
         10,
+        "AZ101",
     ),
     (
         "a test named without quotes",
         "test sharers see docs\n  user 1 can share doc 1\n",
         'line 10: write a test\'s name in double quotes: test "sharers see docs" [AZ101]',
         10,
+        "AZ101",
     ),
-    ("a scope's command without its table", "scope s = docs.select\n", "commands are qualified by a table", 10),
-    ("a scope's permission under a schema", "scope s = alt.doc.share\n", "permissions are qualified by a type", 10),
-    ("custom roles declared twice", "  roles : user\n  roles : user\n", "doc declares custom roles twice", 11),
-    ("custom roles naming no one", "  roles :\n", "write custom roles as: roles : user, team#member [from org]", 10),
+    (
+        "a scope's command without its table",
+        "scope s = docs.select\n",
+        "commands are qualified by a table",
+        10,
+        "AZ404",
+    ),
+    (
+        "a scope's permission under a schema",
+        "scope s = alt.doc.share\n",
+        "permissions are qualified by a type",
+        10,
+        "AZ404",
+    ),
+    ("custom roles declared twice", "  roles : user\n  roles : user\n", "doc declares custom roles twice", 11, "AZ109"),
+    (
+        "custom roles naming no one",
+        "  roles :\n",
+        "write custom roles as: roles : user, team#member [from org]",
+        10,
+        "AZ103",
+    ),
     (
         "a pair of columns naming a group",
         "  x : grp#member = (kind, owner_id)\n",
         "a (type_col, id_col) source links to objects, not groups",
         10,
+        "AZ205",
     ),
-    ("a mask without columns", "rules alt.docs\n  select : share\n  mask : share\n", "write masks as: mask col1", 12),
+    (
+        "a mask without columns",
+        "rules alt.docs\n  select : share\n  mask : share\n",
+        "write masks as: mask col1",
+        12,
+        "AZ105",
+    ),
     (
         "a cascade line without from",
         "rules alt.docs\n  select : share\n  cascade alt.users\n",
         "write a cascade as: cascade from schema.table   (or, to say which of several keys: cascade from schema.table "
         "(column, ...)) [AZ105]",
         12,
+        "AZ105",
     ),
     (
         "a cascade line whose columns don't close",
         "rules alt.docs\n  select : share\n  cascade from alt.users (owner_id\n",
         "write a cascade as: cascade from schema.table",
         12,
+        "AZ105",
     ),
     (
         "a cascade line naming a column twice",
         "rules alt.docs\n  select : share\n  cascade from alt.users (owner_id, owner_id)\n",
         "cascade from alt.users: a column is named twice [AZ105]",
         12,
+        "AZ105",
     ),
     (
         "a cascade line written twice, its columns in another order",
@@ -676,6 +851,7 @@ COMPILE = [
         "  cascade from alt.users (blocked_id, owner_id)\n",
         "cascade from alt.users is written twice under rules alt.docs [AZ109]",
         13,
+        "AZ109",
     ),
     (
         "a deny on a permission that inherits through another type",
@@ -686,6 +862,7 @@ COMPILE = [
         "doc.view has a deny, so it can only inherit within doc (like parent.view), not through permissions of other "
         "types",
         12,
+        "AZ306",
     ),
     (
         "a deny on a permission that inherits through a relation to another type too",
@@ -694,36 +871,42 @@ COMPILE = [
         "doc.view has a deny and inherits through above, which also points at other types; give those their own "
         "relation",
         12,
+        "AZ306",
     ),
     (
         "a permission that depends on itself only through a not",
         "  can view = {locked} and not parent.view\n",
         "doc.view depends on itself; a permission can only recurse as 'or rel.perm' (optionally 'and {condition}')",
         10,
+        "AZ302",
     ),
     (
         "inheritance narrowed by a relation, after a condition",
         "  can view = owner or ({locked} and parent.view and reader)\n",
         "inheritance through parent can only be narrowed with {conditions}",
         10,
+        "AZ304",
     ),
     (
         "inheritance narrowed by a permission through another relation, written before it: the inheritance is named",
         "  also : doc = also_up\n  can view = owner or (also.share and parent.view)\n",
         "inheritance through parent can only be narrowed with {conditions} on the row, e.g. (parent.view and {inherit})",
         11,
+        "AZ304",
     ),
     (
         "inheritance inside an or, inside an and",
         "  can view = owner or (reader and (parent.view or {locked}))\n",
         "doc.view depends on itself; a permission can only recurse as 'or rel.perm' (optionally 'and {condition}')",
         10,
+        "AZ302",
     ),
     (
         "a group named by the permission it gives",
         "  viewer : user, doc#view  shared\n  can view = owner or viewer\n",
         "doc.view depends on itself; a permission can only recurse as 'or rel.perm' (optionally 'and {condition}')",
         11,
+        "AZ302",
     ),
     (
         "two groups nested in each other",
@@ -732,149 +915,217 @@ COMPILE = [
         "team.lead depends on itself; a permission can only recurse as 'or rel.perm' (optionally 'and {condition}') "
         "through a relation to objects, and a group only as 'member : group#member'",
         11,
+        "AZ302",
     ),
     (
         "a rule following a permission with a dot, among other items",
         "rules alt.docs\n  select : owner or share.view\n",
         "'share' is a permission; only relations can be followed with a dot",
         11,
+        "AZ301",
     ),
     (
         "a rule using a link as if it held users",
         "rules alt.docs\n  select : owner or parent\n",
         "doc.parent links to doc objects, not users; follow it with a dot",
         11,
+        "AZ301",
     ),
     (
         "... also when the link has a column and a link table",
         "  parent : doc = alt.doc_links(child -> parent)\nrules alt.docs\n  select : owner and not parent\n",
         "doc.parent links to doc objects, not users; follow it with a dot",
         12,
+        "AZ301",
     ),
     (
         "a masked view named as the table",
         "rules alt.docs view alt.docs\n  select : share\n",
         "alt.docs is a table of the policy; name a new view",
         10,
+        "AZ402",
     ),
     (
         "a masked view named as another type's table",
         "rules alt.docs view alt.groups\n  select : share\n",
         "alt.groups is a table of the policy; name a new view",
         10,
+        "AZ402",
     ),
     (
         "a word after a rules line's table",
         "rules alt.docs extra\n",
         "write rules as: rules schema.table [view schema.view]",
         10,
+        "AZ101",
     ),
-    ("a caveat without braces", "caveat c = x\n", "write caveats as: caveat name = {sql}", 10),
-    ("a scope without =", "scope s doc.share\n", "write scopes as: scope name = select, view", 10),
+    ("a caveat without braces", "caveat c = x\n", "write caveats as: caveat name = {sql}", 10, "AZ101"),
+    ("a scope without =", "scope s doc.share\n", "write scopes as: scope name = select, view", 10, "AZ101"),
     (
         "a word after invariants",
         "invariants now\n",
         "invariants is alone on its line; each invariant goes below it, indented: never folder: share",
         10,
+        "AZ101",
     ),
     (
         "a scope's command on a table no type maps",
         "scope s = alt.things.select\n",
         "scope s: no type maps to alt.things",
         10,
+        "AZ404",
     ),
-    ("a scope's permission of a type that isn't there", "scope s = robot.view\n", "scope s: unknown type 'robot'", 10),
+    (
+        "a scope's permission of a type that isn't there",
+        "scope s = robot.view\n",
+        "scope s: unknown type 'robot'",
+        10,
+        "AZ201",
+    ),
     (
         "a scope's permission no type has",
         "scope s = frobnicate\n",
         "scope s: no type has a permission 'frobnicate'",
         10,
+        "AZ404",
+    ),
+    (
+        "a permission without its =: says how a permission is written",
+        "  can view owner\n",
+        "line 10: write permissions as: can name = expression [AZ104]",
+        10,
+        "AZ104",
+    ),
+    ("... nor its name", "  can = owner\n", "write permissions as: can name = expression", 10, "AZ104"),
+    (
+        "a block's word misspelt: the words a block starts with",
+        "tpye thing = alt.things\n",
+        "line 10: expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', 'test \"name\"' or "
+        "'include', got: tpye thing = alt.things [AZ101]",
+        10,
+        "AZ101",
     ),
 ]
 
-# whole policies, without BASE: (what, policy, expected piece of the message, expected line)
+# whole policies, without BASE: (what, policy, expected piece of the message, the line it names, its code)
 WHOLE = [
-    ("no app role", "type user = alt.users\n", "name the app role, the Postgres role your app connects as", 1),
+    ("no app role", "type user = alt.users\n", "name the app role, the Postgres role your app connects as", 1, "AZ111"),
     (
         "a type line without its =: says how a type is written",
         "app role app_user\ntype user alt.users\n",
         "line 2: write types as: type name = schema.table [(key)] [principal] [where {sql}] [AZ101]",
         2,
+        "AZ101",
     ),
     (
         "principal after where: the order a type line takes",
         "app role app_user\ntype user = alt.users where {true} principal\n",
         "write types as: type name = schema.table [(key)] [principal] [where {sql}]",
         2,
+        "AZ101",
     ),
-    ("the app role in two words", "app role app user\n", "line 1: write the app role as: app role name [AZ101]", 1),
+    (
+        "the app role in two words",
+        "app role app user\n",
+        "line 1: write the app role as: app role name [AZ101]",
+        1,
+        "AZ101",
+    ),
     (
         "an include without quotes",
         "include roles.authz\napp role app_user\n",
         'line 1: write includes as: include "file.authz" (the file\'s name in double quotes) [AZ101]',
         1,
+        "AZ101",
     ),
-    ("PUBLIC as the app role", "app role public\ntype user = alt.users\n", "not PUBLIC", 1),
+    ("PUBLIC as the app role", "app role public\ntype user = alt.users\n", "not PUBLIC", 1, "AZ111"),
     (
         "the app role named without app",
         "role app_user\ntype user = alt.users\n",
         "expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', 'test \"name\"' or 'include', "
         "got: role app_user",
         1,
+        "AZ101",
+    ),
+    (
+        "no user type",
+        "app role app_user\ntype doc = alt.docs (doc_no)\n  can view = signed_in\n",
+        "line 1: declare the user type, e.g.: type user = app.users [AZ202]",
+        1,
+        "AZ202",
+    ),
+    (
+        "an indented line with no block above it",
+        "app role app_user\n  owner : user = owner_id\ntype user = alt.users\n",
+        "line 2: indented line outside a type, rules, invariants or test block [AZ101]",
+        2,
+        "AZ101",
     ),
 ]
 
+# (what, policy text appended to BASE, expected piece of the message, its code: every mistake the message lists
+# carries it)
 APPLY = [
     (
         "a table that doesn't exist",
         "type thing = alt.things\n  owner : user = owner_id\n  can view = owner\n",
         "line 10: table alt.things not found",
+        "AZ601",
     ),
     (
         "... said first: the policy names what the database lacks",
         "type thing = alt.things\n  owner : user = owner_id\n  can view = owner\n",
-        "the policy does not match this database:",
+        "ERROR:  the policy does not match this database:\n  line 10: table alt.things not found [AZ601]\n",
+        "AZ601",
     ),
     (
         "a column that doesn't exist",
         "  editor : user = editor_id\n  can view = editor\n",
         "line 10: column editor_id not found in alt.docs",
+        "AZ601",
     ),
     (
         "inheritance reading a view",
         "  can view = owner or (parent.view and {not exists (select 1 from alt.held h where h.target = doc_no)})\n",
-        "reads alt.held, which is not a table",
+        "line 10: a condition used for inheritance reads alt.held, which is not a table",
+        "AZ604",
     ),
     (
         "inheritance calling a function that isn't IMMUTABLE",
         "  can view = owner or (parent.view and {alt.is_open(doc_no)})\n",
         "line 10: a condition used for inheritance calls alt.is_open(bigint), which is not IMMUTABLE",
+        "AZ603",
     ),
     (
         "a cascade line that names no foreign key that acts: the keys of docs to users are NO ACTION",
         "rules alt.docs\n  select : share\n  cascade from alt.users\n",
         "line 12: cascade from alt.users: no foreign key of alt.docs to alt.users deletes or changes rows of alt.docs "
         "(ON DELETE CASCADE, SET NULL or SET DEFAULT, ON UPDATE SET NULL or SET DEFAULT): remove the line [AZ625]",
+        "AZ625",
     ),
     (
         "... nor one that acts only ON UPDATE CASCADE (docs.up), which needs no line",
         "rules alt.docs\n  select : share\n  cascade from alt.docs (up)\n",
         "line 12: cascade from alt.docs: no foreign key of alt.docs to alt.docs on (up) deletes or changes rows",
+        "AZ625",
     ),
     (
         "a cascade line naming a column the table doesn't have",
         "rules alt.docs\n  select : share\n  cascade from alt.docs (upp)\n",
         "line 12: column upp not found in alt.docs [AZ601]",
+        "AZ601",
     ),
     (
         "a key declared with the wrong type",
         "type doc3 = alt.docs (doc_no uuid)\n  owner : user = owner_id\n  can see = owner\n",
         "line 10: alt.docs.doc_no is bigint, not uuid: write its type after the key, (doc_no bigint) [AZ602]",
+        "AZ602",
     ),
     (
         "inheritance limited by a time-zone dependent expression",
         "  can view = owner or (parent.view and {created + interval '1 day' > '2020-01-01'})\n",
         "line 10: a condition that limits inheritance must give the same answer for every user at any time",
+        "AZ603",
     ),
     (
         "inheritance across two types through a link table whose where depends on the time zone",
@@ -883,40 +1134,12 @@ APPLY = [
         "type project = alt.projects\n  lead : user = lead_id\n  docs : doc = alt.doc_projects(proj_id -> doc_no)\n"
         "  can view = lead or docs.view\n",
         "line 10: a condition that limits inheritance must give the same answer for every user at any time",
+        "AZ603",
     ),
 ]
 
 # a file name SQL text must quote ('), and a RAISE's message too (%)
 QUOTED_FILE = "o'brien 50%.authz"
-
-# Answers worked out by hand, asked of the database as each user ('' is nobody): expect() says which ids
-# authz.list gives and which of the ids authz.can allows, sees() which rows the app role reads through the rules.
-ANSWERS = """
-CREATE FUNCTION pg_temp.expect(p_user text, p_type text, p_perm text, p_ids text[], p_want text[]) RETURNS void
-LANGUAGE plpgsql AS $f$
-DECLARE v_want text[] := ARRAY(SELECT x FROM unnest(p_want) x ORDER BY x); v_list text[]; v_can text[];
-BEGIN
-  PERFORM set_config('authz.user_id', p_user, false);
-  v_list := ARRAY(SELECT x FROM authz.list(p_type, p_perm) x ORDER BY x);
-  v_can := ARRAY(SELECT x FROM unnest(p_ids) x WHERE authz.can(p_type, x, p_perm) ORDER BY x);
-  IF v_list <> v_want OR v_can <> v_want THEN
-    RAISE EXCEPTION '%.% as user %: authz.list gives %, authz.can allows %, by hand %',
-      p_type, p_perm, p_user, v_list, v_can, v_want;
-  END IF;
-END $f$;
-CREATE FUNCTION pg_temp.sees(p_user text, p_query text, p_want text[]) RETURNS void
-LANGUAGE plpgsql AS $f$
-DECLARE v_got text[];
-BEGIN
-  PERFORM set_config('authz.user_id', p_user, true);
-  SET LOCAL ROLE app_user;
-  EXECUTE 'SELECT ARRAY(' || p_query || ')' INTO v_got;
-  RESET ROLE;
-  IF v_got <> ARRAY(SELECT x FROM unnest(p_want) x ORDER BY x) THEN
-    RAISE EXCEPTION 'as user %, the app role reads % (%), by hand %', p_user, v_got, p_query, p_want;
-  END IF;
-END $f$;
-"""
 
 # policies that must apply cleanly although their names are awkward (a whole policy if it starts with its app role)
 APPLY_OK = [
@@ -996,111 +1219,16 @@ APPLY_OK = [
         "INSERT INTO alt.users VALUES (1); INSERT INTO alt.groups VALUES (1, 1); INSERT INTO alt.group_members VALUES (1, 1);"
         "UPDATE alt.group_members SET active = false; DELETE FROM alt.group_members; TRUNCATE alt.group_members;",
     ),
-    # forms of the language that must give, in the database, the answers worked out by hand from the reference
-    # (docs/reference/language.md), asked with ANSWERS
-    (
-        "a group named by a permission (team#manage): shared to it, those who hold the permission hold the relation",
-        "  watcher : user, team#manage  shared\n  can view = owner or reader or watcher\n"
-        "type team = alt.groups (gid)\n  boss : user = owner_id\n  can manage = boss\n",
-        {},
-        ANSWERS + "INSERT INTO alt.users VALUES (1), (2), (3), (4); INSERT INTO alt.groups VALUES (1, 1), (2, 3);"
-        "INSERT INTO alt.group_members (group_id, user_id) VALUES (1, 2), (2, 4);"
-        "INSERT INTO alt.docs (doc_no) VALUES (10), (11), (12);"
-        "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES"
-        " ('doc', '10', 'watcher', 'team', '1', 'manage'), ('doc', '11', 'reader', 'grp', '1', 'member'),"
-        " ('doc', '12', 'watcher', 'team', '2', 'manage');"
-        "SELECT pg_temp.expect('1', 'doc', 'view', '{10,11,12}', '{10}');"
-        "SELECT pg_temp.expect('2', 'doc', 'view', '{10,11,12}', '{11}');"
-        "SELECT pg_temp.expect('3', 'doc', 'view', '{10,11,12}', '{12}');"
-        "SELECT pg_temp.expect('4', 'doc', 'view', '{10,11,12}', '{}');"
-        "SELECT pg_temp.expect('', 'doc', 'view', '{10,11,12}', '{}');"
-        "SELECT pg_temp.expect('1', 'team', 'manage', '{1,2}', '{1}');",
-    ),
-    (
-        "a relation declared again for another type (a doc's parent is a doc, or its project), inheriting through it",
-        "  parent : doc = alt.doc_links(child -> parent)\n  parent : project = project_id\n"
-        "  can view = (owner and not {locked}) or parent.view\nrules alt.docs\n  select : view\n"
-        "type project = alt.projects\n  owner : user = lead_id\n  can view = owner\n",
-        {},
-        # (doc 3's parent is doc 1 through the column, and the project has the id of a doc)
-        ANSWERS + "INSERT INTO alt.users VALUES (1), (2), (3); INSERT INTO alt.projects VALUES (1, 3);"
-        "INSERT INTO alt.docs (doc_no, owner_id, locked, project_id) VALUES (1, 1, false, NULL), (2, 1, true, NULL),"
-        " (4, NULL, false, NULL), (5, NULL, false, 1), (6, NULL, false, NULL), (7, 2, false, 1);"
-        "INSERT INTO alt.docs (doc_no, up) VALUES (3, 1); INSERT INTO alt.doc_links VALUES (4, 2), (6, 5);"
-        "SELECT pg_temp.expect('1', 'doc', 'view', '{1,2,3,4,5,6,7}', '{1,3}');"
-        "SELECT pg_temp.expect('2', 'doc', 'view', '{1,2,3,4,5,6,7}', '{7}');"
-        "SELECT pg_temp.expect('3', 'doc', 'view', '{1,2,3,4,5,6,7}', '{5,6,7}');"
-        "SELECT pg_temp.expect('', 'doc', 'view', '{1,2,3,4,5,6,7}', '{}');"
-        "SELECT pg_temp.expect('1', 'doc', 'share', '{1,2,3,4,5,6,7}', '{1,2,3,4}');"
-        "SELECT pg_temp.expect('3', 'doc', 'share', '{1,2,3,4,5,6,7}', '{5,7}');"
-        "SELECT pg_temp.sees('3', 'SELECT doc_no::text FROM alt.docs ORDER BY 1', '{5,6,7}');"
-        "DELETE FROM alt.doc_links WHERE child = 6; INSERT INTO alt.doc_links VALUES (6, 1);"
-        "SELECT pg_temp.expect('1', 'doc', 'view', '{1,2,3,4,5,6,7}', '{1,3,6}');"
-        "SELECT pg_temp.expect('3', 'doc', 'view', '{1,2,3,4,5,6,7}', '{5,7}');"
-        "SELECT pg_temp.sees('1', 'SELECT doc_no::text FROM alt.docs ORDER BY 1', '{1,3,6}');",
-    ),
-    (
-        "inheritance across two types whose only condition is a link table's where: a link it leaves out passes nothing",
-        "  project : project = alt.proj_links(doc_no -> proj_id) where {active}\n"
-        "  can view = owner or parent.view or project.view\n"
-        "type project = alt.projects\n  lead : user = lead_id\n  docs : doc = alt.doc_projects(proj_id -> doc_no)\n"
-        "  can view = lead or docs.view\n",
-        {},
-        ANSWERS + "INSERT INTO alt.users VALUES (1), (2), (3); INSERT INTO alt.projects VALUES (1, 3), (2, NULL);"
-        "INSERT INTO alt.docs (doc_no, owner_id) VALUES (1, 1), (2, NULL), (3, NULL), (4, NULL);"
-        "INSERT INTO alt.doc_projects VALUES (1, 2);"
-        "INSERT INTO alt.proj_links (doc_no, proj_id, active) VALUES (2, 1, true), (3, 1, false), (4, 2, true);"
-        "SELECT pg_temp.expect('1', 'doc', 'view', '{1,2,3,4}', '{1,4}');"
-        "SELECT pg_temp.expect('1', 'project', 'view', '{1,2}', '{2}');"
-        "SELECT pg_temp.expect('3', 'doc', 'view', '{1,2,3,4}', '{2}');"
-        "SELECT pg_temp.expect('3', 'project', 'view', '{1,2}', '{1}');"
-        "SELECT pg_temp.expect('2', 'doc', 'view', '{1,2,3,4}', '{}');"
-        "UPDATE alt.proj_links SET active = true WHERE doc_no = 3;"
-        "SELECT pg_temp.expect('3', 'doc', 'view', '{1,2,3,4}', '{2,3}');",
-    ),
-    (
-        "every type keyed by text",
-        "app role app_user\ntype user = alt.tusers (id text)\ntype doc = alt.tdocs (id text)\n"
-        "  owner  : user = owner_id\n  parent : doc = parent_id\n  viewer : user  shared\n"
-        "  can share = owner or parent.share\n  can view = share or viewer or parent.view\n"
-        "rules alt.tdocs\n  select : view\n",
-        {},
-        ANSWERS + "INSERT INTO alt.tusers VALUES ('ann'), ('bo');"
-        "INSERT INTO alt.tdocs VALUES ('a', 'ann', NULL), ('c', 'bo', NULL), ('d', NULL, NULL), ('b', NULL, 'a'),"
-        " ('e', NULL, 'd');"
-        "SET authz.user_id = 'bo'; SELECT authz.share('doc', 'c', 'viewer', 'user', 'ann'); RESET authz.user_id;"
-        "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id)"
-        " VALUES ('doc', 'd', 'viewer', 'user', 'bo');"
-        "SELECT pg_temp.expect('ann', 'doc', 'view', '{a,b,c,d,e}', '{a,b,c}');"
-        "SELECT pg_temp.expect('bo', 'doc', 'view', '{a,b,c,d,e}', '{c,d,e}');"
-        "SELECT pg_temp.expect('', 'doc', 'view', '{a,b,c,d,e}', '{}');"
-        "SELECT pg_temp.expect('ann', 'doc', 'share', '{a,b,c,d,e}', '{a,b}');"
-        "SELECT pg_temp.sees('ann', 'SELECT id FROM alt.tdocs ORDER BY 1', '{a,b,c}');",
-    ),
-    (
-        "no permission at all, and a rule on a relation to users and to objects: its users",
-        "app role app_user\ntype user = alt.users\ntype doc = alt.docs (doc_no)\n  watcher : user = owner_id\n"
-        "  watcher : doc = alt.doc_links(child -> parent)\nrules alt.docs\n  select : watcher\n",
-        {},
-        ANSWERS + "INSERT INTO alt.users VALUES (1), (2);"
-        "INSERT INTO alt.docs (doc_no, owner_id) VALUES (1, 1), (2, NULL), (3, 2);"
-        "INSERT INTO alt.doc_links VALUES (2, 1), (3, 1);"
-        "SELECT pg_temp.sees('1', 'SELECT doc_no::text FROM alt.docs ORDER BY 1', '{1}');"
-        "SELECT pg_temp.sees('2', 'SELECT doc_no::text FROM alt.docs ORDER BY 1', '{3}');"
-        "SELECT pg_temp.sees('', 'SELECT doc_no::text FROM alt.docs ORDER BY 1', '{}');",
-    ),
     (
         "a link table naming objects of two types keyed by two columns: the audit names each by its key",
         "  pinned : space, room = alt.pins(doc_no -> (kind, [org, ref]))\n  can view = owner or pinned.see\n"
         "type space = alt.spaces (org, id)\n  keeper : user = keeper_id\n  can see = keeper\n"
         "type room = alt.rooms (org, id)\n  keeper : user = keeper_id\n  can see = keeper\n",
         {},
-        ANSWERS + "INSERT INTO alt.users VALUES (1), (2);"
+        "INSERT INTO alt.users VALUES (1), (2);"
         "INSERT INTO alt.spaces VALUES (1, 2, 1); INSERT INTO alt.rooms VALUES (1, 2, 2);"
         "INSERT INTO alt.docs (doc_no) VALUES (10), (11);"
         "INSERT INTO alt.pins VALUES (10, 'space', 1, 2), (11, 'room', 1, 2);"
-        "SELECT pg_temp.expect('1', 'doc', 'view', '{10,11}', '{10}');"
-        "SELECT pg_temp.expect('2', 'doc', 'view', '{10,11}', '{11}');"
         "DO $$ BEGIN IF ARRAY(SELECT concat_ws(' ', action, object_id, relation, subject_type, subject_id)"
         " FROM authz.audit WHERE relation = 'pinned' ORDER BY 1)"
         ' <> \'{"relate 10 pinned space (1,2)","relate 11 pinned room (1,2)"}\' THEN'
@@ -1161,55 +1289,63 @@ GRANT SELECT, UPDATE ON alt.notes TO app_user;
 
 
 # Included files passed as a map, the way the rowstile command passes them: never read from disk.
-# (what, main policy, files, expected start of the message)
+# (what, main policy, files, expected start of the message, its code)
 INCLUDES = [
     (
         "an include missing from the files",
         'include "roles.authz"\n',
         {},
         "line 1: can't find roles.authz in the policy's folder [AZ108]",
+        "AZ108",
     ),
     (
         "a server file",
         'include "/etc/passwd"\n',
         {"/etc/passwd": BASE},
         "line 1: /etc/passwd: an included file is in the policy's folder",
+        "AZ108",
     ),
     (
         "a file above the policy's folder",
         'include "sub/../../x.authz"\n',
         {"../x.authz": BASE},
         "line 1: sub/../../x.authz: an included file is in the policy's folder",
+        "AZ108",
     ),
     (
         "a file above, from an included file",
         'include "sub/a.authz"\n',
         {"sub/a.authz": 'include "../../x.authz"\n', "../x.authz": BASE},
         "sub/a.authz line 1: ../../x.authz: an included file is in the policy's folder",
+        "AZ108",
     ),
     (
         "a backslash",
         'include "sub\\x.authz"\n',
         {"sub\\x.authz": BASE},
         "line 1: sub\\x.authz: an included file is in the policy's folder",
+        "AZ108",
     ),
     (
         "a drive",
         'include "C:x.authz"\n',
         {"C:x.authz": BASE},
         "line 1: C:x.authz: an included file is in the policy's folder",
+        "AZ108",
     ),
     (
         "a mistake in an included file names that file",
         'include "sub/x.authz"\n',
         {"sub/x.authz": BASE + "  can view = no_such_name\n"},
         "sub/x.authz line 10:",
+        "AZ203",
     ),
     (
         "an include resolved from the including file's folder",
         'include "sub/a.authz"\n',
         {"sub/a.authz": 'include "b.authz"\n', "b.authz": BASE},
         "sub/a.authz line 1: can't find sub/b.authz in the policy's folder [AZ108]",
+        "AZ108",
     ),
     (
         "a file whose name holds a dollar quote's tag",
@@ -1217,12 +1353,14 @@ INCLUDES = [
         {"notes$f$.authz": BASE},
         "line 1: notes$f$.authz: an included file's name can't hold $f$: the generated functions name the file in "
         "their messages, and $f$ would end one; rename the file [AZ108]",
+        "AZ108",
     ),
     (
         "the same file twice",
         'include "a.authz"\ninclude "a.authz"\n',
         {"a.authz": BASE},
         "line 2: a.authz is included twice",
+        "AZ108",
     ),
     (
         "an included file that starts indented: its lines don't go on with the block above the include",
@@ -1230,12 +1368,14 @@ INCLUDES = [
         {"more.authz": "  can view = owner\n"},
         "more.authz line 1: indented line outside a type, rules, invariants or test block: a block ends at an "
         "include line, and an included file starts blocks of its own [AZ101]",
+        "AZ101",
     ),
     (
         "indented lines after an include: they don't go on with the included file's last block",
         'app role app_user\ntype user = alt.users\ninclude "doc.authz"\n  can view = owner\n',
         {"doc.authz": "type doc = alt.docs (doc_no)\n  owner : user = owner_id\n"},
         "line 4: indented line outside a type, rules, invariants or test block: a block ends at an include line",
+        "AZ101",
     ),
     (
         "an include line indented",
@@ -1243,132 +1383,168 @@ INCLUDES = [
         {"more.authz": "type more = alt.projects\n"},
         "line 10: an include line starts at the left margin: it includes a whole file, not lines of the block above "
         "[AZ101]",
+        "AZ101",
     ),
 ]
 
 
-# named tests (compiled with their SQL): (what, text appended to BASE, expected piece of the message, expected line)
+# named tests (compiled with their SQL): (what, text appended to BASE, expected piece of the message, the line it
+# names, its code)
 TESTS = [
-    ("a $name used before a given names it", 'test "t"\n  user $ann can share doc 1\n', "$ann is not named yet", 11),
+    (
+        "a $name used before a given names it",
+        'test "t"\n  user $ann can share doc 1\n',
+        "$ann is not named yet",
+        11,
+        "AZ501",
+    ),
     (
         "... also inside a statement",
         'test "t"\n  as user 1 refused {INSERT INTO alt.docs VALUES ($doc)}\n',
         "$doc is not named yet",
         11,
+        "AZ501",
     ),
     (
         "acting as a type that doesn't sign in",
         'test "t"\n  given g = {SELECT 1}\n  grp $g can share doc 1\n',
         "'grp' doesn't sign in: a test acts as anyone or as a type that signs in (user) [AZ502]",
         12,
+        "AZ502",
     ),
     (
         "... where two types sign in",
         'type bot = alt.bots principal\ntest "t"\n  grp 1 can share doc 1\n',
         "'grp' doesn't sign in: a test acts as anyone or as a type that signs in (user, bot) [AZ502]",
         12,
+        "AZ502",
     ),
-    ("a line that is none of a test's", 'test "t"\n  user 1 maybe share doc 1\n', "a test's lines are", 11),
+    ("a line that is none of a test's", 'test "t"\n  user 1 maybe share doc 1\n', "a test's lines are", 11, "AZ106"),
     (
         "a scope the policy doesn't have",
         'test "t"\n  user 1 with scope files can share doc 1\n',
         "no scope 'files' in the policy (it has: read)",
         11,
+        "AZ503",
     ),
     (
         "... also on a statement",
         'test "t"\n  as user 1 with scope read, files sees 0 {SELECT 1}\n',
         "no scope 'files' in the policy",
         11,
+        "AZ503",
     ),
     (
         "a scope for nobody",
         'test "t"\n  anyone with scope read can share doc 1\n',
         "`anyone` is nobody signed in",
         11,
+        "AZ106",
     ),
-    ("with scope and no scope", 'test "t"\n  user 1 with scope can share doc 1\n', "a test's lines are", 11),
-    ("a test with no lines", 'test "t"\n', "test 't' has no lines", 10),
+    ("with scope and no scope", 'test "t"\n  user 1 with scope can share doc 1\n', "a test's lines are", 11, "AZ106"),
+    ("a test with no lines", 'test "t"\n', "test 't' has no lines", 10, "AZ106"),
     (
         "a test with an empty name",
         'test ""\n  user 1 can share doc 1\n',
         'the test\'s name is empty: say what it checks, test "owners see their folders" [AZ106]',
         10,
+        "AZ106",
     ),
     (
         "words after a test's closing quote",
         'test "owners" see\n  user 1 can share doc 1\n',
         "the test's name ends at its closing \": nothing goes after it on the line [AZ106]",
         10,
+        "AZ106",
     ),
     (
         "a test written glued to its name",
         'test"t"\n  user 1 can share doc 1\n',
         'write tests as: test "name" (or test alone, for checks on the data already there) [AZ101]',
         10,
+        "AZ101",
     ),
     (
         "a scope named with - in a test: read whole, as where it is declared",
         'test "t"\n  user 1 with scope read-only can share doc 1\n',
         "no scope 'read-only' in the policy (it has: read)",
         11,
+        "AZ503",
     ),
     (
         "... and with :, on a statement",
         'test "t"\n  as user 1 with scope read, files:write sees 0 {SELECT 1}\n',
         "no scope 'files:write' in the policy (it has: read)",
         11,
+        "AZ503",
     ),
     (
         "two tests with one name",
         'test "a"\n  user 1 can share doc 1\ntest "a"\n  user 1 can share doc 1\n',
         "already a test named 'a'",
         12,
+        "AZ109",
     ),
     (
         "a permission that doesn't exist, in a named test",
         'test "t"\n  user 1 can edit doc 1\n',
         "doc has no permission 'edit'",
         11,
+        "AZ203",
     ),
     (
         "the test section acting as a type that doesn't sign in",
         "test\n  grp 1 can share doc 1\n",
         "'grp' doesn't sign in",
         11,
+        "AZ502",
     ),
     (
         "the test section acting as a type that isn't there",
         "test\n  bot 1 can share doc 1\n",
         "'bot' doesn't sign in",
         11,
+        "AZ502",
     ),
     (
         "a statement in the test section",
         "test\n  as user 1 allowed {SELECT 1}\n",
         "the test section checks the data already there",
         11,
+        "AZ106",
     ),
-    ("a $name in the test section", "test\n  user $ann can share doc 1\n", "$ann is not named yet", 11),
+    ("a $name in the test section", "test\n  user $ann can share doc 1\n", "$ann is not named yet", 11, "AZ501"),
     (
         "sees N on a statement that writes",
         'test "t"\n  as user 1 sees 0 {UPDATE alt.docs SET up = NULL RETURNING doc_no}\n',
         "`sees N` counts the rows of a SELECT, and this statement writes",
         11,
+        "AZ106",
     ),
     (
         "sees N on a statement that writes in its WITH",
         'test "t"\n  as user 1 sees 0 {WITH gone AS (DELETE FROM alt.docs RETURNING doc_no) SELECT * FROM gone}\n',
         "`sees N` counts the rows of a SELECT, and this statement writes",
         11,
+        "AZ106",
     ),
     (
         "sees N on a statement that writes after a comment",
         'test "t"\n  as user 1 sees 0 {/* none of them */ DELETE FROM alt.docs WHERE false}\n',
         "`sees N` counts the rows of a SELECT, and this statement writes",
         11,
+        "AZ106",
     ),
 ]
+
+
+def reset(db: str) -> None:
+    """The app's tables afresh, with what the apply cases add to them, and no policy (tests/alt_schema.sql drops
+    rowstile's schemas and the app's first)."""
+    for source in (["-f", "tests/alt_schema.sql"], ["-c", APPLY_SETUP]):
+        subprocess.run(
+            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, *source], check=True, capture_output=True
+        )
 
 
 def compile_policy(text: str, tests: bool = False, files: dict[str, str] | None = None) -> str:
@@ -1380,22 +1556,22 @@ def main() -> None:
     db = sys.argv[sys.argv.index("--db") + 1] if "--db" in sys.argv else "authz_errors"
     os.chdir(os.path.dirname(HERE))
     fails = 0
-    for what, extra, want, line in COMPILE:
+    for what, extra, want, line, code in COMPILE:
         try:
             compile_policy(BASE + extra)
             got = "(compiled without error)"
         except PolicyError as e:
             got = str(e)
-        ok = want in got and (line is None or got.startswith(f"line {line}:")) and coded(got)
+        ok = want in got and got.startswith(f"line {line}:") and coded(got, code)
         fails += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  {what}: {got}")
-    for what, text, want, line in WHOLE:
+    for what, text, want, line, code in WHOLE:
         try:
             compile_policy(text)
             got = "(compiled without error)"
         except PolicyError as e:
             got = str(e)
-        ok = want in got and got.startswith(f"line {line}:") and coded(got)
+        ok = want in got and got.startswith(f"line {line}:") and coded(got, code)
         fails += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  {what}: {got}")
 
@@ -1404,17 +1580,17 @@ def main() -> None:
         got = "(compiled without error)"
     except PolicyError as e:
         got = str(e)
-    ok = "doc has no permission 'edit'" in got and coded(got)
+    ok = got.startswith("line 12: doc has no permission 'edit'") and coded(got, "AZ203")
     fails += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a test of a permission that doesn't exist: {got}")
 
-    for what, extra, want, line in TESTS:
+    for what, extra, want, line, code in TESTS:
         try:
             compile_policy(BASE + extra, tests=True)
             got = "(compiled without error)"
         except PolicyError as e:
             got = str(e)
-        ok = want in got and got.startswith(f"line {line}:") and coded(got)
+        ok = want in got and got.startswith(f"line {line}:") and coded(got, code)
         fails += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  named tests: {what}: {got}")
     try:
@@ -1423,7 +1599,7 @@ def main() -> None:
         got = "(compiled without error)"
     except PolicyError as e:
         got = str(e)
-    ok = got.startswith("more.authz: a test file holds only named tests") and coded(got)
+    ok = got.startswith("more.authz: a test file holds only named tests") and coded(got, "AZ106")
     fails += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  named tests: a test file with a type in it: {got}")
     try:
@@ -1433,17 +1609,17 @@ def main() -> None:
         got = "(compiled without error)"
     except PolicyError as e:
         got = str(e)
-    ok = got.startswith("more.authz line 2: doc has no permission 'view'") and coded(got)
+    ok = got.startswith("more.authz line 2: doc has no permission 'view'") and coded(got, "AZ203")
     fails += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  named tests: a mistake in a test file names the file: {got}")
 
-    for what, main_text, files, want in INCLUDES:
+    for what, main_text, files, want, code in INCLUDES:
         try:
             compile_policy(main_text, files=files)
             got = "(compiled without error)"
         except PolicyError as e:
             got = str(e)
-        ok = got.startswith(want) and coded(got)
+        ok = got.startswith(want) and coded(got, code)
         fails += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  included files: {what}: {got}")
     try:
@@ -1458,37 +1634,24 @@ def main() -> None:
     subprocess.run(["createdb", db], check=True, capture_output=True)
     # each also from an included file named with a quote and a percent sign: the messages hold its name as SQL
     # text, and as a RAISE's message, and say it as written
-    for (what, extra, want), file in [(a, f) for a in APPLY for f in (None, QUOTED_FILE)]:
-        subprocess.run(
-            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", "tests/alt_schema.sql"],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-c", APPLY_SETUP], check=True, capture_output=True
-        )
+    for (what, extra, want, code), file in [(a, f) for a in APPLY for f in (None, QUOTED_FILE)]:
+        reset(db)
         if file is None:
             sql = compile_policy(BASE + extra)
         else:
             sql = compile_policy(f'include "{file}"\n', files={file: BASE + extra})
             what += f", in {file}"
-            want = re.sub(r"^line ", f"{file} line ", want)
+            want = re.sub(r"^(\s*)line ", "\\g<1>" + file.replace("\\", "\\\\") + " line ", want, flags=re.M)
         p = subprocess.run(
             ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db], input=sql, capture_output=True, text=True
         )
         err = next((ln for ln in p.stderr.splitlines() if "ERROR" in ln), "(applied without error)")
-        ok = p.returncode != 0 and want in p.stderr and re.search(r"\[AZ6\d\d\]", p.stderr) is not None
+        # every mistake the message lists carries the case's code
+        ok = p.returncode != 0 and want in p.stderr and set(re.findall(r"\[(AZ\d{3})\]", p.stderr)) == {code}
         fails += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  applying {what}: {err.split('ERROR:', 1)[-1].strip()}")
     for what, extra, env, *after in APPLY_OK:
-        subprocess.run(
-            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", "tests/alt_schema.sql"],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-c", APPLY_SETUP], check=True, capture_output=True
-        )
+        reset(db)
         try:
             sql = compile_policy(extra if extra.startswith("app role ") else BASE + extra)
             p = subprocess.run(
@@ -1506,11 +1669,7 @@ def main() -> None:
         print(f"{'ok  ' if ok else 'FAIL'}  {what}{': ' + err if err else ''}")
     # a whole policy in an included file named with a quote and a percent sign: it applies, and its named test runs,
     # its line said as written
-    subprocess.run(
-        ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", "tests/alt_schema.sql"],
-        check=True,
-        capture_output=True,
-    )
+    reset(db)
     text = (
         BASE + "rules alt.docs\n  select : share\n"
         'test "the owner sees the doc"\n  given u = {INSERT INTO alt.users VALUES (7) RETURNING id}\n'
@@ -1551,13 +1710,6 @@ def main() -> None:
     fails += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a relation named with a % that is no table: a notice says so: {got}")
     # a shared relation with expiring shares can't later become a link for inheritance
-    reset = lambda: [
-        subprocess.run(
-            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", "tests/alt_schema.sql"],
-            check=True,
-            capture_output=True,
-        )
-    ]
     v1 = compile_policy(BASE + "  shortcut : doc shared\n  can view = owner or shortcut.owner\n")
     v2 = compile_policy(BASE + "  shortcut : doc shared\n  can view = owner or shortcut.view\n")
     # beside a share that never ends nor starts later (which may become a link), one that expires, or one that starts
@@ -1566,7 +1718,7 @@ def main() -> None:
         ("expiring", "now() + interval '1 day', NULL"),
         ("starting later", "NULL, now() + interval '1 day'"),
     ):
-        reset()
+        reset(db)
         setup = (
             "INSERT INTO alt.users VALUES (1); INSERT INTO alt.docs (doc_no, owner_id) VALUES (1, 1), (2, 1), (3, 1);"
             "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation,"

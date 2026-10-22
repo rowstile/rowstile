@@ -10222,6 +10222,20 @@ class ErrorCodes(unittest.TestCase):
             used |= {a or b for a, b in re.findall(r"\[(AZ\d{3})\]|rowstile help (AZ\d{3})", src)}
         self.assertEqual(sorted(set(CODES) - used), [], "codes nothing raises (retire them in errors.py instead)")
 
+    def test_every_code_found_when_compiling_has_a_case(self) -> None:
+        """Each code the compiler gives (found when a policy or its tests are compiled) has a case in
+        tests/policy_errors.py, which asks for exactly that code, the message's words and its line; and no case asks
+        for one only a database or the command finds (its page would say where it is reported, wrongly)."""
+        import policy_errors as pe
+        from authzlib.errors import CODES
+
+        asked = {case[-1] for cases in (pe.COMPILE, pe.WHOLE, pe.TESTS, pe.INCLUDES) for case in cases}
+        compiling = {code for code, c in CODES.items() if c.when in ("compile", "tests")}
+        self.assertEqual(sorted(compiling - asked), [], "found when compiling, and no case in policy_errors.py")
+        self.assertEqual(sorted(asked - compiling), [], "asked for when compiling, but its page says otherwise")
+        applying = {code for code, c in CODES.items() if c.when == "apply"}
+        self.assertEqual(sorted({case[-1] for case in pe.APPLY} - applying), [], "asked for when applying")
+
     # raised and caught inside rowstile, or wrapping lines that carry their own code
     UNCODED = (
         "'bad'",

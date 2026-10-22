@@ -1,0 +1,43 @@
+-- answer: keys
+-- Every type keyed by text, the users too: the answers are those of the same policy keyed by numbers. Doc b is
+-- below a (ann's), e below d; bo shares c, his, with ann, and d is shared with bo.
+app role app_user
+
+type user = app.text_users (id text)
+type doc = app.text_docs (id text)
+  owner  : user = owner_id
+  parent : doc = parent_id
+  viewer : user shared
+  can share = owner or parent.share
+  can view  = share or viewer or parent.view
+
+rules app.text_docs
+  select : view
+
+test "keys that are text"
+  given ann = {INSERT INTO app.text_users VALUES ('ann') RETURNING id}
+  given bo  = {INSERT INTO app.text_users VALUES ('bo') RETURNING id}
+  given a   = {INSERT INTO app.text_docs (id, owner_id) VALUES ('a', $ann) RETURNING id}
+  given c   = {INSERT INTO app.text_docs (id, owner_id) VALUES ('c', $bo) RETURNING id}
+  given d   = {INSERT INTO app.text_docs (id) VALUES ('d') RETURNING id}
+  given b   = {INSERT INTO app.text_docs (id, parent_id) VALUES ('b', $a) RETURNING id}
+  given e   = {INSERT INTO app.text_docs (id, parent_id) VALUES ('e', $d) RETURNING id}
+  as user $bo allowed {SELECT authz.share('doc', $c, 'viewer', 'user', $ann)}
+  given {INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('doc', $d, 'viewer', 'user', $bo)}
+  user $ann can view doc $a
+  user $ann can view doc $b
+  user $ann can view doc $c
+  user $ann cannot view doc $d
+  user $ann cannot view doc $e
+  as user $ann sees 1 {SELECT WHERE ARRAY(SELECT x FROM authz.list('doc', 'view') x ORDER BY x) = '{a,b,c}'}
+  user $bo can view doc $c
+  user $bo can view doc $d
+  user $bo can view doc $e
+  user $bo cannot view doc $a
+  as user $bo sees 1 {SELECT WHERE ARRAY(SELECT x FROM authz.list('doc', 'view') x ORDER BY x) = '{c,d,e}'}
+  anyone cannot view doc $a
+  user $ann can share doc $a
+  user $ann can share doc $b
+  user $ann cannot share doc $c
+  as user $ann sees 1 {SELECT WHERE ARRAY(SELECT x FROM authz.list('doc', 'share') x ORDER BY x) = '{a,b}'}
+  as user $ann sees 1 {SELECT WHERE ARRAY(SELECT id FROM app.text_docs ORDER BY id) = '{a,b,c}'}

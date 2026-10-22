@@ -63,7 +63,7 @@ each step's output printed whole once it ends, in the order `run_tests.sh` write
 | `tests/fuzz_coverage.py` | nightly only (`nightly.yml`'s fuzz, twenty minutes; Atheris, `tests/fuzz-requirements.txt`): `fuzz_parser.py`'s rule, under a coverage-guided fuzzer over the parser and the compiler, from every policy in the repository |
 | `tests/conditions_test.py` | every run (3000; `--soak`: 50000, a new seed each night): conditions made up at random over columns of each kind; each one the reference evaluator reads itself (`authzlib/conditions.py`) must give Postgres's answer on every row, signed in as each user and as nobody |
 | `tests/moves.sh` | moves and links of folders with hundreds below them: the stored rows are shifted (rows inside the moved part left alone), loops fall back to recomputing, and the tables match a rebuild after each |
-| `tests/policy_errors.py` | policy mistakes (including included files passed as a map), each reported at compile or apply time, and awkward policies that must still work |
+| `tests/policy_errors.py` | policy mistakes (including included files passed as a map), each reported at compile or apply time with its words, its line and its code, and awkward policies that must still work |
 | `tests/keep.sh` | applying keeps the inheritance tables whose definition didn't change, and rebuilds the ones that did |
 | `tests/principals.sh` | services that sign in as themselves: principal types, their keys and JWTs, `service:*` next to `user:*`, what the audit trail records |
 | `tests/sessions.sh` | signed sessions: the app role can't choose its user by setting `authz.user_id`, widen its scopes, or reuse a sign-in in another transaction or connection |
