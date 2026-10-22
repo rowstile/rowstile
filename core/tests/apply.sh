@@ -11,10 +11,24 @@ PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
 quiet() { PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 "$@"; }
-fresh() { dropdb --if-exists "$1" 2>/dev/null; createdb "$1" || exit 1; }
+# a database of the suite's, made anew (and dropped when the suite ends)
+made=()
+fresh() { made+=("$1"); dropdb --if-exists "$1" 2>/dev/null; createdb "$1" || exit 1; }
 CLI() { python3 cli/rowstile_cli.py --db "dbname=$DB" "$@"; }
 run() { out=$(CLI "$@" 2>&1); rc=$?; }
 T=$(mktemp -d)
+. tests/races.sh
+# whatever way the suite ends: the sessions it left running, its databases, then its roles, and its files
+cleanup() {
+  local d r
+  stop_sessions
+  for d in "${made[@]}"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+  for r in authz_apply_web authz_apply_was authz_apply_bypass authz_apply_mine authz_apply_other authz_apply_owner "${DB}_plain_app"; do
+    psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1
+  done
+  rm -rf "$T"
+}
+trap cleanup EXIT
 # the end-to-end scenario, with the tests at the bottom of the policy file
 python3 compile_policy.py example/docs.authz --tests > "$T/docs_tests.sql" || exit 1
 scenario() { psql -X -q -v ON_ERROR_STOP=1 -v docs_tests="$T/docs_tests.sql" -d "$DB" -f tests/scenario.sql; }
@@ -132,13 +146,14 @@ run push "$T/docs.authz" --development --downgrade
 [ $rc -eq 0 ] && [ "$(PSQL -c "SELECT version FROM authz.policy_versions ORDER BY id DESC LIMIT 1")" = "$(python3 -c 'import authzlib; print(authzlib.BUILD)')" ] &&
   ok "... unless asked: push --downgrade" || bad "push --downgrade" "$rc $out"
 PSQL -c "DELETE FROM authz.settings WHERE key = 'development'" >/dev/null
-scenario > /tmp/authz_apply_scenario.log 2>&1
-rc=$?; n=$(grep -c 'ok  ' /tmp/authz_apply_scenario.log)
-[ $rc -eq 0 ] && ok "the end-to-end scenario passes ($n checks)" || bad "scenario" "$(grep 'FAIL\|ERROR' /tmp/authz_apply_scenario.log | head -3)"
+scenario > $T/scenario.log 2>&1
+rc=$?; n=$(grep -c 'ok  ' $T/scenario.log)
+[ $rc -eq 0 ] && ok "the end-to-end scenario passes ($n checks)" || bad "scenario" "$(grep 'FAIL\|ERROR' $T/scenario.log | head -3)"
 nshares=$(PSQL -c "SELECT count(*) FROM authz.shares")
-CLI reapply >/dev/null 2>&1; CLI reapply >/dev/null 2>&1
-[ "$(PSQL -c "SELECT count(*) FROM authz.shares")" = "$nshares" ] && [ "$(PSQL -c "SELECT authz.verify()")" = t ] &&
-  ok "applying again keeps the $nshares shares and the trees stay consistent" || bad "reapply"
+run reapply; first="$rc $out"; run reapply
+[ "$first" = "0 applied again" ] && [ "$rc $out" = "0 applied again" ] &&
+  [ "$(PSQL -c "SELECT count(*) FROM authz.shares")" = "$nshares" ] && [ "$(PSQL -c "SELECT authz.verify()")" = t ] &&
+  ok "applying again keeps the $nshares shares and the trees stay consistent" || bad "reapply" "$first, then $rc $out"
 # applying again warns of what the policy can't make safe: a foreign key that deletes or changes rows of a governed
 # table (its actions skip row-level security), and a table that lost its rules (its row-level security stays on).
 # ON UPDATE CASCADE is no warning: the docs app's files.folder_id has it, and the first apply above says nothing
@@ -262,8 +277,8 @@ psql -X -q -d postgres -c "ALTER ROLE authz_apply_web RENAME TO authz_apply_was"
 psql -X -q -d postgres -c "ALTER ROLE authz_apply_was RENAME TO authz_apply_web" >/dev/null
 run apply "$T/docs.authz"; [ $rc -eq 0 ] || bad "applying for app_user again" "$out"
 psql -X -q -d postgres -c "DROP ROLE authz_apply_web" >/dev/null || bad "dropping the role the policy named for a while"
-psql -X -q -d "$DB" -c "BEGIN" -c "LOCK app.files IN ACCESS SHARE MODE" -c "SELECT pg_sleep(20)" -c "COMMIT" >/dev/null 2>&1 &
-sleep 1; t=$SECONDS
+PGAPPNAME=authz_apply_holder psql -X -q -d "$DB" -c "BEGIN" -c "LOCK app.files IN ACCESS SHARE MODE" -c "SELECT pg_sleep(20)" -c "COMMIT" >/dev/null 2>&1 &
+waits_on authz_apply_holder PgSleep; t=$SECONDS
 run apply "$T/docs.authz" --force
 # (the holder outlasts apply's 10 s; once apply has given up, it lets go)
 PSQL -c "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE datname = '$DB' AND query = 'SELECT pg_sleep(20)'" >/dev/null
@@ -300,7 +315,7 @@ dropdb "$TDB"
 # grant first. A switch refused while the tests run would pass a check that a statement is refused, unrun
 N=${DB}_plain; R=${DB}_plain_app
 dropdb --if-exists "$N" 2>/dev/null; psql -X -q -d postgres -c "DROP ROLE IF EXISTS $R" >/dev/null 2>&1
-createdb "$N" || exit 1
+made+=("$N"); createdb "$N" || exit 1
 PGOPTIONS="-c createrole_self_grant= -c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$N" \
   -c "CREATE ROLE $R" -c "CREATE SCHEMA app" -c "CREATE TABLE app.users (id bigint PRIMARY KEY)" \
   -c "CREATE TABLE app.notes (id bigint PRIMARY KEY, owner_id bigint NOT NULL REFERENCES app.users)" \
@@ -357,27 +372,31 @@ case "$out" in "policy line 63: the condition {confidentail} doesn't run: column
 echo "-- who may apply"
 PSQL -c "DROP ROLE IF EXISTS authz_apply_other" -c "CREATE ROLE authz_apply_other LOGIN" -c "GRANT CREATE ON DATABASE $DB TO authz_apply_other" \
      -c "GRANT USAGE, CREATE ON SCHEMA authz TO authz_apply_other" >/dev/null
-out=$(python3 cli/rowstile_cli.py --db "dbname=$DB user=authz_apply_other" apply example/docs.authz --force 2>&1)
-case "$out" in *"must be owner"*|*"permission denied"*) ok "a role that doesn't own the tables can't apply: Postgres refuses";; *) bad "non-owner apply" "$out";; esac
+out=$(python3 cli/rowstile_cli.py --db "dbname=$DB user=authz_apply_other" apply example/docs.authz --force 2>&1); rc=$?
+[ "$out" = "permission denied for table policy_versions" ] && [ $rc -eq 1 ] &&
+  ok "a role that doesn't own the tables can't apply: Postgres refuses" || bad "non-owner apply" "$rc $out"
 [ "$(PSQL -c "SELECT authz.verify()")" = t ] && ok "... and nothing changed" || bad "state after refused apply"
-out=$(PSQL -c "SET ROLE app_user" -c "SELECT count(*) FROM authz.policy_versions" 2>&1)
-case "$out" in *"permission denied"*) ok "the app role can't read or change the stored policies";; *) bad "policy_versions access" "$out";; esac
+out=$(for q in "SELECT count(*) FROM authz.policy_versions" "INSERT INTO authz.policy_versions DEFAULT VALUES" \
+           "UPDATE authz.policy_versions SET version = version" "DELETE FROM authz.policy_versions"; do
+       psql -X -q -At -d "$DB" -c "SET ROLE app_user" -c "$q" 2>&1; done | sort | uniq -c | sed 's/^ *//')
+[ "$out" = "4 ERROR:  permission denied for table policy_versions" ] && ok "the app role can't read or change the stored policies" ||
+  bad "policy_versions access" "$out"
 PSQL -c "REVOKE ALL ON SCHEMA authz FROM authz_apply_other" -c "REVOKE ALL ON DATABASE $DB FROM authz_apply_other" -c "DROP ROLE authz_apply_other" >/dev/null
 
 echo "-- backup and restore"
-access "$DB" > /tmp/authz_apply_access_before
+access "$DB" > $T/access_before
 counts="SELECT (SELECT count(*) FROM authz.shares), (SELECT count(*) FROM authz.audit), (SELECT count(*) FROM authz.policy_versions), (SELECT count(*) FROM authz.changes)"
 orig=$(PSQL -c "$counts")
-pg_dump -Fc -f /tmp/authz_apply.dump "$DB" || bad "pg_dump"
+pg_dump -Fc -f $T/apply.dump "$DB" || bad "pg_dump"
 fresh "${DB}_restored"
-out=$(pg_restore --exit-on-error -d "${DB}_restored" /tmp/authz_apply.dump 2>&1); [ -z "$out" ] && ok "pg_restore runs without errors" || bad "pg_restore" "$out"
+out=$(pg_restore --exit-on-error -d "${DB}_restored" $T/apply.dump 2>&1); [ -z "$out" ] && ok "pg_restore runs without errors" || bad "pg_restore" "$out"
 [ "$(psql -X -At -d "${DB}_restored" -c "$counts")" = "$orig" ] &&
   ok "shares, audit trail, policy history and change feed are all restored ($orig)" || bad "restored rows" "$(psql -X -At -d "${DB}_restored" -c "$counts") vs $orig"
 [ "$(psql -X -At -d "${DB}_restored" -c "SELECT authz.verify()")" = t ] && ok "the restored inheritance tables match a rebuild" || bad "verify after restore"
-access "${DB}_restored" > /tmp/authz_apply_access_after
-cmp -s /tmp/authz_apply_access_before /tmp/authz_apply_access_after &&
-  ok "every user sees the same files and folders after the restore ($(wc -l < /tmp/authz_apply_access_after) users)" ||
-  bad "access differs after restore" "$(diff /tmp/authz_apply_access_before /tmp/authz_apply_access_after | head -4)"
+access "${DB}_restored" > $T/access_after
+cmp -s $T/access_before $T/access_after &&
+  ok "every user sees the same files and folders after the restore ($(wc -l < $T/access_after) users)" ||
+  bad "access differs after restore" "$(diff $T/access_before $T/access_after | head -4)"
 [ "$(psql -X -At -d "${DB}_restored" -c "SELECT nextval('authz.audit_id_seq') > (SELECT max(id) FROM authz.audit) AND nextval('authz.policy_versions_id_seq') > (SELECT max(id) FROM authz.policy_versions)")" = t ] &&
   ok "sequences carry on after the restore" || bad "sequences restart"
 out=$(python3 cli/rowstile_cli.py --db "dbname=${DB}_restored" reapply 2>&1 && psql -X -At -d "${DB}_restored" -c "SELECT authz.verify()")
@@ -436,9 +455,9 @@ echo "-- the second policy: masks, UUIDs, caveats"
 fresh "$DB"
 quiet -d "$DB" -f tests/multi_schema.sql >/dev/null || exit 1
 run apply tests/multi.authz; case "$out" in *"tests/multi.authz: applied") ok "rowstile apply multi.authz";; *) bad "apply multi" "$out";; esac
-psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f tests/multi_scenario.sql > /tmp/authz_apply_multi.log 2>&1
-rc=$?; n=$(grep -c 'ok  ' /tmp/authz_apply_multi.log)
-[ $rc -eq 0 ] && ok "its scenario passes ($n checks)" || bad "multi scenario" "$(grep 'FAIL\|ERROR' /tmp/authz_apply_multi.log | head -3)"
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f tests/multi_scenario.sql > $T/multi.log 2>&1
+rc=$?; n=$(grep -c 'ok  ' $T/multi.log)
+[ $rc -eq 0 ] && ok "its scenario passes ($n checks)" || bad "multi scenario" "$(grep 'FAIL\|ERROR' $T/multi.log | head -3)"
 [ "$(PSQL -c "SELECT has_column_privilege('app_user', 'mt.docs', 'body', 'SELECT')")" = f ] && ok "the masked column isn't readable from the table" || bad "mask"
 # a share to user:* names no row ('*' is every signed-in user): applying again must not sweep it away
 PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id)
@@ -686,9 +705,9 @@ out=$(OWNER "$DB" apply example/docs.authz 2>&1); rc=$?
 case "$out" in *"example/docs.authz: applied"*) [ $rc -eq 0 ] && ok "the owner applies the policy, with no superuser" || bad "owner apply exit" "$rc";; *) bad "owner apply" "$out";; esac
 [ "$(PSQL -c "SELECT authz.verify()")" = t ] && [ "$(PSQL -c "SELECT nspowner::regrole FROM pg_namespace WHERE nspname = 'authz_int'")" = authz_apply_owner ] &&
   ok "... and owns what it made" || bad "owner's objects"
-scenario > /tmp/authz_apply_owner.log 2>&1
-rc=$?; n=$(grep -c 'ok  ' /tmp/authz_apply_owner.log)
-[ $rc -eq 0 ] && ok "the end-to-end scenario passes on it ($n checks)" || bad "owner scenario" "$(grep 'FAIL\|ERROR' /tmp/authz_apply_owner.log | head -3)"
+scenario > $T/owner.log 2>&1
+rc=$?; n=$(grep -c 'ok  ' $T/owner.log)
+[ $rc -eq 0 ] && ok "the end-to-end scenario passes on it ($n checks)" || bad "owner scenario" "$(grep 'FAIL\|ERROR' $T/owner.log | head -3)"
 dropdb "$DB"
 owned "$TDB"
 OWNER "$TDB" apply example/docs.authz >/dev/null 2>&1
@@ -753,7 +772,7 @@ quiet -d "$CDB" -c "CREATE FUNCTION app.\"Member\"(p bigint) RETURNS boolean LAN
 for call in 'app."Member"(this.id)' '"app"."Member"(this.id)' 'app . "Member" /* c */ (this.id)' '=!= this.id'; do
   sed "s|{exists .*}|{$call}|" "$T/members.authz" > "$T/members_fn.authz"
   out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/members_fn.authz" 2>&1)
-  [ "$(seen)" = "10,12" ] && ok "... and a function it calls by a quoted name or as an operator: {$call}" ||
+  [ "$out" = "$T/members_fn.authz: applied" ] && [ "$(seen)" = "10,12" ] && ok "... and a function it calls by a quoted name or as an operator: {$call}" ||
     bad "a quoted function's rights" "{$call}: select $(seen): $out"
 done
 dropdb "$CDB"
@@ -820,7 +839,7 @@ for policy in teams teams_shared; do
   out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/$policy.authz" 2>&1)
   before="$(sees 902)"
   quiet -d "$CDB" -c "UPDATE app.teams SET name = 'disbanded' WHERE id = 911" >/dev/null
-  [ "$before" = 9100 ] && [ "$(sees 902)" = "" ] && [ "$(sees 901)" = 9100 ] &&
+  [ "$out" = "$T/$policy.authz: applied" ] && [ "$before" = 9100 ] && [ "$(sees 902)" = "" ] && [ "$(sees 901)" = 9100 ] &&
     ok "$policy.authz: a member of a disbanded sub-team no longer sees what the team above it may; its own members still do" ||
     bad "$policy.authz: a disbanded sub-team" "user 902 saw '$before', then '$(sees 902)'; user 901 '$(sees 901)': $out"
 done

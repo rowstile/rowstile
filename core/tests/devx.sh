@@ -10,7 +10,12 @@ fails=0
 PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
-CLI() { python3 cli/rowstile_cli.py --db "dbname=$DB" "$@"; }
+# the command on the database; one that applies makes rowstile's functions anew, and Postgres's counts of their calls
+# go with the old ones, so while the run measures what the suites run they are kept first (tests/coverage_functions.sh)
+CLI() {
+  case "$1" in apply|push|reapply|remove) bash tests/coverage_functions.sh "$DB";; esac
+  python3 cli/rowstile_cli.py --db "dbname=$DB" "$@"
+}
 run() { out=$(CLI "$@" 2>&1); rc=$?; }
 # a statement as the app role, signed in as user $1: its error (message and detail), or 'ok'
 as() { psql -X -q -At -d "$DB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "SET authz.user_id = '$1'" -c "$2" 2>&1; }
@@ -18,10 +23,22 @@ as() { psql -X -q -At -d "$DB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "S
 # policy's own test section
 rows() { python3 tests/test_rows.py "dbname=$DB" "$@" | awk -F'\t' '$1 != "test section"'; }
 
+T=$(mktemp -d)
+. tests/races.sh
+# whatever way the suite ends: the programs it started that still run (rowstile dev, and what a check holds), its
+# databases, its role and its files
+cleanup() {
+  stop_sessions
+  if [ -z "${KEEP:-}" ]; then
+    for d in "$DB" "${DB}_names" "${DB}_ext" "${DB}_apps" "${DB}_plain"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+    psql -X -q -d postgres -c "DROP ROLE IF EXISTS authz_devx_other" >/dev/null 2>&1
+  fi
+  rm -rf "$T"
+}
+trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null || exit 1
 run apply example/docs.authz; [ "$out" = "example/docs.authz: applied" ] || { bad "apply" "$out"; exit 1; }
-T=$(mktemp -d)
 
 echo "-- named tests: their own data, rolled back"
 before=$(PSQL -c "SELECT (SELECT count(*) FROM app.users) || '/' || (SELECT count(*) FROM app.files)")
@@ -216,9 +233,6 @@ case "$out" in "no   insert : parent.edit and owner  (line "*")|  no   parent.ed
   *) bad "explain an insert at the top" "$out";; esac
 
 echo "-- an update after rule: what the row after the change answers to"
-# (applying makes rowstile's functions anew, and Postgres's counts of their calls go with the old ones: while the
-# run measures what the suites run, they are kept first, here and before the next apply; tests/coverage_functions.sh)
-bash tests/coverage_functions.sh "$DB"
 # a file's sharers update it, and after the change they must still edit it (not share it)
 sed 's/^  update                            : edit$/  update                            : share\n  update after                      : edit/' \
   example/docs.authz > "$T/after.authz"
@@ -252,11 +266,9 @@ out=$(as 2 "UPDATE app.files SET folder_id = 2 WHERE id = 11")
 case "$out" in *"42501: permission denied: user 2 may not update this row of app.files to these values"*"DETAIL:  no   update : edit  (line "*")"$'\n'"  no   edit"$'\n'"HINT:  the update rule must hold on the row after the change too"*)
   ok "the update rule refusing the row after the change: its reasons are that row's, none read from the row as stored";;
   *) bad "the update rule refusing the row after the change" "$out";; esac
-bash tests/coverage_functions.sh "$DB"
 CLI apply example/docs.authz >/dev/null 2>&1
 
 echo "-- the wheres an explanation reads: the type's, a link table's"
-bash tests/coverage_functions.sh "$DB"
 # body is NULL in every file, so the file type's where is neither true nor false; Design docs (4) is linked into
 # Handbook (live), Secrets (live NULL) and Globex (not live), and Joint project into Company (live)
 PSQL -c "ALTER TABLE app.folder_links ADD COLUMN live boolean" -c "UPDATE app.folder_links SET live = true" \
@@ -275,13 +287,12 @@ out=$(as 2 "WITH e AS (SELECT l, n FROM unnest(authz.explain_rule('app.folders',
   SELECT string_agg(l, '|' ORDER BY n) FROM e WHERE n > (SELECT n FROM e WHERE l = '  no   linked_into.edit')")
 [ "$out" = "    no   you have no access to folder 2" ] && ok "a missing rel.perm is explained on what the row's link rows point at, where the link table's where holds" ||
   bad "explain linked_into.edit" "$out"
-bash tests/coverage_functions.sh "$DB"
 CLI apply example/docs.authz >/dev/null 2>&1
 PSQL -c "DELETE FROM app.folder_links WHERE folder_id = 4" -c "ALTER TABLE app.folder_links DROP COLUMN live" >/dev/null
 
 echo "-- authz.who_among"
 out=$(as '' "SELECT string_agg(x, ',' ORDER BY x) FROM authz.who_among('file', 11, 'view', ARRAY['1','2','3','4','5','6','7']) x")
-[ -n "$out" ] && ok "who of these may view file 11: $out" || bad "who_among" "$out"
+[ "$out" = 1,2,5,7 ] && ok "who of these may view file 11: $out" || bad "who_among" "$out"
 want=$(for u in 1 2 3 4 5 6 7; do [ "$(as $u "SELECT authz.can('file', 11, 'view')")" = t ] && printf '%s,' $u; done)
 [ "$out," = "$want" ] && ok "... the same as asking authz.can as each of them" || bad "who_among vs can" "$out vs $want"
 out=$(as 4 "SELECT count(*) FROM authz.who_among('file', 11, 'view', ARRAY['1']); SELECT current_setting('authz.user_id')" | tail -n 1)
@@ -289,7 +300,7 @@ out=$(as 4 "SELECT count(*) FROM authz.who_among('file', 11, 'view', ARRAY['1'])
 PSQL -c "DROP ROLE IF EXISTS authz_devx_other" -c "CREATE ROLE authz_devx_other" -c "GRANT USAGE ON SCHEMA authz TO authz_devx_other" \
      -c "GRANT EXECUTE ON FUNCTION authz.who_among(text, text, text, text[], text) TO authz_devx_other" >/dev/null
 out=$(PSQL -c "SET ROLE authz_devx_other" -c "SELECT authz.who_among('file', '11', 'view', ARRAY['1'])" 2>&1)
-case "$out" in *"permission denied"*) ok "a role that may not sign people in may not use it";; *) bad "who_among needs SET" "$out";; esac
+case "$out" in "ERROR:  permission denied for function act_as"*) ok "a role that may not sign people in may not use it";; *) bad "who_among needs SET" "$out";; esac
 
 echo "-- applying, and what it warns about"
 { cat example/docs.authz; printf '%s\n' 'rules app.teams' '  select : {exists (select 1 from app.files f where f.owner_id = authz.uid())}'; } > "$T/trap.authz"
@@ -567,7 +578,8 @@ out=$(cd "$T/a" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_apps
 case "$out" in *": applied") ok "... and applies";; *) bad "draft apps apply" "$out";; esac
 out=$(cd "$T/a" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_apps" lint 2>&1)
 case "$out" in *"name others more than once"*) bad "draft apps: lint warns of views written out again" "$out";;
-  *) ok "... and lint finds no permission named again and again";; esac
+  "authz.lint(): nothing found"|"severity  "*) ok "... and lint finds no permission named again and again";;
+  *) bad "draft apps: lint" "$out";; esac
 # round the loop as the org's owner: the domain, its address, the settings that use it, and the org
 psql -X -q -d "${DB}_apps" -c "INSERT INTO lo.users (id) VALUES (1), (2);
   INSERT INTO lo.orgs (id, owner_id) VALUES (1, 1); INSERT INTO lo.domains (id, org_id) VALUES (1, 1);
@@ -656,16 +668,50 @@ case "$out" in *Traceback*) bad "dev on an expression nested too deep gives a tr
   *"  x    "*"deep.authz: an expression in the policy is nested too deep to read"*"nothing applied"*)
     [ $rc -eq 1 ] && ok "... of an expression nested too deep to read: said, nothing applied, exit 1" || bad "dev on deep nesting: exit" "$rc";;
   *) bad "dev on deep nesting" "$out";; esac
+# rowstile dev left running, in the background: started with job control on (a background job otherwise ignores
+# Ctrl-C), and with Python's fault handler, so that SIGABRT writes where each of its threads is into its log
+# before it ends. Waits on it are bounded: a dev that stops answering is said, with where it was, and ended.
+# whether the process $1 is still one this suite started, running: its parent is this shell, and it hasn't ended
+# (a process id that has ended may be another program's by now, a server process's too: never signalled)
+ours() { local st; st=$(sed 's/^.*) //' "/proc/$1/stat" 2>/dev/null) || return 1; set -- $st; [ "$1" != Z ] && [ "$2" = "$$" ]; }
+# $1 dev's process, $2 its log, $3 what was waited for: says so, with its state and its sessions, and ends it,
+# its Python stack written into its log first
+hung() {
+  echo "(rowstile dev, process $1: $3; its state: $(grep '^State:' "/proc/$1/status" 2>/dev/null | cut -f2 || echo gone);" \
+    "its sessions: $(PSQL -c "SELECT coalesce(string_agg(state || ' ' || coalesce(wait_event_type || ':' || wait_event, '-')
+       || ' ' || left(query, 80), '; '), 'none') FROM pg_stat_activity WHERE datname = '$DB' AND application_name = 'rowstile'" 2>&1);" \
+    "where it was: below in its log $2)"
+  ours "$1" && kill -ABRT "$1" 2>/dev/null
+  for _ in $(seq 20); do ours "$1" || break; sleep 0.25; done
+  ours "$1" && kill -KILL "$1" 2>/dev/null
+}
+# $1 dev's process, $2 its log, $3 seconds: its exit status once it ends, within that time; else hung
+ends() {
+  local _
+  for _ in $(seq $(($3 * 4))); do ours "$1" || break; sleep 0.25; done
+  ours "$1" && hung "$1" "$2" "still running $3 seconds on"
+  wait "$1"
+}
+# Ctrl-C to dev ($1, its log $2), and its exit status once it has ended (half a minute at most)
+ctrl_c() { ours "$1" && kill -INT "$1" 2>/dev/null; ends "$1" "$2" 30; }
 # the loop itself, left running: each save of the policy or of a test file runs it again, a mistake stops it
-# before applying, the migration is written once the saves stop, and Ctrl-C ends it, exit 0 (with job control
-# on: a background job otherwise ignores Ctrl-C)
+# before applying, the migration is written once the saves stop, and Ctrl-C ends it, exit 0
 printf '[migrations]\ntool = "sql"\ndir = "migrations"\nwrite_after = 1\n' >> "$T/p/rowstile.toml"
 set -m
-( cd "$T/p" && exec python3 "$OLDPWD/cli/rowstile_cli.py" dev --no-studio ) > "$T/watch.log" 2>&1 &
+( cd "$T/p" && PYTHONFAULTHANDLER=1 exec python3 "$OLDPWD/cli/rowstile_cli.py" dev --no-studio ) > "$T/watch.log" 2>&1 &
 watcher=$!
 set +m
-# waits (a minute at most) until the loop has said something, or said it n times
-seen() { for _ in $(seq 120); do [ "$(grep -c -- "$1" "$T/watch.log")" -ge "${2:-1}" ] && return 0; sleep 0.5; done; return 1; }
+# waits (a minute at most) until the loop has said something, or said it n times; once it has waited a minute in
+# vain, dev is ended (hung) and every later wait fails at once
+quiet=
+seen() {
+  local _
+  [ -z "$quiet" ] || return 1
+  for _ in $(seq 240); do [ "$(grep -c -- "$1" "$T/watch.log")" -ge "${2:-1}" ] && return 0; sleep 0.25; done
+  quiet="it said nothing new for a minute, waiting for '$1' (${2:-1} times)"
+  hung "$watcher" "$T/watch.log" "$quiet"
+  return 1
+}
 passes() { grep -c "check(s) pass" "$T/watch.log"; }
 # saves a mistake: the loop drops the migration it was about to write, so once it says it applied nothing, none is
 # being written, and a check may change the files one writes
@@ -715,7 +761,7 @@ if seen "watching 2 file(s)" && seen "check(s) pass"; then
     ok "... says it lost the database when the server ends its session, and connects again on the next save" || bad "dev losing the database" "$(cat "$T/watch.log")"
   # ... and when it ends it in the middle of a push (here while it waits on another apply, which holds the lock
   # apply and push take)
-  ( PSQL -c "SELECT pg_advisory_lock(1919905638, 0)" -c "SELECT pg_sleep(4)" >/dev/null 2>&1 ) &
+  ( PSQL -c "SET lock_timeout = '60s'" -c "SELECT pg_advisory_lock(1919905638, 0)" -c "SELECT pg_sleep(4)" >/dev/null 2>&1 ) &
   locker=$!
   for _ in $(seq 40); do [ "$(PSQL -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1919905638 AND objid = 0 AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())")" = 1 ] && break; sleep 0.25; done
   n=$(passes); sed -i 's/^  can share = owner or folder.share$/&\n  can comment = view/' "$T/p/policy.authz"
@@ -727,8 +773,8 @@ if seen "watching 2 file(s)" && seen "check(s) pass"; then
 else
   bad "dev didn't start watching" "$(cat "$T/watch.log")"
 fi
-kill -INT "$watcher" 2>/dev/null; wait "$watcher"; rc=$?
-[ $rc -eq 0 ] && ok "... and Ctrl-C ends it, exit 0" || bad "dev Ctrl-C" "$rc $(tail -n 3 "$T/watch.log")"
+ctrl_c "$watcher" "$T/watch.log"; rc=$?
+[ $rc -eq 0 ] && ok "... and Ctrl-C ends it, exit 0" || bad "dev Ctrl-C" "$rc $(tail -n 30 "$T/watch.log")"
 # Studio beside the loop (without --no-studio): on the port given, able to write (this is a development database);
 # on a port another program holds it doesn't start, and the loop goes on without it
 mkdir -p "$T/s"; cp "$T/p/policy.authz" "$T/s/policy.authz"
@@ -736,10 +782,10 @@ printf 'policy = "policy.authz"\ndatabase = "dbname=%s"\n' "$DB" > "$T/s/rowstil
 # starts the loop with Studio on port $1, and waits (a minute at most) until it watches
 looping() {
   set -m
-  ( cd "$T/s" && exec python3 "$OLDPWD/cli/rowstile_cli.py" dev --studio-port "$1" ) > "$T/s.log" 2>&1 &
+  ( cd "$T/s" && PYTHONFAULTHANDLER=1 exec python3 "$OLDPWD/cli/rowstile_cli.py" dev --studio-port "$1" ) > "$T/s.log" 2>&1 &
   watcher=$!
   set +m
-  for _ in $(seq 120); do grep -q "^watching" "$T/s.log" && break; sleep 0.5; done
+    for _ in $(seq 120); do grep -q "^watching" "$T/s.log" && break; sleep 0.5; done
 }
 port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 looping "$port"
@@ -747,7 +793,7 @@ token=$(sed -n "s|^Studio on http://127.0.0.1:$port/?token=\([A-Za-z0-9_-]*\)$|\
 writes=$(python3 -c "import json, sys, urllib.request
 r = urllib.request.Request('http://127.0.0.1:$port/api/overview', headers={'X-Studio-Token': sys.argv[1]})
 print(json.load(urllib.request.urlopen(r, timeout=60))['writable'])" "$token" 2>&1)
-kill -INT "$watcher"; wait "$watcher"; rc=$?
+ctrl_c "$watcher" "$T/s.log"; rc=$?
 [ -n "$token" ] && [ "$writes" = True ] && [ $rc -eq 0 ] &&
   ok "dev starts Studio beside the loop, on the port given, able to write" || bad "dev's Studio" "$rc $writes $(cat "$T/s.log")"
 python3 -c 'import socket, sys, time
@@ -758,8 +804,8 @@ holder=$!
 for _ in $(seq 40); do [ -s "$T/held" ] && break; sleep 0.25; done
 port=$(cat "$T/held")
 looping "$port"
-kill -INT "$watcher"; wait "$watcher"; rc=$?
-kill "$holder"; wait "$holder" 2>/dev/null
+ctrl_c "$watcher" "$T/s.log"; rc=$?
+ours "$holder" && kill "$holder"; wait "$holder" 2>/dev/null
 case "$(cat "$T/s.log")" in *"Studio didn't start ("*"): rowstile dev --studio-port N for another port"*"watching 1 file(s)"*)
   [ $rc -eq 0 ] && ok "... on a port another program holds: says so and how to pick another, and the loop goes on" || bad "dev with Studio's port held: exit" "$rc";;
   *) bad "dev with Studio's port held" "$(cat "$T/s.log")";; esac
@@ -775,12 +821,12 @@ printf 'tests = ["slow.authz"]\n' >> "$T/s/rowstile.toml"
 behind() {
   local then=$1; shift
   set -m
-  ( cd "$T/s" && exec python3 "$OLDPWD/cli/rowstile_cli.py" dev --no-studio "$@" ) > "$T/s.log" 2>&1 &
+  ( cd "$T/s" && PYTHONFAULTHANDLER=1 exec python3 "$OLDPWD/cli/rowstile_cli.py" dev --no-studio "$@" ) > "$T/s.log" 2>&1 &
   pass=$!
   set +m
   pid=
   for _ in $(seq 80); do pid=$(PSQL -c "SELECT pid FROM pg_stat_activity WHERE datname = '$DB' AND application_name = 'rowstile' AND wait_event = 'PgSleep'"); [ -n "$pid" ] && break; sleep 0.25; done
-  ( PSQL -c "BEGIN" -c "LOCK TABLE authz.policy_versions" -c "SELECT pg_sleep(3)" -c "COMMIT" >/dev/null 2>&1 ) &
+  ( PSQL -c "SET lock_timeout = '60s'" -c "BEGIN" -c "LOCK TABLE authz.policy_versions" -c "SELECT pg_sleep(3)" -c "COMMIT" >/dev/null 2>&1 ) &
   locker=$!
   for _ in $(seq 80); do [ -n "$pid" ] && [ "$(PSQL -c "SELECT wait_event_type FROM pg_stat_activity WHERE pid = $pid")" = Lock ] && break; sleep 0.25; done
   [ -n "$pid" ] && $then
@@ -790,7 +836,7 @@ grows() { for _ in $(seq 120); do [ "$(grep -c -- "$1" "$T/s.log")" -ge "${2:-1}
 # the server ends the session there (with --once): said, the pass stands (exit 0), and no traceback
 terminate() { PSQL -c "SELECT pg_terminate_backend($pid)" >/dev/null; }
 behind terminate --once
-wait "$pass"; rc=$?
+ends "$pass" "$T/s.log" 60; rc=$?
 case "$(cat "$T/s.log")" in *Traceback*) bad "dev on a database lost as it looks for missing indexes gives a traceback" "$(cat "$T/s.log")";;
   *"check(s) pass"*"  x    lost the database: terminating connection due to administrator command"*) [ $rc -eq 0 ] && [ -n "$pid" ] &&
     ok "... and the database lost after the pass, as it looks for missing indexes: said, the pass stands, exit 0" ||
@@ -801,7 +847,7 @@ behind terminate
 grows "lost the database: terminating connection" && grows "^watching" && printf -- '-- saved\n' >> "$T/s/slow.authz" && grows "check(s) pass" 2 &&
   [ "$(grep -c "lost the database" "$T/s.log")" = 1 ] &&
   ok "... and watching: it goes on watching, and the next save connects again and passes" || bad "dev watching, losing the database as it looks for missing indexes" "$(cat "$T/s.log")"
-kill -INT "$pass"; wait "$pass"
+ctrl_c "$pass" "$T/s.log"
 # ... the connection closed under it without a word from the server (here by a go-between dev connects through,
 # which then closes the connections it holds, as a server that goes away or a network that drops does): the same
 python3 -c 'import os, signal, socket, sys, threading
@@ -828,17 +874,17 @@ while True:
     for a, b in ((c, u), (u, c)): threading.Thread(target=pump, args=(a, b), daemon=True).start()' "$T/between" &
 between=$!
 for _ in $(seq 40); do [ -s "$T/between" ] && break; sleep 0.25; done
-hang_up() { kill -USR1 "$between"; }
+hang_up() { ours "$between" && kill -USR1 "$between"; }
 behind hang_up --db "host=127.0.0.1 port=$(cat "$T/between") dbname=$DB"
 grows "lost the database: the server closed the connection" && grows "^watching" && printf -- '-- saved again\n' >> "$T/s/slow.authz" && grows "check(s) pass" 2 &&
   [ "$(grep -c "lost the database" "$T/s.log")" = 1 ] &&
   ok "... and when the connection closes without a word from the server: said, and the next save connects again" || bad "dev on a connection closed as it looks for missing indexes" "$(cat "$T/s.log")"
-kill -INT "$pass"; wait "$pass"
-kill "$between"; wait "$between" 2>/dev/null
+ctrl_c "$pass" "$T/s.log"
+ours "$between" && kill "$between"; wait "$between" 2>/dev/null
 # a look that doesn't go through, its session still there (its statement cancelled): nothing said, the pass stands
 cancel() { PSQL -c "SELECT pg_cancel_backend($pid)" >/dev/null; }
 behind cancel --once
-wait "$pass"; rc=$?
+ends "$pass" "$T/s.log" 60; rc=$?
 case "$(cat "$T/s.log")" in *Traceback*|*"  x    "*) bad "dev on a look for missing indexes cancelled" "$(cat "$T/s.log")";;
   *"check(s) pass"*) [ $rc -eq 0 ] && [ -n "$pid" ] && ok "... and a look cancelled, the session still there: nothing said, exit 0" ||
     bad "dev on a look for missing indexes cancelled: exit" "$rc ($pid)";;
@@ -853,7 +899,11 @@ case "$out" in *"broken.authz line 2: anyone can view file 11"*) echo "$out" | g
 run can --as user:1 file 11 edit; [ "$out" = yes ] && ok "can --as user:1" || bad "can" "$out"
 run explain --as user:6 file 11 view; case "$out" in "no   user 6 does not hold view on file 11"*) ok "explain --as";; *) bad "explain" "$out";; esac
 run sql --as user:2 "SELECT count(*) AS n FROM app.folders"; case "$out" in *"(1 row, as user:2; rolled back)"*) ok "sql --as runs as the app role";; *) bad "sql" "$out";; esac
-run sql --as user:2 "DELETE FROM app.users"; [ "$(PSQL -c "SELECT count(*) > 0 FROM app.users")" = t ] && ok "... and rolls back" || bad "sql rollback" "$out"
+# bob may delete file 11 (the app role may delete files, under the rules): deleted, then rolled back
+before=$(PSQL -c "SELECT count(*) FROM app.files")
+run sql --as user:2 "DELETE FROM app.files"
+[ "$out" = "DELETE 1, as user:2; rolled back" ] && [ "$(PSQL -c "SELECT count(*) FROM app.files")" = "$before" ] &&
+  ok "... and rolls back" || bad "sql rollback" "$out"
 run explain-rule --as user:1 app.files insert --row '{"folder_id": 6, "owner_id": 2}'
 case "$out" in "no   insert"*"no   owner"*) ok "explain-rule --as";; *) bad "explain-rule" "$out";; esac
 [ -f "$T/i/db/policy.authz" ] && [ -f "$T/i/rowstile.toml" ] && [ -f "$T/i/db/tests/first.authz" ] && grep -q "authz.act_as" "$T/init.log" &&
@@ -872,6 +922,4 @@ case "$out" in *"added   rowstile's section to AGENTS.md"*) [ "$(head -1 "$T/ag/
   ok "... and an AGENTS.md that is there keeps its text, with the section added" || bad "init AGENTS.md added" "$(cat "$T/ag/AGENTS.md")";;
   *) bad "init AGENTS.md added" "$out";; esac
 
-rm -r "$T"
-[ -z "${KEEP:-}" ] && { dropdb "$DB"; psql -X -q -d postgres -c "DROP ROLE IF EXISTS authz_devx_other" >/dev/null 2>&1; }
 if [ $fails -eq 0 ]; then echo "devx: all passed"; else echo "devx: $fails failed"; exit 1; fi

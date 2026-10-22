@@ -13,6 +13,14 @@ PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 fresh() { dropdb --if-exists "$1" 2>/dev/null; createdb "$1" || exit 1
   PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$1" -f example/app_schema.sql >/dev/null || exit 1; }
 T=$(mktemp -d)
+. tests/races.sh
+# whatever way the suite ends: the sessions it left running, its databases, its files
+cleanup() {
+  stop_sessions
+  for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8" "${DB}_9"; do dropdb --force --if-exists "$db" 2>/dev/null; done
+  rm -rf "$T"
+}
+trap cleanup EXIT
 P="$T/p"
 mkdir -p "$P/db"
 sed '/^test$/,$d' example/docs.authz > "$P/db/policy.authz"     # without its test section: the checks below change the policy
@@ -238,12 +246,15 @@ for n in 6 7 8 9; do dropdb --if-exists "${DB}_$n" 2>/dev/null; createdb --templ
 said=$(sed -n 3p "$build")
 [ "$said" = "-- builds folder__linked_into_parent__tree beside the ones in use; the next migration swaps it in" ] &&
   ok "... the first says which tree it builds beside, and that the next swaps it in" || bad "the first's summary" "$said"
-( PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "${DB}_2" -c "BEGIN" -f "$build" -c "SELECT pg_sleep(4)" -c "COMMIT" 2> "$T/build.log" >/dev/null ) &
-sleep 2
+# the build holds its transaction open (until go) while the app writes
+RACE_DB=${DB}_2 race
+PGAPPNAME=authz_migrations_build PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "${DB}_2" -c "BEGIN" -f "$build" \
+  -c "$HOLD" -c "COMMIT" 2> "$T/build.log" >/dev/null &
+RACE_DB=${DB}_2 held authz_migrations_build
 out=$(psql -X -q -At -d "${DB}_2" -c "SET lock_timeout = '1s'" -c "UPDATE app.folders SET name = name WHERE id = 4" \
           -c "INSERT INTO app.folder_links VALUES (6, 20)" 2>&1)
 [ -z "$out" ] && ok "while the first one runs, the app still writes to the tables the tree follows" || bad "build blocks writers" "$out"
-wait
+RACE_DB=${DB}_2 go; wait
 [ ! -s "$T/build.log" ] && ok "... and it finishes" || bad "build" "$(cat "$T/build.log")"
 echo "$build" >> "$T/applied_${DB}_2"
 # a statement at a time (psql -f alone, which also goes on after an error): refused before anything changes, where
@@ -298,6 +309,8 @@ if [ -n "${PGSUPERUSER:-}" ]; then
     [ "$(PSQL -d "${DB}_9" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 91")" = 1 ] &&
     ok "... and a folder no trigger saw, made in the swap's own transaction: in the tree, found by its row's xmin" ||
     bad "swap with a folder no trigger saw" "$out"
+else
+  echo "skip  a folder no trigger saw: only a superuser may turn the triggers off (PGSUPERUSER)"
 fi
 # the link table emptied between the two: the swap builds the tree again from what is there (the emptying says
 # nothing of which rows went)
@@ -421,8 +434,9 @@ out=$(migrate_db "${DB}_3" "$Q/m") &&
   bad "a policy that holds the quote" "$out"
 
 echo "-- tree writes that wait while a migration adds a tree for another type"
-# The migration gives boxes a tree and never touches folders. Two folder moves that together make a loop start
-# while its transaction is open: each waits on the folders' lock row, and after it one of them must still be refused.
+# The migration gives boxes a tree and never touches folders. Two folder moves that together make a loop run while
+# its transaction is open (they don't wait for it: one waits on the folders' lock row the other holds), and one of
+# them must still be refused.
 L="${DB}_4"
 dropdb --if-exists "$L" 2>/dev/null; createdb "$L" || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$L" >/dev/null <<'SQL' || exit 1
@@ -451,7 +465,7 @@ type box = p.boxes
 POLICY
 sed 's/^  can view = owner$/  can view = owner or parent.view/' "$T/trees_old.authz" > "$T/trees_new.authz"
 python3 cli/rowstile_cli.py --db "dbname=$L" apply "$T/trees_old.authz" >/dev/null || bad "apply the two-type policy"
-python3 - "$T" <<'PY' || bad "the migration that adds a tree"
+python3 - "$T" "$HOLD" <<'PY' || bad "the migration that adds a tree"
 import sys
 sys.path.insert(0, ".")
 from authzlib import database, migrate
@@ -463,21 +477,24 @@ with open(t + "/trees_new.authz", encoding="utf-8") as fh:
 [m] = database.migrations(new, {}, migrate.lock_of(database.migratable(old, {})[1]), "box tree", two_phase=False)
 assert "INSERT INTO authz_int.locks" in m.sql and "DELETE FROM authz_int.locks" not in m.sql, "the lock rows are deleted"
 with open(t + "/trees.sql", "w", encoding="utf-8") as fh:
-    fh.write("BEGIN;\nSET client_min_messages = error;\n" + m.sql + "SELECT pg_sleep(4);\nCOMMIT;\n")
+    fh.write("BEGIN;\nSET client_min_messages = error;\n" + m.sql + sys.argv[2] + ";\nCOMMIT;\n")
 PY
-( psql -X -q -At -v ON_ERROR_STOP=1 -d "$L" -f "$T/trees.sql" > "$T/trees.log" 2>&1 ) &
-sleep 2
-( psql -X -q -At -d "$L" -c "UPDATE p.folders SET parent_id = 4 WHERE id = 1" > "$T/move_a.log" 2>&1 ) &
-( psql -X -q -At -d "$L" -c "UPDATE p.folders SET parent_id = 3 WHERE id = 2" > "$T/move_b.log" 2>&1 ) &
-wait
+# the migration holds its transaction open (until go) while both moves run
+RACE_DB=$L race
+PGAPPNAME=authz_migrations_trees psql -X -q -At -v ON_ERROR_STOP=1 -d "$L" -f "$T/trees.sql" > "$T/trees.log" 2>&1 &
+trees=$!
+RACE_DB=$L held authz_migrations_trees
+psql -X -q -At -d "$L" -c "UPDATE p.folders SET parent_id = 4 WHERE id = 1" > "$T/move_a.log" 2>&1 & move_a=$!
+psql -X -q -At -d "$L" -c "UPDATE p.folders SET parent_id = 3 WHERE id = 2" > "$T/move_b.log" 2>&1 & move_b=$!
+wait "$move_a" "$move_b"
+open=$(psql -X -q -At -d "$L" -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND application_name = 'authz_migrations_trees'")
+RACE_DB=$L go; wait "$trees"
 moves=$(cat "$T/move_a.log" "$T/move_b.log")
 loop=$(psql -X -q -At -d "$L" -c "WITH RECURSIVE up(id, n) AS (SELECT parent_id, 1 FROM p.folders WHERE id = 1 UNION ALL
   SELECT f.parent_id, n + 1 FROM p.folders f JOIN up ON f.id = up.id WHERE n < 10) SELECT coalesce(bool_or(id = 1), false) FROM up")
-case "$moves" in *"cannot be moved inside itself"*) [ "$loop" = f ] && [ "$(psql -X -q -At -d "$L" -c "SELECT authz.verify()")" = t ] &&
-  ok "two moves that waited for the migration: the one that would close a loop is still refused" || bad "moves during a migration" "loop $loop";;
+case "$moves" in *"cannot be moved inside itself"*) [ "$loop" = f ] && [ "$open" = 1 ] && [ "$(psql -X -q -At -d "$L" -c "SELECT authz.verify()")" = t ] &&
+  ok "two moves while the migration is open: the one that would close a loop is still refused" || bad "moves during a migration" "loop $loop, migration open: $open";;
   *) bad "both moves went through during a migration" "loop: $loop; $(cat "$T/trees.log" | tail -n 3)";; esac
 dropdb --if-exists "$L" 2>/dev/null
 
-rm -rf "$T"
-for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8" "${DB}_9"; do dropdb --if-exists "$db" 2>/dev/null; done
 [ $fails -eq 0 ] && echo "migrations: all passed" || { echo "migrations: $fails failed"; exit 1; }

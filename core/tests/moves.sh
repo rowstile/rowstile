@@ -7,6 +7,11 @@
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_moves}
+L=${DB}_loop
+W=$(mktemp -d)
+# whatever way the suite ends: its databases, its files
+cleanup() { for d in "$DB" "$L"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$W"; }
+trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 fails=0
 PSQL() { PGOPTIONS="-c client_min_messages=warning" psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
@@ -23,8 +28,8 @@ snapshot() { PSQL -c "DROP TABLE IF EXISTS kept" -c "CREATE TABLE kept (d bigint
 untouched() { echo "SELECT count(*) > 100 AND count(*) = count(*) FILTER (WHERE t.xmin = k.x)
                     FROM kept k JOIN $T t ON t.descendant = k.d AND t.ancestor = k.a"; }
 
-python3 compile_policy.py example/docs.authz > "/tmp/${DB}_docs.sql" || exit 1
-PSQL -f example/app_schema.sql >/dev/null 2>&1 && PSQL -f "/tmp/${DB}_docs.sql" >/dev/null 2>&1 || { echo "setup failed"; exit 1; }
+python3 compile_policy.py example/docs.authz > "$W/docs.sql" || exit 1
+PSQL -f example/app_schema.sql >/dev/null 2>&1 && PSQL -f "$W/docs.sql" >/dev/null 2>&1 || { echo "setup failed"; exit 1; }
 # five levels below each of two roots (1000 and 2000), 4 children each; links point nearer the top
 PSQL >/dev/null <<'SQL' || { echo "load failed"; exit 1; }
 SET client_min_messages = warning;
@@ -97,10 +102,9 @@ PSQL -c "UPDATE app.folder_links SET parent_id = 1000 WHERE parent_id = 2000"
 check "several links moved at once: tables match a rebuild" "SELECT authz.verify()"
 
 echo "-- 5. a loop round four tables' keys (tests/loop.authz: a tree whose name is too long, shortened to a hash)"
-L=${DB}_loop
 dropdb --if-exists "$L" 2>/dev/null; createdb "$L" || exit 1
-python3 compile_policy.py tests/loop.authz > "/tmp/${L}.sql" || exit 1
-PGOPTIONS="-c client_min_messages=warning" psql -X -q -At -v ON_ERROR_STOP=1 -d "$L" -f tests/loop_schema.sql -f "/tmp/${L}.sql" \
+python3 compile_policy.py tests/loop.authz > "$W/loop.sql" || exit 1
+PGOPTIONS="-c client_min_messages=warning" psql -X -q -At -v ON_ERROR_STOP=1 -d "$L" -f tests/loop_schema.sql -f "$W/loop.sql" \
   -c "INSERT INTO lp.users VALUES (1, 'u')" -c "INSERT INTO lp.orgs (id, owner_id) VALUES (1, 1)" \
   -c "INSERT INTO lp.settings (id) VALUES (1)" -c "INSERT INTO lp.emails (id) VALUES (1)" \
   -c "INSERT INTO lp.domains (id, org_id) VALUES (1, 1)" -c "UPDATE lp.emails SET domain_id = 1" \
@@ -111,7 +115,4 @@ got=$(psql -X -q -At -d "$L" -v VERBOSITY=verbose -c "UPDATE lp.orgs SET setting
   [ "$(psql -X -q -At -d "$L" -c "SELECT settings_id IS NULL AND authz.verify() FROM lp.orgs")" = t ] &&
   echo "ok    the write that would close the loop is refused, by its words, and the tables match a rebuild" ||
   { echo "FAIL  a loop round four tables: $got"; fails=$((fails + 1)); }
-dropdb "$L"
-
-dropdb "$DB"
 [ $fails -eq 0 ] && echo "all move checks passed" || { echo "$fails move checks failed"; exit 1; }

@@ -10,6 +10,14 @@ set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_adversarial}
 ATTACKER=authz_attacker
+T=$(mktemp -d)
+# whatever way the suite ends: its databases, its role, its files
+cleanup() {
+  for d in "$DB" "${DB}_catalog" "${DB}_composite" "${DB}_alt" "${DB}_views" "${DB}_grants"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+  psql -X -q -d postgres -c "DROP ROLE IF EXISTS $ATTACKER" >/dev/null 2>&1
+  rm -rf "$T"
+}
+trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 fails=0
 PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
@@ -26,9 +34,9 @@ expect() {   # $1 label, $2 expected output (for an error, "SQLSTATE: the messag
   if agrees "$label" "$want" "$got"; then echo "ok    $label"; else echo "FAIL  $label: expected '$want', got '$got'"; fails=$((fails + 1)); fi
 }
 
-python3 compile_policy.py example/docs.authz > /tmp/authz_adversarial.sql || exit 1
+python3 compile_policy.py example/docs.authz > $T/adversarial.sql || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null &&
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_adversarial.sql >/dev/null || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/adversarial.sql >/dev/null || exit 1
 PSQL -c "SET ROLE app_user; SET authz.user_id = 5; SELECT authz.share('folder', 1, 'viewer', 'org', 1, 'member')" >/dev/null
 psql -X -q -d postgres -c "DROP ROLE IF EXISTS $ATTACKER" -c "CREATE ROLE $ATTACKER LOGIN IN ROLE app_user" >/dev/null 2>&1
 visible=$(as -c "SELECT count(*) FROM app.files")
@@ -59,8 +67,8 @@ expect "a prepared statement follows the signed-in user" "$erin" \
   -c "EXECUTE q" -c "$(sign 5)" -c "EXECUTE q"
 expect "...and signed out, nothing" "0" -c "PREPARE q AS SELECT count(*) FROM app.files" -c "EXECUTE q" -c "$(sign '')" \
   -c "EXECUTE q"
-got=$(bare -c "BEGIN" -c "$(sign 5)" -c "COMMIT" -c "SELECT count(*) FROM app.files")
-[ "$got" = "ERROR:  28000" ] && echo "ok    a transaction's sign-in ends with it: after it, nobody is signed in (an error, not rows)" ||
+got=$(error_of "$(psql -X -q -At -U "$ATTACKER" -d "$DB" -v VERBOSITY=verbose -c "BEGIN" -c "$(sign 5)" -c "COMMIT" -c "SELECT count(*) FROM app.files" 2>&1)")
+[ "$got" = "28000: nobody signed in in this transaction" ] && echo "ok    a transaction's sign-in ends with it: after it, nobody is signed in (an error, not rows)" ||
   { echo "FAIL  a transaction's sign-in ends with it: got '$got'"; fails=$((fails + 1)); }
 
 echo "-- choosing another user"
@@ -104,26 +112,26 @@ catalog() {
   [ -n "$views" ] || { echo "no GRANT SELECT list in $2"; return; }
   psql -X -q -At -d "$1" -v role="$3" -v api="$api" -v views="$views" -f tests/catalog.sql 2>&1
 }
-got=$(catalog "$DB" /tmp/authz_adversarial.sql app_user)
+got=$(catalog "$DB" $T/adversarial.sql app_user)
 [ -z "$got" ] &&
   echo "ok    docs: definer functions set their search_path; the app role executes the API and reads the views its rules look up, nothing else; no grants to PUBLIC or others; none parallel safe" ||
   { echo "FAIL  the catalog: $got"; fails=$((fails + 1)); }
 for p in "multi tests/multi_schema.sql tests/multi.authz app_user" "alt tests/alt_schema.sql tests/alt.authz app_user"          "composite tests/composite_schema.sql tests/composite.authz app_user"          "patterns tests/patterns_schema.sql tests/patterns.authz cb_app"          "cross tests/cross_schema.sql tests/cross.authz app_user"; do
   set -- $p; C="${DB}_catalog"
   dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
-  python3 compile_policy.py "$3" > /tmp/authz_adversarial_catalog.sql &&
-  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" -f "$2" -f /tmp/authz_adversarial_catalog.sql >/dev/null ||
+  python3 compile_policy.py "$3" > $T/adversarial_catalog.sql &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" -f "$2" -f $T/adversarial_catalog.sql >/dev/null ||
     { echo "FAIL  applying $3"; fails=$((fails + 1)); continue; }
-  got=$(catalog "$C" /tmp/authz_adversarial_catalog.sql "$4"); dropdb "$C"
+  got=$(catalog "$C" $T/adversarial_catalog.sql "$4"); dropdb "$C"
   [ -z "$got" ] && echo "ok    ... and $1" || { echo "FAIL  the catalog of $1: $got"; fails=$((fails + 1)); }
 done
 
 echo "-- a table keyed by several columns (tests/composite.authz): the rule on a column holds there too"
 C="${DB}_composite"
 dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
-python3 compile_policy.py tests/composite.authz > /tmp/authz_adversarial_composite.sql &&
+python3 compile_policy.py tests/composite.authz > $T/adversarial_composite.sql &&
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" -f tests/composite_schema.sql \
-  -f /tmp/authz_adversarial_composite.sql -c "INSERT INTO cx.users (id) VALUES (1), (2)" -c "INSERT INTO cx.orgs VALUES (1)" \
+  -f $T/adversarial_composite.sql -c "INSERT INTO cx.users (id) VALUES (1), (2)" -c "INSERT INTO cx.orgs VALUES (1)" \
   -c "INSERT INTO cx.folders (org_id, id, owner_id) VALUES (1, 1, 1), (1, 2, 2)" >/dev/null || exit 1
 # alice owns folder (1,1), not (1,2): she may change her folder, not move it under bob's
 got=$(error_of "$(psql -X -q -At -1 -U "$ATTACKER" -d "$C" -v VERBOSITY=verbose -c "$(sign 1)" \
@@ -136,9 +144,9 @@ dropdb "$C"
 echo "-- a deny split from what a permission inherits (tests/alt.authz): sharing what feeds the part before it"
 C="${DB}_alt"
 dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
-python3 compile_policy.py tests/alt.authz > /tmp/authz_adversarial_alt.sql &&
+python3 compile_policy.py tests/alt.authz > $T/adversarial_alt.sql &&
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" -f tests/alt_schema.sql \
-  -f /tmp/authz_adversarial_alt.sql -c "INSERT INTO alt.users (id) VALUES (1), (2), (3)" \
+  -f $T/adversarial_alt.sql -c "INSERT INTO alt.users (id) VALUES (1), (2), (3)" \
   -c "INSERT INTO alt.docs (doc_no, owner_id) VALUES (1, 1)" >/dev/null || exit 1
 # user 1 owns doc 1: she may share it (share = owner) and view it. view is (owner or reader ...) and not hidden,
 # so sharing reader gives view, and needs it
@@ -159,7 +167,7 @@ dropdb "$C"
 echo "-- what the rules read, the app role can't: a deny, a permission made of a condition, links, shares, a tree"
 C="${DB}_views"
 dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
-cat > /tmp/authz_adversarial_views.authz <<'POLICY'
+cat > $T/adversarial_views.authz <<'POLICY'
 app role app_user
 type user = av.users
 type team = av.teams
@@ -195,7 +203,7 @@ rules av.files
   update : edit or viewer
   delete : edit
 POLICY
-python3 compile_policy.py /tmp/authz_adversarial_views.authz > /tmp/authz_adversarial_views.sql &&
+python3 compile_policy.py $T/adversarial_views.authz > $T/adversarial_views.sql &&
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" \
   -c "CREATE SCHEMA av" -c "CREATE TABLE av.users (id bigint PRIMARY KEY)" -c "CREATE TABLE av.teams (id bigint PRIMARY KEY)" \
   -c "CREATE TABLE av.team_members (team_id bigint, user_id bigint)" \
@@ -207,7 +215,7 @@ PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" \
   -c "CREATE TABLE av.blocklist (word text PRIMARY KEY)" \
   -c "GRANT USAGE ON SCHEMA av TO app_user" -c "GRANT SELECT, INSERT, UPDATE, DELETE ON av.folders, av.files TO app_user" \
   -c "GRANT SELECT ON av.users, av.teams, av.team_members, av.folder_links TO app_user" \
-  -f /tmp/authz_adversarial_views.sql -c "INSERT INTO av.users VALUES (1), (2), (3)" \
+  -f $T/adversarial_views.sql -c "INSERT INTO av.users VALUES (1), (2), (3)" \
   -c "INSERT INTO av.teams VALUES (1)" -c "INSERT INTO av.team_members VALUES (1, 3)" \
   -c "INSERT INTO av.folders VALUES (1, NULL, 1, false, false), (2, 1, NULL, true, false), (3, NULL, 2, true, false),
         (4, 2, NULL, false, false), (5, NULL, 2, false, true), (6, 5, NULL, false, false), (7, NULL, 2, false, false),
@@ -239,7 +247,7 @@ check_views "what the permission inherits before the deny, which lists the hidde
   "42501: permission denied for schema authz_int" -c "SELECT count(*) FROM authz_int.\"folder__view__base\""
 check_views "the functions the rules call on the hidden part: not by name" "42501: permission denied for schema authz_int" \
   -c "SELECT authz_int.\"folder__view__base__has\"(8)"
-cond_fn=$(grep -o 'authz_int\."file__check_[0-9a-f]*"' /tmp/authz_adversarial_views.sql | head -n 1)
+cond_fn=$(grep -o 'authz_int\."file__check_[0-9a-f]*"' $T/adversarial_views.sql | head -n 1)
 check_views "a condition that reads another table: not by name, for a row the caller makes up" \
   "42501: permission denied for schema authz_int" -c "SELECT $cond_fn(ROW(99, NULL, 2, 'zebra', false)::av.files)"
 # each view and function it may use, as each user: none tells apart two objects that authz.can, authz.explain and the
@@ -261,7 +269,7 @@ dropdb "$C"
 echo "-- grants the policy doesn't give, and schemas on the search path others may create in"
 C="${DB}_grants"
 CP() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$C" "$@"; }
-apply_c() { PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -v VERBOSITY=verbose -d "$C" -f /tmp/authz_adversarial.sql 2>&1 >/dev/null; }
+apply_c() { PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -v VERBOSITY=verbose -d "$C" -f $T/adversarial.sql 2>&1 >/dev/null; }
 lint_c() { CP -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = '$1'"; }
 dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
 PGOPTIONS="-c client_min_messages=error" CP -f example/app_schema.sql >/dev/null || exit 1
@@ -269,7 +277,7 @@ PGOPTIONS="-c client_min_messages=error" CP -f example/app_schema.sql >/dev/null
 CP -c "ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO app_user" -c "ALTER DEFAULT PRIVILEGES GRANT ALL ON SEQUENCES TO app_user" \
    -c "ALTER DEFAULT PRIVILEGES GRANT ALL ON FUNCTIONS TO app_user" -c "ALTER DEFAULT PRIVILEGES GRANT ALL ON SCHEMAS TO app_user" >/dev/null
 out=$(apply_c) || { echo "FAIL  applying under the owner's default privileges: $out"; fails=$((fails + 1)); }
-got=$(catalog "$C" /tmp/authz_adversarial.sql app_user)
+got=$(catalog "$C" $T/adversarial.sql app_user)
 [ -z "$got" ] && echo "ok    the owner's default privileges: apply leaves the app role only what the policy gives" ||
   { echo "FAIL  default privileges survive apply ($(echo "$got" | wc -l) lines): $(echo "$got" | head -n 3 | paste -sd';')"; fails=$((fails + 1)); }
 CP -c "ALTER DEFAULT PRIVILEGES REVOKE ALL ON TABLES FROM app_user" -c "ALTER DEFAULT PRIVILEGES REVOKE ALL ON SEQUENCES FROM app_user" \
@@ -281,7 +289,7 @@ CP -c "GRANT SELECT ON authz_int.file__folder__view, authz_int.folder__view TO a
 got="$(lint_c authz_int.file__folder__view) $(lint_c authz_int.folder__view)"
 [ "$got" = "1 0" ] && echo "ok    lint reports SELECT on a view no rule reads, not on one the rules read" ||
   { echo "FAIL  lint on SELECT granted on two views: $got (expected '1 0')"; fails=$((fails + 1)); }
-out=$(apply_c); got=$(catalog "$C" /tmp/authz_adversarial.sql app_user)
+out=$(apply_c); got=$(catalog "$C" $T/adversarial.sql app_user)
 [ -z "$got" ] && echo "ok    ... and the next apply takes it back" || { echo "FAIL  a later grant survives apply: $got $out"; fails=$((fails + 1)); }
 # a schema on the search path the app role may create in: a function there could take the place of a built-in
 # one in the functions that run as the owner
@@ -292,7 +300,7 @@ out=$(apply_c); rc=$?
 case "$out" in *AZ612*) [ $rc -ne 0 ] && echo "ok    ... and apply refuses it" || { echo "FAIL  apply went on: $out"; fails=$((fails + 1)); };;
   *) echo "FAIL  apply with CREATE on public for the app role: $out"; fails=$((fails + 1));; esac
 CP -c "REVOKE CREATE ON SCHEMA public FROM app_user" -c "CREATE SCHEMA app_ext" -c "GRANT USAGE, CREATE ON SCHEMA app_ext TO app_user" >/dev/null
-out=$(PGOPTIONS="-c client_min_messages=error -c search_path=app_ext,public" psql -X -q -v ON_ERROR_STOP=1 -d "$C" -f /tmp/authz_adversarial.sql 2>&1 >/dev/null)
+out=$(PGOPTIONS="-c client_min_messages=error -c search_path=app_ext,public" psql -X -q -v ON_ERROR_STOP=1 -d "$C" -f $T/adversarial.sql 2>&1 >/dev/null)
 case "$out" in *AZ612*) echo "ok    ... whichever schema of the applying session's path it is";;
   *) echo "FAIL  apply with app_ext on the path: $out"; fails=$((fails + 1));; esac
 out=$(apply_c) && echo "ok    ... and applies once the schema is closed or off the path" || { echo "FAIL  apply after the revoke: $out"; fails=$((fails + 1)); }
@@ -395,7 +403,7 @@ PSQL -c "CREATE TABLE app.files_old () INHERITS (app.files)" -c "GRANT SELECT, I
 # (applying makes rowstile's functions anew, and the statements the run measures go with the old ones: they are kept
 # first; tests/coverage_functions.sh)
 bash tests/coverage_functions.sh "$DB"
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_adversarial.sql >/dev/null || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/adversarial.sql >/dev/null || exit 1
 expect "reading it directly, once applied again" "0" -c "SELECT count(*) FROM app.files_old"
 expect "... changing it directly" "0" -c "WITH u AS (UPDATE app.files_old SET name = 'mine' RETURNING 1) SELECT count(*) FROM u"
 expect "... adding to it directly" "42501: new row violates row-level security policy for table \"files_old\"" -c "INSERT INTO app.files_old (id, folder_id, owner_id, name) VALUES (9002, 1, 3, 'x')"
@@ -410,6 +418,4 @@ AS=2 expect "... and can't take its ownership (the rule on the column)" "42501: 
   echo "ok    ... and lint has nothing more to say about it" || { echo "FAIL  lint after apply"; fails=$((fails + 1)); }
 
 psql -X -q -d postgres -c "DROP OWNED BY $ATTACKER" -d "$DB" >/dev/null 2>&1
-dropdb "$DB"
-psql -X -q -d postgres -c "DROP ROLE IF EXISTS $ATTACKER" >/dev/null
 [ $fails -eq 0 ] && echo "adversarial: all passed" || { echo "adversarial: $fails failed"; exit 1; }

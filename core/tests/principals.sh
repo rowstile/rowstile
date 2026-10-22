@@ -5,6 +5,19 @@
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_principals}
+MDB="${DB}_marks" IDB="${DB}_ids"
+T=$(mktemp -d)
+. tests/races.sh
+# whatever way the suite ends: the sessions it left running, its databases, its role, its files
+cleanup() {
+  stop_sessions
+  if [ -z "${KEEP:-}" ]; then
+    for d in "$DB" "$MDB" "$IDB"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+    psql -X -q -d postgres -c "DROP ROLE IF EXISTS authz_principals_other" >/dev/null 2>&1
+  fi
+  rm -rf "$T"
+}
+trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 fails=0
 PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
@@ -50,7 +63,7 @@ AS_USER="SET authz.user_id = '1'; SET authz.principal_type = '';"
 PGOPTIONS="-c client_min_messages=warning" PSQL <<'SQL' >/dev/null || exit 1
 DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN CREATE ROLE app_user NOLOGIN; END IF;
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'other_app') THEN CREATE ROLE other_app NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authz_principals_other') THEN CREATE ROLE authz_principals_other NOLOGIN; END IF;
 END $$;
 CREATE SCHEMA ps;
 CREATE TABLE ps.users (id bigint PRIMARY KEY, support_id bigint);
@@ -68,10 +81,10 @@ INSERT INTO ps.team_services VALUES (1, 8);
 INSERT INTO ps.docs VALUES (1, 1, 7, 'bot 7 keeps this'), (2, 2, NULL, 'shared with team 1'),
   (3, 2, NULL, 'shared with every service'), (4, 2, NULL, 'shared with every user'), (5, 3, NULL, 'nobody else');
 INSERT INTO ps.albums VALUES (1, 2, 'service', 7), (2, 2, 'user', 3);
-GRANT USAGE ON SCHEMA ps TO app_user, other_app;
+GRANT USAGE ON SCHEMA ps TO app_user, authz_principals_other;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA ps TO app_user;
 SQL
-cat > /tmp/authz_principals.authz <<'POLICY'
+cat > $T/principals.authz <<'POLICY'
 app role app_user
 type user = ps.users
   support : service = support_id         -- a service the policy lets view as this user
@@ -109,8 +122,8 @@ invariants
   never doc: edit and not owner
   never doc: not view             -- everyone, signed in or not, lacks view on something: broken on purpose
 POLICY
-python3 compile_policy.py /tmp/authz_principals.authz > /tmp/authz_principals.sql || exit 1
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_principals.sql >/dev/null || exit 1
+python3 compile_policy.py $T/principals.authz > $T/principals.sql || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/principals.sql >/dev/null || exit 1
 PSQL -c "SET authz.user_id = '2'" -c "SELECT authz.share('doc', 2, 'reader', 'team', 1, 'member')" \
      -c "SELECT authz.share('doc', 3, 'reader', 'service', '*')" -c "SELECT authz.share('doc', 4, 'reader', 'user', '*')" >/dev/null
 
@@ -151,7 +164,7 @@ got=$(PSQL -c "SET ROLE app_user; SET client_min_messages = log; SET authz_debug
   echo "ok    the decision log names it as the audit trail does, not as user 7" ||
   { echo "FAIL  the decision log names a service: $got"; fails=$((fails + 1)); }
 check "authz.who lists users" "1,3" "RESET ROLE; SELECT string_agg(x, ',' ORDER BY x) FROM authz.who('doc', 1, 'view') x;"
-expect_code "a role the policy doesn't govern can't sign in as a service" "42501: permission denied for schema authz" -c "RESET ROLE" -c "SET ROLE other_app" \
+expect_code "a role the policy doesn't govern can't sign in as a service" "42501: permission denied for schema authz" -c "RESET ROLE" -c "SET ROLE authz_principals_other" \
   -c "SELECT authz.act_as('service', '7')"
 
 check "invariants are asked as each service too, named as the audit trail names it" "service:7|{1}"   "RESET ROLE; SELECT string_agg(user_id || '|' || object_ids::text, ' ') FROM authz.check_invariants() WHERE invariant LIKE 'never doc: edit and not owner%';"
@@ -175,7 +188,7 @@ check "the owner holds it, and may" "1" "$AS_USER SELECT authz.share('doc', 1, '
 got=$(psql -X -q -At -d "$DB" -c "SET ROLE app_user" -c "SET authz.user_id = '3'" -c "SELECT authz.share('doc', 1, 'reader', 'user', 2)" 2>&1)
 case "$got" in *"you cannot share doc 1 (needs share)"*) echo "ok    ... and may not share reader, which another permission shares";;
   *) echo "FAIL  sharing a relation by the permission that shares another: $got"; fails=$((fails + 1));; esac
-got=$(psql -X -q -At -d "$DB" -f <(python3 compile_policy.py /tmp/authz_principals.authz --tests) 2>&1)
+got=$(psql -X -q -At -d "$DB" -f <(python3 compile_policy.py $T/principals.authz --tests) 2>&1)
 case "$got" in *"FAIL  invariant never doc: edit and not owner"*": service 7 can reach {1}"*) echo "ok    ... and the policy tests say which service";;
   *) echo "FAIL  the policy tests on a service breaking an invariant: $got"; fails=$((fails + 1));; esac
 
@@ -321,29 +334,36 @@ expect_code "a new user with the old one's id signs in with none of its keys" "2
 expect_code "... nor a new service with a deleted one's id" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$K97')"
 expect_code "... nor one with the id another left" "28000: invalid API key" -c "BEGIN" -c "SELECT authz.login_key('$K96')"
 # a key made while its principal is deleted: it waits for the delete, then there is no one to make it for
-psql -X -q -d "$DB" -c "BEGIN" -c "DELETE FROM ps.users WHERE id = 94" -c "SELECT pg_sleep(1.5)" -c "COMMIT" >/dev/null 2>&1 &
-sleep 0.5
-expect_code "a key made while its user is deleted waits for the delete, then is refused" \
-  "42501: sign in to create an API key" -c "SET authz.user_id = '94'" -c "SELECT authz.create_api_key('late')"
-wait
+race
+PGAPPNAME=authz_principals_a psql -X -q -d "$DB" -c "BEGIN" -c "DELETE FROM ps.users WHERE id = 94" -c "$HOLD" -c "COMMIT" >/dev/null 2>&1 &
+held authz_principals_a
+PGAPPNAME=authz_principals_b psql -X -q -At -d "$DB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "SET authz.user_id = '94'" \
+  -c "SELECT authz.create_api_key('late')" > "$T/late.out" 2>&1 &
+blocked authz_principals_b
+go; wait
+got=$(error_of "$(cat "$T/late.out")")
+if agrees "a key made while its user is deleted" "42501: sign in to create an API key" "$got"; then
+  echo "ok    a key made while its user is deleted waits for the delete, then is refused"
+else echo "FAIL  a key made while its user is deleted: expected 42501: sign in to create an API key, got $got"; fails=$((fails + 1)); fi
 check "... and no key is left behind" "0" "$(keys user 94)"
 # REPEATABLE READ: a delete whose snapshot is older than a key made for the row fails to serialize
-psql -X -q -d "$DB" > /tmp/authz_principals_rr.out 2>&1 <<'SQL' &
+race
+PGAPPNAME=authz_principals_a psql -X -q -d "$DB" > $T/principals_rr.out 2>&1 <<SQL &
 BEGIN ISOLATION LEVEL REPEATABLE READ;
 SELECT count(*) FROM ps.teams;
-SELECT pg_sleep(1.5);
+$HOLD;
 DELETE FROM ps.services WHERE id = 93;
 COMMIT;
 SQL
-sleep 0.5
+held authz_principals_a
 state -c "$AS_USER" -c "SELECT left(authz.create_api_key('deploy', '', NULL, 'service', '93'), 3)" >/dev/null
-wait
-if grep -q "could not serialize access due to concurrent update" /tmp/authz_principals_rr.out; then
+go; wait
+if grep -q "could not serialize access due to concurrent update" $T/principals_rr.out; then
   echo "ok    a delete with an older snapshot than a key made for the service gets a serialization error"
-else echo "FAIL  a delete with an older snapshot than a key: $(tr '\n' ' ' < /tmp/authz_principals_rr.out)"; fails=$((fails + 1)); fi
+else echo "FAIL  a delete with an older snapshot than a key: $(tr '\n' ' ' < $T/principals_rr.out)"; fails=$((fails + 1)); fi
 check "... and the service and its key are both still there" "1|1" \
   "RESET ROLE; SELECT (SELECT count(*) FROM ps.services WHERE id = 93) || '|' || (SELECT count(*) FROM authz.api_keys WHERE principal_type = 'service' AND user_id = '93');"
-rm -f /tmp/authz_principals_rr.out
+rm -f $T/principals_rr.out
 
 echo "-- JWTs naming a principal type"
 PSQL -c "INSERT INTO authz.settings VALUES ('jwt_secret', 's3cret'), ('jwt_type_claim', 'kind')" >/dev/null
@@ -356,13 +376,13 @@ sig = base64.urlsafe_b64encode(hmac.new(b"s3cret", msg.encode(), hashlib.sha256)
 print(msg + "." + sig)
 PY
 }
-T=$(jwt '{"sub": "8", "kind": "service"}')
+TOKEN=$(jwt '{"sub": "8", "kind": "service"}')
 check "a token for service 8" "service:8|2,3" \
-  "BEGIN; SELECT authz.login_jwt('$T') || '|' || (SELECT string_agg(id::text, ',' ORDER BY id) FROM ps.docs); COMMIT;"
-T=$(jwt '{"sub": "1"}')
-check "a token without the claim is a user's" "1" "BEGIN; SELECT authz.login_jwt('$T'); COMMIT;"
-T=$(jwt '{"sub": "1", "kind": "doc"}')
-expect_code "a token naming a type that doesn't sign in" "28000: the token names a type that does not sign in" -c "BEGIN" -c "SELECT authz.login_jwt('$T')"
+  "BEGIN; SELECT authz.login_jwt('$TOKEN') || '|' || (SELECT string_agg(id::text, ',' ORDER BY id) FROM ps.docs); COMMIT;"
+TOKEN=$(jwt '{"sub": "1"}')
+check "a token without the claim is a user's" "1" "BEGIN; SELECT authz.login_jwt('$TOKEN'); COMMIT;"
+TOKEN=$(jwt '{"sub": "1", "kind": "doc"}')
+expect_code "a token naming a type that doesn't sign in" "28000: the token names a type that does not sign in" -c "BEGIN" -c "SELECT authz.login_jwt('$TOKEN')"
 
 echo "-- the policy"
 bad() {  # $1 label, $2 expected piece of the error, $3 policy
@@ -370,23 +390,28 @@ bad() {  # $1 label, $2 expected piece of the error, $3 policy
   case "$got" in *"$2"*) echo "ok    $1";; *) echo "FAIL  $1: $got"; fails=$((fails + 1));; esac
 }
 bad "type:* needs a principal type" "doc:* means any signed-in doc, but doc doesn't sign in" \
-  "$(sed 's/  reader : user, service, team#member, user:\*, service:\*  shared/  reader : user, doc:*  shared/' /tmp/authz_principals.authz)"
+  "$(sed 's/  reader : user, service, team#member, user:\*, service:\*  shared/  reader : user, doc:*  shared/' $T/principals.authz)"
 bad "a principal's key is one column" "the service type signs in, so it needs a key of one column" \
-  "$(sed 's/type service = ps.services principal/type service = ps.services (owner_id, id) principal/' /tmp/authz_principals.authz)"
+  "$(sed 's/type service = ps.services principal/type service = ps.services (owner_id, id) principal/' $T/principals.authz)"
 # a change that reaches only a service is in the preview, named as the audit trail names it
-sed 's/^  can assist = owner or helper$/  can assist = owner or helper or bot/' /tmp/authz_principals.authz > /tmp/authz_principals_bot.authz
-out=$(python3 compile_policy.py /tmp/authz_principals_bot.authz --diff | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$DB" 2>&1)
+sed 's/^  can assist = owner or helper$/  can assist = owner or helper or bot/' $T/principals.authz > $T/principals_bot.authz
+out=$(python3 compile_policy.py $T/principals_bot.authz --diff | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$DB" 2>&1)
 case "$out" in *"gains|service:7|doc|permission assist|1"*) echo "ok    the preview lists what a service gains";;
   *) echo "FAIL  the preview of a change for a service: $out"; fails=$((fails + 1));; esac
-out=$(python3 compile_policy.py /tmp/authz_principals_bot.authz --diff --users 1,2 | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$DB" 2>&1)
-case "$out" in *service:*) echo "FAIL  --users 1,2 shows a service: $out"; fails=$((fails + 1));; *) echo "ok    ... and --users leaves it out when it names users only";; esac
+out=$(python3 compile_policy.py $T/principals_bot.authz --diff --users 1,2 | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$DB" 2>&1)
+case "$out" in *service:*|*ERROR*) echo "FAIL  --users 1,2 shows a service: $out"; fails=$((fails + 1));;
+  *"== Details (first 200) =="*) echo "ok    ... and --users leaves it out when it names users only";;
+  *) echo "FAIL  --users 1,2 gives no preview: $out"; fails=$((fails + 1));; esac
 check "lint has no note on a principal type someone can make keys for" "0" \
   "RESET ROLE; SELECT count(*) FROM authz.lint() WHERE object = 'service' AND problem LIKE '%manage_keys%';"
 
 # the keys of a user deleted while no trigger watched (after rowstile remove, before the next apply): applying
 # deletes them
 PSQL -c "INSERT INTO authz.api_keys (user_id, principal_type, name, prefix, hash) VALUES ('90', 'user', 'left', 'ak_', 'left over')" >/dev/null
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f /tmp/authz_principals.sql >/dev/null
+# (applying makes rowstile's functions anew, and Postgres's counts of their calls go with the old ones: while the run
+# measures what the suites run, they are kept first; tests/coverage_functions.sh)
+bash tests/coverage_functions.sh "$DB"
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/principals.sql >/dev/null
 check "applying the policy deletes the keys of a principal whose row is gone" "0" \
   "RESET ROLE; SELECT count(*) FROM authz.api_keys WHERE principal_type = 'user' AND user_id = '90';"
 PSQL -c "TRUNCATE ps.services CASCADE" >/dev/null
@@ -401,7 +426,7 @@ echo "-- a row's marks go with it, and only its own"
 # A share, a key or a request marks each row it names (authz_int.row_marks), so a delete with an older snapshot fails
 # to serialize; the marks go with the row. Here the ids repeat across types, and nothing is shared with a bot: only
 # its keys mark its rows, so its keys' trigger alone forgets them.
-MDB="${DB}_marks"
+
 dropdb --if-exists "$MDB" 2>/dev/null; createdb "$MDB" || exit 1
 MPSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$MDB" "$@"; }
 PGOPTIONS="-c client_min_messages=warning" MPSQL <<'SQL' >/dev/null || exit 1
@@ -417,7 +442,7 @@ INSERT INTO pm.pages VALUES (1, 1), (2, 1);
 GRANT USAGE ON SCHEMA pm TO app_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA pm TO app_user;
 SQL
-cat > /tmp/authz_principals_marks.authz <<'POLICY'
+cat > $T/principals_marks.authz <<'POLICY'
 app role app_user
 type user = pm.users
 type bot = pm.bots principal             -- nothing is shared with a bot
@@ -434,8 +459,8 @@ type page = pm.pages
   can share = owner
   can view  = owner or reader
 POLICY
-python3 compile_policy.py /tmp/authz_principals_marks.authz > /tmp/authz_principals_marks.sql || exit 1
-PGOPTIONS="-c client_min_messages=error" MPSQL -f /tmp/authz_principals_marks.sql >/dev/null || exit 1
+python3 compile_policy.py $T/principals_marks.authz > $T/principals_marks.sql || exit 1
+PGOPTIONS="-c client_min_messages=error" MPSQL -f $T/principals_marks.sql >/dev/null || exit 1
 MPSQL -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SELECT authz.share('note', 1, 'reader', 'user', 2)" \
   -c "SELECT authz.share('note', 2, 'reader', 'user', 2)" -c "SELECT authz.share('page', 1, 'reader', 'user', 2)" \
   -c "SELECT authz.create_api_key('a', '', NULL, 'bot', '1')" -c "SELECT authz.create_api_key('b', '', NULL, 'bot', '2')" >/dev/null
@@ -455,30 +480,34 @@ marks "emptying the bots (their keys' trigger) takes every bot's marks, and no o
 MPSQL -c "INSERT INTO pm.bots VALUES (3, 1), (4, 1)" >/dev/null
 # REPEATABLE READ: a delete whose snapshot is older than a key made for the bot fails to serialize, as for a service,
 # though no share trigger writes the bot's mark first
-MPSQL > "/tmp/${MDB}_rr.out" 2>&1 <<'SQL' &
+RACE_DB=$MDB race
+PGAPPNAME=authz_principals_a MPSQL > "$T/marks_rr.out" 2>&1 <<SQL &
 BEGIN ISOLATION LEVEL REPEATABLE READ;
 SELECT count(*) FROM pm.users;
-SELECT pg_sleep(1.5);
+$HOLD;
 DELETE FROM pm.bots WHERE id = 3;
 COMMIT;
 SQL
-sleep 0.5
+RACE_DB=$MDB held authz_principals_a
 MPSQL -c "SET ROLE app_user" -c "SET authz.user_id = '1'" -c "SELECT authz.create_api_key('c', '', NULL, 'bot', '3')" >/dev/null 2>&1
-wait
-if grep -q "could not serialize access due to concurrent update" "/tmp/${MDB}_rr.out"; then
+RACE_DB=$MDB go; wait
+if grep -q "could not serialize access due to concurrent update" "$T/marks_rr.out"; then
   echo "ok    a delete with an older snapshot than a key made for a bot nothing is shared with gets a serialization error"
-else echo "FAIL  a bot deleted with an older snapshot than its key: $(tr '\n' ' ' < "/tmp/${MDB}_rr.out")"; fails=$((fails + 1)); fi
+else echo "FAIL  a bot deleted with an older snapshot than its key: $(tr '\n' ' ' < "$T/marks_rr.out")"; fails=$((fails + 1)); fi
 got=$(MPSQL -c "SELECT (SELECT count(*) FROM pm.bots WHERE id = 3) || '|' || (SELECT count(*) FROM authz.api_keys WHERE principal_type = 'bot' AND user_id = '3')")
 [ "$got" = "1|1" ] && echo "ok    ... and the bot and its key are both still there" ||
   { echo "FAIL  the bot and its key after the delete: expected 1|1, got $got"; fails=$((fails + 1)); }
-rm -f "/tmp/${MDB}_rr.out"
+rm -f "$T/marks_rr.out"
 # READ COMMITTED: a key made for another principal while it is deleted waits for the delete (its row is locked
 # first), then there is no one to make it for
-psql -X -q -d "$MDB" -c "BEGIN" -c "DELETE FROM pm.bots WHERE id = 4" -c "SELECT pg_sleep(1.5)" -c "COMMIT" >/dev/null 2>&1 &
-sleep 0.5
-got=$(psql -X -q -At -d "$MDB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "SET authz.user_id = '1'" \
-  -c "SELECT authz.create_api_key('late', '', NULL, 'bot', '4')" 2>&1 | grep '^ERROR:  ' | tail -n 1)
-wait
+RACE_DB=$MDB race
+PGAPPNAME=authz_principals_a psql -X -q -d "$MDB" -c "BEGIN" -c "DELETE FROM pm.bots WHERE id = 4" -c "$HOLD" -c "COMMIT" >/dev/null 2>&1 &
+RACE_DB=$MDB held authz_principals_a
+PGAPPNAME=authz_principals_b psql -X -q -At -d "$MDB" -v VERBOSITY=verbose -c "SET ROLE app_user" -c "SET authz.user_id = '1'" \
+  -c "SELECT authz.create_api_key('late', '', NULL, 'bot', '4')" > "$T/late.out" 2>&1 &
+RACE_DB=$MDB blocked authz_principals_b
+RACE_DB=$MDB go; wait
+got=$(grep '^ERROR:  ' "$T/late.out" | tail -n 1)
 got=${got#ERROR:  }
 if agrees "a key made for a bot while it is deleted waits for the delete, then is refused" \
   "42501: you cannot manage the keys of bot 4" "${got:-ok}"; then
@@ -502,7 +531,7 @@ echo "-- who acted, as the SDKs write it: a user whose id reads like another pri
 # A user is written by their id ('42'), or user:<id> when the id holds ':' or is 'nobody', so the user whose id is
 # service:1 is never written as service 1 is, nor the user whose id is nobody as nobody: the audit trail, every
 # created_by and decided_by, what the logins return, the invariants and the preview all name them so.
-IDB="${DB}_ids"
+
 dropdb --if-exists "$IDB" 2>/dev/null; createdb "$IDB" || exit 1
 IPSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$IDB" "$@"; }
 icheck() {  # $1 label, $2 expected, $3 SQL (as app_user, in one transaction)
@@ -526,7 +555,7 @@ INSERT INTO pi.docs VALUES (1, 'service:1', 'nobody'), (2, 'nobody', 'service:1'
 GRANT USAGE ON SCHEMA pi TO app_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA pi TO app_user;
 SQL
-cat > /tmp/authz_principals_ids.authz <<'POLICY'
+cat > $T/principals_ids.authz <<'POLICY'
 app role app_user
 type user = pi.users (id text)
   support : user = support_id
@@ -548,10 +577,10 @@ rules pi.docs
 invariants
   never doc: reader and not owner
 POLICY
-python3 compile_policy.py /tmp/authz_principals_ids.authz > /tmp/authz_principals_ids.sql || exit 1
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$IDB" -f /tmp/authz_principals_ids.sql >/dev/null || exit 1
+python3 compile_policy.py $T/principals_ids.authz > $T/principals_ids.sql || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$IDB" -f $T/principals_ids.sql >/dev/null || exit 1
 IPSQL -c "SET ROLE app_user; $AS_42 SELECT authz.share('doc', 3, 'reader', 'service', '1')" >/dev/null
-L=$(grep -n '^type service = pi.services principal$' /tmp/authz_principals_ids.authz | cut -d: -f1)
+L=$(grep -n '^type service = pi.services principal$' $T/principals_ids.authz | cut -d: -f1)
 icheck "lint notes a principal type nobody can make keys for, with its line" \
   "info|service|signs in, but has no manage_keys permission, so nobody can make API keys for it: add can manage_keys = ... (line $L)" \
   "RESET ROLE; SELECT severity || '|' || object || '|' || problem FROM authz.lint() WHERE problem LIKE '%manage_keys%';"
@@ -588,19 +617,19 @@ icheck "a custom role made by the user whose id is service:1: created_by says us
   "$AS_COLON SELECT authz.create_role('team', 1, 'doc', 'helper', ARRAY['view']); RESET ROLE; SELECT created_by FROM authz.roles WHERE name = 'helper';"
 icheck "invariants name each the same way" "42 service:1 user:nobody user:service:1" \
   "RESET ROLE; SELECT string_agg(user_id, ' ' ORDER BY user_id) FROM authz.check_invariants();"
-got=$(psql -X -q -At -d "$IDB" -f <(python3 compile_policy.py /tmp/authz_principals_ids.authz --tests) 2>&1)
+got=$(psql -X -q -At -d "$IDB" -f <(python3 compile_policy.py $T/principals_ids.authz --tests) 2>&1)
 for who in "user service:1" "user nobody" "user 42" "service 1"; do
   case "$got" in *"FAIL  invariant never doc: reader and not owner"*": $who can reach "*) echo "ok    ... and the policy tests say $who";;
     *) echo "FAIL  the policy tests on $who breaking an invariant: $got"; fails=$((fails + 1));; esac
 done
 case "$got" in *": user user:"*) echo "FAIL  the policy tests say user user:...: $got"; fails=$((fails + 1));;
   *) echo "ok    ... and never user user:<id>";; esac
-sed 's/^  can break_glass = oncall$/  can break_glass = oncall\n  can page = oncall/' /tmp/authz_principals_ids.authz > /tmp/authz_principals_ids_page.authz
-out=$(python3 compile_policy.py /tmp/authz_principals_ids_page.authz --diff | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$IDB" 2>&1 | grep -E '^gains\|[^|]*\|doc\|' | sort | tr '\n' ' ')
+sed 's/^  can break_glass = oncall$/  can break_glass = oncall\n  can page = oncall/' $T/principals_ids.authz > $T/principals_ids_page.authz
+out=$(python3 compile_policy.py $T/principals_ids_page.authz --diff | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$IDB" 2>&1 | grep -E '^gains\|[^|]*\|doc\|' | sort | tr '\n' ' ')
 if [ "$out" = "gains|user:nobody|doc|permission page|1 gains|user:service:1|doc|permission page|2 " ]; then
   echo "ok    the preview names them the same way"
 else echo "FAIL  the preview of who may page: $out"; fails=$((fails + 1)); fi
-out=$(python3 compile_policy.py /tmp/authz_principals_ids_page.authz --diff --users user:service:1 | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$IDB" 2>&1 | grep -E '^gains\|[^|]*\|doc\|' | tr '\n' ' ')
+out=$(python3 compile_policy.py $T/principals_ids_page.authz --diff --users user:service:1 | PGOPTIONS="-c client_min_messages=error" psql -X -q -At -d "$IDB" 2>&1 | grep -E '^gains\|[^|]*\|doc\|' | tr '\n' ' ')
 if [ "$out" = "gains|user:service:1|doc|permission page|2 " ]; then
   echo "ok    ... and the users asked for are named so: user:service:1 is that user alone"
 else echo "FAIL  the preview for --users user:service:1: $out"; fails=$((fails + 1)); fi

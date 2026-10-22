@@ -15,10 +15,14 @@ DB=authz_stress
 SECONDS_EACH=${1:-60}
 MOVE_LIMIT=${MOVE_LIMIT:-10}
 fails=0
+W=$(mktemp -d)
+# whatever way the suite ends: its database, its files
+cleanup() { [ -n "${KEEP:-}" ] || dropdb --force --if-exists "$DB" 2>/dev/null; rm -rf "$W"; }
+trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null || exit 1
-python3 compile_policy.py example/docs.authz > "/tmp/${DB}_docs.sql" || exit 1
-PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "/tmp/${DB}_docs.sql" >/dev/null || exit 1
+python3 compile_policy.py example/docs.authz > "$W/docs.sql" || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "$W/docs.sql" >/dev/null || exit 1
 psql -X -q -v ON_ERROR_STOP=1 -d "$DB" >/dev/null <<'SQL' || exit 1
 SET client_min_messages = warning;
 -- 2,000 more folders under the example's, each under a random earlier one; 100 of them also linked elsewhere
@@ -80,7 +84,6 @@ BEGIN
   END LOOP;
 END $$;
 SQL
-W=$(mktemp -d)
 cat > "$W/create.sql" <<'EOF'
 \set p random(100, 2099)
 SELECT stress.try(format('INSERT INTO app.folders (org_id, parent_id, owner_id, name) VALUES (1, %s, 1, %L)', :p, 'new'));
@@ -151,6 +154,4 @@ for level in "read committed" "repeatable read" "serializable"; do
   fi
 done
 
-rm -rf "$W"
-[ -z "${KEEP:-}" ] && dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "stress: all passed"; else echo "stress: $fails failed"; exit 1; fi

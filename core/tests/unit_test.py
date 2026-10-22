@@ -1564,6 +1564,23 @@ class Principals(unittest.TestCase):
         text = read(POLICIES["composite"]).replace("  can manage_keys = owner\n", "  can see = owner\n")
         self.assertIn("nobody can make API keys for it", Compiler(parse_policy(text)).compile("x"))
 
+    def test_a_signature_names_the_backend_and_the_transaction(self) -> None:
+        # what tests/sessions.sh can't tell apart: a signature replayed on another connection is refused for its
+        # transaction already, and two connections can't be made to start one in the same microsecond. The backend
+        # is what tells them apart then: the signature covers it, both where it is made and where it is checked
+        sql = compiled("docs")
+        for name in ("session_sig() RETURNS text", "session_ok() RETURNS boolean"):
+            body = search(r"CREATE FUNCTION authz_int\." + re.escape(name) + r".*?\$f\$;", sql, re.S).group(0)
+            for part in (
+                "pg_catalog.pg_backend_pid()::text",
+                "pg_catalog.transaction_timestamp()",
+                *(
+                    f"current_setting('authz.{s}', true)"
+                    for s in ("user_id", "principal_type", "scopes", "acting_user")
+                ),
+            ):
+                self.assertIn(part, body, name)
+
 
 class CommandMode(unittest.TestCase):
     """What the rowstile command runs inside its own transaction."""

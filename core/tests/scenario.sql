@@ -21,6 +21,10 @@ CREATE FUNCTION test.files() RETURNS text LANGUAGE sql AS $$
   SELECT coalesce(string_agg(name, ', ' ORDER BY name), '-') FROM app.files $$;
 CREATE FUNCTION test.try(stmt text) RETURNS text LANGUAGE plpgsql AS $$
 BEGIN EXECUTE stmt; RETURN 'ok'; EXCEPTION WHEN OTHERS THEN RETURN SQLSTATE; END $$;
+-- a refusal by its words, 'SQLSTATE: message', as tests/words.sh reads them: the code alone can't say which guard
+-- refused, where two answer with the same one
+CREATE FUNCTION test.error(stmt text) RETURNS text LANGUAGE plpgsql AS $$
+BEGIN EXECUTE stmt; RETURN 'ok'; EXCEPTION WHEN OTHERS THEN RETURN SQLSTATE || ': ' || SQLERRM; END $$;
 CREATE FUNCTION test.rows(stmt text) RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE n bigint; BEGIN EXECUTE stmt; GET DIAGNOSTICS n = ROW_COUNT; RETURN n; END $$;
 -- the teams the signed-in user is in, as the rules read them (from authz_int, which the app role can't name: a
@@ -38,12 +42,15 @@ SELECT test.ok('erin shares Company with every Acme member',
 SELECT test.ok('erin shares offer-letter.pdf with dave, for one day',
   test.try($$SELECT authz.share('file', 13, 'viewer', 'user', 4, '', now() + interval '1 day')$$) = 'ok');
 SELECT test.ok('shares the policy does not declare are refused',
-  test.try($$SELECT authz.share('folder', 1, 'owner', 'user', 3)$$) = 'P0001');
+  test.error($$SELECT authz.share('folder', 1, 'owner', 'user', 3)$$)
+  = 'P0001: the policy does not allow sharing folder.owner with user');
 SET authz.user_id = 3;   -- carol
 SELECT test.ok('carol cannot share Company',
-  test.try($$SELECT authz.share('folder', 1, 'viewer', 'user', 4)$$) = '42501');
+  test.error($$SELECT authz.share('folder', 1, 'viewer', 'user', 4)$$)
+  = '42501: you cannot share folder 1');
 SELECT test.ok('the raw shares table is off limits',
-  test.try($$SELECT * FROM authz.shares$$) = '42501');
+  test.error($$SELECT * FROM authz.shares$$)
+  = '42501: permission denied for table shares');
 RESET ROLE;
 RESET authz.user_id;
 
@@ -90,8 +97,10 @@ SELECT test.ok('explain: gina edits it through Platform, inside Backend, inside 
   (SELECT count(*) FROM authz.explain('file', 11, 'edit', '7') e WHERE e LIKE '%through team 12%') = 1
   AND (SELECT e FROM authz.explain('file', 11, 'edit', '7') e LIMIT 1) = 'yes  user 7 holds edit on file 11');
 SET authz.user_id = 3;
-SELECT test.ok('carol (viewer) cannot list who has access', test.try($$SELECT authz.who('file', 11, 'view')$$) = '42501');
-SELECT test.ok('... nor ask about other people', test.try($$SELECT authz.explain('file', 11, 'view', '4')$$) = '42501');
+SELECT test.ok('carol (viewer) cannot list who has access', test.error($$SELECT authz.who('file', 11, 'view')$$)
+  = '42501: you cannot see who has access to file 11');
+SELECT test.ok('... nor ask about other people', test.error($$SELECT authz.explain('file', 11, 'view', '4')$$)
+  = '42501: you cannot inspect access to file 11');
 SELECT test.ok('... but can ask why she may not edit it',
   (SELECT e FROM authz.explain('file', 11, 'edit') e LIMIT 1) = 'no   user 3 does not hold edit on file 11');
 SET authz.user_id = 4;
@@ -124,13 +133,15 @@ SET authz.user_id = 1;   -- alice, owner of Engineering
 SELECT test.ok('alice adds a file to Design docs, as its owner',
   test.try($$INSERT INTO app.files (folder_id, owner_id, name) VALUES (4, 1, 'api-spec.md') RETURNING id$$) = 'ok');
 SELECT test.ok('alice cannot add a file claiming carol owns it',
-  test.try($$INSERT INTO app.files (folder_id, owner_id, name) VALUES (4, 3, 'x.md')$$) = '42501');
+  test.error($$INSERT INTO app.files (folder_id, owner_id, name) VALUES (4, 3, 'x.md')$$)
+  = '42501: permission denied: user 1 may not insert this row into app.files');
 SELECT test.ok('alice creates a subfolder and reads it back (RETURNING)',
   test.try($$INSERT INTO app.folders (org_id, parent_id, owner_id, name) VALUES (1, 4, 1, 'Drafts') RETURNING id$$) = 'ok');
 SELECT test.ok('alice renames Design docs',
   test.rows($$UPDATE app.folders SET name = 'Design' WHERE id = 4$$) = 1);
 SELECT test.ok('alice cannot move Design docs into Secrets (no edit there)',
-  test.try($$UPDATE app.folders SET parent_id = 5 WHERE id = 4$$) = '42501');
+  test.error($$UPDATE app.folders SET parent_id = 5 WHERE id = 4$$)
+  = '42501: changing parent_id of app.folders 4 needs: parent.edit or ({parent_id is null} and share)');
 SELECT test.ok('app code can ask directly: authz.can(''file'', 11, ''edit'')',
   authz.can('file', 11, 'edit'));
 SELECT test.ok('... and list: authz.list(''folder'', ''edit'') = Engineering, Design, Drafts',
@@ -142,7 +153,8 @@ SELECT test.ok('... or in pages, in key order: two, then the rest after the last
   = (SELECT array_agg(x ORDER BY x::bigint) FROM authz.list('folder', 'edit') x));
 SET authz.user_id = 3;   -- carol, viewer
 SELECT test.ok('carol cannot add files to Design docs',
-  test.try($$INSERT INTO app.files (folder_id, owner_id, name) VALUES (4, 3, 'x.md')$$) = '42501');
+  test.error($$INSERT INTO app.files (folder_id, owner_id, name) VALUES (4, 3, 'x.md')$$)
+  = '42501: permission denied: user 3 may not insert this row into app.files');
 SELECT test.ok('carol cannot edit architecture.md (update skips it)',
   test.rows($$UPDATE app.files SET body = 'x' WHERE id = 11$$) = 0);
 SET authz.user_id = 2;   -- bob, viewer of Secrets
@@ -184,10 +196,12 @@ RESET ROLE;
 RESET authz.user_id;
 
 SELECT test.ok('moving Engineering into its own subfolder is refused',
-  test.try($$UPDATE app.folders SET parent_id = 6 WHERE id = 3$$) = '23514');
+  test.error($$UPDATE app.folders SET parent_id = 6 WHERE id = 3$$)
+  = '23514: folder 3 cannot be moved inside itself');
 SELECT test.ok('... also when two new folders point at each other in one statement',
-  test.try($$INSERT INTO app.folders (id, org_id, parent_id, owner_id, name)
-             VALUES (92, 1, 93, 1, 'a'), (93, 1, 92, 1, 'b')$$) = '23514');
+  test.error($$INSERT INTO app.folders (id, org_id, parent_id, owner_id, name)
+             VALUES (92, 1, 93, 1, 'a'), (93, 1, 92, 1, 'b')$$)
+  = '23514: folder 92 cannot be moved inside itself');
 
 -- a loop in the team nesting: Engineering placed inside Platform
 UPDATE app.teams SET parent_id = 12 WHERE id = 10;
@@ -219,7 +233,8 @@ SELECT test.ok('alice makes folder 150 and shares it with herself as editor',
   test.try($$INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (150, 1, 4, 1, 'tmp')$$) = 'ok'
   AND test.try($$SELECT authz.share('folder', 150, 'editor', 'user', 1)$$) = 'ok');
 SELECT test.ok('sharing with someone who does not exist is refused',
-  test.try($$SELECT authz.share('folder', 150, 'viewer', 'user', 999)$$) = 'P0001');
+  test.error($$SELECT authz.share('folder', 150, 'viewer', 'user', 999)$$)
+  = 'P0001: there is no user 999');
 SELECT test.ok('alice deletes it', test.rows($$DELETE FROM app.folders WHERE id = 150$$) = 1);
 RESET ROLE;
 INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (150, 2, 20, 6, 'Globex board');
@@ -249,13 +264,17 @@ SET authz.user_id = 7;   -- gina: edit on Engineering through her teams, no shar
 SELECT test.ok('gina can rename Design (edit is enough)',
   test.rows($$UPDATE app.folders SET name = 'Design!' WHERE id = 4$$) = 1);
 SELECT test.ok('gina cannot make herself owner of Design (needs share)',
-  test.try($$UPDATE app.folders SET owner_id = 7 WHERE id = 4$$) = '42501');
+  test.error($$UPDATE app.folders SET owner_id = 7 WHERE id = 4$$)
+  = '42501: changing id, owner_id, org_id, inherit of app.folders 4 needs: share');
 SELECT test.ok('gina cannot switch off inheritance on Design (needs share)',
-  test.try($$UPDATE app.folders SET inherit = false WHERE id = 4$$) = '42501');
+  test.error($$UPDATE app.folders SET inherit = false WHERE id = 4$$)
+  = '42501: changing id, owner_id, org_id, inherit of app.folders 4 needs: share');
 SELECT test.ok('gina cannot make herself owner of architecture.md',
-  test.try($$UPDATE app.files SET owner_id = 7 WHERE id = 11$$) = '42501');
+  test.error($$UPDATE app.files SET owner_id = 7 WHERE id = 11$$)
+  = '42501: changing id, owner_id, confidential of app.files 11 needs: share');
 SELECT test.ok('gina cannot move architecture.md into Globex (no edit there)',
-  test.try($$UPDATE app.files SET folder_id = 20 WHERE id = 11$$) = '42501');
+  test.error($$UPDATE app.files SET folder_id = 20 WHERE id = 11$$)
+  = '42501: changing folder_id of app.files 11 needs: folder.edit');
 SELECT test.ok('gina can move it between folders she edits',
   test.rows($$UPDATE app.files SET folder_id = 3 WHERE id = 11$$) = 1
   AND test.rows($$UPDATE app.files SET folder_id = 4 WHERE id = 11$$) = 1);
@@ -266,7 +285,8 @@ UPDATE app.folders SET name = 'Design' WHERE id = 4;
 SET ROLE app_user;
 SET authz.user_id = 1;   -- alice can share Engineering, but cannot see inside Secrets
 SELECT test.ok('alice cannot delete Engineering while it has contents',
-  test.try($$DELETE FROM app.folders WHERE id = 3$$) = '23503'
+  test.error($$DELETE FROM app.folders WHERE id = 3$$)
+  = '23503: update or delete on table "folders" violates foreign key constraint "folders_parent_id_fkey" on table "folders"'
   AND (SELECT count(*) FROM app.files WHERE folder_id = 4) > 0);
 RESET ROLE;
 
@@ -301,7 +321,8 @@ SET ROLE app_user;
 SET authz.user_id = 1;
 SELECT test.ok('alice shares architecture.md with dave', test.try($$SELECT authz.share('file', 11, 'viewer', 'user', 4)$$) = 'ok');
 SET authz.user_id = 7;
-SELECT test.ok('gina (edit, no share) cannot renumber files', test.try($$UPDATE app.files SET id = 900 WHERE id = 11$$) = '42501');
+SELECT test.ok('gina (edit, no share) cannot renumber files', test.error($$UPDATE app.files SET id = 900 WHERE id = 11$$)
+  = '42501: changing id, owner_id, confidential of app.files 11 needs: share');
 RESET ROLE;
 INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (30, 4, 1, 'roadmap-secret.md');
 UPDATE app.files SET id = CASE id WHEN 11 THEN 900 WHEN 30 THEN 11 END WHERE id IN (11, 30);
@@ -319,7 +340,8 @@ SET ROLE app_user;
 SELECT test.ok('erin shares Keys with dave as editor', test.try($$SELECT authz.share('folder', 6, 'editor', 'user', 4)$$) = 'ok');
 SET authz.user_id = 4;
 SELECT test.ok('dave renames Keys (no edit on Secrets needed)', test.rows($$UPDATE app.folders SET name = 'Keys!' WHERE id = 6$$) = 1);
-SELECT test.ok('... but cannot move it anywhere he cannot edit', test.try($$UPDATE app.folders SET parent_id = 2 WHERE id = 6$$) = '42501');
+SELECT test.ok('... but cannot move it anywhere he cannot edit', test.error($$UPDATE app.folders SET parent_id = 2 WHERE id = 6$$)
+  = '42501: changing parent_id of app.folders 6 needs: parent.edit or ({parent_id is null} and share)');
 RESET ROLE;
 RESET authz.user_id;
 

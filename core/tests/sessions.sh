@@ -22,6 +22,15 @@ expect() {   # $1 label, $2 expected (for an error, "SQLSTATE: the message's wor
   agrees "$label" "$want" "$got" && ok "$label" || bad "$label" "expected '$want', got '$got'"
 }
 ACT() { echo "DO \$\$ BEGIN PERFORM authz.act_as($1); END \$\$"; }
+T=$(mktemp -d)
+# whatever way the suite ends: its databases, its roles, its files
+cleanup() {
+  for d in "$DB" "${DB}_half"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+  for r in $APP $OTHER; do psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1; done
+  [ -z "${PGSUPERUSER:-}" ] || psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS authz_sess_bypass" >/dev/null 2>&1
+  rm -rf "$T"
+}
+trap cleanup EXIT
 
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null || exit 1
@@ -57,6 +66,12 @@ got=$(psql -X -q -At -U "$APP" -d "$DB" -c "BEGIN" -c "$(ACT "'user', '3'")" -c 
 expect "... which the app may turn back on after signing in" "on" -c "$(ACT "'user', '3'")" -c "SET LOCAL jit = on" -c "SELECT current_setting('jit')"
 expect "view_as signs who it shows: erin, viewing as carol, sees what carol sees" "$carol|3" -c "$(ACT "'user', '5'")" \
   -c "DO \$\$ BEGIN PERFORM authz.view_as('3', 'ticket 7'); END \$\$" -c "SELECT count(*) || '|' || authz.uid() FROM app.files"
+expect "... and leaving view-as by clearing who views is an error, not a way to write as carol" "28000: who is signed in was changed after signing in" \
+  -c "$(ACT "'user', '5'")" -c "DO \$\$ BEGIN PERFORM authz.view_as('3', 'ticket 7'); END \$\$" -c "SET LOCAL authz.acting_user = ''" \
+  -c "UPDATE app.files SET name = name WHERE id = 11"
+expect "... nor by clearing its scopes" "28000: who is signed in was changed after signing in" \
+  -c "$(ACT "'user', '5'")" -c "DO \$\$ BEGIN PERFORM authz.view_as('3', 'ticket 7'); END \$\$" -c "SET LOCAL authz.scopes = ''" \
+  -c "UPDATE app.files SET name = name WHERE id = 11"
 expect "act_as(NULL, NULL): nobody, on purpose, no error" "0" -c "$(ACT "NULL, NULL")" -c "SELECT count(*) FROM app.files WHERE id = 12"
 expect "changing authz.user_id after signing in is an error" "28000: who is signed in was changed after signing in" -c "$(ACT "'user', '3'")" -c "SET LOCAL authz.user_id = 1" \
   -c "SELECT count(*) FROM app.files"
@@ -72,7 +87,7 @@ expect "... and so is asking can() as one" "28000: who is signed in was changed 
   -c "SELECT authz.can('folder', 5, 'view')"
 
 echo "-- a signature is good for one transaction on one connection"
-got=$(psql -X -q -At -U "$APP" -d "$DB" -v VERBOSITY=sqlstate 2>&1 <<'SQL' | tail -n 1
+got=$(error_of "$(psql -X -q -At -U "$APP" -d "$DB" -v VERBOSITY=verbose 2>&1 <<'SQL'
 BEGIN;
 SELECT authz.act_as('user', '1');
 SELECT current_setting('authz.session') AS sig \gset
@@ -83,8 +98,8 @@ SELECT set_config('authz.session', :'sig', true);
 SELECT count(*) FROM app.files;
 COMMIT;
 SQL
-)
-[ "$got" = "ERROR:  28000" ] && ok "a signature from an earlier transaction is refused in the next one" || bad "replay in the next transaction" "$got"
+)")
+[ "$got" = "28000: who is signed in was changed after signing in" ] && ok "a signature from an earlier transaction is refused in the next one" || bad "replay in the next transaction" "$got"
 sig=$(psql -X -q -At -U "$APP" -d "$DB" -c "BEGIN" -c "SELECT authz.act_as('user', '1')" -c "SELECT current_setting('authz.session')" -c "COMMIT" | tail -n 1)
 expect "... and one from another connection too" "28000: who is signed in was changed after signing in" -c "SET LOCAL authz.user_id = 1" -c "SELECT set_config('authz.session', '$sig', true)" \
   -c "SELECT count(*) FROM app.files"
@@ -149,7 +164,7 @@ END $f$;
 GRANT USAGE ON SCHEMA sh TO app_user;
 GRANT SELECT, UPDATE ON ALL TABLES IN SCHEMA sh TO app_user;
 SQL
-cat > "/tmp/${H}.authz" <<'POLICY'
+cat > "$T/half.authz" <<'POLICY'
 app role app_user
 type user = sh.users
 type bot = sh.bots principal
@@ -168,8 +183,8 @@ rules sh.docs
 invariants
   never doc: view and not edit and not viewer
 POLICY
-python3 compile_policy.py "/tmp/${H}.authz" > "/tmp/${H}.sql" &&
-  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$H" -f "/tmp/${H}.sql" >/dev/null ||
+python3 compile_policy.py "$T/half.authz" > "$T/half.sql" &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$H" -f "$T/half.sql" >/dev/null ||
   { bad "apply the policy that fails half way"; exit 1; }
 psql -X -q -d "$H" -c "SET authz.user_id = 1" -c "SELECT authz.share('doc', 1, 'viewer', 'user', 2)" \
   -c "SELECT authz.share('doc', 1, 'viewer', 'user', 3)" >/dev/null
@@ -227,9 +242,9 @@ got=$(psql -X -q -At -U "$APP" -d "$H" -1 -c "$(ACT "'user', '1'")" -c "DO \$\$ 
 [ "$got" = "$(printf 'NOTICE:  caught: sh.trips() fails for user 3\n1|1')" ] &&
   ok "... caught by an exception block: the same user signed in" || bad "who caught by an exception block" "$got"
 # not caught: the transaction fails, and the next one on the connection has nobody signed in, not user 3
-got=$(psql -X -q -At -U "$APP" -d "$H" -v VERBOSITY=sqlstate -c "BEGIN" -c "SELECT authz.act_as('user', '1')" \
-  -c "SELECT count(*) FROM authz.who('doc', '1', 'view')" -c "COMMIT" -c "SELECT count(*) FROM sh.docs" 2>&1 | tail -n 1)
-[ "$got" = "ERROR:  28000" ] && ok "... not caught: the next transaction has nobody signed in" || bad "who not caught" "$got"
+got=$(error_of "$(psql -X -q -At -U "$APP" -d "$H" -v VERBOSITY=verbose -c "BEGIN" -c "SELECT authz.act_as('user', '1')" \
+  -c "SELECT count(*) FROM authz.who('doc', '1', 'view')" -c "COMMIT" -c "SELECT count(*) FROM sh.docs" 2>&1)")
+[ "$got" = "28000: nobody signed in in this transaction" ] && ok "... not caught: the next transaction has nobody signed in" || bad "who not caught" "$got"
 
 echo "-- ... and when they answer, who is signed in is as it was for the rest of the transaction"
 # doc 5: user 2 owns it and bot 1 keeps it, so bot 1 may ask who has access, and the answer is someone else
@@ -317,7 +332,7 @@ EOF2
 # who, explain and the policy tests switch who is signed in while they ask, then put back the transaction's own: in a
 # session signed in as a service and a transaction as a user, the next transaction is the service's again
 # (the policy tests' function alone: the block that reports them raises when one fails, which undoes everything)
-python3 compile_policy.py example/docs.authz --tests | sed '/^DO \$t\$/,$d' > /tmp/authz_sessions_tests.sql || exit 1
+python3 compile_policy.py example/docs.authz --tests | sed '/^DO \$t\$/,$d' > "$T/tests.sql" || exit 1
 BOT="SET authz.user_id = '9'; SET authz.principal_type = 'bot'; SET authz.scopes = 'read'; SET authz.acting_user = '8'"
 AS_ERIN="SET LOCAL authz.user_id = '5'; SET LOCAL authz.principal_type = ''; SET LOCAL authz.scopes = ''"
 while IFS='|' read -r label what; do
@@ -327,7 +342,7 @@ done <<EOF2
 who|SELECT count(*) FROM authz.who('folder', '1', 'view')
 explain, for another user|SELECT count(*) FROM authz.explain('folder', '1', 'view', '3')
 EOF2
-got=$(PSQL -c "$BOT" -c "BEGIN" -c "$AS_ERIN" -f /tmp/authz_sessions_tests.sql \
+got=$(PSQL -c "$BOT" -c "BEGIN" -c "$AS_ERIN" -f "$T/tests.sql" \
   -c "SELECT count(*) FROM pg_temp.authz_policy_tests()" -c "COMMIT" -c "SELECT format('%s|%s|%s|%s',
   current_setting('authz.user_id', true), current_setting('authz.principal_type', true), current_setting('authz.scopes', true),
   current_setting('authz.acting_user', true))" 2>/dev/null | tail -n 1)
@@ -366,7 +381,4 @@ expect "act_as names only types that sign in" "P0001: folder is not a type that 
 # are kept first; tests/coverage_functions.sh)
 bash tests/coverage_functions.sh "$DB"
 PSQL -c "REVOKE ALL ON SCHEMA app, authz FROM $OTHER" -c "REVOKE ALL ON FUNCTION authz.connection_check() FROM $OTHER" >/dev/null 2>&1
-dropdb "$DB"
-dropdb "$H"
-for r in $APP $OTHER; do psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1; done
 [ $fails -eq 0 ] && echo "sessions: all passed" || { echo "sessions: $fails failed"; exit 1; }

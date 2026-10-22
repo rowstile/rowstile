@@ -15,6 +15,17 @@ ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
 schema() { PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$1" -f tests/prisma_schema.sql >/dev/null; }
 T=$(mktemp -d)
+# whatever way the suite ends: its databases, the role it made, its files
+cleanup() {
+  if [ -z "${KEEP:-}" ]; then
+    for d in "$DB" "$DB2" authz_capitals_link authz_capitals_approle authz_capitals_roles authz_capitals_accents; do
+      dropdb --force --if-exists "$d" 2>/dev/null
+    done
+    psql -X -q -d postgres -c 'DROP ROLE IF EXISTS "AppUser"' >/dev/null 2>&1
+  fi
+  rm -rf "$T"
+}
+trap cleanup EXIT
 # runs the command in the project; sets $out (stdout and stderr) and $rc
 run() { out=$(cd "$T" && python3 "$ROOT/cli/rowstile_cli.py" "$@" 2>&1); rc=$?; }
 as() { PSQL -c "SET authz.user_id = $1" -c "$2"; }
@@ -67,6 +78,8 @@ if [ -n "${PGSUPERUSER:-}" ]; then
   [ "$got" = 0 ] && ok "lint: an oid another catalog's dependency shares with a view's rule, or with Folder, names no view" ||
     bad "lint, oids of other catalogs" "$got"
   PSQL -c 'DROP VIEW "LookupView"'
+else
+  echo "skip  lint on oids another catalog shares: only a superuser may write pg_depend (PGSUPERUSER)"
 fi
 PSQL -c 'DROP TABLE "Lookup"'
 # the app's own check of its connection finds the tables by their quoted names too
@@ -183,7 +196,7 @@ run reapply; [ $rc -eq 0 ] || bad "reapply after the view built on it is gone" "
 
 echo "-- without the mask, then removed"
 sed -i '/^  mask body/d; s/^rules public.Note view public.NoteShown$/rules public.Note/' "$T/db/policy.authz"
-run push; is pushed || run apply
+run push; is pushed || bad "push the policy without the mask" "$out"
 [ "$(PSQL -c "SELECT has_column_privilege('app_user', 'public.\"Note\"', 'body', 'SELECT'), to_regclass('public.\"NoteShown\"') IS NULL, (SELECT count(*) FROM authz.masked_tables)")" = "t|t|0" ] &&
   ok "the mask taken out: the column is the app role's again, the view is gone" || bad "without the mask" "$out $(PSQL -c "SELECT * FROM authz.masked_tables")"
 run remove --yes
@@ -475,7 +488,8 @@ case "$out" in *"more.authz: applied")
   got=$(R -c "SELECT authz.act_as('Bot', '1'); SELECT principal_type || ':' || principal_id FROM authz.principal()" 2>&1 | tail -n 1)
   [ "$got" = "Bot:1" ] && ok "a Bot signed in is who authz.principal() says" || bad "authz.principal(), a Bot" "$got"
   run --db "dbname=$DB4" bench --people 1 --rounds 1
-  [ $rc -eq 0 ] && ok "bench: its people read from tables named with capitals" || bad "bench" "$out"
+  case "$rc $out" in *failed*|*"does not exist"*) bad "bench" "$out";;
+    "0 1 rounds as 1 people"*"authz.list Folder view "*"read public.Log "*) ok "bench: its people read from tables named with capitals";; *) bad "bench" "$out";; esac
   got=$(R -c "SELECT added || '|' || removed FROM authz.sync_members('Squad', '(1,red)', 'member', ARRAY['2', '3'])" \
          -c "SELECT string_agg(\"userId\"::text, ' ' ORDER BY \"userId\") FROM \"SquadMember\"" | paste -sd' ')
   [ "$got" = "2|0 2 3" ] && ok "sync a squad keyed by two columns named with capitals: its members are the list" || bad "sync_members, Squad" "$got"
