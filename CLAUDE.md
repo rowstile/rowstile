@@ -141,7 +141,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   `operations.md`, `managed-postgres.md` (the setup on a managed service; Neon and Supabase, as tried),
   `signed-urls.md`, `comparison.md` and `compare/` (a page per alternative, titled `# rowstile and <it>`, which
   the site lists from the folder: what they say of another project is quoted from its docs with the day they
-  were read, and wants reading again each quarter; `ComparePages` checks what they say of rowstile), `stacks/` (a page per stack; every line of code in them is in a
+  were read, and wants reading again each quarter (`docs/compare_readings.py`, the nightly's `readings` job, fails
+  once a reading is older); `ComparePages` checks what they say of rowstile), `stacks/` (a page per stack; every line of code in them is in a
   conformance app, `StackPages` in `tests/unit_test.py`), `errors/` (a page per error code, written from
   `authzlib/errors.py` by `unit_test.py --update`)
 - `context7.json` — for an index of docs that coding agents ask (Context7): the folders it reads, and what an
