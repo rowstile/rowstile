@@ -14373,6 +14373,23 @@ class Delivery(unittest.TestCase):
             self.assertIn(f'"/{os.path.dirname(path)}"', folders, f"{path}: Dependabot's docker folders")
         self.assertEqual(loose, [], "an image by tag alone: add its digest (tag@sha256:...)")
         self.assertIn("FROM pg${PG_MAJOR}\n", read("Dockerfile"))
+        # ... and the images the examples' compose files pull (a service with `build:` makes its own)
+        composed = search(r"package-ecosystem: docker-compose\n    directories: \[([^\]]*)\]", dependabot).group(1)
+        pulled = []
+        for path in sorted(glob.glob(os.path.join(self.REPO, "examples", "*", "docker-compose.yml"))):
+            rel = os.path.relpath(path, self.REPO).replace(os.sep, "/")
+            with open(path, encoding="utf-8") as fh:
+                services = re.split(r"(?m)^  [\w-]+:\n", fh.read())[1:]
+            for service in services:
+                image = re.search(r"(?m)^    image: (\S+)", service)
+                if image and not re.search(r"(?m)^    build:", service):
+                    pulled.append(image.group(1))
+                    self.assertRegex(image.group(1), r"@sha256:[0-9a-f]{64}$", f"{rel}: add its digest")
+                    self.assertIn(f'"/{os.path.dirname(rel)}"', composed, f"{rel}: Dependabot's docker-compose folders")
+        self.assertTrue(any(p.startswith("rustfs/rustfs:") for p in pulled), pulled)
+        # pip's pinned requirements (Atheris, for the fuzz job) are Dependabot's too
+        pip = search(r"package-ecosystem: pip\n    directory: (\S+)", dependabot).group(1)
+        self.assertTrue(glob.glob(os.path.join(self.REPO, pip.lstrip("/"), "*requirements*.txt")), pip)
 
     def test_the_image_is_checked_on_each_platform_it_is_published_for(self) -> None:
         # the release builds the command's image for these platforms, and the packaging tests (packaging/test.sh)
@@ -14458,6 +14475,9 @@ class Delivery(unittest.TestCase):
         # each Python is the bytes its release published
         self.assertEqual([k for k, sha in targets.items() if not re.fullmatch(r"[0-9a-f]{64}", sha)], [])
         self.assertGreaterEqual(len(targets), 7)
+        # nothing watches python-build-standalone but a release step: it names the constant build.mjs pins
+        self.assertRegex(build, r'(?m)^const RELEASE = "\d{8}";$')
+        self.assertIn("`packaging/npm/build.mjs` (`RELEASE`", read("../RELEASING.md"))
 
     def test_the_readme_lists_every_suite(self) -> None:
         def suites(text: str) -> set[str]:

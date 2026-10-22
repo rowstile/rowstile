@@ -88,6 +88,11 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 - The speed figures on the limits page and the benchmark's page say what measured them: a build of 2026-10-03,
   from before the rename, on the laptop the project was developed on then. No build since has run those sizes.
   The benchmark's "reads alone" row shows the end-to-end p95 at every size, as its other rows do.
+- The npm packages with the command's Python are about 10 MB smaller each (`@rowstile/cli-linux-x64`: 15 MB to
+  download, from 26). They no longer carry `libpython` (on Linux and macOS the Python is linked statically and
+  never loaded it), `python3.13-config`, or the `dbm` module's C part (Berkeley DB on Linux), which the command
+  never uses. Their `license` names the licence of each library in that Python, beside Apache-2.0 and PSF-2.0,
+  and they carry those texts only.
 
 ### Removed
 

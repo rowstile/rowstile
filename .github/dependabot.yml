@@ -3,6 +3,8 @@
 # versions to bump, so only lock files and workflows are updated: npm keeps every package.json as written (the
 # root is the workspace of the SDK's packages too), and a new major (TypeScript, Vite, Vitest, the VS Code
 # extension's `@types/vscode`, which follows its `engines.vscode`) is a change made on purpose, by hand.
+# Not here: the Python the npm packages bring (python-build-standalone, packaging/npm/build.mjs), which
+# RELEASING.md's release steps check.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -34,6 +36,27 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       docker: {patterns: ["*"]}
+
+  # the services the examples' compose files pull (RustFS, beside the file manager), pinned by digest the same way;
+  # the rowstile image there is built from the repository
+  - package-ecosystem: docker-compose
+    directories: ["/examples/filemanager"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    ignore:
+      - dependency-name: "rowstile"
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      compose: {patterns: ["*"]}
+
+  # Atheris, for the nightly fuzz job, pinned by its wheels' hashes (core/tests/fuzz-requirements.txt)
+  - package-ecosystem: pip
+    directory: /core/tests
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    groups:
+      fuzz: {patterns: ["*"]}
 
   - package-ecosystem: uv
     directories: ["/examples/filemanager/backend", "/examples/messenger/backend", "/integrations/fastapi"]
