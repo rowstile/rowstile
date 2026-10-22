@@ -14140,6 +14140,179 @@ class DocsApps(unittest.TestCase):
                     self.assertEqual(fh.read(), "then: docs.authz\n")
 
 
+class Benchmarks(unittest.TestCase):
+    """bench/: what run.sh says of a run, how regress.py reads a result, and when regress.sh runs again. The
+    benchmarks themselves run on Actions (nightly.yml, only=bench), not here."""
+
+    BENCH = os.path.join(ROOT, "bench")
+    # what pgbench 16 prints for a client it stops: on the statement timeout, and on any other error
+    PGBENCH_OUT = (
+        "pgbench: error: client 0 script 0 aborted in command 0 query 0: ERROR:  canceling statement due to "
+        "statement timeout\n"
+        "pgbench: error: client 1 script 0 aborted in command 0 query 0: ERROR:  division by zero\n"
+        "pgbench: error: client 2 script 1 aborted in command 3 query 0: ERROR:  new row violates row-level "
+        'security policy for table "folders"\n'
+        "pgbench: error: Run was aborted; the above results are incomplete.\n"
+    )
+
+    def setUp(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("regress", os.path.join(self.BENCH, "regress.py"))
+        assert spec is not None and spec.loader is not None
+        self.regress = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.regress)
+
+    def result(self, writes_p95: float) -> str:
+        """A run.sh result, small: step 1, the gate's writes and reads (each with an "all" row), the big move."""
+        head = "script              txns  failed     p50 ms     p95 ms     p99 ms     max ms    e2e p95\n"
+        return (
+            "== 1. Reads through RLS, alone (50/s arriving steadily, 16 clients, 15 s)\n"
+            + head
+            + "all                  750       0       1.00       2.00       3.00       4.00       2.10\n"
+            + "== 3. The gate: 20 tree writes/s arriving steadily (20 clients) + 50 reads/s (16 clients), 20 s\n"
+            + "writes: 20.0/s done, 0 failed, 0 clients aborted, 0 timed out\n"
+            + head
+            + "create               360       0       4.00       9.00      20.00      30.00       9.10\n"
+            + "move                  36       0      10.00      40.00      90.00      99.00      40.10\n"
+            + f"all                  400       0       4.00 {writes_p95:10.2f}      80.00      99.00      14.10\n"
+            + "reads: 50.0/s done\n"
+            + head
+            + "open_file            900       0       1.00       3.00       4.00       5.00       3.10\n"
+            + "all                  990       0       1.00       3.00       4.00       5.00       3.10\n"
+            + "== 4. One big move during steady writes (20/s, 20 s): the folder with most below it\n"
+            + "the big move: folder 12 with 300 folders below it, into folder 1: 0.20 s\n"
+        )
+
+    def test_the_gates_writes_and_reads_are_keyed_apart(self) -> None:
+        # a run of 2026-10-03: its writes' "all" row (p95 14.40 ms) came before the reads' (3.13 ms), which overwrote it
+        path = os.path.join(self.BENCH, "results", "2026-10-03-1000000-files-pg16-1.txt")
+        numbers, rare = self.regress.numbers(path)
+        self.assertEqual(numbers["3.writes.all"], 14.40)
+        self.assertEqual(numbers["3.reads.all"], 3.13)
+        self.assertEqual((numbers["3.writes.create"], numbers["3.writes.move"]), (9.72, 43.44))
+        self.assertEqual(numbers["3.reads.open_file"], 3.28)
+        self.assertEqual((numbers["1.all"], numbers["4.big_move_s"]), (3.23, 0.62))
+        self.assertNotIn("3.all", numbers)
+        self.assertEqual(rare, {"3.writes.link"}, "5 links: too few to judge")
+
+    def test_slower_writes_in_the_gate_are_a_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base, now = os.path.join(d, "baseline.txt"), os.path.join(d, "now.txt")
+            for path, p95 in ((base, 14.0), (now, 40.0)):
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(self.result(p95))
+            argv, sys.argv = sys.argv, ["regress.py", base, base, "--record"]
+            try:
+                with mock.patch("sys.stdout", new=io.StringIO()):
+                    self.assertEqual(self.regress.main(), 0)
+                sys.argv = ["regress.py", now, base]
+                with mock.patch("sys.stdout", new=io.StringIO()) as out:
+                    self.assertEqual(self.regress.main(), 1)
+            finally:
+                sys.argv = argv
+            with open(base, encoding="utf-8") as fh:
+                self.assertIn("3.writes.all 14.0\n", fh.read())
+            self.assertIn("regression: 3.writes.all: 40.00 against 14.00", out.getvalue())
+            self.assertNotIn("3.reads.all: ", out.getvalue())
+
+    def test_timed_out_and_aborted_clients_are_counted_apart(self) -> None:
+        with open(os.path.join(self.BENCH, "run.sh"), encoding="utf-8") as fh:
+            counters = [line for line in fh if line.startswith(("TIMEOUT=", "timedout()", "aborted()"))]
+        self.assertEqual(len(counters), 3)
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "w.out")
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(self.PGBENCH_OUT)
+            script = "".join(counters) + f'echo "$(timedout {out}) $(aborted {out})"\n'
+            answer = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(answer, "1 2\n", "one client timed out, two stopped on another error")
+
+    def run_sh(self, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", os.path.join(self.BENCH, "run.sh")], env=env, capture_output=True, text=True, timeout=60
+        )
+
+    def test_run_sh_wants_its_settings_from_scale_sh(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k not in ("FILES", "FOLDERS", "OUT")}
+        done = self.run_sh(env)
+        self.assertEqual(done.returncode, 2)
+        self.assertEqual(done.stderr, "run.sh: FILES is not set: start the benchmark with core/bench/scale.sh\n")
+
+    def test_run_sh_says_why_apply_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            stubs = os.path.join(d, "bin")
+            os.mkdir(stubs)
+            for tool in ("psql", "createdb", "dropdb"):  # the server's part succeeds and says nothing
+                with open(os.path.join(stubs, tool), "w", encoding="utf-8") as fh:
+                    fh.write("#!/bin/sh\nexit 0\n")
+                os.chmod(os.path.join(stubs, tool), 0o755)
+            out = os.path.join(d, "result.txt")
+            settings = {"FILES": "2000", "FOLDERS": "100", "LEVELS": "5", "USERS": "20", "TEAMS": "4", "DURATION": "1"}
+            env = dict(os.environ, **settings, GATE_DURATION="1", READ_RATE="10", OUT=out, LOGS=os.path.join(d, "l"))
+            env.update(PATH=stubs + os.pathsep + os.environ["PATH"], PGHOST=os.path.join(d, "no-server"))
+            done = self.run_sh(env)
+            self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+            with open(out, encoding="utf-8") as fh:
+                result = fh.read()
+        sock = os.path.join(d, "no-server", ".s.PGSQL.5432")
+        self.assertIn(f"apply docs.authz failed:\ncan't connect to the socket {sock}: no such file", result)
+        self.assertIn("apply docs.authz failed:\ncan't connect", done.stdout)
+
+    def regress_sh(self, d: str, runs: list[tuple[int, float]]) -> tuple[subprocess.CompletedProcess[str], int]:
+        """regress.sh in a copy of the folder, over a scale.sh that writes a result (its gate writes' p95) and exits as
+        told, each run in turn; the baseline's gate writes had a p95 of 14 ms. Answers what it did, and how many runs."""
+        bench = os.path.join(d, "core", "bench")
+        os.makedirs(os.path.join(bench, "results"))
+        for name in ("regress.sh", "regress.py"):
+            with (
+                open(os.path.join(self.BENCH, name), encoding="utf-8") as src,
+                open(os.path.join(bench, name), "w", encoding="utf-8") as fh,
+            ):
+                fh.write(src.read())
+        for i, (code, p95) in enumerate(runs):
+            with open(os.path.join(d, f"run{i}.txt"), "w", encoding="utf-8") as fh:
+                fh.write(self.result(p95))
+            with open(os.path.join(d, f"code{i}"), "w", encoding="utf-8") as fh:
+                fh.write(str(code))
+        with open(os.path.join(d, "base.txt"), "w", encoding="utf-8") as fh:
+            fh.write(self.result(14.0))
+        record = ["python3", os.path.join(bench, "regress.py"), "base.txt", "core/bench/baseline.txt", "--record"]
+        subprocess.run(record, cwd=d, check=True, capture_output=True)
+        with open(os.path.join(bench, "scale.sh"), "w", encoding="utf-8") as fh:
+            fh.write(
+                "n=$(cat runs 2>/dev/null || echo 0); echo $((n + 1)) > runs\n"
+                'cp "run$n.txt" "$OUT"; echo "scale.sh, run $n"; exit "$(cat "code$n")"\n'
+            )
+        done = subprocess.run(["bash", os.path.join(bench, "regress.sh")], cwd=d, capture_output=True, text=True)
+        with open(os.path.join(d, "runs"), encoding="utf-8") as fh:
+            return done, int(fh.read())
+
+    def test_a_run_that_went_wrong_is_not_run_again(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            done, runs = self.regress_sh(d, [(1, 14.0), (0, 14.0)])
+        self.assertEqual((done.returncode, runs), (1, 1), done.stdout + done.stderr)
+        self.assertEqual(
+            done.stdout, "scale.sh, run 0\n== the run went wrong (the lines above say why): not run again\n"
+        )
+
+    def test_a_slower_run_is_run_once_more(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            done, runs = self.regress_sh(d, [(0, 40.0), (0, 15.0)])
+        self.assertEqual((done.returncode, runs), (0, 2), done.stdout + done.stderr)
+        self.assertIn("regression: 3.writes.all: 40.00 against 14.00\n", done.stdout)
+        self.assertIn("== slower than the baseline: running once more; only a second slower run counts\n", done.stdout)
+        self.assertTrue(done.stdout.endswith("no regression\n"), done.stdout)
+        with tempfile.TemporaryDirectory() as d:
+            done, runs = self.regress_sh(d, [(0, 40.0), (0, 41.0)])
+        self.assertEqual((done.returncode, runs), (1, 2), done.stdout + done.stderr)
+        self.assertIn("regression: 3.writes.all: 41.00 against 14.00\n", done.stdout)
+        with tempfile.TemporaryDirectory() as d:
+            done, runs = self.regress_sh(d, [(0, 40.0), (1, 14.0)])
+        self.assertEqual((done.returncode, runs), (1, 2), done.stdout + done.stderr)
+        self.assertTrue(done.stdout.endswith("not run again\n"), done.stdout)
+
+
 class Delivery(unittest.TestCase):
     """What the workflows run, what the packages are built from, and what this folder's README says is tested."""
 

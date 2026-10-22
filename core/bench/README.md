@@ -6,12 +6,12 @@ p95 < 50 ms, reads through RLS p95 < 5 ms, and no failed writes; a big move may 
 writes, and the run reports for how long.
 
     core/bench/scale.sh                       # 400k files, 20k folders: the dev size, a few minutes
-    core/bench/scale.sh --large               # 1M files, 50k folders: the gate's size on the dev laptop
+    core/bench/scale.sh --large               # 1M files, 50k folders: the gate's size on the laptop of 2026-10
     core/bench/scale.sh --medium              # 5M files, 250k folders: 8 minutes
     core/bench/scale.sh --full                # 20M files, 1M folders, the gate's own size: 20 minutes, and
                                               # 16 GB for Docker (8 GB of shared buffers)
     KEEP=1 core/bench/scale.sh                # leave the container up (database authz_bench)
-    core/bench/regress.sh                     # small run compared with baseline.txt (CI runs it)
+    core/bench/regress.sh                     # small run compared with this machine's baseline (CI runs it)
 
 Each run starts a fresh Postgres container from `../Dockerfile` (4 GB shared buffers, 8 GB for `--full`; JIT
 off), loads
@@ -28,33 +28,43 @@ then runs `pgbench` (`workload/`, driven by `run.sh`):
 4. one big move (the folder with the most below it, into another root) during steady writes;
 5. listing everything a user can see with `authz.list`, whole and in pages of 1,000.
 
-Results are written to `results/`. `latency.py` turns pgbench's per-transaction logs into
-percentiles; "e2e" adds the time a transaction waited to start, which is what a caller arriving
-at that rate sees. Any statement running longer than four measuring periods is cut off and counted
-as "timed out", so slow writes can't stretch a run. The server and pgbench share the machine's CPUs,
-and other containers may be running: compare runs with each other, not with production. A run exits 1 when a
-gate fails, when `authz.verify()` doesn't say true after its writes, or when a listing fails.
+Results are written to `results/`. `latency.py` turns pgbench's per-transaction logs into percentiles; "e2e" adds
+the time a transaction waited to start, which is what a caller arriving at that rate sees. Any statement running
+longer than four measuring periods is cut off and counted as "timed out", so slow writes can't stretch a run; a
+client pgbench stops on any other error (a write the rules refuse, say) is counted apart, as "aborted": a broken
+write path, not a slow one. The server and pgbench share the machine's CPUs, and other containers may be running:
+compare runs with each other, not with production. A run exits 1 when a gate fails, when `authz.verify()` doesn't
+say true after its writes, or when a listing fails.
 
-`regress.sh` runs a small version (10k folders, short steps) and fails when any p95 of steps 1 and 3,
-or the big move, got more than twice as slow as in `baseline.txt` (and by more than 2 ms, or half a second
-for the big move), a
-write failed or timed out, or `authz.verify()` didn't say true after the writes. The gate's speed limits (reads and
-writes p95) are shown, not judged (`SPEED_GATES=0`): they are for the gate's size on a machine of its own, which
-`scale.sh` judges. Its reads arrive at 25 a second per CPU, at most the gate's 400 (`READ_RATE`): on a 2-CPU CI
-machine 400 reads/s keep both CPUs busy, and the p95 measures the wait for one (126 ms there, 2.3 ms on the dev
-laptop). A script that ran fewer than 50 times isn't judged. A run that fails runs once more, and only a second failure counts: a busy machine is slow for a
-while, a slower commit is slow both times. A baseline belongs to the machine that recorded it:
-`regress.sh --record` after an intended change; CI (GitHub's runners) keeps its own in the Actions cache:
+`regress.sh` runs a small version (10k folders, short steps) and fails when any p95 of steps 1 and 3 (step 3's
+writes and reads each have their own, and an "all" row each), or the big move, got more than twice as slow as in
+the machine's baseline (and by more than 2 ms, or half a second for the big move), or when the run went wrong: a
+write failed, was aborted or timed out, `authz.verify()` didn't say true after the writes, or a listing failed. The
+gate's speed limits (reads and writes p95) are shown, not judged (`SPEED_GATES=0`): they are for the gate's size on
+a machine of its own, which `scale.sh` judges. Its reads arrive at 25 a second per CPU, at most the gate's 400
+(`READ_RATE`): on a 2-CPU CI machine 400 reads/s keep both CPUs busy, and the p95 measures the wait for one (126 ms
+there). A script that ran fewer than 50 times isn't judged. A run that is slower runs once more, and only a second
+slower run counts: a busy machine is slow for a while, a slower commit is slow both times. A run that went wrong
+fails at once. A baseline belongs to the machine that recorded it, so none is committed: the first run on a machine
+records one (`core/bench/baseline.txt`, which git ignores), and `regress.sh --record` records it again after an
+intended change. CI (GitHub's runners) keeps its own in the Actions cache:
 `gh workflow run nightly.yml -f only=bench` records it when there is none.
 
-## Latest results (2026-10-03, PostgreSQL 16, the dev laptop, nothing else running)
+## Results of 2026-10-03, from a build before the rename
 
-`results/2026-10-03-*`. `--large` twice; `--medium` once; `--full` once, then its measuring steps again on the
-same database (`-again`).
+These figures were measured on 2026-10-03 by the build of that day, before the project took the name rowstile:
+the result files call it `rowfence 0.1.0-dev`. They ran on PostgreSQL 16, on the laptop the project was
+developed on then (16 CPUs, nothing else running), which is out of use. No build since has run these sizes:
+read them as what the design cost at each size on that build, not as the speed of this release.
+
+Each column comes from its files in `results/`: `--large` from `2026-10-03-1000000-files-pg16-1.txt` and
+`-2.txt`; `--medium` from `2026-10-03-5000000-files-pg16.txt`; `--full` from
+`2026-10-03-20000000-files-pg16.txt`, then its measuring steps again on the same database (`-again.txt`).
+Latencies are end to end (the "e2e" column).
 
 | p95 | `--large`: 1M files, 50k folders | `--medium`: 5M, 250k | `--full`: 20M, 1M |
 |---|---|---|---|
-| reads alone | 3.23, 3.12 ms | 3.33 ms | 4.62, 4.24 ms |
+| reads alone | 3.31, 3.20 ms | 3.33 ms | 4.62, 4.24 ms |
 | reads beside the gate's writes | 3.21, 3.18 ms | 3.71 ms | 4.57, 4.30 ms |
 | tree writes, the gate | 14.5, 16.3 ms | 32.7 ms | 38.4, 28.5 ms |
 | the big move | 0.62, 0.56 s (19k below) | 0.91 s (26k below) | 3.68, 2.04 s (54k below) |

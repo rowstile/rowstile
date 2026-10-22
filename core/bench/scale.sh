@@ -1,7 +1,7 @@
 #!/bin/bash
 # scale.sh: the scale benchmark in a fresh Postgres container; see bench/run.sh.
 #   core/bench/scale.sh              # 400k files, 20k folders, 20 levels: the dev size, a few minutes
-#   core/bench/scale.sh --large      # 1M files, 50k folders: the gate's size on the dev laptop
+#   core/bench/scale.sh --large      # 1M files, 50k folders: the gate's size on the laptop of 2026-10 (out of use)
 #   core/bench/scale.sh --medium     # 5M files, 250k folders (long)
 #   core/bench/scale.sh --full       # 20M files, 1M folders: the scale gate's size; needs 16 GB for Docker
 # (--large, --medium and --full have 25 folders for each user and for each team, so one user holds the same at each)

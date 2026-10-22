@@ -3,7 +3,9 @@
 ## Speed
 
 `core/bench/benchmark_results.txt` (`benchmark.sql`): 200,000 files, 10,000 folders, 2,000 users, nested
-teams, 500 linked folders; the dev laptop, JIT off:
+teams, 500 linked folders; JIT off. These figures, and those below, were measured on 2026-10-03 by a build from
+before the rename (`rowfence 0.1.0-dev`), on the laptop the project was developed on then; no build since has
+run these benchmarks on a machine of its own.
 
 | median | ms |
 |---|---|
@@ -19,7 +21,7 @@ reads a second are served) moves the folder with the most below it, about 19,000
 0.56 to 0.62 s; reads through the rules have a p95 of 3.2 ms beside the writes (`core/bench/README.md`).
 
 At twenty times that (`scale.sh --full`: 20 million files, a million folders, 40,000 users; 22 and 15 million
-rows of inheritance in a 6 GB database; the same laptop, 8 GB of shared buffers) the same workload has reads at
+rows of inheritance in a 6 GB database; the same build and laptop, 8 GB of shared buffers) the same workload has reads at
 a p95 of 4.3 to 4.6 ms and tree writes at 28 to 38 ms. The folder with the most below it, 54,000, moves in 2 to
 3.7 s. Applying takes three minutes there (the backfill), and `authz.verify()` two and a half.
 

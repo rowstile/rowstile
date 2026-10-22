@@ -325,7 +325,8 @@ jobs:
           if-no-files-found: ignore
   # The scale benchmark, small: fails when a measure got more than twice as slow as the runners' baseline
   # (recorded on the first run and kept in the cache; delete the cache entries to record it again, after an
-  # intended change or on other runners), when a write fails, or when verify() doesn't say true. The gate's
+  # intended change or on other runners; the key's name changes with what a baseline holds: by-table, since
+  # step 3's writes and reads are keyed apart), when a write fails, or when verify() doesn't say true. The gate's
   # speed limits are shown, not judged: they are for its size on a machine of its own. See core/bench/regress.sh.
   # Last, once the others are done: on a self-hosted runner, timings need the machine to themselves.
   bench:
@@ -336,14 +337,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
         with:
-          path: core/bench/baseline-ci.txt
-          key: bench-baseline-${{ github.sha }}
-          restore-keys: bench-baseline-
-      - run: BASELINE=core/bench/baseline-ci.txt flock /tmp/rowstile-ci-bench.lock bash core/bench/regress.sh
+          path: core/bench/baseline.txt
+          key: bench-baseline-by-table-${{ github.sha }}
+          restore-keys: bench-baseline-by-table-
+      - run: flock /tmp/rowstile-ci-bench.lock bash core/bench/regress.sh
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
         with:
-          path: core/bench/baseline-ci.txt
-          key: bench-baseline-${{ github.sha }}
+          path: core/bench/baseline.txt
+          key: bench-baseline-by-table-${{ github.sha }}
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:

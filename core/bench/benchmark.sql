@@ -6,7 +6,8 @@
 -- Loads 2,000 users, 200 nested teams, 10,000 folders (500 also linked
 -- into a second folder) and 200,000 files first,
 -- then applies docs.sql to that existing data, then times reads as five
--- users through RLS. "no RLS" runs the same queries as the table owner.
+-- users through RLS. "no RLS" runs the same queries as the table owner (not authz.can:
+-- it reads the policy whoever calls it).
 -- Then a big move, what the audit trail and the change feed cost on writes, and
 -- nested teams (20,000 more, in chains ten deep and one deep).
 -- =====================================================================
@@ -100,8 +101,11 @@ BEGIN
     'SELECT count(*) FROM (SELECT id, name FROM app.files WHERE folder_id = $1) s', 50);
   PERFORM bench.run(p_variant, '3. open one file',
     'SELECT count(*) FROM (SELECT * FROM app.files WHERE id = $2) s', 200);
-  PERFORM bench.run(p_variant, '4. app check: authz.can(file, edit)',
-    'SELECT authz.can(''file'', $2, ''edit'')::int', 200);
+  -- authz.can evaluates the policy whoever calls it: as the owner it would be the same call, so it runs once
+  IF p_variant <> 'no RLS' THEN
+    PERFORM bench.run(p_variant, '4. app check: authz.can(file, edit)',
+      'SELECT authz.can(''file'', $2, ''edit'')::int', 200);
+  END IF;
 END $$;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA bench TO app_user;
 
