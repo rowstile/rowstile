@@ -63,8 +63,8 @@ A build from `main` records its version with a hash of the compiler's sources (`
 ## Tags and branches
 
 - Tags are `vX.Y.Z`, `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N` and `vX.Y.Z-rc.N`, annotated, on a commit of `main` or `release/X.Y` whose version files
-  say that version (the release workflow checks). A tag is never moved or deleted once pushed: a bad release
-  is followed by a new one.
+  say that version (the release workflow checks both: a tag on another branch's commit publishes nothing). A
+  tag is never moved or deleted once pushed: a bad release is followed by a new one.
 - A patch comes from `main` when `main` holds only fixes since the last release. Otherwise, make
   `release/X.Y` from the tag `vX.Y.Z` (once), land the fix on `main` first, then cherry-pick it to the branch
   (`git cherry-pick -x`) in a pull request, and release from there.
@@ -107,12 +107,13 @@ pull request of its own, before the release's (the comment above `RELEASE` says 
        git push origin vX.Y.Z-rc.N
 
 4. **The release workflow** (`.github/workflows/release.yml`) runs on the tag. It checks that the tag and the
-   version agree, runs the unit tests and the packaging tests, then publishes: the Python package, the npm
-   packages, the image, and a GitHub release holding the wheel, the sdist, the npm launcher and the VS Code
-   extension, with the changelog's section as its notes. Last, the MCP server's entry in the official registry
-   (`server.json`): that registry is a preview, and a failure there never fails the release (run the `mcp` job
-   again). Where it publishes follows the repository: private
-   places while it is private, PyPI, npm and ghcr.io once public. An alpha, a beta or a candidate goes under
+   version agree and that the tag's commit is on `main` or `release/X.Y`, runs the unit tests and the packaging
+   tests, then publishes: the Python package, the npm packages, the image, and a GitHub release holding the
+   wheel, the sdist, the npm launcher and the VS Code extension, with the changelog's section as its notes.
+   Each file is built once, in a job with no right to publish, and PyPI and the Marketplace get the files the
+   GitHub release attaches. Last, the MCP server's entry in the official registry (`server.json`): that
+   registry is a preview, and a failure there never fails the release (run the `mcp` job again). A patch to an
+   older line moves no `latest`: not npm's, the image's or GitHub's. An alpha, a beta or a candidate goes under
    npm's `next`; while no final release exists the run then moves npm's `latest` there too, so a plain `npm i
    rowstile` gets the newest (`packaging/npm_latest.py`). It waits for the registry to show the release
    first, up to twenty minutes: npm shows a publish some minutes late, and a package it still doesn't show
@@ -130,7 +131,8 @@ pull request of its own, before the release's (the comment above `RELEASE` says 
    start them; the Linux ones, x64 and arm64, glibc and musl, are started.
 
 Run by hand (Actions, **release**, **Run workflow**), the release workflow builds and checks everything and
-publishes nothing: a dry run before tagging.
+publishes nothing: a dry run before tagging. From `main`, a `-dev` version, the notes it writes are what
+**Unreleased** holds.
 
 Run by hand with `latest`, it does one thing instead: npm's `latest` goes where `next` is on every package,
 and nothing is published. It is for a release whose own run couldn't move it, and moves nothing once a final

@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-        with: {fetch-depth: 0}     # the Zed extension's grammar commit is checked against this one
+        with: {fetch-depth: 0, persist-credentials: false}     # the Zed extension's grammar commit is checked against this one
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97   # v7.0.0
         with:
           python-version: "3.13"
@@ -97,7 +97,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-        with: {fetch-depth: 0}     # the changes are read against main
+        with: {fetch-depth: 0, persist-credentials: false}     # the changes are read against main
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
         with: {pattern: "coverage-pg*", path: .ci/parts}
       - run: docker build -q -t rowstile:16-coverage --build-arg PG_MAJOR=16 --build-arg COVERAGE=1 -f core/Dockerfile .
@@ -122,7 +122,7 @@ jobs:
     permissions: {contents: read, pull-requests: write}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-        with: {fetch-depth: 0}
+        with: {fetch-depth: 0, persist-credentials: false}
       - uses: ./review-ci/github
         with: {version: source, working-directory: examples/filemanager}
   # The Python SDK's conformance suite: FastAPI, SQLAlchemy async and asyncpg, Alembic (integrations/fastapi). It
@@ -133,6 +133,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
       - run: bash integrations/fastapi/test.sh
@@ -152,6 +153,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
@@ -177,6 +179,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
@@ -192,6 +195,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
@@ -206,6 +210,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
@@ -220,6 +225,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
@@ -244,6 +250,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: bash editor/test.sh
   # The ways rowstile is installed, each on a clean machine: npm (no Python there; Linux arm64 emulated, the macOS
   # and Windows packages read), PyPI, the command's image (on each platform release.yml publishes it for, arm64
@@ -256,6 +263,7 @@ jobs:
       ROWSTILE_IMAGE_PLATFORMS: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       # arm64 under emulation, for the npm packages and the image; the binfmt image by digest (Dependabot doesn't move it)
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1   # v4.4.0
         with: {platforms: arm64, cache-image: false, image: "docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"}
@@ -268,6 +276,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -282,6 +291,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0

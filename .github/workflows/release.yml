@@ -1,16 +1,15 @@
 # Publishes a version (RELEASING.md): set it with `python3 packaging/version.py X.Y.Z` (or X.Y.Z-alpha.N,
 # X.Y.Z-beta.N, X.Y.Z-rc.N), commit,
-# push the tag vX.Y.Z. A -dev version (main between releases) is refused. Where it goes follows the repository:
-#   - public: PyPI and npm (trusted publishing: no token; npm with provenance), the image on ghcr.io
-#   - private: the @rowstile/* packages on GitHub Packages' npm registry, a private image; the public steps as
-#     dry runs. PyPI and npm have no private side, so the wheel, the sdist and the unscoped launcher (a
-#     tarball) are on the GitHub release
-# Either way the GitHub release holds the wheel, the sdist, the launcher and the editor extension (.vsix), and once
-# public their provenance (.intoto.jsonl); the docs site is site.yml's (GitHub Pages). An alpha, a beta or a release candidate is npm's `next` and a pre-release on
-# GitHub, and never the image's `latest`. While no final release exists it becomes npm's `latest` too, so a plain
-# install gets the newest (packaging/npm_latest.py); once one exists, only a release is `latest`. A patch to an
-# older line (release-X.Y) moves no `latest`. A release that stopped half-way is finished by running its jobs
-# again: what is published already is skipped.
+# push the tag vX.Y.Z on a commit of main or of release/X.Y. A -dev version (main between releases) is refused.
+# It publishes to PyPI and npm (trusted publishing: no token; PyPI with its attestations, npm with provenance), the
+# image on ghcr.io (with its provenance), and a GitHub release that holds the wheel, the sdist, the launcher and the
+# editor extension (.vsix) with their provenance (.intoto.jsonl); the docs site is site.yml's (GitHub Pages). Each
+# file is built once, in a job that can write and sign nothing (release-files, npm-files), and published as built:
+# PyPI and the Marketplace get the files the GitHub release attaches. An alpha, a beta or a release candidate is
+# npm's `next` and a pre-release on GitHub, and never the image's `latest`. While no final release exists it
+# becomes npm's `latest` too, so a plain install gets the newest (packaging/npm_latest.py); once one exists, only a
+# release is `latest`. A patch to an older line (release-X.Y) moves no `latest`: npm's, the image's or GitHub's.
+# A release that stopped half-way is finished by running its jobs again: what is published already is skipped.
 # Run by hand (workflow_dispatch), it builds and checks everything and publishes nothing. With latest=true it does
 # one thing instead, from main: npm's `latest` goes where `next` is, for a release whose own run couldn't move it
 #   gh workflow run release.yml -f latest=true
@@ -39,19 +38,26 @@ jobs:
       publish: ${{ steps.v.outputs.publish }}
       npm-tag: ${{ steps.v.outputs.npm-tag }}
     steps:
+      # every branch and tag: the unit tests check the Zed extension's grammar commit is in the history, and the
+      # tag's commit is looked for on main and release/X.Y
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-        with: {fetch-depth: 0}     # the unit tests check the Zed extension's grammar commit is in the history
+        with: {fetch-depth: 0, persist-credentials: false}
       - id: v
-        env:
-          PRIVATE: ${{ github.event.repository.private }}
         run: |
           version=$(python3 packaging/version.py)   # fails when two files disagree
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "the tag is $GITHUB_REF_NAME, the version $version"; exit 1; }
             case "$version" in *-dev) echo "$version is main between releases: it is never published"; exit 1;; esac
+            # on a commit of main, or of release/X.Y for a patch to its line (RELEASING.md): never another branch's
+            line=$(cut -d. -f1-2 <<< "$version")
+            on=
+            for branch in main "release/$line"; do
+              if git merge-base --is-ancestor HEAD "refs/remotes/origin/$branch" 2>/dev/null; then on=$branch; fi
+            done
+            [ -n "$on" ] || { echo "the tag $GITHUB_REF_NAME is on a commit of neither main nor release/$line (RELEASING.md)"; exit 1; }
             # its notes: CHANGELOG.md has its section, and nothing is left under Unreleased
             python3 packaging/changelog.py --tagged "$version" > /dev/null
-            if [ "$PRIVATE" = true ]; then publish=private; else publish=public; fi
+            publish=public
           else
             publish=none
           fi
@@ -65,77 +71,97 @@ jobs:
         with: {platforms: arm64, cache-image: false, image: "docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"}
       - run: bash packaging/test.sh
 
+  # the wheel and the sdist release-files built, the files the GitHub release attaches; PyPI keeps their
+  # attestations (PEP 740), which the publish action makes by trusted publishing
   pypi:
-    needs: check
+    needs: [check, release-files]
     if: needs.check.outputs.publish == 'public'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: pypi
-    permissions: {id-token: write, contents: read}
+    permissions: {id-token: write}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
-        with: {version: "0.12.21"}
-      - run: uv build --out-dir pypi-dist sdk/python
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with: {name: release-files, path: dist/}
+      - run: mkdir pypi-dist && mv dist/*.whl dist/*.tar.gz pypi-dist/
       # a file PyPI has already is skipped: a release that stopped half-way is finished by running it again
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33   # release/v1
         with: {packages-dir: pypi-dist, skip-existing: true}
 
-  npm:
+  # the npm packages, each packed as npm publishes it: built here, with no right to write or sign anything (npm ci
+  # runs the install scripts of every package the workspace has); the npm job publishes these files
+  npm-files:
     needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
+        with: {node-version: "24"}
+      - run: node packaging/npm/build.mjs --all
+      - run: npm ci --no-audit --no-fund && npx tsc -b sdk/typescript
+      # each SDK package ships its own README (in its folder: its page on npm) and the licence
+      - run: for d in sdk/typescript/*/; do cp LICENSE "$d"; done
+      # the platforms first (rowstile names them as optional dependencies), then the launcher, then the SDK's: the
+      # order the npm job publishes them in, a file and its package's name a line
+      - run: |
+          mkdir npm-dist
+          for d in packaging/npm/out/cli-* packaging/npm/out/rowstile sdk/typescript/*/; do
+            npm pack --json --pack-destination npm-dist "$d" \
+              | node -e 'const [p] = JSON.parse(require("fs").readFileSync(0, "utf8")); console.log(p.filename, p.name)' >> npm-dist/order.txt
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with: {name: npm-files, path: npm-dist/}
+
+  # npm-files' packages on npmjs.com. It runs no package's code: npm itself (checked by its hash) and these files
+  npm:
+    needs: [check, npm-files]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # npm trusts this workflow only in the environment `npm` (each package's trusted publisher names it), which
     # takes v* tags, and main for the `latest` job; a dry run, on a branch, publishes nothing and goes without it
     environment: ${{ needs.check.outputs.publish == 'public' && 'npm' || '' }}
-    permissions: {id-token: write, contents: read, packages: write}
+    permissions: {id-token: write, contents: read}
     env:
       PUBLISH: ${{ needs.check.outputs.publish }}
       TAG: ${{ needs.check.outputs.npm-tag }}
       VERSION: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
-        with:
-          node-version: "24"
-          registry-url: ${{ needs.check.outputs.publish == 'public' && 'https://registry.npmjs.org' || 'https://npm.pkg.github.com' }}
-          scope: "@rowstile"
+        with: {node-version: "24", registry-url: "https://registry.npmjs.org", scope: "@rowstile"}
       # moving a tag by trusted publishing needs a newer npm than Node 24 brings (11.21.0 or newer), checked by its hash
       - run: bash packaging/npm/install_npm.sh
-      - run: node packaging/npm/build.mjs --all
-      - run: npm ci --no-audit --no-fund && npx tsc -b sdk/typescript
-      # each SDK package ships its own README (in its folder: its page on npm) and the licence
-      - run: for d in sdk/typescript/*/; do cp LICENSE "$d"; done
-      # every package as the public publish would send it, the launcher too
-      - run: for d in packaging/npm/out/cli-* packaging/npm/out/rowstile sdk/typescript/*/; do npm publish --dry-run --tag "$TAG" --access public "$d"; done
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with: {name: npm-files, path: npm-dist/}
+      # every package as the publish would send it, the launcher too: nothing is published unless each one passes
+      - run: |
+          while read -r file _ <&3; do
+            npm publish --ignore-scripts --dry-run --tag "$TAG" --access public "./npm-dist/$file"
+          done 3< npm-dist/order.txt
       # npmjs.com trusts this workflow (each package's trusted publisher: rowstile/rowstile, release.yml, npm): npm
-      # trades the job's OIDC token for one publish, from npm 11.5.1 on. GitHub Packages (private) takes GITHUB_TOKEN.
+      # trades the job's OIDC token for one publish, from npm 11.5.1 on.
       # A package npm doesn't have yet can't have a trusted publisher: its first publish takes a token, the
       # environment's secret NPM_TOKEN (npm falls back to it); delete the secret once the trusted publishers are set
-      - if: env.PUBLISH != 'none'
+      - if: env.PUBLISH == 'public'
         env:
-          NODE_AUTH_TOKEN: ${{ needs.check.outputs.publish == 'private' && secrets.GITHUB_TOKEN || secrets.NPM_TOKEN || '' }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || '' }}
         run: |
-          if [ "$PUBLISH" = public ] && ! node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$(npm --version)"; then
+          if ! node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$(npm --version)"; then
             echo "::error::trusted publishing needs npm 11.5.1 or newer, this is $(npm --version)"; exit 1
           fi
-          flags=(--tag "$TAG")
-          if [ "$PUBLISH" = public ]; then flags+=(--provenance --access public); fi
           # a version the registry has already is skipped (it refuses it a second time): a release that stopped
           # half-way is finished by running this job again
-          publish() {
-            local name; name=$(node -p "require('./$1/package.json').name")
+          while read -r file name <&3; do
             if [ "$(npm view "$name@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
               echo "$name@$VERSION is published already"
             else
-              npm publish "${flags[@]}" "$1"
+              npm publish --ignore-scripts --provenance --access public --tag "$TAG" "./npm-dist/$file"
             fi
-          }
-          # the platforms first: rowstile names them as optional dependencies
-          for d in packaging/npm/out/cli-*; do publish "$d"; done
-          # GitHub Packages takes scoped names only: while private, the launcher is on the GitHub release
-          if [ "$PUBLISH" = public ]; then publish packaging/npm/out/rowstile; fi
-          for d in sdk/typescript/*/; do publish "$d"; done
+          done 3< npm-dist/order.txt
       # while no final release exists, a plain install gets the newest pre-release: npm's latest goes where next is, once
       # the registry shows this version there (minutes after the publish: read sooner, nothing looks left to
       # move). Each package's trusted publisher must allow it (Allow npm dist-tag); where one doesn't, or the
@@ -155,6 +181,7 @@ jobs:
     permissions: {id-token: write, contents: read}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with: {node-version: "24", registry-url: "https://registry.npmjs.org"}
       - run: bash packaging/npm/install_npm.sh
@@ -165,10 +192,12 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    permissions: {packages: write, contents: read}
+    # id-token and attestations: the image's provenance (below)
+    permissions: {packages: write, contents: read, id-token: write, attestations: write}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - if: needs.check.outputs.publish != 'none'
+        with: {persist-credentials: false}
+      - if: needs.check.outputs.publish == 'public'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f   # v4.6.0
         with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
       # one image for each platform under one tag: arm64 is built under emulation, by a BuildKit that can build
@@ -178,19 +207,31 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069   # v4.4.1
         with: {driver-opts: "image=moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c"}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc   # v7.4.0
+        id: build
         with:
           context: .
           file: packaging/docker/Dockerfile
           platforms: ${{ env.ROWSTILE_IMAGE_PLATFORMS }}
           # the label org.opencontainers.image.version; the Dockerfile stops if it isn't the package's
           build-args: VERSION=${{ needs.check.outputs.version }}
-          push: ${{ needs.check.outputs.publish != 'none' }}
+          push: ${{ needs.check.outputs.publish == 'public' }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/rowstile:${{ needs.check.outputs.version }}
             ${{ needs.check.outputs.npm-tag == 'latest' && format('ghcr.io/{0}/rowstile:latest', github.repository_owner) || '' }}
+      # the image's provenance (SLSA, signed through Sigstore as this workflow), kept by GitHub and pushed beside it:
+      # `gh attestation verify oci://ghcr.io/rowstile/rowstile:VERSION --repo rowstile/rowstile` checks it
+      # (docs/installing.md). No storage record: that is the organisation's, and would take another right
+      - if: needs.check.outputs.publish == 'public'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6   # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/rowstile
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
 
-  # the files a user can download: the wheel and sdist (PyPI's dry run: twine check), the launcher, the extension.
-  # Built here, with no right to write or sign anything; github-release signs and publishes them
+  # the files a user can download: the wheel and sdist (PyPI's dry run: twine check), the extension (the launcher
+  # is npm-files'). Built here, with no right to write or sign anything; github-release signs and publishes them,
+  # pypi and vscode publish theirs
   release-files:
     needs: check
     runs-on: ubuntu-latest
@@ -200,27 +241,26 @@ jobs:
       VERSION: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with: {node-version: "24"}
       # uv writes a .gitignore into the folder it builds into: not a file to download (0.1.0-alpha.1 had it)
-      - run: uv build --out-dir dist sdk/python && rm -f dist/.gitignore && uvx twine check --strict dist/*
-      - run: |
-          node packaging/npm/build.mjs && npm pack --pack-destination dist packaging/npm/out/rowstile
-          mv "dist/rowstile-$VERSION.tgz" "dist/rowstile-npm-$VERSION.tgz"   # not to be taken for the sdist
+      - run: uv build --out-dir dist sdk/python && rm -f dist/.gitignore && uvx twine@7.0.0 check --strict dist/*
       # the extension starts the language server with vscode-languageclient: the .vsix carries it (package.json's
       # files lists node_modules; vsce keeps the production dependencies only)
       - run: cd editor && npm ci --omit=dev --no-audit --no-fund && npx --yes @vscode/vsce@3.9.2 package --out ../dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with: {name: release-files, path: dist/}
-      # the notes github-release takes, written in a dry run too
+      # the notes github-release takes, written in a dry run too (from main, a -dev version: what Unreleased holds)
       - run: python3 packaging/changelog.py "$VERSION" > /dev/null
 
-  # the GitHub release: the files above, their provenance, the notes. It runs none of the packages' code
+  # the GitHub release: release-files' files and npm's launcher, their provenance, the notes. It runs none of the
+  # packages' code
   github-release:
-    needs: [check, release-files]
-    if: needs.check.outputs.publish != 'none'
+    needs: [check, release-files, npm-files]
+    if: needs.check.outputs.publish == 'public'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # id-token and attestations: the files' provenance (below)
@@ -229,18 +269,20 @@ jobs:
       VERSION: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
         with: {name: release-files, path: dist/}
+      # the launcher npm has, named so as not to be taken for the sdist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with: {name: npm-files, path: npm-dist/}
+      - run: mv "npm-dist/rowstile-$VERSION.tgz" "dist/rowstile-npm-$VERSION.tgz"
       # the files' provenance: where and how they were built (SLSA, signed through Sigstore as this workflow), kept
       # by GitHub and attached beside them as rowstile-<version>.intoto.jsonl. `gh attestation verify FILE --repo
-      # rowstile/rowstile` checks a file against it (docs/installing.md). GitHub keeps attestations for public
-      # repositories only
-      - if: needs.check.outputs.publish == 'public'
-        id: attest
+      # rowstile/rowstile` checks a file against it (docs/installing.md)
+      - id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6   # v4.2.2
         with: {subject-path: "dist/*"}
-      - if: needs.check.outputs.publish == 'public'
-        env: {BUNDLE: "${{ steps.attest.outputs.bundle-path }}"}
+      - env: {BUNDLE: "${{ steps.attest.outputs.bundle-path }}"}
         run: cp "$BUNDLE" "dist/rowstile-$VERSION.intoto.jsonl"
       # the notes are the release's section of CHANGELOG.md
       - run: python3 packaging/changelog.py "$VERSION" > release-notes.md
@@ -251,28 +293,40 @@ jobs:
           files: dist/*
           body_path: release-notes.md
           prerelease: ${{ needs.check.outputs.npm-tag == 'next' }}
+          # GitHub makes a release that isn't a pre-release its Latest unless told: not a patch to an older line
+          make_latest: ${{ needs.check.outputs.npm-tag == 'latest' }}
           fail_on_unmatched_files: true
 
-  # the VS Code extension on the Marketplace and Open VSX, when its own version (editor/package.json, raised when
-  # the extension changes) isn't there yet. Their tokens are the environment vscode's, which takes v* tags only; a
-  # dry run, on a branch, packages it and goes without them
+  # the VS Code extension release-files packaged, the file the GitHub release attaches, on the Marketplace and Open
+  # VSX when its own version (editor/package.json, raised when the extension changes) isn't there yet. Their tokens
+  # are the environment vscode's, which takes v* tags only; a dry run, on a branch, finds the file and goes without
+  # them
   vscode:
-    needs: check
+    needs: [check, release-files]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: ${{ needs.check.outputs.publish == 'public' && 'vscode' || '' }}
     permissions: {contents: read}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with: {node-version: "24"}
-      - run: cd editor && npm ci --omit=dev --no-audit --no-fund && npx --yes @vscode/vsce@3.9.2 package --out ../rowstile.vsix
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with: {name: release-files, path: dist/}
+      # vsce names it after the extension and its version
+      - id: vsix
+        run: |
+          version=$(node -p "require('./editor/package.json').version")
+          ls "dist/rowstile-$version.vsix"
+          { echo "version=$version"; echo "file=dist/rowstile-$version.vsix"; } >> "$GITHUB_OUTPUT"
       - if: needs.check.outputs.publish == 'public'
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
+          EXTENSION: ${{ steps.vsix.outputs.version }}
+          VSIX: ${{ steps.vsix.outputs.file }}
         run: |
-          version=$(node -p "require('./editor/package.json').version")
           # a registry whose token isn't set is skipped, said in the run's summary
           if [ -z "$VSCE_PAT" ]; then
             echo "::notice::VSCE_PAT isn't set (environment vscode): not published on the VS Code Marketplace"
@@ -281,17 +335,17 @@ jobs:
             let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
               let versions = []; try { versions = JSON.parse(s).versions.map((v) => v.version) } catch {}
               process.exit(versions.includes(process.argv[1]) ? 0 : 1)
-            })' "$version"; then
-            echo "the Marketplace has rowstile.rowstile $version already"
+            })' "$EXTENSION"; then
+            echo "the Marketplace has rowstile.rowstile $EXTENSION already"
           else
-            npx --yes @vscode/vsce@3.9.2 publish --packagePath rowstile.vsix
+            npx --yes @vscode/vsce@3.9.2 publish --packagePath "$VSIX"
           fi
           if [ -z "$OVSX_PAT" ]; then
             echo "::notice::OVSX_PAT isn't set (environment vscode): not published on Open VSX"
-          elif curl -sf "https://open-vsx.org/api/rowstile/rowstile/$version" > /dev/null; then
-            echo "Open VSX has rowstile.rowstile $version already"
+          elif curl -sf "https://open-vsx.org/api/rowstile/rowstile/$EXTENSION" > /dev/null; then
+            echo "Open VSX has rowstile.rowstile $EXTENSION already"
           else
-            npx --yes ovsx@1.2.0 publish rowstile.vsix
+            npx --yes ovsx@1.2.0 publish "$VSIX"
           fi
 
   # The MCP server's entry in the official registry (registry.modelcontextprotocol.io): server.json, which names
@@ -310,6 +364,7 @@ jobs:
       SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
       - run: |
           curl -fsSL --retry 4 -o mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/v$PUBLISHER/mcp-publisher_linux_amd64.tar.gz"
           echo "$SHA256  mcp-publisher.tar.gz" | sha256sum -c -

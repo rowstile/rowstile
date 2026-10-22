@@ -58,6 +58,10 @@ The GitHub CLI checks a file against it (the wheel's name writes the version as 
 
     gh attestation verify rowstile-<version>-py3-none-any.whl --repo rowstile/rowstile
 
+The image has its provenance too, from 0.1.0-beta.1 on:
+
+    gh attestation verify oci://ghcr.io/rowstile/rowstile:<version> --repo rowstile/rowstile
+
 ## From the repository
 
     git clone https://github.com/rowstile/rowstile
