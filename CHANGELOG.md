@@ -530,6 +530,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   says `npm ci`. `migrate.py` runs outside this repository (it stopped with a `StopIteration`): it needs the
   command only for `--client`, and outside the repository it runs the one installed. The app's image no longer
   copies the command, and `test.sh` takes the database and storage down when a step stops the run early.
+- The page on files in S3-compatible storage (`docs/signed-urls.md`) uploads as the file manager does: the browser
+  sends the bytes to a place of their own (`uploads/<key>`), and confirming the upload moves them to the file's
+  object and checks their size. The page signed the upload for the object's own key: that link goes on working
+  after the confirm, so it could replace a confirmed file, whose stored size was then wrong. The file manager's
+  README names each setting with its default, the maintenance jobs to schedule and each part of the backend, and
+  no longer describes the share links' table the app dropped.
 - Studio's page: in the Tables tab each row's cells sit under their headings again (each row was laid out as a
   flex box, its cells bunched apart from the columns). "Why?" while viewing as anyone says to pick someone,
   where it showed "Asking…" for ever. Clicking a type or a permission in the graph shows how it is written

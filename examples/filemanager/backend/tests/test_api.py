@@ -4,7 +4,9 @@ Every check goes through HTTP as a signed-in person, so what it proves is what r
 the authz.* functions decide, end to end.
 """
 
+import dataclasses
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -809,6 +811,57 @@ def test_migrate_runs_outside_this_repository(tmp_path: Path) -> None:
         assert (p.returncode, p.stderr, p.stdout) == (0, "", said)
     client = (tmp_path / "backend" / "app" / "authz_client.py").read_text(encoding="utf-8")
     assert client == f"# written by rowstile client py {tmp_path / 'db' / 'policy.authz'}\n"
+
+
+# --- what the README and docs/signed-urls.md say -------------------------------------------------
+EXAMPLE = Path(__file__).resolve().parents[2]
+
+
+def readme_rows() -> dict[str, str]:
+    """The README's tables: each row's first cell (in backticks), and the rest of the row."""
+    readme = (EXAMPLE / "README.md").read_text(encoding="utf-8")
+    return {m[1]: m[2] for m in re.finditer(r"^\| `([^`]+)` \|(.*)\|$", readme, re.M)}
+
+
+def test_the_readme_gives_each_setting_and_its_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The settings table: every FM_ variable the backend and db/migrate.py read, each with the default it has."""
+    from app import config
+
+    sources = [*(EXAMPLE / "backend" / "app").glob("*.py"), EXAMPLE / "db" / "migrate.py"]
+    read = {name for p in sources for name in re.findall(r"\"(FM_[A-Z0-9_]+)\"", p.read_text(encoding="utf-8"))}
+    defaults = {k: re.fullmatch(r" `([^`]*)` | (none) ", v.split("|")[0]) for k, v in readme_rows().items()}
+    shown = {k: m[1] or m[2] for k, m in defaults.items() if k.startswith("FM_") and m}
+    assert sorted(shown) == sorted(read)
+    for name in read:
+        monkeypatch.delenv(name, raising=False)
+    settings = config.load()
+    fields = dataclasses.fields(settings)
+    for field in fields:
+        name, value = f"FM_{field.name.upper()}", getattr(settings, field.name)
+        default = shown[shown[name]] if shown[name] in shown else shown[name]  # or another setting's value
+        if isinstance(value, bool):
+            value = str(value).lower()
+        assert default == (",".join(value) if isinstance(value, tuple) else str(value)), name
+    # the two the backend doesn't read at start: db/migrate.py and the maintenance jobs need them
+    rest = {k: v for k, v in shown.items() if k not in {f"FM_{f.name.upper()}" for f in fields}}
+    assert rest == {"FM_ADMIN_URL": "none", "FM_APP_PASSWORD": "none"}
+
+
+def test_the_readme_names_each_part_of_the_backend() -> None:
+    """The table of how it fits together: each module of backend/app, and only paths that are there."""
+    paths = [k for k in readme_rows() if "/" in k or "." in k]
+    assert [p for p in paths if not (EXAMPLE / p).exists()] == []
+    modules = sorted(p.name for p in (EXAMPLE / "backend" / "app").glob("*.py") if p.name != "__init__.py")
+    assert [m for m in modules if f"backend/app/{m}" not in paths] == []
+
+
+def test_the_signed_url_page_uploads_where_the_example_does() -> None:
+    """docs/signed-urls.md: the upload link points at the upload's own place, which confirming moves from."""
+    from app.storage import Storage
+
+    page = (EXAMPLE.parents[1] / "docs" / "signed-urls.md").read_text(encoding="utf-8")
+    assert f"presigned `PUT` URL for `{Storage.UPLOADS}<object_key>`, not for the object's own key" in page
+    assert f'CopySource={{"Bucket": BUCKET, "Key": "{Storage.UPLOADS}" + key}}' in page
 
 
 def test_the_app_does_not_start_as_the_tables_owner(monkeypatch: pytest.MonkeyPatch) -> None:

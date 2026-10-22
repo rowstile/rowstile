@@ -2,8 +2,8 @@
 
 rowstile decides who may see a row; file contents usually live elsewhere (S3, RustFS, MinIO, R2). The
 pattern that keeps the two in step: **the row is the file's permission, and a signed URL is handed out
-only after the row was read through row-level security.** `examples/filemanager/` does exactly this
-(`backend/app/main.py`, `backend/app/storage.py`).
+only after the row was read through row-level security.** `examples/filemanager/` does this, uploads
+included (`backend/app/main.py`, `backend/app/storage.py`).
 
 ## The table
 
@@ -16,6 +16,7 @@ CREATE TABLE app.files (
   folder_id  bigint NOT NULL REFERENCES app.folders,
   name       text NOT NULL,
   object_key uuid NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+  size       bigint,                               -- what arrived, once it has
   ready      boolean NOT NULL DEFAULT false        -- the bytes have arrived
 );
 ```
@@ -42,17 +43,42 @@ return {"url": s3.generate_presigned_url("get_object", ExpiresIn=600,
 
 ## Uploading
 
-Straight from the browser to storage, with the row created first:
+Straight from the browser to storage, with the row created first, and the bytes sent to a place of their
+own:
 
 1. `INSERT INTO app.files (folder_id, name, ...) VALUES (...) RETURNING id, object_key`: row-level
    security checks the user may add files there (`insert : folder.edit and ...`), with `ready = false`.
-2. Return a presigned `PUT` URL for that key (the bucket needs a CORS rule for your web app's origin).
+2. Return a presigned `PUT` URL for `uploads/<object_key>`, not for the object's own key (the bucket needs a
+   CORS rule for your web app's origin).
 3. The browser PUTs the bytes.
-4. `POST /files/{id}/ready`: the backend checks the object exists (`HEAD`), stores its real size and
-   sets `ready = true`.
+4. `POST /files/{id}/ready`: the backend reads the row as the user, moves the bytes to the object's key, and
+   stores their real size with `ready = true`:
 
-Readers only list and download `ready` rows. Rows that never became ready (the upload was abandoned)
-can be deleted by a periodic job, together with their objects.
+```python
+with transaction_as(user):                                    # authz.act_as('user', ...)
+    row = one("SELECT object_key FROM app.files WHERE id = %s AND NOT ready", file_id)
+    if row is None:
+        return 404                                            # hidden, missing or confirmed already
+    key = str(row.object_key)
+    if size_of("uploads/" + key) is not None:                 # (a retry finds it moved already)
+        s3.copy_object(Bucket=BUCKET, Key=key, CopySource={"Bucket": BUCKET, "Key": "uploads/" + key})
+        s3.delete_object(Bucket=BUCKET, Key="uploads/" + key)
+    size = size_of(key)                                       # head_object's ContentLength, or None
+    if size is None:
+        return 409                                            # nothing was uploaded
+    execute("UPDATE app.files SET ready = true, size = %s WHERE id = %s", size, file_id)
+```
+
+- Why a place of its own: a signed `PUT` URL works until it expires, also after the upload was confirmed.
+  Signed for the object's own key, it would let its holder replace a confirmed file, and the stored size
+  (a quota's count) would no longer be the file's. Moved on confirm, the bytes are out of its reach: what is
+  put there later is never read.
+- The size the browser gave when the upload started is its word, and a signed `PUT` takes any length: check
+  your limit on what arrived (the size above), and delete it if it is over.
+
+Readers only list and download `ready` rows. A periodic job deletes the rows that never became ready (the
+upload was abandoned), with their objects and what is in their uploads' place, and anything left in
+`uploads/` after a day.
 
 ## Deleting
 
