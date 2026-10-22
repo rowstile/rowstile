@@ -70,6 +70,12 @@ A build from `main` records its version with a hash of the compiler's sources (`
 
 ## Making a release
 
+First, the Python the npm packages bring. It is python-build-standalone's, pinned by hand in
+`packaging/npm/build.mjs` (`RELEASE`, `PYTHON` and a SHA-256 for each platform), and Dependabot doesn't watch it:
+a fix in CPython or OpenSSL reaches npm users only when it moves. When the newest release
+(`gh release view -R astral-sh/python-build-standalone --json tagName`) is newer than `RELEASE`, move to it in a
+pull request of its own, before the release's (the comment above `RELEASE` says what changes with it).
+
 1. **The release pull request**, from a branch `release-X.Y.Z` (or `release-X.Y.Z-rc.N`, `release-X.Y.Z-beta.N`,
    `release-X.Y.Z-alpha.N`), with two commits:
    1. the release itself, with the subject line `X.Y.Z-rc.N` (or `X.Y.Z-alpha.N`, `X.Y.Z-beta.N`, `X.Y.Z`):

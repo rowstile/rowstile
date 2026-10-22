@@ -36,7 +36,7 @@ docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo node:24 bash -c \
   "node packaging/npm/build.mjs --platform linux-x64 --platform linux-x64-musl >/dev/null && cd $OUT && npm pack -s /repo/packaging/npm/out/rowstile /repo/packaging/npm/out/cli-linux-x64 /repo/packaging/npm/out/cli-linux-x64-musl >/dev/null" \
   || bad "the npm packages build"
 size=$(stat -c %s "$OUT"/rowstile-cli-linux-x64-[0-9]*.tgz 2>/dev/null || echo 0)
-[ "$size" -gt 0 ] && [ "$size" -lt 40000000 ] && ok "@rowstile/cli-linux-x64 is $((size / 1000000)) MB (under 40)" || bad "@rowstile/cli-linux-x64 is $size bytes"
+[ "$size" -gt 0 ] && [ "$size" -lt 20000000 ] && ok "@rowstile/cli-linux-x64 is $((size / 1000000)) MB (under 20)" || bad "@rowstile/cli-linux-x64 is $size bytes"
 # on the lowest Node the package's engines state (packaging/npm/rowstile/package.json); the others on Node 24
 docker run --rm -v "$REPO:/repo" node:22.12.0-slim bash -c "
   ! command -v python3 >/dev/null && ! command -v python >/dev/null || { echo 'python is here'; exit 1; }
@@ -131,14 +131,26 @@ for f in glob.glob(out + "/rowstile-*.whl"):
 print(bare) if bare else None
 sys.exit(1 if bare else 0)
 EOF
-# ... and a platform package those of the libraries built into its Python (python-build-standalone's)
-python3 - "$OUT" <<'EOF' && ok "each platform package holds the licences of the libraries built into its Python" || bad "a platform package without python/licenses"
-import glob, sys, tarfile
+# ... and a platform package those of the libraries built into its Python (python-build-standalone's): each text of
+# packaging/npm/python-licenses, and no other
+python3 - "$OUT" <<'EOF' && ok "each platform package holds the licences of the libraries built into its Python" || bad "a platform package without python/licenses as it is"
+import glob, os, sys, tarfile
+want = sorted(os.listdir("packaging/npm/python-licenses"))
 packages = glob.glob(sys.argv[1] + "/rowstile-cli-*.tgz")
-bare = [f for f in packages if not {"LICENSE.openssl-3.txt", "LICENSE.sqlite.txt", "LICENSE.zlib.txt", "LICENSE.cpython.txt"}
-        <= {n.rsplit("/", 1)[-1] for n in tarfile.open(f).getnames() if "/python/licenses/" in n}]
-print(bare) if bare else None
-sys.exit(1 if bare or not packages else 0)
+wrong = {f: got for f in packages
+         if (got := sorted(n.rsplit("/", 1)[-1] for n in tarfile.open(f).getnames() if "/python/licenses/" in n)) != want}
+print(f"python-licenses: {want}", wrong) if wrong else None
+sys.exit(1 if wrong or not packages else 0)
+EOF
+# ... and none of what its Python never loads: libpython (the binary is linked statically), python3.13-config, and
+# _dbm (Berkeley DB, which the command never imports)
+python3 - "$OUT" <<'EOF' && ok "no platform package holds libpython, python3.13-config or _dbm" || bad "a platform package holds what its Python never loads"
+import glob, re, sys, tarfile
+packages = glob.glob(sys.argv[1] + "/rowstile-cli-*.tgz")
+extra = [n for f in packages for n in tarfile.open(f).getnames()
+         if re.search(r"/(libpython3[^/]*|python3[^/]*-config|_dbm\.[^/]*)$", n)]
+print(extra) if extra else None
+sys.exit(1 if extra or not packages else 0)
 EOF
 
 echo "-- the image"

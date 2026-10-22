@@ -24,7 +24,8 @@ const CACHE = join(HERE, ".cache");
 // the release's own (its SHA256SUMS): a download, or a file kept from an earlier one, that isn't those bytes
 // is refused. A new RELEASE or PYTHON needs the seven sums again, and python-licenses/ again: the licence
 // texts of the libraries built into that Python (OpenSSL, SQLite, zlib...), which only the release's full
-// archives carry (python/licenses/, the same nineteen files for every target).
+// archives carry (python/licenses/, the same files for every target), less those of the parts trim() removes.
+// RELEASING.md's release steps check for a newer release: nothing else watches it.
 const RELEASE = "20260924";
 const PYTHON = "3.13.15";
 /** @typedef {{triple: string, os: string, cpu: string, libc?: string, sha256: string}} Target */
@@ -52,6 +53,16 @@ const COMMAND = ["authzlib", "cli/studio",
 // what the command never uses: the standard library's tests, GUIs, installers and headers
 const UNUSED = ["test", "idlelib", "tkinter", "turtledemo", "turtle.py", "ensurepip", "lib2to3", "pydoc_data",
   "site-packages", "venv", "__phello__"];
+// python-licenses/: each text, and the licence it is (SPDX), for the package's `license`. Left out, with the parts
+// trim() removes: Berkeley DB (in _dbm), Tcl, Tk, Tix and the X11 libraries Tk uses; OpenSSL 1.1 (no target has it)
+/** @type {Record<string, string>} */
+const LICENSES = {
+  "LICENSE.cpython.txt": "PSF-2.0", "LICENSE.openssl-3.txt": "Apache-2.0", "LICENSE.sqlite.txt": "blessing",
+  "LICENSE.zlib.txt": "Zlib", "LICENSE.bzip2.txt": "bzip2-1.0.6", "LICENSE.liblzma.txt": "0BSD",
+  "LICENSE.libffi.txt": "MIT", "LICENSE.expat.txt": "MIT", "LICENSE.mpdecimal.txt": "BSD-2-Clause",
+  "LICENSE.libuuid.txt": "BSD-3-Clause", "LICENSE.libedit.txt": "BSD-3-Clause",
+  "LICENSE.ncurses.txt": "X11-distribute-modifications-variant",
+};
 
 const version = /^__version__ = "([^"]+)"/m.exec(readFileSync(join(ROOT, "core", "authzlib", "__init__.py"), "utf8"))?.[1];
 if (!version) throw new Error("core/authzlib/__init__.py has no __version__");
@@ -145,16 +156,21 @@ function trim(python, target) {
     for (const f of readdirSync(join(python, "lib"))) {
       if (/^(libtcl|libtk|tcl|tk|itcl|thread|pkgconfig)/.test(f)) rmSync(join(python, "lib", f), { recursive: true, force: true });
     }
-    for (const f of readdirSync(join(python, "bin"))) {
-      if (/^(idle|pydoc|2to3|pip)/.test(f)) rmSync(join(python, "bin", f), { force: true });
+    // libpython: the binary is linked statically and loads none (readelf -d, otool -L); python3.13-config: for
+    // building against the headers removed above
+    for (const f of readdirSync(join(python, "lib"))) {
+      if (/^libpython3/.test(f)) rmSync(join(python, "lib", f), { force: true });
     }
+    for (const f of readdirSync(join(python, "bin"))) {
+      if (/^(idle|pydoc|2to3|pip)|-config$/.test(f)) rmSync(join(python, "bin", f), { force: true });
+    }
+    // _dbm: the dbm module's C part (Berkeley DB on Linux), which the command never imports
     const dyn = join(lib, "lib-dynload");
-    if (existsSync(dyn)) for (const f of readdirSync(dyn)) if (f.startsWith("_tkinter")) rmSync(join(dyn, f), { force: true });
+    if (existsSync(dyn)) for (const f of readdirSync(dyn)) if (/^(_tkinter|_dbm)\./.test(f)) rmSync(join(dyn, f), { force: true });
   }
 }
 
-// npm leaves symlinks out of packages: drop them (bin/python3 -> python3.13; libpython3.13.so ->
-// libpython3.13.so.1.0, the name the loader asks for)
+// npm leaves symlinks out of packages: drop them (bin/python3 -> python3.13, the name asked for)
 /** @param {string} dir */
 function unlink(dir) {
   for (const f of readdirSync(dir)) {
@@ -169,6 +185,13 @@ function unlink(dir) {
 function size(path) {
   const s = statSync(path);
   return s.isDirectory() ? readdirSync(path).reduce((n, f) => n + size(join(path, f)), 0) : s.size;
+}
+
+// the package's own licence (LICENSE), then each of its Python's
+const licence = [...new Set(["Apache-2.0", ...Object.values(LICENSES)])].join(" AND ");
+const texts = readdirSync(join(HERE, "python-licenses")).sort().join(", ");
+if (texts !== Object.keys(LICENSES).sort().join(", ")) {
+  throw new Error(`python-licenses/ holds ${texts}: LICENSES in build.mjs names each text the packages carry`);
 }
 
 /** @param {string} key */
@@ -192,7 +215,7 @@ function platform(key) {
     name: `@rowstile/cli-${key}`,
     version,
     description: `The Python the rowstile command runs on, for ${key} (python-build-standalone ${PYTHON}, trimmed)`,
-    license: "Apache-2.0 AND PSF-2.0",
+    license: licence,
     homepage: "https://rowstile.dev",
     keywords: ["rowstile"],
     repository: { type: "git", url: "git+https://github.com/rowstile/rowstile.git", directory: "packaging/npm" },
@@ -205,7 +228,7 @@ function platform(key) {
   });
   cpSync(join(ROOT, "LICENSE"), join(dir, "LICENSE"));    // the package's; Python's own is python/**/LICENSE.txt
   // ... and those of the libraries built into this Python, where python-build-standalone's full archives put them
-  cpSync(join(HERE, "python-licenses"), join(dir, "python", "licenses"), { recursive: true });
+  for (const f of Object.keys(LICENSES)) cpSync(join(HERE, "python-licenses", f), join(dir, "python", "licenses", f));
   write(join(dir, "README.md"), `# @rowstile/cli-${key}\n\nThe Python that the \`rowstile\` command runs on, for ${key}: ` +
     `CPython ${PYTHON} from python-build-standalone (${RELEASE}), without the parts the command never uses. ` +
     "Installed by `rowstile` as an optional dependency; not for use on its own.\n\n" +
