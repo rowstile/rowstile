@@ -1,5 +1,5 @@
-"""pytest fixtures for apps that use rowstile (loaded by the pytest11 entry point, or with
-`pytest_plugins = ["rowstile.testing"]`).
+"""pytest fixtures for apps that use rowstile. Installing the package is enough: its pytest11 entry point loads
+them (naming rowstile.testing in pytest_plugins too, pytest stops: it is loaded already).
 
     def test_bob_cannot_rename(client, as_user, assert_refused):
         with as_user(2):
@@ -10,6 +10,7 @@ role: what the app sees), both SQLAlchemy or libpq URLs, give the authz_owner_ur
 The fixtures' types, for annotating a test's arguments: AsUser, AssertRefused, AssertNotFound.
 
 With an async function, await the helper in an async test: `await assert_refused(lambda: rename(note_id, "x"))`.
+A test that never awaits it fails: the check runs only when it is awaited.
 
 A database per worker: database_per_worker(owner_url) copies the migrated test database (with the policy) once
 for each pytest-xdist worker, so tests that write don't meet each other.
@@ -22,7 +23,7 @@ import inspect
 import os
 import re
 import urllib.parse
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Protocol, TypeVar, cast, overload
@@ -123,6 +124,8 @@ def database_per_worker(url: str, app_url: str | None = None, fresh: bool = True
 
 
 Raised = TypeVar("Raised", Refused, NotFound)
+# what a helper returned for an async function, and that function's own awaitable: each must be awaited
+_Pending = list[tuple[Coroutine[object, object, object], Awaitable[object]]]
 
 
 class AssertRefused(Protocol):
@@ -160,9 +163,9 @@ def _raised(e: Exception, expected: type[Raised]) -> Raised:
 
 
 def _checked(
-    fn: Callable[[], object], expected: type[Raised], what: str, check: Callable[[Raised], None]
+    fn: Callable[[], object], expected: type[Raised], what: str, check: Callable[[Raised], None], pending: _Pending
 ) -> Raised | Awaitable[Raised]:
-    """fn() must raise `expected`: the error, checked; for an async function, an awaitable of it."""
+    """fn() must raise `expected`: the error, checked; for an async function, an awaitable of it (in pending)."""
     try:
         out = fn()
     except Exception as e:
@@ -171,23 +174,44 @@ def _checked(
         return err
     if not inspect.isawaitable(out):
         raise AssertionError(f"expected {what}, got {out!r}")
-    pending = out
+    inner = out
 
     async def later() -> Raised:
         try:
-            got = await pending
+            got = await inner
         except Exception as e:
             err = _raised(e, expected)
             check(err)
             return err
         raise AssertionError(f"expected {what}, got {got!r}")
 
-    return later()
+    checked = later()
+    pending.append((checked, inner))
+    return checked
+
+
+def _never_awaited(helper: str, pending: _Pending) -> None:
+    """At the end of the test: what the helper returned for an async function must have been awaited, or its check
+    never ran. Fails the test if not (closing both, so Python doesn't warn of them as well)."""
+    never = [
+        (checked, inner) for checked, inner in pending if inspect.getcoroutinestate(checked) == inspect.CORO_CREATED
+    ]
+    for checked, inner in never:
+        checked.close()
+        getattr(inner, "close", lambda: None)()
+    if never:
+        pytest.fail(
+            f"{helper}() was given an async function, and what it returned was never awaited, so the check never "
+            "ran: await it",
+            pytrace=False,
+        )
 
 
 @pytest.fixture
-def assert_refused() -> AssertRefused:
-    """assert_refused(fn, command=None, table=None): fn() must be refused by the policy; returns the Refused."""
+def assert_refused() -> Iterator[AssertRefused]:
+    """assert_refused(fn, command=None, table=None): fn() must be refused by the policy; returns the Refused (for
+    an async function, an awaitable of it, which the test must await)."""
+    pending: _Pending = []
 
     def check(
         fn: Callable[[], object], command: str | None = None, table: str | None = None
@@ -199,17 +223,23 @@ def assert_refused() -> AssertRefused:
             if table:
                 assert err.table == table, err.table
 
-        return _checked(fn, Refused, "a refusal", the_rule)
+        return _checked(fn, Refused, "a refusal", the_rule, pending)
 
-    return cast("AssertRefused", check)
+    yield cast("AssertRefused", check)
+    _never_awaited("assert_refused", pending)
 
 
 @pytest.fixture
-def assert_not_found() -> AssertNotFound:
-    def check(fn: Callable[[], object]) -> NotFound | Awaitable[NotFound]:
-        return _checked(fn, NotFound, "NotFound", lambda err: None)
+def assert_not_found() -> Iterator[AssertNotFound]:
+    """assert_not_found(fn): fn() must raise NotFound; returns it (for an async function, an awaitable of it, which
+    the test must await)."""
+    pending: _Pending = []
 
-    return cast("AssertNotFound", check)
+    def check(fn: Callable[[], object]) -> NotFound | Awaitable[NotFound]:
+        return _checked(fn, NotFound, "NotFound", lambda err: None, pending)
+
+    yield cast("AssertNotFound", check)
+    _never_awaited("assert_not_found", pending)
 
 
 @pytest.fixture

@@ -38,8 +38,10 @@ from rowstile import sqlalchemy as authz_sa
             assert authz_sa.can_sync(s, "note", 2, "edit") and not authz_sa.can_sync(s, "note", 3, "edit")
 ```
 
-An ORM update the rules refuse changes 0 rows, which SQLAlchemy raises as `StaleDataError`; `why_stale_sync`
-asks the database why, and gives `Refused` with the rule and the reason, or `NotFound`:
+An ORM update the rules refuse changes 0 rows, which SQLAlchemy raises as `StaleDataError`. The SDK asks the
+database why before the flush's transaction is rolled back, in it; `why_stale_sync` gives the answer, `Refused`
+with the rule and the reason, or `NotFound` (`None` when the rules allow the change: the row changed since it
+was read):
 
 ```python
             with pytest.raises(StaleDataError) as e, Session(engine) as s, s.begin():

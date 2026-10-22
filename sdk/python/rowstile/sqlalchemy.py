@@ -11,20 +11,22 @@ Queries by permission use set checks, never a function call per row:
 Queries[ObjectType, Permission]() has the same queries taking only the policy's names (the generated client's),
 so a misspelled one doesn't type-check.
 
-An ORM update of a row the user may not change matches no row, and SQLAlchemy raises StaleDataError;
-why_stale() asks the database which it was, for each row of the flush that failed: NotFound (the row is
-hidden) or Refused (and why) for the first one the database says no for. The rows are remembered per request
-or acting_as block; outside one, per thread (or task), for the transaction it began last. An ORM delete that
+An ORM update of a row the user may not change matches no row, and SQLAlchemy raises StaleDataError. Before the
+flush's transaction (or savepoint) is rolled back, the SDK asks the database about the flush's rows, in one
+statement, in that transaction and as the same user: it sees what the transaction wrote, and needs no other
+connection. why_stale(exc) gives the answer: NotFound (the row is hidden) or Refused (and why) for the first row
+the database says no for. None when the rules allow every row (the row changed since it was read: a version
+counter's conflict), or when it couldn't ask (a model mapped to a join names no one table). An ORM delete that
 matches no row is only a warning in SQLAlchemy (an error with a version column alone): delete with Core's
 delete() and expect().
 """
 
 from __future__ import annotations
 
-import contextvars
+import sys
 import typing
 from collections.abc import Callable, Iterable, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
 from sqlalchemy import (
     BigInteger,
@@ -39,7 +41,8 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.orm import Mapper, Session
+from sqlalchemy.orm import Mapper, Session, object_session
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.types import TypeEngine
 
 from . import (
@@ -49,14 +52,13 @@ from . import (
     Principal,
     Refused,
     Who,
-    _Write,
-    _writes,
     act_as_args,
     act_as_sql,
     answer,
     current,
     explain_rule_args,
     explain_rule_sql,
+    key_text,
     verdict,
 )
 
@@ -78,39 +80,36 @@ Result = TypeVar("Result")
 TypeName = TypeVar("TypeName", bound=str)
 PermissionName = TypeVar("PermissionName", bound=str)
 
-_engines: dict[Engine, Engine | AsyncEngine] = {}  # sync engine -> the engine install() was given (async or not)
-_mapper_events = False
-# the writes remembered outside a request or acting_as block: each thread's or task's own (never one list for the
-# process: another thread's writes are another person's), those of the transaction it began last
-_outside: contextvars.ContextVar[list[_Write] | None] = contextvars.ContextVar("rowstile_writes_outside", default=None)
-
-
-def _outside_writes(begin: bool = False) -> list[_Write]:
-    """Where the writes made outside a block go: this thread's or task's list; a new one when a transaction
-    begins (begin), so that why_stale doesn't answer about an earlier transaction's rows."""
-    writes = None if begin else _outside.get()
-    if writes is None:
-        writes = []
-        _outside.set(writes)
-    return writes
+_users: dict[Engine, Callable[[], Who] | None] = {}  # each engine install() was given (the sync one): its user()
+_orm_events = False
+# a row an ORM flush updates or deletes: (the table, update or delete, the row's key)
+_Row: TypeAlias = "tuple[str, str, tuple[object, ...]]"
+_ROWS = "rowstile_rows"  # in a connection's info: the rows of the flush on it, as SQLAlchemy told them
+_FLUSHING = "rowstile_flushing"  # in a session's info: a flush began, and its first row starts the rows again
+_ASKED = "_rowstile_asked"  # on a StaleDataError: what the database said, NotFound or Refused; True: the rules allow
 
 
 def install(engine: AnyEngine, user: Callable[[], Who] | None = None) -> AnyEngine:
     """Signs every transaction on `engine` in as whoever the code acts for (rowstile.acting_as, or the web
-    integration), else as user() if given, else as nobody. Also remembers the rows each ORM flush updates
-    or deletes, for why_stale()."""
-    global _mapper_events
+    integration), else as user() if given, else as nobody. When an ORM flush on it fails with StaleDataError, asks
+    the database why, for why_stale(). Installing an engine again changes nothing, but gives it user() if it had
+    none (Rowstile(app, engine) installs it without one); another user() than the one it has is a ValueError."""
+    global _orm_events
     sync = engine.sync_engine if isinstance(engine, AsyncEngine) else engine
-    if sync in _engines:
+    if sync in _users:
+        if user is not None and _users[sync] not in (None, user):
+            raise ValueError("install(engine) was given another user() for this engine before: an engine has one")
+        _users[sync] = _users[sync] or user
         return engine
-    _engines[sync] = engine
+    _users[sync] = user
 
     @event.listens_for(sync, "begin")
     def _sign_in(conn: Connection) -> None:
-        _outside_writes(begin=True)
+        conn.info[_ROWS] = []
         who = current()
-        if who is None and user is not None:
-            who = Principal.of(user())
+        given = _users[sync]
+        if who is None and given is not None:
+            who = Principal.of(given())
         who = who or NOBODY
         # the id as a parameter where the driver takes them this way: psycopg reads % in a statement, so an id
         # written into it would be changed ('%s') or refused ('50%')
@@ -122,30 +121,44 @@ def install(engine: AnyEngine, user: Callable[[], Who] | None = None) -> AnyEngi
         else:
             conn.exec_driver_sql(act_as_sql(who))
 
-    if not _mapper_events:
-        _mapper_events = True
+    event.listen(sync, "rollback", _ask)
+    event.listen(sync, "rollback_savepoint", _ask)
+    if not _orm_events:
+        _orm_events = True
+        event.listen(Session, "before_flush", _flushing)
         event.listen(Mapper, "before_update", _remember("update"))
         event.listen(Mapper, "before_delete", _remember("delete"))
     return engine
 
 
+def _flushing(session: Session, *_: object) -> None:
+    session.info[_FLUSHING] = True
+
+
 def _remember(command: str) -> Callable[[Mapper[Any], Connection, object], None]:
     def remember(mapper: Mapper[Any], connection: Connection, target: object) -> None:
+        rows: list[_Row] | None = connection.info.get(_ROWS)
+        if rows is None:
+            return  # an engine install() wasn't given: nothing asks about its rows
+        session = object_session(target)
+        assert session is not None  # a row the session flushes
+        if session.info.pop(_FLUSHING, False):
+            rows.clear()  # the flush's first row: an earlier flush's rows aren't asked about
         table = mapper.local_table
         if not isinstance(table, Table):
             return  # mapped to a join or a query: no one table to ask about
         name = f"{table.schema}.{table.name}" if table.schema else table.name
-        key = mapper.primary_key_from_instance(target)
-        writes = _writes.get()
-        if writes is None:
-            writes = _outside_writes()
-        writes.append((connection.engine, name, command, key))
-        del writes[:-20]
+        rows.append((name, command, mapper.primary_key_from_instance(target)))
 
     return remember
 
 
 _EXPLAIN = explain_rule_sql("CAST(:t AS text)", ":c", ":k")
+# each row's answer, in one statement, in the order of the rows
+_EXPLAIN_EACH = text(
+    "SELECT r.* FROM unnest(CAST(:t AS text[]), CAST(:c AS text[]), CAST(:k AS text[])) WITH ORDINALITY "
+    "AS w(t, c, k, n) CROSS JOIN LATERAL (" + explain_rule_sql("w.t", "w.c", "w.k") + ") r ORDER BY w.n"
+)
 
 
 def _explain_sql(table: str, command: str, key: object) -> TextClause:
@@ -153,52 +166,54 @@ def _explain_sql(table: str, command: str, key: object) -> TextClause:
     return text(_EXPLAIN).bindparams(t=t, c=c, k=k)
 
 
-def _flush(exc: BaseException | None) -> list[_Write]:
-    """The writes the failed flush was about, the latest first: SQLAlchemy tells every row of a flush before it
-    sends the statements, so the row that was refused is one of the last run of writes to the same table. In a
-    block, its own writes only, even when it made none."""
-    recent = _writes.get()
-    if recent is None:
-        recent = _outside.get() or []
-    out: list[_Write] = []
-    for write in reversed(recent):
-        if out and write[:3] != out[0][:3]:
-            break
-        out.append(write)
-    return out
+def _last_run(rows: list[_Row]) -> list[_Row]:
+    """The rows the failed statements were about: SQLAlchemy tells every row of a table before it sends that
+    table's statements, so they are the last run of rows of one table and command."""
+    start = len(rows)
+    while start > 0 and rows[start - 1][:2] == rows[-1][:2]:
+        start -= 1
+    return rows[start:]
 
 
-def why_stale_sync(exc: BaseException | None = None) -> NotFound | Refused | None:
-    """For a StaleDataError: NotFound or Refused for the row it was about (sync engines). Returns the error
-    to raise (or None when it can't tell)."""
-    for engine, table, command, key in _flush(exc):
-        original = _engines.get(engine, engine)
-        if isinstance(original, AsyncEngine):
-            raise TypeError("an async engine's write: await rowstile.sqlalchemy.why_stale()")
-        with original.connect() as conn:
-            lines, who, named = answer(conn.execute(_explain_sql(table, command, key)).first())
-            conn.rollback()
+def _ask(conn: Connection, *_: object) -> None:
+    """Before a transaction or a savepoint is rolled back because a flush failed with StaleDataError (an update or
+    a delete matched no row): asks the database about the flush's rows, in that transaction, as the same user. The
+    answer goes on the error, for why_stale()."""
+    exc = sys.exc_info()[1]
+    if not isinstance(exc, StaleDataError) or isinstance(getattr(exc, _ASKED, None), (NotFound, Refused)):
+        return
+    rows = _last_run(conn.info.get(_ROWS, []))
+    if not rows:
+        return  # nothing to ask about: a model mapped to a join
+    asked = {"t": [r[0] for r in rows], "c": [r[1] for r in rows], "k": [key_text(r[2]) for r in rows]}
+    try:
+        answers = conn.execute(_EXPLAIN_EACH, asked).all()
+    except Exception:
+        return  # the error the app sees is the flush's: this one would hide it, and stop the rollback
+    for (table, command, key), row in zip(rows, answers, strict=True):
+        lines, who, named = answer(row)
         if not _allowed(lines):
-            return verdict(table, command, key, lines, who, named)
-    return None
+            setattr(exc, _ASKED, verdict(table, command, key, lines, who, named))
+            return
+    setattr(exc, _ASKED, True)
 
 
-async def why_stale(exc: BaseException | None = None) -> NotFound | Refused | None:
-    """For a StaleDataError: NotFound (the user can't see the row) or Refused (they may not, and why), asked
-    in a new transaction as the same user. Returns the error to raise, or None when it can't tell."""
-    for engine, table, command, key in _flush(exc):
-        original = _engines.get(engine, engine)
-        if isinstance(original, AsyncEngine):
-            async with original.connect() as aconn:
-                lines, who, named = answer((await aconn.execute(_explain_sql(table, command, key))).first())
-                await aconn.rollback()
-        else:
-            with original.connect() as conn:
-                lines, who, named = answer(conn.execute(_explain_sql(table, command, key)).first())
-                conn.rollback()
-        if not _allowed(lines):
-            return verdict(table, command, key, lines, who, named)
-    return None
+def why_stale_sync(exc: BaseException) -> NotFound | Refused | None:
+    """For a StaleDataError: NotFound (the user can't see the row) or Refused (they may not, and why), as the
+    database said in the flush's own transaction. Returns the error to raise, or None: the rules allow every row
+    of the flush (the row changed since it was read), or the SDK couldn't ask."""
+    asked = getattr(exc, _ASKED, None)
+    return asked if isinstance(asked, (NotFound, Refused)) else None
+
+
+async def why_stale(exc: BaseException) -> NotFound | Refused | None:
+    """why_stale_sync(exc), for code that awaits it."""
+    return why_stale_sync(exc)
+
+
+def _rules_allow(exc: BaseException) -> bool:
+    """Whether the database said the rules allow every row of the flush that failed: not the rules' doing."""
+    return getattr(exc, _ASKED, None) is True
 
 
 def _allowed(lines: Sequence[str] | None) -> bool:
@@ -225,7 +240,9 @@ def expect_sync(session: Session | Connection, result: Result, table: str, comma
 # --- queries by permission ------------------------------------------------------------------------------
 def ids(type_: str, perm: str, key_type: type[TypeEngine[Any]] | TypeEngine[Any] | None = BigInteger) -> Select[Any]:
     """The ids the signed-in user holds `perm` on, as a subquery: Folder.id.in_(ids("folder", "edit")).
-    key_type: the key's SQL type (BigInteger by default; String for text and uuid keys: pass None)."""
+    key_type: the key's SQL type, which the ids are cast to: BigInteger by default, Uuid for a uuid key, None for a
+    text key (the ids as authz.list gives them, text). A key of several columns has no one type: its ids are the
+    rows' text, so join authz.list on that text instead."""
     listed = func.authz.list(type_, perm).table_valued("id").render_derived(name="authz_ids")
     col = listed.c.id if key_type is None else cast(listed.c.id, key_type)
     return select(col)

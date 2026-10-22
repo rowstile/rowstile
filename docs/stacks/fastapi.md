@@ -135,8 +135,11 @@ database why and answers 403 with the rule and the reason, or 404 when the user 
         return {"id": note_id}
 ```
 
-A flush of several rows is asked about row by row: the answer is about the first one the database says no
-for. A Core `delete()` or `update()` reports 0 rows without an error; `expect` turns that into the same
+The SDK asks before the flush's transaction is rolled back, in it and as the same user, so it sees the rows that
+transaction wrote, and needs no other connection from the pool. A flush of several rows is asked about in one
+statement: the answer is about the first one the database says no for. When the rules allow every row, the row
+changed since it was read (a version counter, `version_id_col`), and the answer is 409. A Core `delete()` or
+`update()` reports 0 rows without an error; `expect` turns that into the same
 answers (404 too when the user may change the row and the statement matched nothing for another reason, such
 as a `where` with more than the key):
 
@@ -285,4 +288,6 @@ Postgres](../managed-postgres.md)).
 ## Other drivers
 
 The sync engine (and SQLModel, built on it) takes `install(engine)`. psycopg and asyncpg without SQLAlchemy:
-[Python apps](python.md).
+[Python apps](python.md). With FastAPI, such an app passes no engine, `Rowstile(app, None, user=...)`, and its
+drivers' errors get the same answers: 403 for a refused write, and each code's own. There is no engine to check
+at start-up: `rowstile.psycopg.problems(conn)` or `rowstile.asyncpg.problems(conn)` does it.

@@ -22,12 +22,12 @@ Rowstile(app, engine, user=current_user)     # current_user(request): its user's
 | module | what |
 |---|---|
 | `rowstile` | `acting_as(who)`, `@job(who)`, `Principal`, `Refused`, `NotFound`, `refusal(exc)`, `error_code(exc)` (rowstile's code for any database error: `AZ709`), `act_as_sql()` |
-| `rowstile.fastapi` | `Rowstile(app, engine, user=...)`: the request's principal, 403/404 problem bodies (and 404 for what a call names that isn't there, 400 for a missing or wrong argument, 401 for a call that needs someone signed in or a login refused, 409 for a move inside itself), the start-up check |
+| `rowstile.fastapi` | `Rowstile(app, engine, user=...)`: the request's principal, 403/404 problem bodies (and 404 for what a call names that isn't there, 400 for a missing or wrong argument, 401 for a call that needs someone signed in or a login refused, 409 for a move inside itself, and for an ORM update the rules allow of a row that changed since it was read), the start-up check; on psycopg or asyncpg without SQLAlchemy, `Rowstile(app, None, user=...)` |
 | `rowstile.sqlalchemy` | `install(engine)` (sync or async; SQLModel too), `ids(type, perm)` for `where`, `perms_of()` for a list's buttons, `can()` (`Queries[ObjectType, Permission]()` has the three taking only the generated client's names, so a misspelled one doesn't type-check), `expect()` for Core updates and deletes, `why_stale()` for the ORM's StaleDataError |
 | `rowstile.psycopg` | `transaction(conn, who)`, `atransaction(aconn, who)`, `expect()`, `aexpect()` |
 | `rowstile.asyncpg` | `transaction(conn, who)`, `expect()` |
 | `rowstile.alembic` | `include_name`, `include_object`: autogenerate leaves rowstile's objects alone |
-| `rowstile.testing` | pytest fixtures: `as_user`, `assert_refused`, `assert_not_found` (awaited, with an async function), `authz_owner_url`, `authz_app_url`; `database_per_worker(url)`: a copy of the migrated test database for each pytest-xdist worker |
+| `rowstile.testing` | pytest fixtures, loaded once the package is installed: `as_user`, `assert_refused`, `assert_not_found` (awaited, with an async function: a test that never awaits it fails), `authz_owner_url`, `authz_app_url`; `database_per_worker(url)`: a copy of the migrated test database for each pytest-xdist worker |
 
 Who a transaction acts for: `42` or `"42"` (a user), `("service", 3)` (another principal type of the policy),
 or `None` (nobody: only what `anyone` may see; `None` given to a call is nobody too, whoever the code around

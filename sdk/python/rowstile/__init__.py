@@ -21,12 +21,9 @@ import enum
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, LiteralString, ParamSpec, TypeAlias, TypeVar, cast
+from typing import LiteralString, ParamSpec, TypeAlias, TypeVar, cast
 
 from ._version import __version__
-
-if TYPE_CHECKING:
-    from sqlalchemy.engine import Engine
 
 Id: TypeAlias = "int | str"
 # who a transaction acts for: 42, '42' (a user, whatever the id holds), ('service', 3), a Principal, or None (nobody)
@@ -82,11 +79,6 @@ class Principal:
 
 NOBODY = Principal("user", None)
 _current: contextvars.ContextVar[Principal | None] = contextvars.ContextVar("rowstile_principal", default=None)
-# the rows the ORM updated or deleted lately (sqlalchemy.why_stale): a list each request or acting_as block
-# makes, which the ORM's hooks add to (they may run in another greenlet, which sees the same list)
-# (the engine, the table, update or delete, the row's key)
-_Write: TypeAlias = "tuple[Engine, str, str, tuple[object, ...]]"
-_writes: contextvars.ContextVar[list[_Write] | None] = contextvars.ContextVar("rowstile_writes", default=None)
 
 
 class _Unset(enum.Enum):
@@ -104,11 +96,10 @@ def current() -> Principal | None:
 @contextlib.contextmanager
 def acting_as(who: Who) -> Iterator[Principal | None]:
     """Everything in the block (every transaction the integrations begin) acts for `who`."""
-    token, writes = _current.set(Principal.of(who)), _writes.set([])
+    token = _current.set(Principal.of(who))
     try:
         yield _current.get()
     finally:
-        _writes.reset(writes)
         _current.reset(token)
 
 
@@ -202,7 +193,9 @@ class NotFound(Exception):
 
     def __init__(self, table: str | None = None, id_: object = None) -> None:
         self.table, self.id = table, key_shown(id_)
-        super().__init__(f"{table or 'the row'}{'' if self.id is None else ' ' + self.id} not found")
+        # 'app.notes 7 not found', 'app.notes not found', 'row 7 not found', or 'not found'
+        named = [table or "row", self.id] if self.id is not None else [table] if table else []
+        super().__init__(" ".join([*named, "not found"]))
 
     def problem(self) -> Problem:
         return {
