@@ -10612,6 +10612,32 @@ class ComparePages(unittest.TestCase):
                 shown.append(search(r"```authz\n(.*?)```", fh.read(), re.S).group(1))
         self.assertEqual(shown[0], shown[1])
 
+    def test_the_share_the_service_pages_show_needs_the_line_they_name(self) -> None:
+        """The OpenFGA and the SpiceDB pages share a relation their policy reads from a table: the share call they
+        show is refused by that policy (nothing is shared there), and allowed once the one line they name is added
+        under the type, by whoever holds the permission it names."""
+        from authzlib.parse import SharedSource
+
+        for page in ("openfga.md", "spicedb.md"):
+            with open(os.path.join(self.REPO, "docs", "compare", page), encoding="utf-8") as fh:
+                text = fh.read()
+            where = f"docs/compare/{page}"
+            policy = search(r"```authz\n(.*?)```", text, re.S).group(1)
+            prose = " ".join(text.split())
+            under, line = search(r"one more line under `(\w+)`, `([^`]+)`", prose).groups()
+            kind, relation = search(r"authz\.share\('(\w+)', '[^']*', '(\w+)'", prose).groups()
+            by = search(r"`shared by (\w+)` says who may share", prose).group(1)
+            self.assertEqual(kind, under, where)
+            head = search(rf"\ntype {under} = [^\n]*\n", policy)
+            changed = policy[: head.end()] + "  " + line + "\n" + policy[head.end() :]
+            shares = []
+            for text_ in (policy, changed):
+                c = Compiler(parse_policy(text_, where))
+                c.compile(where)
+                sources = c.types[kind].relations[relation].sources
+                shares.append([s.shared_by for s in sources if isinstance(s, SharedSource)])
+            self.assertEqual(shares, [[], [by]], f"{where}: the share it shows, without and with the line it names")
+
 
 class BlogPosts(unittest.TestCase):
     """docs/blog/: what a post shows can be run. Its SQL is lines of the files in the folder named like it

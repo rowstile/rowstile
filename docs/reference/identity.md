@@ -10,7 +10,7 @@ Three ways to say who is asking, all per transaction:
    policy's own (`scope files = ...`) limit which commands and permissions the
    transaction gets. <!-- checked: tests/identity.sh "read-only key: may view file 11, not edit it"; tests/identity.sh "files key: sees no folders (not in its scope)" -->
    A read-only session can't share, approve, or mint broader keys. <!-- checked: tests/identity.sh "read-only key: cannot share"; tests/identity.sh "read-only key: cannot approve a request"; tests/identity.sh "a read-only session cannot mint a broader key" -->
-   Pass the key as a parameter (`SELECT authz.login_key($1)`, as the SDKs and the generated clients do), not
+   Pass the key as a parameter (`SELECT authz.login_key($1)`, as the generated clients do), not
    written into the statement, or it ends up in the server's statement log; the same for a JWT.
    `authz.login_key(key)` works in read-only transactions too (a replica), and requests with
    the same key never wait for each other: when a key was last used (`last_used_at`) is kept to
@@ -67,11 +67,12 @@ A key made while its principal is deleted waits for the delete and is refused; a
 SERIALIZABLE whose snapshot is older than a key made since fails with a serialization error (40001), to retry. <!-- checked: tests/principals.sh "a key made while its user is deleted waits for the delete, then is refused"; tests/principals.sh "and no key is left behind"; tests/principals.sh "a delete with an older snapshot than a key made for the service gets a serialization error" -->
 Applying the policy deletes the keys of principals whose rows went while nothing watched them. <!-- checked: tests/principals.sh "applying the policy deletes the keys of a principal whose row is gone" -->
 
-**Every sign-in is signed**. `act_as` and the logins put an HMAC in `authz.session`, over
-who is signed in, the scopes, the backend and the transaction, with a key the app role can't read. <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/sessions.sh "and so is the signing" -->
+**Every sign-in is signed**. `act_as`, the logins and `view_as` put an HMAC in `authz.session`, over
+who is signed in, the scopes, the backend and the transaction, with a key the app role can't read. <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/sessions.sh "and so is the signing"; tests/sessions.sh "view_as signs who it shows" -->
 The
-settings are believed only with it, so nothing but `act_as` and the logins can change who is signed
-in, widen a key's scopes, or leave view-as, on any Postgres: setting `authz.user_id` is an error, and so is
+settings are believed only with it, so nothing but rowstile's own functions (`act_as`, the logins, `view_as`,
+and `who`, `explain` and the like for the length of their call) can change who is signed in, widen a key's
+scopes, or leave view-as, on any Postgres: setting `authz.user_id` is an error, and so is
 a signature from another transaction or connection. <!-- checked: tests/sessions.sh "and so is a user set directly"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
 A transaction in which nobody signed in gets an error
 too, not an empty result (`act_as(NULL, NULL)` says "nobody" on purpose). <!-- checked: tests/sessions.sh "but nobody signed in is an error, not an empty result"; tests/sessions.sh "act_as(NULL, NULL): nobody, on purpose, no error" -->

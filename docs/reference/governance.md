@@ -3,7 +3,7 @@
 - **Audit trail** (`authz.audit`): who did what, as whom (the real user during
   "view as"), with the reason from `SET LOCAL authz_ctx.reason = '...'`. <!-- checked: tests/governance.sh "a changed owner column is recorded, with what it was and why"; tests/identity.sh "the audit trail has the reason" -->
   Changes to
-  relationship tables and columns are recorded too (as relate/unrelate), including
+  relation tables and columns are recorded too (as relate/unrelate), including
   TRUNCATE, but not what is written in replica mode, where no ordinary trigger runs ([How it
   works](guarantees.md)). <!-- checked: tests/governance.sh "memberships kept in your tables are recorded too"; tests/governance.sh "emptying a link table is recorded" -->
   Nobody can update or delete rows, whatever the session sets (`session_replication_role`
@@ -59,11 +59,11 @@
 makes reads through the rules slow. Each finding has a severity. These are errors:
 
 - The app role doesn't exist. <!-- checked: tests/apply.sh "lint reports an app role that does not exist, and nothing more" -->
-- The app role is a superuser or has BYPASSRLS, itself or through a role it is a member of. <!-- checked: tests/apply.sh "lint reports an app role that is a member of a role with BYPASSRLS: an error"; tests/apply.sh "and one that has BYPASSRLS itself" -->
+- The app role is a superuser or has BYPASSRLS, itself or through a Postgres role it is a member of. <!-- checked: tests/apply.sh "lint reports an app role that is a member of a role with BYPASSRLS: an error"; tests/apply.sh "and one that has BYPASSRLS itself" -->
 - The app role is the policy's owner, or a member of it: who is signed in is believed without a signature, and
   it may read rowstile's tables and turn row-level security off. Applying refuses such an app role (AZ624), and
   lint finds one that became a member since. <!-- checked: tests/apply.sh "applying refuses the policy's owner as the app role"; tests/apply.sh "and applying refuses it, saying why"; tests/apply.sh "lint reports an app role that is a member of the policy's owner: an error" -->
-- The app role owns a type's table, or is a member of a role that does. An owner skips row-level security and
+- The app role owns a type's table, or is a member of a Postgres role that does. An owner skips row-level security and
   may turn it off, so `FORCE ROW LEVEL SECURITY` is no way out: the app role must not own the tables. <!-- checked: tests/governance.sh "lint finds: a governed table owned by the app role"; tests/governance.sh "and one owned by a role the app role is a member of"; tests/governance.sh "FORCE ROW LEVEL SECURITY or not, since an owner may turn it off" -->
 - Row-level security is off on a table with rules. <!-- checked: tests/governance.sh "lint finds row-level security off on a table with rules: an error" -->
 - A permissive policy on a table with rules that rowstile didn't make: Postgres joins permissive policies with
@@ -79,8 +79,8 @@ makes reads through the rules slow. Each finding has a severity. These are error
 - A masked column the app role may read from the table. <!-- checked: tests/masks.sh "lint reports a column readable through a role membership"; tests/masks.sh "lint reports: GRANT SELECT (body) ON mt.docs TO PUBLIC" -->
 - A privilege on rowstile's own schemas (`authz`, `authz_gen`, `authz_int`) or what is in them that the policy
   doesn't give. Applying takes it back. <!-- checked: tests/adversarial.sh "lint reports a grant on rowstile's objects made after apply"; tests/adversarial.sh "and the next apply takes it back" -->
-- A schema on the search path of rowstile's functions that run as the owner, which another role may create in.
-  Applying refuses it (AZ612). <!-- checked: tests/adversarial.sh "lint reports a schema on the functions' search path the app role may create in"; tests/adversarial.sh "and apply refuses it" -->
+- A schema on the search path of rowstile's functions that run as the owner, which another Postgres role may
+  create in. Applying refuses it (AZ612). <!-- checked: tests/adversarial.sh "lint reports a schema on the functions' search path the app role may create in"; tests/adversarial.sh "and apply refuses it" -->
 
 These are warnings:
 

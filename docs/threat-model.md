@@ -1,9 +1,10 @@
 # Threat model
 
 What rowstile protects, from whom, where it relies on the deployment, and what it does not cover.
-Checked by `core/tests/adversarial.sh` (the app role attacking the policy), `tests/identity.sh`
-(identity and scopes), `tests/difftest.py` (the database agrees with an independent evaluator) and
-`tests/fuzz_parser.py` (broken policies are refused cleanly). <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
+Checked by `core/tests/adversarial.sh` (the app role attacking the policy), `core/tests/sessions.sh` (signed
+sessions), `core/tests/identity.sh` (identity and scopes), `core/tests/principals.sh` (services that sign in as
+themselves), `core/tests/difftest.py` (the database agrees with an independent evaluator) and
+`core/tests/fuzz_parser.py` (broken policies are refused cleanly). <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
 rowstile has not been audited by anyone
 outside the project.
 
@@ -33,16 +34,17 @@ The trust boundary is between the app role and everything above it. A bug in the
 injection) should not let an attacker read hidden rows through queries. What such an attacker can
 do depends on identity:
 
-- **On any Postgres, sign-ins are signed**: `authz.act_as()` and the logins sign who is signed in,
-  the scopes, the backend and the transaction with a key the app role can't read, and nothing else is
-  believed. <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/sessions.sh "a forged signature is an error" -->
+- **On any Postgres, sign-ins are signed**: `authz.act_as()`, the logins and `authz.view_as()` sign who is
+  signed in, the scopes, the backend and the transaction with a key the app role can't read, and nothing else
+  is believed (`authz.who()`, `authz.explain()` and the like switch who is signed in only for the length of
+  their call). <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/sessions.sh "a forged signature is an error"; tests/sessions.sh "view_as signs who it shows" -->
   So the app role can't change who is signed in by setting it, widen a key's scopes, leave
   view-as, or reuse a sign-in from another transaction or connection (`tests/sessions.sh`). <!-- checked: tests/sessions.sh "changing authz.user_id after signing in is an error"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
 - **The app role may call `authz.act_as()`**, so code running as the app role can claim to be anyone. <!-- checked: tests/sessions.sh "authz.act_as signs carol in: she sees her files" -->
-  Roles other than the app role
+  Postgres roles other than the app role
   and its members can't sign anyone in. <!-- checked: tests/sessions.sh "a role that isn't the app role can't act_as"; tests/docs_test.sh "another role can't say who is signed in" -->
-- **If the backend role itself is compromised**, the attacker can claim any user either way: the
-  backend is trusted to say who is signed in. Keep that role's credentials inside the
+- **If the app role itself is compromised**, the attacker can claim any user either way: the
+  backend is trusted to say who is signed in. Keep the app role's credentials inside the
   backend, and sign other clients in with keys or JWTs.
 
 ## What stops what
@@ -54,7 +56,7 @@ do depends on identity:
 | `SET row_security = off`, disable row-level security, drop or add a policy, drop a trigger, replace a generated function | not the owner (applying refuses an app role that is the policy's owner or a member of it, AZ624, and `authz.lint()` reports one that owns a governed table); `row_security = off` makes the query fail instead | adversarial.sh, apply.sh, governance.sh <!-- checked: tests/apply.sh "applying refuses the policy's owner as the app role"; tests/governance.sh "lint finds: a governed table owned by the app role"; tests/adversarial.sh "row_security = off is refused, not obeyed"; tests/adversarial.sh "disabling row-level security"; tests/adversarial.sh "adding a permissive policy"; tests/adversarial.sh "dropping a closure trigger"; tests/adversarial.sh "replacing a generated function" --> |
 | read or write `authz_int`, `authz.shares`, `authz.audit`, `authz.changes`, the lock rows; call internal functions; read what the rules look up | no privileges on them; the views and functions the rules use are in `authz_int`, whose names the app role can't use (Postgres keeps a rule as read when the policy was applied, and checks a schema only when a name is looked up); it calls the `authz.*` API and the rules' explanations, which answer only for a new row or one the user may see | adversarial.sh <!-- checked: tests/adversarial.sh "the shares table"; tests/adversarial.sh "the lock rows"; tests/adversarial.sh "a closure's refresh function"; tests/adversarial.sh "the views the rules read: the app role can't name them"; tests/adversarial.sh "...nor the functions the rules call"; tests/adversarial.sh "the app role reads no view of rowstile's"; tests/adversarial.sh "the views and functions the app role may use tell nothing the API doesn't" --> |
 | use rowstile's tables or administrators' functions through the owner's default privileges, or a grant made since | applying takes back every privilege on rowstile's schemas the policy doesn't give; `authz.lint()` reports later ones | adversarial.sh <!-- checked: tests/adversarial.sh "the owner's default privileges: apply leaves the app role only what the policy gives"; tests/adversarial.sh "lint reports a grant on rowstile's objects made after apply"; tests/adversarial.sh "and the next apply takes it back" --> |
-| run code as the owner: a function in a schema on the search path of rowstile's functions that run as the owner, taking a built-in's place | applying refuses a schema on that path that roles other than the owner may create in (AZ612); `authz.lint()` reports one opened later | adversarial.sh <!-- checked: tests/adversarial.sh "and apply refuses it"; tests/adversarial.sh "whichever schema of the applying session's path it is"; tests/adversarial.sh "lint reports a schema on the functions' search path the app role may create in" --> |
+| run code as the owner: a function in a schema on the search path of rowstile's functions that run as the owner, taking a built-in's place | applying refuses a schema on that path that Postgres roles other than the owner may create in (AZ612); `authz.lint()` reports one opened later | adversarial.sh <!-- checked: tests/adversarial.sh "and apply refuses it"; tests/adversarial.sh "whichever schema of the applying session's path it is"; tests/adversarial.sh "lint reports a schema on the functions' search path the app role may create in" --> |
 | update, delete or upsert onto a hidden row | row-level security (`UPDATE 0`, `DELETE 0`, an error for the upsert) | adversarial.sh <!-- checked: tests/adversarial.sh "updating a hidden row changes nothing"; tests/adversarial.sh "deleting a hidden row changes nothing"; tests/adversarial.sh "an upsert onto a hidden row" --> |
 | take ownership, move a row where the user may not write, stop inheritance above a folder | column rules (`update owner_id : share`, `update parent_id after : parent.edit`) | adversarial.sh, scenario.sql <!-- checked: tests/adversarial.sh "bob (may edit, not share) can't take ownership"; tests/adversarial.sh "alice can't move her folder under a folder she may not edit"; tests/adversarial.sh "can't cut it off from the folders above"; tests/scenario.sql "gina cannot switch off inheritance on Design (needs share)" --> |
 | share what the user can't share, a relation that isn't shared, or to widen their own access | `authz.share()` checks the relation is shared and the sharer holds what the policy asks | adversarial.sh, multi_scenario.sql <!-- checked: tests/adversarial.sh "sharing what she may only view"; tests/adversarial.sh "sharing a relation the policy doesn't share"; tests/adversarial.sh "sharing a hidden file with herself"; tests/multi_scenario.sql "cannot give the archivist role, for he does not hold archive" --> |

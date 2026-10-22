@@ -205,7 +205,8 @@ def once(items: Sequence[Expr]) -> list[Expr]:
 # for one read grows with every permission named more than once on the way (Core.expansions counts them).
 VIEW_BODY = re.compile(r'CREATE VIEW authz_int\.("(?:[^"]|"")+"|\w+) AS\n(.*?);(?=\nCREATE VIEW authz_gen|\Z)', re.S)
 VIEW_NAME = re.compile(r'authz_(?:int|gen)\.("(?:[^"]|"")+"|\w+)')
-# the policies here stay under 25; from about 70, planning a read can take a tenth of a second and more
+# as docs/reference/limits.md says: the policies here write out at most a dozen views for a read, and at around a
+# hundred, planning alone takes a tenth of a second and more
 MANY_EXPANSIONS = 50
 
 

@@ -18,7 +18,7 @@ type folder = app.folders where {not archived}
   linked_into : folder = app.folder_links(folder_id -> parent_id)   -- from a table you have
   owner       : user   = owner_id
   viewer      : user, team#member, user:*, anyone, link  shared by edit   -- authz.share()
-  editor      : user, team#member  shared if {subject_type <> 'user' or ...}
+  editor      : user, team#member  shared if {subject_type <> 'user' or subject_id in (select id::text from app.users where active)}
   roles       : user, team#member  from org     -- custom roles, defined at runtime by the org
 
   can share = owner or org.admin or (parent.share and {inherit})
@@ -62,8 +62,11 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
 - **The app role** is the Postgres role the rules apply to, the one your app connects as. Its name is read
   as written, like a table's: `app role AppUser` is the role `CREATE ROLE "AppUser"` makes, while
   `CREATE ROLE AppUser` makes `appuser`. <!-- checked: tests/capitals.sh "apply: the rules apply to the role AppUser, as written" -->
-- **Files**: `include "roles.authz"` reads another file, named from the folder of the file that includes it
-  (AZ108). Each file's blocks are its own: a block ends at an include line and at the end of its file, so an
+- **Files**: `include "roles.authz"` reads another file, named from the folder of the file that includes it. <!-- checked: tests/policy_errors.py "an include resolved from the including file's folder" -->
+  The command reads included files from disk, and applying stores them with the policy. <!-- checked: tests/cli.sh "apply reads the included files from disk"; tests/cli.sh "and the included file is stored with it" -->
+  A file outside the policy's folder (above it, an absolute path, a path with a backslash or a drive) is refused
+  (AZ108), and so is a file included twice. <!-- checked: tests/policy_errors.py "a file above the policy's folder"; tests/policy_errors.py "a file above, from an included file"; tests/policy_errors.py "a server file"; tests/policy_errors.py "a backslash"; tests/policy_errors.py "a drive"; tests/policy_errors.py "the same file twice" -->
+  Each file's blocks are its own: a block ends at an include line and at the end of its file, so an
   included file starts with a line at the left margin. <!-- checked: tests/policy_errors.py "an included file that starts indented"; tests/policy_errors.py "indented lines after an include" -->
   Its name may hold an apostrophe or a `%`, never a dollar quote's tag (`$f$`), which would end a generated
   function that names the file. <!-- checked: tests/policy_errors.py "a whole policy in an included file named with a quote"; tests/policy_errors.py "a file whose name holds a dollar quote's tag" -->
@@ -240,7 +243,7 @@ The app role
 loses SELECT on `body` in the table itself (the other columns stay), so the view is
 the only way to read it. <!-- checked: tests/masks.sh "the app role cannot read the masked column from the table"; tests/multi_scenario.sql "the text cannot be read from the table directly" --> <!-- answer: mask-table -->
 Applying refuses to go on if the column would still be
-readable through PUBLIC or another role. <!-- checked: tests/masks.sh "a mask PUBLIC could read around is refused"; tests/masks.sh "and applying refuses it, as for PUBLIC" -->
+readable through PUBLIC or another Postgres role. <!-- checked: tests/masks.sh "a mask PUBLIC could read around is refused"; tests/masks.sh "and applying refuses it, as for PUBLIC" -->
 A later `GRANT` that makes it readable again
 isn't refused (that would need an event trigger, and so a superuser): `authz.lint()`
 reports it, and applying again takes it back. <!-- checked: tests/masks.sh "and applying again takes it back"; tests/apply.sh "and later grants aren't refused any more" -->

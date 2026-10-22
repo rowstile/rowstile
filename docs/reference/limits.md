@@ -72,8 +72,8 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
 - **Identity providers**: `authz.sync_members` takes the member list; there is no SCIM
   endpoint. JWTs are HS256 only (no RS256/JWKS in plpgsql); for asymmetric tokens,
   verify in your backend and sign in from there ([Identity](identity.md)), or use an API key. <!-- checked: tests/identity.sh "alg none" -->
-- **Writes cost more**: each closure table is maintained on every structural write,
-  and structural writes to one type are serialized. Inheritance conditions that read
+- **Writes cost more**: each closure table is maintained on every tree write,
+  and tree writes to one type are serialized. Inheritance conditions that read
   other tables are re-evaluated for every row of the type when those tables change
   (and when a statement writes rows of the type's own table, if a condition reads it).
   A move rewrites one row per folder below it and per ancestor it gains or loses;
@@ -124,7 +124,7 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   its key changes, so a row that has the key later starts with none. Where the update also puts the
   row in another partition, rowstile forgets the shares of every key the update left without a row;
   if the same update gives that key to another row (two rows swapping keys, which takes a deferrable
-  key), the shares stay with the key. And the audit has no line for a relationship column changed by
+  key), the shares stay with the key. And the audit has no line for a relation column changed by
   an update that changes the row's key and its partition at once.
 - **A foreign key's action skips the rules**: Postgres runs `ON DELETE CASCADE`, `ON DELETE SET NULL`
   or `SET DEFAULT`, and `ON UPDATE SET NULL` or `SET DEFAULT` without row-level security, so deleting a

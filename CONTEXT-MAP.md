@@ -9,4 +9,4 @@
 ## Relationships
 
 - **File manager, messenger → rowstile**: each is an ordinary user of rowstile. It writes its own policy file against its own tables, applies it from its migrations, and calls only the public surface (the `rowstile` command, the `authz` functions and settings, and the generated Python client). rowstile never names anything from the file manager.
-- **Shared terms**: the file manager's folders and files are rowstile **objects**, its users and groups are **subjects**, and its sharing screens create **shares**. Use the rowstile words for those concepts in both contexts.
+- **Shared terms**: the file manager's folders and files, and the messenger's chats and messages, are rowstile **objects**; their users (and the file manager's groups, the messenger's bots) are **subjects**; the file manager's sharing screens and the messenger's invite links create **shares**. Use the rowstile words for those concepts in every context.

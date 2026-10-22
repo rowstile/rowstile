@@ -78,7 +78,7 @@ The version (semantic versioning; 1.0 will freeze the public surface) is the com
 - **Who may apply**: whoever may change the tables' policies and triggers, which is their owner (or a
   superuser). <!-- checked: tests/apply.sh "a role that doesn't own the tables can't apply: Postgres refuses"; tests/apply.sh "the owner applies the policy, with no superuser" -->
   The `{...}` conditions are SQL that runs with the rights of whoever applies the policy,
-  so applying is as powerful as being that role.
+  so whoever writes a policy has the rights of whoever applies it.
 - **Every applied policy is kept** in `authz.policy_versions`, with the rowstile version that applied
   it and the lock's hash (not readable by the app role). <!-- checked: tests/apply.sh "every apply is kept in authz.policy_versions"; tests/apply.sh "the history records which version applied it"; tests/migrations.sh "and records the policy and the lock's hash"; tests/apply.sh "the app role can't read or change the stored policies" -->
 - **Backups**: everything is an ordinary table, view, function or policy, so `pg_dump` keeps it all:

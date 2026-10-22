@@ -37,7 +37,7 @@
   with the triggers off (`session_replication_role = replica`, `ALTER TABLE ... DISABLE TRIGGER`, a bulk
   load or a restore that turns them off): `authz.verify()` then says false, and `rowstile reapply --force`
   computes the tables again. <!-- checked: tests/apply.sh "a move made with the triggers off leaves the inheritance tables behind: verify() is false"; tests/apply.sh "computes them again" -->
-- **What is written in replica mode isn't followed.** A superuser, or a role allowed to set
+- **What is written in replica mode isn't followed.** A superuser, or a Postgres role allowed to set
   `session_replication_role`, may write with it set to `replica`, where Postgres runs no ordinary trigger: the
   audit trail gets no line for the shares and memberships changed so, the change feed doesn't announce them, and
   the inheritance tables don't follow (above). The audit trail itself can't be changed that way: its guard holds
