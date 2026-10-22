@@ -1,6 +1,6 @@
 #!/bin/bash
 # identity.sh: scopes, API keys, JWT login, view-as and group sync.
-#   PGHOST=... PGPORT=... PGUSER=postgres tests/identity.sh [database]
+#   PGHOST=... PGPORT=... PGUSER=authz_owner tests/identity.sh [database]
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_identity}

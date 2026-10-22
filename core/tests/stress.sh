@@ -10,7 +10,7 @@
 # (a move of a big subtree alone takes about a second). So the limit on a statement, 600 s, is there for a
 # write that never ends; how fast a write is, is checked alone afterwards, on the tree the run leaves: the
 # biggest moves and links must each take under MOVE_LIMIT seconds (10). The slowest write is said either way.
-#   PGHOST=... PGUSER=postgres tests/stress.sh [SECONDS]   (default 60 per isolation level)
+#   PGHOST=... PGUSER=authz_owner tests/stress.sh [SECONDS]   (default 60 per isolation level)
 set -u
 cd "$(dirname "$0")/.."
 DB=authz_stress

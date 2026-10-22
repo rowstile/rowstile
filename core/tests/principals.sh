@@ -1,7 +1,7 @@
 #!/bin/bash
 # principals.sh: services that sign in as themselves: principal types, their keys and
 # JWTs, service:* next to user:*, signed_in staying about users, and what the audit trail records.
-#   PGHOST=... PGPORT=... PGUSER=postgres tests/principals.sh [database]
+#   PGHOST=... PGPORT=... PGUSER=authz_owner tests/principals.sh [database]
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_principals}

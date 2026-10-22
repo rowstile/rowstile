@@ -19,7 +19,14 @@ one transaction) and after every change compares, for every user:
   - both again as the app role, on the rows it may select (where the app role
     checks them: a condition must read with the policy's rights there too)
   - for one of them, again with a scope: lists, checks and policies
+  - authz.explain() of every object and permission, as an administrator asks it and as the user asks it of
+    themselves (by their id too), authz.who() and authz.who_among(), authz.perms_of() and authz.explain_rule()
+  - the sharing API tried as the user and undone: authz.share(), unshare(), create_link(), list_shares(), the
+    links API (list_links) and the custom roles API (create_role and the rest)
+  - the masked views, read as each user: their rows, and the rows each masked column is shown on
   - authz.verify(): the closure tables match a rebuild
+
+(check() has them all, each with the words a difference is reported in.)
 
 against a reference evaluator written directly from the language's meaning:
 relations and permissions are sets of object ids, computed together as the

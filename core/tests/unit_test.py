@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""unit_test: fast checks that need no database: the generated SQL against golden files, included
-files, what the rowstile command runs against a database, its file reading, and the version.
+"""unit_test: the checks that need no database: the generated SQL against golden files, the compiler and the
+reference evaluator, what the rowstile command runs against a database, its file reading, the version, and what the
+repository's pages and workflows say of the code.
 
-    python3 tests/unit_test.py            # a few seconds; runs anywhere Python 3.9+ does
+    python3 tests/unit_test.py            # two to three minutes; Python 3.11 or newer, as the command
     python3 tests/unit_test.py --update   # after an intended change to the generated SQL: rewrite
                                           # tests/golden/*.sql, then read the diff before committing
 """
@@ -6798,7 +6799,7 @@ class Fmt(unittest.TestCase):
         self.assertEqual(format(want), want)
 
     def test_a_continuation_at_the_start_of_its_line_hangs_too(self) -> None:
-        # the parser reads a line that starts with or (and, where, if, grant) as the line before it continued,
+        # the parser reads a line that starts with or (and, where, if) as the line before it continued,
         # however little it is indented: it hangs under the expression like any other, with no blank line before it
         from authzlib.fmt import format
 
@@ -6874,7 +6875,9 @@ class Fmt(unittest.TestCase):
 
 
 class Confidence(unittest.TestCase):
-    """rowstile prove (invariants in small worlds) and coverage (branches no test makes true)."""
+    """rowstile prove (invariants in small worlds), the reference evaluator's worlds (drawn, listed, made smaller) and
+    evaluate.compare (the review's refactor check), the simple conditions read as facts about the row, and coverage
+    (branches no test makes true)."""
 
     def test_prove_finds_the_smallest_counterexample(self) -> None:
         from authzlib import prove
@@ -13975,7 +13978,7 @@ class Worlds(unittest.TestCase):
         self.assertNotIn("login_", self.a.transaction(self.a.World(1, session="set role"), "1", checker, [], True))
 
     def test_every_two_features_of_the_worlds_meet_in_the_full_runs(self) -> None:
-        """--pairs 1000, what the full run checks: twenty-five worlds (no fewer than twenty-four could: six kinds of
+        """--pairs 1000, what the full run checks: about two dozen worlds (no fewer than twenty-four could: six kinds of
         key, words among them, four of database) in which every two FEATURES meet but two values of what a world has
         one of; every feature is one a world can have, and every world's features are FEATURES'."""
         seeds, unmet, never = self.a.covering(1000)

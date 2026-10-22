@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """tools_test: the diagram, the generated clients and the editor grammar.
 
-    PGHOST=... PGUSER=postgres python3 tests/tools_test.py [--db authz_tools]
+    PGHOST=... PGUSER=authz_owner python3 tests/tools_test.py [--db authz_tools]
 
 Needs only the standard library (the Python client talks to Postgres with cli/pgwire.py);
 the TypeScript client is type-checked when tsc is installed.
 """
 
 import atexit
+import getpass
 import importlib
 import json
 import os
@@ -154,7 +155,7 @@ def main() -> None:
         fh.write(compiler.client("py", "docs.authz"))
     sys.path.insert(0, tmp)
     authz_client = importlib.import_module("authz_client")  # written above, for this database
-    conn = pgwire.connect(host=host, port=port, user=os.environ.get("PGUSER", "postgres"), database=db)
+    conn = pgwire.connect(host=host, port=port, user=os.environ.get("PGUSER") or getpass.getuser(), database=db)
     conn.execute("BEGIN")
     conn.execute("SET LOCAL ROLE app_user")
     a = authz_client.Authz(Driver(conn))

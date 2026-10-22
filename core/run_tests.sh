@@ -443,9 +443,9 @@ for gen in $GENS; do
   unit "$p" $((secs*STEPS/15)) difftest "$gen"
 done
 # what is around the policy depends on the version of Postgres more than the policy does: a few on every run
-# (the full run: the worlds in which every two of their features meet, twenty-five of a thousand seeds). In shares, each
-# with databases and login roles of its own: on the full run three lanes of the random part; else two, one with
-# each of the other parts, which are shorter (as difftest's composite and multi are)
+# (the full run: the worlds in which every two of their features meet, about two dozen of a thousand seeds). In
+# shares, each with databases and login roles of its own: on the full run three lanes of the random part; else two,
+# one with each of the other parts, which are shorter (as difftest's composite and multi are)
 around() {
 if [ "$MODE" = full ]; then
   step "random policies in random worlds: the catalog, the session and the role around them (every two features of the worlds together, of 1000 seeds: share $1 of 3)"

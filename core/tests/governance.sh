@@ -1,7 +1,8 @@
 #!/bin/bash
-# governance.sh: the audit trail, the change feed, access requests, emergency access,
-# access reviews, invariants, decision logs and previewing a policy change.
-#   PGHOST=... PGPORT=... PGUSER=postgres tests/governance.sh [database]
+# governance.sh: the audit trail (trimmed, and copied to another database by a subscription), the change feed (how
+# long it keeps entries), emptying a table, access requests, emergency access, access reviews, invariants, decision
+# logs, previewing a policy change, authz.explain, and what authz.lint() reports.
+#   PGHOST=... PGPORT=... PGUSER=authz_owner PGSUPERUSER=postgres tests/governance.sh [database]
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_governance}

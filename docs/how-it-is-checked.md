@@ -28,9 +28,10 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   Each night they read all 130,431 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
   (The grammar takes more than the parser does, as an editor must: what the parser refuses isn't compared.) <!-- checked: tests/parse_agreement.py "policy the parser refuses is not compared" -->
 - **Random data**: [`tests/difftest.py`](../core/tests/difftest.py) fills six policies' tables with random
-  rows and makes a hundred random changes to each (moves, links, loops, groups inside groups, inheritance
+  rows and makes random changes to each (moves, links, loops, groups inside groups, inheritance
   through two types at once, shares that start and end, ids that change, `TRUNCATE`, several statements in
-  one transaction). After each change,
+  one transaction): fifteen on each push, a hundred in the full run, and five hundred with a new seed in each
+  night's soak. After each change,
   `authz.can`, `authz.list`, `authz.explain`, `authz.who`, what row-level security lets each user read, every
   rule's condition and the masked views are compared with the evaluator's answer. One user a change, in turn,
   is also asked `authz.list` in pages of two: the pages, one after another, must be the whole list in key order,
@@ -73,8 +74,8 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   app role on every row and undoes them (updates, deletes, and inserts of rows like the ones there), shares too (against who may share and what the relation's
   `shared if` says of the share), checks that no share outlives its row, that a role the policy
   doesn't name gets nothing, and that `authz.lint()` reports what changed and `rowstile apply` puts it right.
-  A few on every run; in the full run each night the twenty-five worlds, of a thousand seeds, in which every two of those
-  features meet (words for keys in the Turkish database among them); sixty with new seeds every night.
+  A few on every run; in the full run each night the two dozen or so worlds, of a thousand seeds, in which every
+  two of those features meet (words for keys in the Turkish database among them); sixty with new seeds every night.
 - **Every small policy**: a random draw can wait long for the one small policy, and the one small world, that a
   mistake needs. [`tests/small.py`](../core/tests/small.py) lists every policy of the core language up to a size
   instead, each once (two that differ in their names alone, or in the order of an `or`'s or an `and`'s parts, are
@@ -83,8 +84,8 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   group's members; a `parent` from a column, from a link table, or from a pair of columns or a link table naming
   two types; an `up` from a column, a link table or shares); one or two permissions a type, each of up to three
   parts joined by `or`, `and` and `and not`, or one of `signed_in`, `anyone` and `nobody` alone: inheritance, and
-  denies. Up to six sources, parts and `where`s there are 94,599, and 35,832 of seven with a deny, the smallest a
-  deny can be. For each, the reference evaluator answers in every world of
+  denies. Up to six sources, parts and `where`s there are 94,599, and 35,832 of seven with a deny (the whole of
+  size seven is out of reach). For each, the reference evaluator answers in every world of
   one and two rows of each type (up to 400 of each), and in some of three; in each, the same policy written
   another way (its names swapped, its parts turned round) must get the same answers. Then each part of the policy
   is made wrong in turn (held by nobody or by anyone, an `and` for an `or`, a `not` left out, a link read the other
@@ -93,15 +94,15 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   the evaluator's. Each push checks those up to size three and the denies of four (122); each night, a fourteenth
   of them all; every two weeks, the whole list.
 - **Answers worked out by hand**: each paragraph of [the language's reference](reference/language.md) that says
-  who may do what, given a policy and rows, carries an anchor readers don't see (40 of them), and each anchor has
+  who may do what, given a policy and rows, carries an anchor readers don't see, and each anchor has
   a case whose answers were worked out from that paragraph, by hand, and written down before anything ran.
-  `HandAnswers` in [`tests/unit_test.py`](../core/tests/unit_test.py) gives the reference evaluator the 39 it can
+  `HandAnswers` in [`tests/unit_test.py`](../core/tests/unit_test.py) gives the reference evaluator the cases it can
   answer: small policies and worlds, `not` and parentheses, inheritance through any mix of sources and stopped by a
   condition or a type's `where`, a suspended user, groups inside groups and in a loop, each kind of subject (`user:*`,
   `anyone`, a link, a service), a relation followed to a user's own permission, a deny inside inheritance, custom
   roles with and without `from` and a folder moved to another org, NULL in conditions, an invariant asked as a
-  service and as nobody. [`tests/hand_answers.sh`](../core/tests/hand_answers.sh) gives the database the 25 that are
-  its alone to answer (143 checks), as named tests in `tests/hand/`: a share that expires or starts later, a caveat,
+  service and as nobody. [`tests/hand_answers.sh`](../core/tests/hand_answers.sh) gives the database those that are
+  its alone to answer, as named tests in `tests/hand/`: a share that expires or starts later, a caveat,
   `shared if`, who may share, a write checked before and after, column rules, an insert, a masked column, `this` and a
   bare column in a subquery, conditions read with the policy's rights, a polymorphic pair naming a type the policy
   doesn't have, keys of two columns and keys that are text, a group named by a permission (`team#manage`), a
@@ -227,7 +228,7 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   reading as the app role just before the cut and after it, gets the old policy's answers, whole; after some, the
   next run leaves what an uncut one does. <!-- checked: tests/interrupt.py "after each cut, the database is as it was"; tests/interrupt.py "the app read the old policy's answers, whole" -->
   Between the two migrations the old policy is in force. <!-- checked: tests/interrupt.py "between a migration's two: the old policy in force" -->
-  Each night, after every one of their 1,923 statements (about 25 minutes); on each push, ten cuts of each. The real
+  Each night, after every one of their statements (about 25 minutes); on each push, ten cuts of each. The real
   command is also ended while one of its statements waits for a lock, and stopped by `statement_timeout`; and
   `rowstile review --db` as soon as it signs in. Every night the soak cuts the first apply of twenty-five other policies, random ones among them, where its seed says.
 - **Reads that stay fast**: where a read or a list needs a permission's starting points (a function that

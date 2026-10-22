@@ -5,7 +5,7 @@
 
 difftest and genpolicy compare two evaluations of one policy on data they made, always the same way: plain
 tables, the owner's session switched to the app role, a database nobody else was given anything in. Most of the
-holes the bug hunt found were not in the policy's logic but around it. So each seed here takes genpolicy's
+mistakes found by reading the code were not in the policy's logic but around it. So each seed here takes genpolicy's
 policy for that seed and draws a world for it:
 
   the names     the seed's own, as genpolicy draws them: for a third of the seeds its tables and columns are
