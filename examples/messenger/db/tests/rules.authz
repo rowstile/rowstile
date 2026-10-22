@@ -1,5 +1,6 @@
--- The messenger's rules, one test each (the table in README.md). Each test brings its own people and chats,
--- and rolls them back. Run: rowstile test (from messenger/), or rowstile dev while editing the policy.
+-- The messenger's rules: each row of the table in README.md is checked here. Each test brings its own
+-- people and chats, and rolls them back. Run: rowstile test (from messenger/), or rowstile dev while
+-- editing the policy.
 
 test "only members read a chat"
   given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
@@ -22,6 +23,11 @@ test "new members don't see what was said before they joined"
   user $ann can read message $old
   user $bo cannot read message $old
   as user $bo sees 0 {SELECT FROM ms.messages WHERE chat_id = $g}
+  -- a bot is no member: added after the message, it reads the whole chat
+  given b = {INSERT INTO ms.bots (name, owner_id) VALUES ('notes', $ann) RETURNING id}
+  given {INSERT INTO ms.chat_bots (chat_id, bot_id, added_by) VALUES ($g, $b, $ann)}
+  bot $b can read message $old
+  as bot $b sees 1 {SELECT FROM ms.messages WHERE chat_id = $g}
   -- by the message's number, whatever the clocks say: a member whose joined_at is ahead still posts and reads
   given {UPDATE ms.members SET joined_at = now() + interval '1 hour' WHERE chat_id = $g AND user_id = $bo}
   as user $bo allowed {INSERT INTO ms.messages (chat_id, sender_id, body) VALUES ($g, $bo, 'hello') RETURNING seq}
@@ -89,7 +95,7 @@ test "nobody demotes the owner, nor makes another"
   as user $bo refused {INSERT INTO ms.members (chat_id, user_id, role) VALUES ($g, $cy, 'owner')}
   as user $bo allowed {INSERT INTO ms.members (chat_id, user_id, role) VALUES ($g, $di, 'admin')}
 
-test "you edit your own messages for 15 minutes; admins delete anyone's, for everyone, for good"
+test "you edit your own messages for 15 minutes and delete them; admins delete anyone's, for everyone, for good"
   given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
   given bo = {INSERT INTO ms.users (phone, name) VALUES ('t-bo', 'Bo') RETURNING id}
   given g = {INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Weekend', $ann) RETURNING id}
@@ -100,13 +106,35 @@ test "you edit your own messages for 15 minutes; admins delete anyone's, for eve
   user $bo cannot edit message $old
   user $ann cannot edit message $now
   user $ann can remove message $now
+  user $bo can remove message $old
   -- "edited" is part of editing: only the sender, for those 15 minutes
   as user $bo allowed {UPDATE ms.messages SET body = 'fresh', edited_at = now() WHERE (chat_id, seq) = (SELECT chat_id, seq FROM ms.messages WHERE body = 'fresh')}
   as user $ann refused {UPDATE ms.messages SET edited_at = clock_timestamp() WHERE (chat_id, seq) = (SELECT chat_id, seq FROM ms.messages WHERE body = 'fresh')}
   as user $bo refused {UPDATE ms.messages SET edited_at = clock_timestamp() WHERE (chat_id, seq) = (SELECT chat_id, seq FROM ms.messages WHERE body = 'stale')}
   as user $ann allowed {UPDATE ms.messages SET deleted = true, body = '' WHERE (chat_id, seq) = (SELECT chat_id, seq FROM ms.messages WHERE body = 'fresh')}
+  as user $bo allowed {UPDATE ms.messages SET deleted = true, body = '' WHERE (chat_id, seq) = (SELECT chat_id, seq FROM ms.messages WHERE body = 'stale')}
   as user $ann refused {UPDATE ms.messages SET deleted = false WHERE chat_id = $g AND deleted}
   as user $ann refused {DELETE FROM ms.messages WHERE chat_id = $g}
+
+test "invite links: an admin makes one for a group, and whoever holds it joins"
+  given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
+  given bo = {INSERT INTO ms.users (phone, name) VALUES ('t-bo', 'Bo') RETURNING id}
+  given cy = {INSERT INTO ms.users (phone, name) VALUES ('t-cy', 'Cy') RETURNING id}
+  given g = {INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Weekend', $ann) RETURNING id}
+  given {INSERT INTO ms.members (chat_id, user_id, role) VALUES ($g, $ann, 'owner'), ($g, $bo, 'member')}
+  given d = {INSERT INTO ms.chats (kind, created_by) VALUES ('direct', $ann) RETURNING id}
+  given {INSERT INTO ms.members (chat_id, user_id) VALUES ($d, $ann), ($d, $bo)}
+  as user $bo refused {SELECT authz.create_link('chat', $g, 'invitee')}
+  as user $ann refused {SELECT authz.create_link('chat', $d, 'invitee')}
+  user $cy cannot join chat $g
+  as user $cy refused {INSERT INTO ms.members (chat_id, user_id) VALUES ($g, $cy)}
+  -- the backend's link ends a week after it is made (MS_INVITE_DAYS); the request carries its token
+  as user $ann allowed {SELECT set_config('authz_ctx.links', authz.create_link('chat', $g, 'invitee', now() + interval '7 days'), true)}
+  user $cy can join chat $g
+  user $cy cannot read chat $g
+  as user $cy refused {INSERT INTO ms.members (chat_id, user_id, role) VALUES ($g, $cy, 'admin')}
+  as user $cy allowed {INSERT INTO ms.members (chat_id, user_id) VALUES ($g, $cy)}
+  user $cy can read chat $g
 
 test "bots post as themselves, only where an admin added them; only their owner makes keys"
   given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
@@ -124,3 +152,16 @@ test "bots post as themselves, only where an admin added them; only their owner 
   as user $bo refused {INSERT INTO ms.chat_bots (chat_id, bot_id, added_by) VALUES ($h, $b, $bo)}
   user $ann can manage_keys bot $b
   user $bo cannot manage_keys bot $b
+
+test "messages are numbered per chat: a message's key is its chat and its number"
+  given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
+  given bo = {INSERT INTO ms.users (phone, name) VALUES ('t-bo', 'Bo') RETURNING id}
+  given g = {INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Weekend', $ann) RETURNING id}
+  given h = {INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Other', $ann) RETURNING id}
+  given {INSERT INTO ms.members (chat_id, user_id, role) VALUES ($g, $ann, 'owner'), ($g, $bo, 'member'), ($h, $ann, 'owner')}
+  given first = {INSERT INTO ms.messages (chat_id, sender_id, body) VALUES ($g, $ann, 'one') RETURNING chat_id, seq}
+  given other = {INSERT INTO ms.messages (chat_id, sender_id, body) VALUES ($h, $ann, 'one') RETURNING chat_id, seq}
+  as user $ann sees 2 {SELECT FROM ms.messages WHERE chat_id IN ($g, $h) AND seq = 1}
+  user $ann can edit message $first
+  user $bo can read message $first
+  user $bo cannot read message $other
