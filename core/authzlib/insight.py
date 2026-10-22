@@ -499,8 +499,9 @@ END $f$;"""
             )
             return f"      CASE p_perm\n{cases}\n        ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';\n      END CASE;"
 
-        who_body = self.dispatch_type(who_branch, "RETURN;")
-        why_body = self.dispatch_type(why_branch, "RETURN;")
+        # an id that isn't the type's leaves the block, not the function: the caller's settings are put back after it
+        who_body = self.dispatch_type(who_branch, "EXIT asking;")
+        why_body = self.dispatch_type(why_branch, "EXIT asking;")
         return f"""{self.visible_sql()}
 
 -- May the current user look at who has access to this object? (they can share it, or the caller is an
@@ -528,7 +529,9 @@ BEGIN
   -- the transaction, or the savepoint the error is caught at, as for explain, check_invariants and the logins)
   PERFORM set_config('authz.scopes', '', true);   -- each candidate is checked with full rights
   PERFORM set_config('authz.principal_type', '', true);   -- candidates are users
+  <<asking>> BEGIN
 {who_body}
+  END asking;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);
@@ -565,7 +568,9 @@ BEGIN
   v_ok := authz.can(p_type, p_id, p_perm);
   RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
     || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
+  <<asking>> BEGIN
 {why_body}
+  END asking;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);

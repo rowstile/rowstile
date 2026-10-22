@@ -5084,9 +5084,10 @@ BEGIN
   -- the transaction, or the savepoint the error is caught at, as for explain, check_invariants and the logins)
   PERFORM set_config('authz.scopes', '', true);   -- each candidate is checked with full rights
   PERFORM set_config('authz.principal_type', '', true);   -- candidates are users
+  <<asking>> BEGIN
   CASE p_type
     WHEN 'user' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'manage_roles' THEN
@@ -5098,7 +5099,7 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'grp' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'share' THEN
@@ -5110,7 +5111,7 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'proj' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'view' THEN
@@ -5122,7 +5123,7 @@ BEGIN
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'doc' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'share' THEN
@@ -5166,6 +5167,7 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';
   END CASE;
+  END asking;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);
@@ -5202,30 +5204,31 @@ BEGIN
   v_ok := authz.can(p_type, p_id, p_perm);
   RETURN NEXT CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || coalesce(coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user') || ' ' || nullif(current_setting('authz.user_id', true), ''), 'nobody')
     || ' ' || CASE WHEN v_ok THEN 'holds ' ELSE 'does not hold ' END || p_perm || ' on ' || p_type || ' ' || p_id;
+  <<asking>> BEGIN
   CASE p_type
     WHEN 'user' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'manage_roles' THEN RETURN QUERY SELECT * FROM authz_int."user__manage_roles__why"(v_bigint, 1, '{}');
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'grp' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."grp__share__why"(v_bigint, 1, '{}');
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'proj' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."proj__view__why"(v_bigint, 1, '{}');
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'doc' THEN
-      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN RETURN; END IF;
+      IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."doc__share__why"(v_bigint, 1, '{}');
@@ -5239,6 +5242,7 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';
   END CASE;
+  END asking;
   PERFORM set_config('authz.user_id', v_me, true);
   PERFORM set_config('authz.principal_type', v_pt, true);
   PERFORM set_config('authz.scopes', v_scopes, true);

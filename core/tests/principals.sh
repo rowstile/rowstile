@@ -267,6 +267,12 @@ check "an administrator whose session names a service the table doesn't have vie
   "RESET ROLE; BEGIN; SET LOCAL authz.user_id = '77'; SET LOCAL authz.principal_type = 'service';
    SELECT authz.view_as('3', 'ticket 13');
    SELECT authz.uid() || '|' || (SELECT principal_type || ':' || principal_id FROM authz.principal()); ROLLBACK;"
+# view_as signs in for its transaction only: a session set to the service names it again once that one ends
+got=$(PSQL -c "SET authz.user_id = '77'" -c "SET authz.principal_type = 'service'" -c "BEGIN" \
+  -c "SELECT authz.view_as('3', 'ticket 14')" -c "COMMIT" \
+  -c "SELECT current_setting('authz.principal_type') || ':' || current_setting('authz.user_id')" 2>&1 | tail -n 1)
+[ "$got" = "service:77" ] && echo "ok    ... and once its transaction ends, the session names the service again" ||
+  { echo "FAIL  the session after a view_as transaction: $got"; fails=$((fails + 1)); }
 # a share to someone goes with their row: a new row with the same id later must not find it
 PSQL -c "SET authz.user_id = '1'" -c "SELECT authz.share('doc', 1, 'reader', 'user', 99)" >/dev/null
 before=$(PSQL -c "SELECT count(*) FROM authz.shares WHERE subject_type = 'user' AND subject_id = '99'")
