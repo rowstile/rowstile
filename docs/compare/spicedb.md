@@ -81,8 +81,10 @@ second one fails.
 
 With rowstile there is nothing more to write: `folder_id` is the relationship, and a folder's editors are
 the rows of `app.folder_editors`, the `INSERT` the app makes anyway. For access people hand each other
-while the app runs, a relation can be `shared` instead: `authz.share('document', '7', 'editor', 'user',
-'4')` writes it, in the same transaction as the rest of the request, and the policy says who may share.
+while the app runs, a relation can also come from shares. With one more line under `document`,
+`editor : user shared by edit`, the call `authz.share('document', '7', 'editor', 'user', '4')` writes one,
+in the same transaction as the rest of the request, and `shared by edit` says who may share: whoever may
+edit the document.
 
 ## Consistency
 

@@ -63,9 +63,9 @@ it with the app's other migrations, as the owner of the tables. There is no sepa
 
 - A migration holds only what changed. Most take milliseconds and lock the app's tables only where a
   rule or a trigger on them changes (the migration's first comments say what changed; `rowstile review`
-  will say which tables it locks). Each waits at most 10 seconds for a table (`lock_timeout`, unless the
-  migration tool set one), then fails, rather than queueing every query behind it; run it again when the
-  database is quieter.
+  says which tables it locks, and in which mode). Each waits at most 10 seconds for a table (`lock_timeout`,
+  unless the migration tool set one), then fails, rather than queueing every query behind it; run it again
+  when the database is quieter.
 - A change to how something inherits comes as two migrations when it can: the first builds the new
   inheritance table beside the one in use while the app runs (it reads the app's tables, and takes as
   long as the backfill takes: seconds for tens of thousands of folders, 40 seconds at 250k, three minutes
@@ -102,7 +102,9 @@ and requests made before still work.
 
 `pg_dump` includes everything: the shares, the audit trail, the change feed, the policy history
 (`authz.policy_versions`), and the objects the policy generated, as ordinary objects. Restore with
-`pg_restore` (or `psql`); nothing needs to be installed first. Then check:
+`pg_restore` (or `psql`); nothing needs to be installed first. `pg_dump` keeps no roles, though, and the rules
+and grants name the app role: on a new server, make the roles first (`pg_dumpall --roles-only`, or the
+migration that makes the app role). Then check:
 
 ```sql
 SELECT authz.verify();     -- the inheritance tables match a rebuild

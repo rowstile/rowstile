@@ -1,8 +1,9 @@
 #!/bin/bash
 # reference.sh: the reference runs as written. Each code block of docs/reference/*.md is run as what it is: a
-# policy (```authz) compiles, with its tests, what it includes taken from tests/fixtures/; SQL (```sql) runs on
-# the docs app; the refusal app-code.md shows is the docs app's, word for word; a rowstile.toml (```toml) is a
-# project's, whose commands read it; the settings that start the MCP server (```json) start it, in that project;
+# policy (```authz) compiles, with its tests, what it includes taken from tests/fixtures/, and is applied to the
+# tables tests/fixtures/<page>.sql makes, where its tests run on their rows; SQL (```sql) runs on the docs app;
+# the refusal app-code.md shows is the docs app's, word for word; a rowstile.toml (```toml) is a project's,
+# whose commands read it; the settings that start the MCP server (```json) start it, in that project;
 # and the lines of a block indented four spaces, a `rowstile` command each, run there in the pages' order, each
 # doing what its comment says. A block that can't run says why in a comment right before it
 # (<!-- not run: why -->); a block that does neither fails. And what the pages' tables say of the compiler
@@ -15,6 +16,7 @@ REF=$(cd ../docs/reference && pwd)
 DB=authz_reference                 # the docs app: SQL blocks, the refusal
 DEV=authz_reference_dev            # the project's development database: push, diff, test
 REVIEW=authz_reference_review      # the review database, at the base branch's state
+POLICY=authz_reference_policy      # a page's policy, applied to the tables tests/fixtures/ gives that page
 fails=0
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
@@ -82,7 +84,8 @@ while IFS=$'\t' read -r id page kind line why; do
   handled "$id"
 done < "$T/blocks/list"
 
-echo "-- policies compile, with their tests"
+echo "-- policies compile, with their tests, and run"
+applied=0
 while IFS=$'\t' read -r id page kind line why; do
   [ -z "$why" ] || continue
   d="$T/authz/$id"; mkdir -p "$d"; cp "$T/blocks/$id" "$d/policy.authz"
@@ -94,7 +97,22 @@ while IFS=$'\t' read -r id page kind line why; do
   out=$(rowstile check "$d/policy.authz" 2>&1) && out=$(python3 compile_policy.py "$d/policy.authz" --tests 2>&1 >/dev/null) &&
     ok "$page, the policy on line $line compiles, with its tests" || bad "$page, the policy on line $line" "$out"
   handled "$id"
+  # applied to the tables tests/fixtures/ gives its page, and its tests run on their rows
+  schema="tests/fixtures/${page%.md}.sql"
+  if [ -f "$schema" ]; then
+    dropdb --if-exists "$POLICY" 2>/dev/null; createdb "$POLICY" || exit 1
+    quiet -d "$POLICY" -f "$schema" >/dev/null || { bad "$schema"; continue; }
+    out=$(rowstile --db "dbname=$POLICY" apply "$d/policy.authz" 2>&1) && [ "$out" = "$d/policy.authz: applied" ] &&
+      ok "$page, the policy on line $line applies to the tables of $schema" || bad "$page, applying the policy on line $line" "$out"
+    out=$(cd "$d" && rowstile --db "dbname=$POLICY" test 2>&1); rc=$?
+    case "$out" in *"policy tests passed"*) [ $rc -eq 0 ] && ok "$page, the policy on line $line: its tests and invariants pass on the rows of $schema" ||
+        bad "$page, the tests of the policy on line $line" "exit $rc";;
+      *) bad "$page, the tests of the policy on line $line" "$out";; esac
+    dropdb "$POLICY"
+    applied=$((applied + 1))
+  fi
 done < <(blocks authz)
+[ "$applied" -ge 1 ] || bad "no policy of the reference was applied: tests/fixtures/ has the tables of none"
 
 echo "-- SQL runs on the docs app"
 while IFS=$'\t' read -r id page kind line why; do
@@ -255,5 +273,5 @@ if [ -z "$left" ] && [ "$total" -ge 8 ]; then ok "every block of the reference r
   [ "$total" -ge 8 ] || bad "only $total blocks were found in the reference"
 fi
 
-[ -n "${KEEP:-}" ] || { dropdb "$DB"; dropdb "$DEV"; dropdb --if-exists "$REVIEW" 2>/dev/null; rm -rf "$T"; }
+[ -n "${KEEP:-}" ] || { dropdb "$DB"; dropdb "$DEV"; dropdb --if-exists "$REVIEW" 2>/dev/null; dropdb --if-exists "$POLICY" 2>/dev/null; rm -rf "$T"; }
 if [ $fails -eq 0 ]; then echo "reference: all passed"; else echo "reference: $fails failed"; exit 1; fi

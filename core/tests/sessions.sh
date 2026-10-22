@@ -1,8 +1,8 @@
 #!/bin/bash
 # sessions.sh: signed sessions: authz.user_id and the other settings are plain settings anyone
-# may set. Only the signature authz.act_as() and the logins make keeps the app role from choosing its own
-# user by setting them, widening its scopes, or reusing a sign-in in another transaction or on another
-# connection.
+# may set. Only the signature authz.act_as(), the logins and authz.view_as() make keeps the app role from
+# choosing its own user by setting them, widening its scopes, or reusing a sign-in in another transaction or on
+# another connection.
 #   PGHOST=... PGUSER=postgres tests/sessions.sh [database]
 set -u
 cd "$(dirname "$0")/.."
@@ -55,6 +55,8 @@ expect "signing in turns JIT off until the transaction ends" "off" -c "$(ACT "'u
 got=$(psql -X -q -At -U "$APP" -d "$DB" -c "BEGIN" -c "$(ACT "'user', '3'")" -c "COMMIT" -c "SELECT current_setting('jit')" 2>&1)
 [ "$got" = on ] && ok "... and the next transaction has the session's own setting" || bad "JIT after the transaction" "$got"
 expect "... which the app may turn back on after signing in" "on" -c "$(ACT "'user', '3'")" -c "SET LOCAL jit = on" -c "SELECT current_setting('jit')"
+expect "view_as signs who it shows: erin, viewing as carol, sees what carol sees" "$carol|3" -c "$(ACT "'user', '5'")" \
+  -c "DO \$\$ BEGIN PERFORM authz.view_as('3', 'ticket 7'); END \$\$" -c "SELECT count(*) || '|' || authz.uid() FROM app.files"
 expect "act_as(NULL, NULL): nobody, on purpose, no error" "0" -c "$(ACT "NULL, NULL")" -c "SELECT count(*) FROM app.files WHERE id = 12"
 expect "changing authz.user_id after signing in is an error" "28000: who is signed in was changed after signing in" -c "$(ACT "'user', '3'")" -c "SET LOCAL authz.user_id = 1" \
   -c "SELECT count(*) FROM app.files"

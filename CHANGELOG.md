@@ -98,6 +98,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
 
 ### Fixed
 
+- The policy language page's example applies as written: its `shared if` condition had `...` in it, which no
+  database runs. It says what an include may name (a file in the policy's folder, once). The identity page and
+  the threat model name `view_as` among what signs a session in; the identity page no longer says the SDKs sign
+  in with a key. The operations page says to make the roles first when restoring on a new server (`pg_dump`
+  keeps none), and the OpenFGA and SpiceDB pages name the line their policy needs before its editors can be
+  shared.
 - The tools reference lists every option each command takes (`migrate --tool --dir --one-phase --downgrade`,
   `diff --limit`, `bench --people --rounds`, `init --role --out`, `snapshot --out`, and the others), every
   `rowstile.toml` setting (`[migrations] lock` and `write_after`, `[review] snapshot`, `[clients] ts`), the exit

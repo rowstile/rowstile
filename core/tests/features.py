@@ -724,7 +724,7 @@ FEATURES: list[Feature] = [
         2,
         "Policies in several files: `include`",
         ("lang.include", "err.AZ108"),
-        Doc(LANG, "The policy language"),
+        Doc(LANG, "Files"),
         (
             T("unit_test.py", "class Includes("),
             T("cli.sh", "apply reads the included files from disk"),

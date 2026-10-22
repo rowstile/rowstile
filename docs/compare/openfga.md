@@ -91,9 +91,10 @@ With rowstile there is nothing more to write. The document's `folder_id` is the 
 the rows of `app.team_members`, and a folder's editors the rows of `app.folder_editors`: the `INSERT` the
 app makes anyway, in the same transaction as whatever else the request does. Both commit, or neither.
 
-For access that people hand each other while the app runs, a relation can be `shared` instead of read
-from a table: `authz.share('document', '7', 'editor', 'user', '4')` writes it, in the same transaction,
-and the policy says who may share.
+For access that people hand each other while the app runs, a relation can also come from shares. With
+one more line under `document`, `editor : user shared by edit`, the call
+`authz.share('document', '7', 'editor', 'user', '4')` writes one, in the same transaction, and
+`shared by edit` says who may share: whoever may edit the document.
 
 ## Asking
 

@@ -1,5 +1,6 @@
 -- roles.authz: the types the policy language page's example (docs/reference/language.md) leaves to the file it
--- includes, so that the example compiles (tests/unit_test.py DocPages, tests/reference.sh)
+-- includes, so that the example compiles (tests/unit_test.py DocPages) and applies to the tables of language.sql
+-- (tests/reference.sh)
 type org = app.orgs
   member : user = app.org_members(org_id -> user_id)
   admin  : user = app.org_members(org_id -> user_id) where {role = 'admin'}

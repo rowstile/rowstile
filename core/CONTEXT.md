@@ -107,5 +107,13 @@ _Avoid_: dev DB, local database (it may be remote), test database
 _Avoid_: extension, CLI tool, plugin
 
 **First adopter**:
-The file management app that uses rowstile as an ordinary user would and tests each feature before release.
+The file management app (`examples/filemanager/`), which uses rowstile as an ordinary user would: the public
+surface only, and each feature an app of its kind needs. Its tests run on every change. It doesn't use every
+feature: view-as, custom roles, group sync and the change feed are checked by the suites alone.
 _Avoid_: pilot, customer, design partner, "our app"
+
+**Second adopter**:
+The messenger (`examples/messenger/`), a WhatsApp-style app built to show what rowstile takes off an app. The
+same rules as the first adopter: the public surface only, the features an app of its kind needs, its tests on
+every change.
+_Avoid_: demo, sample app, "our app"

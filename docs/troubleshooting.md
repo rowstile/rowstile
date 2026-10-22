@@ -87,7 +87,8 @@ statement is one, so sign in inside an explicit transaction.
 
 ## "authz.user_id was set directly, so it is not believed" / "who is signed in was changed after signing in"
 
-Only `authz.act_as()` and the logins can say who is signed in: they sign the session. Setting
+Only rowstile's own functions (`authz.act_as()`, the logins, `authz.view_as()`) can say who is signed in: they
+sign the session. Setting
 `authz.user_id`, `authz.principal_type`, `authz.scopes` or `authz.acting_user` yourself, or reusing a signature
 from another transaction, is refused. Superusers and the policy's owner may set them directly (psql, tests).
 
