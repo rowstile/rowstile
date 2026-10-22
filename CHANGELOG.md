@@ -9,6 +9,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+## 0.1.0-beta.1 (2026-10-22)
+
 ### Added
 
 - `cascade from schema.table` under a table's rules says that its foreign key to that table deletes or changes its
