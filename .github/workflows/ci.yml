@@ -1,10 +1,6 @@
 # Every suite on PostgreSQL 16 and what depends on the version on 17 and 18, the way core/ci.sh runs them locally.
-# Each job runs on GitHub's ubuntu-latest, or on the runner labelled by the repository variable RUNNER when it
-# is set (the laptop's self-hosted runners were, until 2026-10-03). Never set it on a public repository: its
-# pull requests would run on that machine.
-# Self-hosted runners would share one machine: a job that starts fixed-name containers or ports (the examples,
-# the conformance suites, the packaging tests) holds a lock of its own (flock), so the same job from two runs
-# waits rather than colliding; on GitHub's runners each job has a machine of its own and the lock is free. The proofs, 17's and 18's other suites and the benchmark run nightly (nightly.yml).
+# Each job runs on GitHub's ubuntu-latest, a machine of its own. The proofs, 17's and 18's other suites and the
+# benchmark run nightly (nightly.yml).
 name: ci
 on:
   push:
@@ -19,7 +15,7 @@ concurrency:
 permissions: {contents: read}
 jobs:
   unit:
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {fetch-depth: 0}     # the Zed extension's grammar commit is checked against this one
@@ -42,10 +38,7 @@ jobs:
   # part runs the same checks, measured (--short has no unit part: 17 and 18 run it nightly)
   suites:
     name: suites (${{ matrix.pg }}, ${{ matrix.part }})
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    env:
-      # the label on this job's containers: its run, attempt, job, version and part
-      ROWSTILE_CI_JOB: "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.pg }}-${{ matrix.part }}"
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -63,15 +56,12 @@ jobs:
       # --coverage, on 16: each Python process also measures what it runs of authzlib and cli (the coverage job reads
       # it). 17 and 18 run less and added nothing (2026-10-10: the same lines, branches and functions as 16 alone)
       - run: bash core/ci.sh ${{ matrix.pg == '16' && '--coverage' || '' }} ${{ matrix.mode }} ${{ matrix.pg }}
-        env: {ROWSTILE_CI_LOGS: "${{ runner.temp }}", ROWSTILE_PART: "${{ matrix.part }}"}
-      # a cancelled job may stop before ci.sh removes its container: this job's own (the label names the job)
-      - if: always()
-        run: docker ps -aq --filter "label=rowstile.ci=$ROWSTILE_CI_JOB" | xargs -r docker rm -f -v
+        env: {ROWSTILE_PART: "${{ matrix.part }}"}
       - if: failure() || cancelled()   # cancelled by hand too: what had run, and the hung step
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: logs-pg${{ matrix.pg }}-${{ matrix.part }}
-          path: ${{ runner.temp }}/rowstile-ci-${{ matrix.pg }}.log
+          path: /tmp/rowstile-ci-${{ matrix.pg }}.log
       # what it measured: the lines, combined in one file (ci.sh's report made it, its name starts with a dot), and
       # the calls of rowstile's functions
       - if: success() && matrix.pg == '16'
@@ -89,7 +79,7 @@ jobs:
   postgres:
     needs: suites
     if: always()
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -107,7 +97,7 @@ jobs:
   # there that nothing runs fails the job
   coverage:
     needs: suites
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {fetch-depth: 0}     # the changes are read against main
@@ -129,7 +119,7 @@ jobs:
   review:
     if: github.event_name == 'pull_request'
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions: {contents: read, pull-requests: write}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
@@ -140,12 +130,12 @@ jobs:
   # fails unless its checks run every line and branch of the SDK; the report it prints is kept
   conformance-python:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
         with: {version: "0.12.21"}
-      - run: flock /tmp/rowstile-ci-conformance-python.lock bash integrations/fastapi/test.sh
+      - run: bash integrations/fastapi/test.sh
         env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-python"}
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
@@ -158,14 +148,14 @@ jobs:
   # SDK; the report it prints is kept, with each file's details (coverage-final.json)
   conformance-typescript:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with:
           node-version: "24"
       - run: npm ci --no-audit --no-fund
-      - run: flock /tmp/rowstile-ci-conformance-typescript.lock bash integrations/nextjs/test.sh
+      - run: bash integrations/nextjs/test.sh
         env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-typescript"}
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
@@ -182,7 +172,7 @@ jobs:
   # 10 s: the design's limit is 5 s, and GitHub's runners took up to 5.9 s)
   playground:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -196,7 +186,7 @@ jobs:
   # shares and requests as the API sends them, and a policy applied while the page is open
   studio-page:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -209,7 +199,7 @@ jobs:
   # it (site/build.mjs)
   site:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -222,7 +212,7 @@ jobs:
   # The JavaScript is typed (JSDoc) and checked strictly by TypeScript, each part with its own dependencies' types
   javascript:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -245,7 +235,7 @@ jobs:
   # extension's build (editor/test.sh)
   editor:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - run: bash editor/test.sh
@@ -254,7 +244,7 @@ jobs:
   # under emulation)
   packaging:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     env:
       ROWSTILE_IMAGE_PLATFORMS: linux/amd64,linux/arm64
     steps:
@@ -262,12 +252,12 @@ jobs:
       # arm64 under emulation, for the npm packages and the image; the binfmt image by digest (Dependabot doesn't move it)
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1   # v4.4.0
         with: {platforms: arm64, cache-image: false, image: "docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"}
-      - run: flock /tmp/rowstile-ci-packaging.lock bash packaging/test.sh
+      - run: bash packaging/test.sh
   # The file manager against the rowstile image built from the same commit: its public-surface
   # check, the generated client matching its policy, the API tests with RustFS, and the web app's build and tests.
   filemanager:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
@@ -276,11 +266,11 @@ jobs:
         with:
           node-version: "24"
       - run: cd examples/filemanager/frontend && npm ci && npm run build && npm test
-      - run: flock /tmp/rowstile-ci-filemanager.lock bash examples/filemanager/test.sh
+      - run: bash examples/filemanager/test.sh
 
   messenger:
     needs: unit
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
@@ -289,4 +279,4 @@ jobs:
         with:
           node-version: "24"
       - run: cd examples/messenger/frontend && npm ci && npm run build && npm test
-      - run: flock /tmp/rowstile-ci-messenger.lock bash examples/messenger/test.sh
+      - run: bash examples/messenger/test.sh

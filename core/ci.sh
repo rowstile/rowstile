@@ -31,8 +31,8 @@ VERSIONS=${*:-16 17 18}
 LIMIT=7200; [ "$MODE" = --soak ] && LIMIT=12600
 if [ -n "${ROWSTILE_PART:-}" ] && { [ "$MODE" = --quick ] || [ "$MODE" = --short ]; }; then LIMIT=1500; fi
 failed=()
-# where the logs go: /tmp, or ROWSTILE_CI_LOGS (CI gives each job its own: self-hosted runners may share a machine)
-LOGS=${ROWSTILE_CI_LOGS:-/tmp}
+# where the logs go
+LOGS=/tmp
 name=""
 # a run stopped half way (Ctrl-C, a cancelled CI job) removes its container too, and the database's volume
 trap '[ -z "$name" ] || docker rm -f -v "$name" >/dev/null 2>&1' EXIT
@@ -46,14 +46,13 @@ for v in $VERSIONS; do
     echo "--- FAILED: building the image"; failed+=("$v (build)"); continue
   fi
   name="rowstile-ci-$v-$$"
-  # labelled with the job (ROWSTILE_CI_JOB in CI), whose cleanup removes only its own
   # The server doesn't wait for the disk: the databases last as long as the container, and no suite stops the
   # server to see what it kept. What the suites check is the same, sooner (they make and drop many databases).
   # (measuring, Postgres also counts the calls of every function: track_functions; with --statements, plpgsql_check's
   # profiler the statements of each PL/pgSQL one, in shared memory, tests/coverage_plpgsql.py, its warnings about
   # cursors left open off, so the suites see what they see without it). wal_level = logical: a database can publish
   # to another of the same server (tests/governance.sh copies the audit trail by a subscription)
-  docker run -d --name "$name" --label "rowstile.ci=${ROWSTILE_CI_JOB:-local}" -e POSTGRES_HOST_AUTH_METHOD=trust -v "$REPO:/src" "$image" \
+  docker run -d --name "$name" -e POSTGRES_HOST_AUTH_METHOD=trust -v "$REPO:/src" "$image" \
     -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c wal_level=logical \
     ${COVERAGE:+-c track_functions=all} ${STATEMENTS:+-c shared_preload_libraries=plpgsql_check -c plpgsql_check.profiler=on} \
     ${STATEMENTS:+-c plpgsql_check.cursors_leaks=off -c plpgsql_check.max_stats_size=204800} >/dev/null || { failed+=("$v (start)"); continue; }

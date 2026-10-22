@@ -127,7 +127,7 @@ suite cut short. So `tests/check_counts.txt` says how many checks each suite pas
 run to it (`tests/check_counts.py`, on the run's log): a suite that passes fewer or more fails the run, though
 each of its checks passed, and a count that changes is in the diff, like the golden SQL. After adding or taking
 away checks on purpose, write the new count there, or `python3 tests/check_counts.py --write LOG` with the run's
-log (`rowstile-ci-16.log`, in `/tmp` or where `ROWSTILE_CI_LOGS` says). The random suites (difftest, genpolicy,
+log (`/tmp/rowstile-ci-16.log`). The random suites (difftest, genpolicy,
 around, the invariance of random policies, the conditions, the parser fuzzer, the stress test) check as many
 things as their seeds draw, and aren't counted.
 

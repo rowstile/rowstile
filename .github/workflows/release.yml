@@ -32,7 +32,7 @@ env:
 jobs:
   check:
     if: ${{ !inputs.latest }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
       publish: ${{ steps.v.outputs.publish }}
@@ -62,13 +62,12 @@ jobs:
       # arm64 under emulation, for the npm packages' and the image's packaging tests; the binfmt image by digest (Dependabot doesn't move it)
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1   # v4.4.0
         with: {platforms: arm64, cache-image: false, image: "docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"}
-      # the lock CI's packaging job holds: both build the image under one name on a machine they share
-      - run: flock /tmp/rowstile-ci-packaging.lock bash packaging/test.sh
+      - run: bash packaging/test.sh
 
   pypi:
     needs: check
     if: needs.check.outputs.publish == 'public'
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     environment: pypi
     permissions: {id-token: write, contents: read}
     steps:
@@ -82,7 +81,7 @@ jobs:
 
   npm:
     needs: check
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # npm trusts this workflow only in the environment `npm` (each package's trusted publisher names it), which
     # takes v* tags, and main for the `latest` job; a dry run, on a branch, publishes nothing and goes without it
     environment: ${{ needs.check.outputs.publish == 'public' && 'npm' || '' }}
@@ -147,7 +146,7 @@ jobs:
   # own run couldn't move it. It publishes nothing. From main, which the environment `npm` takes for this
   latest:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest }}
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     environment: npm
     permissions: {id-token: write, contents: read}
     steps:
@@ -160,7 +159,7 @@ jobs:
 
   image:
     needs: check
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions: {packages: write, contents: read}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
@@ -189,7 +188,7 @@ jobs:
   # Built here, with no right to write or sign anything; github-release signs and publishes them
   release-files:
     needs: check
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions: {contents: read}
     env:
       VERSION: ${{ needs.check.outputs.version }}
@@ -216,7 +215,7 @@ jobs:
   github-release:
     needs: [check, release-files]
     if: needs.check.outputs.publish != 'none'
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # id-token and attestations: the files' provenance (below)
     permissions: {contents: write, id-token: write, attestations: write}
     env:
@@ -238,7 +237,6 @@ jobs:
         run: cp "$BUNDLE" "dist/rowstile-$VERSION.intoto.jsonl"
       # the notes are the release's section of CHANGELOG.md
       - run: python3 packaging/changelog.py "$VERSION" > release-notes.md
-      # an action, not the GitHub CLI: a self-hosted runner may not have it
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64   # v3.0.3
         with:
           tag_name: v${{ env.VERSION }}
@@ -253,7 +251,7 @@ jobs:
   # dry run, on a branch, packages it and goes without them
   vscode:
     needs: check
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     environment: ${{ needs.check.outputs.publish == 'public' && 'vscode' || '' }}
     permissions: {contents: read}
     steps:

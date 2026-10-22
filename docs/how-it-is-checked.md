@@ -355,9 +355,10 @@ quoting call left out), compiles every policy in the repository with each, and r
 what one of them compiles to, on GitHub's runners, [weekly](../.github/workflows/mutants.yml). A mistake no suite
 catches is listed in `core/mutants/survivors.txt`, either as one that changes no answer or with the check that would
 catch it, and one that isn't listed fails the run. <!-- checked: tests/unit_test.py "test_a_new_survivor_fails_the_run" -->
-The first pass over all of them ended on 20 October 2026: of the 2,749 that change what a policy compiles to, the
-suites caught 2,714 (98.7%). Those they missed got a check, or a line in `survivors.txt`: why no answer changes,
-or which check would catch it and is still to write.
+Up to 20 October 2026 the runs gave a result for 2,934 of the 10,749 it makes; the rest are still to run. Of those
+2,934, 2,749 change what a policy compiles to and aren't listed as changing no answer: the suites caught 2,714 of
+them (98.7%). Those they missed got a check, or a line in `survivors.txt`: why no answer changes, or which check
+would catch it and is still to write.
 
 ## When something is found
 
