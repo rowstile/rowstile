@@ -598,6 +598,12 @@ Each release from 0.1.0-beta.1 on upgrades from the one before it. How releases 
   A share or link "until" a day ended as that day began in UTC (the evening before, west of UTC); it now lasts
   to the end of that day where the person is. A request's duration reads "7 days", not "P7D". Cancel on "Why
   not?" no longer denies the request, and a preview's Download or "Leave this group" that fails says why.
+- The site's links to the repository's files go to the release it shows, not to `main`, where a file may have
+  moved or changed since. Its headings' anchors are GitHub's (`#what-a-0x-release-promises`), so a link to a
+  heading written for GitHub finds it on the site too; the changelog's link to "What a 0.x release promises"
+  didn't. The build fails on a link to a heading that isn't there, on a page no menu lists, and on a link the
+  pages' Markdown copies can't rewrite. The card a shared link shows is drawn with fonts kept beside it (Inter,
+  JetBrains Mono), so it looks the same whichever machine renders it.
 
 ## 0.1.0 (alpha)
 

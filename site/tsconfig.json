@@ -6,5 +6,5 @@
     "target": "ES2023", "lib": ["ES2023", "DOM"], "module": "NodeNext", "moduleResolution": "NodeNext",
     "types": ["node"], "noUnusedLocals": true, "noImplicitReturns": true, "noFallthroughCasesInSwitch": true
   },
-  "include": ["*.mjs", ".vitepress/config.mts"]
+  "include": ["*.mjs", "assets/*.mjs", ".vitepress/config.mts"]
 }

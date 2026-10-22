@@ -1,14 +1,20 @@
 // The site's pages: which Markdown in the repository, at which address. The files stay where they are, written
 // for GitHub and editors (links relative to the file); siteLink() turns each link into the site's: a page's address,
-// or the file on GitHub. A link to a file that isn't in the repository fails the build.
+// or the file on GitHub, at the tag the site is built from. A link to a file that isn't in the repository fails the
+// build, and so does a link to a heading that isn't there (deadAnchors), a link the Markdown copies can't rewrite
+// (rewriteLinks) and a page no menu reaches (checkMenus).
 // Plain JavaScript, typed with JSDoc and checked strictly (site/tsconfig.json).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { FOLDERS } from "./source.mjs";
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const GITHUB = "https://github.com/rowstile/rowstile";
-const BRANCH = "main";
+// Where a link to a file on GitHub points: the release the site is built from, and the site tag whose blog and
+// comparison pages it shows (site.yml sets both, from site/source.mjs). A build of a branch links to main.
+const CODE = process.env.SITE_CODE || "main";
+const CONTENT = process.env.SITE_CONTENT || CODE;
 
 const errorPages = readdirSync(join(REPO, "docs", "errors")).filter((f) => /^AZ\d+\.md$/.test(f)).sort();
 // a recipe with a page of its own: docs/cookbook/<name>.md, beside the folder that holds what it shows
@@ -248,7 +254,153 @@ export function siteLink(source, href) {
   const page = PAGES[target] ?? (dir ? PAGES[posix.join(target, "README.md")] : undefined);
   if (page) return url(page) + hash;
   if (target === ".") return GITHUB;
-  return `${GITHUB}/${dir ? "tree" : "blob"}/${BRANCH}/${target}${hash}`;
+  const at = FOLDERS.some((f) => target === f || target.startsWith(`${f}/`)) ? CONTENT : CODE;
+  return `${GITHUB}/${dir ? "tree" : "blob"}/${at}/${target}${hash}`;
+}
+
+/** A heading's anchor as GitHub makes it, so a link written for GitHub (operations.md#behind-a-pooler) finds its
+ *  heading on the site too: lower case, a hyphen for each space, without what is neither a letter, a digit, "_" nor
+ *  "-" ("What a 0.x release promises": what-a-0x-release-promises). VitePress's own would keep the dot as a hyphen.
+ *  @param {string} heading the heading's text @returns {string} */
+export function slug(heading) {
+  return heading.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "").replace(/ /g, "-");
+}
+
+/** The links to a heading that isn't there: each page's links to an anchor (href="/operations#behind-a-pooler",
+ *  href="#tested") against the ids of the page they go to, as VitePress wrote them. A link to what isn't a page
+ *  (the playground, GitHub) isn't checked here.
+ *  @param {Map<string, {source: string, html: string}>} pages each built page by its URL ("/operations", "/stacks/"):
+ *  the file it is made from, and its HTML
+ *  @param {{from: string, href: string}[]} [more] links from elsewhere (llms.txt), to the same URLs
+ *  @returns {string[]} one line per link, saying where it is and what it misses */
+export function deadAnchors(pages, more = []) {
+  /** @type {Record<string, string>} */
+  const entities = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", "#x27": "'" };
+  const unescape = (/** @type {string} */ s) => s.replace(/&(amp|lt|gt|quot|#39|#x27);/g, (_, /** @type {string} */ e) => entities[e]);
+  const decode = (/** @type {string} */ s) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
+  /** @type {Map<string, Set<string>>} */
+  const ids = new Map();
+  for (const [page, { html }] of pages) ids.set(page, new Set([...html.matchAll(/\sid="([^"]*)"/g)].map((m) => unescape(m[1]))));
+  /** @type {{from: string, page?: string, href: string}[]} */
+  const links = [...more];
+  for (const [page, { source, html }] of pages) {
+    for (const m of html.matchAll(/\shref="([^"]*)"/g)) links.push({ from: source, page, href: unescape(m[1]) });
+  }
+  const dead = [];
+  for (const { from, page, href } of links) {
+    const cut = href.indexOf("#");
+    if (cut < 0 || cut === href.length - 1 || !(href.startsWith("/") || href.startsWith("#"))) continue;
+    const to = cut === 0 ? page : href.slice(0, cut);
+    const there = to === undefined ? undefined : pages.get(to);
+    const anchor = decode(href.slice(cut + 1));
+    if (to && there && !ids.get(to)?.has(anchor)) dead.push(`${from}: the link ${href} goes to a heading ${there.source} doesn't have`);
+  }
+  return [...new Set(dead)];
+}
+
+/** A Markdown token, as markdown-it's parse gives it: what rewriteLinks reads.
+ *  @typedef {{type: string, markup: string, map: [number, number] | null, children: Token[] | null,
+ *             attrGet: (name: string) => string | null}} Token */
+
+/** A Markdown file with its links rewritten, for the copies of the pages (/operations.md) and llms.txt: each
+ *  [words](href) and ![words](src) outside code, its title kept. markdown-it's parse says which links the file
+ *  holds: one written another way (a reference, [words][name]) can't be rewritten, and fails the build.
+ *  @param {(text: string) => Token[]} parse @param {string} source the file, for messages
+ *  @param {string} text @param {(href: string) => string} to the link's new address */
+export function rewriteLinks(parse, source, text, to) {
+  const lines = text.split("\n");
+  const tokens = parse(text);
+  /** @type {string[]} */
+  const links = [];
+  /** @type {boolean[]} lines of code (fences, indented blocks) and HTML blocks, which hold no links */
+  const verbatim = lines.map(() => false);
+  (function walk(/** @type {Token[]} */ list) {
+    for (const t of list) {
+      if (/^(fence|code_block|html_block)$/.test(t.type) && t.map) verbatim.fill(true, t.map[0], t.map[1]);
+      const href = t.type === "link_open" ? t.attrGet("href") : t.type === "image" ? t.attrGet("src") : null;
+      // what the file says: not an autolink, a bare URL, or the link VitePress adds to each heading
+      const made = t.markup === "autolink" || t.markup === "linkify" || t.attrGet("class") === "header-anchor";
+      if (href !== null && !made) links.push(href);
+      if (t.children) walk(t.children);
+    }
+  })(tokens);
+  /** @type {string[]} */
+  const found = [];
+  /** @type {string[]} */
+  const out = [];
+  /** @type {string[]} */
+  let run = [];
+  const flush = () => {
+    if (!run.length) return;
+    // a code span is kept as it is; a link's address, written bare or in <>, is rewritten, its title kept
+    out.push(run.join("\n").replace(/(`+)[^]*?\1|\]\(\s*(<[^>\n]*>|[^\s)]+)((?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*)\)/g,
+      (all, ticks, href, rest) => {
+        if (ticks) return all;
+        const bare = href.startsWith("<") ? href.slice(1, -1) : href;
+        found.push(bare);
+        return `](${to(bare)}${rest})`;
+      }));
+    run = [];
+  };
+  lines.forEach((line, i) => {
+    if (verbatim[i]) {
+      flush();
+      out.push(line);
+    } else run.push(line);
+  });
+  flush();
+  // markdown-it gives an address as it reads it (&amp; read, non-ASCII percent-encoded): compare them so
+  const same = (/** @type {string} */ s) => {
+    try {
+      return decodeURI(s.replace(/&amp;/g, "&"));
+    } catch {
+      return s;
+    }
+  };
+  const missed = [...links.map(same)];
+  const extra = [];
+  for (const f of found.map(same)) {
+    const i = missed.indexOf(f);
+    if (i < 0) extra.push(f);
+    else missed.splice(i, 1);
+  }
+  if (missed.length) {
+    throw new Error(`${source}: a link the Markdown copy can't rewrite, to ${missed.join(", ")}: write it [words](address)`);
+  }
+  if (extra.length) throw new Error(`${source}: ](${extra.join("), ](")}) reads as a link here but isn't one in Markdown`);
+  return out.join("\n");
+}
+
+/** Every link of a menu (the navigation, the sidebars): its items' links, and their items'.
+ *  @param {unknown} menu @returns {string[]} */
+export function menuLinks(menu) {
+  if (Array.isArray(menu)) return menu.flatMap(menuLinks);
+  if (!menu || typeof menu !== "object") return [];
+  const item = /** @type {{link?: unknown, items?: unknown}} */ (menu);
+  return [...(typeof item.link === "string" ? [item.link] : []), ...menuLinks(item.items)];
+}
+
+/** Pages no menu needs to list: the home page (the logo goes there) and the SDKs' problem types (their answers link
+ *  to them, and so does each stack's page). */
+const OFF_MENUS = /^(index\.md|problems\/.*)$/;
+
+/** The menus' links against the pages: every page is in a menu, and every link of a menu goes to a page. A page
+ *  added to PAGES alone would be reached only by a link or by search. @param {string[]} links */
+export function checkMenus(links) {
+  const pages = new Set(Object.values(PAGES).map(url));
+  const listed = new Set(links);
+  const unlisted = Object.values(PAGES).filter((a) => !OFF_MENUS.test(a) && !listed.has(url(a)));
+  if (unlisted.length) {
+    throw new Error(`site/.vitepress/config.mts: no menu lists ${unlisted.map(url).join(", ")}: add each to the sidebar`);
+  }
+  const nowhere = links.filter((l) => l.startsWith("/") && l !== "/playground/" && !pages.has(l));
+  if (nowhere.length) throw new Error(`site/.vitepress/config.mts: a menu links to ${nowhere.join(", ")}, which is no page`);
 }
 
 /** Every other Markdown file in the repository, and the folders of what's installed or built: not pages. */

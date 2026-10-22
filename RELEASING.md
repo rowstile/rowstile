@@ -142,7 +142,8 @@ the site's own code. An article and a comparison page describe no version, and d
 - The site workflow (`.github/workflows/site.yml`) builds the site from the release it shows, with
   `docs/blog/` and `docs/compare/` as they are at the site tag, and deploys it. `site/source.mjs` holds
   the rule and `site/source_test.mjs` checks it; `node site/source.mjs site-vN` says what a tag is built
-  from.
+  from. The site's links to files in the repository go to those tags: the release's, and the site tag's for
+  the two folders.
 - Nothing else comes from a site tag. The landing page, the navigation, every other page and a new kind
   of page go out with a release. A post that links to a page the release doesn't have fails the build,
   and so does a post or a comparison page the release's site can't make: nothing is deployed, and the

@@ -1,9 +1,13 @@
 <!doctype html>
-<!-- The card a shared link shows (1200 x 630): rendered once to card.png with a headless browser. -->
+<!-- The card a shared link shows (1200 x 630): rendered once to card.png with a headless browser (render.mjs). Its
+     fonts are beside it (fonts/: Inter, the site's, and JetBrains Mono, under the SIL Open Font License), so it looks
+     the same whichever machine renders it. -->
 <meta charset="utf-8">
 <style>
+  @font-face { font-family: "Inter"; src: url("fonts/inter-latin.woff2") format("woff2"); font-weight: 100 900; }
+  @font-face { font-family: "JetBrains Mono"; src: url("fonts/jetbrains-mono-latin.woff2") format("woff2"); }
   html, body { margin: 0; }
-  body { width: 1200px; height: 630px; background: #14213d; color: #e8ecf4; font-family: "Segoe UI", system-ui, sans-serif;
+  body { width: 1200px; height: 630px; background: #14213d; color: #e8ecf4; font-family: "Inter", sans-serif;
          display: grid; grid-template-columns: 560px 1fr; }
   .left { padding: 72px 0 0 72px; }
   .name { display: flex; align-items: center; gap: 22px; font-size: 64px; font-weight: 600; letter-spacing: -1px; }
@@ -11,14 +15,21 @@
   h1 { margin: 44px 0 0; font-size: 44px; line-height: 1.15; font-weight: 600; }
   p { margin: 22px 0 0; font-size: 26px; line-height: 1.4; color: #b9c2d6; max-width: 440px; }
   .url { margin-top: 44px; font-size: 24px; color: #fca311; }
+  .nowrap { white-space: nowrap; }
   pre { margin: 72px 60px 72px 20px; padding: 30px 32px; background: #0d1730; border: 1px solid #2a3a63; border-radius: 16px;
-        font: 21px/1.55 "Cascadia Mono", Consolas, monospace; color: #dfe6f3; align-self: start; }
+        font: 20px/1.63 "JetBrains Mono", monospace; color: #dfe6f3; align-self: start; }
   .k { color: #fca311; } .c { color: #7f8cab; } .t { color: #9ecbff; }
 </style>
+<script>
+  // what render.mjs reads before the screenshot: whether each font loaded (else the browser drew the card in another)
+  addEventListener("load", () => document.fonts.ready.then(() => {
+    document.body.dataset.fonts = [...document.fonts].map((f) => `${f.family.replace(/"/g, "")}: ${f.status}`).join(", ");
+  }));
+</script>
 <div class="left">
   <div class="name"><img src="mark.svg" alt="">rowstile</div>
   <h1>Authorization inside your Postgres</h1>
-  <p>Sharing, groups and nested folders in one policy file, compiled to row-level security.</p>
+  <p>Sharing, groups and nested folders in one policy file, compiled to <span class="nowrap">row-level security</span>.</p>
   <div class="url">rowstile.dev</div>
 </div>
 <pre><span class="k">type</span> folder = <span class="t">app.folders</span>

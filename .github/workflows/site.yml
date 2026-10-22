@@ -49,7 +49,11 @@ jobs:
             echo "deploy=false" >> "$GITHUB_OUTPUT"
             echo "::notice::npm's $tag: the site stays at the release a plain install gets"
           fi
-      - run: cd site && npm ci --no-audit --no-fund && node build.mjs
+      # its links to the repository's files go to the tags it is built from, not main (site/pages.mjs)
+      - env:
+          SITE_CODE: ${{ steps.from.outputs.code }}
+          SITE_CONTENT: ${{ steps.from.outputs.content }}
+        run: cd site && npm ci --no-audit --no-fund && node build.mjs
       # a release from before the blog builds without a word and without the posts: say so, and deploy nothing
       - run: node "$RUNNER_TEMP/source.mjs" --built
       - if: steps.which.outputs.deploy == 'true'
