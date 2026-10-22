@@ -123,6 +123,15 @@ case "$out" in *"last written by rowstile 99.0.0-beta.1, which is newer than thi
   ok "... and so is one a newer beta applied" || bad "apply over a newer beta: rc" "$rc";;
   *) bad "apply over a newer beta" "$out";; esac
 run apply "$T/docs.authz" --downgrade; [ "$out" = "$T/docs.authz: applied" ] && ok "... unless asked: --downgrade" || bad "apply --downgrade" "$out"
+# push applies whole over what another version applied: the same refusal, and the same way back
+PSQL -c "UPDATE authz.policy_versions SET version = '99.0.0' WHERE id = (SELECT max(id) FROM authz.policy_versions)" >/dev/null
+run push "$T/docs.authz" --development
+case "$out" in *"last written by rowstile 99.0.0, which is newer than this command"*"[AZ616]"*"--downgrade"*) [ $rc -ne 0 ] &&
+  ok "push refuses it too" || bad "push over a newer version: rc" "$rc";; *) bad "push over a newer version" "$out";; esac
+run push "$T/docs.authz" --development --downgrade
+[ $rc -eq 0 ] && [ "$(PSQL -c "SELECT version FROM authz.policy_versions ORDER BY id DESC LIMIT 1")" = "$(python3 -c 'import authzlib; print(authzlib.BUILD)')" ] &&
+  ok "... unless asked: push --downgrade" || bad "push --downgrade" "$rc $out"
+PSQL -c "DELETE FROM authz.settings WHERE key = 'development'" >/dev/null
 scenario > /tmp/authz_apply_scenario.log 2>&1
 rc=$?; n=$(grep -c 'ok  ' /tmp/authz_apply_scenario.log)
 [ $rc -eq 0 ] && ok "the end-to-end scenario passes ($n checks)" || bad "scenario" "$(grep 'FAIL\|ERROR' /tmp/authz_apply_scenario.log | head -3)"

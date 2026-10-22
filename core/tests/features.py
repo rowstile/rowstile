@@ -7,7 +7,8 @@
 
 The surface is read from the code, not from memory: the authz.* functions applying makes (GENERATED_FUNCTIONS) and
 those the app role may call (api_signatures()), the command's commands as it dispatches them and as its usage
-lists them (with each flag), the forms of the language (the editors' grammar, which tests/parse_agreement.py holds
+lists them (with each flag each takes: a suite gives each to its command, on one line), the settings rowstile.toml
+may hold (a suite sets each), the forms of the language (the editors' grammar, which tests/parse_agreement.py holds
 to the parser), the error codes (errors.CODES), what the SDKs export, the language server's methods, the MCP
 server's tools and Studio's routes. Each item is in one feature, and each feature names:
 
@@ -15,7 +16,7 @@ server's tools and Studio's routes. Each item is in one feature, and each featur
 - where the docs say it: a page, and a heading on it (or the bold words a paragraph starts with, or a table's
   first cell);
 - its fixed checks: a suite, and words that suite holds (a check's label as it prints it, a test's name, the call
-  it makes);
+  it makes), on a line that isn't a comment;
 - its oracle: the checks that hold it to an answer this code didn't give (the reference evaluator, a rebuild,
   the policy applied whole, Postgres, the answers before), at random or over every case up to a size.
   A feature of tier 1 has one;
@@ -393,6 +394,9 @@ FEATURES: list[Feature] = [
             "cli.push",
             "cli.diff",
             "cli.remove",
+            "cli.--db",
+            "toml.policy",
+            "toml.database",
             "err.AZ609",
             "err.AZ610",
             "err.AZ612",
@@ -421,7 +425,7 @@ FEATURES: list[Feature] = [
         "cli.migrate",
         1,
         "Migrations: `rowstile migrate`, the lock file, trees built beside then swapped in",
-        ("cli.migrate", "err.AZ607", "err.AZ608", "err.AZ615", "err.AZ619"),
+        ("cli.migrate", "toml.migrations.*", "err.AZ607", "err.AZ608", "err.AZ615", "err.AZ619"),
         Doc(MIGR, "Deploying a policy: migrations"),
         (
             T("migrations.sh", "migrate writes two: build beside, then swap in"),
@@ -460,7 +464,7 @@ FEATURES: list[Feature] = [
         "cli.test",
         2,
         "Running the policy's tests: `rowstile test`",
-        ("cli.test",),
+        ("cli.test", "toml.tests"),
         Doc(TOOLS, "`rowstile test [tests.authz"),
         (
             T("cli.sh", "test passes and shows each check"),
@@ -504,7 +508,7 @@ FEATURES: list[Feature] = [
         "cli.review",
         2,
         "Reviewing a change: `rowstile review`, `rowstile snapshot`",
-        ("cli.review", "cli.snapshot", "err.AZ623"),
+        ("cli.review", "cli.snapshot", "toml.review.snapshot", "err.AZ623"),
         Doc("docs/reference/review.md", "Reviewing a policy change"),
         (
             T("review.sh", "Access: who gains what, on the review data"),
@@ -525,7 +529,7 @@ FEATURES: list[Feature] = [
         ("cli.fmt",),
         Doc(TOOLS, "`rowstile fmt"),
         (
-            T("review.sh", "CLI fmt"),
+            T("review.sh", "fmt --check: exit 1, and which file"),
             T("unit_test.py", "class Fmt("),
             T("unit_test.py", "test_the_repositorys_policies_are_laid_out_as_fmt_writes_them"),
         ),
@@ -565,7 +569,7 @@ FEATURES: list[Feature] = [
         "cli.tools",
         3,
         "The diagram, the clients, lint and help: `rowstile graph`, `client`, `lint`, `help`, `--version`",
-        ("cli.graph", "cli.client", "cli.lint", "cli.help", "cli.--version"),
+        ("cli.graph", "cli.client", "cli.lint", "cli.help", "cli.--version", "cli.--help", "toml.clients.*"),
         Doc(TOOLS, "`rowstile graph"),
         (
             T("cli.sh", "check, graph and client of a file need no database"),
@@ -697,14 +701,18 @@ FEATURES: list[Feature] = [
         Doc(LANG, "Rows that count"),
         (
             T("unit_test.py", "test_a_rule_gives_no_row_the_type_leaves_out"),
-            T("policy_errors.py", "COMPILE = ["),
+            T("policy_errors.py", "unknown subject type"),
             T("principals.sh", "a service failing the type's where is nobody"),
             T(
                 "apply.sh",
                 "a column it reads that the app dropped since: apply refuses it with its line, not unchanged",
             ),
         ),
-        (T(DIFF, "class CrossGen("), T("small.py", "user_where"), T("genpolicy.py", "def make(")),
+        (
+            T(DIFF, "class CrossGen("),
+            T("small.py", "user{' where' if spec.user_where else ''}"),
+            T("genpolicy.py", "def make("),
+        ),
         hand=("rows-hold-nothing", "rows-in-permissions", "rows-no-rule", "rows-no-invariant"),
         grammar=("Types, keys and sources",),
     ),
@@ -715,7 +723,7 @@ FEATURES: list[Feature] = [
         ("lang.key", "lang.key_column", "err.AZ206", "err.AZ602"),
         Doc(LANG, "Keys"),
         (T("unit_test.py", "class CompositeKeys("), T("unit_test.py", "class KeyTypeChecks(")),
-        (T(DIFF, "class CompositeGen("), T("genpolicy.py", "keytype"), T("around.py", "keys: two columns")),
+        (T(DIFF, "class CompositeGen("), T("genpolicy.py", "keytype = KEYS["), T("around.py", "keys: two columns")),
         hand=("keys", "keys-composite"),
         grammar=("Types, keys and sources",),
     ),
@@ -869,7 +877,7 @@ FEATURES: list[Feature] = [
             T("adversarial.sh", "alice can't move her folder under a folder she may not edit"),
             T("adversarial.sh", "and both at once: the rule on the row before the change says why"),
             T("unit_test.py", "test_triggers_are_named_after_what_they_guard"),
-            T("children.sh", "rule"),
+            T("children.sh", "the rule on a column, on a row of the table itself"),
             Check(FASTAPI, "test_6_a_refused_insert_says_which_rule"),
         ),
         (T(DIFF, "policy as app"), T("around.py", "def write_problems("), T("genpolicy.py", "def before_after(")),
@@ -934,8 +942,11 @@ FEATURES: list[Feature] = [
         "Caveats: conditions a share carries",
         ("lang.caveat", "api.ctx"),
         Doc(LANG, "caveat"),
-        (T("multi_scenario.sql", "caveat"),),
-        (T(DIFF, "business_hours"), T("genpolicy.py", "CAVEATS = {")),
+        (
+            T("multi_scenario.sql", "alice re-shares it for business hours only (a caveat)"),
+            T("multi_scenario.sql", "a parameterised caveat: only from the office IP"),
+        ),
+        (T(DIFF, "'business_hours', NULL"), T("genpolicy.py", "CAVEATS = {")),
         hand=("caveats",),
         grammar=("Rules, masks, scopes, caveats, invariants",),
     ),
@@ -1115,14 +1126,27 @@ def usage() -> dict[str, set[str]]:
 
 
 def commands() -> set[str]:
-    """The command's commands as it dispatches them (ARGUMENTS) and as its usage lists them, with their flags."""
+    """The command's commands as it dispatches them (ARGUMENTS) and as its usage lists them, with the flags each
+    takes (a flag several take, as --downgrade, is an item of each), and the options every command has: --db, which
+    each that reads a database takes, and --help."""
     import rowstile_cli
 
-    out = {f"cli.{c}" for c in rowstile_cli.ARGUMENTS}
+    out = {f"cli.{c}" for c in rowstile_cli.ARGUMENTS} | {"cli.--db", "cli.--help"}
     for cmd, flags in usage().items():
         out.add(f"cli.{cmd}")
-        out |= {f"cli.{cmd} {f}" for f in flags}
+        out |= {f"cli.{cmd} {f}" for f in flags - {"--db"}}
+    for cmd, takes in rowstile_cli.ARGUMENTS.items():
+        out |= {f"cli.{cmd} {f}" for f in set(takes.options.split()) - {"--db"}}
     return out
+
+
+def settings() -> set[str]:
+    """The settings rowstile.toml may hold (SETTINGS): `toml.policy`, `toml.migrations.tool`, ..."""
+    import rowstile_cli
+
+    return {
+        f"toml.{table + '.' if table else ''}{key}" for table, keys in rowstile_cli.SETTINGS.items() for key in keys
+    }
 
 
 def codes() -> set[str]:
@@ -1224,6 +1248,7 @@ def language() -> set[str]:
 SURFACES: dict[str, Callable[[], set[str]]] = {
     "the authz.* API": api,
     "the command": commands,
+    "rowstile.toml": settings,
     "error codes": codes,
     "the MCP server": mcp_tools,
     "Studio": studio_routes,
@@ -1319,14 +1344,55 @@ def suite_texts() -> dict[str, str]:
     return out
 
 
+COMMENT = re.compile(r"\s*(?:#|--(?:\s|$)|//)")  # a line that is a comment, in the suites' languages
+
+
+def runs(text: str, cmd: str) -> re.Pattern[str]:
+    """What runs the command cmd on a line of a suite's file: its word, or a call of a function of the file that
+    runs it (one whose first lines name it in quotes, as studio_test.py's serving() does)."""
+    helpers = [
+        m[2]
+        for m in re.finditer(r"(?m)^(\s*)def (\w+)\(", text)
+        if re.search(rf"[\"']{re.escape(cmd)}[\"']", "\n".join(text[m.end() :].split("\n")[:12]))
+    ]
+    return re.compile("|".join([rf"(?<![\w-]){re.escape(cmd)}(?![\w-])", *(rf"\b{h}\(" for h in helpers)]))
+
+
 def unused_flags(every: set[str]) -> list[str]:
-    """The command's flags no suite uses: none of the files that say the flag also names its command."""
+    """The command's flags no suite uses: no line of a suite (but comments) gives the flag to its command."""
     texts = list(suite_texts().values())
     out = []
     for item in sorted(i for i in every if i.startswith("cli.") and " " in i):
         cmd, flag = item.removeprefix("cli.").split(" ")
         word = re.compile(rf"(?<![\w-]){re.escape(flag)}(?![\w-])")
-        if not any(word.search(t) and re.search(rf"\b{re.escape(cmd)}\b", t) for t in texts):
+        used = False
+        for t in texts:
+            if not word.search(t):
+                continue
+            run = runs(t, cmd)
+            if any(word.search(line) and run.search(line) and not COMMENT.match(line) for line in t.split("\n")):
+                used = True
+                break
+        if not used:
+            out.append(item)
+    return out
+
+
+def unset_settings(every: set[str]) -> list[str]:
+    """The settings of rowstile.toml no suite writes (in a rowstile.toml a suite writes, or one a conformance app
+    has): a line `key = ...`, in a text that also has the line `[table]` for a table's."""
+    texts = list(suite_texts().values())
+    texts += [
+        read(os.path.relpath(p, REPO))
+        for p in sorted(glob.glob(os.path.join(REPO, "integrations", "*", "rowstile.toml")))
+    ]
+    texts = [t.replace("\\n", "\n") for t in texts]  # what printf writes
+    out = []
+    for item in sorted(i for i in every if i.startswith("toml.")):
+        *table, key = item.removeprefix("toml.").split(".")
+        line = re.compile(rf"(?m)(?:^|[\"'])\s*{re.escape(key)}\s*=\s*[\"\[\d]")  # a line, or a string's first
+        head = re.compile(rf"(?m)^\s*\[{re.escape(table[0])}\]") if table else None
+        if not any(line.search(t) and (head is None or head.search(t)) for t in texts):
             out.append(item)
     return out
 
@@ -1358,6 +1424,7 @@ def problems(features: list[Feature] = FEATURES) -> list[str]:
             f"{sorted(set(rowstile_cli.ARGUMENTS) - listed)} besides"
         )
     out += [f"the command: {item}: no suite uses the flag" for item in unused_flags(every)]
+    out += [f"rowstile.toml: {item}: no suite sets it" for item in unset_settings(every)]
     cases, hands = grammar_cases(), anchors()
     texts: dict[str, str] = {}
     for f in features:
@@ -1383,6 +1450,8 @@ def problems(features: list[Feature] = FEATURES) -> list[str]:
                     continue
             if c.words not in texts[path]:
                 out.append(f"{f.id}: {c.path} no longer says {c.words!r}")
+            elif all(COMMENT.match(line) for line in texts[path].split("\n") if c.words in line):
+                out.append(f"{f.id}: {c.path} says {c.words!r} in comments only")
         for c in f.oracle:
             if suite(c.path) not in ORACLES:
                 out.append(f"{f.id}: {c.path} holds it to no other answer (ORACLES)")

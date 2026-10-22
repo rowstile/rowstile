@@ -87,6 +87,12 @@ def check(label: str, ok: object, detail: object = "") -> None:
         print(f"FAIL  {label}{': ' + str(detail) if detail else ''}")
 
 
+def statements(client: str) -> int:
+    """How many strings of a generated client start with SELECT, in any quotes: its statements, each of which the
+    checks below must find (a change of quotes would leave them checking fewer, or none)."""
+    return len(re.findall(r"[\"'`]SELECT\b", client))
+
+
 def psql(db: str, *cmds: str, check_rc: bool = True) -> str:
     args = ["psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-d", db]
     for c in cmds:
@@ -276,7 +282,8 @@ def main() -> None:
     conn.execute("COMMIT")
     left = conn.query("SELECT coalesce(current_setting('authz_ctx.links', true), '')")
     check("use_links: the tokens are for the transaction, none left after it", left == [("",)], left)
-    client_sql = re.findall(r'"(SELECT [^"]+)"', compiler.client("py", "docs.authz"))
+    py = compiler.client("py", "docs.authz")
+    client_sql = re.findall(r'"(SELECT [^"]+)"', py)
     bad = []
     for i, text in enumerate(client_sql):
         n = text.count("%s")
@@ -287,7 +294,11 @@ def main() -> None:
             conn.query(f"PREPARE py_{i} AS {text}")
         except pgwire.PgError as e:
             bad.append((text, e.message))
-    check(f"every statement of the Python client prepares ({len(client_sql)})", not bad, bad)
+    # each statement is found: as many as the client has strings that start with SELECT, whatever their quotes
+    found = len(client_sql) == statements(py) > 20
+    check(
+        f"every statement of the Python client prepares ({len(client_sql)})", found and not bad, (statements(py), bad)
+    )
 
     print("-- the TypeScript client (--client ts)")
     ts = compiler.client("ts", "docs.authz")
@@ -298,13 +309,19 @@ def main() -> None:
             conn.query(f"PREPARE ts_{i} AS {text}")
         except pgwire.PgError as e:
             bad.append((text, e.message))
-    check(f"every statement of the TypeScript client prepares ({len(ts_sql)})", not bad, bad)
+    found = len(ts_sql) == statements(ts) > 20
+    check(
+        f"every statement of the TypeScript client prepares ({len(ts_sql)})", found and not bad, (statements(ts), bad)
+    )
     links = re.search(r'useLinks: [^\n]*db\.query\("([^"]+)"', ts)
-    conn.execute("BEGIN")
-    conn.query(links.group(1) if links else "SELECT 'no useLinks'", ["a-token"] if links else [])
-    conn.execute("COMMIT")
-    left = conn.query("SELECT coalesce(current_setting('authz_ctx.links', true), '')")
-    check("useLinks: the tokens are for the transaction, none left after it", left == [("",)], left)
+    if links:
+        conn.execute("BEGIN")
+        conn.query(links.group(1), ["a-token"])
+        conn.execute("COMMIT")
+        left = conn.query("SELECT coalesce(current_setting('authz_ctx.links', true), '')")
+        check("useLinks: the tokens are for the transaction, none left after it", left == [("",)], left)
+    else:
+        check("useLinks: the tokens are for the transaction, none left after it", False, "its statement isn't found")
     typed = client_types.type_check(ts)
     if typed:
         check("tsc --strict accepts correct calls and rejects wrong names", typed[0], typed[1])
@@ -336,7 +353,7 @@ def main() -> None:
                 re.compile(p.replace("(?<", "(?P<") if "(?<!" not in p and "(?<=" not in p else p)
             except re.error as e:
                 bad.append((p, str(e)))
-        check(f"the grammar's patterns compile ({len(pats)})", not bad, bad)
+        check(f"the grammar's patterns compile ({len(pats)})", len(pats) > 20 and not bad, bad or "too few found")
         with open(os.path.join(ROOT, "..", "editor", "package.json"), encoding="utf-8") as fh:
             pkg = json.load(fh)
         check(

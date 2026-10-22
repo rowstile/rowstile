@@ -325,13 +325,13 @@ def test_9_generated_names_type_check(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
     )
-    committed = Path(HERE, "app", "authz_client.py").read_text()
+    committed = Path(HERE, "app", "authz_client.py").read_text(encoding="utf-8")
     assert made.stdout == committed, "app/authz_client.py is out of date: run rowstile client"
     good = tmp_path / "good.py"
     bad = tmp_path / "bad.py"
     use = "from app.authz_client import Authz\n\ndef f(a: Authz) -> bool:\n    return a.can('note', 1, {!r})\n"
-    good.write_text(use.format("edit"))
-    bad.write_text(use.format("edt"))
+    good.write_text(use.format("edit"), encoding="utf-8")
+    bad.write_text(use.format("edt"), encoding="utf-8")
     env = {**os.environ, "MYPYPATH": HERE}
     ok = subprocess.run(
         [sys.executable, "-m", "mypy", "--no-error-summary", str(good)], env=env, capture_output=True, text=True
@@ -353,7 +353,7 @@ def test_9_generated_names_type_check(tmp_path: Path) -> None:
         ("sdk_type", "nte", "edit", False),
     ):
         path = tmp_path / f"{name}.py"
-        path.write_text(sdk.format(type_, perm))
+        path.write_text(sdk.format(type_, perm), encoding="utf-8")
         got = subprocess.run(
             [sys.executable, "-m", "mypy", "--no-error-summary", str(path)], env=env, capture_output=True, text=True
         )
@@ -774,7 +774,10 @@ def test_14_a_policy_change_ships_as_the_next_migration(tmp_path: Path) -> None:
     shutil.copytree(HERE, work, ignore=shutil.ignore_patterns(".venv", "__pycache__", ".pytest_cache", ".mypy_cache"))
     policy = work / "db" / "policy.authz"
     policy.write_text(
-        policy.read_text().replace("  can read = recipient\n", "  can read = recipient\n  can reply = recipient\n")
+        policy.read_text(encoding="utf-8").replace(
+            "  can read = recipient\n", "  can read = recipient\n  can reply = recipient\n"
+        ),
+        encoding="utf-8",
     )
     cli = "-m", "rowstile"  # the command, as the rowstile package installs it
     env = {**os.environ, "ROWSTILE_OWNER_URL": copy.url}  # what Alembic migrates (migrations/env.py)

@@ -69,7 +69,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   Each file's blocks are its own: a block ends at an include line and at the end of its file, so an
   included file starts with a line at the left margin. <!-- checked: tests/policy_errors.py "an included file that starts indented"; tests/policy_errors.py "indented lines after an include" -->
   Its name may hold an apostrophe or a `%`, never a dollar quote's tag (`$f$`), which would end a generated
-  function that names the file. <!-- checked: tests/policy_errors.py "a whole policy in an included file named with a quote"; tests/policy_errors.py "a file whose name holds a dollar quote's tag" -->
+  function that names the file. <!-- checked: tests/policy_errors.py "applies, and its named test runs"; tests/policy_errors.py "a file whose name holds a dollar quote's tag" -->
 - **Keys**: a type's key is `id bigint` unless the type line says otherwise: `(gid)`,
   `(id uuid)`, or several columns for a composite key: `type folder = app.folders (org_id, id)`.
   The type is the column's own: a 32-bit key, as Prisma's `Int` or a `serial` makes, is `(id int)`.
@@ -80,7 +80,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
 - **Rows that count**: `where {...}` on a type line says which rows do. A row that fails it holds nothing
   and passes nothing on: a suspended user, an archived folder and what is inside it, a disbanded team's
   members (also through the team that holds it). <!-- answer: rows-hold-nothing --> No rule allows anything on it either: the app role can't
-  read, change or delete an archived folder, so it can't un-archive one. <!-- checked: tests/difftest.py "CrossGen"; tests/unit_test.py "test_a_rule_gives_no_row_the_type_leaves_out" --> <!-- answer: rows-no-rule -->
+  read, change or delete an archived folder, so it can't un-archive one. <!-- checked: tests/difftest.py "UPDATE cx.folders SET archived = NOT archived"; tests/unit_test.py "test_a_rule_gives_no_row_the_type_leaves_out" --> <!-- answer: rows-no-rule -->
   An invariant isn't asked of it either: `never folder: not owner` holds on no archived folder. <!-- answer: rows-no-invariant -->
   Leave such rows to a job that runs
   as the owner, or say it in permissions instead (`can edit = ... and {not archived}`). <!-- answer: rows-in-permissions -->
@@ -178,7 +178,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   says whose roles count on an object: only those of the org its `org` relation links it to now (a
   column or a table, to one type). <!-- checked: tests/unit_test.py "test_roles_from_an_org_count_only_on_its_objects"; tests/multi_scenario.sql "until folder 1 moves to Globex" --> <!-- answer: roles-from -->
   `authz.share` refuses another owner's role (with an error, AZ706: offering it is the app's mistake), an assignment of one
-  grants nothing, and a folder moved to another org stops honouring the first org's roles. <!-- checked: tests/multi_scenario.sql "alice cannot give Globex"; tests/multi_scenario.sql "and one written into authz.shares gives dave nothing while folder 1 is Acme"; tests/difftest.py "MultiGen" --> <!-- answer: roles-refused -->
+  grants nothing, and a folder moved to another org stops honouring the first org's roles. <!-- checked: tests/multi_scenario.sql "alice cannot give Globex"; tests/multi_scenario.sql "and one written into authz.shares gives dave nothing while folder 1 is Acme"; tests/difftest.py "UPDATE mt.folders SET org_id = " --> <!-- answer: roles-refused -->
   Without
   `from`, any role for the type counts wherever it is given, so an app must offer only the owner's
   roles. <!-- checked: tests/unit_test.py "test_roles_without_from_count_wherever_they_are_given" --> <!-- answer: roles-without-from -->

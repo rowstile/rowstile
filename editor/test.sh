@@ -23,12 +23,16 @@ ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; rc=1; }
 # as the caller: what the containers write in the checkout stays removable
 as_me=(-u "$(id -u):$(id -g)" -e HOME=/tmp)
+# each toolchain's image, by its stage's name
+image() { sed -n "s/^FROM \([^ ]*\) AS $1\$/\1/p" editor/images/Dockerfile; }
+NODE=$(image node) RUST=$(image rust)
+[ -n "$NODE" ] && [ -n "$RUST" ] || { bad "editor/images/Dockerfile names each toolchain"; exit 1; }
 
 if [ -n "$AGREE" ]; then
   echo "-- the grammar and the parser: $AGREE"
   # (many files: parsed in chunks, each an XML of its own, compared together; a chunk with a file the grammar
   # reads with an error exits 1, and the comparison says which, or that the parser refuses it too)
-  docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz node:24-trixie bash -c '
+  docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz "$NODE" bash -c '
     npm ci --no-audit --no-fund >/dev/null 2>&1 || { echo "FAIL  npm ci"; exit 1; }
     python3 /repo/core/tests/parse_agreement.py --write /tmp/agree 0 $1 &&
       find /tmp/agree -name "*.authz" | sort > /tmp/paths && split -l 4000 /tmp/paths /tmp/chunk_ || exit 1
@@ -40,7 +44,7 @@ if [ -n "$AGREE" ]; then
 fi
 
 echo "-- the grammar"
-docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz node:24-trixie bash -c '
+docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz "$NODE" bash -c '
   npm ci --no-audit --no-fund >/dev/null 2>&1 || { echo "FAIL  npm ci"; exit 1; }
   # (generated in a copy: the check leaves the checkout as it was)
   rm -rf /tmp/gen-src && mkdir /tmp/gen-src && cp grammar.js package.json tree-sitter.json /tmp/gen-src &&
@@ -64,7 +68,7 @@ docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz
 
 echo "-- the VS Code extension"
 # a copy of the extension: what the README says to run writes node_modules and the .vsix where it runs
-docker run --rm "${as_me[@]}" -v "$REPO:/repo:ro" node:24-trixie bash -c '
+docker run --rm "${as_me[@]}" -v "$REPO:/repo:ro" "$NODE" bash -c '
   mkdir -p /tmp/ext/editor && cd /tmp/ext || exit 1
   tar -C /repo/editor --exclude=node_modules --exclude=tree-sitter-authz --exclude=zed --exclude="*.vsix" -c . | tar -x -C editor
   # the README line that builds it from this repository
@@ -98,7 +102,7 @@ EOF
 echo "-- Neovim"
 # the README steps (build the grammar, put it and its queries in the config folder, its init.lua) on the oldest
 # Neovim it names, and a policy is highlighted
-docker run --rm "${as_me[@]}" -v "$REPO:/repo:ro" node:24-trixie bash -c '
+docker run --rm "${as_me[@]}" -v "$REPO:/repo:ro" "$NODE" bash -c '
   case $(uname -m) in
     x86_64) arch=x86_64 sum=a74740047e73b2b380d63a474282814063d10650cd6cc95efa16d1713c7e616c ;;
     *) arch=arm64 sum=684e4262d2296e469cb43f0d05edbbb52b960b7f117bed6b22936fc768993cd9 ;;
@@ -139,7 +143,7 @@ EOF
 ' || rc=1
 
 echo "-- the Zed extension"
-docker run --rm "${as_me[@]}" -e CARGO_HOME=/tmp/cargo -v "$REPO:/repo" -w /repo/editor/zed rust:1 bash -c '
+docker run --rm "${as_me[@]}" -e CARGO_HOME=/tmp/cargo -v "$REPO:/repo" -w /repo/editor/zed "$RUST" bash -c '
   cp -r /usr/local/cargo /tmp/cargo 2>/dev/null
   rustup target add wasm32-wasip2 >/dev/null 2>&1 &&
     cargo build -q --release --target wasm32-wasip2 --target-dir /tmp/target 2>&1 &&

@@ -414,6 +414,9 @@ toml 'policy = "db/policy.authz"\n[review]\nsnapshot = "review/access.txt"\n' sn
   ok "... or where [review] snapshot says, making its folder" || bad "snapshot where rowstile.toml says" "$rc $out"
 out=$(TOML snapshot --out db 2>&1); rc=$?
 [ $rc -eq 2 ] && [ "$out" = "db: Is a directory" ] && ok "a file it can't write (here a folder) is named, with why, exit 2: not a lost database" || bad "snapshot into a folder" "$rc $out"
+toml 'policy = "db/policy.authz"\n[migrations]\ntool = "sql"\ndir = "db/migrations"\nlock = "state/policy.lock"\n' migrate
+[ $rc -eq 0 ] && case "$out" in *"wrote state/policy.lock"*) true;; *) false;; esac && [ -s "$P/state/policy.lock" ] && [ ! -e "$P/db/policy.lock" ] &&
+  ok "migrate writes the lock file where [migrations] lock says, making its folder" || bad "the lock where rowstile.toml says" "$rc $out"
 
 echo "-- a server that goes away, two applies at once"
 ( sleep 2; psql -X -q -At -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$DB' AND query LIKE '%pg_sleep(7)%' AND pid <> pg_backend_pid()" >/dev/null ) &
