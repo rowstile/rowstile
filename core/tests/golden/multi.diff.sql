@@ -3757,7 +3757,9 @@ BEGIN
   FROM authz.shares g WHERE g.object_type = p_type AND g.object_id = p_id AND g.subject_type = 'link'
     AND g.relation = ANY (v_relations) ORDER BY g.created_at, g.subject_id;
 END $f$;
--- Turn a link off, by its id in authz.list_links: needs what unsharing it needs
+-- Turn a link off, by its id in authz.list_links: needs what unsharing it needs. A link in several relations is
+-- judged in each as things are before any of it goes, and goes whole or not at all: taking it out of one relation
+-- may change what the caller holds, and so what the next would be judged on
 CREATE OR REPLACE FUNCTION authz.revoke_link(p_type text, p_id text, p_link text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_relations text[]; v record; v_found boolean := false;
@@ -3768,20 +3770,20 @@ BEGIN
   IF v_relations IS NULL THEN
     RAISE EXCEPTION 'you cannot turn off the links of % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
-  FOR v IN SELECT g.relation, g.subject_id FROM authz.shares g
+  FOR v IN SELECT g.relation FROM authz.shares g
            WHERE g.object_type = p_type AND g.object_id = p_id AND g.subject_type = 'link'
              AND g.relation = ANY (v_relations) AND left(g.subject_id, 16) = p_link LOOP
     IF NOT authz_int.may_manage(p_type, p_id, v.relation, 'link') THEN
       RAISE EXCEPTION 'you cannot turn off link % of % % (you could not unshare it)', p_link, p_type, p_id
         USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
     END IF;
-    DELETE FROM authz.shares g WHERE g.object_type = p_type AND g.object_id = p_id AND g.relation = v.relation
-      AND g.subject_type = 'link' AND g.subject_id = v.subject_id;
     v_found := true;
   END LOOP;
   IF NOT v_found THEN
     RAISE EXCEPTION 'no link % on % %', p_link, p_type, p_id USING HINT = 'rowstile help AZ708';
   END IF;
+  DELETE FROM authz.shares g WHERE g.object_type = p_type AND g.object_id = p_id AND g.subject_type = 'link'
+    AND g.relation = ANY (v_relations) AND left(g.subject_id, 16) = p_link;
 END $f$;
 CREATE OR REPLACE FUNCTION authz.list_links(p_type text, p_id bigint) RETURNS TABLE (id text, relation text, created_by text, created_at timestamptz, expires_at timestamptz) LANGUAGE sql STABLE AS
   $$ SELECT * FROM authz.list_links(p_type, p_id::text) $$;
