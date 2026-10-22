@@ -154,61 +154,73 @@ def cli(db: str | None, *args: str, cwd: str | None = None) -> tuple[int, str]:
     return r.returncode, r.stdout + r.stderr
 
 
-def plan_scans(raw: Value) -> list[tuple[str, str]]:
-    """(node, index or table) of each scan in a plan (EXPLAIN's JSON)."""
+def psql(db: str, *args: str, check: bool = True) -> str:
+    """psql's output (unaligned, no headers) for these arguments (-c SQL, -f FILE) on db, stopping at the first
+    error; one is the suite's end unless check is False."""
+    r = subprocess.run(
+        ["psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-d", db, *args], capture_output=True, text=True
+    )
+    if check and r.returncode:
+        raise SystemExit(f"psql failed: {r.stderr}")
+    return r.stdout.strip()
+
+
+def walk(raw: Value, pick: Callable[[dict[str, Value]], tuple[str, str] | None]) -> list[tuple[str, str]]:
+    """What pick finds in each node of a plan (EXPLAIN's JSON), in order."""
     found: list[tuple[str, str]] = []
 
-    def walk(node: Value) -> None:
+    def go(node: Value) -> None:
         if isinstance(node, dict):
-            kind, where = node.get("Node Type"), node.get("Index Name") or node.get("Relation Name")
-            if isinstance(kind, str) and "Scan" in kind and isinstance(where, str):
-                found.append((kind, where))
+            got = pick(node)
+            if got is not None:
+                found.append(got)
             for child in node.values():
-                walk(child)
+                go(child)
         elif isinstance(node, list):
             for child in node:
-                walk(child)
+                go(child)
 
-    walk(json.loads(raw) if isinstance(raw, str) else raw)
+    go(json.loads(raw) if isinstance(raw, str) else raw)
     return found
 
 
-def index_conds(raw: Value) -> list[tuple[str, str]]:
-    """(index, its condition) of each scan through an index in a plan (EXPLAIN's JSON)."""
-    found: list[tuple[str, str]] = []
+def scan(node: dict[str, Value]) -> tuple[str, str] | None:
+    """A scan's node and its index or table."""
+    kind, where = node.get("Node Type"), node.get("Index Name") or node.get("Relation Name")
+    return (kind, where) if isinstance(kind, str) and "Scan" in kind and isinstance(where, str) else None
 
-    def walk(node: Value) -> None:
-        if isinstance(node, dict):
-            index, cond = node.get("Index Name"), node.get("Index Cond")
-            if isinstance(index, str) and isinstance(cond, str):
-                found.append((index, cond))
-            for child in node.values():
-                walk(child)
-        elif isinstance(node, list):
-            for child in node:
-                walk(child)
 
-    walk(json.loads(raw) if isinstance(raw, str) else raw)
-    return found
+def index_cond(node: dict[str, Value]) -> tuple[str, str] | None:
+    """A scan through an index: the index and its condition."""
+    index, cond = node.get("Index Name"), node.get("Index Cond")
+    return (index, cond) if isinstance(index, str) and isinstance(cond, str) else None
+
+
+def explain(conn: pgwire.Connection, view: str) -> Value:
+    """The plan of a read of view, signed in as user 7 (as the owner: the views run as their owner whoever reads
+    them, and the app role may read only those its rules look up), with sequential scans off."""
+
+    def plan(d: Db) -> Value:
+        d.rows("SELECT authz.act_as('user', '7')")
+        d.script("SET LOCAL enable_seqscan = off")
+        return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_int."{view}"')[0].values()))
+
+    return rowstile_cli.transaction(conn, plan, keep=False)
 
 
 def main() -> None:
     db = sys.argv[sys.argv.index("--db") + 1] if "--db" in sys.argv else "authz_confidence"
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
     subprocess.run(["createdb", db], check=True)
-    subprocess.run(
-        ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", os.path.join(ROOT, "example", "app_schema.sql")],
-        check=True,
-        capture_output=True,
-    )
+    psql(db, "-f", os.path.join(ROOT, "example", "app_schema.sql"))
     policy = os.path.join(ROOT, "example", "docs.authz")
     # the policy without its test section: coverage counts this file's tests only
     with open(policy, encoding="utf-8") as fh:
         bare = re.sub(r"\ntest\n(  .*\n)+", "\n", fh.read())
-    tmp_policy = os.path.join(tempfile.mkdtemp(), "docs.authz")
-    with open(tmp_policy, "w", encoding="utf-8") as fh:
-        fh.write(bare)
-    rc, out = cli(db, "apply", tmp_policy)
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "docs.authz"), "w", encoding="utf-8") as fh:
+            fh.write(bare)
+        rc, out = cli(db, "apply", os.path.join(tmp, "docs.authz"))
     if rc:
         raise SystemExit(out)
     conn = pgwire.connect(**pgwire.parse_dsn(f"dbname={db}"))
@@ -282,11 +294,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["dropdb", "--if-exists", db + "_deny"], capture_output=True)
         subprocess.run(["createdb", db + "_deny"], check=True)
-        subprocess.run(
-            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db + "_deny", "-c", DENY_SCHEMA],
-            check=True,
-            capture_output=True,
-        )
+        psql(db + "_deny", "-c", DENY_SCHEMA)
         pol, tests = os.path.join(tmp, "p.authz"), os.path.join(tmp, "t.authz")
         for path, text in ((pol, DENY_POLICY), (tests, DENY_TESTS)):
             with open(path, "w", encoding="utf-8") as fh:
@@ -434,11 +442,10 @@ def main() -> None:
         [(m[0], m[1]) for m in work(partial)] == [("app.team_members", ("user_id",))],
     )
     # nor does one a failed CREATE INDEX CONCURRENTLY left unfinished (here a unique one, on a duplicate)
-    sql = lambda *s: subprocess.run(
-        ["psql", "-X", "-q", "-d", db, *(x for c in s for x in ("-c", c))], capture_output=True
+    psql(db, "-c", "DROP INDEX app.team_members_user_id_idx", "-c", "INSERT INTO app.team_members VALUES (11, 1)")
+    psql(  # a build that fails on the row above
+        db, "-c", "CREATE UNIQUE INDEX CONCURRENTLY team_members_user_id_idx ON app.team_members (user_id)", check=False
     )
-    sql("DROP INDEX app.team_members_user_id_idx", "INSERT INTO app.team_members VALUES (11, 1)")
-    sql("CREATE UNIQUE INDEX CONCURRENTLY team_members_user_id_idx ON app.team_members (user_id)")
     check(
         "... nor one a failed build left unfinished",
         [(m[0], m[1]) for m in work(lambda d: perf.missing_indexes(d, database.policy_compiler(*database.applied(d))))]
@@ -453,10 +460,11 @@ def main() -> None:
         '"app"."team_members" ("user_id");' in out,
         out,
     )
-    sql(
-        "DROP INDEX app.team_members_user_id_idx",
-        "DELETE FROM app.team_members WHERE (team_id, user_id) = (11, 1)",
-        "CREATE INDEX team_members_user_id_idx ON app.team_members (team_id)",
+    psql(
+        db,
+        *("-c", "DROP INDEX app.team_members_user_id_idx"),
+        *("-c", "DELETE FROM app.team_members WHERE (team_id, user_id) = (11, 1)"),
+        *("-c", "CREATE INDEX team_members_user_id_idx ON app.team_members (team_id)"),
     )
     # a valid index of the app's that holds the name the advice gives, on other columns: no failed build, nothing
     # to drop first
@@ -468,18 +476,22 @@ def main() -> None:
         ]
         == [("app.team_members", ("user_id",), ())],
     )
-    sql(
-        "DROP INDEX app.team_members_user_id_idx",
-        "CREATE INDEX team_members_user_id_idx ON app.team_members (user_id)",
+    psql(
+        db,
+        *("-c", "DROP INDEX app.team_members_user_id_idx"),
+        *("-c", "CREATE INDEX team_members_user_id_idx ON app.team_members (user_id)"),
     )
     # a name longer than Postgres keeps (63 bytes): the advice shortens it as every generated name, the same in every
     # line, so that a build of it that failed is found under it
     long = "labels_kept_for_each_organisation_and_its_departments"
-    sql(
-        f"CREATE TABLE app.{long} (org_id bigint NOT NULL, name text NOT NULL, owner_id bigint)",
-        f"INSERT INTO app.{long} VALUES (1, 'a', 1), (1, 'a', 1)",
+    psql(
+        db,
+        *("-c", f"CREATE TABLE app.{long} (org_id bigint NOT NULL, name text NOT NULL, owner_id bigint)"),
+        *("-c", f"INSERT INTO app.{long} VALUES (1, 'a', 1), (1, 'a', 1)"),
+        "-c",
         f'CREATE UNIQUE INDEX CONCURRENTLY "{perf.index_name(f"app.{long}", ("org_id", "name"))}" '
         f"ON app.{long} (org_id, name)",
+        check=False,  # the build fails on the rows above
     )
 
     def long_names(d: Db) -> str:
@@ -500,7 +512,7 @@ def main() -> None:
         and perf.advice(f"app.{long}", ("org_id", "name"), "drizzle").startswith(f"index('{short}')"),
         said,
     )
-    sql(f"DROP TABLE app.{long}")
+    psql(db, "-c", f"DROP TABLE app.{long}")
 
     def capitals(d: Db) -> list[tuple[str, ...]]:
         # names with capital letters, as Prisma writes them: the table is looked up by its quoted name
@@ -643,7 +655,7 @@ def main() -> None:
         (said, key_only, unique),
     )
     # the line to add in the words of the tool rowstile.toml names, and --check exits 1 while a lookup has no index
-    subprocess.run(["psql", "-X", "-q", "-d", db, "-c", "DROP INDEX app.team_members_user_id_idx"], check=True)
+    psql(db, "-c", "DROP INDEX app.team_members_user_id_idx")
     with tempfile.TemporaryDirectory() as tmp:
         for tool, line in (
             ("drizzle", "index('team_members_user_id_idx').on(t.user_id) in the table for app.team_members"),
@@ -674,10 +686,7 @@ def main() -> None:
                 and f"\n  add: {line}\n" in out,
                 out,
             )
-    subprocess.run(
-        ["psql", "-X", "-q", "-d", db, "-c", "CREATE INDEX team_members_user_id_idx ON app.team_members (user_id)"],
-        check=True,
-    )
+    psql(db, "-c", "CREATE INDEX team_members_user_id_idx ON app.team_members (user_id)")
 
     print("-- plans and bench")
 
@@ -754,12 +763,8 @@ def main() -> None:
         any("reads all of app.org_members" in w for t in slow["tables"] for w in t["warnings"]),
         slow,
     )
-    count: Callable[[], str] = lambda: subprocess.run(
-        ["psql", "-X", "-At", "-d", db, "-c", "SELECT count(*), sum(length(name)) FROM app.folders"],
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    before = count()
+    count = "SELECT count(*), sum(length(name)) FROM app.folders"
+    before = psql(db, "-c", count)
     b = work(lambda d: perf.bench(d, database.policy_compiler(*database.applied(d)), people=3, rounds=3))
     paths = {x["path"]: x for x in b["paths"]}
     check(
@@ -770,12 +775,13 @@ def main() -> None:
     )
     rc, out = cli(db, "bench", "--rounds", "2", "--people", "2")
     check("rowstile bench", rc == 0 and "p50" in out and "read app.files" in out, out)
-    check("... and nothing it did stays", count() == before, (before, count()))
+    after = psql(db, "-c", count)
+    check("... and nothing it did stays", after == before, (before, after))
     # a table whose columns are all its key and what its relations read: nothing to write back unchanged, so no
     # update is timed
     subprocess.run(["dropdb", "--if-exists", db + "_tags"], capture_output=True)
     subprocess.run(["createdb", db + "_tags"], check=True)
-    subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db + "_tags", "-c", TAGS_SCHEMA], check=True)
+    psql(db + "_tags", "-c", TAGS_SCHEMA)
     with tempfile.TemporaryDirectory() as tmp:
         with open(os.path.join(tmp, "p.authz"), "w", encoding="utf-8") as fh:
             fh.write(TAGS_POLICY)
@@ -820,30 +826,18 @@ def main() -> None:
     keys = db + "_keys"
     subprocess.run(["dropdb", "--if-exists", keys], capture_output=True)
     subprocess.run(["createdb", keys], check=True)
-    for sql in (["-f", os.path.join(HERE, "composite_schema.sql")], ["-c", KEYS_ROWS]):
-        subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", keys, *sql], check=True, capture_output=True)
+    psql(keys, "-f", os.path.join(HERE, "composite_schema.sql"), "-c", KEYS_ROWS)
     rc, out = cli(keys, "apply", os.path.join(HERE, "composite.authz"))
     if rc:
         raise SystemExit(out)
     kconn = pgwire.connect(**pgwire.parse_dsn(f"dbname={keys}"))
-
-    def scans(view: str) -> list[tuple[str, str]]:
-        """(node, table or index) of each scan in the plan of a read of view, signed in as user 7 (as the owner:
-        the views run as their owner whoever reads them, and the app role may read only those its rules look up)."""
-
-        def plan(d: Db) -> Value:
-            d.rows("SELECT authz.act_as('user', '7')")
-            d.script("SET LOCAL enable_seqscan = off")
-            return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_int."{view}"')[0].values()))
-
-        return plan_scans(rowstile_cli.transaction(kconn, plan, keep=False))
 
     for view, table, index in (
         ("file__folder__edit", "files", "files_org_id_folder_id_idx"),  # files in the folders user 7 edits
         ("folder__editor", "folder_teams", "folder_teams_org_id_team_slug_idx"),  # folders of the teams 7 is in
         ("folder__parent__edit__on_project", "folders", "folders_org_id_parent_id_idx"),  # (type, [org_id, id])
     ):
-        found = scans(view)
+        found = walk(explain(kconn, view), scan)
         check(
             f"{view}: {table} looked up through {index}, not read row by row",
             any(where == index for _, where in found) and ("Seq Scan", table) not in found,
@@ -888,8 +882,8 @@ def main() -> None:
         d.rows("SELECT authz.act_as('user', '34')")
         d.script("SET LOCAL enable_seqscan = off")
         ids = sorted(str(r["id"]) for r in d.rows('SELECT id FROM authz_int."team__member"'))
-        return ids, plan_scans(
-            next(iter(d.rows('EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_int."team__member"')[0].values()))
+        return ids, walk(
+            next(iter(d.rows('EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_int."team__member"')[0].values())), scan
         )
 
     ids, steps = rowstile_cli.transaction(kconn, nested, keep=False) if rc == 0 else ([], [])
@@ -911,31 +905,17 @@ def main() -> None:
     pairs = db + "_pairs"
     subprocess.run(["dropdb", "--if-exists", pairs], capture_output=True)
     subprocess.run(["createdb", pairs], check=True)
-    for sql in (["-f", os.path.join(HERE, "cross_schema.sql")], ["-c", PAIRS_ROWS]):
-        subprocess.run(
-            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", pairs, *sql], check=True, capture_output=True
-        )
+    psql(pairs, "-f", os.path.join(HERE, "cross_schema.sql"), "-c", PAIRS_ROWS)
     rc, out = cli(pairs, "apply", os.path.join(HERE, "cross.authz"))
     if rc:
         raise SystemExit(out)
     pconn = pgwire.connect(**pgwire.parse_dsn(f"dbname={pairs}"))
 
-    def conds(view: str) -> list[tuple[str, str]]:
-        """(index, its condition) of each index scan in the plan of a read of view, signed in as user 7 (as the owner, as
-        scans says)."""
-
-        def plan(d: Db) -> Value:
-            d.rows("SELECT authz.act_as('user', '7')")
-            d.script("SET LOCAL enable_seqscan = off")
-            return next(iter(d.rows(f'EXPLAIN (FORMAT JSON) SELECT count(*) FROM authz_int."{view}"')[0].values()))
-
-        return index_conds(rowstile_cli.transaction(pconn, plan, keep=False))
-
     for view, index, cond in (
         ("folder__parent__file__on_project", "folders_parent_type_parent_id_idx", "(parent_type = 'project'::text)"),
         ("project__backer__fund__on_region", "backings_backer_type_backer_id_idx", "(backer_type = 'region'::text)"),
     ):
-        found = conds(view)
+        found = walk(explain(pconn, view), index_cond)
         check(f"{view}: the rows of that type found through {index}, by the type", (index, cond) in found, found)
 
     def served(d: Db) -> tuple[set[str], set[str]]:

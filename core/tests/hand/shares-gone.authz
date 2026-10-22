@@ -1,4 +1,4 @@
--- answer: runtime-share
+-- answer: shares-gone
 -- A share goes with its object: a project deleted takes its shares with it, so one made again with the same id
 -- starts with none, even on a type whose only relation is shared.
 app role app_user

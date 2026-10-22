@@ -34,9 +34,6 @@ admin() {   # $1 label, $2 expected, $3 SQL (run as the administrator)
   if [ "$got" = "$2" ]; then echo "ok    $1"; else echo "FAIL  $1: expected '$2', got '$got'"; fails=$((fails + 1)); fi
 }
 as() { local u=$1; shift; PSQL -c "SET ROLE app_user; SET authz.user_id = '$u';" "$@" 2>&1 | tail -n 1; }
-code() {
-  psql -X -q -At -d "$DB" -v VERBOSITY=sqlstate "$@" 2>&1 | grep -o '^ERROR:  [0-9A-Z]*' | tail -n 1 | cut -c9- || true
-}
 . tests/words.sh
 expect_code() {  # $1 label, $2 expected "SQLSTATE: the message's words" (or ok), rest: -c statements (as app_user unless the first is RESET ROLE)
   local label=$1 want=$2; shift 2

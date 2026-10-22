@@ -986,16 +986,8 @@ class GenPolicyGen(Gen):
         return "\n".join([*self.custom_roles(), *(self.grant(None) for _ in range(12))])
 
     def when(self) -> tuple[str, str]:
-        """A share's expires_at and starts_at: live, not started yet, expired, or live until tomorrow."""
-        return self.r.choice(
-            [
-                ("NULL", "NULL"),
-                ("NULL", "NULL"),
-                ("NULL", difftest.LATER),
-                (difftest.EXPIRED, "NULL"),
-                ("now() + interval '1 day'", "NULL"),
-            ]
-        )
+        """A share's expires_at and starts_at (Gen.WHEN), live twice as often."""
+        return self.r.choice([self.WHEN[0], *self.WHEN])
 
     def custom_roles(self) -> list[str]:
         """Two custom roles on each type that has them: one owned where the type takes its roles `from` (an object
@@ -1052,7 +1044,7 @@ class GenPolicyGen(Gen):
             )
         shared = [(o, rel) for o in self.spec.objs for rel in o.rels if rel.kind == "shared"]
         if not shared:
-            return "SELECT 1;"
+            return difftest.NOTHING
         o, rel = r.choice(shared)
         subject = r.choice(rel.subjects)
         st, sr = (
@@ -1183,11 +1175,12 @@ class Slow(Exception):
     """The policy's reads are slow to plan (lint says so), or the seed went over its time."""
 
 
-def invariant_problems(checker: Checker) -> list[str]:
-    """authz.check_invariants() against the evaluator: the first five ids each user, each bot and nobody breaks."""
+def invariant_problems(checker: Checker) -> tuple[list[str], set[int]]:
+    """authz.check_invariants() against the evaluator: the first five ids each user, each bot and nobody breaks.
+    And the invariants it says are broken (by their place in the policy)."""
     pol = checker.pol
     if not pol.invariants:
-        return []
+        return [], set()
     got: dict[tuple[int, str], list[str]] = {}
     for inv, user, ids in checker.db.rows(
         "SELECT invariant, coalesce(user_id, ''), array_to_json(object_ids) FROM authz.check_invariants()"
@@ -1197,9 +1190,10 @@ def invariant_problems(checker: Checker) -> list[str]:
     snap = checker.snapshot_data_only()
     problems: list[str] = []
     gen = checker.gen
-    gone = gen.spec.spelling.ident(GONE) if isinstance(gen, GenPolicyGen) else GONE
+    assert isinstance(gen, GenPolicyGen)
+    gone = gen.spec.spelling.ident(GONE)
     for u in checker.users:
-        if u in (GONE, UUID.format(int(GONE)), gone):  # asked as each row of a principal type, and as nobody
+        if u == gone:  # asked as each row of a principal type, and as nobody
             continue
         data = evaluate.Data.of({tuple(k[2:]): v for k, v in snap.items() if k[0] == u and k[1] == "data"})
         state = checker.ref.evaluate(data, u, set())
@@ -1212,7 +1206,7 @@ def invariant_problems(checker: Checker) -> list[str]:
                     f"{u or '(nobody)'}: check_invariants() for 'never {inv.type}: {inv.src}' "
                     f"gives {sorted(have)}, expected {sorted(bad)[:5]}"
                 )
-    return problems
+    return problems, {i for i, _ in got}
 
 
 def run(
@@ -1252,11 +1246,12 @@ def run(
     for step in range(steps + 1):
         if time.monotonic() - started > seconds:
             raise Slow(f"over {seconds:.0f} s at step {step} of {steps}")
-        problems = checker.check() + invariant_problems(checker)
+        problems = checker.check()
+        wrong, now_broken = invariant_problems(checker)
+        problems += wrong
         if problems:
             return [f"step {step}:", *problems[:12]]
-        for inv, *_ in db.rows("SELECT invariant FROM authz.check_invariants()") if checker.pol.invariants else []:
-            broken |= {n for n, x in enumerate(checker.pol.invariants) if inv.startswith(f"never {x.type}: {x.src} (")}
+        broken |= now_broken
         if step == steps:
             break
         ids: Ids = {

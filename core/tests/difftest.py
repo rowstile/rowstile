@@ -101,6 +101,8 @@ EXPIRED = "now() - interval '1 hour'"
 # a share's start ahead, far enough that it doesn't come during a run (a soak's takes hours): not started throughout.
 # A generator gives one in place of one of its draws' live shares, so that its draws, and all it makes, stay the same
 LATER = "now() + interval '1 day'"
+# a share's start a day back: it has started
+EARLIER = "now() - interval '1 day'"
 # A random change runs with psql's errors in full (VERBOSITY verbose): what Gen.refused reads is their SQLSTATE, the
 # code a rowstile refusal gives in its HINT, and the functions they were raised in (CONTEXT), not their words
 CHANGE = "\\set VERBOSITY verbose\n"
@@ -853,30 +855,12 @@ class Checker:
                 f"CREATE OR REPLACE FUNCTION difftest_app.q{n}() RETURNS json LANGUAGE sql STABLE "
                 f"BEGIN ATOMIC {sql}; END;"
             )
-        # authz.share tried as the caller and always undone: 'ok', or the refusal's SQLSTATE and words
-        lines.append(
-            "CREATE OR REPLACE FUNCTION difftest_app.try_share(t text, i text, r text, st text, sid text) RETURNS text "
-            "LANGUAGE plpgsql AS $f$ BEGIN BEGIN PERFORM authz.share(t, i, r, st, sid); "
-            "RAISE EXCEPTION USING ERRCODE = 'P0099', MESSAGE = 'shared'; "
-            "EXCEPTION WHEN OTHERS THEN RETURN CASE WHEN SQLSTATE = 'P0099' THEN 'ok' ELSE SQLSTATE || ': ' || SQLERRM END; "
-            "END; END $f$;"
-        )
-        lines.append(  # and authz.unshare the same way
-            "CREATE OR REPLACE FUNCTION difftest_app.try_unshare(t text, i text, r text, st text, sid text) RETURNS text "
-            "LANGUAGE plpgsql AS $f$ BEGIN BEGIN PERFORM authz.unshare(t, i, r, st, sid); "
-            "RAISE EXCEPTION USING ERRCODE = 'P0099', MESSAGE = 'unshared'; "
-            "EXCEPTION WHEN OTHERS THEN RETURN CASE WHEN SQLSTATE = 'P0099' THEN 'ok' ELSE SQLSTATE || ': ' || SQLERRM END; "
-            "END; END $f$;"
-        )
-        lines.append(  # and authz.create_link
-            "CREATE OR REPLACE FUNCTION difftest_app.try_create_link(t text, i text, r text) RETURNS text "
-            "LANGUAGE plpgsql AS $f$ BEGIN BEGIN PERFORM authz.create_link(t, i, r); "
-            "RAISE EXCEPTION USING ERRCODE = 'P0099', MESSAGE = 'linked'; "
-            "EXCEPTION WHEN OTHERS THEN RETURN CASE WHEN SQLSTATE = 'P0099' THEN 'ok' ELSE SQLSTATE || ': ' || SQLERRM END; "
-            "END; END $f$;"
-        )
-        # the custom roles API, the same way
+        # authz.share, unshare, create_link and the custom roles API, each tried as the caller and always undone: 'ok',
+        # or the refusal's SQLSTATE and words
         for name, args, call in (
+            ("share", "t text, i text, r text, st text, sid text", "authz.share(t, i, r, st, sid)"),
+            ("unshare", "t text, i text, r text, st text, sid text", "authz.unshare(t, i, r, st, sid)"),
+            ("create_link", "t text, i text, r text", "authz.create_link(t, i, r)"),
             (
                 "create_role",
                 "ot text, oi text, t text, ps text[]",
@@ -1464,6 +1448,8 @@ class Gen:
     role: ClassVar[str] = "app_user"
     # rowstile's own refusals a random change may meet, by the code in their HINT: a move under itself (AZ713)
     refusals: ClassVar[tuple[str, ...]] = ("AZ713",)
+    # a share's expires_at and starts_at: live, not started yet, expired, or live until tomorrow
+    WHEN: ClassVar[list[tuple[str, str]]] = [("NULL", "NULL"), ("NULL", LATER), (EXPIRED, "NULL"), (LATER, "NULL")]
 
     def refused(self, err: str) -> bool:
         """Whether a change failed as random changes may (err: psql's, with VERBOSITY verbose; CHANGE): a key the
@@ -1786,16 +1772,7 @@ class DocsGen(Gen):
         folders, files = there(ids, "folder", 25), there(ids, "file", 50)
         if not (folders and files):
             return NOTHING
-        # live, not started yet, expired, or live until tomorrow
-        expires, starts = r.choice(
-            [
-                ("NULL", "NULL"),
-                ("NULL", "NULL"),
-                ("NULL", LATER),
-                (EXPIRED, "NULL"),
-                ("now() + interval '1 day'", "NULL"),
-            ]
-        )
+        expires, starts = r.choice([self.WHEN[0], *self.WHEN])  # live twice as often
         kind = r.random()
         if kind < 0.6:
             obj, oid, rel = "folder", r.choice(folders), r.choice(["viewer", "editor"])
@@ -1980,7 +1957,7 @@ class AltGen(Gen):
         if row[2] != "shortcut":  # (a link of a tree: it never expires, nor starts later)
             draw = r.random()
             if draw < 0.25:
-                expires = r.choice(["now() - interval '1 hour'", "now() + interval '1 day'"])
+                expires = r.choice([EXPIRED, LATER])
             elif draw < 0.31:  # not started yet (with no draw of its own)
                 starts = LATER
         vals = ", ".join(lit(x) if isinstance(x, str) else str(x) for x in row)
@@ -2245,8 +2222,8 @@ class MultiGen(Gen):
             obj, oid, rel = "team", r.randint(1, 4), "member"
             st, sid, sr = "team", str(r.randint(1, 4)), "member"
         sid_sql = sid if sid.startswith("encode(") else lit(sid)
-        expires = r.choice(["NULL"] * 4 + ["now() - interval '1 hour'", "now() + interval '1 day'"])
-        starts = r.choice(["NULL"] * 4 + [LATER, "now() - interval '1 day'"])
+        expires = r.choice(["NULL"] * 4 + [EXPIRED, LATER])
+        starts = r.choice(["NULL"] * 4 + [LATER, EARLIER])
         caveat, args = r.choice(
             [("NULL", "NULL")] * 4
             + [
@@ -2449,9 +2426,7 @@ class CompositeGen(Gen):
             to, ts = self.team(ids)
             subj = ("team", None, "member")
             sid = f"ROW({to}, {lit(ts)})::text"
-        expires, starts = r.choice(
-            [("NULL", "NULL"), ("NULL", LATER), (EXPIRED, "NULL"), ("now() + interval '1 day'", "NULL")]
-        )
+        expires, starts = r.choice(self.WHEN)
         return (
             f"INSERT INTO authz.shares ({SHARE_COLUMNS}) VALUES ('folder', {lit(self.id_text(o, f))}, 'viewer', "
             f"{lit(subj[0])}, {sid}, {lit(subj[2])}, {expires}, {starts}) ON CONFLICT DO NOTHING;"
@@ -2562,13 +2537,6 @@ class LoopGen(Gen):
             s.append(f"UPDATE lp.emails SET verified = {str(r.random() < 0.75).lower()} WHERE id = {i};")
         s += [f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), 100);" for table, _, _ in self.tables.values()]
         return "\n".join(s)
-
-    WHEN: ClassVar[list[tuple[str, str]]] = [
-        ("NULL", "NULL"),
-        ("NULL", LATER),
-        (EXPIRED, "NULL"),
-        ("now() + interval '1 day'", "NULL"),
-    ]
 
     def grants(self) -> str:
         # one share in each state first (the decision ledger found no expired one in a run), then two drawn
@@ -2750,9 +2718,7 @@ class CrossGen(Gen):
                 f"INSERT INTO authz.shares VALUES ('project', {r.choice(projects)}, 'host', 'folder', "
                 f"{r.choice(folders)}, '', NULL) ON CONFLICT DO NOTHING;"
             )
-        expires, starts = r.choice(
-            [("NULL", "NULL"), ("NULL", LATER), (EXPIRED, "NULL"), ("now() + interval '1 day'", "NULL")]
-        )
+        expires, starts = r.choice(self.WHEN)
         return (
             f"INSERT INTO authz.shares ({SHARE_COLUMNS}) VALUES ('folder', {r.choice(folders)}, 'viewer', 'user', "
             f"{r.choice(self.users)}, '', {expires}, {starts}) ON CONFLICT DO NOTHING;"
@@ -2806,8 +2772,7 @@ class CrossGen(Gen):
             lambda: f"DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = '{f}';",
             lambda: f"UPDATE authz.shares SET expires_at = {EXPIRED} WHERE relation = 'viewer' AND random() < 0.3;",
             lambda: (
-                f"INSERT INTO authz.shares VALUES ('project', {p}, 'host', 'folder', {f}, '', "
-                "now() + interval '1 day');"
+                f"INSERT INTO authz.shares VALUES ('project', {p}, 'host', 'folder', {f}, '', {LATER});"
                 if ints(ids, "project") and ints(ids, "folder")
                 else NOTHING  # (see there())
             ),

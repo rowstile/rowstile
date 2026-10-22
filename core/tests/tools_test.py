@@ -93,14 +93,14 @@ def statements(client: str) -> int:
     return len(re.findall(r"[\"'`]SELECT\b", client))
 
 
-def psql(db: str, *cmds: str, check_rc: bool = True) -> str:
+def psql(db: str, *cmds: str) -> str:
     args = ["psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-d", db]
     for c in cmds:
         args += ["-c", c]
     r = subprocess.run(
         args, capture_output=True, text=True, env=dict(os.environ, PGOPTIONS="-c client_min_messages=error")
     )
-    if check_rc and r.returncode:
+    if r.returncode:
         raise SystemExit(f"psql failed: {r.stderr}")
     return r.stdout.strip()
 
@@ -116,10 +116,11 @@ def main() -> None:
     policy = os.path.join(ROOT, "example", "docs.authz")
     compiler = compile_policy.load(policy)
     sql = compiler.compile(policy)
-    for f in (os.path.join(ROOT, "example", "app_schema.sql"),):
-        subprocess.run(
-            ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", f], check=True, capture_output=True
-        )
+    subprocess.run(
+        ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", os.path.join(ROOT, "example", "app_schema.sql")],
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(
         ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db],
         input=sql,
@@ -159,9 +160,9 @@ def main() -> None:
     a = authz_client.Authz(Driver(conn))
     a.sign_in(3)
     check("can: carol may view file 11", a.can("file", 11, "view") is True)
-    cur = Cursor(conn)
-    cur.execute("UPDATE app.files SET name = name WHERE id = %s", (12,))  # file 12 is hidden from carol: no row changes
-    for label, given in (("a count of 0", 0), ("no rows", []), ("the cursor that ran it", Ran(0))):
+    # an update of file 12, which is hidden from carol, changes no row: a driver hands back a count of 0, no rows, or
+    # a cursor whose rowcount is 0
+    for label, given in (("a count of 0", 0), ("no rows", []), ("a cursor that changed no row", Ran(0))):
         try:
             a.expect(given, "app.files", "update", 12)
             check(f"expect, given {label}: NotFound", False, "it returned")
