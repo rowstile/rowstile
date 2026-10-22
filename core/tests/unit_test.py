@@ -9360,12 +9360,31 @@ class Invariance(unittest.TestCase):
 
         import invariance
 
-        e = authzlib.parse.ExprParser("(a or b or c) and (a or b or c) and not d", authzlib.parse.Loc(None, 0)).parse()
         for seed in range(6):
-            new = authzlib.parse.written(invariance.shuffled_expr(e, invariance.ranks(random.Random(seed))))
+            new = invariance.shuffled_text(
+                "(a or b or c) and (a or b or c) and not d", invariance.ranks(random.Random(seed))
+            )
             first, second, last = new.split(" and ")
             self.assertEqual(first, second)
             self.assertEqual(last, "not d")  # (what a `not` takes away from stays before it)
+
+    def test_reordered_keeps_the_brackets_as_written(self) -> None:
+        """Only the order changes: brackets that change nothing stay (an explanation says the line as written), and
+        each bracket's operands are shuffled inside it."""
+        import random
+
+        import invariance
+
+        written = "(nobody and r1) or (parent.p1 or r1) or ({not b2} and r1 and not {b1}) or parent.p2"
+        seen: set[str] = set()
+        for seed in range(12):
+            new = invariance.shuffled_text(written, invariance.ranks(random.Random(seed)))
+            seen.add(new)
+            self.assertEqual(new.count("("), 3, new)
+            self.assertRegex(new, r"\((nobody and r1|r1 and nobody)\)")
+            self.assertRegex(new, r"\((parent\.p1 or r1|r1 or parent\.p1)\)")
+            self.assertRegex(new, r"\((\{not b2\} and r1|r1 and \{not b2\}) and not \{b1\}\)")
+        self.assertGreater(len(seen), 3)
 
     def test_keys_renumbered_map_back(self) -> None:
         import random
