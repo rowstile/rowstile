@@ -45,9 +45,9 @@ from . import (
     Problem,
     Refused,
     Who,
+    _call_problem,
+    _check_problems,
     _current,
-    call_problem,
-    check_problems,
     not_signed_in,
     refusal,
 )
@@ -97,7 +97,7 @@ class Rowstile:
         """Raises ConnectionProblem if the engine's connections skip row-level security."""
         if self.engine is None:
             return
-        problems = check_problems(await sa.connection_check(self.engine))
+        problems = _check_problems(await sa.connection_check(self.engine))
         if problems:
             raise ConnectionProblem(problems)
 
@@ -144,7 +144,7 @@ async def _db_error(request: Request, exc: Exception) -> Response:
     r = refusal(exc)
     if r is not None:
         return _json(r.problem())
-    problem = call_problem(exc)
+    problem = _call_problem(exc)
     if problem is not None:  # a share with someone who doesn't exist: 404; a negative page size: 400; ...
         return _json(problem)
     if not_signed_in(exc):  # the app's bug, not the user's doing: a 500 that says what

@@ -52,13 +52,13 @@ from . import (
     Principal,
     Refused,
     Who,
+    _answer,
+    _explain_rule_args,
+    _explain_rule_sql,
+    _key_text,
     act_as_args,
     act_as_sql,
-    answer,
     current,
-    explain_rule_args,
-    explain_rule_sql,
-    key_text,
     verdict,
 )
 
@@ -153,16 +153,16 @@ def _remember(command: str) -> Callable[[Mapper[Any], Connection, object], None]
     return remember
 
 
-_EXPLAIN = explain_rule_sql("CAST(:t AS text)", ":c", ":k")
+_EXPLAIN = _explain_rule_sql("CAST(:t AS text)", ":c", ":k")
 # each row's answer, in one statement, in the order of the rows
 _EXPLAIN_EACH = text(
     "SELECT r.* FROM unnest(CAST(:t AS text[]), CAST(:c AS text[]), CAST(:k AS text[])) WITH ORDINALITY "
-    "AS w(t, c, k, n) CROSS JOIN LATERAL (" + explain_rule_sql("w.t", "w.c", "w.k") + ") r ORDER BY w.n"
+    "AS w(t, c, k, n) CROSS JOIN LATERAL (" + _explain_rule_sql("w.t", "w.c", "w.k") + ") r ORDER BY w.n"
 )
 
 
 def _explain_sql(table: str, command: str, key: object) -> TextClause:
-    t, c, k = explain_rule_args(table, command, key)
+    t, c, k = _explain_rule_args(table, command, key)
     return text(_EXPLAIN).bindparams(t=t, c=c, k=k)
 
 
@@ -185,13 +185,13 @@ def _ask(conn: Connection, *_: object) -> None:
     rows = _last_run(conn.info.get(_ROWS, []))
     if not rows:
         return  # nothing to ask about: a model mapped to a join
-    asked = {"t": [r[0] for r in rows], "c": [r[1] for r in rows], "k": [key_text(r[2]) for r in rows]}
+    asked = {"t": [r[0] for r in rows], "c": [r[1] for r in rows], "k": [_key_text(r[2]) for r in rows]}
     try:
         answers = conn.execute(_EXPLAIN_EACH, asked).all()
     except Exception:
         return  # the error the app sees is the flush's: this one would hide it, and stop the rollback
     for (table, command, key), row in zip(rows, answers, strict=True):
-        lines, who, named = answer(row)
+        lines, who, named = _answer(row)
         if not _allowed(lines):
             setattr(exc, _ASKED, verdict(table, command, key, lines, who, named))
             return
@@ -218,7 +218,7 @@ def _rules_allow(exc: BaseException) -> bool:
 
 def _allowed(lines: Sequence[str] | None) -> bool:
     """Whether authz.explain_rule's answer says the user may: this row of the flush isn't the one refused."""
-    return bool(lines) and lines is not None and lines[0].lstrip().startswith("yes")
+    return bool(lines and lines[0].lstrip().startswith("yes"))
 
 
 async def expect(
@@ -228,13 +228,13 @@ async def expect(
     asked in the same transaction: delete(Note).where(Note.id == 7) that matched nothing, and why."""
     if getattr(result, "rowcount", 1):
         return result
-    raise verdict(table, command, key, *answer((await session.execute(_explain_sql(table, command, key))).first()))
+    raise verdict(table, command, key, *_answer((await session.execute(_explain_sql(table, command, key))).first()))
 
 
 def expect_sync(session: Session | Connection, result: Result, table: str, command: str, key: object) -> Result:
     if getattr(result, "rowcount", 1):
         return result
-    raise verdict(table, command, key, *answer(session.execute(_explain_sql(table, command, key)).first()))
+    raise verdict(table, command, key, *_answer(session.execute(_explain_sql(table, command, key)).first()))
 
 
 # --- queries by permission ------------------------------------------------------------------------------

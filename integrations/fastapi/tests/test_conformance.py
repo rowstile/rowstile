@@ -433,7 +433,7 @@ def test_psycopg_transactions() -> None:
 
 def test_a_key_is_spelled_as_the_database_writes_it() -> None:
     """In a message: 7, (1,2), a field quoted only where Postgres would. One spelling, for 403 and 404."""
-    shown = [rowstile.key_shown(k) for k in (7, (7,), (1, 2), ["a b", "x,y"], ("", 'q"t'), ("b\\s", "(1)"), (1, None))]
+    shown = [rowstile._key_text(k) for k in (7, (7,), (1, 2), ["a b", "x,y"], ("", 'q"t'), ("b\\s", "(1)"), (1, None))]
     assert shown == ["7", "7", "(1,2)", '("a b","x,y")', '("","q""t")', '("b\\\\s","(1)")', "(1,)"]
     assert str(rowstile.NotFound("app.members", (1, 2))) == "app.members (1,2) not found"
     assert rowstile.NotFound("app.members", (1, 2)).id == "(1,2)"
@@ -632,7 +632,7 @@ def test_refused_means_the_database_said_no() -> None:
         with pytest.raises(psycopg.errors.InsufficientPrivilege) as e, pgp.transaction(conn, 1):
             conn.execute("SELECT * FROM public.alembic_version")
         assert rowstile.refusal(e.value) is None
-    assert rowstile.key_text(("a,b", 1)) == '("a,b","1")' and rowstile.key_text((7,)) == "7"
+    assert rowstile._key_text(("a,b", 1)) == '("a,b",1)' and rowstile._key_text((7,)) == "7"
 
 
 # the code is read where the runtime puts it, `rowstile help AZnnn`; an applying error's `[AZ612]` is no answer

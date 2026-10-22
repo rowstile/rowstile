@@ -5,6 +5,11 @@ In migrations/env.py:
     from rowstile.alembic import include_name, include_object
     context.configure(..., include_name=include_name, include_object=include_object)
 
+A model of a masked view (`rules app.files view app.files_visible`: the view rowstile makes, and the only way to
+read the masked column) says so, or autogenerate would create a table for it:
+
+    __table_args__ = {"schema": "app", "info": {"rowstile": True}}
+
 rowstile's migrations themselves are written by `rowstile migrate` (tool = "alembic" in rowstile.toml):
 a revision after the current head, with its SQL beside it.
 """
@@ -32,7 +37,8 @@ def include_name(name: str | None, type_: str, parent_names: ParentNames) -> boo
 def include_object(
     obj: SchemaItem, name: str | None, type_: str, reflected: bool, compare_to: SchemaItem | None
 ) -> bool:
-    """Leaves out rowstile's tables and indexes, and the masked views it makes in the app's schemas."""
+    """Leaves out rowstile's tables and indexes, and a model whose table's info says "rowstile" (a model of a
+    masked view, which rowstile makes)."""
     schema = getattr(obj, "schema", None) or getattr(getattr(obj, "table", None), "schema", None)
     if schema in SCHEMAS:
         return False

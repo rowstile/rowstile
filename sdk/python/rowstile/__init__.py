@@ -130,7 +130,7 @@ def job(who: Who) -> Callable[[Callable[P, R]], Callable[P, R]]:
     return wrap
 
 
-def literal(value: object) -> str:
+def _literal(value: object) -> str:
     """A SQL string literal that means the same whatever standard_conforming_strings says (a role, a database or
     a session may turn it off): quotes doubled, and a value holding a backslash written E'...' with its
     backslashes doubled, so that no backslash can end the string early."""
@@ -152,7 +152,7 @@ def act_as_sql(who: Who | _Unset = _UNSET) -> str:
     argument, as whoever the code acts for now (nobody if unset). The values are written into the statement:
     where the driver takes parameters, pass act_as_args() instead (psycopg reads % in a statement)."""
     kind, pid = act_as_args(who)
-    return f"SELECT authz.act_as({literal(kind)}, {literal(pid)})"
+    return f"SELECT authz.act_as({_literal(kind)}, {_literal(pid)})"
 
 
 # --- errors -------------------------------------------------------------------------------------------
@@ -192,7 +192,7 @@ class NotFound(Exception):
     """The row isn't there, or whoever the transaction acts for can't see it."""
 
     def __init__(self, table: str | None = None, id_: object = None) -> None:
-        self.table, self.id = table, key_shown(id_)
+        self.table, self.id = table, _key_text(id_)
         # 'app.notes 7 not found', 'app.notes not found', 'row 7 not found', or 'not found'
         named = [table or "row", self.id] if self.id is not None else [table] if table else []
         super().__init__(" ".join([*named, "not found"]))
@@ -274,7 +274,7 @@ _CALL_PROBLEMS: dict[str, tuple[str, str, int]] = {
 }
 
 
-def call_problem(exc: BaseException) -> Problem | None:
+def _call_problem(exc: BaseException) -> Problem | None:
     """The problem body for a database error that is no refusal and answers as its code's page says: a login
     refused or a call that needs someone signed in (AZ703, AZ714: 401), something the call names isn't there
     (AZ708: a share with someone who doesn't exist, 404), an argument missing or wrong (AZ710: a negative page
@@ -354,20 +354,15 @@ def not_signed_in(exc: BaseException) -> bool:
     return sqlstate(exc) == "28000" and error_code(exc) in (None, "AZ701")
 
 
-def check_problems(rows: Iterable[tuple[str, str]]) -> list[str]:
+def _check_problems(rows: Iterable[tuple[str, str]]) -> list[str]:
     """The errors among authz.connection_check()'s rows (severity, problem)."""
     return [problem for severity, problem in rows if severity == "error"]
 
 
-def _field_text(value: object) -> str:
-    """One field of a row as Postgres writes it, quoted: a comma, a quote or a space in it stays in its field."""
-    if value is None:
-        return ""
-    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def key_text(key: object) -> str | None:
-    """A row's key as the database compares it: one value, or a composite key as Postgres writes a row."""
+def _key_text(key: object) -> str | None:
+    """A row's key as Postgres writes it: 7, or (1,2) for a composite key (a field is quoted only where Postgres
+    would: when it is empty or holds a comma, a quote, a parenthesis or a space). What a message shows, and what
+    authz.explain_rule reads back (it casts a composite key's text to the key's row type)."""
     if isinstance(key, (tuple, list)):
         if len(key) != 1:
             return "(" + ",".join(_field_text(v) for v in key) + ")"
@@ -375,17 +370,7 @@ def key_text(key: object) -> str | None:
     return None if key is None else str(key)
 
 
-def key_shown(key: object) -> str | None:
-    """A row's key as the database writes it, for a message: 7, or (1,2) for a composite key (a field is
-    quoted only where Postgres would: when it is empty or holds a comma, a quote, a parenthesis or a space)."""
-    if isinstance(key, (tuple, list)):
-        if len(key) != 1:
-            return "(" + ",".join(_field_shown(v) for v in key) + ")"
-        key = key[0]
-    return None if key is None else str(key)
-
-
-def _field_shown(value: object) -> str:
+def _field_text(value: object) -> str:
     if value is None:
         return ""
     text = str(value)
@@ -394,12 +379,12 @@ def _field_shown(value: object) -> str:
     return text
 
 
-def explain_rule_args(table: str, command: str, key: object) -> tuple[str, str, str | None]:
+def _explain_rule_args(table: str, command: str, key: object) -> tuple[str, str, str | None]:
     """authz.explain_rule's arguments for a row's key: one value, or several (a composite key's row text)."""
-    return table, command, key_text(key)
+    return table, command, _key_text(key)
 
 
-def explain_rule_sql(table: LiteralString, command: LiteralString, key: LiteralString) -> LiteralString:
+def _explain_rule_sql(table: LiteralString, command: LiteralString, key: LiteralString) -> LiteralString:
     """SELECT authz.explain_rule($1, $2, $3, NULL) with the driver's placeholders for the table, the command and
     the key (':t', '%(t)s', '$1'), in a second column who is signed in, in the words the database's own
     refusals use ('user 2', 'service 3', 'someone not signed in'), and in a third the table as the policy names
@@ -419,12 +404,12 @@ def explain_rule_sql(table: LiteralString, command: LiteralString, key: LiteralS
     )
 
 
-def answer(row: Sequence[object] | None) -> tuple[Sequence[str] | None, str | None, str | None]:
-    """A row of explain_rule_sql's statement: authz.explain_rule's lines (None: the row isn't there for this
+def _answer(row: Sequence[object] | None) -> tuple[Sequence[str] | None, str | None, str | None]:
+    """A row of _explain_rule_sql's statement: authz.explain_rule's lines (None: the row isn't there for this
     user), who is signed in, and the table as the policy names it."""
     if row is None:
         return None, None, None
-    lines, who, named = row[0], row[1] if len(row) > 1 else None, row[2] if len(row) > 2 else None
+    lines, who, named = row[0], row[1], row[2]
     return (
         None if lines is None else [str(x) for x in cast("Iterable[object]", lines)],
         None if who is None else str(who),
@@ -444,16 +429,16 @@ def verdict(
     (authz.explain_rule answered NULL), or when the rule allows the write (its first line says yes: the
     statement matched nothing for another reason, such as a WHERE with more than the key); Refused, with
     why, otherwise. Worded as the database words a refused insert: 'permission denied: user 2 may not update
-    row 7 of app.notes'. who: as answer() read it; left out, whoever the code acts for now. named: the table
-    as the policy names it, as answer() read it ('public.notes' for a model that says 'notes'), so an update's
-    refusal names the table as an insert's does."""
+    row 7 of app.notes'. who: who is signed in, in those words ('user 2', 'service 3'); left out, whoever the
+    code acts for now. named: the table as the policy names it ('public.notes' for a model that says 'notes'),
+    so an update's refusal names the table as an insert's does."""
     table = named or table
     if lines is None or (lines and lines[0].lstrip().startswith("yes")):
         return NotFound(table, key)
     if who is None:
         p = current() or NOBODY
         who = "someone not signed in" if p.id is None else f"{p.type} {p.id}"
-    message = f"permission denied: {who} may not {command} row {key_shown(key)} of {table}"
+    message = f"permission denied: {who} may not {command} row {_key_text(key)} of {table}"
     return Refused(message, table, command, lines)
 
 
