@@ -255,15 +255,15 @@ def prepare(args: argparse.Namespace) -> None:
 class Container:
     """A Postgres container from the suites' image, with this checkout mounted at /src, started as core/ci.sh does."""
 
-    def __init__(self, root: str, image: str, name: str, label: str) -> None:
-        self.root, self.image, self.name, self.label = root, image, name, label
+    def __init__(self, root: str, image: str, name: str) -> None:
+        self.root, self.image, self.name = root, image, name
 
     def docker(self, *a: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(["docker", *a], capture_output=True, text=True, check=check)
 
     def start(self) -> None:
-        self.docker("run", "-d", "--name", self.name, "--label", f"rowstile.ci={self.label}",
-                    "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-v", f"{self.root}:/src", self.image,
+        self.docker("run", "-d", "--name", self.name, "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
+                    "-v", f"{self.root}:/src", self.image,
                     "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off",
                     "-c", "wal_level=logical")  # fmt: skip
         for _ in range(60):
@@ -406,7 +406,7 @@ def run(args: argparse.Namespace) -> None:
     out = os.path.join(args.out, f"results-{i}.jsonl")
     open(out, "w", encoding="utf-8").close()
     name = args.name or f"rowstile-mutants-{os.getpid()}"
-    box = Container(args.root, args.image, name, os.environ.get("ROWSTILE_CI_JOB", "local"))
+    box = Container(args.root, args.image, name)
     print(f"shard {i} of {n}: {len(mine)} mutants, at {queue['commit']}; container {name}", flush=True)
     box.start()
     shard = Shard(args, box, stats)
