@@ -7,12 +7,12 @@
  *
  * Every transaction signs in with authz.act_as() as whoever the code acts for (actingAs, a job), else user(),
  * else nobody. Queries by permission are set checks (a subquery on authz.list), never a function call per row.
- * A refused write throws Refused (with the rule and why), strict sign-in's error NotSignedIn; an UPDATE or
+ * A refused write throws Refused (with the rule and why), the not-signed-in error (AZ701) NotSignedIn; an UPDATE or
  * DELETE that changed nothing: expect(tx, result, ...) says NotFound or Refused.
  */
 import { sql, type SQL, type Column } from "drizzle-orm";
 import {
-  actAs, calls, signingIn, translate,
+  actAs, calls, signingIn, transactionScope, translate,
   type Id, type ObjectType, type Permission, type Queryable, type UserResolver, type Who,
 } from "@rowstile/client";
 
@@ -51,25 +51,55 @@ export function queryable(tx: Executes): Queryable {
   };
 }
 
+/** What a node-postgres client listens with. */
+interface Listens {
+  on(event: "error", listener: (e: Error) => void): unknown;
+  removeListener(event: "error", listener: (e: Error) => void): unknown;
+}
+
+/** The node-postgres client a Drizzle transaction runs on (Drizzle's own field: on a pool, the client it checked
+ *  out for the transaction); undefined on postgres.js. */
+function clientOf(tx: unknown): Listens | undefined {
+  const client = (tx as { session?: { client?: Partial<Listens> } }).session?.client;
+  return typeof client?.on === "function" && typeof client.removeListener === "function" ? client as Listens : undefined;
+}
+
 export function withAuthz<Tx extends Executes>(db: Transacts<Tx>, options: Options = {}) {
+  const scope = transactionScope<Tx>();
   const transaction = async <R>(fn: (tx: Tx) => Promise<R>, who?: Who): Promise<R> => {
     const p = await signingIn(options.user, who);
+    // node-postgres listens for a lost connection only on idle clients, and Drizzle doesn't listen on the one it
+    // checks out: while the transaction holds it, an error with nobody listening would stop the process. The
+    // transaction fails at its next query instead. (Taken off once Drizzle has given the client back.)
+    let held: Listens | undefined;
+    const lost = () => undefined;
     try {
       return await db.transaction(async (tx) => {
+        held = clientOf(tx);
+        held?.on("error", lost);
         const a = actAs(p);
         await tx.execute(statement(a.text, a.values));
-        return fn(tx);
+        return scope.run(tx, p, () => fn(tx));
       });
     } catch (e) {
       throw translate(e) ?? e;
+    } finally {
+      held?.removeListener("error", lost);
     }
   };
-  const each: Queryable = { query: (text, values) => transaction((tx) => queryable(tx).query(text, values)) };
+  // inside transaction(fn), in its transaction; elsewhere, in one of its own
+  const each: Queryable = {
+    query: (text, values) => {
+      const tx = scope.open();
+      return tx ? queryable(tx).query(text, values) : transaction((t) => queryable(t).query(text, values));
+    },
+  };
   return {
-    /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). */
+    /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). fn acts for them too:
+     *  this object's own calls made inside it (can, permsOf, ...) run in the same transaction. */
     transaction,
-    /** The runtime's functions (can, permsOf, list, share, ...), each in its own signed-in transaction; inside
-     *  a transaction, use calls(queryable(tx)). */
+    /** The runtime's functions (can, permsOf, list, share, ...): inside transaction(fn), in that transaction;
+     *  elsewhere, each in a signed-in transaction of its own. */
     ...calls(each),
   };
 }

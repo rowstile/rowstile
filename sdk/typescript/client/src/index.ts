@@ -137,6 +137,23 @@ export function job<A extends unknown[], R>(who: Who, fn: (...args: A) => R): (.
   return (...args: A) => inScope(p, () => fn(...args));
 }
 
+/** For the drivers' packages: the transaction their `transaction(fn, who)` runs fn in. `run` runs fn acting for
+ *  p, whom the transaction signed in as, so what fn begins signs in as p too. `open()` is that transaction while
+ *  the code running now still acts for p: the package's own calls made inside fn (`a.expect`, `a.can`) run in
+ *  it, as p, see what it wrote, and wait for no second connection. */
+export function transactionScope<T>(): { run<R>(tx: T, p: Principal, fn: () => Promise<R>): Promise<R>; open(): T | undefined } {
+  const store = new AsyncLocalStorage<{ tx: T; p: Principal }>();
+  return {
+    run: (tx, p, fn) => store.run({ tx, p }, () => inScope(p, fn)),
+    open: () => {
+      const t = store.getStore();
+      const now = current();
+      // (code inside fn that acts for someone else, with actingAs, asks in a transaction of its own)
+      return t && now && now.type === t.p.type && now.id === t.p.id ? t.tx : undefined;
+    },
+  };
+}
+
 /** Who the request is, when nothing set it with actingAs: e.g. async () => (await auth())?.user.id */
 export type UserResolver = () => Who | Promise<Who>;
 
@@ -221,7 +238,7 @@ export class NotFound extends Error {
   }
 }
 
-/** A query that needs to know who is asking ran in a transaction nobody signed in to (strict sign-in). */
+/** A query that needs to know who is asking ran in a transaction nobody signed in to (AZ701). */
 export class NotSignedIn extends Error {
   readonly code = "AZ701";                         // rowstile help AZ701
   constructor(message: string, options?: { cause?: unknown }) {
@@ -351,7 +368,7 @@ export function refusal(e: unknown, schemaOf?: (table: string) => string | undef
   return new Refused(err.message, table, command, err.detail ? err.detail.split("\n") : [], { cause: e, code });
 }
 
-/** Whether e is strict sign-in's error (rowstile help AZ701): a query that needs to know who is asking, and nobody
+/** Whether e is the not-signed-in error (rowstile help AZ701): a query that needs to know who is asking, and nobody
  *  signed in. A login refused (AZ703) and settings changed by hand (AZ702) share its SQLSTATE, 28000, but are no
  *  such thing. */
 export function notSignedIn(e: unknown): boolean {
@@ -359,8 +376,8 @@ export function notSignedIn(e: unknown): boolean {
   return sqlstate(e) === "28000" && (code === undefined || code === "AZ701");
 }
 
-/** e as rowstile's error: Refused, NotFound or NotSignedIn as they are, a database refusal as Refused, strict
- *  sign-in's error as NotSignedIn; null for anything else. */
+/** e as rowstile's error: Refused, NotFound or NotSignedIn as they are, a database refusal as Refused, the
+ *  not-signed-in error (AZ701) as NotSignedIn; null for anything else. */
 export function translate(e: unknown, schemaOf?: (table: string) => string | undefined): Refused | NotFound | NotSignedIn | null {
   if (e instanceof Refused || e instanceof NotFound || e instanceof NotSignedIn) return e;
   const r = refusal(e, schemaOf);

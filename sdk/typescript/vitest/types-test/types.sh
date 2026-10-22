@@ -8,8 +8,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SDK=$(cd "$HERE/../.." && pwd)
 VERSIONS=${*:-4 5}
 fails=0
+# a folder for each version, in one removed however the script ends (a failed install, a missing version)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
 for v in $VERSIONS; do
-  dir=$(mktemp -d)
+  dir="$work/vitest-$v"
+  mkdir "$dir"
   cp "$HERE/use.ts" "$dir/"
   printf '{"compilerOptions": {"strict": true, "noEmit": true, "target": "ES2022", "module": "NodeNext",
     "moduleResolution": "NodeNext", "skipLibCheck": false, "types": []}, "files": ["use.ts"]}\n' > "$dir/tsconfig.json"

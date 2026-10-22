@@ -8,7 +8,7 @@ this list.
 
 1. Signed in, a list shows only the user's rows.
 2. Signed out on purpose, only what `anyone` may see.
-3. Not signed in: the strict sign-in error, naming `act_as`.
+3. Not signed in: the not-signed-in error (AZ701), naming `act_as`.
 4. With a pool of one connection, a request as Ann, then one as Bob: Bob never sees Ann's rows.
 5. Concurrent requests never mix users.
 6. A refused insert: 403 with the problem body naming the rule.

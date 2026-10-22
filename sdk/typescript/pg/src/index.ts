@@ -7,11 +7,12 @@
  *
  * Every transaction signs in with authz.act_as() as whoever the code acts for (actingAs, a job), else user(),
  * else nobody. Nothing uses a session-level SET, so pools and poolers in transaction mode are safe. A refused write
- * throws Refused (with the rule and why), strict sign-in's error NotSignedIn.
+ * throws Refused (with the rule and why), the not-signed-in error (AZ701) NotSignedIn.
  */
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 import {
-  actAs, calls, signingIn, translate, type Queryable, type UserResolver, type Who,
+  actAs, calls, signingIn, transactionScope, translate,
+  type Principal, type Queryable, type UserResolver, type Who,
 } from "@rowstile/client";
 
 export interface Options {
@@ -19,7 +20,8 @@ export interface Options {
   user?: UserResolver;
 }
 
-async function signedIn<R>(pool: Pool, who: Who | undefined, options: Options, fn: (client: PoolClient) => Promise<R>): Promise<R> {
+async function signedIn<R>(pool: Pool, who: Who | undefined, options: Options,
+                           fn: (client: PoolClient, p: Principal) => Promise<R>): Promise<R> {
   const p = await signingIn(options.user, who);
   const client = await pool.connect();
   let broken: unknown;
@@ -31,7 +33,7 @@ async function signedIn<R>(pool: Pool, who: Who | undefined, options: Options, f
     await client.query("BEGIN");
     const a = actAs(p);
     await client.query(a.text, a.values);
-    const out = await fn(client);
+    const out = await fn(client, p);
     await client.query("COMMIT");
     return out;
   } catch (e) {
@@ -48,17 +50,21 @@ async function signedIn<R>(pool: Pool, who: Who | undefined, options: Options, f
 }
 
 export function authz(pool: Pool, options: Options = {}) {
-  const each: Queryable = { query: (text, values) => signedIn(pool, undefined, options, (c) => c.query(text, values)) };
+  const scope = transactionScope<PoolClient>();
+  // inside transaction(fn), in its transaction; elsewhere, in one of its own
+  const query = <T extends QueryResultRow = any>(text: string, values?: unknown[]): Promise<QueryResult<T>> =>
+    scope.open()?.query<T>(text, values) ?? signedIn(pool, undefined, options, (c) => c.query<T>(text, values));
   return {
     pool,
-    /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). */
-    transaction: <R>(fn: (client: PoolClient) => Promise<R>, who?: Who) => signedIn(pool, who, options, fn),
-    /** One statement in its own signed-in transaction. */
-    query: <T extends QueryResultRow = any>(text: string, values?: unknown[]): Promise<QueryResult<T>> =>
-      signedIn(pool, undefined, options, (c) => c.query<T>(text, values)),
-    /** The runtime's functions (can, permsOf, list, share, ...), each in its own signed-in transaction; inside
-     *  a transaction, use calls(client) instead. */
-    ...calls(each),
+    /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). fn acts for them too:
+     *  this object's own calls made inside it (query, expect, can, ...) run in the same transaction. */
+    transaction: <R>(fn: (client: PoolClient) => Promise<R>, who?: Who) =>
+      signedIn(pool, who, options, (client, p) => scope.run(client, p, () => fn(client))),
+    /** One statement: inside transaction(fn), in that transaction; elsewhere, in a signed-in transaction of its own. */
+    query,
+    /** The runtime's functions (can, permsOf, list, share, ...): inside transaction(fn), in that transaction;
+     *  elsewhere, each in a signed-in transaction of its own. */
+    ...calls({ query }),
   };
 }
 

@@ -33,9 +33,10 @@ import { authz as rowstile } from "@rowstile/pg";
       expect(await a.transaction(async (c) => (await c.query("SELECT id FROM app.notes ORDER BY id")).rows.map((r) => r.id), "2")).toEqual([2, 3]);
 ```
 
-`transaction(fn, who)` signs in as `who`, or as whoever `actingAs` set. An UPDATE or DELETE the rules refuse
-changes 0 rows, without an error; `expect` asks the database why, and throws `Refused` with the rule and the
-reason, or `NotFound`:
+`transaction(fn, who)` signs in as `who`, or as whoever `actingAs` set, else the `user` function, else nobody.
+`fn` acts for them too: `expect`, `can` and the others called inside it run in its transaction, as `who`, and
+see what it wrote. An UPDATE or DELETE the rules refuse changes 0 rows, without an error; `expect` asks the
+database why, and throws `Refused` with the rule and the reason, or `NotFound`:
 
 ```ts
       await expect(actingAs("3", () => a.transaction(async (c) => {
@@ -82,7 +83,7 @@ import { expect as drizzleExpect, inIds, withAuthz } from "@rowstile/drizzle";
         "app.notes", "delete", 1), "3")).rejects.toBeRefused("delete");
 ```
 
-A query outside a signed-in transaction fails with strict sign-in's error; `translate(e)` makes it
+A query outside a signed-in transaction fails with the not-signed-in error (AZ701); `translate(e)` makes it
 `NotSignedIn`:
 
 ```ts
