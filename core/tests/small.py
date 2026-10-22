@@ -587,10 +587,15 @@ def reference(
 
 def respelled(spec: Spec) -> tuple[Spec, dict[str, str], dict[str, str]]:
     """The policy written another way: each type's relations r1, r2, ... and its permissions named the other way
-    round (not those of the types a pair of columns names together: `parent.p1` names p1 of both), the permissions
+    round (not those of the types one relation names together, in one source or in two: `parent.p1` names p1 of
+    both), the permissions
     declared the other way round, the parts of every `or` and `and` too. With the renaming of the relations (for
     the world's links) and of the permissions (for the answers), by type and name."""
-    tied = {st for o in spec.objs for rel in o.rels if len(rel.subjects) > 1 for st in rel.subjects}
+    named: dict[tuple[str, str], set[str]] = {}  # each relation's subjects, over its sources
+    for o in spec.objs:
+        for rel in o.rels:
+            named.setdefault((o.name, rel.name), set()).update(rel.subjects)
+    tied = {st for subjects in named.values() if len(subjects) > 1 for st in subjects}
     rmaps, pmaps = {}, {}
     for o in spec.objs:
         rs = list(dict.fromkeys(rel.name for rel in o.rels if rel.name not in NAMED))
@@ -684,7 +689,8 @@ def put(n: Node, path: tuple[int, ...], new: Node) -> Node:
 def wrong_parts(spec: Spec) -> Iterator[tuple[str, Spec]]:
     """The policy with one part of one permission wrong: the whole permission held by nobody or by anyone; each
     part replaced by nobody or anyone; an `and` for an `or` and the other way; a `not` dropped; a relation not
-    followed (`parent.p1` read as `p1`)."""
+    followed (`parent.p1` read as `p1`, where the type has a p1: a `parent` to another type's rows follows to that
+    type's permissions, which the type may not have, and a policy naming one it doesn't the compiler refuses, AZ203)."""
     for k, o in enumerate(spec.objs):
         for p, e in o.perms.items():
             for path in places(e):
@@ -693,7 +699,7 @@ def wrong_parts(spec: Spec) -> Iterator[tuple[str, Spec]]:
                 news: list[tuple[str, Node]] = []
                 if isinstance(x, str):
                     news += [("nobody", "nobody"), ("anyone", "anyone")]
-                    if x.startswith("parent."):
+                    if x.startswith("parent.") and x.split(".")[1] in o.perms:
                         news.append(("not followed", x.split(".")[1]))
                 elif x[0] == "not":
                     news.append(("without its not", x[1][0]))
