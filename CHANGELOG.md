@@ -38,6 +38,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The beta starts afresh: it doesn't upgrade a database an alpha made, and no longer reads the names from before
   the rename (`rowfence.toml`, `ROWFENCE_PYTHON`, the marks rowfence wrote). Apply the policy to a new database,
   or to the same one after `rowstile remove --yes` (shares and history stay).
+- The example apps (the file manager, the messenger) and the conformance apps (FastAPI, Next.js) each have one
+  migration for their policy, written by this version's command: they kept every migration since the first
+  alpha, about 45 each. The file manager's tables are one migration too, and the conformance apps no longer set
+  `jit = off` on their app role (the sign-in turns JIT off for its own transaction). A database one of them made
+  before is made anew: `docker compose down -v`.
 - The Python package's extras ask for the versions its conformance suite runs on: FastAPI 0.110, asyncpg 0.29
   and psycopg 3.1.4 or newer (they allowed FastAPI 0.100, asyncpg 0.28 and psycopg 3.1, which nothing ran). The
   suite also runs each night on the oldest versions the extras allow.

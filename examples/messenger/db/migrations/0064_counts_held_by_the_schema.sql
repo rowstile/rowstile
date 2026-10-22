@@ -1,4 +1,4 @@
--- 0053: what the policy counts, held for every statement. A rule checks each row against the tables as the
+-- 0064: what the policy counts, held for every statement. A rule checks each row against the tables as the
 -- statement found them: one INSERT of several rows put three people in a direct chat, or two owners in a group
 -- being set up, though each row alone passes its rule.
 
