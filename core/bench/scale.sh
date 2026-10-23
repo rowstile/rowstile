@@ -31,7 +31,7 @@ mkdir -p core/bench/results
 echo "benchmark: $FILES files, $FOLDERS folders, PostgreSQL $PG -> $OUT"
 
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f core/Dockerfile . >/dev/null || exit 1
-docker rm -f "$NAME" >/dev/null 2>&1
+docker rm -f -v "$NAME" >/dev/null 2>&1
 # shellcheck disable=SC2086
 docker run -d --name "$NAME" --shm-size=1g -e POSTGRES_HOST_AUTH_METHOD=trust -v "$REPO:/src" "rowstile:$PG" \
   $SETTINGS -c max_connections=300 -c max_wal_size=8GB -c checkpoint_timeout=30min -c jit=off >/dev/null || exit 1
@@ -42,6 +42,6 @@ docker exec -e PGHOST=/var/run/postgresql -e PGUSER=postgres -e FILES="$FILES" -
   -e SPEED_GATES="${SPEED_GATES:-1}" -e READ_RATE="${READ_RATE:-400}" \
   -e OUT="/src/$OUT" -w /src/core "$NAME" bash bench/run.sh
 rc=$?
-if [ -n "${KEEP:-}" ]; then echo "kept container $NAME (database authz_bench)"; else docker rm -f "$NAME" >/dev/null; fi
+if [ -n "${KEEP:-}" ]; then echo "kept container $NAME (database authz_bench)"; else docker rm -f -v "$NAME" >/dev/null; fi
 echo "results: $OUT"
 exit $rc
