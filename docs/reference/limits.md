@@ -63,8 +63,9 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   files, `lower(name) LIKE 'file\_1234%'` took 0.07 ms as the owner, through its index, and 2.1 s as an
   administrator, 8.5 s as a user who sees a quarter of the files; `lower(name) = ...` and a trigram `ILIKE`
   did the same. Equality and ranges on a column itself are leakproof and keep their index: `name >= 'file_1234'
-  AND name < 'file_1235'` took 2.6 and 6.4 ms. So search on a column with `=` or a range (a generated column
-  holding `lower(name)`, say), or narrow the search first by such a condition (a folder, an owner). <!-- unchecked: how Postgres orders a query's conditions, and times measured by hand on 2026-10-19 -->
+  AND name < 'file_1235'` took 2.6 and 6.4 ms. At 20 million files the gap grows: `lower(name) LIKE` took 184 s
+  as an administrator and over ten minutes for users who see a few hundred thousand files, the range 13 to 38 ms.
+  So search on a column with `=` or a range (a generated column holding `lower(name)`, say), or narrow the search first by such a condition (a folder, an owner). <!-- unchecked: how Postgres orders a query's conditions, and times measured by hand on 2026-10-19 and 2026-10-23 -->
 - **A big policy needs room in Postgres's lock table.** Applying it whole (or a first migration) takes a lock
   on each object it makes, in one transaction, and the table holds `max_locks_per_transaction` for each
   connection: 6,400 by default. GitLab's thousand tables, drafted by `rowstile init`, make about 45,000; applying
@@ -162,9 +163,16 @@ The audit trail and change feed add about 15 µs per changed row (10,000 owner c
   0.1 ms from its sixth run. <!-- unchecked: how Postgres plans prepared statements, and a time measured by hand -->
   The plan Postgres settles on then (a generic one) serves every user as well as the first: the rules read who is
   signed in when the query runs, not when it is planned, so a plan is made alike for a user who sees a few rows
-  and one who sees them all. A generic plan changes what the app's own parameters change, no more: on the docs
-  app with 400,000 files, a count, a page of a folder and one file took the same time either way, within a
-  run's noise, for an administrator and for a user who sees a quarter of the files. <!-- unchecked: how Postgres plans prepared statements, and times measured by hand on 2026-10-19 -->
+  and one who sees them all. A generic plan changes what the app's own parameters change: on the docs app
+  with 400,000 files, and on the scale benchmark's 20 million, a count, a page of a folder and one file took the
+  same time either way, within a run's noise, for an administrator and for users who see a few hundred thousand
+  files. <!-- unchecked: how Postgres plans prepared statements, and times measured by hand on 2026-10-19 and 2026-10-23 -->
+  A parameter that hides how many rows match costs more, though. Postgres then guesses many, and may check the
+  rules against the reader's whole set at once rather than row by row. At 20 million files, a search by range
+  (`name >= $1 AND name < $1 || '~'`) found one file in 13 ms for an administrator with a plan made for its
+  value, and in 0.93 s with the generic plan; for users who see 100,000 to 400,000 files, 20 to 28 ms against
+  98 to 128 ms. The owner's query took 2 ms either way. For such a query, `SET LOCAL plan_cache_mode =
+  force_custom_plan` in its transaction keeps a plan made for each value. <!-- unchecked: how Postgres plans prepared statements, and times measured by hand on 2026-10-23 -->
   Whether queries are prepared is the driver's doing, not the policy's. asyncpg and
   postgres.js prepare every query, and psycopg one it has run five times. node-postgres prepares only a query
   given a `name`, and Prisma's `pg` adapter only with its `statementNameGenerator` option: without them, each
