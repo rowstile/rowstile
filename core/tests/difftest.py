@@ -1282,7 +1282,8 @@ class Checker:
         problems: list[str] = []
         who = self.ref.principal
         uid = who[1] if who is not None and who[0] == "user" else None
-        actor = evaluate.principal_of(u, self.types)[1]  # (who acted, as the trail names them: a user's id)
+        kind, pid = evaluate.principal_of(u, self.types)
+        actor = pid if kind == "user" else f"{kind}:{pid}"  # (who acted, as the trail names them: 42, bot:2)
         service = who is not None and who[0] != "user"
 
         def users_only(call: str) -> str:
