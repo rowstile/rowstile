@@ -17,7 +17,7 @@ FLYWAY=flyway/flyway:13.10.3-alpine@sha256:f6358224a41866888c3341b9c1e286fa2be8e
 PG=$(sed -n 's/^FROM \(postgres:16@sha256:[0-9a-f]*\) AS pg16$/\1/p' "$CORE/Dockerfile")
 NAME="rowstile-migration-tools-$$"
 T=$(mktemp -d)
-trap 'docker rm -f "$NAME" >/dev/null 2>&1; rm -rf "$T"' EXIT
+trap 'docker rm -f -v "$NAME" >/dev/null 2>&1; rm -rf "$T"' EXIT
 fails=0 passed=0
 ok() { echo "ok    $1"; passed=$((passed + 1)); }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }

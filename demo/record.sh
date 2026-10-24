@@ -18,12 +18,12 @@ WORK=$(mktemp -d)
 mkdir -p demo/out
 
 cleanup() {
-  docker rm -f "$PG" >/dev/null 2>&1 || true
+  docker rm -f -v "$PG" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   rm -rf "$WORK" "$WORK.sql"
 }
 trap cleanup EXIT
-docker rm -f "$PG" >/dev/null 2>&1 || true
+docker rm -f -v "$PG" >/dev/null 2>&1 || true
 docker network rm "$NET" >/dev/null 2>&1 || true
 
 # the recorder, with git (the review reads the base branch's policy from it), and Postgres with the command

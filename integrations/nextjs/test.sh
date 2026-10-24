@@ -17,7 +17,7 @@ BIN=$ROOT/node_modules/.bin
 export PYTHON=${PYTHON:-python3}
 [ -d "$ROOT/node_modules" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
-docker rm -f "$NAME" >/dev/null 2>&1
+docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
 for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
 sleep 2
@@ -83,5 +83,5 @@ else
   echo "FAIL  lines, branches or functions of the TypeScript SDK no check runs (the report above: $CONFORMANCE_COVERAGE/report.txt)"; rc=1
 fi
 stop
-[ -n "${KEEP:-}" ] || { [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"; docker rm -f "$NAME" >/dev/null; }
+[ -n "${KEEP:-}" ] || { [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"; docker rm -f -v "$NAME" >/dev/null; }
 exit $rc

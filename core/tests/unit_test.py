@@ -14505,14 +14505,14 @@ class MessengerTestScript(unittest.TestCase):
 
     def test_a_run_that_stops_early_takes_the_database_down(self) -> None:
         rc, calls, out = self.run_script(uv=1)  # migrate.py fails: the script exits right after starting the database
-        self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down"]), out)
+        self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down -v"]), out)
         self.assertNotIn("README.md says", out)  # it stopped before the checks
 
     def test_a_run_to_its_end_takes_it_down_and_keep_leaves_it(self) -> None:
         # uv says nothing: the policy's tests ran none, which the README's number doesn't match
         rc, calls, out = self.run_script(uv=0)
         self.assertIn("README.md says another number of checks than rowstile test ran ()", out)
-        self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down"]), out)
+        self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down -v"]), out)
         self.assertEqual(self.run_script(uv=1, keep="1")[:2], (1, [*self.UP]))
 
 
@@ -14524,11 +14524,11 @@ class FilemanagerTestScript(unittest.TestCase):
 
     def test_a_run_that_stops_early_takes_the_services_down(self) -> None:
         rc, calls, out = run_example_test_script("filemanager", uv=1)  # migrate.py fails: it exits right there
-        self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down"]), out)
+        self.assertEqual((rc, calls), (1, [*self.UP, "<app> docker compose down -v"]), out)
 
     def test_a_run_to_its_end_takes_them_down_and_keep_leaves_them(self) -> None:
         rc, calls, out = run_example_test_script("filemanager", uv=0)  # every step passes
-        self.assertEqual((rc, calls), (0, [*self.UP, "<app> docker compose down"]), out)
+        self.assertEqual((rc, calls), (0, [*self.UP, "<app> docker compose down -v"]), out)
         self.assertEqual(run_example_test_script("filemanager", uv=1, keep="1")[:2], (1, [*self.UP]))
 
 
