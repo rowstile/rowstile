@@ -770,6 +770,13 @@ if seen "watching 2 file(s)" && seen "check(s) pass"; then
   wait "$locker"
   seen "  x    lost the database: terminating connection" && printf -- '-- saved after it\n' >> "$T/p/tests/docs.authz" && seen "check(s) pass" $((n + 1)) &&
     ok "... and in the middle of a push: lost the database, and connects again on the next save" || bad "dev losing the database in a push" "$(cat "$T/watch.log")"
+  # Ctrl-C once dev is idle in its loop: after the last pass, its migration tried (refused: the lock file still
+  # names 99.0.0). Under coverage, a Ctrl-C landing as dev first runs some code can leave coverage.py's own lock
+  # taken, and its save at exit then waits on it for ever.
+  for _ in $(seq 240); do
+    awk '/check\(s\) pass/ { p = NR } /wrote policy\.lock|newer than this command/ { m = NR } END { exit !(p && m > p) }' "$T/watch.log" && break
+    sleep 0.25
+  done
 else
   bad "dev didn't start watching" "$(cat "$T/watch.log")"
 fi
