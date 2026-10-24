@@ -404,6 +404,9 @@ class Reference(evaluate.Reference):
 # Comparing
 # ----------------------------------------------------------------------
 class Checker:
+    # requests, breaking the glass and reviews tried in each snapshot (workflow_setup, workflow_problems)
+    workflows: ClassVar[bool] = True
+
     def __init__(self, db: DB, policy_path: str, gen: Gen, decisions: bool = False) -> None:
         self.db, self.gen = db, gen
         # everyone who signs in, and nobody ('': signed out, what `anyone` and links are for)
@@ -726,14 +729,15 @@ class Checker:
                         f"SELECT json_build_array(difftest_app.try_decide({n}, true), "
                         f"difftest_app.try_decide({n}, false), difftest_app.try_cancel({n}))",
                     )
-                emit([u, "pending"], "SELECT difftest_app.try_pending()")
+                if self.workflows:
+                    emit([u, "pending"], "SELECT difftest_app.try_pending()")
                 for tname, rname in self.glass_tried:
                     emit(
                         [u, "break_glass", tname, rname],
                         f"SELECT coalesce(json_agg(json_build_array(i, difftest_app.try_break_glass({lit(tname)}, i, "
                         f"{lit(rname)}))), '[]') FROM unnest({text_array(sample[tname])}) i",
                     )
-                for tname in self.inspected:
+                for tname in self.inspected if self.workflows else ():
                     t = self.types[tname]
                     emit(
                         [u, "review", tname],
@@ -1205,9 +1209,13 @@ class Checker:
     def workflow_setup(self, sharer: str, sample: dict[str, list[str]]) -> None:
         """What requests, breaking the glass and reviews are tried on, as the owner reads and makes it: the catalog
         of what may be shared with whom (with the permission that shares it), the custom roles' types, and the
-        shares of the users below. The requests are made again for each snapshot, pending: by the user shared with
-        and by the one whose turn it is, on the sample rows, for each relation the share tries try, with a
-        duration or without, in turn, and one more on a row no table has."""
+        shares of the users below. The requests are made again for each snapshot, pending: by the user shared with,
+        the one whose turn it is and another user, on the sample rows, for two of the relations the share tries
+        try (in turn), with a duration or without, in turn, and one more on a row no table has."""
+        self.requests_tried, self.glass_tried, self.requesters = [], [], []
+        self.requests: dict[int, tuple[str, str, str, str, bool]] = {}
+        if not self.workflows:
+            return
         self.catalog: dict[tuple[str, str, str], str] = {
             (tname, rname, subject): by
             for tname, rname, subject, by in self.db.rows(
@@ -1229,12 +1237,10 @@ class Checker:
         askers = [x for x in users if x != sharer]
         other = [askers[self.checks % len(askers)]] if askers else []
         self.requesters = list(dict.fromkeys(x for x in (self.share_target, sharer, *other) if x in users))
-        made = [
-            (tname, i, rname, who)
-            for tname, rname in self.shares_tried
-            for i in sample[tname]
-            for who in self.requesters
-        ]
+        # on two of those relations in each snapshot, in turn
+        asked = list(self.shares_tried)
+        asked = [asked[(self.checks * 2 + k) % len(asked)] for k in range(min(2, len(asked)))] if asked else []
+        made = [(tname, i, rname, who) for tname, rname in asked for i in sample[tname] for who in self.requesters]
         if made and other:
             made.append((made[0][0], MISSING_ROW, made[0][2], other[0]))
         lasting = ("interval '3 days'", "NULL")
@@ -1246,7 +1252,7 @@ class Checker:
             "INSERT INTO authz.requests (object_type, object_id, relation, requester, reason, duration) "
             f"VALUES {values} RETURNING id, object_type, object_id, relation, requester, (duration IS NOT NULL)::text"
         )
-        self.requests: dict[int, tuple[str, str, str, str, bool]] = {
+        self.requests = {
             int(n): (tname, i, rname, who, dur == "true")
             for n, tname, i, rname, who, dur in self.db.rows(
                 "DELETE FROM authz.requests WHERE reason = 'difftest';" + (f"\n{insert};" if made else "")

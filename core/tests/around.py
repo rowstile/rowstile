@@ -858,6 +858,8 @@ class AroundChecker(Checker):
     the answers compared with the reference evaluator."""
 
     world: World
+    # (requests and reviews are tried in the owner's session, which is not what the worlds change: difftest's)
+    workflows = False
     since: int = 2**62  # a transaction id from before the last change (none yet)
     excused: set[str]  # shares the changes wrote on rows they had removed (share_problems)
     spec: Spec  # the policy (its `shared if`s)
