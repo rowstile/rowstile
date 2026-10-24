@@ -807,6 +807,7 @@ FEATURES: list[Feature] = [
         Doc(LANG, "Conditions name their row `this`"),
         (
             T("devx.sh", "a rule condition that reads a governed table runs with the policy's rights, as a function"),
+            T("apply.sh", "a function a condition calls runs with the policy's rights where a view reads it too"),
             T("apply.sh", "a condition that doesn't run names its line"),
             T("unit_test.py", "class ThisRow("),
             T("apply.sh", "a signing-in type's where whose subquery calls its table w: applies, then is unchanged"),

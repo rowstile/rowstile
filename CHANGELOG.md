@@ -11,6 +11,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- A condition that calls a function or an operator of the app's (`{not app.blocked(this.id)}`) runs with the
+  policy's rights where a view reads its permission too: another type's rule through an arrow (`file.open =
+  doc.open`), a permission that inherits, a masked view. There it ran with the app role's rights, so a function
+  reading a governed table saw only what the signed-in user may see: under a `not`, row-level security could
+  show rows the policy refuses (`authz.can` and a type's own select rule were right); otherwise it hid rows the
+  policy grants, and a function reading the permission's own table made every read fail ("stack depth limit
+  exceeded"). Conditions written as subqueries were not affected.
 - The npm packages that hold the command's Python name its licence `Python-2.0` in their `license`, where they
   said `PSF-2.0`: the licence file they carry is CPython's whole licence (the PSF, BeOpen, CNRI and CWI
   agreements), which SPDX names `Python-2.0`; `PSF-2.0` is only the first of them.

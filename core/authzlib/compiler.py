@@ -44,6 +44,7 @@ from .sqlutil import (
     CAVEAT_ARG,
     RESERVED,
     ROW_ALIAS,
+    calls_app_code,
     check_stable_condition,
     lit,
     names_this,
@@ -458,7 +459,7 @@ class Core:
                 )
             else:
                 assert o.kind == "table", f"{t.name}.{t.roles_from}: custom roles come from a link"
-                where = f" AND coalesce(({row_cond(o.where, 'w')}), false)" if o.where else ""
+                where = f" AND {self.cond_sql(t, o.where, 'w', o.table)}" if o.where else ""
                 owners.append(
                     f"SELECT ({self.subject_id(o, 'w', ot)})::text FROM {qt(o.table)} w "
                     f"WHERE {self.key_is(t, 'w', obj, o.obj_col)}{where}"
@@ -1157,7 +1158,7 @@ class Core:
         assert t.where is not None, f"{t.name} has no where"
         return (
             f"EXISTS (SELECT 1 FROM {qt(t.table)} w WHERE {self.key_is(t, 'w', id_sql)} "
-            f"AND coalesce(({row_cond(t.where, 'w')}), false))"
+            f"AND {self.cond_sql(t, t.where, 'w')})"
         )
 
     def where_kept(self, t: Type, sql: str) -> str:
@@ -1419,7 +1420,7 @@ class Core:
                 return None
             if src.kind == "column":
                 return f"SELECT {self.key(t, 'r')} AS id FROM {qt(t.table)} r WHERE {match}"
-            extra = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
+            extra = f" AND {self.cond_sql(t, src.where, 's', src.table)}" if src.where else ""
             return f"SELECT {self.ref(t, 's', src.obj_col)} AS id FROM {qt(src.table)} s WHERE {match}{extra}"
         # shares and custom roles live in authz.shares
         who = self.share_subject_sql(st, sr, src)
@@ -1612,7 +1613,7 @@ class Core:
                     )
                 elif src.kind == "table":
                     assert src.table is not None and src.obj_col is not None
-                    extra = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
+                    extra = f" AND {self.cond_sql(t, src.where, 's', src.table)}" if src.where else ""
                     parts.append(
                         f"SELECT {self.ref(t, 's', src.obj_col)} AS id FROM {qt(src.table)} s "
                         f"WHERE {self.subject_in(src, 's', st, inner)}{extra}"
@@ -1873,7 +1874,7 @@ class Core:
                 view = self.ensure_link_view(t, r, perm_name, loc, targets=names)
                 return f"SELECT id FROM authz_int.{q(view)}"
             case Cond(sql):
-                return f"SELECT {rid} AS id FROM {tbl} r WHERE coalesce(({row_cond(sql, 'r')}), false)"
+                return f"SELECT {rid} AS id FROM {tbl} r WHERE {self.cond_sql(t, sql, 'r')}"
             case Or(items):
                 return union([self.set_sql(t, i, loc, flatten) for i in once(items)])
         items = once(node.items) if isinstance(node, And) else [node]
@@ -1881,9 +1882,9 @@ class Core:
         for item in items:
             match item:
                 case Cond(sql):
-                    where.append(f"coalesce(({row_cond(sql, 'r')}), false)")
+                    where.append(self.cond_sql(t, sql, "r"))
                 case Not(Cond(sql)):
-                    where.append(f"NOT coalesce(({row_cond(sql, 'r')}), false)")
+                    where.append(f"NOT {self.cond_sql(t, sql, 'r')}")
                 case Not(inner):
                     where.append(f"NOT EXISTS (SELECT 1 FROM ({self.set_sql(t, inner, loc)}) x WHERE x.id = {rid})")
                 case _:
@@ -1980,7 +1981,7 @@ class Core:
             case Cond(sql):
                 if invoker and reads_more(sql):
                     return self.definer_cond(t, sql, alias)
-                return f"coalesce(({row_cond(sql, alias)}), false)"
+                return self.cond_sql(t, sql, alias)
             case Not(inner_node):
                 # NULL (a NULL column, or no user) must mean "not held", as it does in the views
                 inner = self.row_sql(t, alias, inner_node, loc, point, invoker)
@@ -2007,20 +2008,31 @@ class Core:
             case _:
                 assert_never(node)
 
-    def definer_cond(self, t: Type, sql: str, alias: str) -> str:
-        """A condition that reads more than its row's columns, where the app role checks it: a call of a function
-        that runs it as the owner on the row, as the views and authz.can do, so it sees what the policy sees."""
-        name = f"{t.name}__check_{hashlib.sha1(sql.encode(), usedforsecurity=False).hexdigest()[:10]}"
+    def definer_cond(self, t: Type, sql: str, alias: str, table: str | None = None) -> str:
+        """A condition that reads more than its row's columns, where the app role checks it or a view calls what it
+        calls: a call of a function that runs it as the owner on the row, so it sees what the policy sees. table:
+        the row's, where it isn't t's (a link table's where)."""
+        table = table or t.table
+        source = sql if table == t.table else f"{table}\n{sql}"
+        name = f"{t.name}__check_{hashlib.sha1(source.encode(), usedforsecurity=False).hexdigest()[:10]}"
         fn = f"authz_int.{q(name)}"
-        if self.first_time(name, sql):
-            bare = q(t.table.split(".")[1])
+        if self.first_time(name, source):
+            bare = q(table.split(".")[1])
             self.view_sql.append(
                 f"-- {t.name}: a condition that reads other rows, run with the policy's rights wherever it is checked\n"
-                f"CREATE FUNCTION {fn}(p_row {qt(t.table)}) RETURNS boolean\n"
+                f"CREATE FUNCTION {fn}(p_row {qt(table)}) RETURNS boolean\n"
                 f"LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
                 f"  SELECT coalesce(({row_cond(sql, bare)}), false) FROM (SELECT (p_row).*) AS {bare}\n$f$;"
             )
-        return f"{fn}({whole_row(alias, t.table)})"
+        return f"{fn}({whole_row(alias, table)})"
+
+    def cond_sql(self, t: Type, sql: str, alias: str, table: str | None = None) -> str:
+        """A condition on the row aliased alias (of t's table, or of table), where a view reads it: inline, unless
+        it calls a function or operator of the app's. A view reads its own tables as its owner but runs what it
+        calls as whoever reads it, so that call goes through definer_cond, to see what the policy sees."""
+        if calls_app_code(sql):
+            return self.definer_cond(t, sql, alias, table)
+        return f"coalesce(({row_cond(sql, alias)}), false)"
 
     def link_checks(
         self, t: Type, r: Relation, names: list[str], checks: Mapping[str, str | None], obj: str
@@ -2036,7 +2048,7 @@ class Core:
                 fn = f"authz_int.{q(check)}"
                 if src.kind == "table":
                     assert src.table is not None and src.obj_col is not None
-                    extra = f" AND coalesce(({row_cond(src.where, 's')}), false)" if src.where else ""
+                    extra = f" AND {self.cond_sql(t, src.where, 's', src.table)}" if src.where else ""
                     holds = self.of_type(src, "s", st, f"{fn}({self.subject_id(src, 's', st)})")
                     parts.append(
                         f"EXISTS (SELECT 1 FROM {qt(src.table)} s WHERE "
@@ -2131,7 +2143,7 @@ class Core:
             where = (
                 self.definer_cond(t, t.where, alias)
                 if invoker and reads_more(t.where)
-                else f"coalesce(({row_cond(t.where, alias)}), false)"
+                else self.cond_sql(t, t.where, alias)
             )
             sql = f"({sql}\n    AND {where})"
         return sql

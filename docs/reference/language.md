@@ -130,7 +130,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   Names that start with `authz__` are rowstile's own: a condition that writes one is refused (AZ113). <!-- checked: tests/policy_errors.py "a name that starts with authz__ in a condition" -->
 - **Conditions read with the policy's rights**, wherever they are checked (a rule, a permission, `authz.can`,
   another type's rule through `rel.perm`), as relations do: a subquery sees every row of the tables it reads,
-  not only those the signed-in user may. <!-- checked: tests/devx.sh "a rule condition that reads a governed table runs with the policy's rights, as a function"; tests/apply.sh "a condition in a permission sees every membership in its table's rules too" --> <!-- answer: conditions-rights -->
+  not only those the signed-in user may. <!-- checked: tests/devx.sh "a rule condition that reads a governed table runs with the policy's rights, as a function"; tests/apply.sh "a condition in a permission sees every membership in its table's rules too"; tests/apply.sh "a function a condition calls runs with the policy's rights where a view reads it too" --> <!-- answer: conditions-rights -->
   In a write rule, they see the tables as the statement found them, without the other rows it writes: a count
   in a rule is no limit on how many rows there may be ([Limits](limits.md)).
   A condition that is NULL holds nothing: `{not archived}` is false
