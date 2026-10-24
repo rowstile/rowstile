@@ -357,6 +357,7 @@ FEATURES: list[Feature] = [
         (
             T("governance.sh", "the trail cannot be edited, even by an administrator"),
             T("governance.sh", "a share is recorded, with who made it"),
+            T("governance.sh", "and the withdrawal is in the trail, with who withdrew it"),
             T("governance.sh", "memberships kept in your tables are recorded too"),
             T("governance.sh", "and the trim is recorded"),
         ),

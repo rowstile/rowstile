@@ -1362,7 +1362,7 @@ class Checker:
             if service:
                 cancel: str | dict[str, Answer] = users_only("cancel_request")
             elif uid is not None and requester == uid:
-                cancel = {"trail": []}
+                cancel = {"trail": [entry("cancel_request", tname, i, rname, requester)]}
             else:
                 cancel = f"P0001: no pending request {n} of yours"
             judge(f"authz.decide_request({n}, true) of {requester}'s on {tname} {i}", approved, approve)

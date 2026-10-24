@@ -9,6 +9,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+### Changed
+
+- `authz.cancel_request` writes a line in the audit trail (`cancel_request`, the request's object, relation and
+  requester, and the request's id), as deciding a request does. Before, a withdrawn request left no trace there.
+
 ### Fixed
 
 - A condition that calls a function or an operator of the app's (`{not app.blocked(this.id)}`) runs with the
