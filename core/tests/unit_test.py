@@ -4249,6 +4249,22 @@ rules app.files
             [f["flag"] for f in r["risk"]],
             ["`folder.viewer`: its share condition changed: `{subject_id <> '0'}` -> `{subject_id <> '1'}`"],
         )
+        # beside a source shared with another subject without a condition, each subject's condition counts alone
+        teams = self.WATCHED.replace(
+            "type folder = app.folders\n",
+            "type team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
+            "type folder = app.folders\n  viewer : team#member shared\n",
+        )
+        r = self.watched(cond, "shared if {true}", base=teams)
+        self.assertEqual(
+            [f["flag"] for f in r["risk"] if f["why"] == "a share condition removed or changed"],
+            ["`folder.viewer` for `user`: its share condition changed: `{subject_id <> '0'}` -> `{true}`"],
+        )
+        r = self.watched(cond, "shared", base=teams)
+        self.assertEqual(
+            [f["flag"] for f in r["risk"] if f["why"] == "a share condition removed or changed"],
+            ["`folder.viewer` for `user`: its share condition is removed (was `{subject_id <> '0'}`)"],
+        )
         # one added, or the same one written another way, only narrows or says the same: nothing flagged
         open_ = self.WATCHED.replace(cond, "shared")
         self.assertEqual(self.watched("user shared\n", f"user {cond}\n", base=open_)["risk"], [])
