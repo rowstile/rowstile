@@ -27,6 +27,7 @@ from typing import NotRequired, TypeAlias, TypedDict
 from . import Compiler, PolicyError, migrate, parse_policy
 from .connection import Db
 from .evaluate import Difference, Listing, Reference, alike_in, compare, facts, names_read, worlds_to_try
+from .output import subject_key
 from .parse import (
     KEYWORDS,
     And,
@@ -637,15 +638,18 @@ def subjects_of(pol: Policy) -> dict[tuple[str, str], set[tuple[str, str | None,
     return out
 
 
-def share_conditions(pol: Policy) -> dict[tuple[str, str], set[str | None]]:
-    """{(type, relation): {each `shared if` condition its shares must meet, None for shares without one}}, for each
-    relation that may be shared."""
-    out: dict[tuple[str, str], set[str | None]] = {}
+def share_conditions(pol: Policy) -> dict[tuple[str, str, str], set[str | None]]:
+    """{(type, relation, subject): {each `shared if` condition a share to that subject must meet, None for one
+    without}}, for each subject a relation may be shared with (`user`, `team#member`, `user:*`): a share's
+    condition is its subject's, as the database picks it."""
+    out: dict[tuple[str, str, str], set[str | None]] = {}
     for t in pol.types.values():
         for r in t.relations.values():
             for src in r.sources:
                 if src.kind == "shared":
-                    out.setdefault((t.name, r.name), set()).add(squeeze(src.shared_if) if src.shared_if else None)
+                    for st, sr in src.subjects:
+                        cond = squeeze(src.shared_if) if src.shared_if else None
+                        out.setdefault((t.name, r.name, subject_key(st, sr)), set()).add(cond)
     return out
 
 
@@ -799,13 +803,15 @@ def risk(b: Side, h: Side, worlds: int, changed: list[Changed], seen: Difference
     for key, now in sorted(ch.items()):
         was = cb.get(key, {None})
         name = f"{key[0]}.{key[1]}"
+        # the subject is said where the relation may be shared with several
+        shown = f"`{name}` for `{key[2]}`" if sum(1 for k in ch if k[:2] == key[:2]) > 1 else f"`{name}`"
         said = ", ".join(f"`{{{x}}}`" for x in sorted(c for c in was if c))
         if None in now and None not in was:
-            flag(f"`{name}`: its share condition is removed (was {said})", name, "a share condition removed or changed")
+            flag(f"{shown}: its share condition is removed (was {said})", name, "a share condition removed or changed")
         elif None not in was and now - was:
             changed_to = ", ".join(f"`{{{x}}}`" for x in sorted(c for c in now if c))
             flag(
-                f"`{name}`: its share condition changed: {said} -> {changed_to}",
+                f"{shown}: its share condition changed: {said} -> {changed_to}",
                 name,
                 "a share condition removed or changed",
             )

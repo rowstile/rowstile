@@ -21,6 +21,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The npm packages that hold the command's Python name its licence `Python-2.0` in their `license`, where they
   said `PSF-2.0`: the licence file they carry is CPython's whole licence (the PSF, BeOpen, CNRI and CWI
   agreements), which SPDX names `Python-2.0`; `PSF-2.0` is only the first of them.
+- `rowstile review` flags a `shared if` taken off or rewritten for one subject of a relation shared with several
+  (`viewer : user shared if {...}` beside `viewer : team#member shared`). It compared the relation's conditions
+  together, and a subject shared without one hid the change of another's. The flag names the subject there:
+  "`doc.viewer` for `user`: its share condition changed".
 
 ## 0.1.0-beta.1 (2026-10-22)
 
