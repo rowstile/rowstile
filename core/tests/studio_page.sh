@@ -6,7 +6,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 NAME="rowstile-studio-page-$$"
-trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
+trap 'docker rm -f -v "$NAME" >/dev/null 2>&1 || true' EXIT
 docker run -d --name "$NAME" -p 127.0.0.1::5432 -e POSTGRES_HOST_AUTH_METHOD=trust \
   -v "$(dirname "$(dirname "$HERE")"):/src" rowstile:16 >/dev/null
 # ready when the server answers on its socket, past the image's first start (initdb, then a restart)

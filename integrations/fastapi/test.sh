@@ -11,7 +11,7 @@ PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-py
 PORT=${CONFORMANCE_PORT:-25440}
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
-docker rm -f "$NAME" >/dev/null 2>&1
+docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
 for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
 sleep 2
@@ -68,5 +68,5 @@ elif [ $covered = 0 ]; then
 else
   echo "FAIL  lines or branches of the Python SDK no check runs (the report above: $COVERAGE/report.txt)"; rc=1
 fi
-[ -n "${KEEP:-}" ] || { [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"; docker rm -f "$NAME" >/dev/null; }
+[ -n "${KEEP:-}" ] || { [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"; docker rm -f -v "$NAME" >/dev/null; }
 exit $rc

@@ -10,7 +10,7 @@ python3 check_public_surface.py || exit 1
 python3 ../../core/cli/rowstile_cli.py migrate --check || exit 1
 docker compose down -v >/dev/null 2>&1        # a new database each time: migrations run from the start
 here=$(pwd)
-trap '[ -n "${KEEP:-}" ] || (cd "$here" && docker compose down)' EXIT    # however the run ends
+trap '[ -n "${KEEP:-}" ] || (cd "$here" && docker compose down -v)' EXIT    # however the run ends
 docker compose up -d --build --wait db || exit 1
 cd backend
 rc=0

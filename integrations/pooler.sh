@@ -15,7 +15,7 @@ pooler_start() {
   dir=$(mktemp -d)
   docker network create "$pg-net" >/dev/null 2>&1
   docker network connect --alias pg "$pg-net" "$pg" 2>/dev/null
-  docker rm -f "$name" >/dev/null 2>&1
+  docker rm -f -v "$name" >/dev/null 2>&1
   docker image inspect "$POOLER_IMAGE" >/dev/null 2>&1 || docker pull -q "$POOLER_IMAGE" >/dev/null || return 1
   : >"$dir/userlist.txt"
   for up in "$@"; do echo "\"${up%%:*}\" \"${up#*:}\"" >>"$dir/userlist.txt"; done
@@ -49,7 +49,7 @@ EOF
 }
 
 pooler_stop() {
-  docker rm -f "$1-pgbouncer" >/dev/null 2>&1
+  docker rm -f -v "$1-pgbouncer" >/dev/null 2>&1
   docker network disconnect "$1-net" "$1" >/dev/null 2>&1
   docker network rm "$1-net" >/dev/null 2>&1
 }
