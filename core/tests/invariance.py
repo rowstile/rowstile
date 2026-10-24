@@ -980,9 +980,11 @@ def through_shuffle(text: str, files: Files, pol: Policy) -> str:
         return render(blocks)
     schema = q(t1.table.split(".")[0])
     for b in blocks:
-        m = re.fullmatch(r"rules\s+(\S+).*", b[0])
-        if m:
-            tname = type_of_table(pol, m.group(1)).name
+        # in a rule, and in a permission (genpolicy's whose() puts them there too)
+        rule = re.fullmatch(r"rules\s+(\S+).*", b[0])
+        typed = re.fullmatch(r"type\s+(\S+)\s*=.*", b[0])
+        if rule or typed:
+            tname = type_of_table(pol, rule.group(1)).name if rule else typed.group(1) if typed else ""
 
             def via(x: re.Match[str], tname: str = tname) -> str:
                 return f"{schema}.renum_next({lit(tname)}, this.{x.group(1) or x.group(2)})"
