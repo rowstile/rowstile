@@ -13,6 +13,7 @@ const world = {
   /** @type {string[]} */ setting: ["rowstile", "lsp"],
   /** @type {unknown} */ startFails: undefined,
   /** @type {string | undefined} */ choice: undefined,
+  /** @type {number} */ startMs: 0,
   /** @type {((event: {affectsConfiguration: (name: string) => boolean}) => Promise<void>)[]} */ listeners: [],
 };
 
@@ -26,8 +27,11 @@ class LanguageClient {
   }
   start() {
     if (world.startFails !== undefined) return Promise.reject(world.startFails);
-    this.running = true;
-    return Promise.resolve();
+    // a server takes a moment to start (npx, a Python): until then the client is starting, not running
+    return new Promise((resolve) => setTimeout(() => {
+      this.running = true;
+      resolve(undefined);
+    }, world.startMs));
   }
   isRunning() {
     return this.running;
@@ -91,7 +95,7 @@ const shutdown = async (subscriptions) => {
 /** @param {string} name @param {() => Promise<void>} body */
 async function check(name, body) {
   Object.assign(world, { clients: [], stops: [], errors: [], commands: [], listeners: [] });
-  Object.assign(world, { setting: ["rowstile", "lsp"], startFails: undefined, choice: undefined });
+  Object.assign(world, { setting: ["rowstile", "lsp"], startFails: undefined, choice: undefined, startMs: 0 });
   try {
     await body();
     console.log(`ok    ${name}`);
@@ -132,6 +136,18 @@ async function check(name, body) {
       { command: "rowstile", args: ["lsp"], cwd: "/work/app" },
       { command: "npx", args: ["--no", "rowstile", "lsp"], cwd: "/work/app" },
     ]);
+    await shutdown(subscriptions);
+    assert.deepEqual(world.stops, ["rowstile", "npx"]);
+  });
+
+  await check("a new rowstile.command while the server starts: that server is stopped once it has started", async () => {
+    world.startMs = 50;
+    /** @type {{dispose: () => unknown}[]} */ const subscriptions = [];
+    extension.activate(/** @type {any} */ ({ subscriptions }));
+    world.setting = ["npx", "--no", "rowstile", "lsp"];
+    await change("rowstile.command");
+    assert.deepEqual(world.stops, ["rowstile"], "the first server, stopped");
+    assert.equal(world.clients.length, 2);
     await shutdown(subscriptions);
     assert.deepEqual(world.stops, ["rowstile", "npx"]);
   });
