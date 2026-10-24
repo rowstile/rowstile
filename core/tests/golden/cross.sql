@@ -519,12 +519,16 @@ CREATE FUNCTION authz_int.jit_off() RETURNS void
 LANGUAGE sql VOLATILE AS $f$ SELECT pg_catalog.set_config('jit', 'off', true) $f$;
 -- Are the settings to be believed? PL/pgSQL, so its plans are kept for the session, and not a definer: all its
 -- callers run as the owner. (OR runs left to right: the refusal is asked only when the signature doesn't match.)
+-- The two signatures are compared through their hashes: the time it takes says nothing of how many characters of
+-- the one given are right.
 CREATE FUNCTION authz_int.session_ok() RETURNS boolean
 LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE k authz_int.session_key;
 BEGIN
   SELECT * INTO k FROM authz_int.session_key;
-  RETURN coalesce(current_setting('authz.session', true) = pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to(pg_catalog.concat_ws(pg_catalog.chr(31), coalesce(pg_catalog.current_setting('authz.user_id', true), ''), coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), coalesce(pg_catalog.current_setting('authz.scopes', true), ''), coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), pg_catalog.pg_backend_pid()::text, (EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text), 'UTF8'))), 'hex'), false) OR authz_int.session_refused();
+  RETURN pg_catalog.sha256(pg_catalog.convert_to(coalesce(current_setting('authz.session', true), ''), 'UTF8'))
+         = pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to(pg_catalog.concat_ws(pg_catalog.chr(31), coalesce(pg_catalog.current_setting('authz.user_id', true), ''), coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), coalesce(pg_catalog.current_setting('authz.scopes', true), ''), coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), pg_catalog.pg_backend_pid()::text, (EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text), 'UTF8'))), 'hex'), 'UTF8'))
+         OR authz_int.session_refused();
 END $f$;
 -- When the signature doesn't match: true for the owner's and superusers' sessions, else an error saying why
 CREATE FUNCTION authz_int.session_refused() RETURNS boolean
@@ -7079,9 +7083,11 @@ BEGIN
     IF cardinality(parts) <> 3 THEN RAISE EXCEPTION 'bad'; END IF;
     v_head := convert_from(authz_int.b64url(parts[1]), 'UTF8')::jsonb;
     v_claims := convert_from(authz_int.b64url(parts[2]), 'UTF8')::jsonb;
+    -- the signatures compared through their hashes: the time it takes says nothing of how much of the token's is right
     IF v_head->>'alg' IS DISTINCT FROM 'HS256'
-       OR authz_int.b64url(parts[3]) <> authz_int.hmac_sha256(convert_to(v_secret, 'UTF8'),
-                                                              convert_to(parts[1] || '.' || parts[2], 'UTF8')) THEN
+       OR sha256(authz_int.b64url(parts[3]))
+          IS DISTINCT FROM sha256(authz_int.hmac_sha256(convert_to(v_secret, 'UTF8'),
+                                                        convert_to(parts[1] || '.' || parts[2], 'UTF8'))) THEN
       RAISE EXCEPTION 'bad';
     END IF;
   EXCEPTION WHEN OTHERS THEN
@@ -7128,9 +7134,11 @@ END $f$;
 
 -- Support staff see what a user sees, read-only, for this transaction, with a reason on record:
 -- SELECT authz.view_as('42', 'ticket 1234')  (the user type has no impersonate permission: administrators only)
+-- A session limited by scopes (a key's, a token's) keeps them: viewing never reads more than the session could.
 CREATE OR REPLACE FUNCTION authz.view_as(p_user text, p_reason text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_actor text := authz_int.actor();
+        v_scopes text[] := authz_int.scopes_active();  -- the session's, before it is switched
 BEGIN
   PERFORM authz_int.users_only('authz.view_as');
   IF coalesce(current_setting('authz.acting_user', true), '') <> '' THEN
@@ -7150,7 +7158,9 @@ BEGIN
     RAISE EXCEPTION 'there is no active user %', p_user USING HINT = 'rowstile help AZ708';
   END IF;
   PERFORM set_config('authz.acting_user', coalesce(v_actor, authz_int.caller_role()), true);
-  PERFORM set_config('authz.scopes', 'read', true);
+  PERFORM set_config('authz.scopes', CASE WHEN v_scopes IS NULL THEN 'read'
+                                          WHEN cardinality(v_scopes) = 0 THEN '(none)'
+                                          ELSE array_to_string(v_scopes, ',') END, true);
   PERFORM authz_int.sign();
   PERFORM set_config('authz_ctx.reason', p_reason, true);
   PERFORM authz_int.jit_off();
