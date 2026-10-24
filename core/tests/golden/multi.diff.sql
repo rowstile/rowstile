@@ -5780,14 +5780,18 @@ BEGIN
   PERFORM authz_int.audit(CASE WHEN p_approve THEN 'approve_request' ELSE 'deny_request' END, r.object_type,
     r.object_id, r.relation, 'user', r.requester, '', jsonb_build_object('request', p_id, 'note', p_note));
 END $f$;
+-- Withdraw your own request; recorded as a decision is
 CREATE OR REPLACE FUNCTION authz.cancel_request(p_id bigint) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE r authz.requests;
 BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.cancel_request');
   UPDATE authz.requests SET status = 'cancelled', decided_at = now()
-  WHERE id = p_id AND status = 'pending' AND requester = authz.uid()::text;
-  IF NOT FOUND THEN RAISE EXCEPTION 'no pending request % of yours', p_id USING HINT = 'rowstile help AZ708'; END IF;
+  WHERE id = p_id AND status = 'pending' AND requester = authz.uid()::text RETURNING * INTO r;
+  IF r.id IS NULL THEN RAISE EXCEPTION 'no pending request % of yours', p_id USING HINT = 'rowstile help AZ708'; END IF;
+  PERFORM authz_int.audit('cancel_request', r.object_type, r.object_id, r.relation, 'user', r.requester, '',
+                          jsonb_build_object('request', p_id));
 END $f$;
 
 -- Emergency access: people who hold 'break_glass' on an object give themselves a relation on it

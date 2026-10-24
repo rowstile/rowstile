@@ -311,6 +311,9 @@ check "a denied request grants nothing" "f" "SET authz.user_id = 4; SELECT authz
 REQ3=$(as 4 -c "SELECT authz.request_access('folder', 6, 'viewer', 'please')")
 as 4 -c "SELECT authz.cancel_request($REQ3)" >/dev/null
 admin "requests can be withdrawn" "cancelled" "SELECT status FROM authz.requests WHERE id = $REQ3"
+admin "... and the withdrawal is in the trail, with who withdrew it" "cancel_request|folder|6|viewer|4|4" \
+  "SELECT action || '|' || object_type || '|' || object_id || '|' || relation || '|' || subject_id || '|' || user_id
+   FROM authz.audit WHERE action = 'cancel_request' AND detail ->> 'request' = '$REQ3'"
 expect_code "only relations the policy lets people share can be requested" "P0001: the policy does not allow sharing folder.owner with a user" -c "SET authz.user_id = 4" \
   -c "SELECT authz.request_access('folder', 6, 'owner', 'mine now')"
 expect_code "... on types the policy has" "P0001: no type nosuchtype in the policy" -c "SET authz.user_id = 4" \
