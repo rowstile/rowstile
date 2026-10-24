@@ -850,7 +850,10 @@ def answers(db: DB, w: World, script: str) -> Snapshot:
 
 
 def emit(key: list[str], sql: str) -> str:
-    return f"SELECT {lit(json.dumps(key))}, ({sql});"
+    """A question, after its key as JSON: as an escape string, which a session with standard_conforming_strings off
+    reads as one with it on does (the JSON of an id with a double quote in it has backslashes)."""
+    escaped = json.dumps(key).replace("\\", "\\\\").replace("'", "''")
+    return f"SELECT E'{escaped}', ({sql});"
 
 
 class AroundChecker(Checker):
