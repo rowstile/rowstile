@@ -46,7 +46,10 @@ SQL
   else echo "FAIL  $1: $out"; fails=$((fails + 1)); fi
 }
 
-python3 compile_policy.py example/docs.authz > $T/identity.sql || exit 1
+# the docs app, with a scope that may view as someone (a support desk's key)
+sed '/^scope files = /a scope support = user.impersonate' example/docs.authz > $T/identity.authz
+grep -q '^scope support = ' $T/identity.authz || { echo "FAIL  the support scope added to the docs app"; exit 1; }
+python3 compile_policy.py $T/identity.authz > $T/identity.sql || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null &&
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f $T/identity.sql >/dev/null || exit 1
 PSQL -c "SET ROLE app_user; SET authz.user_id = 5; SELECT authz.share('folder', 1, 'viewer', 'org', 1, 'member')" >/dev/null
@@ -242,6 +245,20 @@ check "... for that transaction only: what the session does next is on record wi
   "BEGIN; SET LOCAL authz.user_id = 5; SELECT authz.view_as('3', 'ticket 45'); COMMIT;
    SET authz.user_id = 1; SELECT authz.create_api_key('after the ticket', 'read');
    RESET ROLE; SELECT coalesce(reason, 'none') FROM authz.audit WHERE action = 'create_api_key' ORDER BY id DESC LIMIT 1;"
+# a session limited by scopes keeps them while viewing: a key that may view as someone reads no more than its own
+# scopes give (without any, a session gets read)
+SUPPORT=$(state -c "SET authz.user_id = 5" -c "SELECT authz.create_api_key('support desk', 'support')")
+SUPPORT_FILES=$(state -c "SET authz.user_id = 5" -c "SELECT authz.create_api_key('support desk, files', 'support,files')")
+check "a key that may only view as someone: viewing as carol, it reads none of her files or folders" "0|0|3|support" \
+  "BEGIN; SELECT authz.login_key('$SUPPORT'); SELECT authz.view_as('3', 'ticket 48');
+   SELECT (SELECT count(*) FROM app.files) || '|' || (SELECT count(*) FROM app.folders) || '|' || authz.uid() || '|'
+          || current_setting('authz.scopes'); COMMIT;"
+check "... one with files too: her files, still no folders, read-only" "3|0|false|files,support" \
+  "BEGIN; SELECT authz.login_key('$SUPPORT_FILES'); SELECT authz.view_as('3', 'ticket 49');
+   SELECT (SELECT count(*) FROM app.files) || '|' || (SELECT count(*) FROM app.folders) || '|' || authz.can('file', 11, 'edit')
+          || '|' || current_setting('authz.scopes'); COMMIT;"
+check "... and a session without scopes views with read" "read" \
+  "BEGIN; SET LOCAL authz.user_id = 5; SELECT authz.view_as('3', 'ticket 50'); SELECT current_setting('authz.scopes'); COMMIT;"
 expect_code "carol cannot view as erin" "42501: you cannot view as user 5" -c "SET authz.user_id = 3" -c "SELECT authz.view_as('5', 'curious')"
 expect_code "a reason is required" "22023: say why (the reason is kept in the audit trail)" -c "SET authz.user_id = 5" -c "SELECT authz.view_as('3', '')"
 expect_code "one view-as at a time" "42501: already viewing as someone" -c "BEGIN" -c "SET LOCAL authz.user_id = 5" \

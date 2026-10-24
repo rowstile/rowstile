@@ -31,6 +31,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The VS Code extension (0.1.4) stops the language server it was starting when `rowstile.command` changes, once
   that server has started. It was left running beside the new one, and each mistake was shown twice until the
   window was reloaded.
+- `authz.view_as` in a session limited by scopes (an API key's, a JWT's) keeps those scopes. It gave the session
+  the scope `read`, so a key whose scopes let it view as a user read everything that user may, beyond what the
+  key itself was given. A session without scopes still views with `read`. The session's signature and a JWT's
+  are now compared through their hashes, so the time a comparison takes says nothing of how much of one is right.
 
 ## 0.1.0-beta.1 (2026-10-22)
 
