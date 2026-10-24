@@ -5,6 +5,8 @@ const { LanguageClient } = require("vscode-languageclient/node");
 
 /** @type {import("vscode-languageclient/node").LanguageClient | undefined} */
 let client;
+/** The last start, settled either way: a client still starting can't be stopped, so stop() waits for it. */
+let starting = Promise.resolve();
 
 function start() {
   const [command = "rowstile", ...args] = vscode.workspace.getConfiguration("rowstile").get("command", ["rowstile", "lsp"]);
@@ -17,8 +19,10 @@ function start() {
     { command: word(command), args: args.map(word), options: { cwd, shell: windows } },
     { documentSelector: [{ language: "authz" }] });
   client = started;
+  const run = started.start();
+  starting = run.then(() => undefined, () => undefined);
   // The client's own message says only that it couldn't connect: this one says what to do
-  started.start().catch(async (/** @type {unknown} */ error) => {
+  run.catch(async (/** @type {unknown} */ error) => {
     const why = error instanceof Error ? error.message : String(error);
     const choice = await vscode.window.showErrorMessage(
       `rowstile: the language server didn't start (${why}). Install rowstile (https://rowstile.dev/installing), ` +
@@ -27,10 +31,12 @@ function start() {
   });
 }
 
-/** Stops the running server; one that didn't start has nothing to stop. */
+/** Stops the server, once it has started; one that didn't start has nothing to stop. */
 async function stop() {
   const stopping = client;
+  const started = starting;
   client = undefined;
+  await started;
   if (stopping?.isRunning()) await stopping.stop();
 }
 

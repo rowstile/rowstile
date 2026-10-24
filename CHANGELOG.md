@@ -28,6 +28,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The review's GitHub action and GitLab template update only the comment their token wrote. They took the first
   one that starts with the review's marker, whoever wrote it: a person's comment starting so was overwritten with
   the review, or GitHub refused the edit and the job failed. Now theirs stays, and the review is posted beside it.
+- The VS Code extension (0.1.4) stops the language server it was starting when `rowstile.command` changes, once
+  that server has started. It was left running beside the new one, and each mistake was shown twice until the
+  window was reloaded.
 
 ## 0.1.0-beta.1 (2026-10-22)
 
