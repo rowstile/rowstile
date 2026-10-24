@@ -103,7 +103,7 @@ function authz.break_glass(p_type text, p_id uuid, p_relation text, p_reason tex
 function authz.can(p_type text, p_id bigint, p_perm text) | 3b89f3888983 shape=a0df7b00
 function authz.can(p_type text, p_id text, p_perm text) | 211400cbf31d shape=220bc89f
 function authz.can(p_type text, p_id uuid, p_perm text) | 1acab4c19015 shape=54adceba
-function authz.cancel_request(p_id bigint) | d25e105562ab shape=19aa0bb3
+function authz.cancel_request(p_id bigint) | 14f17f222d45 shape=19aa0bb3
 function authz.changes_since(p_pos bigint, p_limit int) | b494cb9cea48 shape=0448ffba
 function authz.check_invariants() | 5d677568a799 shape=a2072420
 function authz.close_review(p_review bigint, p_revoke_undecided boolean) | 5c17d4af6ead shape=8a35940c
