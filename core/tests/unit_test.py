@@ -13279,22 +13279,19 @@ class Features(unittest.TestCase):
             {"api.share", "api.unshare", "api.create_link", "api.revoke_link", "api.decide_request"}
             | {"api.break_glass", "api.close_review"},
         )
-        self.assertEqual(features.exceptions(), {"api.requests", "api.reviews", "api.audit"})
-        # a granting feature put in tier 2 without the page saying so; one the page stops naming; one it names wrongly
-        links = next(x for x in features.FEATURES if x.id == "api.links")
-        lowered = [dataclasses.replace(x, tier=2) if x is links else x for x in features.FEATURES]
+        self.assertEqual(features.exceptions(), set())  # every one is in tier 1
+        # a granting feature put in tier 2 without the page saying so; one the page names; one it names wrongly
+        lowered = [
+            dataclasses.replace(x, tier=2) if x.id in ("api.links", "api.reviews") else x for x in features.FEATURES
+        ]
         self.assertIn(
             "api.links: tier 2, and it grants or revokes access (api.create_link, api.revoke_link): make it tier 1, or "
             f"name it on docs/how-it-is-checked.md where it says which features {features.EXCEPTIONS}",
             features.problems(lowered),
         )
-        with mock.patch.object(features, "exceptions", return_value={"api.requests", "api.audit", "api.sharing"}):
-            found = features.problems()
-        self.assertIn(
-            "api.reviews: tier 2, and it grants or revokes access (api.close_review): make it tier 1, or name it on "
-            f"docs/how-it-is-checked.md where it says which features {features.EXCEPTIONS}",
-            found,
-        )
+        with mock.patch.object(features, "exceptions", return_value={"api.reviews", "api.sharing"}):
+            found = features.problems(lowered)
+        self.assertFalse([p for p in found if p.startswith("api.reviews: tier 2")], found)
         self.assertIn(
             f"docs/how-it-is-checked.md names api.sharing among the features {features.EXCEPTIONS}, and it is no "
             "feature of tier 2 or 3",
