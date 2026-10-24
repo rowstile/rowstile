@@ -9,13 +9,17 @@
 # ahead of it: as the random moves make the tree deep, a write can wait tens of seconds on a slow machine
 # (a move of a big subtree alone takes about a second). So the limit on a statement, 600 s, is there for a
 # write that never ends; how fast a write is, is checked alone afterwards, on the tree the run leaves: the
-# biggest moves and links must each take under MOVE_LIMIT seconds (10). The slowest write is said either way.
+# biggest moves and links must each take under MOVE_LIMIT seconds (10), or a second per MOVE_RATE rows (5,000) of the
+# inheritance tables they write, if that is longer: how much of the tree a write rewrites depends on the tree the
+# random writes leave (a link can rewrite a few hundred thousand rows of it), and here it writes 18,000 to 37,000 a
+# second. The slowest write is said either way, with the rows it wrote.
 #   PGHOST=... PGUSER=authz_owner tests/stress.sh [SECONDS]   (default 60 per isolation level)
 set -u
 cd "$(dirname "$0")/.."
 DB=authz_stress
 SECONDS_EACH=${1:-60}
 MOVE_LIMIT=${MOVE_LIMIT:-10}
+MOVE_RATE=${MOVE_RATE:-5000}
 fails=0
 W=$(mktemp -d)
 # whatever way the suite ends: its database, its files
@@ -43,23 +47,29 @@ BEGIN
   EXECUTE stmt;
 EXCEPTION WHEN check_violation OR foreign_key_violation OR unique_violation THEN NULL;
 END $$;
--- runs a write alone, undoes it, and says how long it took (seconds)
-CREATE FUNCTION stress.timed(stmt text) RETURNS numeric LANGUAGE plpgsql AS $$
+-- the rows this transaction has written to the inheritance tables so far (inserted, updated, deleted)
+CREATE FUNCTION stress.tree_writes() RETURNS bigint LANGUAGE sql AS $$
+  SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0)::bigint FROM pg_stat_xact_user_tables
+  WHERE schemaname = 'authz_int' $$;
+-- runs a write alone, undoes it, and says how long it took (seconds) and how many rows of the inheritance tables
+-- it wrote
+CREATE FUNCTION stress.timed(stmt text, OUT took numeric, OUT written bigint) LANGUAGE plpgsql AS $$
 DECLARE
-  t0 timestamptz := clock_timestamp();
-  took numeric;
+  t0 timestamptz;
+  w0 bigint := stress.tree_writes();
 BEGIN
   BEGIN
+    t0 := clock_timestamp();
     EXECUTE stmt;
-    took := extract(epoch FROM clock_timestamp() - t0);
+    took := round(extract(epoch FROM clock_timestamp() - t0), 2);
+    written := stress.tree_writes() - w0;
     RAISE EXCEPTION USING ERRCODE = 'AZS01', MESSAGE = 'undone';
   EXCEPTION WHEN SQLSTATE 'AZS01' THEN NULL;
   END;
-  RETURN round(took, 2);
 END $$;
 -- the three folders with the most below them (not a top one), each moved, then linked, under the deepest folder
--- outside what is below it: [write, seconds]
-CREATE FUNCTION stress.biggest_moves() RETURNS TABLE (stmt text, took numeric) LANGUAGE plpgsql AS $$
+-- outside what is below it: [write, seconds, rows of the inheritance tables written]
+CREATE FUNCTION stress.biggest_moves() RETURNS TABLE (stmt text, took numeric, written bigint) LANGUAGE plpgsql AS $$
 DECLARE m record;
 BEGIN
   FOR m IN
@@ -78,10 +88,10 @@ BEGIN
   LOOP
     CONTINUE WHEN m.target IS NULL;
     stmt := format('UPDATE app.folders SET parent_id = %s WHERE id = %s', m.target, m.id);
-    took := stress.timed(stmt);
+    SELECT x.took, x.written INTO took, written FROM stress.timed(stmt) x;
     RETURN NEXT;
     stmt := format('INSERT INTO app.folder_links VALUES (%s, %s) ON CONFLICT DO NOTHING', m.id, m.target);
-    took := stress.timed(stmt);
+    SELECT x.took, x.written INTO took, written FROM stress.timed(stmt) x;
     RETURN NEXT;
   END LOOP;
 END $$;
@@ -166,15 +176,18 @@ for level in "read committed" "repeatable read" "serializable"; do
     echo "FAIL  $level: the inheritance tables don't match a rebuild"; fails=$((fails + 1))
   fi
   # the biggest moves on the tree as it is now, each alone
-  if ! moves=$(psql -X -At -F ' ' -v ON_ERROR_STOP=1 -d "$DB" -c "SELECT took, stmt FROM stress.biggest_moves()" 2>&1) || [ -z "$moves" ]; then
+  if ! moves=$(psql -X -At -F ' ' -v ON_ERROR_STOP=1 -d "$DB" -c "SELECT took, written, stmt FROM stress.biggest_moves()" 2>&1) || [ -z "$moves" ]; then
     echo "FAIL  $level: the biggest moves couldn't be timed: $(echo "$moves" | head -c 300 | tr '\n' ' ')"; fails=$((fails + 1))
   else
     tree=$(psql -X -At -d "$DB" -c "SELECT count(*) || ' folders, ' || (SELECT count(*) FROM authz_int.\"folder__linked_into_parent__tree\") || ' rows in the tree' FROM app.folders")
     worst=$(echo "$moves" | sort -n -r | head -1)
-    if awk -v w="${worst%% *}" -v l="$MOVE_LIMIT" 'BEGIN { exit !(w < l) }'; then
-      echo "ok    $level: the biggest moves and links, each alone, take under ${MOVE_LIMIT}s ($tree; the slowest: ${worst%% *}s)"
+    # (the slowest: its seconds, the rows of the inheritance tables it wrote, the write)
+    took=${worst%% *}; rest=${worst#* }; rows=${rest%% *}; stmt=${rest#* }
+    limit=$(awk -v l="$MOVE_LIMIT" -v n="$rows" -v r="$MOVE_RATE" 'BEGIN { x = n / r; printf "%.1f", (x > l ? x : l) }')
+    if awk -v w="$took" -v l="$limit" 'BEGIN { exit !(w < l) }'; then
+      echo "ok    $level: the biggest moves and links, each alone, take under ${MOVE_LIMIT}s, or a second per $MOVE_RATE rows they write ($tree; the slowest: ${took}s, writing $rows rows of the inheritance tables)"
     else
-      echo "FAIL  $level: a move or link alone took ${worst%% *}s (the limit is ${MOVE_LIMIT}s; $tree): ${worst#* }"
+      echo "FAIL  $level: a move or link alone took ${took}s, writing $rows rows of the inheritance tables (the limit is ${limit}s: ${MOVE_LIMIT}s, or a second per $MOVE_RATE rows written; $tree): $stmt"
       fails=$((fails + 1))
     fi
   fi
