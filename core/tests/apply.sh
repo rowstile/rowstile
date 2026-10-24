@@ -775,6 +775,26 @@ for call in 'app."Member"(this.id)' '"app"."Member"(this.id)' 'app . "Member" /*
   [ "$out" = "$T/members_fn.authz: applied" ] && [ "$(seen)" = "10,12" ] && ok "... and a function it calls by a quoted name or as an operator: {$call}" ||
     bad "a quoted function's rights" "{$call}: select $(seen): $out"
 done
+# ... and where a view reads the permission: another type's rule through an arrow, a masked view. A view reads its
+# tables as its owner but runs what it calls as its reader: under a not, a call with the app role's rights would
+# let user 2 through where the membership they can't see blocks it (project 12)
+quiet -d "$CDB" -c "CREATE TABLE app.tasks (id bigint PRIMARY KEY, project_id bigint, note text)" \
+  -c "INSERT INTO app.tasks VALUES (100, 10, 'a'), (110, 11, 'b'), (120, 12, 'c')" \
+  -c "GRANT SELECT ON app.tasks TO app_user" >/dev/null || exit 1
+for call in 'app."Member"(this.id)' '=!= this.id'; do
+  printf '%s\n' "app role app_user" "type user = app.users" "type project = app.projects" \
+    "  can open = signed_in and not {$call}" "type task = app.tasks" "  project : project = project_id" \
+    "  can open = project.open" "type membership = app.memberships" "rules app.tasks view app.tasks_seen" \
+    "  mask note : open" "  select : open" "rules app.memberships" "  select : {user_id = authz.uid()}" > "$T/tasks.authz"
+  out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/tasks.authz" 2>&1)
+  got=$(psql -X -q -At -d "$CDB" -c "SET ROLE app_user" -c "SET authz.user_id = 2" \
+    -c "SELECT (SELECT coalesce(string_agg(id::text, ',' ORDER BY id), '') FROM app.tasks) || ' ' ||
+               (SELECT coalesce(string_agg(id || ':' || coalesce(note, '-'), ',' ORDER BY id), '') FROM app.tasks_seen) || ' ' ||
+               (SELECT string_agg(authz.can('task', x::text, 'open')::text, ',' ORDER BY x) FROM unnest('{100,110,120}'::int[]) x)" | tail -n 1)
+  [ "$got" = "110 110:b false,true,false" ] &&
+    ok "a function a condition calls runs with the policy's rights where a view reads it too (an arrow, a masked view): {$call}" ||
+    bad "a called function's rights in the views" "{$call}: $got: $out"
+done
 dropdb "$CDB"
 # a write rule that follows a relation kept in shares or a link table: the app role may not read authz.shares
 fresh "$CDB"

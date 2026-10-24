@@ -434,11 +434,16 @@ def reads_more(sql: str) -> bool:
     """Whether a condition reads more than its row's own columns: a subquery, or a function other than a
     built-in that reads nothing, called by name or as an operator. Then who runs it decides what it sees, so the
     policy runs it as its owner."""
+    return bool(READS_TABLE.search(strip_literals(sql, "_quoted_"))) or calls_app_code(sql)
+
+
+def calls_app_code(sql: str) -> bool:
+    """Whether a condition calls a function other than a built-in that reads nothing, by name or as an operator.
+    A view reads its tables with its owner's rights, but runs what it calls with the rights of whoever reads it:
+    such a condition must run as the owner in a view too, where a subquery alone needn't."""
     # a quoted name stands as one no built-in has (app."f"(x) and "app".f(x) are calls of a function of the
     # app's), a comment as a space (f /* c */ (x) is a call), a string literal as an empty one
     shown = strip_literals(sql, "_quoted_")
-    if READS_TABLE.search(shown):
-        return True
     for m in CALL.finditer(shown):
         name = fold(re.sub(r"\s+", "", m.group(1)))
         if name not in PURE_FUNCTIONS and name not in CALL_WORDS:

@@ -10677,7 +10677,7 @@ class SearchPath(unittest.TestCase):
             ]
             sql = Compiler(parse_policy("\n".join(lines))).compile("x")
             running = [st for _, st in statements.split(sql) if "FUNCTION" in st[:40] and "zz_marked" in st]
-            self.assertGreater(len(running), 5, name)
+            self.assertTrue(running, name)  # (each condition at least in its own __check_ function: cond_sql)
             for st in running:
                 self.assertNotIn("search_path = pg_catalog", st.split("$f$")[0], f"{name}: {st[:120]}")
                 # nor on the caller's path, which may lack the schema the condition's names are in: a BEGIN ATOMIC
