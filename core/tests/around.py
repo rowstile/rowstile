@@ -96,7 +96,7 @@ from authzlib import evaluate  # noqa: E402
 from authzlib.parse import Rule  # noqa: E402
 from authzlib.sqlutil import qt  # noqa: E402
 from difftest import CHANGE, DB, Checker, Snapshot, idsql, lit, pages_sql  # noqa: E402
-from genpolicy import SCHEMA, WORDS_LATIN1, Refused, Slow, Spec, Spelling, refusal, too_few  # noqa: E402
+from genpolicy import RAISED, SCHEMA, WORDS_LATIN1, Refused, Slow, Spec, Spelling, refusal, too_few  # noqa: E402
 
 # The login roles of a run, named after its database (name_roles(): these are --db authz_around's)
 MEMBER = "authz_around_member"  # logs in, a member of app_user
@@ -466,7 +466,7 @@ def cut(n: Spelling) -> tuple[str, str, str]:
 
 def top_word(n: Spelling) -> str:
     """A text after every word of n's, in each database a world may have (cut())."""
-    return "\u00ff" if n.words == WORDS_LATIN1 else "\u9999"
+    return RAISED[1] if n.words == WORDS_LATIN1 else RAISED[0]
 
 
 def raised(n: Spelling) -> str:

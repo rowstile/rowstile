@@ -133,6 +133,8 @@ ORGS = 2  # where object types are keyed by (org_id, id): the orgs their rows ar
 # in Turkish. A key folded, compared in another collation, or written into SQL unquoted, is then met by the checks.
 WORDS = ("ab", "\u0130z", "ab c", "O'Neil", "iz", 'say "hi"', "Émile", "\u0131z", "B", "Iz")  # (a dotted, a dotless i)
 # ... as a LATIN1 database can hold them (around.py's): an accented i for the dotted and the dotless ones
+# the letters after every word, in a UTF-8 database and in a LATIN1 one (around.py's top_word())
+RAISED = ("\u9999", "\u00ff")
 WORDS_LATIN1 = ("ab", "Íz", "ab c", "O'Neil", "iz", 'say "hi"', "Émile", "ìz", "B", "Iz")
 
 
@@ -193,6 +195,8 @@ class Spelling:
     def number(self, ident: str) -> int:
         """The n of row n's key."""
         if self.worded:
+            if ident[:1] in RAISED and ident[1:]:  # (around.py's raised(): a letter before the key, past every word)
+                ident = ident[1:]
             if ident in self.words:
                 return self.words.index(ident) + 1
             digits = re.search(r"[0-9]+$", ident)
@@ -738,6 +742,11 @@ def shared_trees(spec: Spec, x: random.Random) -> None:
             o.rels.append(Rel("parent", "shared", [o.name], by=x.choice(["p1", "p2", "p3"])))
 
 
+def tree_shares(o: Obj) -> bool:
+    """Whether o's tree has links kept in shares (shared_trees())."""
+    return any(rel.kind == "shared" and rel.name == "parent" for rel in o.rels)
+
+
 def typed_links(spec: Spec, x: random.Random) -> None:
     """Link tables that name their subjects' type as well as their id (`t1_r1(obj_id -> (subj_type, subj_id))`),
     drawn apart from the rest (x): one to users that names services too, where there is a service; and `parent`
@@ -1224,6 +1233,9 @@ class GenPolicyGen(Gen):
                 return f"{i} % 2 = {odd}"
             return f"{i}::text ~ '{'[13579]' if odd else '[02468]'}$'"
 
+        # a share that is a link of a tree (shared_trees()) can't expire (AZ605): the expiring change leaves them be
+        trees = [f"(object_type = {lit(x.name)} AND relation = 'parent')" for x in self.spec.objs if tree_shares(x)]
+        lasting = f" AND NOT ({' OR '.join(trees)})" if trees else ""
         ops: list[Callable[[], str]] = [
             lambda: f"UPDATE {tbl} SET {b1} = {r.choice(['true', 'false', 'NULL'])} WHERE {is_x};",
             lambda: f"UPDATE {tbl} SET {b2} = NOT {b2}, {b3} = {r.choice(['true', 'false'])} WHERE {is_x};",
@@ -1234,7 +1246,7 @@ class GenPolicyGen(Gen):
             lambda: self.grant(ids),
             lambda: self.grant(ids),
             lambda: f"DELETE FROM authz.shares WHERE object_id = {lit(xid)};",
-            lambda: f"UPDATE authz.shares SET expires_at = {difftest.EXPIRED} WHERE random() < 0.2;",
+            lambda: f"UPDATE authz.shares SET expires_at = {difftest.EXPIRED} WHERE random() < 0.2{lasting};",
             lambda: (
                 f"UPDATE {n.table('users')} SET {active} = NOT {active} "
                 f"WHERE {i} = {n.literal(n.ident(r.randint(1, USERS)))};"
@@ -1409,7 +1421,8 @@ def run(
     if report is not None and checker.decisions is not None:
         report += checker.decisions.report(name or f"seed {spec.seed}", only_decisive=True)
     if broken:
-        results = prove.prove(parse_policy(policy_text(spec)), worlds=200)
+        # (as many worlds as `rowstile prove` tries: fewer can miss a broken world the data found)
+        results = prove.prove(parse_policy(policy_text(spec)))
         for n in sorted(broken):
             if results[n]["holds"]:
                 return [f"prove says {results[n]['invariant']} holds, but the data broke it"]
