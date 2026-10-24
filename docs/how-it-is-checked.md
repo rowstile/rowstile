@@ -281,10 +281,10 @@ the reference evaluator, a rebuild, the policy applied whole, Postgres. The list
 no feature, when a check the list names is gone from its suite (or left in a comment), when no suite gives a flag to
 its command or sets a setting, when a feature of tier 1 (it decides access, grants or revokes it, or keeps data)
 has no check against another answer, or when a refusal isn't asked for by its words. <!-- checked: tests/unit_test.py "test_every_item_is_in_a_feature_and_every_check_is_there"; tests/unit_test.py "test_each_refusal_is_asked_for_by_its_words"; tests/unit_test.py "test_a_check_gone_and_a_tier_one_feature_without_an_oracle_are_said"; tests/unit_test.py "test_a_check_in_comments_and_a_flag_or_setting_no_suite_runs_are_said" -->
-Three features that grant or revoke access are tier 2 instead: access requests and breaking the glass
-(`api.requests`), access reviews (`api.reviews`), and the audit trail of what they and sharing do (`api.audit`). Their
-own suites check them, with answers worked out by hand, not against the reference evaluator, which checks what a
-share gives once it is made, whoever made it. <!-- checked: tests/governance.sh "carol breaks the glass, and the alert goes out"; tests/governance.sh "closing the review revokes what was marked"; tests/governance.sh "a share is recorded, with who made it"; tests/unit_test.py "test_a_feature_that_grants_outside_tier_one_is_named_on_the_page" -->
+Every feature that grants or revokes access is in tier 1. Requests for access, breaking the glass and access reviews
+are tried by one user in each snapshot of the random changes, each attempt undone, and held to the reference
+evaluator: what each call says, the requests it shows, the shares it makes or revokes, and the lines it writes in
+the audit trail. <!-- checked: tests/difftest.py "the decisions say"; tests/difftest.py "authz.decide_request("; tests/unit_test.py "test_a_feature_that_grants_outside_tier_one_is_named_on_the_page" -->
 Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `python3 core/tests/features.py
 --matrix` prints each feature against each suite.
 
@@ -302,10 +302,10 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | Signing in: `authz.act_as`, `authz.login_key`, `authz.login_jwt`, `authz.view_as`, `authz.principal`, `authz.connection_check`; signed sessions | 1 | [identity](reference/identity.md) | `sessions.sh`, `identity.sh`, `principals.sh`, `integrations/fastapi` | `around.py` |
 | API keys: `authz.create_api_key`, `authz.list_api_keys`, `authz.revoke_api_key` | 1 | [identity](reference/identity.md) | `identity.sh`, `principals.sh`, `children.sh` | `around.py`, `difftest.py` |
 | Group sync from an identity provider: `authz.sync_members` | 1 | [app-code](reference/app-code.md) | `identity.sh` | `difftest.py` |
-| Requests for access and breaking the glass: `authz.request_access`, `authz.decide_request`, `authz.cancel_request`, `authz.pending_requests`, `authz.break_glass` | 2 | [governance](reference/governance.md) | `governance.sh`, `concurrency.sh` | hand answers |
-| Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review` | 2 | [governance](reference/governance.md) | `governance.sh`, `principals.sh` |  |
+| Requests for access and breaking the glass: `authz.request_access`, `authz.decide_request`, `authz.cancel_request`, `authz.pending_requests`, `authz.break_glass` | 1 | [governance](reference/governance.md) | `governance.sh`, `concurrency.sh` | `difftest.py`, hand answers |
+| Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review` | 1 | [governance](reference/governance.md) | `governance.sh`, `principals.sh` | `difftest.py` |
 | The change feed: `authz.changes_since`, `authz.trim_changes` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` |  |
-| The audit trail: `authz.audit`, `authz.trim_audit` | 2 | [governance](reference/governance.md) | `governance.sh` |  |
+| The audit trail: `authz.audit`, `authz.trim_audit` | 1 | [governance](reference/governance.md) | `governance.sh` | `difftest.py` |
 | Checking the database: `authz.lint`, `authz.check_invariants` | 2 | [governance](reference/governance.md) | `governance.sh`, `adversarial.sh`, `apply.sh` | `around.py` |
 | What apps see of a refusal: each code's SQLSTATE and HTTP answer, the reason in the error | 1 | [app-code](reference/app-code.md) | `unit_test.py`, `reference.sh`, `adversarial.sh`, `integrations/fastapi`, `integrations/nextjs` | `around.py` |
 | Applying a policy: `rowstile apply`, `check`, `push`, `diff`, `remove` | 1 | [tools](reference/tools.md) | `apply.sh`, `cli.sh`, `migrations.sh`, `children.sh` | `interrupt.py`, `around.py`, `migrate_test.py` |

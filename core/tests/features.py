@@ -298,7 +298,7 @@ FEATURES: list[Feature] = [
     ),
     Feature(
         "api.requests",
-        2,
+        1,
         "Requests for access and breaking the glass: `authz.request_access`, `authz.decide_request`, "
         "`authz.cancel_request`, `authz.pending_requests`, `authz.break_glass`",
         ("api.request_access", "api.decide_request", "api.cancel_request", "api.pending_requests", "api.break_glass"),
@@ -311,11 +311,18 @@ FEATURES: list[Feature] = [
             T("governance.sh", "carol breaks the glass, and the alert goes out"),
             T("concurrency.sh", "breaking the glass waits for the delete, then is refused"),
         ),
+        (
+            T(DIFF, "authz.request_access('"),
+            T(DIFF, "authz.decide_request("),
+            T(DIFF, "authz.cancel_request("),
+            T(DIFF, "authz.pending_requests()"),
+            T(DIFF, "authz.break_glass('"),
+        ),
         hand=("runtime-break-glass",),
     ),
     Feature(
         "api.reviews",
-        2,
+        1,
         "Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review`",
         ("api.start_review", "api.review_items", "api.review_decide", "api.close_review"),
         Doc(GOV, "Access reviews"),
@@ -326,6 +333,7 @@ FEATURES: list[Feature] = [
             T("governance.sh", "authz.review_decide("),
             T("principals.sh", "authz.start_review is for users: a service is told so"),
         ),
+        (T(DIFF, "authz.start_review('"), T(DIFF, "the decisions say"), T(DIFF, "authz.close_review of")),
     ),
     Feature(
         "api.feed",
@@ -342,7 +350,7 @@ FEATURES: list[Feature] = [
     ),
     Feature(
         "api.audit",
-        2,
+        1,
         "The audit trail: `authz.audit`, `authz.trim_audit`",
         ("api.trim_audit", "err.AZ711"),
         Doc(GOV, "Audit trail"),
@@ -352,6 +360,9 @@ FEATURES: list[Feature] = [
             T("governance.sh", "memberships kept in your tables are recorded too"),
             T("governance.sh", "and the trim is recorded"),
         ),
+        (T(DIFF, "difftest_app.trail()"),),
+        note="held to the reference only in the lines requests, breaking the glass and reviews write (the shares they "
+        "make and revoke among them); those of authz.share alone, of the app's tables and of trims, by their suites",
     ),
     Feature(
         "api.checks",

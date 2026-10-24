@@ -23,6 +23,8 @@ one transaction) and after every change compares, for every user:
     themselves (by their id too), authz.who() and authz.who_among(), authz.perms_of() and authz.explain_rule()
   - the sharing API tried as the user and undone: authz.share(), unshare(), create_link(), list_shares(), the
     links API (list_links) and the custom roles API (create_role and the rest)
+  - requests for access, breaking the glass and access reviews, tried by the same user and undone: what each call
+    says, the requests it shows, the shares it makes or revokes, and the lines it writes in the audit trail
   - the masked views, read as each user: their rows, and the rows each masked column is shown on
   - authz.verify(): the closure tables match a rebuild
 
@@ -205,6 +207,16 @@ def signs_in_as_user(u: str, types: dict[str, Type]) -> bool:
     """Whether u signs in as a user id (a row of the user table or not), not as nobody or another principal."""
     kind, pid = evaluate.principal_of(u, types)
     return kind == "user" and bool(pid)
+
+
+def subject_key(st: str, sid: str, sr: str) -> str:
+    """Whom a share is to, as the catalog of what may be shared with whom says it: user, user:*, team#member,
+    anyone, link."""
+    if st in ("anyone", "link"):
+        return st
+    if sid == "*" and sr == "":
+        return f"{st}:*"
+    return f"{st}#{sr}" if sr else st
 
 
 def link_ids(links: list[tuple[str, str]]) -> list[str]:
@@ -561,6 +573,7 @@ class Checker:
             ):
                 self.shares_now.setdefault((tname, i), []).append([rname, st, "(link)" if st == "link" else sid, sr])
         self.inspected = inspected
+        self.workflow_setup(sharer, sample)
         for u in self.users:
             lines = []
             blocks.append(lines)
@@ -574,15 +587,16 @@ class Checker:
             for key, sql in self.decisions_queries:
                 emit([u, "decisions", *key], sql)
             # a `shared if` on the shares the one whose turn it is tries: the rows on which it holds, for the share as
-            # it would be made, evaluated as conditions are (by the database, as the policy's owner, them signed in)
+            # it would be made, evaluated as conditions are (by the database, as the policy's owner, them signed in);
+            # to the user shared with, and to each other who asks for access (approving a request shares with them)
             for (tname, rname), (_, _, cond) in self.shares_tried.items() if pid and u == sharer else ():
-                if cond:
+                for to in dict.fromkeys([self.share_target, *self.requesters]) if cond else ():
                     t = self.types[tname]
                     emit(
-                        [u, "share if", tname, rname],
+                        [u, "share if", tname, rname, *([] if to == self.share_target else [to])],
                         f"SELECT coalesce(json_agg({idsql(t, 'o')}), '[]') FROM {qt(t.table)} o WHERE (SELECT "
                         f"coalesce(({cond}), false) FROM (SELECT ({idsql(t, 'o')})::{t.pktype} AS object_id, "
-                        f"'user'::text AS subject_type, {lit(self.share_target)}::text AS subject_id, "
+                        f"'user'::text AS subject_type, {lit(to)}::text AS subject_id, "
                         "''::text AS subject_relation) this)",
                     )
             # the database's answers, as the app role
@@ -696,6 +710,36 @@ class Checker:
                         [u, "list_shares", tname],
                         f"SELECT coalesce(json_agg(json_build_array(i, difftest_app.try_list_shares({lit(tname)}, i))), "
                         f"'[]') FROM (SELECT unnest(ARRAY[{', '.join(lit(i) for i in sample[tname])}]::text[]) UNION "
+                        f"(SELECT {idsql(t)} FROM {qt(t.table)} WHERE authz.can({lit(tname)}, {idsql(t)}, 'share') "
+                        f"ORDER BY md5({idsql(t)}) LIMIT 2)) s(i)",
+                    )
+                # requests, breaking the glass and reviews, tried by the same user, each attempt undone
+                for tname, rname in self.requests_tried:
+                    emit(
+                        [u, "request", tname, rname],
+                        f"SELECT coalesce(json_agg(json_build_array(i, difftest_app.try_request({lit(tname)}, i, "
+                        f"{lit(rname)}))), '[]') FROM unnest({text_array(sample[tname])}) i",
+                    )
+                for n in self.requests:
+                    emit(
+                        [u, "decide", str(n)],
+                        f"SELECT json_build_array(difftest_app.try_decide({n}, true), "
+                        f"difftest_app.try_decide({n}, false), difftest_app.try_cancel({n}))",
+                    )
+                emit([u, "pending"], "SELECT difftest_app.try_pending()")
+                for tname, rname in self.glass_tried:
+                    emit(
+                        [u, "break_glass", tname, rname],
+                        f"SELECT coalesce(json_agg(json_build_array(i, difftest_app.try_break_glass({lit(tname)}, i, "
+                        f"{lit(rname)}))), '[]') FROM unnest({text_array(sample[tname])}) i",
+                    )
+                for tname in self.inspected:
+                    t = self.types[tname]
+                    emit(
+                        [u, "review", tname],
+                        f"SELECT coalesce(json_agg(json_build_array(i, difftest_app.try_review({lit(tname)}, i, "
+                        f"{'true' if self.review_undecided else 'false'}))), '[]') "
+                        f"FROM (SELECT unnest({text_array(sample[tname])}) UNION "
                         f"(SELECT {idsql(t)} FROM {qt(t.table)} WHERE authz.can({lit(tname)}, {idsql(t)}, 'share') "
                         f"ORDER BY md5({idsql(t)}) LIMIT 2)) s(i)",
                     )
@@ -902,6 +946,67 @@ class Checker:
             "SELECT e INTO v FROM authz.explain(t, i, p, u) e LIMIT 1; RETURN v; "
             "EXCEPTION WHEN OTHERS THEN RETURN SQLSTATE || ': ' || SQLERRM; END $f$;"
         )
+        # requests, breaking the glass and reviews, tried as the caller and always undone: {"refused": SQLSTATE and
+        # words}, or what the call left (each as below) with "trail", the audit trail it wrote, as the owner reads it
+        lines.append(
+            "CREATE OR REPLACE FUNCTION difftest_app.trail() RETURNS json LANGUAGE sql SECURITY DEFINER "
+            "SET search_path = pg_catalog, pg_temp AS $f$ SELECT coalesce(json_agg(json_build_array(a.action, "
+            "a.object_type, a.object_id, a.relation, a.subject_type, a.subject_id, a.subject_relation, a.user_id, "
+            "CASE WHEN a.action IN ('share', 'share_changed') THEN a.detail ? 'expires_at' END) ORDER BY a.id), '[]') "
+            "FROM authz.audit a WHERE a.txid = txid_current() $f$;"
+        )
+        lines.append(  # whether a user's share of a relation lets them in now, and until then
+            "CREATE OR REPLACE FUNCTION difftest_app.lets_in(t text, i text, r text, s text, until timestamptz) "
+            "RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$ "
+            "SELECT EXISTS (SELECT 1 FROM authz.shares g WHERE g.object_type = t AND g.object_id = i "
+            "AND g.relation = r AND g.subject_type = 'user' AND g.subject_id = s AND g.subject_relation = '' "
+            "AND g.caveat IS NULL AND (g.starts_at IS NULL OR g.starts_at <= now()) "
+            "AND (g.expires_at IS NULL OR g.expires_at >= until)) $f$;"
+        )
+        for name, args, body in (
+            (
+                "request",
+                "t text, i text, r text",
+                "PERFORM authz.request_access(t, i, r, 'difftest', interval '3 days');",
+            ),
+            ("decide", "n bigint, yes boolean", "PERFORM authz.decide_request(n, yes, 'difftest');"),
+            ("cancel", "n bigint", "PERFORM authz.cancel_request(n);"),
+            (  # the ids of the requests difftest made that the caller is shown
+                "pending",
+                "",
+                "SELECT coalesce(json_agg(p.id ORDER BY p.id), '[]') INTO v FROM authz.pending_requests() p "
+                "WHERE p.reason = 'difftest'; v := json_build_object('ids', v);",
+            ),
+            (  # and whether the caller's share now lets them in for the hour asked
+                "break_glass",
+                "t text, i text, r text",
+                "PERFORM authz.break_glass(t, i, r, 'difftest', interval '1 hour'); v := json_build_object('lets_in', "
+                "difftest_app.lets_in(t, i, r, authz.uid()::text, now() + interval '1 hour'));",
+            ),
+            (  # a review started, its items, each decided in turn (kept, revoked, left undecided), and closed
+                "review",
+                "t text, i text, undecided boolean",
+                "rv := authz.start_review(t, i); "
+                "SELECT coalesce(json_agg(json_build_array(x.item, x.relation, x.subject_type, x.subject_id, "
+                "x.subject_relation) ORDER BY x.item), '[]') INTO items FROM authz.review_items(rv) x; "
+                "FOR it IN SELECT x.item FROM authz.review_items(rv) x WHERE x.item % 3 <> 0 ORDER BY x.item LOOP "
+                "BEGIN PERFORM authz.review_decide(rv, it.item, it.item % 3 = 2); "
+                "decided := decided || jsonb_build_array(jsonb_build_array(it.item, 'ok')); "
+                "EXCEPTION WHEN OTHERS THEN decided := decided || jsonb_build_array(jsonb_build_array(it.item, "
+                "SQLSTATE || ': ' || SQLERRM)); END; END LOOP; "
+                "v := json_build_object('items', items, 'decided', decided, "
+                "'revoked', authz.close_review(rv, undecided));",
+            ),
+        ):
+            lines.append(
+                f"CREATE OR REPLACE FUNCTION difftest_app.try_{name}({args}) RETURNS json LANGUAGE plpgsql AS $f$ "
+                "DECLARE v json := '{}'; rv bigint; it record; items json; decided jsonb := '[]'; "
+                f"BEGIN BEGIN {body} "
+                "RAISE EXCEPTION USING ERRCODE = 'P0099', "
+                "MESSAGE = (v::jsonb || jsonb_build_object('trail', difftest_app.trail()))::text; "
+                "EXCEPTION WHEN OTHERS THEN RETURN CASE WHEN SQLSTATE = 'P0099' THEN SQLERRM::json "
+                "ELSE json_build_object('refused', SQLSTATE || ': ' || SQLERRM) END; END; END $f$;"
+            )
         lines.append(  # and the links on an object: 'ok' and each one's relation:id, or the refusal
             "CREATE OR REPLACE FUNCTION difftest_app.try_list_links(t text, i text) RETURNS text "
             "LANGUAGE plpgsql AS $f$ BEGIN "
@@ -942,7 +1047,15 @@ class Checker:
         return self.ref.eval_expr(state, t, rule.expr) & self.ref.ids(t) & self.ref.valid(t)
 
     def share_verdict(
-        self, state: evaluate.State, signed_in: bool, t: Type, i: str, by: str, required: list[str], to_user: bool
+        self,
+        state: evaluate.State,
+        signed_in: bool,
+        t: Type,
+        i: str,
+        by: str,
+        required: list[str],
+        to_user: bool,
+        target: str | None = None,
     ) -> str:
         """How authz.share answers, from what the reference says the sharer holds on row i of t: in the order its
         guards go (nobody signed in, or nothing to share there: the answer a missing object gets; no such user; the
@@ -953,7 +1066,7 @@ class Checker:
 
         if not signed_in or not any(holds(p) for p in self.share_perms.get(t.name, {"share"})):
             return "42501: you cannot share"
-        if to_user and self.share_target not in self.ref.ids(self.types["user"]):
+        if to_user and (target or self.share_target) not in self.ref.ids(self.types["user"]):
             return "P0001: there is no"
         if not holds(by):
             return f"42501: you cannot share {t.name} {i} (needs {by})"
@@ -1089,6 +1202,234 @@ class Checker:
                     problems.append(f"user {u}: authz.list_shares('{tname}', {i}) says {got}, expected {want}")
         return problems
 
+    def workflow_setup(self, sharer: str, sample: dict[str, list[str]]) -> None:
+        """What requests, breaking the glass and reviews are tried on, as the owner reads and makes it: the catalog
+        of what may be shared with whom (with the permission that shares it), the custom roles' types, and the
+        shares of the users below. The requests are made again for each snapshot, pending: by the user shared with
+        and by the one whose turn it is, on the sample rows, for each relation the share tries try, with a
+        duration or without, in turn, and one more on a row no table has."""
+        self.catalog: dict[tuple[str, str, str], str] = {
+            (tname, rname, subject): by
+            for tname, rname, subject, by in self.db.rows(
+                "SELECT object_type, relation, subject, shared_by FROM authz_int.shared_relations"
+            )
+        }
+        self.role_types: dict[str, str] = {
+            row[0]: row[1] for row in self.db.rows("SELECT id::text, object_type FROM authz.roles")
+        }
+        self.review_undecided = self.checks % 2 == 0  # closing a review revokes what nobody decided, or keeps it
+        # what is asked for and broken into: the relations shared with a user, and up to two that aren't
+        others = [
+            (t.name, r) for t in self.types.values() for r in t.relations if (t.name, r, "user") not in self.catalog
+        ]
+        self.requests_tried = [*self.shares_tried, *others[:2]]
+        self.glass_tried = [(tn, rn) for tn, rn in self.requests_tried if "break_glass" in self.types[tn].perms]
+        # who asks: the user shared with, the one whose turn it is, and another user than them, in turn
+        users = [x for x in self.users if signs_in_as_user(x, self.types)]
+        askers = [x for x in users if x != sharer]
+        other = [askers[self.checks % len(askers)]] if askers else []
+        self.requesters = list(dict.fromkeys(x for x in (self.share_target, sharer, *other) if x in users))
+        made = [
+            (tname, i, rname, who)
+            for tname, rname in self.shares_tried
+            for i in sample[tname]
+            for who in self.requesters
+        ]
+        if made and other:
+            made.append((made[0][0], MISSING_ROW, made[0][2], other[0]))
+        lasting = ("interval '3 days'", "NULL")
+        values = ", ".join(
+            f"({lit(tname)}, {lit(i)}, {lit(rname)}, {lit(who)}, 'difftest', {lasting[n % 2]})"
+            for n, (tname, i, rname, who) in enumerate(made)
+        )
+        insert = (
+            "INSERT INTO authz.requests (object_type, object_id, relation, requester, reason, duration) "
+            f"VALUES {values} RETURNING id, object_type, object_id, relation, requester, (duration IS NOT NULL)::text"
+        )
+        self.requests: dict[int, tuple[str, str, str, str, bool]] = {
+            int(n): (tname, i, rname, who, dur == "true")
+            for n, tname, i, rname, who, dur in self.db.rows(
+                "DELETE FROM authz.requests WHERE reason = 'difftest';" + (f"\n{insert};" if made else "")
+            )
+        }
+        # each of those users' shares of a relation (as a user, not as one of a group's): whether it lets them in
+        # now and for the next hour (breaking the glass leaves such a one as it is, and changes any other)
+        shared = ", ".join(lit(x) for x in self.requesters) or "NULL"
+        self.user_shares: dict[tuple[str, str, str, str], bool] = {
+            (tname, i, rname, sid): lets == "true"
+            for tname, i, rname, sid, lets in self.db.rows(
+                "SELECT object_type, object_id, relation, subject_id, (caveat IS NULL AND (starts_at IS NULL OR "
+                "starts_at <= now()) AND (expires_at IS NULL OR expires_at >= now() + interval '1 hour'))::text "
+                f"FROM authz.shares WHERE subject_type = 'user' AND subject_relation = '' AND subject_id IN ({shared})"
+            )
+        }
+
+    def workflow_problems(self, snap: Snapshot, u: str, state: evaluate.State) -> list[str]:
+        """Requests, breaking the glass and reviews as u tried them (when it was their turn), each undone: what
+        each call says, what it leaves (the requests shown, a share that lets them in, a review's items, what its
+        close revokes) and the audit trail it writes, from the policy and what the reference says u holds. All are
+        for users: a service is told so first (AZ715). Deciding a request, or an item of a review, needs the
+        permission that shares the relation (the one unsharing it needs), and approving one is a share, as
+        authz.share judges it; breaking the glass needs `break_glass`, and starting a review `share`."""
+        if (u, "pending") not in snap:
+            return []
+        problems: list[str] = []
+        who = self.ref.principal
+        uid = who[1] if who is not None and who[0] == "user" else None
+        actor = evaluate.principal_of(u, self.types)[1]  # (who acted, as the trail names them: a user's id)
+        service = who is not None and who[0] != "user"
+
+        def users_only(call: str) -> str:
+            return f"42501: authz.{call} is for users, not services ({who[0]} {who[1]} is signed in)" if who else ""
+
+        def holds(t: Type, i: str, p: str) -> bool:
+            return p in t.perms and i in state[(t.name, p)] & self.ref.ids(t)
+
+        def may_manage(t: Type, i: str, rname: str, subject: str) -> bool:
+            if rname.startswith("role:"):  # a custom role of the type: shared by `share`
+                by = "share" if self.role_types.get(rname.removeprefix("role:")) == t.name else None
+            else:
+                by = self.catalog.get((t.name, rname, subject))
+            return uid is not None and by is not None and holds(t, i, by)
+
+        def judge(call: str, got: Answer, want: str | dict[str, Answer]) -> None:
+            """want: the refusal's start, or what the call leaves (its trail in any order)."""
+            if isinstance(want, str):
+                bad = not isinstance(got, dict) or not str(got.get("refused", "")).startswith(want)
+            else:
+                trail = sorted(json.dumps(x) for x in want["trail"])
+                bad = (
+                    not isinstance(got, dict)
+                    or "refused" in got
+                    or {**got, "trail": sorted(json.dumps(x) for x in got.get("trail", []))} != {**want, "trail": trail}
+                )
+            if bad:
+                problems.append(f"user {u}: {call} says {got}, expected {want}")
+
+        def entry(action: str, t: str, i: str, rname: str | None = None, subject: str | None = None) -> list[Answer]:
+            """A line of the trail: a user subject's share, or the call's own line (subject: the user it names)."""
+            return [action, t, i, rname, *(("user", subject, "") if subject else (None, None, None)), actor, None]
+
+        for tname, rname in self.requests_tried:
+            t = self.types[tname]
+            for i, got in snap.get((u, "request", tname, rname), []):
+                by = self.catalog.get((tname, rname, "user"))
+                if service:
+                    want: str | dict[str, Answer] = users_only("request_access")
+                elif uid is None:
+                    want = "42501: sign in first"
+                elif by is None or by not in t.perms:
+                    want = f"P0001: the policy does not allow sharing {tname}.{rname} with a user"
+                else:
+                    want = {"trail": [entry("request_access", tname, i, rname, uid)]}
+                judge(f"authz.request_access('{tname}', {i}, '{rname}')", got, want)
+        for n, (tname, i, rname, requester, lasts) in self.requests.items():
+            if (u, "decide", str(n)) not in snap:
+                continue
+            t = self.types[tname]
+            approved, denied, cancelled = snap[(u, "decide", str(n))]
+            if service:
+                approve: str | dict[str, Answer] = users_only("decide_request")
+                deny: str | dict[str, Answer] = approve
+            elif uid is None:
+                approve = deny = "42501: sign in to decide a request"
+            elif requester == uid:
+                approve = deny = "42501: you cannot decide your own request"
+            elif not may_manage(t, i, rname, "user"):
+                approve = deny = f"42501: you cannot decide request {n}"
+            else:
+                by, required, cond = self.shares_tried[(tname, rname)]
+                verdict = self.share_verdict(state, True, t, i, by, required, to_user=True, target=requester)
+                asked = (u, "share if", tname, rname, *([] if requester == self.share_target else [requester]))
+                if verdict == "ok" and cond and i not in snap.get(asked, []):
+                    verdict = "42501: the policy does not allow this share"
+                made = "share_changed" if (tname, i, rname, requester) in self.user_shares else "share"
+                share = entry(made, tname, i, rname, requester)
+                share[-1] = lasts
+                approve = (
+                    verdict
+                    if verdict != "ok"
+                    else {"trail": [share, entry("approve_request", tname, i, rname, requester)]}
+                )
+                deny = {"trail": [entry("deny_request", tname, i, rname, requester)]}
+            if service:
+                cancel: str | dict[str, Answer] = users_only("cancel_request")
+            elif uid is not None and requester == uid:
+                cancel = {"trail": []}
+            else:
+                cancel = f"P0001: no pending request {n} of yours"
+            judge(f"authz.decide_request({n}, true) of {requester}'s on {tname} {i}", approved, approve)
+            judge(f"authz.decide_request({n}, false) of {requester}'s on {tname} {i}", denied, deny)
+            judge(f"authz.cancel_request({n}) of {requester}'s", cancelled, cancel)
+        # the requests shown: their own, and those they may decide
+        shown = sorted(
+            n
+            for n, (tname, i, rname, requester, _) in self.requests.items()
+            if uid is not None and (requester == uid or may_manage(self.types[tname], i, rname, "user"))
+        )
+        judge(
+            "authz.pending_requests()",
+            snap[(u, "pending")],
+            users_only("pending_requests") if service else {"ids": shown, "trail": []},
+        )
+        for tname, rname in self.glass_tried:
+            t = self.types[tname]
+            for i, got in snap.get((u, "break_glass", tname, rname), []):
+                if service:
+                    want = users_only("break_glass")
+                elif uid is None or not holds(t, i, "break_glass"):
+                    want = f"42501: you cannot break the glass on {tname} {i}"
+                elif (tname, rname, "user") not in self.catalog:
+                    want = f"P0001: the policy does not allow sharing {tname}.{rname} with a user"
+                else:
+                    lets = self.user_shares.get((tname, i, rname, uid))
+                    share = entry("share" if lets is None else "share_changed", tname, i, rname, uid)
+                    share[-1] = True
+                    want = {
+                        "lets_in": True,
+                        "trail": [*([] if lets else [share]), entry("break_glass", tname, i, rname, uid)],
+                    }
+                judge(f"authz.break_glass('{tname}', {i}, '{rname}')", got, want)
+        for tname in self.inspected:
+            t = self.types[tname]
+            for i, got in snap.get((u, "review", tname), []):
+                if service:
+                    judge(f"authz.start_review('{tname}', {i})", got, users_only("start_review"))
+                    continue
+                if not holds(t, i, "share"):
+                    judge(f"authz.start_review('{tname}', {i})", got, f"42501: you cannot review {tname} {i}")
+                    continue
+                items = got.get("items", []) if isinstance(got, dict) else []
+                if sorted(x[1:] for x in items) != sorted(self.shares_now.get((tname, i), [])):
+                    problems.append(
+                        f"user {u}: the review of {tname} {i} has the items {items}, expected the shares on it: "
+                        f"{sorted(self.shares_now.get((tname, i), []))}"
+                    )
+                # each item decided in turn (revoked, kept, left), by someone who may unshare it; closing revokes
+                # what was marked, and what nobody decided if asked, where the one closing may unshare it
+                decided: list[Answer] = []
+                trail = [entry("start_review", tname, i), entry("close_review", tname, i)]
+                for k, rname, st, sid, sr in items:
+                    ok = may_manage(t, i, rname, subject_key(st, sid, sr))
+                    if k % 3:
+                        decided.append([k, "ok" if ok else f"42501: you cannot decide on {rname} in review"])
+                    if ok and (k % 3 == 1 or (self.review_undecided and k % 3 == 0)):
+                        trail.append(["unshare", tname, i, rname, st, sid, sr, actor, None])
+                said = got.get("decided", []) if isinstance(got, dict) else []
+                if len(said) != len(decided) or any(
+                    g[0] != w[0] or not str(g[1]).startswith(w[1]) or (w[1] == "ok") != (g[1] == "ok")
+                    for g, w in zip(said, decided, strict=False)
+                ):
+                    problems.append(
+                        f"user {u}: in the review of {tname} {i}, the decisions say {said}, expected {decided}"
+                    )
+                judge(
+                    f"authz.close_review of {tname} {i} (undecided {'revoked' if self.review_undecided else 'kept'})",
+                    got,
+                    {"items": items, "decided": said, "revoked": len(trail) - 2, "trail": trail},
+                )
+        return problems
+
     def rule_allows(self, state: evaluate.State, table: str, cmd: str, i: str) -> bool:
         """What authz.explain_rule's first line says of cmd on row i as it is, asked without the changes: whether
         its rule lets it through (an update by the update rule alone: the call explains an update that matched no
@@ -1220,6 +1561,7 @@ class Checker:
             problems += self.role_problems(snap, u, state, signed_in)
             problems += self.link_problems(snap, u, state, signed_in)
             problems += self.list_share_problems(snap, u, state)
+            problems += self.workflow_problems(snap, u, state)
             # perms_of: the public permissions held on each object, no more (a type without any: none)
             for t in self.types.values():
                 public = [p for p, x in t.perms.items() if not x.hidden]
