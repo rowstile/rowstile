@@ -1,5 +1,5 @@
 """The action's comment: the review posted on the pull request, or the comment posted before updated in place (the one
-that starts with the review's marker). The standard library only: a self-hosted runner may not have the GitHub CLI.
+that starts with the review's marker, written by the token's own account: anyone may write a comment that starts so). The standard library only: a self-hosted runner may not have the GitHub CLI.
 
 A pull request from a fork gets a read-only token, whatever the workflow's permissions ask for. GitHub refuses the
 comment then (403): the review stays in the run's summary, a notice says so, and the step passes. A review longer
@@ -21,9 +21,15 @@ MARK = "<!-- rowstile review -->"
 LIMIT = 60_000
 
 
+class Author(TypedDict):
+    login: str
+    type: str
+
+
 class Comment(TypedDict):
     id: int
     body: str
+    user: Author
 
 
 def cut(body: str, rest: str, limit: int = LIMIT) -> str:
@@ -58,6 +64,22 @@ def call(method: str, url: str, token: str, body: dict[str, str] | None = None) 
         return json.load(res)
 
 
+def account(token: str) -> str | None:
+    """The login the token writes as, or None for an app's token (the workflow's own, GITHUB_TOKEN, writes as
+    github-actions[bot]), which GitHub doesn't answer /user for."""
+    try:
+        return cast(dict[str, str], call("GET", f"{os.environ['GITHUB_API_URL']}/user", token))["login"]
+    except (urllib.error.HTTPError, KeyError, TypeError):
+        return None
+
+
+def ours(c: Comment, me: str | None) -> bool:
+    """Whether a comment is the review's: it starts with the marker, and the token's account wrote it (for an app's
+    token, an app: a person can't write as one)."""
+    who = c.get("user") or {"login": "", "type": ""}
+    return c["body"].startswith(MARK) and (who["login"] == me if me else who["type"] == "Bot")
+
+
 def refusal(e: urllib.error.HTTPError) -> str:
     """What GitHub said when it refused: its status and its message."""
     try:
@@ -77,11 +99,12 @@ def main() -> int:
     with open(os.path.join(env["RUNNER_TEMP"], "rowstile-review.md"), encoding="utf-8") as fh:
         body = {"body": cut(fh.read(), run)}
     try:
-        # one comment, updated in place: the one that starts with the review's marker
+        # one comment, updated in place: the one that starts with the review's marker, and that this token wrote
+        me = account(token)
         found, page = None, 1
         while found is None:
             comments = cast(list[Comment], call("GET", f"{api}/{pr}/comments?per_page=100&page={page}", token))
-            found = next((c["id"] for c in comments if c["body"].startswith(MARK)), None)
+            found = next((c["id"] for c in comments if ours(c, me)), None)
             if len(comments) < 100:
                 break
             page += 1

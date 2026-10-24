@@ -15965,14 +15965,23 @@ class ReviewInCI(unittest.TestCase):
         return shell.group(1), names, run
 
     def comment(
-        self, review: str, fork: bool, readonly: bool, posted: list[dict[str, str]]
+        self, review: str, fork: bool, readonly: bool, posted: list[dict[str, str]], me: str | None = None
     ) -> tuple[int, str, list[str]]:
         """Runs the comment step on `review` against a stand-in for GitHub's API, which refuses a read-only token's
-        writes (403) and a comment over 65,536 characters (422), as GitHub does. `posted` is the pull request's
-        comments, as the stand-in keeps them. (exit status, output, each request's method)."""
+        writes (403), a comment over 65,536 characters (422) and an edit of another's comment (403), as GitHub
+        does. `posted` is the pull request's comments, as the stand-in keeps them, each with its author's login
+        (`login`; the workflow's, github-actions[bot], if none). `me` is the token's account: None for the workflow's
+        own token, which GitHub doesn't answer /user for. (exit status, output, each request: its method, WHO for
+        /user)."""
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
         calls: list[str] = []
+        writer = me or "github-actions[bot]"
+        for c in posted:
+            c.setdefault("login", "github-actions[bot]")
+
+        def kind(login: str) -> str:
+            return "Bot" if login.endswith("[bot]") else "User"
 
         class GitHub(BaseHTTPRequestHandler):
             def log_message(self, format: str, *args: object) -> None:
@@ -15987,8 +15996,19 @@ class ReviewInCI(unittest.TestCase):
                 self.wfile.write(data)
 
             def do_GET(self) -> None:
+                if self.path.endswith("/user"):
+                    calls.append("WHO")
+                    if me is None:
+                        return self.reply(403, {"message": "Resource not accessible by integration"})
+                    return self.reply(200, {"login": me, "type": "User"})
                 calls.append("GET")
-                self.reply(200, [{"id": i + 1, "body": c["body"]} for i, c in enumerate(posted)])
+                self.reply(
+                    200,
+                    [
+                        {"id": i + 1, "body": c["body"], "user": {"login": c["login"], "type": kind(c["login"])}}
+                        for i, c in enumerate(posted)
+                    ],
+                )
 
             def write(self) -> None:
                 calls.append(self.command)
@@ -15998,9 +16018,12 @@ class ReviewInCI(unittest.TestCase):
                 if len(body) > 65536:
                     return self.reply(422, {"message": "Validation Failed"})
                 if self.command == "POST":
-                    posted.append({"body": body})
+                    posted.append({"body": body, "login": writer})
                 else:
-                    posted[int(self.path.rsplit("/", 1)[1]) - 1] = {"body": body}
+                    i = int(self.path.rsplit("/", 1)[1]) - 1
+                    if posted[i]["login"] != writer:
+                        return self.reply(403, {"message": "Resource not accessible by integration"})
+                    posted[i] = {"body": body, "login": writer}
                 self.reply(200, {"id": 1, "body": body})
 
             do_POST = write
@@ -16073,12 +16096,25 @@ class ReviewInCI(unittest.TestCase):
         self.assertEqual((comment, summary), ("<!-- rowstile review -->\n",) * 2)
 
     def test_the_comment_is_posted_then_updated_in_place(self) -> None:
-        posted: list[dict[str, str]] = [{"body": "a person's comment"}]
+        posted: list[dict[str, str]] = [{"body": "a person's comment", "login": "ann"}]
         status, out, calls = self.comment(self.review(1000), fork=False, readonly=False, posted=posted)
-        self.assertEqual((status, calls), (0, ["GET", "POST"]), out)
+        self.assertEqual((status, calls), (0, ["WHO", "GET", "POST"]), out)
         status, out, calls = self.comment(self.review(1000) + "again\n", fork=False, readonly=False, posted=posted)
-        self.assertEqual((status, calls), (0, ["GET", "PATCH"]), out)
+        self.assertEqual((status, calls), (0, ["WHO", "GET", "PATCH"]), out)
         self.assertEqual([c["body"] for c in posted], ["a person's comment", self.review(1000) + "again\n"])
+
+    def test_the_comment_updated_is_the_one_its_token_wrote(self) -> None:
+        # anyone may write a comment that starts with the marker: theirs stays as it is, and the review is posted
+        theirs = {"body": self.review(10) + "looks fine\n", "login": "ann"}
+        posted = [dict(theirs)]
+        status, out, calls = self.comment(self.review(1000), fork=False, readonly=False, posted=posted)
+        self.assertEqual((status, calls), (0, ["WHO", "GET", "POST"]), out)
+        self.assertEqual(posted, [theirs, {"body": self.review(1000), "login": "github-actions[bot]"}])
+        # with a person's token (GitHub answers /user): that account's comment, not another app's
+        posted = [{"body": self.review(10), "login": "github-actions[bot]"}, {"body": self.review(20), "login": "rev"}]
+        status, out, calls = self.comment(self.review(1000), fork=False, readonly=False, posted=posted, me="rev")
+        self.assertEqual((status, calls), (0, ["WHO", "GET", "PATCH"]), out)
+        self.assertEqual([c["body"] for c in posted], [self.review(10), self.review(1000)])
 
     def test_a_pull_request_from_a_fork_gets_the_summary_and_passes(self) -> None:
         # GitHub gives a fork's pull request a read-only token, whatever the workflow's permissions ask for
@@ -16089,7 +16125,7 @@ class ReviewInCI(unittest.TestCase):
             "read-only token: the review is in the run's summary, not in a comment.",
             out,
         )
-        self.assertEqual(calls, ["GET", "POST"])
+        self.assertEqual(calls, ["WHO", "GET", "POST"])
         # elsewhere a refusal is the workflow's permissions: the step fails, and says what to give it
         status, out, _ = self.comment(self.review(1000), fork=False, readonly=True, posted=[])
         self.assertEqual(status, 1, out)
@@ -16117,7 +16153,7 @@ class ReviewInCI(unittest.TestCase):
         # one that fits is posted whole
         posted.clear()
         self.assertEqual(self.comment(self.review(50_000), fork=False, readonly=False, posted=posted)[0], 0)
-        self.assertEqual(posted, [{"body": self.review(50_000)}])
+        self.assertEqual([c["body"] for c in posted], [self.review(50_000)])
 
     def gitlab(self, review: str, notes: list[dict[str, object]]) -> tuple[int, str, list[dict[str, object]]]:
         """Runs the template's script as GitLab runs it (bash, -eo pipefail), with a rowstile that writes `review`
@@ -16154,7 +16190,10 @@ class ReviewInCI(unittest.TestCase):
                     f"with open({tmp + '/calls'!r}, 'a', encoding='utf-8') as fh:\n"
                     "    fh.write(json.dumps({'args': [a for a in args if len(a) < 4096], 'long': max(map(len, args)), "
                     "'data': data and json.loads(data)}) + '\\n')\n"
-                    f"if '-X' not in args:\n    print(open({tmp + '/notes.json'!r}).read())\n"
+                    # the token's user is 77: a note without an author is theirs
+                    "if '-X' not in args and args[-1].endswith('/user'):\n    print(json.dumps({'id': 77}))\n"
+                    f"elif '-X' not in args:\n    notes = json.load(open({tmp + '/notes.json'!r}))\n"
+                    "    print(json.dumps([{'author': {'id': 77}, **n} for n in notes]))\n"
                 )
             for name in ("rowstile", "curl"):
                 os.chmod(os.path.join(stubs, name), 0o755)
@@ -16183,24 +16222,30 @@ class ReviewInCI(unittest.TestCase):
     def test_gitlab_posts_a_long_review_from_a_file_then_updates_it(self) -> None:
         # one argument holds 128 KiB at most on Linux: the note goes in a file
         review = self.review(200_000)
-        status, out, calls = self.gitlab(review, [{"id": 8, "body": "a person's note"}])
+        status, out, calls = self.gitlab(review, [{"id": 8, "body": "a person's note", "author": {"id": 1}}])
         self.assertEqual(status, 0, out)
-        self.assertEqual(len(calls), 2, calls)
-        self.assertIn("POST", cast(list[str], calls[1]["args"]))
-        self.assertIn("--data-binary", cast(list[str], calls[1]["args"]))
-        self.assertLess(cast(int, calls[1]["long"]), 4096)
-        self.assertEqual(calls[1]["data"], {"body": review})
+        self.assertEqual(len(calls), 3, calls)
+        self.assertIn("POST", cast(list[str], calls[2]["args"]))
+        self.assertIn("--data-binary", cast(list[str], calls[2]["args"]))
+        self.assertLess(cast(int, calls[2]["long"]), 4096)
+        self.assertEqual(calls[2]["data"], {"body": review})
         # the note posted before is updated in place
-        status, out, calls = self.gitlab(review, [{"id": 8, "body": "a person's note"}, {"id": 9, "body": review}])
+        status, out, calls = self.gitlab(
+            review, [{"id": 8, "body": "a person's note", "author": {"id": 1}}, {"id": 9, "body": review}]
+        )
         self.assertEqual(status, 0, out)
-        self.assertIn("PUT", cast(list[str], calls[1]["args"]))
-        self.assertTrue(cast(list[str], calls[1]["args"])[-1].endswith("/merge_requests/5/notes/9"))
+        self.assertIn("PUT", cast(list[str], calls[2]["args"]))
+        self.assertTrue(cast(list[str], calls[2]["args"])[-1].endswith("/merge_requests/5/notes/9"))
+        # one that starts with the marker but another user wrote (anyone may) stays theirs: the review is posted
+        status, out, calls = self.gitlab(review, [{"id": 8, "body": review, "author": {"id": 1}}])
+        self.assertEqual(status, 0, out)
+        self.assertIn("POST", cast(list[str], calls[2]["args"]))
 
     def test_gitlab_cuts_a_review_longer_than_a_note(self) -> None:
         review = self.review(1_100_000)
         status, out, calls = self.gitlab(review, [])
         self.assertEqual(status, 0, out)
-        body = cast(dict[str, str], calls[1]["data"])["body"]
+        body = cast(dict[str, str], calls[2]["data"])["body"]
         self.assertLessEqual(len(body), 1_000_000)
         self.assertTrue(review.startswith(body.split("\n\n</details>\n\n**The review")[0]), body[-300:])
         self.assertTrue(

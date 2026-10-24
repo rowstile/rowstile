@@ -42,11 +42,13 @@ rowstile-review:
     - |
       if [ -n "${ROWSTILE_REVIEW_TOKEN:-}" ]; then
         api="$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes"
-        # the note that starts with the review's marker, on whichever page of the notes it is
+        # the note that starts with the review's marker and that the token's user wrote (anyone may write a note
+        # that starts so), on whichever page of the notes it is
+        me=$(curl -sf -H "PRIVATE-TOKEN: $ROWSTILE_REVIEW_TOKEN" "$CI_API_V4_URL/user" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
         id=""; page=1
         while :; do
           found=$(curl -sf -H "PRIVATE-TOKEN: $ROWSTILE_REVIEW_TOKEN" "$api?per_page=100&page=$page" |
-                  python3 -c 'import json,sys; ns=json.load(sys.stdin); n=[x["id"] for x in ns if x["body"].startswith("<!-- rowstile review -->")]; print(n[0] if n else "", len(ns))')
+                  ME=$me python3 -c 'import json,os,sys; ns=json.load(sys.stdin); n=[x["id"] for x in ns if x["body"].startswith("<!-- rowstile review -->") and str(x["author"]["id"]) == os.environ["ME"]]; print(n[0] if n else "", len(ns))')
           id=${found% *}; count=${found##* }
           if [ -n "$id" ] || [ "${count:-0}" -lt 100 ]; then break; fi
           page=$((page + 1))

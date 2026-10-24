@@ -25,6 +25,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   (`viewer : user shared if {...}` beside `viewer : team#member shared`). It compared the relation's conditions
   together, and a subject shared without one hid the change of another's. The flag names the subject there:
   "`doc.viewer` for `user`: its share condition changed".
+- The review's GitHub action and GitLab template update only the comment their token wrote. They took the first
+  one that starts with the review's marker, whoever wrote it: a person's comment starting so was overwritten with
+  the review, or GitHub refused the edit and the job failed. Now theirs stays, and the review is posted beside it.
 
 ## 0.1.0-beta.1 (2026-10-22)
 
