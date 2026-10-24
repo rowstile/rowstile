@@ -72,7 +72,7 @@ function authz.list_links(p_type text, p_id integer) | cec8e40d450f shape=92b361
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
 function authz.list_shares(p_type text, p_id integer) | 240ca74609bd shape=665dd3d5
 function authz.list_shares(p_type text, p_id text) | 3eb4ea871fe0 shape=36731fe1
-function authz.login_jwt(p_token text) | c37b1cfc697c shape=57d5745b
+function authz.login_jwt(p_token text) | 40f269bfa184 shape=57d5745b
 function authz.login_key(p_token text) | 0371744d9925 shape=f3077520
 function authz.pending_requests() | fb26fccd4e34 shape=872485a8
 function authz.perms(p_type text, p_id integer) | 5c62b8a0215d shape=8f3765fb
@@ -104,7 +104,7 @@ function authz.unshare(p_type text, p_id integer, p_relation text, p_subject_typ
 function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text) | 321df275fba9 shape=80662401
 function authz.unshare(p_type text, p_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | 7b1add04a56d shape=d4ebe9cc
 function authz.verify() | 8e50658767de shape=8e0f53a6
-function authz.view_as(p_user text, p_reason text) | f584bb4a4348 shape=5d7b6326
+function authz.view_as(p_user text, p_reason text) | bf76b2722b72 shape=5d7b6326
 function authz.who(p_type text, p_id integer, p_perm text) | 392e8fa82862 shape=b6bb06d3
 function authz.who(p_type text, p_id text, p_perm text) | 57bdb14b17ff shape=1cf83af9
 function authz.who_among(p_type text, p_id integer, p_perm text, p_users text[], p_principal_type text) | 3cbf9dbbd703 shape=21122f56
@@ -260,7 +260,7 @@ function authz_int.role_relations(p_type text, p_perm text) | a76149d22783 shape
 function authz_int.scope_cmd(p_table text, p_cmd text) | 3473f95d8cfd shape=935f1a39
 function authz_int.scope_perm(p_type text, p_perm text) | b54d98533b98 shape=6c64efba
 function authz_int.scopes_active() | 2ad7d14d2bec shape=a01d60f5
-function authz_int.session_ok() | 6695051b2384 shape=5f5c1ab1
+function authz_int.session_ok() | 9cb35a283ec9 shape=5f5c1ab1
 function authz_int.session_refused() | 1bba4bdf36fe shape=3950e31a
 function authz_int.session_sig() | 52b1d4733768 shape=7531c149
 function authz_int.share_if(p_key text, p_object_id text, p_subject_type text, p_subject_id text, p_subject_relation text) | 36fbdc8a3756 shape=f9b63b7b
