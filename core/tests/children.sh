@@ -215,6 +215,11 @@ PSQL -c "GRANT TRUNCATE ON ch.frozen_hold TO app_user"
 same "lint says the app role may empty a partition of the table a condition reads, which skips its triggers" \
   "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.frozen_hold' AND problem LIKE 'is a partition of ch.frozen (or inherits from it), and app_user may TRUNCATE it, %'")" 1
 PSQL -c "REVOKE TRUNCATE ON ch.frozen_hold FROM app_user"
+# (a governed table has triggers of rowstile's too: it is still one table above, said once)
+PSQL -c "GRANT TRUNCATE ON ch.notes_top TO app_user"
+same "... and once a partition of a governed table" \
+  "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.notes_top' AND problem LIKE 'is a partition of ch.notes (or inherits from it), and app_user may TRUNCATE it, %'")" 1
+PSQL -c "REVOKE TRUNCATE ON ch.notes_top FROM app_user"
 run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "apply after a partition of a table without rules was made" "$out"
 same "... lint has nothing more to say of them" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object IN ('ch.topics_top', 'ch.frozen_hold')")" 0
 # (not the triggers for TRUNCATE alone: emptying a partition is not emptying its table, which is what they do)

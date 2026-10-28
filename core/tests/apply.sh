@@ -411,12 +411,21 @@ out=$(python3 cli/rowstile_cli.py --db "dbname=${DB}_restored" reapply --force 2
 case "$out" in *t) ok "... reapply --force computes them again";; *) bad "reapply --force" "$out";; esac
 # a delete with the triggers off leaves the gone folder's rows behind: verify() looks for them too
 R -c "INSERT INTO app.folders (id, org_id, parent_id, name) SELECT 9001, org_id, 4, 'gone' FROM app.folders WHERE id = 4" \
+  -c "SET authz.user_id = 5" -c "SELECT authz.share('folder', 9001, 'viewer', 'user', 3)" -c "RESET authz.user_id" \
+  -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation)
+      VALUES ('folder', '9001', 'viewer', 'user', '*', '')" \
   -c "ALTER TABLE app.folders DISABLE TRIGGER USER" -c "DELETE FROM app.folders WHERE id = 9001" \
   -c "ALTER TABLE app.folders ENABLE TRIGGER USER" >/dev/null
 [ "$(R -c "SELECT authz.verify()")" = f ] && ok "a delete made with the triggers off leaves rows of a gone folder: verify() is false" ||
   bad "verify after a delete without triggers"
+SWEPT="SELECT count(*) FROM authz.shares WHERE object_type = 'folder' AND object_id = '9001'"
+[ "$(R -c "$SWEPT")" = 2 ] || bad "the two shares on folder 9001, before it is deleted unwatched" "$(R -c "$SWEPT")"
 out=$(python3 cli/rowstile_cli.py --db "dbname=${DB}_restored" reapply --force 2>&1 && R -c "SELECT authz.verify()")
 case "$out" in *t) ok "... and reapply --force takes them out";; *) bad "reapply --force after a delete" "$out";; esac
+# (and the shares on it, to user:* too, as a policy that allowed it would have left: '*' is no row on the subject's
+# side only)
+[ "$(R -c "$SWEPT")" = 0 ] &&
+  ok "... and the shares on the gone folder, the one to every signed-in user too" || bad "shares on a folder deleted unwatched"
 R -c "ALTER TABLE app.folders DISABLE TRIGGER USER" -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" -c "ALTER TABLE app.folders ENABLE TRIGGER USER" >/dev/null
 R -c "SELECT policy FROM authz.policy_versions ORDER BY id DESC LIMIT 1" > "$T/in_force.authz"
 out=$(python3 cli/rowstile_cli.py --db "dbname=${DB}_restored" apply "$T/in_force.authz" --force 2>&1 && R -c "SELECT authz.verify()")
@@ -877,9 +886,10 @@ dropdb "$UDB"
 
 echo "-- a type whose key changes type (text, then bigint)"
 # a share's ids are stored as the canonical text of the type's key, which changes with the key's type: applying
-# again makes the shares stored before canonical for the new one (two spellings of one share kept once), so the
-# sweep of shares on rows that are gone, which compares text, keeps them. (rowstile's triggers on the key stop
-# its type from changing: the policy is removed first, and applied again after.)
+# again makes the shares stored before canonical for the new one (two spellings of one share kept once, whether
+# one of them is canonical or neither), so the sweep of shares on rows that are gone, which compares text, keeps
+# them. (rowstile's triggers on the key stop its type from changing: the policy is removed first, and applied
+# again after.)
 KDB="${DB}_key"
 fresh "$KDB"
 quiet -d "$KDB" >/dev/null <<'SQL' || exit 1
@@ -895,16 +905,16 @@ K() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$KDB" "$@"; }
 tagged() { K -c "SELECT string_agg(object_id || '>' || subject_id, ' ' ORDER BY object_id, subject_id) FROM authz.shares WHERE object_type = 'tag'"; }
 out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags_text.authz" 2>&1) &&
   K -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES
-          ('tag', '012', 'viewer', 'user', '04'), ('tag', '0013', 'viewer', 'user', '3')" >/dev/null &&
+          ('tag', '012', 'viewer', 'user', '04'), ('tag', '0013', 'viewer', 'user', '3'), ('tag', '013', 'viewer', 'user', '03')" >/dev/null &&
   out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" remove --yes 2>&1) &&
   K -c "ALTER TABLE app.tags ALTER COLUMN id TYPE bigint USING id::bigint" \
     -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('tag', '12', 'viewer', 'user', '4')" >/dev/null ||
   bad "a policy over tags" "$out"
 before=$(tagged)
 out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags.authz" 2>&1)
-[ "$before" = "0013>3 012>4 12>4" ] && [ "$out" = "$T/tags.authz: applied" ] && [ "$(tagged)" = "12>4 13>3" ] &&
+[ "$before" = "0013>3 012>4 013>3 12>4" ] && [ "$out" = "$T/tags.authz: applied" ] && [ "$(tagged)" = "12>4 13>3" ] &&
   [ "$(K -c "SET authz.user_id = 3" -c "SELECT authz.can('tag', 13, 'view')")" = t ] &&
-  ok "applying after a key's type changed makes the shares' ids canonical for it, keeping one of two spellings" ||
+  ok "applying after a key's type changed makes the shares' ids canonical for it, keeping one of two spellings, or of two not canonical" ||
   bad "a key whose type changed" "$out: $before, then $(tagged)"
 # the warning of a table left with no rules, when its rule was the only one: no other policy of rowstile's is there
 printf '\nrules app.tags\n  select : view\n' | cat "$T/tags.authz" - > "$T/tags_rules.authz"

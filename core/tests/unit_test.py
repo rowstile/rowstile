@@ -362,6 +362,8 @@ class ThisRow(unittest.TestCase):
         )
         self.assertEqual(this_spans("→this.x = 1"), [])  # →this is a name: x is that table's
         self.assertFalse(this_alone("→this = 1") or this_alone("this→ = 1"))
+        # ... from the first character past ASCII on, U+0080: a name that ends in E is no E'' string, `this.` after it
+        self.assertEqual(this_spans("\x80E'a\\' = this.x"), [(9, 14)])
         self.assertEqual(names_in("archivé and année"), {"archivé", "and", "année"})
         self.assertEqual(
             [m.group(1) for m in BARE.finditer("archivé and d.é or é(1) > année")], ["archivé", "and", "or", "année"]
@@ -554,14 +556,15 @@ class Compiling(unittest.TestCase):
 
     def test_the_condition_an_error_points_just_after(self) -> None:
         """Postgres may point a little past a condition it refused (a syntax error at what follows it): up to two
-        characters past its end, that condition is the one named, among several in the statement."""
+        characters past its end, that condition is the one named, among several in the statement. An empty
+        `where {}` on another line matches nowhere (an empty text would match at every position)."""
 
         class Refused(Exception):
             def __init__(self, fields: dict[str, str]) -> None:
                 super().__init__("refused")
                 self.fields = fields
 
-        policy = "app role app_user\ntype user = app.users\ntype doc = app.docs\n  can a = {x > 1}\n  can b = {y < 2}\n"
+        policy = "app role app_user\ntype user = app.users where {}\ntype doc = app.docs\n  can a = {x > 1}\n  can b = {y < 2}\n"
         sql = "SELECT 1;\nSELECT (x > 1) OR (y < 2) FROM t;\n"
         for past, line in ((2, 4), (3, None)):
             at = sql.index("x > 1") + len("x > 1") + past
@@ -2795,6 +2798,7 @@ class Statements(unittest.TestCase):
         self.assertEqual(split("SELECT année, ñ, ²x FROM t"), [("", "SELECT année, ñ, ²x FROM t")])
         # a name that ends in E is no E'' string, nor is a number's: its backslash escapes nothing
         self.assertEqual(split("SELECT x →E'a\\'; SELECT 2"), [("", "SELECT x →E'a\\'"), ("", "SELECT 2")])
+        self.assertEqual(split("SELECT x \x80E'a\\'; SELECT 2"), [("", "SELECT x \x80E'a\\'"), ("", "SELECT 2")])
         self.assertEqual(split("SELECT 1E'a\\'; SELECT 2"), [("", "SELECT 1E'a\\'"), ("", "SELECT 2")])
         self.assertEqual(split("SELECT x E'a\\'; b'; SELECT 3"), [("", "SELECT x E'a\\'; b'"), ("", "SELECT 3")])
         # a dollar quote's tag, and a $ inside a name
@@ -4607,6 +4611,24 @@ class Draft(unittest.TestCase):
             "auth.users: public.posts.user_id points to it, and it isn't in public: draft its schema too (--schema "
             "public,auth), or name the table that holds your users: rowstile init --users schema.table [AZ621]",
         )
+        # three columns are all said; past three, the first three and "and more"
+        for n, said in (
+            (3, "public.posts.user_1, public.posts.user_2, public.posts.user_3 point"),
+            (4, "and more point"),
+        ):
+            cols = [f"user_{k}" for k in range(1, n + 1)]
+            many = self.table(
+                "public.posts",
+                {"id": "bigint", **dict.fromkeys(cols, "uuid")},
+                ["id"],
+                tuple(([c], "auth.users", ["id"]) for c in cols),
+            )
+            with self.assertRaises(draft.DraftError) as e:
+                draft.draft([many], schemas=("public",))
+            self.assertIn(
+                "auth.users: public.posts.user_1, public.posts.user_2, public.posts.user_3 ", str(e.exception)
+            )
+            self.assertIn(f" {said} to it, ", str(e.exception))
         odd = self.table("public.Benutzer-2", {"id": "uuid"}, ["id"])
         with self.assertRaises(draft.DraftError) as e:
             draft.draft([odd, posts("public.Benutzer-2")], schemas=("public",))
@@ -7821,6 +7843,8 @@ class Confidence(unittest.TestCase):
         rare = list(evaluate.rare_worlds([pol], 80, "0"))
         self.assertEqual(len(rare), evaluate.dense_worlds(80) + 12)
         self.assertEqual([w.size for w in rare if w.chained], [4] * 12)
+        # half of the chains dense too
+        self.assertEqual([w.density for w in rare if w.chained], [None, evaluate.DENSITIES[0]] * 6)
 
     def test_a_corner_chooses_as_many_values_as_it_tries(self) -> None:
         # four columns of eight values each (the six named, one none of them names, NULL): just as many combinations

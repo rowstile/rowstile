@@ -117,6 +117,8 @@ run list --as user:2 folder view; [ "$out" = 4 ] && ok "list" || bad "list" "$ou
 run why --as user:2 folder 3 edit; case "$out" in *"would be granted by:"*"share editor on folder 3 with user 2"*"set ownerId of folder 3 to 2"*) ok "why: the shares and the column that would grant it";; *) bad "why" "$out";; esac
 run plans --as user:1
 case "$out" in *failed*) bad "plans" "$out";; "as user:1:"$'\n'"  public.Folder: "[0-9]*" ms"*$'\n'"  public.Note: "[0-9]*" ms"*) ok "plans: each table read as the app, by its quoted name";; *) bad "plans" "$out";; esac
+run plans
+case "$out" in *failed*) bad "plans, as the first user" "$out";; "as user:1:"$'\n'*) ok "... and as the first user, found in a table named with capitals";; *) bad "plans, as the first user" "$out";; esac
 as 1 "SELECT authz.share('folder', 1, 'viewer', 'user', 2)" >/dev/null
 [ "$(as 2 'SET ROLE app_user; SELECT id FROM "Folder" ORDER BY id' | tr '\n' ' ')" = "1 2 3 4 " ] && ok "a share on the top folder shows what is under it" || bad "rows after a share"
 [ "$(as 2 'SET ROLE app_user; SELECT count(*), count(body) FROM "NoteShown" WHERE id IN (1, 2)')" = "2|0" ] && ok "the masked view shows a viewer the notes without their text" || bad "the masked view"
@@ -282,8 +284,10 @@ type Folder = public.Folder (id int)
 type Note = public.Note (id int)
   folder : Folder       = folderId
   keeper : Folder#owner = folderId   -- a column naming a group: the owners of the note's folder
+  holder : Folder#owner = public.Note(id -> folderId)   -- ... and a table's rows naming one
   can view = folder.view
   can keep = keeper
+  can hold = holder
 EOF
 run --db "dbname=$DB3" apply "$T/types.authz"
 case "$out" in *"types.authz: applied") ok "apply: types named with capitals";; *) bad "apply, types named with capitals" "$out";; esac
@@ -293,6 +297,9 @@ got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1',
 got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1', 'keep', '1') WITH ORDINALITY x(e, n)")
 [ "$got" = "yes  user 1 holds keep on Note 1|  Note.keep = keeper|  yes  keeper|    yes  keeper: folderId is Folder 1, and you are owner there|      yes  owner: ownerId is you" ] &&
   ok "... and a column naming the group of one" || bad "explain through Folder#owner" "$got"
+got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1', 'hold', '1') WITH ORDINALITY x(e, n)")
+[ "$got" = "yes  user 1 holds hold on Note 1|  Note.hold = holder|  yes  holder|    yes  holder: a row in public.Note names Folder 1, and you are owner there|      yes  owner: ownerId is you" ] &&
+  ok "... and a table's row naming the group of one" || bad "explain through a table naming Folder#owner" "$got"
 [ -z "${KEEP:-}" ] && dropdb "$DB3"
 
 echo "-- an app role named with capitals"

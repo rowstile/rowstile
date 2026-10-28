@@ -890,7 +890,11 @@ SHARED="SELECT count(*) FILTER (WHERE object_type = 'file') || '|' || count(*) F
 before=$(PSQL -c "$SHARED")
 { [ "${before%%|*}" -gt 0 ] && [ "${before##*|}" -gt 0 ]; } 2>/dev/null ||
   { echo "FAIL  a share on a file and one to a team, to empty their tables under: $before"; fails=$((fails + 1)); }
+# and a request for a file, which emptying the table cancels: its object is gone (the call says no id)
+RQT=$(as 3 -c "SELECT authz.request_access('file', 13, 'viewer', 'carol needs it')")
 PSQL -c "TRUNCATE app.files" >/dev/null
+admin "emptying a table cancels the pending requests for its rows, and says its object is gone" "cancelled|its object is gone" \
+  "SELECT status || '|' || note FROM authz.requests WHERE id = $RQT"
 admin "emptying a table whose columns hold relations is recorded" "truncate|app.files" \
   "SELECT action || '|' || (detail ->> 'table') FROM authz.audit WHERE action = 'truncate' AND object_type = 'file'"
 admin "... and announced for every file" "1" \
@@ -965,5 +969,41 @@ got=$(TQ -c "SELECT string_agg(user_id || ' ' || object_ids::text, ', ') FROM au
 [ "$got" = "1 {3}" ] && echo "ok    ... and an invariant's condition reads the folder it is about: the marked folder breaks it" ||
   { echo "FAIL  an invariant whose subquery calls its table r: $got"; fails=$((fails + 1)); }
 dropdb "$TDB"; rm -f $T/governance_this.authz
+
+echo "-- a polymorphic pair's type column (tests/hand/polymorphic-type-names.authz)"
+createdb "$TDB" || exit 1
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$TDB" -f tests/hand/schema.sql >/dev/null &&
+python3 cli/rowstile_cli.py --db "dbname=$TDB" apply tests/hand/polymorphic-type-names.authz >/dev/null || exit 1
+TQ -c "INSERT INTO app.users (id) VALUES (1)" -c "INSERT INTO app.projects (id, owner_id) VALUES (1, 1)" \
+   -c "INSERT INTO app.folders (id, owner_id) VALUES (1, 1)" \
+   -c "INSERT INTO app.folders (id, parent_type, parent_id) VALUES (10, 'folder', 1)" \
+   -c "UPDATE app.folders SET parent_type = 'project' WHERE id = 10" >/dev/null
+got=$(TQ -c "SELECT string_agg(object_id || ' ' || relation || ' ' || subject_id || ' ' || detail::text, ', ') FROM authz.audit WHERE action = 'relate'")
+[ "$got" = '10 parent project {"was": "folder", "column": "parent_type"}' ] &&
+  echo "ok    a change of a polymorphic pair's type column alone is recorded, with what it was" ||
+  { echo "FAIL  a change of the type column of a pair: $got"; fails=$((fails + 1)); }
+dropdb "$TDB"
+
+echo "-- a custom role given to anyone, to every signed-in user and to a link: explain says to whom"
+createdb "$TDB" || exit 1
+TQ -c "CREATE SCHEMA app" -c "CREATE TABLE app.users (id bigint PRIMARY KEY)" \
+   -c "CREATE TABLE app.orgs (id bigint PRIMARY KEY, admin_id bigint)" -c "CREATE TABLE app.docs (id bigint PRIMARY KEY, org_id bigint)" \
+   -c "INSERT INTO app.users VALUES (1), (2)" -c "INSERT INTO app.orgs VALUES (1, 1)" -c "INSERT INTO app.docs VALUES (1, 1)" >/dev/null
+printf '%s\n' "app role app_user" "type user = app.users" "type org = app.orgs" "  admin : user = admin_id" \
+  "  can manage_roles = admin" "type doc = app.docs" "  org : org = org_id" "  roles : user, user:*, anyone, link from org" \
+  "  can share = org.manage_roles" "  can view = roles or share" > "$T/governance_roles.authz"
+python3 cli/rowstile_cli.py --db "dbname=$TDB" apply "$T/governance_roles.authz" >/dev/null || exit 1
+RR=$(TQ -c "SET authz.user_id = 1" -c "SELECT authz.create_role('org', 1, 'doc', 'reader', ARRAY['view'])" | tail -n 1)
+given() { TQ -c "SET authz.user_id = 2" -c "${1:-SELECT 1}" -c "SELECT * FROM authz.explain('doc', '1', 'view')" | sed -n 's/^ *yes  a custom role given to //p'; }
+TQ -c "SET authz.user_id = 1" -c "SELECT authz.share('doc', 1, 'role:$RR', 'anyone', '')" >/dev/null
+got=$(given)
+TQ -c "SET authz.user_id = 1" -c "SELECT authz.unshare('doc', 1, 'role:$RR', 'anyone', '')" -c "SELECT authz.share('doc', 1, 'role:$RR', 'user', '*')" >/dev/null
+got="$got|$(given)"
+LINK=$(TQ -c "SET authz.user_id = 1" -c "SELECT authz.unshare('doc', 1, 'role:$RR', 'user', '*')" -c "SELECT authz.create_link('doc', 1, 'role:$RR')" | tail -n 1)
+got="$got|$(given "SET authz_ctx.links = '$LINK'")"
+[ "$got" = "anyone (by 1) (role reader)|every signed-in user (by 1) (role reader)|a link you presented (by 1) (role reader)" ] &&
+  echo "ok    explain says whom a custom role was given to: anyone, every signed-in user, a link" ||
+  { echo "FAIL  explain, a custom role given to anyone, every user or a link: $got"; fails=$((fails + 1)); }
+dropdb "$TDB"; rm -f "$T/governance_roles.authz"
 dropdb "$DB"
 if [ $fails -eq 0 ]; then echo "governance: all passed"; else echo "governance: $fails failed"; exit 1; fi

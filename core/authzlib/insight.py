@@ -435,6 +435,10 @@ END $f$;"""
             base = f"{name}: a row in {src.table}"
             return base + (" names you" if you else " names")
         if src.kind == "roles":
+            if sr == "*":
+                return f"{name} given to every signed-in {st}"
+            if st in ("anyone", "link"):
+                return f"{name} given to " + ("anyone" if st == "anyone" else "a link you presented")
             return f"{name} given to " + ("you" if you else "")
         if sr == "*":
             return f"{name}: shared with every signed-in {st}"
