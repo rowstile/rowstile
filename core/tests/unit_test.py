@@ -11430,7 +11430,7 @@ class BlogPosts(unittest.TestCase):
         import statistics
 
         folder = os.path.join(self.REPO, "docs", "blog")
-        with open(os.path.join(folder, "2026-10-20-row-level-security-on-one-cpu.md"), encoding="utf-8") as fh:
+        with open(os.path.join(folder, "2026-10-28-row-level-security-on-one-cpu.md"), encoding="utf-8") as fh:
             text = fh.read()
         flat = " ".join(text.split())
         runs: dict[int, dict[str, str]] = {}
@@ -11504,6 +11504,11 @@ class BlogPosts(unittest.TestCase):
             self.assertIn("(actual rows=40000", sections["3"])
             # max_parallel_workers_per_gather, work_mem and hash_mem_multiplier: the defaults
             self.assertRegex(settings[version], r"\|\s+2\s+\|\s+4MB\s+\|\s+2\n")
+        # the script tells a reader to read the figure the tables give
+        with open(os.path.join(folder, "row-level-security-on-one-cpu", "experiment.sql"), encoding="utf-8") as fh:
+            script = " ".join(fh.read().split("\n-- "))
+        self.assertIn("Each number is the middle one of three runs.", flat)
+        self.assertIn('Each query runs three times; read the middle "Execution Time" of each.', script)
         (_, count), (_, one) = middles(runs[18]["7"])
         self.assertIn(f"the same count takes {count} in one process", flat)
         self.assertIn(f"opening one file {one}", flat)

@@ -6,7 +6,7 @@
 --   createdb rls_parallel && psql -X -d rls_parallel -v files=2000000 -f experiment.sql
 --
 -- It makes a schema `demo` and a role `demo_app`, and drops neither. PostgreSQL 16 or later, default settings
--- but for JIT, which is off. Each query runs three times; read the last "Execution Time" of each.
+-- but for JIT, which is off. Each query runs three times; read the middle "Execution Time" of each.
 
 \set ON_ERROR_STOP on
 \if :{?files} \else \set files 2000000 \endif
