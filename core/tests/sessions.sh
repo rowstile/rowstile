@@ -295,6 +295,9 @@ if [ -n "${PGSUPERUSER:-}" ]; then
   # BYPASSRLS without being a superuser is enough to be an administrator after SET ROLE
   ROLE=authz_sess_bypass expect "... and after SET ROLE app_user, that it logs in as an administrator" "1" -c "SET ROLE app_user" \
     -c "SELECT count(*) FROM authz.connection_check() WHERE problem LIKE 'this connection logs in as authz_sess_bypass, %'"
+  # ... and is one in its own: signed in as a user who can't see folder 5, it may still ask who has access to it
+  ROLE=authz_sess_bypass expect "... and is one: it may ask who has access to an object its user can't see" "t" \
+    -c "$(ACT "'user', '3'")" -c "SELECT count(*) > 0 FROM authz.who('folder', '5', 'view')"
   psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS authz_sess_bypass" >/dev/null 2>&1
 fi
 expect "a login in the app role: no errors" "0" -c "SELECT count(*) FROM authz.connection_check() WHERE severity = 'error'"

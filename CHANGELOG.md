@@ -40,6 +40,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   the scope `read`, so a key whose scopes let it view as a user read everything that user may, beyond what the
   key itself was given. A session without scopes still views with `read`. The session's signature and a JWT's
   are now compared through their hashes, so the time a comparison takes says nothing of how much of one is right.
+- `authz.explain` says to whom a custom role was given when it was given to `anyone`, to every signed-in user
+  (`user:*`) or to a link: "a custom role given to anyone (by 1) (role reader)". It said "a custom role given to
+  (by 1)", naming nobody.
 
 ## 0.1.0-beta.1 (2026-10-22)
 

@@ -12,7 +12,7 @@ T=$(mktemp -d)
 # whatever way the suite ends: its database, its role, its files
 cleanup() {
   [ -n "${KEEP:-}" ] || dropdb --force --if-exists "$DB" 2>/dev/null
-  psql -X -q -d postgres -c "DROP ROLE IF EXISTS authz_masks_reader" >/dev/null 2>&1
+  psql -X -q -d postgres -c "DROP ROLE IF EXISTS authz_masks_reader" -c "DROP ROLE IF EXISTS authz_masks_gone" >/dev/null 2>&1
   rm -rf "$T"
 }
 trap cleanup EXIT
@@ -174,5 +174,13 @@ out=$(migrate unmasked)
 fresh; apply $T/masks.sql >/dev/null; apply $T/masks_two.sql >/dev/null; apply $T/nomask.sql >/dev/null
 [ "$(acl)" = "$(PSQL -c "SELECT relacl FROM pg_class WHERE oid = 'mt.docs'::regclass") id= container_type= container_id= author_id= body=" ] &&
   ok "the table-wide SELECT a mask replaced, given back by applying once the masks changed and went: no column grant they gave is left" || bad "column grants left by unmasking" "$(acl)"
+# what a mask took from a role dropped since (an app role the policy named before): giving it back skips that role,
+# and forgets it
+fresh; apply $T/masks.sql >/dev/null
+PSQL -c "CREATE ROLE authz_masks_gone" -c "INSERT INTO authz.masked_tables VALUES ('mt.docs', 'authz_masks_gone', true, '{body}')" \
+     -c "DROP ROLE authz_masks_gone" >/dev/null
+out=$(apply $T/nomask.sql)
+[ -z "$out" ] && [ "$(PSQL -c "SELECT count(*) FROM authz.masked_tables")" = 0 ] &&
+  ok "unmasking skips a role dropped since, and forgets what was taken from it" || bad "unmasking with a role dropped since" "$out"
 
 if [ $fails -eq 0 ]; then echo "masks: all passed"; else echo "masks: $fails failed"; exit 1; fi

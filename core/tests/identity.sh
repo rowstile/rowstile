@@ -65,6 +65,9 @@ check "only the key's hash is kept, and its first ten characters" "true|true|tru
 check "the key signs in as alice" "1" "BEGIN; SELECT authz.login_key('$READ'); SELECT authz.uid(); COMMIT;"
 check "read-only key: may view file 11, not edit it" "true|false" \
   "BEGIN; SELECT authz.login_key('$READ'); SELECT authz.can('file', 11, 'view') || '|' || authz.can('file', 11, 'edit'); COMMIT;"
+# (its scope names the command select, not a permission: asked as one, it is outside the scope too, and false)
+check "... and a permission named as the command it may run is not in its scope" "false|0" \
+  "BEGIN; SELECT authz.login_key('$READ'); SELECT authz.can('file', 11, 'select') || '|' || (SELECT count(*) FROM authz.list('file', 'select')); COMMIT;"
 check "read-only key: SELECT works" "3" "BEGIN; SELECT authz.login_key('$READ'); SELECT count(*) FROM app.files; COMMIT;"
 check "read-only key: UPDATE changes nothing" "0" \
   "BEGIN; SELECT authz.login_key('$READ'); WITH u AS (UPDATE app.files SET body = 'x' WHERE id = 11 RETURNING 1) SELECT count(*) FROM u; ROLLBACK;"
@@ -76,6 +79,8 @@ case "$got" in *"no   the sign-in's scopes do not allow insert on app.files"*) e
   *) echo "FAIL  read-only key, an insert: $got"; fails=$((fails + 1));; esac
 expect_code "read-only key: cannot approve a request" "42501: this session is read-only (viewing as someone else, or a read-only token)" -c "BEGIN" -c "SELECT authz.login_key('$READ')" \
   -c "SELECT authz.decide_request(1, true)"
+expect_code "read-only key: cannot make a custom role (refused before anything else is asked)" "42501: this session is read-only (viewing as someone else, or a read-only token)" -c "BEGIN" -c "SELECT authz.login_key('$READ')" \
+  -c "SELECT authz.create_role('org', 1, 'folder', 'reader', ARRAY['view'])"
 expect_code "a read-only session cannot mint a broader key" "42501: this session is read-only (viewing as someone else, or a read-only token)" -c "BEGIN" -c "SELECT authz.login_key('$READ')" \
   -c "SELECT authz.create_api_key('sneaky', 'files')"
 expect_code "a session limited to a scope cannot make a key with another" "42501: a key cannot have more scopes than the session creating it" \
