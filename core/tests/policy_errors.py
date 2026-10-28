@@ -735,6 +735,17 @@ COMPILE = [
     ),
     # mistakes the parser reports that no case met (the coverage report)
     ("an empty condition", "  can see = owner and {   }\n", "empty {} condition", 10, "AZ102"),
+    # ... and wherever else a condition goes: left empty, a where or an if would read as none, which allows more
+    ("an empty where on a type", "type t3 = alt.docs where {}\n", "empty {} condition", 10, "AZ102"),
+    (
+        "an empty where on a link table",
+        "  viewer : user = alt.group_members(group_id -> user_id) where { }\n",
+        "empty {} condition",
+        10,
+        "AZ102",
+    ),
+    ("an empty shared if", "  helper : user shared if {}\n", "empty {} condition", 10, "AZ102"),
+    ("an empty caveat", "caveat c = {  }\n", "empty {} condition", 10, "AZ102"),
     ("a key column named twice", "type t2 = alt.docs (doc_no, doc_no)\n", "a key column is named twice", 10, "AZ206"),
     (
         "a link table's object side named as two columns",

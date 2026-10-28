@@ -13,6 +13,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 - `authz.cancel_request` writes a line in the audit trail (`cancel_request`, the request's object, relation and
   requester, and the request's id), as deciding a request does. Before, a withdrawn request left no trace there.
+- An empty condition is refused (AZ102, "empty {} condition") in a type's or a link table's `where`, a `shared if`
+  and a caveat, as it already was in a permission or a rule. An empty `where` or `if` was read as none, so the type
+  or the relation took more rows than meant; an empty caveat compiled to SQL that Postgres refused on apply. A
+  policy that has one: write the condition, or take the `where {}` (or `if {}`) away.
 
 ### Fixed
 
