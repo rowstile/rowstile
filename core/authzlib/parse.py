@@ -1267,9 +1267,18 @@ def read_side(w: Words) -> tuple[Cols, str | None]:
     return column, type_col
 
 
-def read_where(w: Words) -> str | None:
+def condition(w: Words, loc: Loc) -> str:
+    """The {sql} a form needs here. An empty one is refused, as in an expression: a `where` or an `if` left empty
+    would read as none, which allows more."""
+    p = w.need(w.take("cond"))
+    if not p.text.strip():
+        fail(loc, "empty {} condition", "AZ102", at=(p.start, p.end))
+    return p.text
+
+
+def read_where(w: Words, loc: Loc) -> str | None:
     """`where {sql}` after a link table's columns, and the line's end."""
-    where = w.need(w.take("cond")).text if w.name("where") else None
+    where = condition(w, loc) if w.name("where") else None
     w.end()
     return where
 
@@ -1292,7 +1301,9 @@ def parse_source(w: Words, subjects: list[Subject], spans: tuple[Span | None, ..
             w.need(w.mark("->"))
             subj, type_col = read_side(w)
             w.need(w.mark(")"))
-            return TableSource(subjects, loc, table, obj, subj, type_col=type_col, where=read_where(w), spans=spans)
+            return TableSource(
+                subjects, loc, table, obj, subj, type_col=type_col, where=read_where(w, loc), spans=spans
+            )
         # the same with the columns named, in either order: schema.table(object: col, subject: col)
         sides: dict[str, tuple[Cols, str | None]] = {}
         for i in range(2):
@@ -1302,7 +1313,7 @@ def parse_source(w: Words, subjects: list[Subject], spans: tuple[Span | None, ..
             w.need(w.mark(":"))
             sides[side] = read_side(w)
         w.need(w.mark(")"))
-        return finish_named_sides(table, sides, read_where(w))
+        return finish_named_sides(table, sides, read_where(w, loc))
 
     def finish_named_sides(table: str, sides: dict[str, tuple[Cols, str | None]], where: str | None) -> Link:
         if set(sides) != {"object", "subject"}:
@@ -1445,7 +1456,7 @@ class Reader:
         table = qname(w).text
         key = w.until(")") if w.mark("(") else None
         principal = w.name("principal", spaced=True) is not None
-        where = w.need(w.take("cond")).text if w.name("where", spaced=True) else None
+        where = condition(w, loc) if w.name("where", spaced=True) else None
         w.end()
         at = (name.start, name.end)
         if name.text in ("anyone", "link"):
@@ -1489,7 +1500,7 @@ class Reader:
         """caveat name = {sql}"""
         name = w.need(w.name())
         w.need(w.mark("="))
-        sql = w.need(w.take("cond")).text
+        sql = condition(w, loc)
         w.end()
         if name.text in self.pol.caveats:
             fail(loc, f"caveat {name.text} is defined twice", "AZ109", at=(name.start, name.end))
@@ -1814,12 +1825,12 @@ def granted_by_roles(t: Type) -> list[str]:
     return [name for name, p in t.perms.items() if any(not neg for neg in names_roles(p.expr))]
 
 
-def shared_tail(w: Words) -> tuple[str | None, str | None] | Unread:
+def shared_tail(w: Words, loc: Loc) -> tuple[str | None, str | None] | Unread:
     """What follows `shared` in a relation: [by perm] [if {sql}], to the line's end; where reading stopped if
     something else does."""
     try:
         by = w.need(w.name()).text if w.name("by") else None
-        cond = w.need(w.take("cond")).text if w.name("if") else None
+        cond = condition(w, loc) if w.name("if") else None
         w.end()
     except Unread as stop:
         return stop
@@ -1883,7 +1894,7 @@ def parse_relation_line(t: Type, s: str, loc: Loc, pieces: Pieces) -> None:
         # `shared` after the subjects and a space
         if (p.kind, p.text) != ("name", "shared") or p.start == after or p.start - colon.end < 2:
             continue
-        got = shared_tail(Words(s, p.end, pieces))
+        got = shared_tail(Words(s, p.end, pieces), loc)
         if isinstance(got, Unread):
             stops.append(got.at)
             continue

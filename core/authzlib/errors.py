@@ -56,7 +56,9 @@ CODES = {
         "where needed, `relation.permission` to follow a relation, and SQL conditions in `{ }` on the row's own "
         "columns. The message says what was unexpected, or what is missing: a `)`, a closing `}`, or the rest of "
         "the expression. Where `and` and `or` meet, parentheses say which goes first: `a or b and c` reads two "
-        "ways, so it is refused with the parentheses to add, `a or (b and c)`.",
+        "ways, so it is refused with the parentheses to add, `a or (b and c)`. A condition in `{ }` is never "
+        "empty, there or in a type's or a link table's `where`, a `shared if` or a caveat: left empty, it would "
+        "read as no condition at all.",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner or\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner or {is_public}\n",
     ),
