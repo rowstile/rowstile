@@ -1,6 +1,6 @@
 # Why a query through row-level security runs on one CPU
 
-*Salaheddine El Hssani, 2026-10-20*
+*Salaheddine El Hssani, 2026-10-28*
 
 Counting two million rows, a table's owner gets a plan that splits the work between processes. The same count
 through a row-level security policy often runs in one, and nothing in the policy says so. Three things decide
@@ -21,7 +21,8 @@ allow two parallel workers. The output of each run is beside the script
 ([16](row-level-security-on-one-cpu/run-16.txt), [17](row-level-security-on-one-cpu/run-17.txt),
 [18](row-level-security-on-one-cpu/run-18.txt)). The three runs got three different processors
 ([runner.txt](row-level-security-on-one-cpu/runner.txt)), so compare times within a run, not across versions.
-Which plans get workers is the same on all three, except where this post says otherwise.
+Which plans get workers is the same on all three, except where this post says otherwise. The plans shown are
+18's; 16 prints a hashed subplan more briefly, `(hashed SubPlan 1)`.
 
 Three queries are timed through each way of writing the rule:
 
@@ -84,7 +85,7 @@ ALTER FUNCTION demo.uid() PARALLEL SAFE;
 brings the workers back. Mark a function safe only when it is. The
 [documentation's rule](https://www.postgresql.org/docs/current/parallel-safety.html): a function is unsafe if it
 writes to the database, changes the transaction state, accesses sequences or makes persistent changes to
-settings, and restricted if it reads temporary tables, client connection state, cursors, prepared statements
+settings, and restricted if it accesses temporary tables, client connection state, cursors, prepared statements
 "or miscellaneous backend-local state that the system cannot synchronize across workers".
 
 ## 2. A subquery that refers to the row
@@ -110,7 +111,7 @@ for the count it runs the hashed one:
          Rows Removed by Filter: 1997499
 ```
 
-It is the plan `IN` got in section 2: the set built once, and no workers. Only the number differs, `SubPlan
+It is the plan `IN` got in section 1: the set built once, and no workers. Only the number differs, `SubPlan
 2`. `SubPlan 1` was the row-by-row way, planned and set aside, and that it could have run was enough to keep
 the count in one process.
 
@@ -165,7 +166,7 @@ auditor, is exactly who `IN` fails. Raising `work_mem` moves the line; it doesn'
 recommends wrapping such functions in a `SELECT`: `using ( (select auth.uid()) = user_id )` rather than
 `using ( auth.uid() = user_id )`. "Wrapping the function causes an `initPlan` to be run by the Postgres
 optimizer, which allows it to "cache" the results per-statement, rather than calling the function on each
-row." It is good advice: in the table above, sections 5 and 6 count in about half the time of section 3.
+row." It is good advice: in the table above, rows 5 and 6 count in about half the time of row 3.
 
 On 16 it has a catch. [PostgreSQL 16's list](https://www.postgresql.org/docs/16/parallel-safety.html) of what
 is always parallel restricted has one more item: "Plan nodes to which an `InitPlan` is attached". Written inside the shares subquery, the `(SELECT demo.uid())`
