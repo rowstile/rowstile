@@ -654,7 +654,8 @@ def routed(db: DB, spec: Spec, w: World, sql: str, rnd: random.Random) -> str:
     table itself with ONLY), an insert to a table that inherits from it. Statements on the tables under one run
     its triggers as their own (apply gave them), so the answers stay what they would be through the table.
     Through the table still: TRUNCATE (emptying one partition is not emptying the table), and on a partitioned
-    table an insert or a change of the key (a partition takes only its own keys)."""
+    table an insert or a change of the key (a partition takes only its own keys). On a table others inherit from,
+    an insert or a change of the key does nothing where the key is already there: once_keyed()."""
     n = spec.spelling
     stored: dict[str, list[str]] = {}  # each table (as genpolicy writes it): the tables that store its rows
     below: dict[str, list[str]] = {}  # ... those under it
@@ -671,8 +672,11 @@ def routed(db: DB, spec: Spec, w: World, sql: str, rnd: random.Random) -> str:
         below.setdefault(top, []).extend([child] if kind == "r" and itself != "t" else [])
     under = {top: rows for top, rows in stored.items() if len(rows) > 1 or top in partitioned}
     i, out, inside = n.sql("id"), [], False
+    key = [n.sql("org_id"), i] if n.composite else [i]
+    inherited = [t for t in under if t not in partitioned]
     for line in sql.splitlines():
         inside = (inside or line == "BEGIN;") and line != "COMMIT;"
+        line = once_keyed(line, inherited, key)
         tbl = next((t for t in under if line.startswith((f"UPDATE {t} SET ", f"DELETE FROM {t} WHERE "))), "")
         into = next((t for t in under if line.startswith(f"INSERT INTO {t} ")), "")
         if tbl and rnd.random() < 0.5 and not (tbl in partitioned and line.startswith(f"UPDATE {tbl} SET {i} = ")):
@@ -687,6 +691,26 @@ def routed(db: DB, spec: Spec, w: World, sql: str, rnd: random.Random) -> str:
             line = f"INSERT INTO {rnd.choice(below[into])}{line[len(f'INSERT INTO {into}') :]}"
         out.append(line)
     return "\n".join(out)
+
+
+def once_keyed(line: str, inherited: list[str], key: list[str]) -> str:
+    """line (genpolicy's), where it inserts a row into one of the tables others inherit from or changes a row's
+    key there, made to do nothing where the key is already anywhere in the table or under it. Each of those
+    tables holds its keys unique on its own, and Postgres compares none with the others': two inserts of a key in
+    one change, or one after a key moved onto it, would store the key twice (seed 40625916600015). Where keys
+    have two columns, a key change is left out where the id is in any org."""
+    for t in inherited:
+        tail = ") ON CONFLICT DO NOTHING;"
+        if line.startswith(f"INSERT INTO {t} (") and ") VALUES (" in line and line.endswith(tail):
+            head, values = line.removesuffix(tail).split(") VALUES (", 1)
+            given = values.split(", ")[: len(key)]  # (a row's first columns are its key: genpolicy's row())
+            there = f"({', '.join(f'o.{c}' for c in key)}) = ({', '.join(given)})"
+            return f"{head}) SELECT {values} WHERE NOT EXISTS (SELECT 1 FROM {t} o WHERE {there}){tail[1:]}"
+        moved = f"UPDATE {t} SET {key[-1]} = "
+        if line.startswith(moved) and " WHERE " in line:
+            to = line[len(moved) :].split(" WHERE ", 1)[0]
+            return f"{line.removesuffix(';')} AND NOT EXISTS (SELECT 1 FROM {t} o WHERE o.{key[-1]} = {to});"
+    return line
 
 
 def has_icu() -> bool:
