@@ -41,6 +41,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   refusals 403 and hidden rows 404, refuses to start on a connection that skips row-level security, signs Active
   Job in as a service and copies the test database for each worker. `rowstile migrate` writes Rails migrations
   (`tool = "rails"`), and `rowstile client ruby` and `rbs` the policy's names and their signatures, for Steep.
+- A Java SDK, in preview: `dev.rowstile:rowstile` over JDBC, and a Spring Boot starter that signs in every
+  transaction Spring begins as the request's user and answers refusals with problem details
+  (`docs/stacks/spring.md`). `rowstile client java` writes the policy's names for it. It may change in any release.
 
 ### Fixed
 

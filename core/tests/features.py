@@ -112,6 +112,7 @@ ASPNET_BUILD = "integrations/aspnetcore/Tests/BuildTests.cs"
 RAILS = "integrations/rails/test/conformance_test.rb"
 RAILS_CHECKS = "integrations/rails/test/checks_test.rb"
 RAILS_SDK = "integrations/rails/test/sdk_test.rb"
+SPRING = "integrations/spring/src/test/java/dev/rowstile/conformance/"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1218,6 +1219,23 @@ FEATURES: list[Feature] = [
             Check(RAILS_SDK, "db:prepare migrates an empty database, and db:schema:load refuses the dump"),
         ),
     ),
+    Feature(
+        "sdk.java",
+        2,
+        "The Java SDK (preview): JDBC, and the Spring Boot starter",
+        ("sdk.java.*",),
+        Doc(APP, "Java: preview."),
+        (
+            Check(SPRING + "ConformanceTest.java", "5: concurrent requests never mix users"),
+            Check(
+                SPRING + "ConformanceTest.java", "7: an entity's delete the rules refuse is refused too, and says why"
+            ),
+            Check(SPRING + "PoolOfOneTest.java", "4: with a pool of one connection"),
+            Check(SPRING + "SdkTest.java", "Postgres's own refusals, where no rule's refusal speaks first"),
+            Check(SPRING + "AutoConfigurationTest.java", "without Spring Security, nobody, unless the app says"),
+            Check(SPRING + "GeneratedNamesTest.java", "9: the generated names type-check"),
+        ),
+    ),
 ]
 
 
@@ -1434,6 +1452,21 @@ def sdk_ruby() -> set[str]:
     return out | {f"sdk.rb.{m}" for m in re.findall(r"(?m)^  (?:class|module) (\w+)", text) if m not in hidden}
 
 
+def sdk_java() -> set[str]:
+    """What the Java SDK's artifacts make public: their public classes and interfaces, each artifact's own
+    (`sdk.java.rowstile.Authz`, `sdk.java.rowstile-spring-boot-starter.PrincipalSource`)."""
+    out: set[str] = set()
+    for path in sorted(
+        glob.glob(os.path.join(REPO, "sdk", "java", "*", "src", "main", "java", "**", "*.java"), recursive=True)
+    ):
+        artifact = os.path.relpath(path, os.path.join(REPO, "sdk", "java")).split(os.sep)[0]
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        for name in re.findall(r"^public (?:final |abstract )?(?:class|interface|record|enum) (\w+)", text, re.M):
+            out.add(f"sdk.java.{artifact}.{name}")
+    return out
+
+
 def language() -> set[str]:
     """The language's forms, as the editors' grammar names them: its rules, less the hidden ones (`_x`) and the
     ones that read a token's characters (names, values, comments) rather than a word of the language."""
@@ -1460,6 +1493,7 @@ SURFACES: dict[str, Callable[[], set[str]]] = {
     "the Go SDK": sdk_go,
     "the .NET SDK": sdk_dotnet,
     "the Ruby SDK": sdk_ruby,
+    "the Java SDK": sdk_java,
     "the language": language,
 }
 

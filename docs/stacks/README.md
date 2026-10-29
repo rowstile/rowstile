@@ -13,10 +13,11 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 | Django (a preview) | [django.md](django.md) | `pip install --pre "rowstile[django]"` |
 | ASP.NET Core, EF Core, Npgsql (a preview) | [aspnetcore.md](aspnetcore.md) | `Rowstile.EntityFrameworkCore`, `Rowstile.AspNetCore` |
 | Rails, Active Record, Active Job (preview) | [rails.md](rails.md) | `bundle add rowstile` |
-| Anything else (Java, Rust, ...) | [sql.md](sql.md) | none: a few SQL statements |
+| Spring Boot, JPA, JdbcClient, Flyway (preview) | [spring.md](spring.md) | `dev.rowstile:rowstile-spring-boot-starter` |
+| Anything else (Rust, ...) | [sql.md](sql.md) | none: a few SQL statements |
 
 Every line of code these pages show is in a tested app (`integrations/fastapi`, `integrations/nextjs`,
-`integrations/go`, `integrations/django`, `integrations/aspnetcore`, `integrations/rails`, the conformance suites), in `docs/getting-started.md`, which runs as written, or, for the SQL the SDKs send, in
+`integrations/go`, `integrations/django`, `integrations/aspnetcore`, `integrations/rails`, `integrations/spring`, the conformance suites), in `docs/getting-started.md`, which runs as written, or, for the SQL the SDKs send, in
 the SDKs' own code. `core/tests/unit_test.py` checks each line, and that the install lines have each rowstile
 package the code imports. It checks lines one by one: a block may be a few lines of a longer file, so read
 the text around it too.

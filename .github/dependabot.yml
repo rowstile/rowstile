@@ -78,6 +78,16 @@ updates:
     groups:
       python: {patterns: ["*"]}
 
+  - package-ecosystem: maven
+    directories: ["/sdk/java", "/integrations/spring"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      java: {patterns: ["*"]}
+
   - package-ecosystem: cargo
     directory: /editor/zed
     schedule: {interval: monthly}

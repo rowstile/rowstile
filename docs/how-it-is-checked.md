@@ -353,6 +353,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The TypeScript SDK for Jest, a preview: `/jest`; a plain Node server (Express) | 2 | [node](stacks/node.md) | `integrations/node` |  |
 | The .NET SDK (preview): `Rowstile`, `Rowstile.EntityFrameworkCore`, `Rowstile.AspNetCore` | 2 | [app-code](reference/app-code.md) | `integrations/aspnetcore` |  |
 | The Ruby SDK for Rails (preview): signing in, refusals as answers, jobs, tests | 2 | [rails](stacks/rails.md) | `integrations/rails` |  |
+| The Java SDK (preview): JDBC, and the Spring Boot starter | 2 | [app-code](reference/app-code.md) | `integrations/spring` |  |
 
 <!-- features: end of the table -->
 
