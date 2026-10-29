@@ -1,0 +1,11 @@
+# Steep checks the gem's code against its signatures (sig/), with its strict diagnostics: every method declared,
+# no fallback to untyped. steep/ declares what the gem uses of Rails, pg and Minitest (it isn't shipped: an app has
+# those libraries' own signatures). integrations/rails/test.sh runs it.
+D = Steep::Diagnostic
+
+target :lib do
+  signature "sig", "steep"
+  check "lib"
+  library "json"
+  configure_code_diagnostics(D::Ruby.strict)
+end

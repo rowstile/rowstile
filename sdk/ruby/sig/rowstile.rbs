@@ -1,0 +1,169 @@
+# The gem's signatures (Steep checks lib/ against them: sdk/ruby/Steepfile). An app's own names come from the
+# generated client: rowstile client rbs writes Authz's, whose Authz.queries takes only the policy's types and
+# permissions.
+module Rowstile
+  VERSION: String
+
+  # an object's id; for a composite key, its columns in order: [org_id, id]
+  type id = Integer | String | Array[Integer | String | nil]
+  # who a transaction acts for: 42, "42" (a user), ["service", 3], a Principal, or nil (nobody)
+  type who = Principal | Integer | String | [String | Symbol, Integer | String | nil] | nil
+  # an RFC 9457 problem body
+  type problem = Hash[String, String | Integer | Array[String] | nil]
+
+  class Principal
+    attr_reader type: String
+    attr_reader id: String?
+    def initialize: (type: String, id: String?) -> void
+    def self.of: (who who) -> Principal
+    def self.parse: (String text) -> Principal
+    def to_s: () -> String
+    def ==: (untyped other) -> bool
+    alias eql? ==
+    def hash: () -> Integer
+    def inspect: () -> String
+  end
+
+  NOBODY: Principal
+  KEY: Symbol
+  CALL_PROBLEMS: Hash[String, [String, String, Integer]]
+  CONFLICT: problem
+  UNSEEN: String
+  GENERIC: Regexp
+  EXPLAIN: String
+
+  def self.current: () -> Principal?
+  def self.acting_as: [T] (who who) { () -> T } -> T
+  def self.act_as_args: (who who) -> [String?, String?]
+  def self.error_code: (Exception error) -> String?
+  def self.sqlstate: (Exception error) -> String?
+  def self.not_signed_in?: (Exception error) -> bool
+  def self.refusal: (Exception error) -> Refused?
+  def self.call_problem: (Exception error) -> problem?
+  def self.key_text: (id? key) -> String?
+  def self.verdict: (String table, String command, id key, Array[String]? lines, String who) -> (NotFound | Refused)
+  private def self.field_text: (Integer | String | nil value) -> String
+  private def self.generic_refusal: (String message, MatchData match) -> Refused
+  def self.expect: (Integer changed, String table, String command, id key,
+                    ?connection: ActiveRecord::ConnectionAdapters::PostgreSQLAdapter,
+                    ?stale: ActiveRecord::StaleObjectError?) -> Integer
+  def self.connection_check: (?singleton(ActiveRecord::Base) model) -> Array[[String, String]]
+  def self.check_connection!: (?singleton(ActiveRecord::Base) model) -> void
+  def self.problem_of: (Exception error) -> problem?
+  private def self.table_of: (String? model) -> String?
+
+  class Refused < StandardError
+    attr_reader table: String?
+    attr_reader command: String?
+    attr_reader why: Array[String]
+    attr_reader code: String
+    def initialize: (String message, ?table: String?, ?command: String?, ?why: Array[String], ?code: String?) -> void
+    def problem: () -> problem
+  end
+
+  class NotFound < StandardError
+    attr_reader table: String?
+    attr_reader id: String?
+    def initialize: (?String? table, ?id? id) -> void
+    def problem: () -> problem
+  end
+
+  class NotSignedIn < StandardError
+    def code: () -> String
+  end
+
+  class ConnectionProblem < StandardError
+    attr_reader problems: Array[String]
+    def initialize: (Array[String] problems) -> void
+  end
+
+  # what the database said: the fields of the driver's error
+  class Said
+    attr_reader sqlstate: String?
+    attr_reader message: String
+    attr_reader detail: String?
+    attr_reader hint: String?
+    attr_reader schema: String?
+    attr_reader table: String?
+    attr_reader constraint: String?
+    def initialize: (PG::Result result) -> void
+    def self.of: (Exception error) -> Said?
+    def self.pg_error: (Exception? error) -> PG::Error?
+    def code: () -> String?
+  end
+
+  module SignIn : ActiveRecord::ConnectionAdapters::PostgreSQLAdapter
+    UNSIGNED: Array[String]
+    @rowstile_signed: Principal?
+    def begin_db_transaction: () -> void
+    def begin_isolated_db_transaction: (Symbol isolation) -> void
+    def commit_db_transaction: () -> void
+    def exec_rollback_db_transaction: () -> void
+    def exec_rollback_to_savepoint: (?String name) -> void
+    def exec_restart_db_transaction: () -> void
+    private def raw_execute: (String sql, ?String? name, ?Array[untyped] binds, ?materialize_transactions: bool,
+                              **untyped options) -> untyped
+  end
+
+  module Model : ActiveRecord::Base
+    private def _update_row: (Array[String] attribute_names, ?String attempted_action) -> Integer
+    private def destroy_row: () -> Integer
+    private def rowstile_expect: (String command) { () -> Integer } -> Integer
+    private def rowstile_why: (String command, ActiveRecord::StaleObjectError? stale) -> Integer
+  end
+
+  class Queries[T < String, P < String]
+    @model: singleton(ActiveRecord::Base)
+    def initialize: (?singleton(ActiveRecord::Base) model) -> void
+    def can: (T type, id id, P perm) -> bool
+    def perms_of: (T type, Array[id] ids) -> Hash[String, Array[P]]
+    def permitted: [R < ActiveRecord::Relation] (R scope, T type, P perm) -> R
+  end
+
+  class Middleware
+    @app: ^(Hash[String, untyped]) -> [Integer, Hash[String, String], Array[String]]
+    @user: (^(ActionDispatch::Request) -> who)?
+    def initialize: (^(Hash[String, untyped]) -> [Integer, Hash[String, String], Array[String]] app,
+                     ?user: (^(ActionDispatch::Request) -> who)?) -> void
+    def call: (Hash[String, untyped] env) -> [Integer, Hash[String, String], Array[String]]
+  end
+
+  class Railtie < Rails::Railtie
+  end
+
+  module Job
+    def self.included: (singleton(ActiveJob::Base) job) -> void
+    def rowstile_principal: () -> Principal
+
+    module ClassMethods : _Job
+      def acts_for: (who who) -> Principal
+    end
+
+    interface _Job
+      def rowstile_principal=: (Principal) -> Principal
+    end
+  end
+
+  module Testing : _Assertions
+    def as_user: [T] (who who) { () -> T } -> T
+    def assert_refused: (?command: String?, ?table: String?) { () -> untyped } -> Refused
+    def assert_not_found: () { () -> untyped } -> (NotFound | ActiveRecord::RecordNotFound)
+    def self.database_per_worker: (String owner_url, ?Integer worker) -> String
+
+    interface _Assertions
+      def assert: (untyped test, ?String message) -> true
+      def assert_equal: (untyped expected, untyped actual, ?String message) -> true
+      def assert_raises: (*Class) { () -> untyped } -> untyped
+      def flunk: (?String message) -> bot
+    end
+  end
+
+  class SchemaLoadRefused < StandardError
+  end
+
+  module SchemaLoad : ActiveRecord::Tasks::_DatabaseTasks
+    @rowstile_migrating: bool
+    def load_schema: (ActiveRecord::DatabaseConfigurations::DatabaseConfig db_config, ?Symbol format, ?String? file) -> void
+    private def initialize_database: (ActiveRecord::DatabaseConfigurations::DatabaseConfig db_config) -> bool
+  end
+end
