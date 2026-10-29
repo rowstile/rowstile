@@ -125,8 +125,9 @@ jobs:
         with: {fetch-depth: 0, persist-credentials: false}
       - uses: ./review-ci/github
         with: {version: source, working-directory: examples/filemanager}
-  # The Python SDK's conformance suite: FastAPI, SQLAlchemy async and asyncpg, Alembic (integrations/fastapi). It
-  # fails unless its checks run every line and branch of the SDK; the report it prints is kept
+  # The Python SDK's conformance suite: FastAPI, SQLAlchemy async and asyncpg, Alembic, and background jobs in
+  # Celery's and RQ's workers on Redis (integrations/fastapi). It fails unless its checks run every line and branch
+  # of the SDK; the report it prints is kept
   conformance-python:
     needs: unit
     runs-on: ubuntu-latest

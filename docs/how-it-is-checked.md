@@ -342,6 +342,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | Invariants: `never` | 2 | [language](reference/language.md) | `governance.sh`, `principals.sh`, `unit_test.py` | `genpolicy.py`, hand answers |
 | The policy's tests: checks, named tests, `given`, `as`, `with scope` | 2 | [language](reference/language.md) | `devx.sh`, `unit_test.py`, `cookbook.sh` | hand answers |
 | The Python SDK: signing in, refusals as answers, jobs | 2 | [app-code](reference/app-code.md) | `integrations/fastapi` |  |
+| The Python SDK's background jobs, in Celery's and RQ's workers (preview) | 2 | [python](stacks/python.md) | `integrations/fastapi` |  |
 | The Python SDK's stacks: FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic, pytest | 2 | [app-code](reference/app-code.md) | `integrations/fastapi` |  |
 | The TypeScript SDK: `@rowstile/client` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
 | The TypeScript SDK's drivers: `/pg`, `/postgres`, `/prisma`, `/drizzle` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
