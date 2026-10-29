@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.rowstile</groupId>
+    <artifactId>rowstile-parent</artifactId>
+    <version>0.1.0-dev</version>
+  </parent>
+
+  <artifactId>rowstile</artifactId>
+  <name>rowstile</name>
+  <description>rowstile for Java apps on JDBC (preview): each transaction signed in, refusals read as 403 and 404.</description>
+
+  <dependencies>
+    <!-- Postgres's JDBC driver: its errors carry the fields a refusal is read from (the hint, the table, the rule) -->
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+    </dependency>
+  </dependencies>
+</project>

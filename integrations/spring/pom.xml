@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The Java SDK's conformance suite: a small Spring Boot app (Spring MVC, Spring Security, JPA and JdbcClient over
+     HikariCP), migrated with Flyway. test.sh runs it: ../../sdk/java/mvnw -f pom.xml verify -->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.2</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>dev.rowstile.conformance</groupId>
+  <artifactId>rowstile-conformance-spring</artifactId>
+  <version>0.0.0</version>
+  <name>rowstile conformance (Spring)</name>
+
+  <properties>
+    <java.version>21</java.version>
+    <!-- the SDK, as sdk/java builds and installs it (test.sh) -->
+    <rowstile.version>0.1.0-dev</rowstile.version>
+    <!-- what Flyway's own commands migrate (test.sh): the owner's URL, which the environment gives -->
+    <flyway.url>${env.ROWSTILE_OWNER_URL}</flyway.url>
+    <flyway.locations>filesystem:src/main/resources/db/migration</flyway.locations>
+    <!-- where the tests' JVMs write what they ran of the SDK (test.sh gives its own) -->
+    <jacoco.destFile>${project.build.directory}/jacoco.exec</jacoco.destFile>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.rowstile</groupId>
+      <artifactId>rowstile-spring-boot-starter</artifactId>
+      <version>${rowstile.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-launcher</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <!-- every warning javac knows, and each one an error -->
+          <compilerArgs>
+            <arg>-Xlint:all</arg>
+            <arg>-Werror</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+      <!-- what the checks run of the SDK: its classes, measured in the tests' JVMs (test.sh reports it on sdk/java) -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.16</version>
+        <executions>
+          <execution>
+            <id>agent</id>
+            <goals><goal>prepare-agent</goal></goals>
+            <configuration>
+              <destFile>${jacoco.destFile}</destFile>
+              <includes><include>dev/rowstile/*</include><include>dev/rowstile/spring/*</include><include>dev/rowstile/testing/*</include></includes>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- check 12: two JVMs, each with a database of its own, copied from the migrated test database -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <forkCount>2</forkCount>
+          <reuseForks>true</reuseForks>
+          <!-- JaCoCo's agent (@{argLine}), and the JVM's number: its database is conf_tests_w<number> -->
+          <argLine>@{argLine} -Drowstile.worker=${surefire.forkNumber}</argLine>
+          <trimStackTrace>false</trimStackTrace>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-maven-plugin</artifactId>
+        <dependencies>
+          <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <version>${flyway.version}</version>
+          </dependency>
+          <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgresql.version}</version>
+          </dependency>
+        </dependencies>
+      </plugin>
+    </plugins>
+  </build>
+</project>

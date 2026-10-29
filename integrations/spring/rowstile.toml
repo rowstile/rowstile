@@ -1,0 +1,8 @@
+policy   = "db/policy.authz"
+tests    = ["db/tests/*.authz"]
+database = "env:ROWSTILE_OWNER_DSN"
+[clients]
+java = "src/main/java/dev/rowstile/conformance/AuthzNames.java"
+[migrations]
+tool = "flyway"
+dir  = "src/main/resources/db/migration"
