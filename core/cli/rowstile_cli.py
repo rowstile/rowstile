@@ -52,7 +52,7 @@
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
-    rowstile client  [py|ts] [POLICY.authz]        typed helpers for app code; with neither, writes the
+    rowstile client  [py|ts|go] [POLICY.authz]     typed helpers for app code; with neither, writes the
                                                    clients rowstile.toml names
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
                                                    a first policy from the database's tables (every schema of
@@ -90,6 +90,7 @@ rowstile.toml:
     [clients]
     py = "backend/app/authz_client.py"
     ts = "frontend/src/authz.ts"
+    go = "internal/authz/authz.go"         # the policy's names, for the Go SDK
     [migrations]
     tool = "alembic"                       # alembic, prisma, drizzle, sql, goose, dbmate or flyway
     dir  = "alembic/versions"              # where the tool keeps them (each tool has a default)
@@ -498,7 +499,7 @@ class Config:
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
-    "clients": {"py": "text", "ts": "text"},
+    "clients": {"py": "text", "ts": "text", "go": "text"},
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
 }
@@ -1199,8 +1200,8 @@ def main(argv: list[str]) -> None:
             sys.stdout.write(database.graph(text, files))
             return
         if cmd == "client" and args[1:]:
-            if args[0] not in ("py", "ts"):
-                fail("rowstile client: which language, py or ts?", 2)
+            if args[0] not in ("py", "ts", "go"):
+                fail("rowstile client: which language, py, ts or go?", 2)
             _, text, files = policy_arg()
             sys.stdout.write(database.client(args[0], text, files))
             return
@@ -1394,8 +1395,8 @@ def main(argv: list[str]) -> None:
                 for path in cfg.clients.values():
                     print(f"wrote {relative(path)}")
                 return
-            if not args or args[0] not in ("py", "ts"):
-                fail("rowstile client: which language, py or ts?", 2)
+            if not args or args[0] not in ("py", "ts", "go"):
+                fail("rowstile client: which language, py, ts or go?", 2)
             sys.stdout.write(database.client(args[0], text, files))
         elif cmd == "why":
             if not opts.get("--as"):
