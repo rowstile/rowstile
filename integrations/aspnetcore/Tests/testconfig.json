@@ -1,0 +1,9 @@
+{
+  "platformOptions": {
+    "Coverlet": {
+      "include": ["[Rowstile]*", "[Rowstile.EntityFrameworkCore]*", "[Rowstile.AspNetCore]*"],
+      "excludeByAttribute": ["ExcludeFromCodeCoverage", "GeneratedCodeAttribute", "CompilerGeneratedAttribute"],
+      "format": ["cobertura"]
+    }
+  }
+}

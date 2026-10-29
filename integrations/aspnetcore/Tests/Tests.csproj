@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The conformance checks (integrations/README.md) and the SDK's own, in xUnit: each test collection on a copy of
+       its own of the migrated test database (check 12). test.sh measures what they run of the SDK (coverlet). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Microsoft.Testing.Platform, which coverlet measures in (coverlet.MTP), and dotnet test runs on (global.json) -->
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Conformance.Tests</RootNamespace>
+    <!-- test names say what they check, in words (Check_1_2_lists_show_what_each_may_see: CA1707); xUnit names a
+         collection's definition ...Collection (CA1711); the checks' expected arrays are written where they are
+         asserted (CA1861), and a test that hangs is stopped by test.sh's timeout, not by a token in every call
+         (xUnit1051) -->
+    <NoWarn>$(NoWarn);CA1707;CA1711;CA1861;xUnit1051</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../App/App.csproj" />
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+    <PackageReference Include="coverlet.MTP" Version="10.1.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

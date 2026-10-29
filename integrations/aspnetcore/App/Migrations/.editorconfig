@@ -1,0 +1,5 @@
+root = false
+
+# EF Core writes these, and rowstile migrate: the analyzers leave them alone
+[*.cs]
+generated_code = true
