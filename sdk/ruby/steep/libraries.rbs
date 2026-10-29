@@ -1,0 +1,184 @@
+# What the gem uses of Active Support, Active Record, Action Pack, Active Job, Railties and pg, for Steep alone
+# (sdk/ruby/Steepfile): not shipped with the gem, whose users have these libraries' own signatures.
+module ActiveSupport
+  def self.on_load: (Symbol name) { (untyped base) -> void } -> void
+
+  module IsolatedExecutionState
+    def self.[]: (Symbol key) -> untyped
+    def self.[]=: (Symbol key, untyped value) -> untyped
+  end
+
+  module Inflector
+    def self.safe_constantize: (String name) -> untyped
+  end
+
+  class OrderedOptions
+    def method_missing: (Symbol name, *untyped args) -> untyped
+  end
+end
+
+module ActiveRecord
+  class ActiveRecordError < StandardError
+  end
+
+  class StatementInvalid < ActiveRecordError
+  end
+
+  class RecordNotFound < ActiveRecordError
+    def model: () -> String?
+    def id: () -> (Integer | String | Array[Integer | String | nil] | nil)
+  end
+
+  class StaleObjectError < ActiveRecordError
+  end
+
+  class Result
+    def cast_values: () -> Array[untyped]
+  end
+
+  class Relation
+    def model: () -> singleton(Base)
+    def where: (untyped condition) -> self
+  end
+
+  class Base
+    def self.lease_connection: () -> ConnectionAdapters::PostgreSQLAdapter
+    def self.with_connection: [T] () { (ConnectionAdapters::PostgreSQLAdapter) -> T } -> T
+    def self.connection_db_config: () -> DatabaseConfigurations::DatabaseConfig
+    def self.establish_connection: (Hash[Symbol, untyped] config) -> void
+    def self.clear_query_caches_for_current_thread: () -> void
+    def self.table_name: () -> String
+    def self.locking_enabled?: () -> bool
+    def self.primary_key: () -> String
+    def self.columns_hash: () -> Hash[String, ConnectionAdapters::Column]
+    def self.arel_table: () -> Arel::Table
+    def self.<: (Module other) -> bool?
+    def id_in_database: () -> (Integer | String | Array[Integer | String | nil])
+    private def _update_row: (Array[String] attribute_names, ?String attempted_action) -> Integer
+    private def destroy_row: () -> Integer
+  end
+
+  module DatabaseConfigurations
+    class DatabaseConfig
+      def database: () -> String
+      def schema_format: () -> Symbol
+      def configuration_hash: () -> Hash[Symbol, untyped]
+    end
+  end
+
+  module ConnectionAdapters
+    class Column
+      def sql_type: () -> String
+    end
+
+    class PostgreSQLAdapter
+      def select_all: (String sql, ?String name, ?Array[untyped] binds) -> Result
+      def select_value: (String sql, ?String name, ?Array[untyped] binds) -> untyped
+      def select_rows: (String sql, ?String name, ?Array[untyped] binds) -> Array[[String, String]]
+      def transaction: [T] () { () -> T } -> T
+      def transaction_open?: () -> bool
+      def materialize_transactions: () -> void
+      def current_savepoint_name: () -> String
+      def begin_db_transaction: () -> void
+      def begin_isolated_db_transaction: (Symbol isolation) -> void
+      def commit_db_transaction: () -> void
+      def exec_rollback_db_transaction: () -> void
+      def exec_rollback_to_savepoint: (?String name) -> void
+      def exec_restart_db_transaction: () -> void
+      private def internal_execute: (String sql, ?String name, ?Array[untyped] binds, ?materialize_transactions: bool) -> untyped
+      private def raw_execute: (String sql, ?String? name, ?Array[untyped] binds, ?materialize_transactions: bool,
+                                **untyped options) -> untyped
+    end
+  end
+
+  module Tasks
+    interface _DatabaseTasks
+      def schema_dump_path: (DatabaseConfigurations::DatabaseConfig db_config, ?Symbol format) -> String?
+      def load_schema: (DatabaseConfigurations::DatabaseConfig db_config, ?Symbol format, ?String? file) -> void
+      def initialize_database: (DatabaseConfigurations::DatabaseConfig db_config) -> bool
+    end
+
+    module DatabaseTasks
+      def self.singleton_class: () -> Module
+    end
+  end
+end
+
+module Arel
+  def self.sql: (String sql, *untyped binds) -> Nodes::SqlLiteral
+
+  module Nodes
+    class SqlLiteral < String
+    end
+
+    class Node
+    end
+  end
+
+  module Attributes
+    class Attribute
+      def in: (untyped other) -> Nodes::Node
+    end
+  end
+
+  class Table
+    def []: (String name) -> Attributes::Attribute
+  end
+end
+
+module ActionDispatch
+  class Request
+    def initialize: (Hash[String, untyped] env) -> void
+  end
+end
+
+module ActiveJob
+  class Base
+    def self.class_attribute: (Symbol name, instance_writer: bool, default: untyped) -> void
+    def self.around_perform: () { (untyped job, Proc block) -> untyped } -> void
+  end
+end
+
+module Rails
+  class Railtie
+    def self.config: () -> untyped
+    def self.initializer: (String name) { (untyped app) -> void } -> void
+    def self.server: () { (untyped app) -> void } -> void
+  end
+end
+
+module PG
+  PG_DIAG_SQLSTATE: Integer
+  PG_DIAG_MESSAGE_PRIMARY: Integer
+  PG_DIAG_MESSAGE_DETAIL: Integer
+  PG_DIAG_MESSAGE_HINT: Integer
+  PG_DIAG_SCHEMA_NAME: Integer
+  PG_DIAG_TABLE_NAME: Integer
+  PG_DIAG_CONSTRAINT_NAME: Integer
+
+  def self.connect: (String url, **String options) -> Connection
+
+  class Error < StandardError
+    def result: () -> Result?
+  end
+
+  class ObjectInUse < Error
+  end
+
+  class Result
+    def error_field: (Integer field) -> String?
+  end
+
+  class Connection
+    def self.conninfo_parse: (String url) -> Array[Hash[Symbol, String?]]
+    def exec: (String sql) -> Result
+    def quote_ident: (String name) -> String
+    def close: () -> void
+  end
+
+  module TextEncoder
+    class Array
+      def encode: (::Array[String?] values) -> String
+    end
+  end
+end
