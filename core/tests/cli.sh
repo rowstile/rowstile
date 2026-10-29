@@ -94,7 +94,7 @@ run client py
 if [ $rc -eq 0 ] && echo "$out" | python3 -c "import ast, sys; ast.parse(sys.stdin.read())" 2>/dev/null; then ok "client py is valid Python"; else bad "client py" "${out:0:200}"; fi
 run client ts; case "$out" in *"export const permissions"*) ok "client ts";; *) bad "client ts" "${out:0:200}";; esac
 run client go; case "$out" in *"package authz"*'const FolderBreakGlass FolderPermission = "break_glass"'*) ok "client go: the policy's names in Go";; *) bad "client go" "${out:0:200}";; esac
-run client java; [ "$rc $out" = "2 rowstile client: which language, py, ts, go or csharp?" ] && ok "client with an unknown language: exit 2" || bad "client java" "$rc $out"
+run client java; [ "$rc $out" = "2 rowstile client: which language, py, ts, go, csharp, ruby or rbs?" ] && ok "client with an unknown language: exit 2" || bad "client java" "$rc $out"
 
 echo "-- reapply and remove"
 run reapply; [ $rc -eq 0 ] && ok "reapply" || bad "reapply" "$out"
@@ -195,7 +195,7 @@ run studio --port 70000; [ $rc -eq 2 ] && [ "$out" = "--port needs a port, a who
   ok "a port above 65535 is refused" || bad "studio --port 70000" "$rc ${out: -200}"
 run dev --once --studio-port 99999 "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "--studio-port needs a port, a whole number from 1 to 65535, not '99999'" ] &&
   ok "... and one for Studio beside dev" || bad "dev --studio-port 99999" "$rc ${out: -200}"
-run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, go or csharp?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
+run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, go, csharp, ruby or rbs?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
 run client py; fromdb=$out
 run client py "$T/main.authz"; [ $rc -eq 0 ] && [ -n "$out" ] && [ "$out" = "$fromdb" ] && ok "client py from the file alone is the one the applied policy gives" || bad "client py from a file" "$rc ${out:0:120}"
 which='which policy file? (or name it in rowstile.toml: policy = "db/policy.authz")'
@@ -407,6 +407,12 @@ OWN() { ( cd "$P" && python3 "$OLDPWD/cli/rowstile_cli.py" "$@" ); }
 printf 'policy = "db/policy.authz"\n[clients]\npy = "out/c.py"\n' > "$P/rowstile.toml"
 out=$(OWN client 2>&1); rc=$?
 [ $rc -eq 0 ] && [ -s "$P/out/c.py" ] && ok "rowstile client writes them" || bad "client files" "$rc $out"
+printf 'policy = "db/policy.authz"\n[clients]\nruby = "out/authz.rb"\nrbs = "out/authz.rbs"\n' > "$P/rowstile.toml"
+out=$(OWN client 2>&1); rc=$?
+[ $rc -eq 0 ] && [ "$(cat "$P/out/authz.rb")" = "$(OWN client ruby db/policy.authz)" ] &&
+  grep -q '^  def self.queries: () -> Rowstile::Queries\[object_type, permission\]$' "$P/out/authz.rbs" &&
+  ok "... the Ruby names and their signatures, each to its file" || bad "ruby and rbs clients" "$rc $out"
+printf 'policy = "db/policy.authz"\n[clients]\npy = "out/c.py"\n' > "$P/rowstile.toml"
 size=$(wc -c < "$P/out/c.py")
 printf 'type zz = app.nothere\n  can nosuch = bogus\n' >> "$P/db/policy.authz"
 out=$(OWN client 2>&1); rc=$?
