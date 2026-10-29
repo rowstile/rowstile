@@ -112,7 +112,10 @@ class _Job:
 
     def __init__(self, who: Who) -> None:
         self.who = Principal.of(who)
-        self._tokens: list[contextvars.Token[Principal | None]] = []
+        # each thread's or task's own blocks: one job(who) entered side by side never resets another's
+        self._tokens: contextvars.ContextVar[tuple[contextvars.Token[Principal | None], ...]] = contextvars.ContextVar(
+            "rowstile_job", default=()
+        )
 
     def __call__(self, fn: Callable[P, R]) -> Callable[P, R]:
         import functools
@@ -137,13 +140,15 @@ class _Job:
         return run
 
     def __enter__(self) -> Principal:
-        self._tokens.append(_current.set(self.who))
+        self._tokens.set((*self._tokens.get(), _current.set(self.who)))
         return self.who
 
     def __exit__(
         self, kind: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
     ) -> None:
-        _current.reset(self._tokens.pop())
+        *rest, token = self._tokens.get()
+        self._tokens.set(tuple(rest))
+        _current.reset(token)
         raised = None if exc is None else _in_job(exc)
         if raised is not None:
             raise raised from exc

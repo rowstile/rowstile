@@ -108,6 +108,30 @@ def test_a_job_in_a_plain_function() -> None:
     assert report.__name__ == "report"
 
 
+def test_one_job_block_entered_side_by_side() -> None:
+    # one job(who) entered by two threads at once, the first in leaving after the second came in: each leaves its
+    # own block, and each thread is back to whom it acted for before
+    shared = rowstile.job(("service", 1))
+    entered, left = threading.Barrier(2), threading.Event()
+
+    def worker(before: int, first: bool) -> Principal | None:
+        with rowstile.acting_as(before):
+            try:
+                with shared as me:
+                    assert rowstile.current() == me
+                    entered.wait()
+                    if not first:
+                        left.wait(10)
+            finally:
+                if first:
+                    left.set()
+            return rowstile.current()
+
+    with ThreadPoolExecutor(2) as pool:
+        one, two = pool.submit(worker, 1, True), pool.submit(worker, 2, False)
+        assert (one.result(), two.result()) == (Principal("user", "1"), Principal("user", "2"))
+
+
 def test_a_job_block_raises_the_databases_refusals_as_the_sdks() -> None:
     # a refused insert, psycopg's error: Refused, with what the database said, and the error as its cause
     with pytest.raises(Refused) as e, rowstile.job(2) as me, psycopg.connect(libpq(APP)) as conn, pgp.transaction(conn):
