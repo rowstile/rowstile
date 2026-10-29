@@ -59,7 +59,7 @@ Administrators (the policy's owner and superusers; the app role is refused) also
 Generated clients wrap these with the policy's names, so a typo in a permission is a
 compile error: `rowstile client py > authz_client.py`
 (DB-API: psycopg and friends) or `rowstile client ts > authz.ts` (TypeScript, for `pg` or
-anything with `query(text, params)`). Generate it from the policy in force and commit it next to
+anything with `query(text, params)`); `rowstile client go` writes the names alone, for the Go SDK. Generate it from the policy in force and commit it next to
 your code; regenerate when the policy changes (the file manager's tests fail when it is stale).
 
 - **Python: supported.** Part of the 1.0 surface: `Authz(conn)`, with `sign_in`, `sign_in_as` (a principal
@@ -101,3 +101,8 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   `explainRule`, `expect` and `whoAmong`: Python's calls in camelCase, except `principal`. It also has
   `Refused`, `NotFound` and `refusal(e)`, and the types `ObjectType` and `Permission<T>`. It may change before
   it is supported.
+- **Go: preview.** `rowstile client go > internal/authz/authz.go` writes the policy's names alone, for the Go
+  SDK (`github.com/rowstile/rowstile/sdk/go`, a preview too): each type is a constant (`TypeNote`), and each
+  type's permissions a type of their own (`NotePermission`, with `NoteEdit` and `NoteView`), which the SDK's
+  `Can`, `PermsOf` and `List` take. The calls themselves are the SDK's: [Go](../stacks/go.md). It may change
+  before it is supported.

@@ -19,7 +19,7 @@ this list.
 10. A background job signs in as a service principal.
 11. A fresh database: migrate, and the policy tests pass. Then the tool's own diff shows no change.
 12. The framework's test database has the policy: a copy of the migrated one for each test worker (Vitest's,
-    pytest-xdist's).
+    pytest-xdist's; for Go, each test package, which `go test` runs in a process of its own).
 13. The app refuses to start on a connection that skips row-level security.
 14. After a policy change and a new migration, the app works with the new generated names.
 15. Next.js only: a signed-in page is never served from a cache to another user, and a signed-in read inside
@@ -39,5 +39,9 @@ asked, given to it as an argument, and the next job on the worker's one connecti
 The Next.js suite (`integrations/nextjs`) also runs checks 1, 2, 4 to 7 and 9 through Neon's serverless driver, on
 the Node.js runtime and on the edge (`edge/`, an app of its own), behind Neon's `wsproxy`, and check 10 through a
 BullMQ queue on Redis: a preview.
+
+The suites: `fastapi` (the Python SDK: FastAPI, SQLAlchemy, Alembic), `nextjs` (the TypeScript SDK: Next.js,
+Prisma, pg, postgres.js, Drizzle) and `go` (the Go SDK, a preview: `net/http`, pgx, sqlc, goose; every check but
+15, which is Next.js's).
 
 A new stack gets its own folder here, with every check that applies to it.

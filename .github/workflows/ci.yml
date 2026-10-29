@@ -171,6 +171,30 @@ jobs:
           if-no-files-found: ignore
       # @rowstile/vitest's matchers type-check with each Vitest it supports (4, 5)
       - run: npx tsc -b sdk/typescript && bash sdk/typescript/vitest/types-test/types.sh
+  # The Go SDK's conformance suite, a preview: net/http, pgx, sqlc, goose (integrations/go). It fails unless its
+  # checks run every statement of the SDK (Go's coverage counts no branches); the report it prints is kept, with the
+  # profile
+  conformance-go:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e   # v7.0.0
+        with:
+          go-version: "1.26"
+          cache-dependency-path: integrations/go/go.sum
+      - run: bash integrations/go/test.sh
+        env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-go"}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: sdk-coverage-go
+          path: |
+            ${{ runner.temp }}/sdk-coverage-go/report.txt
+            ${{ runner.temp }}/sdk-coverage-go/cover.out
+          if-no-files-found: ignore
   # The playground: the compiler in Pyodide and its SQL in PGlite, headless (every example's tests pass), then the
   # page in Chrome (loaded from the CDN, a mistake and its page, asking as someone, links; loading, cached, under
   # 10 s: the design's limit is 5 s, and GitHub's runners took up to 5.9 s)

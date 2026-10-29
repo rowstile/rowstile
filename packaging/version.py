@@ -10,8 +10,8 @@ A version is X.Y.Z; X.Y.Z-alpha.N, X.Y.Z-beta.N or X.Y.Z-rc.N before it (npm's f
 X.Y.Z, never published (PyPI: 0.2.0.dev0). The grammar is the compiler's (core/authzlib/versions.py), the one the
 command orders versions by: a version's alphas, then its betas, its candidates, then the version itself.
 The compiler's version (core/authzlib/__init__.py) is the one the command and the Python package read. The others
-copy it: the TypeScript SDK's packages and their dependencies on each other, the workspace's lock file, the
-MCP registry's entry (server.json), and the review for CI, which installs the release its tag names (its
+copy it: the TypeScript SDK's packages and their dependencies on each other, the workspace's lock file, the Go
+module's Version (sdk/go/version.go; its release is the tag sdk/go/vX.Y.Z), the MCP registry's entry (server.json), and the review for CI, which installs the release its tag names (its
 action, its GitLab template, and docs/reference/review.md's lines that name it). Not here: the install lines
 that name the image's tag (README.md, docs/installing.md), which the release pull request edits by hand and a
 unit test checks (DocPages). The editor extension keeps its own version (the Marketplace takes no versions that
@@ -38,6 +38,7 @@ PLACES = [
     (["sdk/typescript/*/package.json"], r'^  "version": "([^"]+)"'),
     (["sdk/typescript/*/package.json", "package-lock.json"], r'"@rowstile/[a-z-]+": "(\d[^"]*)"'),  # optional
     (["package-lock.json"], r'"name": "@rowstile/[a-z-]+",\n\s+"version": "([^"]+)"'),
+    (["sdk/go/version.go"], r'^const Version = "([^"]+)"'),  # the Go module's; its release is the tag sdk/go/vX.Y.Z
     (["server.json"], r'^ +"version": "([^"]+)"'),  # the MCP registry's entry: its own version, and the package's
     (["review-ci/github/action.yml"], r'^    default: "(\d[^"]*)"'),
     (["review-ci/github/action.yml", "docs/reference/review.md"], r"review-ci/github@v(\S+)"),
