@@ -12,6 +12,10 @@ conformance suite, `integrations/node` a plain Express server's (a preview), and
 Rails apps use [the Ruby SDK](../../sdk/ruby/README.md), a preview: its Railtie signs every Active Record transaction
 in, answers a refusal with 403 and a hidden row with 404, and checks the app's connection when it is served;
 `integrations/rails` is its conformance suite.
+Java apps use [the Java SDK](../../sdk/java/README.md) (preview): `dev.rowstile:rowstile` over JDBC, and
+`dev.rowstile:rowstile-spring-boot-starter`, which signs in every transaction Spring begins as the request's user and
+answers refusals with problem details; `integrations/spring` is their conformance suite, and `rowstile client java`
+writes the policy's names for them (`AuthzNames.java`).
 The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
 `listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
 `ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,
@@ -119,3 +123,10 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   `rowstile client rbs` their signatures, for Steep: `Authz.queries` has `can`, `perms_of` and `permitted` taking
   the policy's types and permissions. The gem has `Rowstile.acting_as`, `Rowstile::Refused`, `Rowstile::NotFound`,
   `Rowstile.refusal(e)` and `Rowstile.expect`. It may change before it is supported.
+- **Java: preview.** `Rowstile.transaction(conn, who, work)` runs `work` in a transaction signed in, and
+  `Rowstile.signIn(conn, who)` signs in one already open; `Rowstile.actingAs(who, work)` and `Rowstile.job(who, work)`
+  say whom the transactions Spring begins act for. `Authz` has `can`, `perms`, `permsOf`, `list` (with `after` and
+  `limit`), `verdict`, `expect`, `connectionCheck` and `check`, over one connection (`Authz.on(conn)`) or, in Spring,
+  the transaction open now. It also has `Refused`, `NotFound`, `ConnectionProblem`, `Problem` and
+  `Errors.problem(e)`, and the policy's names as `ObjectType` constants and an enum of each type's permissions. It may
+  change before it is supported.

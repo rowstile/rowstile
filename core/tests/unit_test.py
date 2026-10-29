@@ -17287,7 +17287,7 @@ class Private(unittest.TestCase):
     SKIP: ClassVar[set[str]] = {"node_modules", "generated", "__pycache__", "dist", "out", "grammars"}
     # where git isn't asked (a checkout the suites' containers don't trust), the folders are walked: those whose
     # name starts with a dot are a tool's own (git's, an editor's, a cache), but for these
-    DOTTED: ClassVar[set[str]] = {".github", ".vitepress", ".githooks"}
+    DOTTED: ClassVar[set[str]] = {".github", ".vitepress", ".githooks", ".mvn"}
     # (two names that stay out of the repository too, in a file or a pull request; the conventions file keeps its own)
     WORDS = re.compile(
         r"\bADRs?" + r" ?\d{4}|docs/" + r"adr\b|\b(roadmap|v1-design|developer-experience|"
