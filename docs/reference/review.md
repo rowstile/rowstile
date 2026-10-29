@@ -89,7 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: {fetch-depth: 0}
-      - uses: rowstile/rowstile/review-ci/github@v0.1.0-dev   # the release you use
+      - uses: rowstile/rowstile/review-ci/github@v0.1.0-beta.2   # the release you use
 ```
 
 A pull request from a fork gets a read-only token, whatever the workflow asks for: the review is then in

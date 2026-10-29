@@ -10,7 +10,7 @@ Only pre-releases are published so far. Ask for the newest:
 
     npm i -D rowstile@next         # the command with its own Python: a TypeScript app needs none
     pip install --pre rowstile     # the command and the Python SDK: rowstile[fastapi], [sqlalchemy], ...
-    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-beta.1 migrate
+    docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/rowstile/rowstile:0.1.0-beta.2 migrate
 
 Once 0.1.0 is out, the plain `npm i -D rowstile`, `pip install rowstile` and `ghcr.io/rowstile/rowstile` get
 it. Until then a plain `npm i -D rowstile` and `pip install rowstile` get the newest pre-release too (npm's
