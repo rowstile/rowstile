@@ -35,13 +35,20 @@ beforeSignIn(keepOutOfCaches);
  *     export async function register() {
  *       if (process.env.NEXT_RUNTIME === "nodejs") await checkAtStart((await import("./db")).db.$authz);
  *     }
- */
+ *
+ *  In the edge runtime it throws instead (preview): there is no server there to stop, and no process.exit. */
 export async function checkAtStart(calls: { check(): Promise<void> }): Promise<void> {
+  if (process.env.NEXT_RUNTIME === "edge") {
+    throw new Error("rowstile: checkAtStart stops a Node.js server, and the edge runtime has none to stop: call it " +
+      'in register() where NEXT_RUNTIME is "nodejs" (the edge routes connect as the same role)');
+  }
   try {
     await calls.check();
   } catch (e) {
     console.error(`rowstile: ${e instanceof Error ? e.message : String(e)}`);
-    process.exit(1);
+    // (read off process when it is called: a build of the edge runtime warns of process.exit, which it never runs)
+    const { exit } = process;
+    exit(1);
   }
 }
 

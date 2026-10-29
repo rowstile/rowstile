@@ -17,6 +17,9 @@ integrations/nextjs/.next/
 integrations/nextjs/tsconfig.tsbuildinfo
 integrations/nextjs/src/generated/
 integrations/nextjs/next-env.d.ts
+integrations/nextjs/edge/.next/
+integrations/nextjs/edge/next-env.d.ts
+integrations/nextjs/edge/tsconfig.tsbuildinfo
 integrations/nextjs/.work/
 integrations/nextjs/coverage/
 packaging/npm/out/

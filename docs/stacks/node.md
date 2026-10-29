@@ -94,6 +94,46 @@ A query outside a signed-in transaction fails with the not-signed-in error (AZ70
 `notSignedIn(e)` (in `@rowstile/client`) says whether an error is that one. A login the database refuses
 (AZ703) and settings changed by hand (AZ702) have its SQLSTATE, 28000, but are not it.
 
+## The Neon serverless driver (preview)
+
+*Preview: this part may change in any release, and is not part of the 1.0 freeze.*
+
+Neon's serverless driver, `@neondatabase/serverless`, talks to Postgres over WebSockets. Its `Pool` works as pg's
+does, and `@rowstile/pg` takes it as it takes pg's: the transactions get Neon's own client, typed.
+
+```ts
+import { Pool, neonConfig } from "@neondatabase/serverless";
+import { authz } from "@rowstile/pg";
+
+  const one = new Pool({ connectionString: NEON, max: 1 });
+  const a = authz(one);
+      const ids = await a.transaction(async (c) => (await c.query("SELECT id FROM app.notes ORDER BY id")).rows.map((r) => r.id), user || null);
+```
+
+On Neon it needs no settings. In front of your own Postgres it needs a WebSocket proxy, Neon's `wsproxy`, and
+`neonConfig.wsProxy`, `useSecureWebSocket = false` and `pipelineConnect = false`
+([Next.js](nextjs.md#the-neon-serverless-driver-and-the-edge-runtime-preview) shows them). On an edge runtime, a
+pool can't outlive the request that opened it: make one in each request, and end it once the response is sent.
+`pg` is an optional peer of `@rowstile/pg`: an app on Neon's driver alone doesn't run it, and needs only its
+types (`npm install --save-dev @types/pg`), which `@rowstile/pg`'s own name.
+
+## Background jobs: BullMQ (preview)
+
+*Preview: this part may change in any release, and is not part of the 1.0 freeze.*
+
+`job(who, fn)` gives a queue worker its processor: each job signs in as `who`, whoever queued it, and the worker's
+own code outside the job acts for nobody.
+
+```ts
+import { Queue, Worker } from "bullmq";
+
+const connection = { url: process.env.REDIS_URL, maxRetriesPerRequest: null };
+export const digestWorker = () => new Worker("digest", digest, { connection });
+```
+
+`digest` is `job(["service", 1], async () => ...)` ([Next.js](nextjs.md#background-jobs)). Start the worker at the
+top level of its process.
+
 ## Answering HTTP
 
 In your framework's error handler, `problemOf(e)` (in `@rowstile/client`) gives the status and the problem body

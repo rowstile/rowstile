@@ -42,6 +42,9 @@ rules refuse changes 0 rows, without an error; `expect` asks the database why:
   superuser, `BYPASSRLS`, the tables' owner).
 - `changes(pool)` needs a connection of its own, straight to Postgres: `LISTEN` hears nothing through a
   pooler in transaction mode.
+- Preview: Neon's serverless driver (`@neondatabase/serverless`) works too, over WebSockets, on Node.js and on an
+  edge runtime. Its `Pool` goes where pg's does, and the transactions get Neon's own client. `pg` is an optional
+  peer: an app on Neon's driver alone doesn't run it, and needs only `@types/pg`.
 
 ## More
 

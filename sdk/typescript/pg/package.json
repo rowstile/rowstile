@@ -43,5 +43,8 @@
   },
   "peerDependencies": {
     "pg": "^8.23.1"
+  },
+  "peerDependenciesMeta": {
+    "pg": { "optional": true }
   }
 }

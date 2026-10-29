@@ -8,6 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
     "@rowstile/client": "*",
@@ -17,7 +18,9 @@
     "@rowstile/postgres": "*",
     "@rowstile/prisma": "*",
     "@rowstile/react": "*",
+    "bullmq": "^6.4.0",
     "drizzle-orm": "^0.45.4",
+    "ioredis": "^5.11.1",
     "next": "^16.4.0",
     "pg": "^8.23.1",
     "postgres": "^3.4.9",
