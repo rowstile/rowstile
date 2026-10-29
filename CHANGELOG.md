@@ -9,6 +9,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+## 0.1.0-beta.2 (2026-10-29)
+
 ### Changed
 
 - The Python the npm packages bring is CPython 3.13.18 (python-build-standalone 20261026), where it was 3.13.17.
