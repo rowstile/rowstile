@@ -1522,6 +1522,49 @@ class ClientNames(unittest.TestCase):
         # hidden permissions stay off it
         self.assertNotIn("view__base", Compiler(parse_policy(read(POLICIES["alt"]))).client("csharp", "x"))
 
+    def test_java_names(self) -> None:
+        # a constant for each type and an enum of its permissions, in the class rowstile.toml's path names; two names
+        # Java would spell the same get neither, and so does _, a keyword there
+        policy = (
+            self.CASES + "type t = app.t\n  owner : user = owner_id\n  can editAll = owner\n  can edit_all = owner\n"
+        )
+        lines = database.client("java", policy + "  can _ = owner\n  can ok = owner\n", java_class="a.b.Names").split(
+            "\n"
+        )
+        for line in (
+            "package a.b;",
+            "public final class Names {",
+            "    // Doc and doc: no name in Java (one spelling, or _): ObjectType.of(name)",
+            "    public static final ObjectType<OrgUnitPermission> ORG_UNIT =",
+            '            ObjectType.of("orgUnit", OrgUnitPermission.class);',
+            "    public enum TPermission implements Permission {",
+            '        // editAll and edit_all: no name in Java (one spelling, or _): Permission.of("t", name)',
+            '        // _: no name in Java (one spelling, or _): Permission.of("t", name)',
+            '        OK("ok");',
+            '            return "t";',
+        ):
+            self.assertIn(line, lines)
+        self.assertNotIn("DocPermission", "\n".join(lines))
+        # a type named _ has no name in Java either
+        underscore = database.client(
+            "java", self.CASES + "type _ = app.u\n  owner : user = owner_id\n  can see = owner\n"
+        )
+        self.assertIn("    // _: no name in Java (one spelling, or _): ObjectType.of(name)", underscore.split("\n"))
+        self.assertNotIn("_Permission", underscore)
+        # no class named: AuthzNames, in no package
+        self.assertTrue(database.client("java", policy).split("\n")[1].startswith("import dev.rowstile.ObjectType;"))
+        with tempfile.TemporaryDirectory() as d:
+            toml = os.path.join(d, "rowstile.toml")
+            for path, named in (
+                ("src/main/java/com/example/app/AuthzNames.java", "com.example.app.AuthzNames"),
+                ("src/test/java/Names.java", "Names"),
+                ("Names.java", "Names"),
+                (None, "AuthzNames"),
+            ):
+                cfg = rowstile_cli.Config(toml, {"clients": {"java": path}} if path else {})
+                self.assertEqual(cfg.java_class, named, path)
+            self.assertEqual(sorted(rowstile_cli.Config(toml, {"clients": {"java": "N.java"}}).clients), ["java"])
+
     def test_share_takes_caveat_args_as_a_dict(self) -> None:
         sent: list[Sequence[object]] = []
 

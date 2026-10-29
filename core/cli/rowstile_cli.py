@@ -52,10 +52,10 @@
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
-    rowstile client  [py|ts|go|csharp|ruby|rbs] [POLICY.authz]
-                                                   typed helpers for app code (go, csharp, ruby: the policy's
-                                                   names, for those SDKs; rbs: the Ruby names' signatures);
-                                                   with none, writes the clients rowstile.toml names
+    rowstile client  [py|ts|go|csharp|ruby|rbs|java] [POLICY.authz]
+                                                   typed helpers for app code (go, csharp, ruby, java: the
+                                                   policy's names, for those SDKs; rbs: the Ruby names'
+                                                   signatures); with none, writes the clients rowstile.toml names
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
                                                    a first policy from the database's tables (every schema of
                                                    the app's, or those --schema names), and rowstile.toml
@@ -96,6 +96,7 @@ rowstile.toml:
     csharp = "Api/Authz.g.cs"
     ruby = "app/lib/authz.rb"              # the policy's names, for the Ruby SDK
     rbs = "sig/authz.rbs"                  # ... and their signatures, for Steep
+    java = "src/main/java/com/example/AuthzNames.java"   # the policy's names, for the Java SDK
     [migrations]
     tool = "alembic"                       # alembic, prisma, drizzle, efcore, rails, sql, goose, dbmate,
                                            # flyway or django
@@ -449,6 +450,17 @@ class Config:
         return out
 
     @property
+    def java_class(self) -> str:
+        """The class [clients] java holds, named by its path: what follows its last folder named java
+        (src/main/java/com/example/AuthzNames.java is com.example.AuthzNames); AuthzNames when there is none."""
+        path = self.section("clients").get("java")
+        if not isinstance(path, str):
+            return "AuthzNames"
+        *folders, name = re.split(r"[\\/]", path)
+        package = folders[len(folders) - folders[::-1].index("java") :] if "java" in folders else []
+        return ".".join([*package, name.removesuffix(".java")])
+
+    @property
     def tool(self) -> str | None:
         """[migrations] tool: the app's migration tool."""
         return self.setting("migrations", "tool")
@@ -503,11 +515,19 @@ class Config:
 
 
 # the languages rowstile client writes: for Ruby, the policy's names and their signatures (RBS)
-CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs")
+CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java")
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
-    "clients": {"py": "text", "ts": "text", "go": "text", "csharp": "text", "ruby": "text", "rbs": "text"},
+    "clients": {
+        "py": "text",
+        "ts": "text",
+        "go": "text",
+        "csharp": "text",
+        "ruby": "text",
+        "rbs": "text",
+        "java": "text",
+    },
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
 }
@@ -658,7 +678,7 @@ class Unreadable(Exception):
 def write_clients(cfg: Config, text: str, files: dict[str, str]) -> list[str]:
     """Writes the clients rowstile.toml names; returns the files that changed. Every client is made before any
     file is opened: a mistake in the policy, or a language rowstile doesn't know, leaves the files as they were."""
-    made = {path: database.client(lang, text, files) for lang, path in cfg.clients.items()}
+    made = {path: database.client(lang, text, files, cfg.java_class) for lang, path in cfg.clients.items()}
     written: list[str] = []
     for path, code in made.items():
         try:
@@ -1209,9 +1229,9 @@ def main(argv: list[str]) -> None:
             return
         if cmd == "client" and args[1:]:
             if args[0] not in CLIENTS:
-                fail("rowstile client: which language, py, ts, go, csharp, ruby or rbs?", 2)
+                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs or java?", 2)
             _, text, files = policy_arg()
-            sys.stdout.write(database.client(args[0], text, files))
+            sys.stdout.write(database.client(args[0], text, files, cfg.java_class))
             return
         if cmd == "prove":
             from authzlib import parse_policy, prove
@@ -1404,8 +1424,8 @@ def main(argv: list[str]) -> None:
                     print(f"wrote {relative(path)}")
                 return
             if not args or args[0] not in CLIENTS:
-                fail("rowstile client: which language, py, ts, go, csharp, ruby or rbs?", 2)
-            sys.stdout.write(database.client(args[0], text, files))
+                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs or java?", 2)
+            sys.stdout.write(database.client(args[0], text, files, cfg.java_class))
         elif cmd == "why":
             if not opts.get("--as"):
                 fail("rowstile why --as user:42 TYPE ID PERM", 2)

@@ -1012,13 +1012,16 @@ def graph(policy: str, files: Mapping[str, object] | str | None = None) -> str:
     return compiled(policy, files, make)
 
 
-def client(lang: str, policy: str, files: Mapping[str, object] | str | None = None) -> str:
-    """The client in a language the command takes, py, ts, go or csharp (the names, for the .NET SDK); or ts-sdk, the
-    names alone (rowstile.toml's ts, for an app on the TypeScript SDK)."""
+def client(
+    lang: str, policy: str, files: Mapping[str, object] | str | None = None, java_class: str = "AuthzNames"
+) -> str:
+    """The client in a language the command takes, py, ts, go, csharp (the names, for the .NET SDK), ruby, rbs or
+    java (the names alone, as the class `java_class`: com.example.AuthzNames); or ts-sdk, the names alone
+    (rowstile.toml's ts, for an app on the TypeScript SDK)."""
 
     def make(c: Compiler) -> str:
         c.compile("the policy", transaction=False)
-        return c.client(lang, "the policy")
+        return c.client(lang, "the policy", java_class)
 
     return compiled(policy, files, make)
 
