@@ -39,6 +39,7 @@ const stacks = [
   { text: "Node: pg, postgres.js, Drizzle", link: "/stacks/node" },
   { text: "Python", link: "/stacks/python" },
   { text: "Go (preview)", link: "/stacks/go" },
+  { text: "Django (preview)", link: "/stacks/django" },
   { text: "Any other stack: SQL", link: "/stacks/sql" },
 ];
 const sdks = [

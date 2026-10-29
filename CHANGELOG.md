@@ -26,6 +26,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `@rowstile/jest`, a preview: `@rowstile/vitest`'s matchers, `asUser` and a test database per worker, for Jest 30.
   And a conformance suite for a plain Node server, also a preview: Express 5 on pg, Drizzle and postgres.js, with
   Drizzle Kit's migrations and its tests on Jest (`integrations/node`, the Node page).
+- Django, as a preview (it may change in any release): `rowstile[django]` signs every transaction on Django's
+  connections in as the request's user (`"rowstile.django"` in `INSTALLED_APPS`, and its middleware), answers
+  refusals with 403 and hidden rows with 404, and gives pytest-django a copy of the test database per worker.
+  `rowstile migrate` writes Django migrations (`tool = "django"`). [Django](docs/stacks/django.md).
 
 ## 0.1.0-beta.2 (2026-10-29)
 

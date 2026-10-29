@@ -12793,6 +12793,7 @@ class PythonExtras(unittest.TestCase):
         for folder in ("fastapi", *self.APPS.values()):
             with open(os.path.join(self.REPO, "integrations", folder, "test.sh"), encoding="utf-8") as fh:
                 self.assertIn('--resolution "$RESOLUTION"', fh.read(), folder)
+            self.assertIn(f"run: bash integrations/{folder}/test.sh", job, folder)
 
 
 class Licence(unittest.TestCase):
