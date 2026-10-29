@@ -1,0 +1,13 @@
+# sqlc writes internal/db from the app's queries (db/queries.sql) and its tables (the schema's migration), with
+# `sqlc generate` (test.sh runs it in the image ../images/Dockerfile pins, and compares). The generated code runs
+# on any sqlc DBTX: here the pgx.Tx rowstile.Tx signs in.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations/00001_schema.sql
+    queries: db/queries.sql
+    gen:
+      go:
+        package: db
+        out: internal/db
+        sql_package: pgx/v5
