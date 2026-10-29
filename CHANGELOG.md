@@ -11,6 +11,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Changed
 
+- The Python the npm packages bring is CPython 3.13.18 (python-build-standalone 20261026), where it was 3.13.17.
 - `authz.cancel_request` writes a line in the audit trail (`cancel_request`, the request's object, relation and
   requester, and the request's id), as deciding a request does. Before, a withdrawn request left no trace there.
 - An empty condition is refused (AZ102, "empty {} condition") in a type's or a link table's `where`, a `shared if`
