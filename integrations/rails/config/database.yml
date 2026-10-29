@@ -1,0 +1,11 @@
+# The app connects as the policy's app role, DATABASE_URL; the migrations run as the tables' owner, with the
+# owner's URL in DATABASE_URL instead (DATABASE_URL=$ROWSTILE_OWNER_URL bin/rails db:migrate).
+default: &default
+  adapter: postgresql
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
+
+development:
+  <<: *default
+
+test:
+  <<: *default

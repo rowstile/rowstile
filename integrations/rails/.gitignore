@@ -1,0 +1,3 @@
+# Rails' own files (the gems are outside the checkout: test.sh)
+tmp/
+log/

@@ -9,3 +9,5 @@ FROM ghcr.io/neondatabase/wsproxy:latest@sha256:7f2e2149aa6a57ba382a140102fba44f
 FROM redis:8.10.3-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537 AS redis
 # sqlc, which the Go suite runs to check the app's generated queries (integrations/go/test.sh)
 FROM sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a270a6e34e525537 AS sqlc
+# the Rails suite's Ruby (rails/test.sh builds rails/ruby.Dockerfile on it)
+FROM ruby:4.0-slim@sha256:e41d40671d359ccc3431371e0af7c6430bd1b3886b47ac0667443525b7dcec1a AS ruby

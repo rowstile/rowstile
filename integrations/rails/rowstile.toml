@@ -1,0 +1,9 @@
+policy   = "db/policy.authz"
+tests    = ["db/tests/*.authz"]
+database = "env:ROWSTILE_OWNER_URL"
+[clients]
+ruby = "app/lib/authz.rb"
+rbs  = "sig/authz.rbs"
+[migrations]
+tool = "rails"
+dir  = "db/migrate"

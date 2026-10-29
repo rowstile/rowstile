@@ -1,0 +1,16 @@
+# The Rails suite's app: Rails 8 (Active Record, Action Pack, Active Job), Puma, pg, the SDK from this checkout
+source "https://rubygems.org"
+
+gem "actionpack", "~> 8.1"
+gem "activejob", "~> 8.1"
+gem "activerecord", "~> 8.1"
+gem "pg", "~> 1.6"
+gem "puma", ">= 7"
+gem "railties", "~> 8.1"
+gem "rowstile", path: "../../sdk/ruby"
+
+group :test do
+  gem "minitest", ">= 5.25"
+  gem "simplecov", require: false
+  gem "steep", require: false
+end
