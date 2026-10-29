@@ -37,6 +37,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A .NET SDK, as a preview (it may change in any release): `Rowstile`, `Rowstile.EntityFrameworkCore` and
   `Rowstile.AspNetCore` sign each transaction in as the request's user and answer refusals as the other SDKs do,
   `rowstile migrate` writes EF Core migrations (`tool = "efcore"`), and `rowstile client csharp` the policy's names.
+- The Ruby SDK for Rails apps, a preview: the `rowstile` gem signs every Active Record transaction in, answers
+  refusals 403 and hidden rows 404, refuses to start on a connection that skips row-level security, signs Active
+  Job in as a service and copies the test database for each worker. `rowstile migrate` writes Rails migrations
+  (`tool = "rails"`), and `rowstile client ruby` and `rbs` the policy's names and their signatures, for Steep.
 
 ### Fixed
 

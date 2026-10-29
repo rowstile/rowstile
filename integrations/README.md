@@ -45,6 +45,7 @@ The suites: `fastapi` (the Python SDK: FastAPI, SQLAlchemy, Alembic), `nextjs` (
 Prisma, pg, postgres.js, Drizzle, React, Vitest), `node` (a preview: a plain Express server on pg, Drizzle and
 postgres.js, Drizzle Kit's migrations, its tests on Jest; `authzRoutes()` is `@rowstile/next`'s) and `go` (the Go
 SDK, a preview: `net/http`, pgx, sqlc, goose) and `django` (the Python SDK's Django module, a preview: Django's
-ORM on psycopg 3, Django's migrations, pytest-django). Check 15 is Next.js's alone.
+ORM on psycopg 3, Django's migrations, pytest-django) and `rails` (the Ruby SDK, a preview: Rails 8, Active
+Record, Puma, Minitest). Check 15 is Next.js's alone.
 
 A new stack gets its own folder here, with every check that applies to it.

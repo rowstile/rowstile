@@ -2,7 +2,7 @@
 
 <!-- tested: every line of code below is in docs/getting-started.md (run as written by tests/docs_test.sh) or in the SDKs' sources -->
 
-Ruby, Java, Rust, Elixir, or a Python, Node or Go app without the SDKs: rowstile needs no library. The SDKs
+Java, Rust, Elixir, Ruby without Rails, or a Python, Node or Go app without the SDKs: rowstile needs no library. The SDKs
 send the few statements on this page and translate the answers; any language that speaks to Postgres can do
 the same.
 

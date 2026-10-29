@@ -184,7 +184,7 @@ jobs:
   conformance:
     if: ${{ !inputs.only || inputs.only == 'conformance' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -222,6 +222,8 @@ jobs:
         with: {dotnet-version: "10.0.x"}
       - if: ${{ !matrix.resolution }}
         run: bash integrations/aspnetcore/test.sh
+      - if: ${{ !matrix.resolution }}
+        run: bash integrations/rails/test.sh
   # The migrations rowstile migrate writes for goose, dbmate, Flyway and Django, run by each tool, in an empty folder
   # and in one numbered by hand, then the app's next migration after them (core/tests/migration_tools.sh)
   tools:
