@@ -148,8 +148,8 @@ request of its own, before the release's.
    is named, for the by-hand run below. Moving the tag needs **Allow npm dist-tag** ticked in each
    package's trusted publisher on npmjs.com: where it isn't, the run says which packages and the release
    stands. The tag also deploys the docs site at
-   rowstile.dev (`.github/workflows/site.yml`), built from the tag, when the release is what a plain install
-   gets, or while no final release exists: `gh workflow run site.yml -f tag=vX.Y.Z` deploys another one.
+   rowstile.dev (`.github/workflows/site.yml`), built from its commit, when that commit is on `main` and no
+   site tag is on a later one (below).
 5. **Check it** as a user would: install from the registries on Linux, then `rowstile init`, `migrate` and
    `test` on a small app, and the review action on a pull request. Then the next alpha, beta or candidate, or
    the final release. A tag pushed is not a release made: look at the workflow's run, and at what it
@@ -169,11 +169,10 @@ release exists:
     python3 packaging/npm_latest.py              # what it would move, read from the registry
     gh workflow run release.yml -f latest=true   # moves it, from main
 
-## The site between releases
+## The site
 
-The site shows a release: the reference, the guide and the install lines are built from its tag, and so is
-the site's own code. An article and a comparison page describe no version, and don't wait for one. A
-**site tag** publishes them:
+The site, rowstile.dev, doesn't wait for a release: its code, the home page, the docs, the blog, the comparison
+pages and the playground are all built from one commit of `main`. A **site tag** deploys them:
 
     git fetch origin
     git tag -a site-vN -m "the site, N" origin/main
@@ -181,17 +180,17 @@ the site's own code. An article and a comparison page describe no version, and d
 
 - Site tags are `site-v1`, `site-v2` and on: a plain count, annotated, on a commit of `main`, and like a
   release's never moved or deleted once pushed. A wrong page is followed by the next tag.
-- The site workflow (`.github/workflows/site.yml`) builds the site from the release it shows, with
-  `docs/blog/` and `docs/compare/` as they are at the site tag, and deploys it. `site/source.mjs` holds
-  the rule and `site/source_test.mjs` checks it; `node site/source.mjs site-vN` says what a tag is built
-  from. The site's links to files in the repository go to those tags: the release's, and the site tag's for
-  the two folders.
-- Nothing else comes from a site tag. The landing page, the navigation, every other page and a new kind
-  of page go out with a release. A post that links to a page the release doesn't have fails the build,
-  and so does a post or a comparison page the release's site can't make: nothing is deployed, and the
-  workflow's run says which.
-- A release's tag deploys the site at its own commit, which holds every site tag before it: a release
-  needs no site tag. The count goes on after it.
+- The site workflow (`.github/workflows/site.yml`) builds the whole site from the tag's commit and deploys it.
+  The site's links to files in the repository go to that tag.
+- The docs then say what `main` says: between releases, the reference and the guide may describe a change
+  that isn't on PyPI or npm yet. Tag the site when that is what it should show.
+- A release's tag on `main` deploys the site too, from its own commit: a release needs no site tag. A tag
+  pushed on a commit older than another such tag's (a release made from an earlier commit, after a site tag)
+  deploys nothing, and a release's tag off `main` (a patch to an older line) neither: the site never goes back
+  by itself. To put it back on purpose, run it by hand: `gh workflow run site.yml -f tag=site-vN` deploys
+  that tag, whatever comes after it.
+- `site/source.mjs` holds the rule and `site/source_test.mjs` checks it; `node site/source.mjs site-vN` says
+  whether a tag deploys.
 - The release workflow doesn't run on a site tag, which publishes no package (`Delivery` in
   `core/tests/unit_test.py` checks that no pattern of its own matches one).
 - What the comparison pages say of other projects is quoted from their documentation, with the day it was

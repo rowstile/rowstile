@@ -15519,9 +15519,9 @@ class Delivery(unittest.TestCase):
             if path.startswith(".github/"):
                 self.assertIn("permissions: {contents: read}", lines, path)
 
-    def test_a_site_tag_publishes_pages_and_no_package(self) -> None:
-        # site-v3 deploys the site with the blog and the comparison pages (site.yml); only a release's tag
-        # reaches the registries, so no pattern release.yml runs on may match a site tag
+    def test_a_site_tag_deploys_the_site_and_no_package(self) -> None:
+        # site-v3 deploys the whole site, from its commit (site.yml); only a release's tag reaches the registries,
+        # so no pattern release.yml runs on may match a site tag
         on_tags: dict[str, list[str]] = {}
         for path, lines in self.workflows().items():
             for line in lines:
@@ -15534,14 +15534,9 @@ class Delivery(unittest.TestCase):
         )
         for pattern in on_tags[".github/workflows/release.yml"]:
             self.assertFalse(fnmatch.fnmatchcase("site-v3", pattern), pattern)
-        # the folders a site tag publishes are the ones the release steps name
-        folders = re.findall(
-            r'"([^"]+)"', search(r"export const FOLDERS = \[(.*?)\];", read("../site/source.mjs")).group(1)
-        )
-        self.assertEqual(folders, ["docs/blog", "docs/compare"])
-        releasing = read("../RELEASING.md")
-        for folder in folders:
-            self.assertIn(f"`{folder}/`", releasing)
+        # the release steps say how a site tag is made, as the site's rule names one
+        self.assertIn("const SITE = /^site-v([1-9]\\d*)$/;", read("../site/source.mjs"))
+        self.assertIn("git tag -a site-vN", read("../RELEASING.md"))
 
     def test_the_launcher_knows_the_platforms_built(self) -> None:
         build = read("../packaging/npm/build.mjs")
