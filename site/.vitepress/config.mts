@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vitepress";
 import { FEED, FEED_TITLE, LANGUAGES } from "../blog.mjs";
-import { GITHUB, ORIGIN, PAGES, POSTS, REPO, TITLES, blogSidebar, checkMenus, compareSidebar, describe, errorSidebar, menuLinks, notPages, recipeSidebar, siteLink, slug, url } from "../pages.mjs";
+import { GITHUB, ORIGIN, PAGES, POSTS, REPO, TITLES, blogSidebar, checkMenus, compareSidebar, describe, errorSidebar, menuLinks, notPages, pageTitle, recipeSidebar, siteLink, slug, structured, url } from "../pages.mjs";
 
 // The pages are outside site/, and so is Vite's root (the repository), where there is no Vue: the pages' imports of
 // it are resolved from here, and the server bundle leaves Vue out (it imports it at run time, from site/.vitepress)
@@ -130,8 +130,9 @@ export default defineConfig({
     },
   },
   transformPageData(page) {
-    const title = TITLES[page.relativePath];
-    if (title) page.title = title;
+    const named = pageTitle(page.relativePath, TITLES[page.relativePath] ?? page.title);
+    page.title = named.title;
+    page.titleTemplate = named.template;
     // each page's own sentence, for search results and shared links (pages.mjs: a page without one fails the build)
     if (!page.isNotFound) page.description = describe(page.relativePath, page.title);
   },
@@ -139,8 +140,11 @@ export default defineConfig({
   transformHead({ pageData, title, description }) {
     if (pageData.isNotFound) return [];
     const href = ORIGIN + url(pageData.relativePath);
+    const about = structured(pageData.relativePath, description);
     return [
       ["link", { rel: "canonical", href }],
+      // the page's Markdown, which build.mjs writes beside it: what an agent reads in place of the HTML
+      ["link", { rel: "alternate", type: "text/markdown", href: `${ORIGIN}/${pageData.relativePath}` }],
       ["meta", { property: "og:type", content: "website" }],
       ["meta", { property: "og:site_name", content: "rowstile" }],
       ["meta", { property: "og:title", content: title }],
@@ -151,6 +155,8 @@ export default defineConfig({
       ["meta", { property: "og:image:width", content: "1200" }],
       ["meta", { property: "og:image:height", content: "630" }],
       ["meta", { name: "twitter:card", content: "summary_large_image" }],
+      // what the page is, for search engines (pages.mjs); "<" escaped, so no text in it can end the script
+      ...(about ? [["script", { type: "application/ld+json" }, JSON.stringify(about).replaceAll("<", "\\u003c")] as [string, Record<string, string>, string]] : []),
     ];
   },
   themeConfig: {

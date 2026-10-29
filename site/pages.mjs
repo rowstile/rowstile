@@ -225,6 +225,55 @@ export function describe(address, title) {
   throw new Error(`${address}: no description in site/pages.mjs (DESCRIPTIONS)`);
 }
 
+/** What rowstile is, after a page's own title: a search result shows the title first, and a new name says nothing
+ *  yet. The home page says it in one title. */
+const WHAT = "authorization for Postgres";
+
+/** A page's title in a search result and a browser tab: its own words, then what rowstile is (VitePress's
+ *  titleTemplate; false: the title alone).
+ *  @param {string} address @param {string} title @returns {{title: string, template: string | false}} */
+export function pageTitle(address, title) {
+  if (address === "index.md") return { title: `rowstile: ${WHAT}, compiled into row-level security`, template: false };
+  if (/^cookbook\/[a-z0-9-]+\.md$/.test(address)) return { title, template: ":title | Postgres row-level security, rowstile" };
+  if (/\browstile\b/i.test(title)) return { title, template: `:title | ${WHAT}` };
+  return { title, template: `:title | rowstile, ${WHAT}` };
+}
+
+/** What a page says of itself to search engines and agents, as schema.org's JSON-LD: the home page, the software;
+ *  a post, an article with its author and date. Other pages: nothing (their title and description say it).
+ *  @param {string} address @param {string} description @returns {object | null} */
+export function structured(address, description) {
+  if (address === "index.md") {
+    return {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      name: "rowstile",
+      description,
+      url: `${ORIGIN}/`,
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "Linux, macOS, Windows",
+      license: "https://www.apache.org/licenses/LICENSE-2.0",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      image: `${ORIGIN}/card.png`,
+      sameAs: [GITHUB, "https://pypi.org/project/rowstile/", "https://www.npmjs.com/package/rowstile"],
+    };
+  }
+  const post = POSTS.find((p) => p.address === address);
+  if (!post) return null;
+  return {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    headline: post.title,
+    description,
+    datePublished: post.date,
+    author: { "@type": "Person", name: post.author },
+    url: ORIGIN + url(address),
+    mainEntityOfPage: ORIGIN + url(address),
+    image: `${ORIGIN}/card.png`,
+    publisher: { "@type": "Organization", name: "rowstile", url: `${ORIGIN}/` },
+  };
+}
+
 /** A summary as a description. A search result shows about 160 characters: the first sentences that fit, else cut
  *  at a word. @param {string} summary */
 function short(summary) {
