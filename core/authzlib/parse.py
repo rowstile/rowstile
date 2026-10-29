@@ -623,37 +623,44 @@ class Token(NamedTuple):
     end: int
 
 
+# an expression's word after its spaces (all of them, possessively: a trailing one is no mistake): a name or
+# rel.perm, a parenthesis, a {condition} that holds no quote, $, comment or brace (as LINE_PIECE reads one), any
+# other { (braced_at finds its end), anything else (a mistake)
+EXPR_TOKEN = re.compile(
+    rf"""\s*+(?:({IDENT}(?:\.{IDENT})?)|([()])|\{{((?:[^{{}}'"$/-]|-(?!-)|/(?!\*))*+)\}}|(\{{)|(.))""", re.S
+)
+
+
 def tokenize(s: str, loc: Loc, base: int = 0) -> list[Token]:
     """An expression's words; base: where it starts in the line's text (for the places of its mistakes)."""
     toks: list[Token] = []
     i = 0
-    while i < len(s):
-        c = s[i]
-        if c.isspace():
-            i += 1
-        elif c == "{":
-            end = braced_at(s[i:])[0][1]
-            if end < 0:
-                fail(loc, "a { condition is missing its closing }", "AZ102", at=(base + i, base + i + 1))
-            j = i + end - 1
-            sql = s[i + 1 : j].strip()
-            if not sql:
-                fail(loc, "empty {} condition", "AZ102", at=(base + i, base + j + 1))
-            toks.append(Token("cond", sql, base + i, base + j + 1))
-            i = j + 1
-        elif c in "()":
-            toks.append(Token(c, c, base + i, base + i + 1))
-            i += 1
+    while (m := EXPR_TOKEN.match(s, i)) is not None:
+        k = m.lastindex
+        assert k is not None
+        start, i = m.span(k)
+        if k == 1:
+            w = m.group(1)
+            toks.append(Token(w if w in ("or", "and", "not") else "name", w, base + start, base + i))
+        elif k == 2:
+            toks.append(Token(s[start], s[start], base + start, base + i))
+        elif k == 5:
+            # a character that doesn't print (a stray control character) is shown escaped, or the message
+            # would show nothing between its quotes
+            c = s[start]
+            shown = c if c.isprintable() else c.encode("unicode_escape").decode("ascii")
+            fail(loc, f"unexpected '{shown}' in expression", "AZ102", at=(base + start, base + i))
         else:
-            m = re.match(rf"{IDENT}(\.{IDENT})?", s[i:])
-            if not m:
-                # a character that doesn't print (a stray control character) is shown escaped, or the message
-                # would show nothing between its quotes
-                shown = c if c.isprintable() else c.encode("unicode_escape").decode("ascii")
-                fail(loc, f"unexpected '{shown}' in expression", "AZ102", at=(base + i, base + i + 1))
-            w = m.group(0)
-            toks.append(Token(w if w in ("or", "and", "not") else "name", w, base + i, base + i + len(w)))
-            i += len(w)
+            if k == 3:  # (the group is the SQL between the braces)
+                start, sql, i = start - 1, m.group(3).strip(), i + 1
+            else:
+                end = braced_at(s[start:])[0][1]
+                if end < 0:
+                    fail(loc, "a { condition is missing its closing }", "AZ102", at=(base + start, base + start + 1))
+                sql, i = s[start + 1 : start + end - 1].strip(), start + end
+            if not sql:
+                fail(loc, "empty {} condition", "AZ102", at=(base + start, base + i))
+            toks.append(Token("cond", sql, base + start, base + i))
     return toks
 
 
@@ -983,7 +990,6 @@ class Piece(NamedTuple):
 
 # a name or a number: what runs on without a space or a mark
 RUN = re.compile(r"[A-Za-z0-9_]+")
-NOT_SPACE = re.compile(r"\S")
 
 
 def piece_at(text: str, i: int) -> Piece:
@@ -1006,32 +1012,14 @@ def piece_at(text: str, i: int) -> Piece:
 Pieces: TypeAlias = "dict[int, tuple[int, Piece | None]]"
 
 # a piece after spaces, as piece_at reads it: a name or a number, ->, a quote closed on the line (a doubled quote
-# inside it; possessive, so that an unclosed one is a mark as there), a { (piece_at reads the condition), a mark
-LINE_PIECE = re.compile(r"""\s*(?:([A-Za-z0-9_]+)|(->)|('(?:[^']|'')*+'|"(?:[^"]|"")*+")|(\{)|(\S))""")
-
-
-def lex_line(text: str, pieces: Pieces) -> None:
-    """Each piece of a line, read once from its start (what Words would lex at each piece's end, in one pass)."""
-    pos, n = 0, len(text)
-    while True:
-        m = LINE_PIECE.match(text, pos)
-        if m is None:
-            pieces[pos] = (n, None)
-            return
-        run, arrow, quote, brace, _ = m.groups()
-        i = m.start(m.lastindex or 0)
-        if run is not None:
-            piece = Piece("number" if run[0].isdigit() else "name", run, i, m.end())
-        elif arrow is not None:
-            piece = Piece("mark", "->", i, i + 2)
-        elif quote is not None:
-            piece = Piece("quote", quote, i, m.end())
-        elif brace is not None:
-            piece = piece_at(text, i)
-        else:
-            piece = Piece("mark", text[i], i, i + 1)
-        pieces[pos] = (i, piece)
-        pos = piece.end
+# inside it; possessive, so that an unclosed one is a mark as there), a {condition} that holds no quote, $, comment
+# or brace (so that it ends at the first }, as braced_at reads it), any other { (piece_at reads the condition), a
+# mark
+LINE_PIECE = re.compile(
+    r"""\s*(?:([A-Za-z0-9_]+)|(->)|('(?:[^']|'')*+'|"(?:[^"]|"")*+")|\{((?:[^{}'"$/-]|-(?!-)|/(?!\*))*+)\}|(\{)|(\S))"""
+)
+# the kind of piece each of its groups lexes (a name's may be a number's; piece_at reads the fifth's)
+LINE_KINDS = ("", "name", "mark", "quote", "cond", "", "mark")
 
 
 class Unread(Exception):
@@ -1052,11 +1040,10 @@ class Words:
 
     def __init__(self, text: str, start: int = 0, pieces: Pieces | None = None) -> None:
         self.text, self.pos = text, start  # pos: after the piece taken last
-        # the piece after each place read from, and where it starts: each is lexed once, however many forms are
-        # tried on the line (pass the same dict to each)
+        # the piece after each place read from, and where it starts: each is lexed when first asked for (most
+        # readers stop before the line's end: a rule line asks only whether it starts with `cascade`), and once,
+        # however many forms are tried on the line (pass the same dict to each)
         self.pieces = {} if pieces is None else pieces
-        if not self.pieces:
-            lex_line(text, self.pieces)
 
     def copy(self) -> Words:
         return Words(self.text, self.pos, self.pieces)
@@ -1067,10 +1054,26 @@ class Words:
         return self.pieces.get(self.pos) or self.lex()
 
     def lex(self) -> tuple[int, Piece | None]:
-        """The next piece, lexed and kept for the forms tried next on the line."""
-        m = NOT_SPACE.search(self.text, self.pos)
-        i = m.start() if m else len(self.text)
-        got = self.pieces[self.pos] = (i, piece_at(self.text, i) if i < len(self.text) else None)
+        """The next piece, lexed and kept for the forms tried next on the line: where it starts, and the piece
+        (None at the line's end)."""
+        text, pos = self.text, self.pos
+        m = LINE_PIECE.match(text, pos)
+        if m is None:  # (only spaces are left)
+            got: tuple[int, Piece | None] = (len(text), None)
+        else:
+            k = m.lastindex
+            assert k is not None
+            i, end = m.span(k)
+            if k == 1:
+                run = m.group(1)
+                got = i, Piece("number" if run[0].isdigit() else "name", run, i, end)
+            elif k == 4:  # (the group is the SQL between the braces)
+                got = i - 1, Piece("cond", m.group(4), i - 1, end + 1)
+            elif k == 5:
+                got = i, piece_at(text, i)
+            else:
+                got = i, Piece(LINE_KINDS[k], m.group(k), i, end)
+        self.pieces[pos] = got
         return got
 
     def next_start(self) -> int:
@@ -1184,6 +1187,16 @@ def read_cols(w: Words) -> Cols:
 KEY_TYPES = ("bigint", "int8", "integer", "int", "int4", "smallint", "int2", "text", "uuid", "varchar")
 
 
+# a key's column, and its type if written: (id uuid), (org_id, id)
+KEY_COLUMN = re.compile(rf"({IDENT})(?:\s+({IDENT}))?")
+# an item of a list written with commas, without the spaces around it
+PART = re.compile(r"\s*([^,]*?)\s*(?:,|$)")
+# a subject: any signed-in principal of a type (user:*), or a type and maybe one of its relations (team#member)
+ALL_OF_TYPE = re.compile(rf"({IDENT}):\*")
+SUBJECT = re.compile(rf"({IDENT})(?:#({IDENT}))?")
+IDENTIFIER = re.compile(IDENT)
+
+
 def parse_key(key: tuple[str, int] | None, loc: Loc) -> list[tuple[str, str]]:
     """(id uuid) or (org_id, id) or (org_id bigint, id uuid) -> [(column, type)]; key: the text between the
     parentheses, and where it starts."""
@@ -1191,7 +1204,7 @@ def parse_key(key: tuple[str, int] | None, loc: Loc) -> list[tuple[str, str]]:
         return [("id", "bigint")]
     out: list[tuple[str, str, tuple[int, int]]] = []
     for part, at in parts(*key):
-        m = re.fullmatch(rf"({IDENT})(?:\s+({IDENT}))?", part)
+        m = KEY_COLUMN.fullmatch(part)
         if not m:
             fail(
                 loc,
@@ -1218,9 +1231,7 @@ def parse_key(key: tuple[str, int] | None, loc: Loc) -> list[tuple[str, str]]:
 def parts(text: str, base: int = 0) -> list[tuple[str, tuple[int, int]]]:
     """A list written with commas: each item without the spaces around it, and where it is (base: where text
     starts in the line's)."""
-    return [(m.group(1), (base + m.start(1), base + m.end(1))) for m in re.finditer(r"\s*([^,]*?)\s*(?:,|$)", text)][
-        : text.count(",") + 1
-    ]
+    return [(m.group(1), (base + m.start(1), base + m.end(1))) for m in PART.finditer(text)][: text.count(",") + 1]
 
 
 def parse_subjects(text: str, loc: Loc, base: int = 0) -> tuple[list[Subject], tuple[Span | None, ...]]:
@@ -1232,11 +1243,11 @@ def parse_subjects(text: str, loc: Loc, base: int = 0) -> tuple[list[Subject], t
         if part in ("anyone", "link"):
             subjects.append((part, None))
             continue
-        wild = re.fullmatch(rf"({IDENT}):\*", part)
+        wild = ALL_OF_TYPE.fullmatch(part)
         if wild:  # any signed-in principal of that type (user:*, service:*)
             subjects.append((wild.group(1), "*"))
             continue
-        sm = re.fullmatch(rf"({IDENT})(?:#({IDENT}))?", part)
+        sm = SUBJECT.fullmatch(part)
         if not sm:
             fail(
                 loc,
@@ -1588,6 +1599,8 @@ class Reader:
 
 def no_dollar_tags(line: Line) -> None:
     """A condition with a dollar quote's tag ($f$) would end the generated function it goes in."""
+    if "$" not in line.text:  # (most lines: no tag, and braced_at reads a quote's line character by character)
+        return
     for a, b in braced_at(line.text):
         tag = DOLLAR_TAG.search(line.text, a, b) if b > 0 else None
         if tag:
@@ -1647,7 +1660,11 @@ def principal(w: Words, anyone: bool) -> tuple[str, str | None, tuple[str, ...]]
 
 def either(w: Words, read: Callable[[Words, bool], T]) -> T:
     """read(w, anyone) of a test's line: about anyone, or else about a principal (`anyone 3` is one of type
-    anyone, which the compiler refuses); stopping, where the reading that got further stopped."""
+    anyone, which the compiler refuses); stopping, where the reading that got further stopped. One whose next
+    piece isn't `anyone` is read about a principal alone: about anyone, it would stop at that piece, never further
+    than the other reading."""
+    if (p := w.peek()) is None or p.kind != "name" or p.text != "anyone":
+        return read(w, False)
     try:
         return read(w.copy(), True)
     except Unread as first:
@@ -1691,7 +1708,6 @@ def as_step(s: str, loc: Loc, w: Words) -> AsStep:
     """as who allowed|refused|sees N {SQL}"""
 
     def read(w: Words, anyone: bool) -> tuple[tuple[str, str | None, tuple[str, ...]], str | int, str]:
-        w.need(w.name("as"))
         who = principal(w, anyone)
         verb = w.need(w.name("allowed", "refused", "sees"))
         expect: str | int = verb.text
@@ -1704,6 +1720,7 @@ def as_step(s: str, loc: Loc, w: Words) -> AsStep:
         w.end()
         return who, expect, sql
 
+    w.need(w.name("as"))
     (ptype, who, scopes), expect, sql = either(w, read)
     if not sql.strip():
         fail(loc, "as ... {...} needs a statement", "AZ106")
@@ -1734,10 +1751,22 @@ def check_step(s: str, loc: Loc, w: Words) -> CheckStep:
     return either(w, read)
 
 
+# the forms a test's line may be, by its first word: tried in turn, and where none is, the mistake is where the
+# reading that got further stopped
+FORMS: dict[str, tuple[Callable[[str, Loc, Words], Step], ...]] = {
+    "given": (given_step, check_step),
+    "as": (as_step, check_step),
+}
+
+
 def parse_step(s: str, loc: Loc, pieces: Pieces | None = None) -> Step:
     stops: list[tuple[int, int]] = []
     pieces = {} if pieces is None else pieces
-    for form in (given_step, as_step, check_step):
+    first = Words(s, 0, pieces).peek()
+    # a given or an as step starts with its word: on another line it would stop at the first piece, never further
+    # than the check does
+    forms = FORMS.get(first.text if first is not None and first.kind == "name" else "", (check_step,))
+    for form in forms:
         try:
             return form(s, loc, Words(s, 0, pieces))
         except Unread as stop:
@@ -1760,12 +1789,16 @@ def parse_step(s: str, loc: Loc, pieces: Pieces | None = None) -> Step:
     )
 
 
+# a scope's item: a command or a permission, maybe qualified (select, app.files.update, file.edit)
+SCOPE_ITEM = re.compile(rf"(?:({QNAME}|{IDENT})\.)?({IDENT})")
+
+
 def parse_scope_items(text: str, loc: Loc, base: int = 0) -> tuple[list[ScopeItem], list[Span | None]]:
     """A scope's items, and where each is written."""
     items: list[ScopeItem] = []
     spans: list[Span | None] = []
     for part, at in parts(text, base):
-        m = re.fullmatch(rf"(?:({QNAME}|{IDENT})\.)?({IDENT})", part)
+        m = SCOPE_ITEM.fullmatch(part)
         if not m:
             fail(loc, f"bad scope item '{part}' (use select, view, app.files.update or file.edit)", "AZ404", at=at)
         qual, word = m.group(1), m.group(2)
@@ -1984,7 +2017,7 @@ def parse_rule_line(pol: Policy, table: str, s: str, loc: Loc) -> None:
             fail(loc, "write masks as: mask col1, col2 : expression", "AZ105")
     elif (when or columns) and command != "update":
         fail(loc, f"only update rules can name columns, 'before' or 'after' (got: {head.strip()})", "AZ105")
-    if any(not re.fullmatch(IDENT, c) for c in columns):
+    if any(not IDENTIFIER.fullmatch(c) for c in columns):
         fail(
             loc, "write column rules as: update col1, col2 : expression   (or: update col after : expression)", "AZ105"
         )
