@@ -26,7 +26,7 @@
 | `rowstile sql --as user:42 "SELECT ..."` | a statement as the app role, signed in as someone; rolled back. A statement that returns no rows says what it did in the server's words: `UPDATE 0, as user:42; rolled back` is a write the rules let change nothing <!-- checked: tests/cli.sh "and says a write changed no row, in the server's words" --> |
 | `rowstile lsp` | the language server: errors while typing, hover, go to definition, references, outline, completion (of tables and columns too, with `database` in `rowstile.toml`: not `--db`, `DATABASE_URL` or the `PG*` variables; a database it can't reach yet is tried again some seconds later <!-- checked: tests/lsp_test.py "a database not there at the first completion: its tables some seconds later, in the same server" -->). It reads `rowstile.toml` again when it changes; a mistake in it is shown on it, and the policy is checked without it until it is fixed <!-- checked: tests/lsp_test.py "... the mistake shown on rowstile.toml, on its line, and in a message"; tests/lsp_test.py "rowstile.toml fixed: its mistake cleared at the next message, and its settings taken (the test file checks)" --> |
 | `rowstile mcp` | the MCP server, for coding agents (see below) |
-| `rowstile graph [p.authz]`, `rowstile client py\|ts [p.authz]` | diagram and typed helpers: of the file, else of the policy `rowstile.toml` names, else of the policy in force; with `--db`, of the policy in force on that database, and `--db` beside a file is refused <!-- checked: tests/cli.sh "reads the policy in force, though rowstile.toml names a file"; tests/cli.sh "and on a graph of a file" --> |
+| `rowstile graph [p.authz]`, `rowstile client py\|ts\|go [p.authz]` | diagram and typed helpers: of the file, else of the policy `rowstile.toml` names, else of the policy in force; with `--db`, of the policy in force on that database, and `--db` beside a file is refused <!-- checked: tests/cli.sh "reads the policy in force, though rowstile.toml names a file"; tests/cli.sh "and on a graph of a file" --> |
 | `rowstile reapply [--force]`, `rowstile remove --yes [--downgrade]` | the policy in force again, after an upgrade (`--force`: and every inheritance table computed again); to take the policy out |
 | [`editor/`](../../editor/README.md) | the VS Code and Zed extensions: highlighting (SQL inside `{ }` too) and the language server; a Tree-sitter grammar for Helix and Neovim; other editors start `rowstile lsp` themselves |
 
@@ -49,6 +49,7 @@ database = "env:DATABASE_URL"          # a DSN or URL, or env:NAME
 [clients]
 py = "backend/app/authz_client.py"     # written by rowstile dev (and rowstile client) on every change
 ts = "frontend/src/authz.ts"
+go = "internal/authz/authz.go"         # the policy's names, for the Go SDK
 [migrations]
 tool = "alembic"                       # alembic, prisma, drizzle, sql, goose, dbmate or flyway
 dir  = "alembic/versions"              # where the tool keeps them (each tool has a default)
