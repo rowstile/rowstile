@@ -1,8 +1,8 @@
 // Builds the docs site into site/dist/: the pages (VitePress), the playground at /playground/, each page's
 // Markdown beside it (/getting-started.md, its links pointing to the others'), llms.txt with its links pointing
 // there, llms-full.txt, IndexNow's key (indexnow.mjs), and the blog's feed (/blog/feed.xml) once there is a post.
-// Any static host serves dist/. A link to a file, a page or a heading that isn't there fails it (pages.mjs). Plain JavaScript, typed with JSDoc and checked
-// strictly (site/tsconfig.json). Its links to files on GitHub go to SITE_CODE's tag (site.yml), else to main.
+// Any static host serves dist/. A link to a file, a page or a heading that isn't there fails it (pages.mjs). Plain
+// JavaScript, typed with JSDoc and checked strictly (site/tsconfig.json). Its links to files on GitHub go to SITE_CODE's tag (site.yml), else to main.
 //   cd site && npm ci && node build.mjs          (PYTHON=... if python3 isn't the one)
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { build, createMarkdownRenderer } from "vitepress";
 import { FEED, LANGUAGES, feed, forFeed, postBody } from "./blog.mjs";
 import { KEY, KEY_FILE } from "./indexnow.mjs";
-import { ORIGIN, PAGES, POSTS, REPO, deadAnchors, rewriteLinks, siteLink, url } from "./pages.mjs";
+import { ORIGIN, PAGES, POSTS, REPO, deadAnchors, inSitemap, rewriteLinks, siteLink, url } from "./pages.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = join(HERE, "dist");
@@ -57,11 +57,16 @@ const md = await createMarkdownRenderer(REPO, { languages: LANGUAGES });
 /** @param {string} source @returns {(text: string) => import("./pages.mjs").Token[]} */
 const parse = (source) => (text) => md.parse(text, { path: join(REPO, source), relativePath: source });
 
-// for search engines: the sitemap VitePress wrote must hold every page, and robots.txt names it (the site's source
-// folder is the repository's root, so there is no public/ folder to put the file in)
+// for search engines: the sitemap VitePress wrote must hold every page but those inSitemap leaves out, and
+// robots.txt names it (the site's source folder is the repository's root, so there is no public/ folder to put the
+// file in)
 const sitemap = await written(join(DIST, "sitemap.xml"), "</urlset>");
-const unlisted = Object.values(PAGES).map((address) => ORIGIN + url(address)).filter((u) => !sitemap.includes(`<loc>${u}</loc>`));
+const paths = Object.values(PAGES).map(url);
+const unlisted = paths.filter(inSitemap).filter((p) => !sitemap.includes(`<loc>${ORIGIN}${p}</loc>`));
 if (unlisted.length) throw new Error(`sitemap.xml doesn't list ${unlisted.join(", ")}`);
+const listed = paths.filter((p) => !inSitemap(p)).filter((p) => sitemap.includes(`<loc>${ORIGIN}${p}</loc>`));
+if (listed.length) throw new Error(`sitemap.xml lists what it leaves out: ${listed.join(", ")}`);
+if (paths.filter(inSitemap).length === paths.length) throw new Error("inSitemap leaves out no page: the error codes' are");
 // the mark and the card for shared links, at the site's root (no public/ folder: see above)
 for (const f of ["mark.svg", "card.png"]) cpSync(join(HERE, "assets", f), join(DIST, f));
 writeFileSync(join(DIST, "robots.txt"), `User-agent: *\nAllow: /\n\nSitemap: ${ORIGIN}/sitemap.xml\n`);
