@@ -2,7 +2,7 @@
 # change does (meaning, access, risk, tests, deploy).
 #
 #   include:
-#     - remote: https://raw.githubusercontent.com/rowstile/rowstile/v0.1.0-beta.2/review-ci/gitlab/rowstile-review.gitlab-ci.yml
+#     - remote: https://raw.githubusercontent.com/rowstile/rowstile/v0.1.0-dev/review-ci/gitlab/rowstile-review.gitlab-ci.yml
 #   variables:
 #     REVIEW_DATABASE_URL: ...       # optional: a database at the target branch's state, with the review data
 #
@@ -30,7 +30,7 @@ rowstile-review:
     # the whole history: the review reads the target branch's policy, the files it includes, its tests and its
     # lock file with git, and stops (exit 2) where git can't read one of them there
     GIT_DEPTH: "0"
-    ROWSTILE_VERSION: "0.1.0-beta.2"
+    ROWSTILE_VERSION: "0.1.0-dev"
     ROWSTILE_PACKAGE: "rowstile==$ROWSTILE_VERSION"
   before_script:
     - apt-get update -qq && apt-get install -y -qq git curl >/dev/null
