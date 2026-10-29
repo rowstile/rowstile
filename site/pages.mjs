@@ -133,6 +133,13 @@ export const PAGES = {
 /** Titles for pages whose first heading says something else on the site. @type {Record<string, string>} */
 export const TITLES = { "development.md": "Working on rowstile", "words.md": "Words" };
 
+/** Whether the sitemap lists a page (its URL: "/errors/AZ201"). An error code's page is left out: there are some eighty
+ *  of them, short and alike, and a new site's crawl goes first to what the sitemap lists. They stay pages, linked from
+ *  the errors' index and `rowstile help`. @param {string} path */
+export function inSitemap(path) {
+  return !/^\/errors\/AZ\d+$/.test(path);
+}
+
 /** Where the site is served: the sitemap's and the canonical links' host. */
 export const ORIGIN = "https://rowstile.dev";
 

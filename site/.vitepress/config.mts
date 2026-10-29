@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vitepress";
 import { FEED, FEED_TITLE, LANGUAGES } from "../blog.mjs";
-import { GITHUB, ORIGIN, PAGES, POSTS, REPO, TITLES, blogSidebar, checkMenus, compareSidebar, describe, errorSidebar, menuLinks, notPages, pageTitle, recipeSidebar, siteLink, slug, structured, url } from "../pages.mjs";
+import { GITHUB, ORIGIN, PAGES, POSTS, REPO, TITLES, blogSidebar, checkMenus, compareSidebar, describe, errorSidebar, inSitemap, menuLinks, notPages, pageTitle, recipeSidebar, siteLink, slug, structured, url } from "../pages.mjs";
 
 // The pages are outside site/, and so is Vite's root (the repository), where there is no Vue: the pages' imports of
 // it are resolved from here, and the server bundle leaves Vue out (it imports it at run time, from site/.vitepress)
@@ -100,7 +100,11 @@ export default defineConfig({
   outDir: "./dist",
   cacheDir: "./.vitepress/cache",
   cleanUrls: true,
-  sitemap: { hostname: ORIGIN },
+  // the pages a search should find first (pages.mjs: inSitemap); each item's url is the page's, without the first /
+  sitemap: {
+    hostname: ORIGIN,
+    transformItems: (items) => items.filter((item) => inSitemap(`/${item.url.replace(/^\//, "")}`)),
+  },
   // the mark (site/assets/mark.svg, which build.mjs puts at the site's root): the tab's icon and the navigation's
   head: [
     ["link", { rel: "icon", type: "image/svg+xml", href: "/mark.svg" }],

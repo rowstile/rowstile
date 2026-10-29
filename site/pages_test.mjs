@@ -8,7 +8,7 @@ import { createMarkdownRenderer } from "vitepress";
 // what site.yml gives the build when it is built from a site tag on a release (read when pages.mjs is imported)
 process.env.SITE_CODE = "v0.2.0";
 process.env.SITE_CONTENT = "site-v4";
-const { PAGES, POSTS, REPO, checkMenus, deadAnchors, menuLinks, pageTitle, rewriteLinks, siteLink, slug, structured, url } =
+const { PAGES, POSTS, REPO, checkMenus, deadAnchors, inSitemap, menuLinks, pageTitle, rewriteLinks, siteLink, slug, structured, url } =
   await import("./pages.mjs");
 const { KEY, KEY_FILE, payload } = await import("./indexnow.mjs");
 
@@ -148,6 +148,10 @@ check("title: a page that names rowstile doesn't name it twice", pageTitle("comp
   === ":title | authorization for Postgres");
 check("title: a recipe's says row-level security", pageTitle("cookbook/tenants.md", "Multi-tenant").template
   === ":title | Postgres row-level security, rowstile");
+// the sitemap leaves out an error code's page, and only that
+check("sitemap: an error code's page left out", !inSitemap("/errors/AZ201"));
+check("sitemap: the errors' index, a recipe, the home page listed", inSitemap("/errors/") && inSitemap("/cookbook/tenants")
+  && inSitemap("/"));
 // what a page says of itself as JSON-LD: the software on the home page, an article on a post, nothing elsewhere
 const home = /** @type {Record<string, unknown>} */ (structured("index.md", "d"));
 check("JSON-LD: the home page is the software", home["@type"] === "SoftwareApplication" && home.description === "d"
