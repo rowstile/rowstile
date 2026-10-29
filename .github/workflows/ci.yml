@@ -195,6 +195,30 @@ jobs:
             ${{ runner.temp }}/sdk-coverage-go/report.txt
             ${{ runner.temp }}/sdk-coverage-go/cover.out
           if-no-files-found: ignore
+  # The plain Node server's conformance suite, a preview: Express 5 on pg, Drizzle (Drizzle Kit's migrations) and
+  # postgres.js, its tests on Jest (integrations/node). It fails unless its checks run every line, branch and
+  # function of @rowstile/jest; the report it prints of the packages it uses is kept, with each file's details
+  conformance-node:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
+        with:
+          node-version: "24"
+      - run: npm ci --no-audit --no-fund
+      - run: bash integrations/node/test.sh
+        env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-node"}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: sdk-coverage-node
+          path: |
+            ${{ runner.temp }}/sdk-coverage-node/report.txt
+            ${{ runner.temp }}/sdk-coverage-node/coverage-final.json
+          if-no-files-found: ignore
   # The playground: the compiler in Pyodide and its SQL in PGlite, headless (every example's tests pass), then the
   # page in Chrome (loaded from the CDN, a mistake and its page, asking as someone, links; loading, cached, under
   # 10 s: the design's limit is 5 s, and GitHub's runners took up to 5.9 s)
