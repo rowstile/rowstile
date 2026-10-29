@@ -85,7 +85,7 @@ jobs:
         with: {name: release-files, path: dist/}
       - run: mkdir pypi-dist && mv dist/*.whl dist/*.tar.gz pypi-dist/
       # a file PyPI has already is skipped: a release that stopped half-way is finished by running it again
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33   # release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086   # release/v1
         with: {packages-dir: pypi-dist, skip-existing: true}
 
   # the npm packages, each packed as npm publishes it: built here, with no right to write or sign anything (npm ci
@@ -242,7 +242,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {persist-credentials: false}
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e   # v10.3.2
         with: {version: "0.12.21"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
         with: {node-version: "24"}
