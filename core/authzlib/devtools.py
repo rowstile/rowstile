@@ -404,7 +404,7 @@ declare module "@rowstile/client" {{
                 name = go(t, p)
                 if unique(name):
                     out += ["", f"// {name} is {t}'s permission {p}.", f"const {name} {kind} = {q(p)}"]
-                else:
+                elif names[name][0] == f"{t}.{p}":
                     out += ["", f"// {' and '.join(names[name])} would both be {name}: neither has it"]
         return "\n".join(out) + "\n"
 
