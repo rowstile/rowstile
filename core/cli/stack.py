@@ -193,6 +193,8 @@ def detect(root: str = ".") -> Stack:
             s.npm_maybe.append("@rowstile/react")
         if "vitest" in js and "@rowstile/vitest" not in js:
             s.npm_maybe.append("@rowstile/vitest")
+        if "jest" in js and "@rowstile/jest" not in js:
+            s.npm_maybe.append("@rowstile/jest")
         if s.npm:
             s.clients["ts"] = f"{ts_dir}/authz.gen.ts".removeprefix("./")
             if "next" in js and s.setup:
@@ -334,6 +336,7 @@ NPM_WHY = {
     "@rowstile/next": "keeps signed-in reads out of Next.js's caches",
     "@rowstile/react": "hooks for a sharing dialog",
     "@rowstile/vitest": "test matchers for refusals",
+    "@rowstile/jest": "test matchers for refusals, on Jest (a preview)",
     "rowstile": "the command, a dev dependency",
 }
 

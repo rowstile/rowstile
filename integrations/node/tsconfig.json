@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": true,
+    "rootDir": ".",
+    "outDir": "build"
+  },
+  "include": ["src", "tests", "jest.config.js", "drizzle.config.ts"],
+  "exclude": ["node_modules", "build", ".work"]
+}

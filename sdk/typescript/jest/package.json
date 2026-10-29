@@ -1,0 +1,54 @@
+{
+  "name": "@rowstile/jest",
+  "version": "0.1.0-dev",
+  "description": "rowstile with Jest: asUser, toBeRefused, a database per worker (preview)",
+  "license": "Apache-2.0",
+  "homepage": "https://rowstile.dev",
+  "keywords": [
+    "rowstile",
+    "postgres",
+    "postgresql",
+    "authorization",
+    "row-level-security",
+    "rls",
+    "permissions",
+    "access-control",
+    "rbac",
+    "rebac",
+    "multi-tenant",
+    "jest",
+    "testing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rowstile/rowstile.git",
+    "directory": "sdk/typescript/jest"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": { "node": ">=22.12.0" },
+  "dependencies": {
+    "@rowstile/client": "0.1.0-dev",
+    "@rowstile/vitest": "0.1.0-dev"
+  },
+  "peerDependencies": {
+    "jest": "^30.5.2",
+    "pg": "^8.23.1"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    }
+  }
+}

@@ -2256,6 +2256,12 @@ class Command(unittest.TestCase):
         self.assertEqual(
             detect({"package.json": '{"dependencies": {"react": "19", "@rowstile/react": "0"}}'}).npm_maybe, []
         )
+        # ... and Jest's (a preview)
+        s = detect({"package.json": '{"dependencies": {"pg": "8"}, "devDependencies": {"jest": "30"}}'})
+        self.assertEqual(s.npm_maybe, ["@rowstile/jest"])
+        self.assertEqual(
+            detect({"package.json": '{"devDependencies": {"jest": "30", "@rowstile/jest": "0"}}'}).npm_maybe, []
+        )
         # each package init adds or names has its reason
         sdks = os.path.join(os.path.dirname(ROOT), "sdk", "typescript")
         packages = {"@rowstile/" + d for d in os.listdir(sdks) if os.path.isfile(os.path.join(sdks, d, "package.json"))}
@@ -11031,7 +11037,7 @@ class StackPages(unittest.TestCase):
         "fastapi.md": ["integrations/fastapi"],
         "python.md": ["integrations/fastapi"],
         "nextjs.md": ["integrations/nextjs"],
-        "node.md": ["integrations/nextjs"],
+        "node.md": ["integrations/nextjs", "integrations/node"],
         "go.md": ["integrations/go"],
         "sql.md": ["docs/getting-started.md", "sdk/python/rowstile", "sdk/typescript"],
     }
@@ -11571,8 +11577,9 @@ class SdkPackages(unittest.TestCase):
     def test_each_package_has_a_page_of_its_own(self) -> None:
         folder = os.path.join(self.REPO, "sdk", "typescript")
         packages = sorted(d for d in os.listdir(folder) if os.path.exists(os.path.join(folder, d, "package.json")))
-        self.assertEqual(len(packages), 8, packages)
-        have = self.lines("integrations/nextjs")
+        self.assertEqual(len(packages), 9, packages)
+        apps = ("integrations/nextjs", "integrations/node")
+        have = set().union(*(self.lines(app) for app in apps))
         for package in packages:
             with open(os.path.join(folder, package, "package.json"), encoding="utf-8") as fh:
                 name = json.load(fh)["name"]
@@ -11604,10 +11611,10 @@ class SdkPackages(unittest.TestCase):
                 if line not in have
                 and not (
                     (m := re.fullmatch(r"// (\S+\.\w+)", line))
-                    and os.path.exists(os.path.join(self.REPO, "integrations", "nextjs", *m.group(1).split("/")))
+                    and any(os.path.exists(os.path.join(self.REPO, app, *m.group(1).split("/"))) for app in apps)
                 )
             ]
-            self.assertEqual(missing, [], f"sdk/typescript/{package}/README.md: lines not in integrations/nextjs")
+            self.assertEqual(missing, [], f"sdk/typescript/{package}/README.md: lines in no conformance app")
 
     def test_the_vitest_types_check_leaves_no_folder_behind(self) -> None:
         # sdk/typescript/vitest/types-test/types.sh, with an npm that fails (Vitest 4) and a version it has no folder
@@ -11648,7 +11655,7 @@ class SdkPackages(unittest.TestCase):
         # one Node floor for the SDK's packages and the command's launcher, and it is one that runs: the launcher
         # is installed on it (packaging/test.sh), and nightly runs the TypeScript conformance suite on it
         floors = {path: cast(dict[str, str], m.get("engines", {})).get("node") for path, m in self.manifests().items()}
-        self.assertEqual(len(floors), 9, floors)
+        self.assertEqual(len(floors), 10, floors)
         self.assertEqual(len(set(floors.values())), 1, floors)
         m = re.fullmatch(r">=((\d+\.\d+)\.\d+)", str(next(iter(floors.values()))))
         assert m, floors
@@ -11702,7 +11709,7 @@ class SdkPackages(unittest.TestCase):
                         ran, f"{path}: {dep} {alternative}: no lock file installs it ({sorted(locks[dep])})"
                     )
                     seen += 1
-        self.assertEqual(seen, 9)
+        self.assertEqual(seen, 11)
 
     def test_the_lock_file_says_what_each_package_json_does(self) -> None:
         # npm ci doesn't compare a workspace package's engines and peers with its entry in the lock

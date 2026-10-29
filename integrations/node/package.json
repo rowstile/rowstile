@@ -1,0 +1,29 @@
+{
+  "name": "rowstile-conformance-node",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node build/src/server.js",
+    "test": "node --experimental-vm-modules ../../node_modules/jest/bin/jest.js"
+  },
+  "dependencies": {
+    "@rowstile/client": "*",
+    "@rowstile/drizzle": "*",
+    "@rowstile/pg": "*",
+    "@rowstile/postgres": "*",
+    "drizzle-orm": "^0.45.4",
+    "express": "^5.3.0",
+    "pg": "^8.23.1",
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@jest/globals": "^30.5.2",
+    "@rowstile/jest": "*",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "jest": "^30.5.2"
+  }
+}
