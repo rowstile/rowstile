@@ -6,7 +6,8 @@ hidden rows into 404, and check the app's connection at start-up. `integrations/
 suite. TypeScript apps use [the TypeScript SDK](../../sdk/typescript/README.md): `@rowstile/prisma` (a driver adapter that signs every
 transaction in, and a client extension), `/pg`, `/postgres` (postgres.js), `/drizzle`, `/next` (signed-in reads
 kept out of caches, 403 and 404 from route handlers and server actions), `/react` (`usePerms`, `<Can>`, a
-headless share dialog, live updates) and `/vitest`; `integrations/nextjs` is their conformance suite, and
+headless share dialog, live updates), `/vitest` and `/jest` (a preview); `integrations/nextjs` is their
+conformance suite, `integrations/node` a plain Express server's (a preview), and
 `rowstile client` writes only the policy's names for them (`src/authz.gen.ts`). <!-- checked: tests/unit_test.py "test_typescript_sdk_gets_only_the_names" -->
 The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
 `listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's

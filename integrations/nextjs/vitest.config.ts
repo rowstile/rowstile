@@ -16,6 +16,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: [`${sdk}*/dist/*.js`],
+      exclude: [`${sdk}jest/**`],            // @rowstile/jest: integrations/node's suite runs it
       allowExternal: true,
       reporter: ["text", ["text", { file: "report.txt" }], "json-summary", "json"],
       reportsDirectory: process.env.CONFORMANCE_COVERAGE ?? "coverage",

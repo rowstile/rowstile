@@ -22,6 +22,9 @@ integrations/nextjs/edge/next-env.d.ts
 integrations/nextjs/edge/tsconfig.tsbuildinfo
 integrations/nextjs/.work/
 integrations/nextjs/coverage/
+integrations/node/build/
+integrations/node/.work/
+integrations/node/coverage/
 packaging/npm/out/
 packaging/npm/.cache/
 packaging/out/

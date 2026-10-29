@@ -349,6 +349,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The TypeScript SDK's drivers: `/pg`, `/postgres`, `/prisma`, `/drizzle` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
 | The TypeScript SDK for Next.js and React: `/next`, `/react`, `/vitest` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
 | The TypeScript SDK on Neon's serverless driver, the edge runtime, BullMQ and `after()` (preview) | 2 | [nextjs](stacks/nextjs.md) | `integrations/nextjs` |  |
+| The TypeScript SDK for Jest, a preview: `/jest`; a plain Node server (Express) | 2 | [node](stacks/node.md) | `integrations/node` |  |
 
 <!-- features: end of the table -->
 

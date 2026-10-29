@@ -1,13 +1,16 @@
 # Node apps: pg, postgres.js and Drizzle
 
-<!-- tested: every line of code below is in integrations/nextjs (tests/unit_test.py checks it) -->
+<!-- tested: every line of code below is in integrations/nextjs or integrations/node (tests/unit_test.py checks it) -->
 
 Any Node app (Express, Fastify, Hono, a worker) on `pg`, postgres.js or Drizzle. Each transaction signs in as
 whoever the code acts for, the database filters what it reads and refuses what it may not write, and the
 SDK turns a refusal into `Refused` (403) and a hidden row into `NotFound` (404). Next.js with Prisma:
 [Next.js](nextjs.md), which also covers the React kit, and Next.js with pg in a section of its own.
 
-These come from the conformance suite's checks without Prisma (`integrations/nextjs/tests/conformance.test.ts`).
+These come from two conformance suites: the Next.js app's checks without Prisma
+(`integrations/nextjs/tests/conformance.test.ts`), and a plain Express server's (`integrations/node`), whose tests
+run on Jest. The Express app and `@rowstile/jest` are a **preview**: they may change in any release, and are not
+part of what 1.0 will freeze.
 
 ## Who a transaction acts for
 
@@ -21,6 +24,69 @@ needs its own connection to Postgres: [Behind a pooler](../operations.md#behind-
 # @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
 npm install @rowstile/client@next @rowstile/pg@next   # or @rowstile/postgres@next, @rowstile/drizzle@next
 npm install --save-dev rowstile@next                  # the command
+npm install --save-dev @rowstile/jest@next            # tests on Jest (a preview)
+```
+
+## Express
+
+*A preview.* One middleware makes each request act for its user, and every transaction the routes begin signs
+in as them. `userOf(req)` is your session's user: your own cookie or token, or Passport's `req.user`.
+
+```ts
+export const app = express();
+app.use(express.json());
+// every transaction a request begins signs in as its user (none: nobody, who sees only what `anyone` may)
+app.use((req, _res, next) => actingAs(userOf(req), next));
+```
+
+The database, on one pool: node-postgres and Drizzle, each transaction signed in.
+
+```ts
+export const pool = new pg.Pool({ connectionString: url, max: Number(process.env.PG_POOL_MAX ?? 5) });
+export const sql = authz(pool);                       // sql.transaction(fn), sql.query(), sql.can(), ...
+export const db = withAuthz(drizzle(pool));           // db.transaction((tx) => tx.select()...)
+```
+
+The routes check nothing themselves. A refused write throws, and so does an update that changed no row
+(`drizzleExpect` asks the database why):
+
+```ts
+// an update the rules may refuse: a hidden note is 404, one the user may not edit 403 with the reason
+app.patch("/api/notes/:id", async (req, res) => {
+  const { body } = req.body as { body: string };
+  await db.transaction(async (tx) => drizzleExpect(tx,
+    await tx.update(notes).set({ body }).where(eq(notes.id, id(req))).returning({ id: notes.id }), "app.notes", "update", id(req)));
+  res.json({ id: id(req) });
+});
+```
+
+The error handler, last, answers with the problem: 403 with the rule and the reason, 404, and the database's
+other answers as their codes' pages say. Anything else is the app's mistake: it goes on to Express's own
+handler, a 500.
+
+```ts
+export function problems(err: unknown, _req: Request, res: Response, next: NextFunction): void {
+  const problem = problemOf(err);
+  if (problem) res.status(problem.status).type("application/problem+json").json(problem);
+  else next(err);
+}
+
+app.use(problems);
+```
+
+At start-up, before it listens, the server refuses a connection that skips row-level security:
+
+```ts
+await sql.check();
+```
+
+A background job acts for its service, whatever started it:
+
+```ts
+export const digest = job(["service", 1], async () => ({
+  count: (await sql.query<{ n: number }>("SELECT count(*)::int AS n FROM app.projects")).rows[0]?.n,
+  who: current(),
+}));
 ```
 
 ## pg
@@ -143,8 +209,33 @@ AZ710), a call that needs someone signed in or a login refused (401, AZ714 and A
 (409, AZ713), and `null` for anything else. A problem's fields are its own, not under a `body`: `status`, `type`, `title` and `detail` (the database's words), and a refusal's `table`, `command`, `why` (the reason, a line each) and `code`. `problemResponse(e)` is the same as a Fetch `Response`, for Hono and other frameworks built
 on it.
 
+## Tests on Jest
+
+*A preview.* `@rowstile/jest` is `@rowstile/vitest` for Jest 30: the same matchers, `asUser`, and a copy of
+the migrated test database for each Jest worker. The SDK's packages are ES modules, so Jest runs them with
+`node --experimental-vm-modules`.
+
+```ts
+// tests/setup.ts
+import { expect } from "@jest/globals";
+import { matchers } from "@rowstile/jest";
+
+expect.extend(matchers);
+```
+
+```ts
+    worker = await databasePerWorker(TESTS, { appUrl: appAt(TESTS) });
+    await expect(asUser("2", () => a.query("INSERT INTO app.notes (project_id, author_id, body) VALUES (3, 2, 'hi')")))
+      .rejects.toBeRefused("insert", "project.edit");
+```
+
 ## Migrations
 
 Policy changes ship as migrations for your tool: `tool = "drizzle"` (Drizzle Kit's journal), `"sql"`,
 `"goose"`, `"dbmate"` or `"flyway"` in `rowstile.toml`. `npx rowstile migrate` writes the next one;
 `npx rowstile migrate --check` in CI fails if a policy change has none.
+
+With Drizzle Kit, `drizzle-kit migrate` runs rowstile's migrations with yours, and `drizzle-kit generate` finds
+nothing to change after them: each copies the snapshot before it. Never `drizzle-kit push` a database the
+policy governs. Drizzle Kit models row-level security, and your schema declares none of rowstile's, so push
+would turn it off and drop every rule.

@@ -9,4 +9,4 @@ Sharing, groups, nested folders and tenants, with no service to run beside the d
 
 The command runs on the Python that comes with it (the package for your platform, `@rowstile/cli-<platform>`):
 a TypeScript app needs no Python. For app code, the SDK: `@rowstile/prisma`, `/next`, `/react`, `/drizzle`,
-`/pg`, `/postgres`, `/vitest`.
+`/pg`, `/postgres`, `/vitest`, `/jest`.

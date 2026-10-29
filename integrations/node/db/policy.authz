@@ -1,0 +1,55 @@
+-- The conformance app's policy (integrations/nextjs's, without Prisma's feedback): projects with an owner and
+-- members, public ones anyone may read, viewers people share projects with, a service that reads the projects it
+-- is added to, notes in projects, an inbox only its recipient reads, and folders inside folders, which their owner
+-- and the owners of the folders above edit.
+
+app role conf_app
+
+type user = app.users(id integer)
+
+type service = app.services(id integer) principal
+
+type project = app.projects(id integer)
+  owner   : user    = owner_id
+  member  : user    = app.members(project_id -> user_id)
+  service : service = app.project_services(project_id -> service_id)
+  viewer  : user shared by edit
+
+  can edit  = owner or member
+  can view  = edit or service or viewer or {public}
+  can share = owner
+
+type note = app.notes(id integer)
+  project : project = project_id
+  author  : user    = author_id
+
+  can edit = author or project.owner
+  can view = project.view
+
+type message = app.inbox(id integer)
+  recipient : user = recipient_id
+
+  can read = recipient
+
+type folder = app.folders(id integer)
+  parent : folder = parent_id
+  owner  : user   = owner_id
+
+  can edit = owner or parent.edit
+
+rules app.projects
+  select : view
+
+rules app.notes
+  select : view
+  insert : project.edit and author
+  update : edit
+  delete : edit
+
+rules app.inbox
+  select : read
+  insert : signed_in and {sender_id = authz.uid()}
+
+rules app.folders
+  select : edit
+  update : edit

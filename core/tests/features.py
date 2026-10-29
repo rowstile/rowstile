@@ -102,6 +102,8 @@ NEXT_JOBS = "integrations/nextjs/tests/jobs.test.ts"
 GO = "integrations/go/app/conformance_test.go"
 GO_SDK = "integrations/go/app/sdk_test.go"
 GO_POLICY = "integrations/go/policychange/policychange_test.go"
+NODE = "integrations/node/tests/conformance.test.ts"
+NODE_JEST = "integrations/node/tests/package.test.ts"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1136,6 +1138,20 @@ FEATURES: list[Feature] = [
             Check(NEXT_NEON, "9 (Neon): a pool that works as pg's type-checks, and its client is its own"),
             Check(NEXT_JOBS, "10: a job through a queue (BullMQ) acts for its service, whoever queued it"),
             Check(NEXT_JOBS, "after(): work once the response is sent signs in as the request's user or a service"),
+        ),
+    ),
+    Feature(
+        "sdk.typescript.jest",
+        2,
+        "The TypeScript SDK for Jest, a preview: `/jest`; a plain Node server (Express)",
+        ("sdk.ts.jest.*",),
+        Doc("docs/stacks/node.md", "Tests on Jest"),
+        (
+            Check(NODE_JEST, "12: its own copy, with the policy"),
+            Check(NODE_JEST, "what the matchers say when a check fails"),
+            Check(NODE_JEST, "a database per worker: kept, copied again, and why it can't be copied"),
+            Check(NODE, "16: each code through the app's routes"),
+            Check("integrations/node/test.sh", "Drizzle Kit's own diff shows no change"),
         ),
     ),
 ]

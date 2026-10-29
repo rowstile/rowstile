@@ -1,7 +1,7 @@
 {
   "name": "rowstile-workspace",
   "private": true,
-  "description": "The TypeScript SDK's packages (sdk/typescript) and their conformance app (integrations/nextjs), in one npm workspace so they share one React and one pg",
+  "description": "The TypeScript SDK's packages (sdk/typescript) and their conformance apps (integrations/nextjs, integrations/node), in one npm workspace so they share one React and one pg",
   "workspaces": [
     "sdk/typescript/client",
     "sdk/typescript/pg",
@@ -11,7 +11,9 @@
     "sdk/typescript/next",
     "sdk/typescript/react",
     "sdk/typescript/vitest",
-    "integrations/nextjs"
+    "sdk/typescript/jest",
+    "integrations/nextjs",
+    "integrations/node"
   ],
   "devDependencies": {
     "typescript": "~6.0.3"

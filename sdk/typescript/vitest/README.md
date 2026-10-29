@@ -4,7 +4,7 @@
 row in one file, and it becomes row-level security: the database filters every read and refuses every write
 the rules don't allow, whatever the code asks.
 
-This package is for an app's own tests, with Vitest 4 or 5 (the matchers work with Jest too). `toBeRefused`
+This package is for an app's own tests, with Vitest 4 or 5 (with Jest: `@rowstile/jest`). `toBeRefused`
 and `toBeNotFound` say what a write should have been. `asUser(who, fn)` runs code as someone.
 `databasePerWorker(url)` copies the migrated test database, with its policy, once for each worker, so tests
 that write don't meet each other.
@@ -61,5 +61,6 @@ The other packages:
 | [`@rowstile/drizzle`](https://www.npmjs.com/package/@rowstile/drizzle) | Drizzle ORM |
 | [`@rowstile/next`](https://www.npmjs.com/package/@rowstile/next) | Next.js: route handlers, server actions, caches |
 | [`@rowstile/react`](https://www.npmjs.com/package/@rowstile/react) | React: hooks and a share dialog |
+| [`@rowstile/jest`](https://www.npmjs.com/package/@rowstile/jest) | Jest (preview): matchers, a database per worker |
 
 rowstile is in beta: names may still change before 1.0. Apache-2.0.
