@@ -30,6 +30,26 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   connections in as the request's user (`"rowstile.django"` in `INSTALLED_APPS`, and its middleware), answers
   refusals with 403 and hidden rows with 404, and gives pytest-django a copy of the test database per worker.
   `rowstile migrate` writes Django migrations (`tool = "django"`). [Django](docs/stacks/django.md).
+- `authz.announce_timed_shares()` tells the change feed of the shares that ended (`expires_at`) or began
+  (`starts_at`) since it last ran, and of what reads their objects. Run it on a schedule, as `authz.trim_changes()`
+  is run ([Operations](docs/operations.md)): no write marks the moment a share ends, so until it runs a reader of
+  the feed doesn't hear of it.
+
+### Fixed
+
+- The change feed announces what reads a changed object through a relation, and what reads those in turn, with
+  the cause `dependent`. It announced only the object itself, so a reader missed objects whose access had
+  changed: the files in a moved folder (whose view reads the folder's); the folders and files a team is given,
+  shared with or given a custom role on, when a member joins or leaves it (and the teams it sits in); the folders
+  of an org whose admins change. Past a thousand objects of a type it says `{*}` for that type. A custom role
+  whose permissions change announces the objects it is given on (the cause `role`), and every type's table tells
+  the feed of its rows, where before only tables whose columns hold relations did: a change to a column a
+  condition reads, or a row of a type only link tables name added or deleted, went unannounced. An update is
+  announced only where it changes a row's key, a relation's column or a column the type's conditions name (any
+  column, where the compiler can't tell which they read); before, every update of a row whose columns hold
+  relations was, a file's renaming too.
+  Writes that reach other objects take a little longer: on the docs app, a member leaving a team or a share on a
+  folder about half a millisecond more; at most a thousand objects of a type are looked up ([Limits](docs/reference/limits.md)).
 
 ## 0.1.0-beta.2 (2026-10-29)
 

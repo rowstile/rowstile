@@ -6,7 +6,7 @@
 set -u
 cd "$(dirname "$0")/.."
 DB=${1:-authz_governance}
-X="${DB}_across" COPY_DB="${DB}_copy" TDB="${DB}_this" L="${DB}_links"
+X="${DB}_across" COPY_DB="${DB}_copy" TDB="${DB}_this" L="${DB}_links" R="${DB}_roles"
 T=$(mktemp -d)
 . tests/races.sh
 # whatever way the suite ends: the sessions it left running, its databases (the copy's subscription and slot first, which hold both), its roles,
@@ -18,7 +18,7 @@ cleanup() {
       -c "ALTER SUBSCRIPTION authz_governance_trail SET (slot_name = NONE)" -c "DROP SUBSCRIPTION authz_governance_trail" >/dev/null 2>&1
     psql -X -q -U "$PGSUPERUSER" -d "$DB" -c "SELECT pg_drop_replication_slot('authz_governance_trail')" >/dev/null 2>&1
   fi
-  for d in "$DB" "$X" "$COPY_DB" "$TDB" "$L"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+  for d in "$DB" "$X" "$COPY_DB" "$TDB" "$L" "$R"; do dropdb --force --if-exists "$d" 2>/dev/null; done
   for r in authz_gov_other authz_gov_owners; do psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1; done
   rm -rf "$T"
 }
@@ -35,6 +35,13 @@ admin() {   # $1 label, $2 expected, $3 SQL (run as the administrator)
   if [ "$got" = "$2" ]; then echo "ok    $1"; else echo "FAIL  $1: expected '$2', got '$got'"; fails=$((fails + 1)); fi
 }
 as() { local u=$1; shift; PSQL -c "SET ROLE app_user; SET authz.user_id = '$u';" "$@" 2>&1 | tail -n 1; }
+# the SQL that says which objects the feed announced after a position, with a cause, each once: 'file 11; folder 3,4'
+fed() {
+  echo "SELECT coalesce(string_agg(object_type || ' ' || ids, '; ' ORDER BY object_type), 'nothing') FROM (
+    SELECT object_type, string_agg(x, ',' ORDER BY length(x), x) AS ids FROM (
+      SELECT DISTINCT c.object_type, x FROM authz.changes c, unnest(c.object_ids) x WHERE c.pos > $1 AND c.cause = '$2') d
+    GROUP BY object_type) e"
+}
 . tests/words.sh
 expect_code() {  # $1 label, $2 expected "SQLSTATE: the message's words" (or ok), rest: -c statements (as app_user unless the first is RESET ROLE)
   local label=$1 want=$2; shift 2
@@ -107,6 +114,8 @@ admin "emptying a link table is recorded" "truncate|folder" \
   "SELECT action || '|' || object_type FROM authz.audit WHERE action = 'truncate' ORDER BY id DESC LIMIT 1"
 admin "... and announced for every folder" "{*}" \
   "SELECT object_ids::text FROM authz.changes WHERE pos > $POS AND object_type = 'folder' ORDER BY pos LIMIT 1"
+admin "... and for every file, whose view reads its folder's" "1" \
+  "SELECT count(*) FROM authz.changes WHERE pos > $POS AND object_type = 'file' AND object_ids = '{*}' AND cause = 'dependent'"
 PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', '999', 'viewer', 'user', '4')" >/dev/null
 reapply $T/governance.sql
 admin "shares dropped when the policy is applied (their row is gone) are recorded, with why" \
@@ -134,6 +143,7 @@ admin "moving a folder announces it (and what sits below it)" "t" \
   "SELECT bool_or(object_type = 'folder' AND '4' = ANY (object_ids)) FROM authz.changes_since($POS)"
 admin "... with inheritance as the cause" "t" \
   "SELECT bool_or(cause = 'inheritance') FROM authz.changes_since($POS)"
+admin "... and the file in it, whose view reads the folder's: a dependent" "file 11" "$(fed $POS dependent)"
 admin "reading from a position gives what came after it, not the entry at it" "0|1" \
   "SELECT (SELECT count(*) FROM authz.changes_since(m)) || '|' || (SELECT count(*) FROM authz.changes_since(m - 1))
    FROM (SELECT max(pos) AS m FROM authz.changes) x"
@@ -143,6 +153,17 @@ POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 PSQL -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (98, 2, 5, 'for the feed')" -c "DELETE FROM app.files WHERE id = 98" >/dev/null
 admin "a file added, then deleted: the feed has both" "insert,delete" \
   "SELECT string_agg(cause, ',' ORDER BY pos) FROM authz.changes_since($POS) WHERE object_type = 'file' AND '98' = ANY (object_ids)"
+# an UPDATE is announced where access may change: a row's key, a relation's column, or a column a condition names
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+PSQL -c "UPDATE app.users SET name = 'Alice' WHERE id = 1" -c "UPDATE app.files SET name = 'architecture-v2.md' WHERE id = 11" >/dev/null
+admin "a user's name and a file's name, which no rule reads, changed: nothing is announced" "nothing" \
+  "SELECT coalesce(string_agg(object_type, ','), 'nothing') FROM authz.changes WHERE pos > $POS"
+PSQL -c "UPDATE app.users SET name = 'alice' WHERE id = 1" -c "UPDATE app.files SET name = 'architecture.md' WHERE id = 11" >/dev/null
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+PSQL -c "UPDATE app.folders SET inherit = false WHERE id = 4" >/dev/null
+admin "a folder's inherit, which its view's condition reads, changed: the folder is announced" "folder 4" "$(fed $POS update)"
+admin "... with the file in it" "file 11" "$(fed $POS dependent)"
+PSQL -c "UPDATE app.folders SET inherit = true WHERE id = 4" >/dev/null
 got=$(psql -X -q -At -d "$DB" -c "LISTEN authz_changes" -c "SET ROLE app_user" -c "SET authz.user_id = 5" \
        -c "SELECT authz.share('file', 11, 'viewer', 'user', 4)" -c "SELECT 1" 2>&1)
 made=$(PSQL -c "SELECT count(*) FROM authz.shares WHERE object_type = 'file' AND object_id = '11' AND relation = 'viewer' AND subject_id = '4'")
@@ -154,6 +175,11 @@ got=$(psql -X -q -At -d "$DB" -c "LISTEN authz_changes" -c "SET ROLE app_user" -
        -c "SELECT authz.unshare('file', 11, 'viewer', 'user', 4)" -c "SELECT 1" 2>&1)
 case "$got" in *'notification "authz_changes"'*) echo "ok    with notify_changes on, listeners hear of a change (NOTIFY authz_changes)";;
   *) echo "FAIL  notify: $got"; fails=$((fails + 1));; esac
+got=$(psql -X -q -At -d "$DB" -c "LISTEN authz_changes" -c "SET ROLE app_user" -c "SET authz.user_id = 5" \
+       -c "SELECT authz.share('folder', 1, 'viewer', 'user', 4)" -c "SELECT 1" 2>&1 | grep -c 'notification "authz_changes"')
+[ "$got" = 1 ] && echo "ok    ... once for a share on Company, though the feed announces what reads it too, in the same transaction" ||
+  { echo "FAIL  the notifications a share on Company sends: $got"; fails=$((fails + 1)); }
+as 5 -c "SELECT authz.unshare('folder', 1, 'viewer', 'user', 4)" >/dev/null
 PSQL -c "DELETE FROM authz.settings WHERE key = 'notify_changes'" >/dev/null
 expect_code "the app role cannot read the feed" "42501: permission denied for function changes_since" -c "SELECT * FROM authz.changes_since(0)"
 # a share moved to another object (an administrator's UPDATE): the object it left is announced too
@@ -163,6 +189,126 @@ PSQL -c "UPDATE authz.shares SET object_id = '12' WHERE object_type = 'file' AND
 admin "a share moved to another file: both files are announced" "11,12" \
   "SELECT string_agg(DISTINCT x, ',' ORDER BY x) FROM authz.changes_since($POS), unnest(object_ids) x WHERE object_type = 'file'"
 PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '12' AND subject_id = '4'" >/dev/null
+# what reads what changed: announced too, as its dependents, to the end of what reads what (the cause 'dependent')
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+PSQL -c "DELETE FROM app.team_members WHERE team_id = 11 AND user_id = 2" >/dev/null
+admin "bob leaves Backend: the team it sits in, the folders either is given (and what sits below them) and their files are announced" \
+  "file 11,12,13; folder 3,4,5,6; team 10" "$(fed $POS dependent)"
+check "... where bob has lost file 13" "f" "SET authz.user_id = 2; SELECT authz.can('file', 13, 'view')"
+PSQL -c "INSERT INTO app.team_members VALUES (11, 2)" >/dev/null
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation)
+         VALUES ('folder', '2', 'viewer', 'team', '12', 'member')" >/dev/null
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+PSQL -c "DELETE FROM app.team_members WHERE team_id = 12 AND user_id = 7" >/dev/null
+admin "gina leaves Platform, which Handbook is shared with: the teams it sits in, two deep, and Handbook and its files too" \
+  "file 10,11,12,13,14; folder 2,3,4,5,6; team 10,11" "$(fed $POS dependent)"
+PSQL -c "INSERT INTO app.team_members VALUES (12, 7)" \
+     -c "DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = '2' AND subject_type = 'team'" >/dev/null
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+PSQL -c "INSERT INTO app.org_members VALUES (2, 1, 'admin')" >/dev/null
+admin "alice made a Globex admin: its folders (whose share reads org.admin) and their files are announced" \
+  "file 15,16; folder 20,21" "$(fed $POS dependent)"
+PSQL -c "DELETE FROM app.org_members WHERE org_id = 2 AND user_id = 1" >/dev/null
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+as 5 -c "SELECT authz.share('folder', 1, 'viewer', 'user', 4)" >/dev/null
+admin "a share on Company: every folder below it, the one linked into it, and their files are announced" \
+  "file 10,11,12,13,14,16; folder 2,3,4,5,6,21" "$(fed $POS dependent)"
+as 5 -c "SELECT authz.unshare('folder', 1, 'viewer', 'user', 4)" >/dev/null
+# past a thousand of a type: all of them
+PSQL -c "INSERT INTO app.files (id, folder_id, owner_id, name) SELECT 2000 + g, 2, 5, 'many ' || g FROM generate_series(1, 1001) g" >/dev/null
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+as 5 -c "SELECT authz.share('folder', 2, 'viewer', 'user', 4)" >/dev/null
+admin "a share on a folder holding more than a thousand files announces every file ({*})" "file *" "$(fed $POS dependent)"
+as 5 -c "SELECT authz.unshare('folder', 2, 'viewer', 'user', 4)" >/dev/null
+PSQL -c "INSERT INTO app.files (id, folder_id, owner_id, name) SELECT 4000 + g, 2, 5, 'more ' || g FROM generate_series(1, 998) g" \
+     -c "DELETE FROM app.files WHERE id BETWEEN 2001 AND 3001" >/dev/null
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+as 5 -c "SELECT authz.share('folder', 2, 'viewer', 'user', 4)" >/dev/null
+admin "... and a thousand of them by their ids" "1000" \
+  "SELECT count(DISTINCT x) FROM authz.changes c, unnest(c.object_ids) x WHERE c.pos > $POS AND c.cause = 'dependent' AND c.object_type = 'file' AND x <> '*'"
+as 5 -c "SELECT authz.unshare('folder', 2, 'viewer', 'user', 4)" >/dev/null
+PSQL -c "DELETE FROM app.files WHERE id > 4000" >/dev/null
+
+# shares that end, or begin, with time: no write says so, authz.announce_timed_shares() does when it runs
+PSQL -c "SELECT authz.announce_timed_shares()" >/dev/null   # (what ended before now, once)
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
+         VALUES ('file', '13', 'viewer', 'user', '6', clock_timestamp() + interval '1 second')" \
+     -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, starts_at)
+         VALUES ('folder', '6', 'viewer', 'user', '6', clock_timestamp() + interval '1 second')" >/dev/null
+check "frank sees offer-letter.pdf, shared with him for a second" "t" "SET authz.user_id = 6; SELECT authz.can('file', 13, 'view')"
+sleep 1.2
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+check "... and no longer, a second later" "f" "SET authz.user_id = 6; SELECT authz.can('file', 13, 'view')"
+admin "... which the feed doesn't hear of by itself" "nothing" \
+  "SELECT coalesce(string_agg(object_type, ','), 'nothing') FROM authz.changes WHERE pos > $POS"
+admin "authz.announce_timed_shares() announces the shares that ended or began since it last ran, and says how many" "2" \
+  "SELECT authz.announce_timed_shares()"
+admin "... the one that ended" "file 13" "$(fed $POS share_ended)"
+admin "... the one that began, on Keys" "folder 6" "$(fed $POS share_started)"
+admin "... with what reads Keys" "file 12" "$(fed $POS dependent)"
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+admin "run again, it announces nothing new" "0|nothing" \
+  "SELECT authz.announce_timed_shares() || '|' || coalesce((SELECT string_agg(object_type, ',') FROM authz.changes WHERE pos > $POS), 'nothing')"
+expect_code "the app role cannot run it" "42501: permission denied for function announce_timed_shares" -c "SELECT authz.announce_timed_shares()"
+PSQL -c "DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id = '6' AND (expires_at IS NOT NULL OR starts_at IS NOT NULL)" >/dev/null
+
+# custom roles, a type whose condition reads its own columns (no relation kept in them), and one whose rows only links
+# name
+RSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$R" "$@"; }
+dropdb --if-exists "$R" 2>/dev/null; createdb "$R" || exit 1
+cat > $T/governance_roles.authz <<'EOF'
+app role app_user
+type user = r.users
+type team = r.teams
+  member : user = r.team_members(team_id -> user_id)
+  can manage_roles = member
+type doc = r.docs
+  roles : user, team#member
+  can view = roles
+type note = r.notes
+  can view = {public}
+EOF
+RSQL >/dev/null <<'SQL' || exit 1
+CREATE SCHEMA r;
+CREATE TABLE r.users (id bigint PRIMARY KEY);
+CREATE TABLE r.teams (id bigint PRIMARY KEY);
+CREATE TABLE r.team_members (team_id bigint, user_id bigint, PRIMARY KEY (team_id, user_id));
+CREATE TABLE r.docs (id bigint PRIMARY KEY);
+CREATE TABLE r.notes (id bigint PRIMARY KEY, public boolean NOT NULL DEFAULT false);
+INSERT INTO r.users VALUES (1), (2);
+INSERT INTO r.teams VALUES (1);
+INSERT INTO r.team_members VALUES (1, 1);
+INSERT INTO r.docs VALUES (1), (2);
+INSERT INTO r.notes VALUES (1), (2);
+SQL
+python3 compile_policy.py $T/governance_roles.authz > $T/governance_roles.sql &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$R" -f $T/governance_roles.sql >/dev/null || exit 1
+ROLE=$(RSQL -c "INSERT INTO authz.roles (owner_type, owner_id, object_type, name) VALUES ('team', '1', 'doc', 'reader') RETURNING id")
+RSQL -c "INSERT INTO authz.role_permissions VALUES ($ROLE, 'view')" \
+     -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation)
+         VALUES ('doc', '1', 'role:$ROLE', 'team', '1', 'member')" >/dev/null
+POS=$(RSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+RSQL -c "INSERT INTO r.team_members VALUES (1, 2)" >/dev/null
+[ "$(RSQL -c "$(fed $POS dependent)")" = "doc 1" ] && [ "$(RSQL -c "SET authz.user_id = 2" -c "SELECT authz.can('doc', 1, 'view')")" = t ] &&
+  echo "ok    a member joining a team given a custom role on a doc: the doc is announced" ||
+  { echo "FAIL  the feed after a team given a role grows: $(RSQL -c "$(fed $POS dependent)")"; fails=$((fails + 1)); }
+POS=$(RSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+RSQL -c "DELETE FROM authz.role_permissions WHERE role_id = $ROLE" >/dev/null
+[ "$(RSQL -c "$(fed $POS role)")" = "doc 1" ] && [ "$(RSQL -c "SET authz.user_id = 2" -c "SELECT authz.can('doc', 1, 'view')")" = f ] &&
+  echo "ok    a custom role that no longer gives view: the docs it is given on are announced" ||
+  { echo "FAIL  the feed after a role's permissions change: $(RSQL -c "$(fed $POS role)")"; fails=$((fails + 1)); }
+POS=$(RSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+RSQL -c "UPDATE r.notes SET public = true WHERE id = 2" >/dev/null
+[ "$(RSQL -c "$(fed $POS update)")" = "note 2" ] &&
+  echo "ok    a note made public, whose view is a condition on its row: the note is announced" ||
+  { echo "FAIL  the feed after a note's column changes: $(RSQL -c "$(fed $POS update)")"; fails=$((fails + 1)); }
+POS=$(RSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+RSQL -c "DELETE FROM r.teams WHERE id = 1" >/dev/null
+[ "$(RSQL -c "$(fed $POS delete)")|$(RSQL -c "$(fed $POS dependent)")" = "team 1|doc 1" ] &&
+  echo "ok    a team's row deleted, its memberships left in their table: the team and the doc given to its members are announced" ||
+  { echo "FAIL  the feed after a team's row is deleted: $(RSQL -c "$(fed $POS delete)")|$(RSQL -c "$(fed $POS dependent)")"; fails=$((fails + 1)); }
+dropdb "$R"; rm -f $T/governance_roles.authz $T/governance_roles.sql
+
 # folders and projects inside each other through links people share (one inheritance table for the two types): a new
 # link announces what it moves, and only that
 XSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$X" "$@"; }

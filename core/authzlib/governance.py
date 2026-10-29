@@ -4,14 +4,18 @@ access, access reviews, invariants, and previewing a policy change."""
 from __future__ import annotations
 
 from .compiler import Core
-from .parse import ColumnSource, Link, Relation, TableSource, Type
+from .parse import KEYWORDS, Arrow, ArrowOn, ColumnSource, Cond, Link, Relation, TableSource, Type, leaves
 from .parse import cols as columns_of
-from .sqlutil import IF_PARTITIONED, lit, on_row, principal_text, q, qt
+from .sqlutil import IF_PARTITIONED, calls_app_code, lit, names_in, on_row, principal_text, q, qt, this_alone
 from .statements import made
 
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
 # triggers that evaluate the policy's own SQL (link-table where {...}) resolve names as the policy does
 DEF_CURRENT = "SECURITY DEFINER SET search_path FROM CURRENT"
+# The feed's dependents: past this many objects of a type, `{*}` (every one) instead of their ids. It bounds what a
+# write adds: each lookup reads this many rows at most, a few milliseconds; and a reader told of more than a thousand
+# objects does better reading the type again than asking for each one.
+DEPENDENTS_MAX = 1000
 
 
 def trigger_if_table(table: str, trigger_sql: str, what: str) -> str:
@@ -57,16 +61,26 @@ class GovernanceMixin(Core):
         return f"""-- The change feed: objects whose access may have changed. Consumers poll authz.changes_since(pos).
 -- NOTIFY on channel authz_changes only with INSERT INTO authz.settings VALUES ('notify_changes', 'on'):
 -- Postgres commits notifying transactions one at a time, so it would queue every write.
-CREATE FUNCTION authz_int.changed(p_type text, p_ids text[], p_cause text) RETURNS void
+-- (p_notify false: entries of the transaction of one that notified, which listeners read with it)
+CREATE FUNCTION authz_int.announce(p_type text, p_ids text[], p_cause text, p_notify boolean DEFAULT true) RETURNS void
 LANGUAGE plpgsql {DEF} AS $f$
 DECLARE v_pos bigint;
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   INSERT INTO authz.changes (object_type, object_ids, cause) VALUES (p_type, p_ids, p_cause) RETURNING pos INTO v_pos;
-  IF (SELECT s.value FROM authz.settings s WHERE s.key = 'notify_changes') = 'on' THEN
+  IF p_notify AND (SELECT s.value FROM authz.settings s WHERE s.key = 'notify_changes') = 'on' THEN
     PERFORM pg_notify('authz_changes', v_pos::text);
   END IF;
 END $f$;
+-- objects changed: they, and what reads them (authz_int.dependents)
+CREATE FUNCTION authz_int.changed(p_type text, p_ids text[], p_cause text) RETURNS void
+LANGUAGE plpgsql {DEF} AS $f$
+BEGIN
+  IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
+  PERFORM authz_int.announce(p_type, p_ids, p_cause);
+  PERFORM authz_int.dependents(p_type, p_ids);
+END $f$;
+{self.dependents_sql()}
 -- Read the feed from a position: SELECT * FROM authz.changes_since(0)  (administrators, sync jobs).
 -- A reader behind what authz.trim_changes() removed gets an error: it must read everything again.
 CREATE FUNCTION authz.changes_since(p_pos bigint, p_limit int DEFAULT 1000) RETURNS SETOF authz.changes
@@ -96,6 +110,29 @@ BEGIN
   INSERT INTO authz.settings VALUES ('changes_trimmed_to', v_to::text)
     ON CONFLICT (key) DO UPDATE SET value = greatest(authz.settings.value::bigint, v_to)::text;
   RETURN n;
+END $f$;
+-- A share ends (expires_at) or begins (starts_at) with no write to announce it: this announces the objects of the
+-- shares that ended or began since its last call (the first call: every one that has), with what reads them.
+-- Schedule it as often as readers should hear of it; until it runs, they don't. Returns the number of shares.
+CREATE FUNCTION authz.announce_timed_shares() RETURNS bigint
+LANGUAGE plpgsql {DEF} AS $f$
+DECLARE
+  v_from timestamptz := coalesce((SELECT s.value::timestamptz FROM authz.settings s WHERE s.key = 'timed_shares_to'),
+                                 '-infinity');
+  v_to timestamptz := now();
+  n bigint; m bigint;
+BEGIN
+  PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'share_ended')
+  FROM authz.shares g WHERE g.expires_at > v_from AND g.expires_at <= v_to GROUP BY g.object_type;
+  SELECT count(*) INTO n FROM authz.shares g WHERE g.expires_at > v_from AND g.expires_at <= v_to;
+  PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'share_started')
+  FROM authz.shares g WHERE g.starts_at > v_from AND g.starts_at <= v_to GROUP BY g.object_type;
+  SELECT count(*) INTO m FROM authz.shares g WHERE g.starts_at > v_from AND g.starts_at <= v_to;
+  -- (written in ISO 8601, which every session reads alike whatever its DateStyle)
+  INSERT INTO authz.settings VALUES ('timed_shares_to', to_char(v_to AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
+    ON CONFLICT (key) DO UPDATE SET value = to_char(greatest(authz.settings.value::timestamptz, v_to) AT TIME ZONE 'UTC',
+                                                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
+  RETURN n + m;
 END $f$;
 -- The audit trail: entries older than p_keep (no default: how long to keep it is a compliance
 -- decision). The trim itself is recorded in the audit trail.
@@ -178,7 +215,248 @@ END $f$;
 CREATE TRIGGER authz_role_audit AFTER INSERT OR UPDATE OR DELETE ON authz.roles
   FOR EACH ROW EXECUTE FUNCTION authz_int.on_role();
 CREATE TRIGGER authz_role_perm_audit AFTER INSERT OR DELETE ON authz.role_permissions
-  FOR EACH ROW EXECUTE FUNCTION authz_int.on_role();"""
+  FOR EACH ROW EXECUTE FUNCTION authz_int.on_role();
+-- a role that gives more or less: the objects it is given on (its assignments are shares, 'role:<id>')
+CREATE FUNCTION authz_int.on_role_permissions() RETURNS trigger
+LANGUAGE plpgsql {DEF} AS $f$
+BEGIN
+  PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'role')
+  FROM authz.shares g WHERE g.relation IN (SELECT 'role:' || r.role_id FROM role_rows r) GROUP BY g.object_type;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER authz_role_perm_feed_ins AFTER INSERT ON authz.role_permissions
+  REFERENCING NEW TABLE AS role_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.on_role_permissions();
+CREATE TRIGGER authz_role_perm_feed_del AFTER DELETE ON authz.role_permissions
+  REFERENCING OLD TABLE AS role_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.on_role_permissions();"""
+
+    def feed_edges(self) -> list[tuple[str, str, str]]:
+        """(from, to, sql): the objects of `to` whose access reads objects of `from`, through a relation of `to`:
+        followed with a dot (an arrow: `folder.view`, `parent.view`, which inheritance is too), or naming a group's
+        members (`team#member`: in a column, a link table, a share or a custom role). sql selects their ids (as
+        `to`'s key) from the ids in the array $ids (as `from`'s). A condition that reads other rows isn't followed."""
+        out: list[tuple[str, str, str]] = []
+        for u in self.types.values():
+            exprs = [p.expr for p in u.perms.values()] + [r.expr for r in self.rules if r.table == u.table]
+            arrows = [x for e in exprs for x, _ in leaves(e) if isinstance(x, (Arrow, ArrowOn))]
+            for r in u.relations.values():
+                for src in r.sources:
+                    for st, sr in src.subjects:
+                        if st not in self.types or sr == "*":
+                            continue
+                        followed = any(a.rel == r.name and (isinstance(a, Arrow) or st in a.types) for a in arrows)
+                        if not followed and not sr:
+                            continue
+                        t = self.T(st)
+                        if src.kind == "column" or src.kind == "table":
+                            if t.composite:
+                                match = self.key_in(t, "x", "SELECT unnest($ids) AS id", self.source_columns(src))
+                                match += f" AND x.{q(src.type_col)} = {lit(st)}" if src.type_col else ""
+                            else:
+                                match = self.of_type(src, "x", st, f"{self.subject_id(src, 'x', st)} = ANY ($ids)")
+                            if src.kind == "column":
+                                sql = f"SELECT {self.key(u, 'x')} FROM {qt(u.table)} x WHERE {match}"
+                            else:
+                                sql = f"SELECT {self.ref(u, 'x', src.obj_col)} FROM {qt(src.table)} x WHERE {match}"
+                        else:
+                            # shares and custom roles (whose assignments are shares) to the group's members
+                            valid = (
+                                ""
+                                if u.composite or u.pktype == "text"
+                                else f" AND pg_input_is_valid(g.object_id, {lit(u.pktype)})"
+                            )
+                            sql = (
+                                f"SELECT g.object_id{'' if u.composite else '::' + u.pktype} FROM authz.shares g "
+                                f"WHERE g.subject_type = {lit(st)} AND g.subject_id = ANY ($ids::text[]) "
+                                f"AND g.subject_relation = {lit(sr or '')} AND g.object_type = {lit(u.name)}{valid}"
+                            )
+                        out.append((st, u.name, sql))
+        # (in one order, whatever order the policy writes its types and relations in)
+        return sorted(set(out))
+
+    def dependents_sql(self) -> str:
+        """authz_int.dependents(type, ids): announces what reads the objects that changed (feed_edges), and what
+        reads those, to a fixed point; past DEPENDENTS_MAX of a type, all of it, and all of what reads it."""
+        edges = self.feed_edges()
+        head = (
+            "-- What else may have changed when objects of a type did: the objects that read them through a relation (a\n"
+            "-- dot, inheritance, a group's members, a group inside a group), then those that read those, until nothing\n"
+            f"-- is new. Past {DEPENDENTS_MAX} objects of a type: all of them ({{*}}), and all of what reads them. Each is\n"
+            "-- announced with the cause 'dependent'."
+        )
+        if not edges:
+            return (
+                f"{head}\nCREATE FUNCTION authz_int.dependents(p_type text, p_ids text[]) RETURNS void\n"
+                f"LANGUAGE plpgsql {DEF} AS $f$\nBEGIN\n"
+                "  RETURN;  -- nothing in the policy reads another object\nEND $f$;"
+            )
+        names = sorted({n for f, to, _ in edges for n in (f, to)})
+        idx = {n: i + 1 for i, n in enumerate(names)}
+        read = {to for _, to, _ in edges}  # the types something is read through
+        # what reads each type, directly or through others
+        reach: dict[str, set[str]] = {n: set() for n in names}
+        for n in names:
+            todo = [n]
+            while todo:
+                m = todo.pop()
+                for f, to, _ in edges:
+                    if f == m and to not in reach[n]:
+                        reach[n].add(to)
+                        todo.append(to)
+
+        def arr(n: str) -> str:
+            t = self.T(n)
+            return "text[]" if t.composite else f"{t.pktype}[]"
+
+        declare = "\n".join(
+            f"  s{idx[n]} {arr(n)} := '{{}}'; n{idx[n]} {arr(n)} := '{{}}'; x{idx[n]} {arr(n)}; "
+            f"c{idx[n]} int := 0; a{idx[n]} boolean := false;  -- {n}"
+            for n in names
+        )
+        starts = []
+        for n in names:
+            if not any(f == n for f, _, _ in edges):
+                continue
+            t = self.T(n)
+            kt = t.keytype if t.composite else t.pktype
+            conv = "x" if t.composite else f"x::{t.pktype}"
+            valid = "" if kt == "text" else f" WHERE pg_input_is_valid(x, {lit(kt)})"
+            i = idx[n]
+            starts.append(
+                f"    WHEN {lit(n)} THEN\n"
+                f"      IF v_all THEN a{i} := true;\n"
+                f"      ELSE n{i} := ARRAY(SELECT DISTINCT {conv} FROM unnest(p_ids) x{valid}); s{i} := n{i};\n"
+                f"      END IF;"
+            )
+        # each round: for each type, the objects that read the ones new in the last round and aren't known yet, in
+        # one lookup (a lookup that fills its limit may hold more new ones than the most: all of them, then)
+        lookups, news = [], []
+        for to in names:
+            i = idx[to]
+            srcs = [(idx[f], sql) for f, t2, sql in edges if t2 == to]
+            if not srcs:
+                news.append(f"    n{i} := '{{}}';")
+                continue
+            union = "\n          UNION ALL ".join(
+                f"{sql.replace('$ids', f'n{j}')} AND cardinality(n{j}) > 0" for j, sql in srcs
+            )
+            lookups.append(
+                f"    IF NOT a{i} AND ({' OR '.join(f'cardinality(n{j}) > 0' for j in dict.fromkeys(j for j, _ in srcs))}) THEN\n"
+                f"      v_most := cardinality(s{i}) + {DEPENDENTS_MAX + 1};\n"
+                f"      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL "
+                f"AND NOT d.v = ANY (s{i})), '{{}}')\n"
+                f"        INTO v_rows, x{i}\n"
+                f"        FROM ({union}\n          LIMIT v_most) d(v);\n"
+                f"      a{i} := v_rows >= v_most;\n"
+                f"    ELSE\n      x{i} := '{{}}';\n    END IF;"
+            )
+            news.append(
+                f"    n{i} := x{i}; s{i} := s{i} || x{i}; c{i} := c{i} + cardinality(x{i}); "
+                f"a{i} := a{i} OR c{i} > {DEPENDENTS_MAX};"
+            )
+        spread = "\n".join(
+            f"    IF a{idx[n]} THEN " + " ".join(f"a{idx[m]} := true;" for m in sorted(reach[n] - {n})) + " END IF;"
+            for n in names
+            if reach[n] - {n}
+        )
+        stop = " AND ".join(f"(a{idx[n]} OR cardinality(n{idx[n]}) = 0)" for n in names)
+        announce = []
+        for n in names:
+            if n not in read:
+                continue
+            i = idx[n]
+            announce.append(
+                f"  IF a{i} AND NOT (v_all AND p_type = {lit(n)}) THEN\n"
+                f"    PERFORM authz_int.announce({lit(n)}, '{{*}}', 'dependent', false);\n"
+                f"  ELSIF NOT a{i} AND c{i} > 0 THEN\n"
+                f"    PERFORM authz_int.announce({lit(n)}, ARRAY(SELECT v::text FROM "
+                f"unnest(s{i}[cardinality(s{i}) - c{i} + 1:]) v ORDER BY v), 'dependent', false);\n"
+                f"  END IF;"
+            )
+        starts_sql, lookups_sql, news_sql, announce_sql = (
+            "\n".join(starts),
+            "\n".join(lookups),
+            "\n".join(news),
+            "\n".join(announce),
+        )
+        return f"""{head}
+CREATE FUNCTION authz_int.dependents(p_type text, p_ids text[]) RETURNS void
+LANGUAGE plpgsql {DEF} AS $f$
+DECLARE
+  v_all boolean := '*' = ANY (p_ids);
+  v_rows bigint; v_most int;
+  -- for each type: the ids known (s), new in the last round (n), found in this one (x), how many were found (c),
+  -- and whether it is all of them (a)
+{declare}
+BEGIN
+  CASE p_type
+{starts_sql}
+    ELSE RETURN;  -- nothing reads its objects
+  END CASE;
+  LOOP
+    -- all of a type: all of what reads it too
+{spread}
+    EXIT WHEN {stop};
+{lookups_sql}
+{news_sql}
+  END LOOP;
+{announce_sql}
+END $f$;"""
+
+    def feed_watched(self, t: Type) -> list[str] | None:
+        """The names of the columns of t's rows whose change may change access, as the type's conditions (its
+        permissions', its rules', its where) write them, lower case; None: any column, where the compiler can't tell
+        (a condition that names the whole row, `this` alone or the table, or calls the app's code, which may read
+        any of it). A relation's columns and the key are watched besides."""
+        conds = [
+            x.sql
+            for e in [p.expr for p in t.perms.values()] + [r.expr for r in self.rules if r.table == t.table]
+            for x, _ in leaves(e)
+            if isinstance(x, Cond) and x.sql not in KEYWORDS.values()
+        ]
+        conds += [t.where] if t.where else []
+        table = t.table.split(".")[-1].strip('"').lower()
+        names: set[str] = set()
+        for sql in conds:
+            found = names_in(sql)
+            if this_alone(sql) or calls_app_code(sql) or table in found:
+                return None
+            names |= found
+        return sorted(names)
+
+    def feed_update_sql(self, t: Type, relation_columns: list[str]) -> str:
+        """The rows an UPDATE changed so that their access may change: their key, a relation's column or a column
+        a condition reads (feed_watched; any, where the compiler can't tell)."""
+        kt = lambda a: self.key_text(t, a)
+        watched = self.feed_watched(t)
+        if watched is None:
+            return (
+                f"    -- any column may change access: a condition reads the whole row, or the app's code\n"
+                f"    PERFORM authz_int.changed({lit(t.name)}, ARRAY(SELECT {kt('n')} FROM new_rows n "
+                f"UNION SELECT {kt('o')} FROM old_rows o), 'update');"
+            )
+        known = sorted(set(relation_columns))  # (in one order, whatever order the policy writes them in)
+        differs = [f"n.{q(c)} IS DISTINCT FROM o.{q(c)}" for c in known]
+        named = [x for x in watched if x not in {c.lower() for c in known} | {c.lower() for c, _ in t.key}]
+        if named:
+            part = lambda a: (
+                f"(SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb({a})) e "
+                f"WHERE lower(e.key) = ANY (ARRAY[{', '.join(lit(x) for x in named)}]))"
+            )
+            differs.append(f"{part('n')} IS DISTINCT FROM {part('o')}")
+        changed = (
+            f"\n        UNION SELECT {kt('n')} FROM new_rows n JOIN old_rows o ON {kt('n')} = {kt('o')}\n"
+            f"        WHERE {' OR '.join(differs)}"
+            if differs
+            else ""
+        )
+        return (
+            "    -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a\n"
+            "    -- column no rule reads changes no access, and isn't announced)\n"
+            f"    PERFORM authz_int.changed({lit(t.name)}, ARRAY(\n"
+            f"        SELECT {kt('n')} FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE {kt('o')} = {kt('n')})\n"
+            f"        UNION SELECT {kt('o')} FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE {kt('n')} = {kt('o')})"
+            f"{changed}), 'update');"
+        )
 
     def subject_text(self, src: Link, a: str) -> str:
         """A column/table source's subject id as text (for any of its subject types), as the audit names it."""
@@ -205,6 +483,10 @@ CREATE TRIGGER authz_role_perm_audit AFTER INSERT OR DELETE ON authz.role_permis
                         tables.setdefault(src.table, []).append((t, r, src))
                     elif src.kind == "column":
                         cols.setdefault(t.name, []).append((r, src))
+        # every type's table: the feed hears of its rows, whether or not its columns hold relations (a condition may
+        # read them, or the row's coming and going alone may give or take access)
+        for t in self.types.values():
+            cols.setdefault(t.name, [])
         for i, (table, uses) in enumerate(sorted(tables.items(), key=lambda x: x[0])):
             rows = []
             for t, r, src in uses:
@@ -318,17 +600,26 @@ END $f$;""")
             )
             bodies = {
                 "ins": f"    PERFORM authz_int.changed({lit(tname)}, ARRAY(SELECT {kt('n')} FROM new_rows n), 'insert');",
-                "upd": f"    PERFORM authz_int.changed({lit(tname)}, ARRAY(SELECT {kt('n')} FROM new_rows n "
-                f"UNION SELECT {kt('o')} FROM old_rows o), 'update');\n"
-                f"    -- a partitioned table: the rows this update put in another partition, which the row trigger never sees\n"
-                f"    IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN\n{moved}\n    END IF;",
+                "upd": self.feed_update_sql(t, [c for _, c in pairs])
+                + (
+                    "\n    -- a partitioned table: the rows this update put in another partition, which the row trigger "
+                    f"never sees\n    IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN\n{moved}\n    END IF;"
+                    if pairs
+                    else ""
+                ),
                 "del": f"    PERFORM authz_int.changed({lit(tname)}, ARRAY(SELECT {kt('o')} FROM old_rows o), 'delete');",
-                "trunc": f"    PERFORM authz_int.audit('truncate', {lit(tname)}, NULL, NULL, NULL, NULL, NULL, "
-                f"jsonb_build_object('table', {lit(t.table)}));\n"
-                f"    PERFORM authz_int.changed({lit(tname)}, ARRAY['*'], 'truncate');",
+                "trunc": (
+                    f"    PERFORM authz_int.audit('truncate', {lit(tname)}, NULL, NULL, NULL, NULL, NULL, "
+                    f"jsonb_build_object('table', {lit(t.table)}));\n"
+                    if pairs
+                    else ""
+                )
+                + f"    PERFORM authz_int.changed({lit(tname)}, ARRAY['*'], 'truncate');",
             }
             parts = [
                 f"-- relationships kept in columns of {t.table}: audited when they change; the feed hears of every row"
+                if pairs
+                else f"-- {t.table}: the feed hears of every row"
             ]
             for op, event, ref in (
                 ("ins", "INSERT", "REFERENCING NEW TABLE AS new_rows "),
@@ -351,6 +642,9 @@ END $f$;""")
                         "audit",
                     )
                 )
+            if not pairs:
+                out.append("\n".join(parts))
+                continue
             fn = f"authz_int.{q(tname + '__col_audit_row')}"
             parts.append(f"""-- one audit row per changed relationship column (a row trigger, so it also works when the key changes)
 CREATE FUNCTION {fn}() RETURNS trigger

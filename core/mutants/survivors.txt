@@ -61,7 +61,6 @@ g55f6071ea3 equivalent evaluate.py Listing.renamings: a type with one row has on
 g39778bc690 equivalent fmt.py format_policy: with a brace open the line takes the first branch, which writes code.strip() and never reads s.
 g949b21cbab equivalent database.py lock_room: the warning's threshold, at the one count where the objects made are exactly 80% of the lock table's room: no answer, only whether an estimate warns.
 g58298bb6f6 equivalent trees.py TreeMixin.tree_checks: the probe only asks Postgres whether the condition can be indexed (immutable): the coalesce's default doesn't change that.
-ge06ef0a455 equivalent trees.py TreeMixin.next_tree: pg_visible_in_snapshot is true for a txid below the snapshot's xmin, so the NOT beside it drops those changes anyway: the term only narrows the scan.
 g046fab1811 equivalent migrate.py Obj.hard_refs: a function that isn't atomic always has a dollar-quoted body (AS $f$), so the match is never None.
 g65a2decd3a equivalent grant.py how_to_grant: authz.can never returns NULL (EXISTS, false, or a RAISE), so the coalesce's default is never taken.
 gd54b7d602c equivalent identity.py IdentityMixin.identity_api_sql: authz.can never returns NULL (EXISTS, false, or a RAISE), so coalesce(..., true) and coalesce(..., false) give the same.

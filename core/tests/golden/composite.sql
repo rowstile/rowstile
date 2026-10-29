@@ -117,7 +117,7 @@ DO $g$
 DECLARE f record; kept text := '';
 BEGIN
   FOR f IN SELECT p.oid, p.ctid, p.oid::regprocedure AS name FROM pg_proc p WHERE p.pronamespace = to_regnamespace('authz')
-           AND p.proname = ANY (ARRAY['act_as', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'list_links', 'revoke_link']) LOOP
+           AND p.proname = ANY (ARRAY['act_as', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'announce_timed_shares', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'list_links', 'revoke_link']) LOOP
     BEGIN
       EXECUTE format('DROP FUNCTION %s', f.name);
     EXCEPTION WHEN dependent_objects_still_exist THEN
@@ -148,6 +148,9 @@ CREATE TABLE IF NOT EXISTS authz.shares (
   PRIMARY KEY (object_type, object_id, relation, subject_type, subject_id, subject_relation));
 CREATE INDEX IF NOT EXISTS shares_by_subject
   ON authz.shares (subject_type, subject_id, subject_relation, object_type, relation);
+-- the shares that end or begin at a time, for authz.announce_timed_shares()
+CREATE INDEX IF NOT EXISTS shares_by_end ON authz.shares (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shares_by_start ON authz.shares (starts_at) WHERE starts_at IS NOT NULL;
 REVOKE ALL ON authz.shares FROM PUBLIC;
 
 -- Custom roles: sets of permissions defined as data, assigned like shares ('role:<id>')
@@ -953,14 +956,163 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 -- The change feed: objects whose access may have changed. Consumers poll authz.changes_since(pos).
 -- NOTIFY on channel authz_changes only with INSERT INTO authz.settings VALUES ('notify_changes', 'on'):
 -- Postgres commits notifying transactions one at a time, so it would queue every write.
-CREATE FUNCTION authz_int.changed(p_type text, p_ids text[], p_cause text) RETURNS void
+-- (p_notify false: entries of the transaction of one that notified, which listeners read with it)
+CREATE FUNCTION authz_int.announce(p_type text, p_ids text[], p_cause text, p_notify boolean DEFAULT true) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_pos bigint;
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   INSERT INTO authz.changes (object_type, object_ids, cause) VALUES (p_type, p_ids, p_cause) RETURNING pos INTO v_pos;
-  IF (SELECT s.value FROM authz.settings s WHERE s.key = 'notify_changes') = 'on' THEN
+  IF p_notify AND (SELECT s.value FROM authz.settings s WHERE s.key = 'notify_changes') = 'on' THEN
     PERFORM pg_notify('authz_changes', v_pos::text);
+  END IF;
+END $f$;
+-- objects changed: they, and what reads them (authz_int.dependents)
+CREATE FUNCTION authz_int.changed(p_type text, p_ids text[], p_cause text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
+  PERFORM authz_int.announce(p_type, p_ids, p_cause);
+  PERFORM authz_int.dependents(p_type, p_ids);
+END $f$;
+-- What else may have changed when objects of a type did: the objects that read them through a relation (a
+-- dot, inheritance, a group's members, a group inside a group), then those that read those, until nothing
+-- is new. Past 1000 objects of a type: all of them ({*}), and all of what reads them. Each is
+-- announced with the cause 'dependent'.
+CREATE FUNCTION authz_int.dependents(p_type text, p_ids text[]) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE
+  v_all boolean := '*' = ANY (p_ids);
+  v_rows bigint; v_most int;
+  -- for each type: the ids known (s), new in the last round (n), found in this one (x), how many were found (c),
+  -- and whether it is all of them (a)
+  s1 text[] := '{}'; n1 text[] := '{}'; x1 text[]; c1 int := 0; a1 boolean := false;  -- file
+  s2 text[] := '{}'; n2 text[] := '{}'; x2 text[]; c2 int := 0; a2 boolean := false;  -- folder
+  s3 bigint[] := '{}'; n3 bigint[] := '{}'; x3 bigint[]; c3 int := 0; a3 boolean := false;  -- org
+  s4 text[] := '{}'; n4 text[] := '{}'; x4 text[]; c4 int := 0; a4 boolean := false;  -- project
+  s5 text[] := '{}'; n5 text[] := '{}'; x5 text[]; c5 int := 0; a5 boolean := false;  -- team
+  s6 bigint[] := '{}'; n6 bigint[] := '{}'; x6 bigint[]; c6 int := 0; a6 boolean := false;  -- user
+BEGIN
+  CASE p_type
+    WHEN 'folder' THEN
+      IF v_all THEN a2 := true;
+      ELSE n2 := ARRAY(SELECT DISTINCT x FROM unnest(p_ids) x WHERE pg_input_is_valid(x, 'authz_gen."folder__key"')); s2 := n2;
+      END IF;
+    WHEN 'org' THEN
+      IF v_all THEN a3 := true;
+      ELSE n3 := ARRAY(SELECT DISTINCT x::bigint FROM unnest(p_ids) x WHERE pg_input_is_valid(x, 'bigint')); s3 := n3;
+      END IF;
+    WHEN 'project' THEN
+      IF v_all THEN a4 := true;
+      ELSE n4 := ARRAY(SELECT DISTINCT x FROM unnest(p_ids) x WHERE pg_input_is_valid(x, 'authz_gen."project__key"')); s4 := n4;
+      END IF;
+    WHEN 'team' THEN
+      IF v_all THEN a5 := true;
+      ELSE n5 := ARRAY(SELECT DISTINCT x FROM unnest(p_ids) x WHERE pg_input_is_valid(x, 'authz_gen."team__key"')); s5 := n5;
+      END IF;
+    WHEN 'user' THEN
+      IF v_all THEN a6 := true;
+      ELSE n6 := ARRAY(SELECT DISTINCT x::bigint FROM unnest(p_ids) x WHERE pg_input_is_valid(x, 'bigint')); s6 := n6;
+      END IF;
+    ELSE RETURN;  -- nothing reads its objects
+  END CASE;
+  LOOP
+    -- all of a type: all of what reads it too
+    IF a2 THEN a1 := true; a4 := true; END IF;
+    IF a3 THEN a1 := true; a2 := true; a4 := true; END IF;
+    IF a4 THEN a1 := true; a2 := true; END IF;
+    IF a5 THEN a1 := true; a2 := true; a4 := true; END IF;
+    IF a6 THEN a1 := true; END IF;
+    EXIT WHEN (a1 OR cardinality(n1) = 0) AND (a2 OR cardinality(n2) = 0) AND (a3 OR cardinality(n3) = 0) AND (a4 OR cardinality(n4) = 0) AND (a5 OR cardinality(n5) = 0) AND (a6 OR cardinality(n6) = 0);
+    IF NOT a1 AND (cardinality(n2) > 0 OR cardinality(n6) > 0) THEN
+      v_most := cardinality(s1) + 1001;
+      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (s1)), '{}')
+        INTO v_rows, x1
+        FROM (SELECT ROW(x."org_id"::bigint, x."id"::bigint)::text FROM "cx"."files" x WHERE (x."org_id", x."folder_id") IN (SELECT (k.k)."org_id", (k.k)."id" FROM (SELECT x.id::authz_gen."folder__key" AS k FROM (SELECT unnest(n2) AS id) x) k) AND cardinality(n2) > 0
+          UNION ALL SELECT ROW(x."org_id"::bigint, x."id"::bigint)::text FROM "cx"."files" x WHERE x."owner_id" = ANY (n6) AND cardinality(n6) > 0
+          LIMIT v_most) d(v);
+      a1 := v_rows >= v_most;
+    ELSE
+      x1 := '{}';
+    END IF;
+    IF NOT a2 AND (cardinality(n2) > 0 OR cardinality(n3) > 0 OR cardinality(n4) > 0 OR cardinality(n5) > 0) THEN
+      v_most := cardinality(s2) + 1001;
+      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (s2)), '{}')
+        INTO v_rows, x2
+        FROM (SELECT (CASE WHEN (x."org_id", x."child_id") IS NOT NULL THEN ROW(x."org_id"::bigint, x."child_id"::bigint)::text END) FROM "cx"."folder_links" x WHERE (x."org_id", x."parent_id") IN (SELECT (k.k)."org_id", (k.k)."id" FROM (SELECT x.id::authz_gen."folder__key" AS k FROM (SELECT unnest(n2) AS id) x) k) AND cardinality(n2) > 0
+          UNION ALL SELECT ROW(x."org_id"::bigint, x."id"::bigint)::text FROM "cx"."folders" x WHERE (x."org_id", x."parent_id") IN (SELECT (k.k)."org_id", (k.k)."id" FROM (SELECT x.id::authz_gen."folder__key" AS k FROM (SELECT unnest(n2) AS id) x) k) AND x."parent_type" = 'folder' AND cardinality(n2) > 0
+          UNION ALL SELECT ROW(x."org_id"::bigint, x."id"::bigint)::text FROM "cx"."folders" x WHERE x."org_id" = ANY (n3) AND cardinality(n3) > 0
+          UNION ALL SELECT ROW(x."org_id"::bigint, x."id"::bigint)::text FROM "cx"."folders" x WHERE (x."org_id", x."parent_id") IN (SELECT (k.k)."org_id", (k.k)."id" FROM (SELECT x.id::authz_gen."project__key" AS k FROM (SELECT unnest(n4) AS id) x) k) AND x."parent_type" = 'project' AND cardinality(n4) > 0
+          UNION ALL SELECT (CASE WHEN (x."org_id", x."folder_id") IS NOT NULL THEN ROW(x."org_id"::bigint, x."folder_id"::bigint)::text END) FROM "cx"."folder_teams" x WHERE (x."org_id", x."team_slug") IN (SELECT (k.k)."org_id", (k.k)."slug" FROM (SELECT x.id::authz_gen."team__key" AS k FROM (SELECT unnest(n5) AS id) x) k) AND cardinality(n5) > 0
+          UNION ALL SELECT g.object_id FROM authz.shares g WHERE g.subject_type = 'team' AND g.subject_id = ANY (n5::text[]) AND g.subject_relation = 'member' AND g.object_type = 'folder' AND cardinality(n5) > 0
+          LIMIT v_most) d(v);
+      a2 := v_rows >= v_most;
+    ELSE
+      x2 := '{}';
+    END IF;
+    IF NOT a4 AND (cardinality(n2) > 0 OR cardinality(n3) > 0) THEN
+      v_most := cardinality(s4) + 1001;
+      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (s4)), '{}')
+        INTO v_rows, x4
+        FROM (SELECT ROW(x."org_id"::bigint, x."id"::bigint)::text FROM "cx"."projects" x WHERE (x."org_id", x."folder_id") IN (SELECT (k.k)."org_id", (k.k)."id" FROM (SELECT x.id::authz_gen."folder__key" AS k FROM (SELECT unnest(n2) AS id) x) k) AND cardinality(n2) > 0
+          UNION ALL SELECT ROW(x."org_id"::bigint, x."id"::bigint)::text FROM "cx"."projects" x WHERE x."org_id" = ANY (n3) AND cardinality(n3) > 0
+          LIMIT v_most) d(v);
+      a4 := v_rows >= v_most;
+    ELSE
+      x4 := '{}';
+    END IF;
+    IF NOT a5 AND (cardinality(n5) > 0) THEN
+      v_most := cardinality(s5) + 1001;
+      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (s5)), '{}')
+        INTO v_rows, x5
+        FROM (SELECT (CASE WHEN (x."org_id", x."parent_slug") IS NOT NULL THEN ROW(x."org_id"::bigint, x."parent_slug"::text)::text END) FROM "cx"."teams" x WHERE (x."org_id", x."slug") IN (SELECT (k.k)."org_id", (k.k)."slug" FROM (SELECT x.id::authz_gen."team__key" AS k FROM (SELECT unnest(n5) AS id) x) k) AND cardinality(n5) > 0
+          UNION ALL SELECT g.object_id FROM authz.shares g WHERE g.subject_type = 'team' AND g.subject_id = ANY (n5::text[]) AND g.subject_relation = 'member' AND g.object_type = 'team' AND cardinality(n5) > 0
+          LIMIT v_most) d(v);
+      a5 := v_rows >= v_most;
+    ELSE
+      x5 := '{}';
+    END IF;
+    IF NOT a6 AND (cardinality(n6) > 0) THEN
+      v_most := cardinality(s6) + 1001;
+      SELECT count(*), coalesce(array_agg(DISTINCT d.v) FILTER (WHERE d.v IS NOT NULL AND NOT d.v = ANY (s6)), '{}')
+        INTO v_rows, x6
+        FROM (SELECT x."id" FROM "cx"."users" x WHERE x."manager_id" = ANY (n6) AND cardinality(n6) > 0
+          LIMIT v_most) d(v);
+      a6 := v_rows >= v_most;
+    ELSE
+      x6 := '{}';
+    END IF;
+    n1 := x1; s1 := s1 || x1; c1 := c1 + cardinality(x1); a1 := a1 OR c1 > 1000;
+    n2 := x2; s2 := s2 || x2; c2 := c2 + cardinality(x2); a2 := a2 OR c2 > 1000;
+    n3 := '{}';
+    n4 := x4; s4 := s4 || x4; c4 := c4 + cardinality(x4); a4 := a4 OR c4 > 1000;
+    n5 := x5; s5 := s5 || x5; c5 := c5 + cardinality(x5); a5 := a5 OR c5 > 1000;
+    n6 := x6; s6 := s6 || x6; c6 := c6 + cardinality(x6); a6 := a6 OR c6 > 1000;
+  END LOOP;
+  IF a1 AND NOT (v_all AND p_type = 'file') THEN
+    PERFORM authz_int.announce('file', '{*}', 'dependent', false);
+  ELSIF NOT a1 AND c1 > 0 THEN
+    PERFORM authz_int.announce('file', ARRAY(SELECT v::text FROM unnest(s1[cardinality(s1) - c1 + 1:]) v ORDER BY v), 'dependent', false);
+  END IF;
+  IF a2 AND NOT (v_all AND p_type = 'folder') THEN
+    PERFORM authz_int.announce('folder', '{*}', 'dependent', false);
+  ELSIF NOT a2 AND c2 > 0 THEN
+    PERFORM authz_int.announce('folder', ARRAY(SELECT v::text FROM unnest(s2[cardinality(s2) - c2 + 1:]) v ORDER BY v), 'dependent', false);
+  END IF;
+  IF a4 AND NOT (v_all AND p_type = 'project') THEN
+    PERFORM authz_int.announce('project', '{*}', 'dependent', false);
+  ELSIF NOT a4 AND c4 > 0 THEN
+    PERFORM authz_int.announce('project', ARRAY(SELECT v::text FROM unnest(s4[cardinality(s4) - c4 + 1:]) v ORDER BY v), 'dependent', false);
+  END IF;
+  IF a5 AND NOT (v_all AND p_type = 'team') THEN
+    PERFORM authz_int.announce('team', '{*}', 'dependent', false);
+  ELSIF NOT a5 AND c5 > 0 THEN
+    PERFORM authz_int.announce('team', ARRAY(SELECT v::text FROM unnest(s5[cardinality(s5) - c5 + 1:]) v ORDER BY v), 'dependent', false);
+  END IF;
+  IF a6 AND NOT (v_all AND p_type = 'user') THEN
+    PERFORM authz_int.announce('user', '{*}', 'dependent', false);
+  ELSIF NOT a6 AND c6 > 0 THEN
+    PERFORM authz_int.announce('user', ARRAY(SELECT v::text FROM unnest(s6[cardinality(s6) - c6 + 1:]) v ORDER BY v), 'dependent', false);
   END IF;
 END $f$;
 -- Read the feed from a position: SELECT * FROM authz.changes_since(0)  (administrators, sync jobs).
@@ -992,6 +1144,29 @@ BEGIN
   INSERT INTO authz.settings VALUES ('changes_trimmed_to', v_to::text)
     ON CONFLICT (key) DO UPDATE SET value = greatest(authz.settings.value::bigint, v_to)::text;
   RETURN n;
+END $f$;
+-- A share ends (expires_at) or begins (starts_at) with no write to announce it: this announces the objects of the
+-- shares that ended or began since its last call (the first call: every one that has), with what reads them.
+-- Schedule it as often as readers should hear of it; until it runs, they don't. Returns the number of shares.
+CREATE OR REPLACE FUNCTION authz.announce_timed_shares() RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE
+  v_from timestamptz := coalesce((SELECT s.value::timestamptz FROM authz.settings s WHERE s.key = 'timed_shares_to'),
+                                 '-infinity');
+  v_to timestamptz := now();
+  n bigint; m bigint;
+BEGIN
+  PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'share_ended')
+  FROM authz.shares g WHERE g.expires_at > v_from AND g.expires_at <= v_to GROUP BY g.object_type;
+  SELECT count(*) INTO n FROM authz.shares g WHERE g.expires_at > v_from AND g.expires_at <= v_to;
+  PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'share_started')
+  FROM authz.shares g WHERE g.starts_at > v_from AND g.starts_at <= v_to GROUP BY g.object_type;
+  SELECT count(*) INTO m FROM authz.shares g WHERE g.starts_at > v_from AND g.starts_at <= v_to;
+  -- (written in ISO 8601, which every session reads alike whatever its DateStyle)
+  INSERT INTO authz.settings VALUES ('timed_shares_to', to_char(v_to AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
+    ON CONFLICT (key) DO UPDATE SET value = to_char(greatest(authz.settings.value::timestamptz, v_to) AT TIME ZONE 'UTC',
+                                                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
+  RETURN n + m;
 END $f$;
 -- The audit trail: entries older than p_keep (no default: how long to keep it is a compliance
 -- decision). The trim itself is recorded in the audit trail.
@@ -1075,6 +1250,18 @@ CREATE TRIGGER authz_role_audit AFTER INSERT OR UPDATE OR DELETE ON authz.roles
   FOR EACH ROW EXECUTE FUNCTION authz_int.on_role();
 CREATE TRIGGER authz_role_perm_audit AFTER INSERT OR DELETE ON authz.role_permissions
   FOR EACH ROW EXECUTE FUNCTION authz_int.on_role();
+-- a role that gives more or less: the objects it is given on (its assignments are shares, 'role:<id>')
+CREATE FUNCTION authz_int.on_role_permissions() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'role')
+  FROM authz.shares g WHERE g.relation IN (SELECT 'role:' || r.role_id FROM role_rows r) GROUP BY g.object_type;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER authz_role_perm_feed_ins AFTER INSERT ON authz.role_permissions
+  REFERENCING NEW TABLE AS role_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.on_role_permissions();
+CREATE TRIGGER authz_role_perm_feed_del AFTER DELETE ON authz.role_permissions
+  REFERENCING OLD TABLE AS role_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.on_role_permissions();
 
 DO $r$ BEGIN PERFORM set_config('authz_ctx.reason', 'applying the policy: the row was deleted', true); END $r$;
 
@@ -2663,7 +2850,13 @@ END $tr$;
 CREATE FUNCTION authz_int."user__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.changed('user', ARRAY(SELECT n."id"::text FROM new_rows n UNION SELECT o."id"::text FROM old_rows o), 'update');
+    -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
+    -- column no rule reads changes no access, and isn't announced)
+    PERFORM authz_int.changed('user', ARRAY(
+        SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
+        UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
+        UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
+        WHERE n."manager_id" IS DISTINCT FROM o."manager_id"), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -2750,7 +2943,13 @@ END $tr$;
 CREATE FUNCTION authz_int."bot__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.changed('bot', ARRAY(SELECT n."id"::text FROM new_rows n UNION SELECT o."id"::text FROM old_rows o), 'update');
+    -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
+    -- column no rule reads changes no access, and isn't announced)
+    PERFORM authz_int.changed('bot', ARRAY(
+        SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
+        UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)
+        UNION SELECT n."id"::text FROM new_rows n JOIN old_rows o ON n."id"::text = o."id"::text
+        WHERE n."owner_id" IS DISTINCT FROM o."owner_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['active', 'this']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -2837,7 +3036,13 @@ END $tr$;
 CREATE FUNCTION authz_int."team__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.changed('team', ARRAY(SELECT ROW(n."org_id"::bigint, n."slug"::text)::text FROM new_rows n UNION SELECT ROW(o."org_id"::bigint, o."slug"::text)::text FROM old_rows o), 'update');
+    -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
+    -- column no rule reads changes no access, and isn't announced)
+    PERFORM authz_int.changed('team', ARRAY(
+        SELECT ROW(n."org_id"::bigint, n."slug"::text)::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."slug"::text)::text = ROW(n."org_id"::bigint, n."slug"::text)::text)
+        UNION SELECT ROW(o."org_id"::bigint, o."slug"::text)::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."slug"::text)::text = ROW(o."org_id"::bigint, o."slug"::text)::text)
+        UNION SELECT ROW(n."org_id"::bigint, n."slug"::text)::text FROM new_rows n JOIN old_rows o ON ROW(n."org_id"::bigint, n."slug"::text)::text = ROW(o."org_id"::bigint, o."slug"::text)::text
+        WHERE n."lead_id" IS DISTINCT FROM o."lead_id" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['disbanded', 'not'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['disbanded', 'not']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -2924,7 +3129,13 @@ END $tr$;
 CREATE FUNCTION authz_int."project__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.changed('project', ARRAY(SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n UNION SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o), 'update');
+    -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
+    -- column no rule reads changes no access, and isn't announced)
+    PERFORM authz_int.changed('project', ARRAY(
+        SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)
+        UNION SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)
+        UNION SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n JOIN old_rows o ON ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text
+        WHERE n."folder_id" IS DISTINCT FROM o."folder_id" OR n."lead_id" IS DISTINCT FROM o."lead_id" OR n."org_id" IS DISTINCT FROM o."org_id"), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -3044,7 +3255,13 @@ END $tr$;
 CREATE FUNCTION authz_int."folder__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.changed('folder', ARRAY(SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n UNION SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o), 'update');
+    -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
+    -- column no rule reads changes no access, and isn't announced)
+    PERFORM authz_int.changed('folder', ARRAY(
+        SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)
+        UNION SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)
+        UNION SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n JOIN old_rows o ON ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text
+        WHERE n."org_id" IS DISTINCT FROM o."org_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."parent_id" IS DISTINCT FROM o."parent_id" OR n."parent_type" IS DISTINCT FROM o."parent_type" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['is', 'null']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -3175,7 +3392,13 @@ END $tr$;
 CREATE FUNCTION authz_int."file__col_audit_upd"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.changed('file', ARRAY(SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n UNION SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o), 'update');
+    -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
+    -- column no rule reads changes no access, and isn't announced)
+    PERFORM authz_int.changed('file', ARRAY(
+        SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE ROW(o."org_id"::bigint, o."id"::bigint)::text = ROW(n."org_id"::bigint, n."id"::bigint)::text)
+        UNION SELECT ROW(o."org_id"::bigint, o."id"::bigint)::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text)
+        UNION SELECT ROW(n."org_id"::bigint, n."id"::bigint)::text FROM new_rows n JOIN old_rows o ON ROW(n."org_id"::bigint, n."id"::bigint)::text = ROW(o."org_id"::bigint, o."id"::bigint)::text
+        WHERE n."folder_id" IS DISTINCT FROM o."folder_id" OR n."org_id" IS DISTINCT FROM o."org_id" OR n."owner_id" IS DISTINCT FROM o."owner_id" OR n."uploaded_by" IS DISTINCT FROM o."uploaded_by" OR (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(n)) e WHERE lower(e.key) = ANY (ARRAY['authz', 'uid'])) IS DISTINCT FROM (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(to_jsonb(o)) e WHERE lower(e.key) = ANY (ARRAY['authz', 'uid']))), 'update');
     -- a partitioned table: the rows this update put in another partition, which the row trigger never sees
     IF (SELECT relkind FROM pg_class WHERE oid = TG_RELID) = 'p' THEN
       INSERT INTO authz.audit (db_role, user_id, acting_user, action, object_type, object_id, relation, subject_id, detail, reason)
@@ -3274,6 +3497,68 @@ DO $tr$ BEGIN
     EXECUTE 'CREATE TRIGGER "authz_file_col_audit_row" AFTER UPDATE ON "cx"."files" FOR EACH ROW WHEN (OLD."org_id" IS DISTINCT FROM NEW."org_id" OR OLD."folder_id" IS DISTINCT FROM NEW."folder_id" OR OLD."owner_id" IS DISTINCT FROM NEW."owner_id" OR OLD."uploaded_by" IS DISTINCT FROM NEW."uploaded_by") EXECUTE FUNCTION authz_int."file__col_audit_row"()';
   ELSE
     RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."files"';
+  END IF;
+END $tr$;
+
+-- cx.orgs: the feed hears of every row
+CREATE FUNCTION authz_int."org__col_audit_ins"() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+    PERFORM authz_int.changed('org', ARRAY(SELECT n."id"::text FROM new_rows n), 'insert');
+  RETURN NULL;
+END $f$;
+-- @object trigger "authz_org_col_audit_ins" ON "cx"."orgs"
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."orgs"'::regclass) IN ('r', 'p') THEN
+    EXECUTE 'CREATE TRIGGER "authz_org_col_audit_ins" AFTER INSERT ON "cx"."orgs" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_ins"()';
+  ELSE
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."orgs"';
+  END IF;
+END $tr$;
+CREATE FUNCTION authz_int."org__col_audit_upd"() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+    -- the rows whose key changed, or a column access may read: a relation's, or one a condition names (a
+    -- column no rule reads changes no access, and isn't announced)
+    PERFORM authz_int.changed('org', ARRAY(
+        SELECT n."id"::text FROM new_rows n WHERE NOT EXISTS (SELECT 1 FROM old_rows o WHERE o."id"::text = n."id"::text)
+        UNION SELECT o."id"::text FROM old_rows o WHERE NOT EXISTS (SELECT 1 FROM new_rows n WHERE n."id"::text = o."id"::text)), 'update');
+  RETURN NULL;
+END $f$;
+-- @object trigger "authz_org_col_audit_upd" ON "cx"."orgs"
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."orgs"'::regclass) IN ('r', 'p') THEN
+    EXECUTE 'CREATE TRIGGER "authz_org_col_audit_upd" AFTER UPDATE ON "cx"."orgs" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_upd"()';
+  ELSE
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."orgs"';
+  END IF;
+END $tr$;
+CREATE FUNCTION authz_int."org__col_audit_del"() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+    PERFORM authz_int.changed('org', ARRAY(SELECT o."id"::text FROM old_rows o), 'delete');
+  RETURN NULL;
+END $f$;
+-- @object trigger "authz_org_col_audit_del" ON "cx"."orgs"
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."orgs"'::regclass) IN ('r', 'p') THEN
+    EXECUTE 'CREATE TRIGGER "authz_org_col_audit_del" AFTER DELETE ON "cx"."orgs" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_del"()';
+  ELSE
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."orgs"';
+  END IF;
+END $tr$;
+CREATE FUNCTION authz_int."org__col_audit_trunc"() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+    PERFORM authz_int.changed('org', ARRAY['*'], 'truncate');
+  RETURN NULL;
+END $f$;
+-- @object trigger "authz_org_col_audit_trunc" ON "cx"."orgs"
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_class WHERE oid = '"cx"."orgs"'::regclass) IN ('r', 'p') THEN
+    EXECUTE 'CREATE TRIGGER "authz_org_col_audit_trunc" AFTER TRUNCATE ON "cx"."orgs" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_trunc"()';
+  ELSE
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"cx"."orgs"';
   END IF;
 END $tr$;
 

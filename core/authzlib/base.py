@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS authz.shares (
   PRIMARY KEY (object_type, object_id, relation, subject_type, subject_id, subject_relation));
 CREATE INDEX IF NOT EXISTS shares_by_subject
   ON authz.shares (subject_type, subject_id, subject_relation, object_type, relation);
+-- the shares that end or begin at a time, for authz.announce_timed_shares()
+CREATE INDEX IF NOT EXISTS shares_by_end ON authz.shares (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shares_by_start ON authz.shares (starts_at) WHERE starts_at IS NOT NULL;
 REVOKE ALL ON authz.shares FROM PUBLIC;
 
 -- Custom roles: sets of permissions defined as data, assigned like shares ('role:<id>')
@@ -179,6 +182,7 @@ GENERATED_FUNCTIONS = (
     "sync_members",
     "changes_since",
     "trim_changes",
+    "announce_timed_shares",
     "trim_audit",
     "request_access",
     "pending_requests",

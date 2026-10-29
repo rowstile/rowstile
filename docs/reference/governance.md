@@ -16,7 +16,24 @@
 - **Change feed** (`authz.changes`): every object whose access may have changed (but not by
   what is written in replica mode, as above), including everything below a moved folder, with a
   position to resume from. <!-- checked: tests/governance.sh "moving a folder announces it (and what sits below it)" -->
-  `{*}` means every object of that type (after a TRUNCATE). <!-- checked: tests/governance.sh "and announced for every folder"; tests/governance.sh "and announced for every file" -->
+  That includes what reads a changed object through a relation, and what reads those in turn, with the cause
+  `dependent`: the files in a moved folder; the folders and files a team is given, shared with or given a custom
+  role on when its members change, and the teams it sits in; the folders of an org whose admins change. <!-- checked: tests/governance.sh "and the file in it, whose view reads the folder's: a dependent"; tests/governance.sh "bob leaves Backend: the team it sits in, the folders either is given (and what sits below them) and their files are announced"; tests/governance.sh "gina leaves Platform, which Handbook is shared with: the teams it sits in, two deep, and Handbook and its files too"; tests/governance.sh "alice made a Globex admin: its folders (whose share reads org.admin) and their files are announced"; tests/governance.sh "a share on Company: every folder below it, the one linked into it, and their files are announced"; tests/governance.sh "a member joining a team given a custom role on a doc: the doc is announced" -->
+  A custom role whose permissions change announces the objects it is given on (the cause `role`). <!-- checked: tests/governance.sh "a custom role that no longer gives view: the docs it is given on are announced" -->
+  A row of a type's table is announced when it is added or deleted, whether or not its columns hold relations,
+  and when an update changes what access may read: its key, a relation's column, or a column the type's
+  conditions name (in its permissions, its rules or its where). Where the compiler can't tell which columns
+  those are (a condition that names the whole row, as `this` alone or by its table, or calls the app's code),
+  any column counts. <!-- checked: tests/governance.sh "a user's name and a file's name, which no rule reads, changed: nothing is announced"; tests/governance.sh "a folder's inherit, which its view's condition reads, changed: the folder is announced"; tests/governance.sh "with the file in it"; tests/governance.sh "a note made public, whose view is a condition on its row: the note is announced"; tests/governance.sh "a team's row deleted, its memberships left in their table: the team and the doc given to its members are announced" -->
+  `{*}` means every object of that type (after a TRUNCATE, and for what reads it). <!-- checked: tests/governance.sh "and announced for every folder"; tests/governance.sh "and announced for every file"; tests/governance.sh "and for every file, whose view reads its folder's" -->
+  Past a thousand objects of a type that a change reaches through others, the feed says `{*}` for that type
+  instead of their ids: a reader then reads the type again, and the write stops looking. <!-- checked: tests/governance.sh "a share on a folder holding more than a thousand files announces every file ({*})"; tests/governance.sh "and a thousand of them by their ids" -->
+  A condition that reads other rows (a subquery) is not followed: a change to those rows announces nothing
+  for it. <!-- unchecked: what a subquery reads is the app's SQL, which the policy can't take apart -->
+  No write marks the moment a share ends (`expires_at`) or begins (`starts_at`):
+  `authz.announce_timed_shares()` announces the shares that ended or began since it last ran (the cause
+  `share_ended` or `share_started`), with what reads their objects. Schedule it ([Operations](../operations.md));
+  until it runs, a reader doesn't hear of them. <!-- checked: tests/governance.sh "which the feed doesn't hear of by itself"; tests/governance.sh "authz.announce_timed_shares() announces the shares that ended or began since it last ran, and says how many"; tests/governance.sh "the one that ended"; tests/governance.sh "with what reads Keys"; tests/governance.sh "run again, it announces nothing new" -->
   `authz.trim_changes()`
   removes old entries; a reader behind them gets an error from `changes_since` (AZ712) and
   reads everything again. <!-- checked: tests/governance.sh "the feed keeps 7 days by default: older entries are trimmed"; tests/governance.sh "a reader behind the trimmed part is told to read everything again" -->
