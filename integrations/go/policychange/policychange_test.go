@@ -156,11 +156,18 @@ func TestCheck14APolicyChangeShipsAsTheNextMigration(t *testing.T) {
 	}
 	owner(t, "INSERT INTO app.users VALUES (1, 'ann'), (2, 'bo') RETURNING id")
 	message := owner(t, "INSERT INTO app.inbox (sender_id, recipient_id, body) VALUES (1, 2, 'hi') RETURNING id")
+	// the migrations there: the new one comes after the last of them
+	there, err := filepath.Glob(filepath.Join(work, "migrations", "*.sql"))
+	if err != nil || len(there) == 0 {
+		t.Fatal("no migrations", err)
+	}
+	last := filepath.Base(there[len(there)-1])
+	next := fmt.Sprintf("%05d_authz_", len(there)+1)
 	cli := os.Getenv("ROWSTILE_CLI")
 	run(t, work, nil, "python3", cli, "migrate")
 	// goose migrates the database: the new migration alone is left to run
 	said := run(t, work, nil, os.Getenv("GOOSE"), "-dir", "migrations", "postgres", copied.URL, "up")
-	if !strings.Contains(said, "00003_authz_") || strings.Contains(said, "00002_authz_") {
+	if !strings.Contains(said, next) || strings.Contains(said, last) {
 		t.Errorf("goose: %s", said)
 	}
 	run(t, work, nil, "python3", cli, "client")
@@ -178,7 +185,7 @@ func TestCheck14APolicyChangeShipsAsTheNextMigration(t *testing.T) {
 	// the copy's files: the migration and the names rowstile wrote, the lock
 	var wrote []string
 	_ = fs.WalkDir(os.DirFS(work), ".", func(path string, d fs.DirEntry, err error) error {
-		if strings.Contains(path, "00003_authz_") {
+		if strings.Contains(path, next) {
 			wrote = append(wrote, path)
 		}
 		return err
