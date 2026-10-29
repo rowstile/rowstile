@@ -48,7 +48,9 @@ Fixes go to `main` first, then to the release branch.
   `uvx ty@0.0.56 check && uvx ruff@0.15.12 check && uvx ruff@0.15.12 format --check`, from the repository's
   root (`ty.toml`, `ruff.toml`); code that needs packages in its own
   environment: `uv sync --project integrations/fastapi && uvx ty@0.0.56 check --project sdk/python` (and
-  `--project` integrations/fastapi, examples/filemanager, examples/messenger after syncing their backends). The
+  `--project` integrations/fastapi, examples/filemanager, examples/messenger after syncing their backends; the
+  SDK's Django module after `uv sync --project integrations/django`: `uvx ty@0.0.56 check --project
+  integrations/django integrations/django sdk/python/rowstile/django`). The
   command's code uses the standard library only, annotations included. TypeScript is `strict`, and so is the
   plain JavaScript (Studio's page, the playground, the site, the npm scripts, the editors): typed with JSDoc and
   checked by `npx tsc -p <folder>` (the `tsconfig.json` beside it; Studio's is `core/cli/tsconfig.studio.json`).

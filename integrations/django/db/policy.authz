@@ -1,0 +1,52 @@
+-- The conformance app's policy: projects with an owner and members, public ones anyone may read, a service
+-- that reads the projects it is added to, notes in projects, an inbox only its recipient reads, and folders inside
+-- folders, which their owner and the owners of the folders above edit.
+
+app role conf_app
+
+type user = public.users
+
+type service = public.services principal
+
+type project = public.projects
+  owner   : user    = owner_id
+  member  : user    = public.members(project_id -> user_id)
+  service : service = public.project_services(project_id -> service_id)
+
+  can edit = owner or member
+  can view = edit or service or {public}
+
+type note = public.notes
+  project : project = project_id
+  author  : user    = author_id
+
+  can edit = author or project.owner
+  can view = project.view
+
+type message = public.inbox
+  recipient : user = recipient_id
+
+  can read = recipient
+
+type folder = public.folders
+  parent : folder = parent_id
+  owner  : user   = owner_id
+
+  can edit = owner or parent.edit
+
+rules public.projects
+  select : view
+
+rules public.notes
+  select : view
+  insert : project.edit and author
+  update : edit
+  delete : edit
+
+rules public.inbox
+  select : read
+  insert : signed_in and {sender_id = authz.uid()}
+
+rules public.folders
+  select : edit
+  update : edit

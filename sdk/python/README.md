@@ -2,7 +2,8 @@
 
 `pip install --pre rowstile` (`--pre`: the newest pre-release) installs the `rowstile` command (`rowstile init`, `dev`, `migrate`, `review`; also
 `python -m rowstile`) and the SDK for Python apps. Extras bring the integrations' dependencies:
-`rowstile[fastapi]`, `[sqlalchemy]`, `[psycopg]`, `[asyncpg]`. Python 3.11 or newer.
+`rowstile[fastapi]`, `[sqlalchemy]`, `[psycopg]`, `[asyncpg]`, `[django]` (a preview: it may change in any
+release). Python 3.11 or newer.
 
 The SDK for Python apps on a rowstile policy: every transaction signs in as whoever the request or
 the job acts for, refused writes become a 403 with the database's reason, rows the user can't see a 404,
@@ -26,6 +27,7 @@ Rowstile(app, engine, user=current_user)     # current_user(request): its user's
 | `rowstile.sqlalchemy` | `install(engine)` (sync or async; SQLModel too), `ids(type, perm)` for `where`, `perms_of()` for a list's buttons, `can()` (`Queries[ObjectType, Permission]()` has the three taking only the generated client's names, so a misspelled one doesn't type-check), `expect()` for Core updates and deletes, `why_stale()` for the ORM's StaleDataError |
 | `rowstile.psycopg` | `transaction(conn, who)`, `atransaction(aconn, who)`, `expect()`, `aexpect()` |
 | `rowstile.asyncpg` | `transaction(conn, who)`, `expect()` |
+| `rowstile.django` | a preview: it may change in any release. `"rowstile.django"` in `INSTALLED_APPS` (every transaction on Django's Postgres connections signs in as whoever the code acts for: an atomic block when it begins, a query outside one in a transaction of its own; psycopg 3), `Middleware` (each request acts for `ROWSTILE_USER(request)`, else `request.user`; 403/404 problem bodies and each code's answer, as `rowstile.fastapi`'s; the start-up check of `ROWSTILE_CHECK_DATABASES`), `save(instance)` (an update, never Django's insert after a refused one: `NotFound` or `Refused`), `expect()` for a queryset's `update()` and `delete()`, `ids()`, `can()`, `perms_of()`, `Queries[ObjectType, Permission]()`, `check()`; `rowstile.django.testing.database_per_worker(url)` for pytest-django's `django_db_setup` |
 | `rowstile.alembic` | `include_name`, `include_object`: autogenerate leaves rowstile's objects alone, and a model of a masked view that says so (`info={"rowstile": True}` on its table) |
 | `rowstile.testing` | pytest fixtures, loaded once the package is installed: `as_user`, `assert_refused`, `assert_not_found` (awaited, with an async function: a test that never awaits it fails), `authz_owner_url`, `authz_app_url`; `database_per_worker(url)`: a copy of the migrated test database for each pytest-xdist worker |
 
@@ -51,4 +53,6 @@ Policy changes ship as migrations for your tool (`rowstile migrate`, with `tool 
 misspelled permission doesn't type-check.
 
 `integrations/fastapi/` is the conformance suite: a small FastAPI app on SQLAlchemy (async, asyncpg) and
-Alembic, and the checks every supported stack passes (`integrations/fastapi/test.sh`).
+Alembic, and the checks every supported stack passes (`integrations/fastapi/test.sh`). `integrations/django/` is
+the Django module's: a small Django app on psycopg 3, Django's migrations and pytest-django
+([Django](../../docs/stacks/django.md)).

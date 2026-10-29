@@ -11120,6 +11120,7 @@ class StackPages(unittest.TestCase):
     SOURCES: ClassVar[dict[str, list[str]]] = {
         "fastapi.md": ["integrations/fastapi"],
         "python.md": ["integrations/fastapi"],
+        "django.md": ["integrations/django"],
         "nextjs.md": ["integrations/nextjs"],
         "node.md": ["integrations/nextjs", "integrations/node"],
         "go.md": ["integrations/go"],
@@ -12763,20 +12764,24 @@ class PythonExtras(unittest.TestCase):
             out[m[1].lower()] = m[2]
         return out
 
+    APPS: ClassVar[dict[str, str]] = {"django": "django"}  # the conformance app of an extra (else FastAPI's)
+
     def test_each_extras_floor_is_the_conformance_apps(self) -> None:
         import tomllib
 
         with open(os.path.join(self.REPO, "sdk", "python", "pyproject.toml"), "rb") as fh:
             extras = tomllib.load(fh)["project"]["optional-dependencies"]
-        with open(os.path.join(self.REPO, "integrations", "fastapi", "pyproject.toml"), "rb") as fh:
-            app = self.floors([r for r in tomllib.load(fh)["project"]["dependencies"] if not r.startswith("rowstile")])
         for extra, requirements in sorted(extras.items()):
+            folder = self.APPS.get(extra, "fastapi")
+            with open(os.path.join(self.REPO, "integrations", folder, "pyproject.toml"), "rb") as fh:
+                dependencies = tomllib.load(fh)["project"]["dependencies"]
+            app = self.floors([r for r in dependencies if not r.startswith("rowstile")])
             for name, floor in self.floors(requirements).items():
                 self.assertEqual(
                     app.get(name),
                     floor,
-                    f"rowstile[{extra}] allows {name} {floor}: integrations/fastapi/pyproject.toml must ask for the same "
-                    "floor, which the nightly run installs",
+                    f"rowstile[{extra}] allows {name} {floor}: integrations/{folder}/pyproject.toml must ask for the "
+                    "same floor, which the nightly run installs",
                 )
 
     def test_the_conformance_suite_runs_on_the_floors_each_night(self) -> None:
@@ -12785,8 +12790,9 @@ class PythonExtras(unittest.TestCase):
         job = search(r"\n  conformance:\n(.*?)\n  \w", nightly, re.S).group(1)
         self.assertIn('resolution: "lowest-direct"', job, "nightly.yml: the conformance job on the extras' floors")
         self.assertIn("RESOLUTION: ${{ matrix.resolution }}", job)
-        with open(os.path.join(self.REPO, "integrations", "fastapi", "test.sh"), encoding="utf-8") as fh:
-            self.assertIn('--resolution "$RESOLUTION"', fh.read())
+        for folder in ("fastapi", *self.APPS.values()):
+            with open(os.path.join(self.REPO, "integrations", folder, "test.sh"), encoding="utf-8") as fh:
+                self.assertIn('--resolution "$RESOLUTION"', fh.read(), folder)
 
 
 class Licence(unittest.TestCase):

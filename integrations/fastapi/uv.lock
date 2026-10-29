@@ -1204,12 +1204,14 @@ sqlalchemy = [
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.29" },
+    { name = "django", marker = "extra == 'django'", specifier = ">=5.2" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.110" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'django'", specifier = ">=3.1.8" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'psycopg'", specifier = ">=3.1.4" },
     { name = "sqlalchemy", marker = "extra == 'sqlalchemy'", specifier = ">=2.0" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'fastapi'", specifier = ">=2.0" },
 ]
-provides-extras = ["asyncpg", "fastapi", "psycopg", "sqlalchemy"]
+provides-extras = ["asyncpg", "django", "fastapi", "psycopg", "sqlalchemy"]
 
 [[package]]
 name = "rowstile-conformance-fastapi"
