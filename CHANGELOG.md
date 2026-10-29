@@ -9,6 +9,14 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+### Added
+
+- Background jobs in Celery's and RQ's workers, for the Python SDK (preview): `rowstile.job(who)` is a `with` block
+  too, for a job that acts for the user its argument names (`Principal.parse`). In either form, the database's
+  refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).
+  The two keep what they say in their arguments, so pickle and Celery's results give them back whole. The FastAPI
+  conformance suite runs them in both workers, on Redis.
+
 ## 0.1.0-beta.2 (2026-10-29)
 
 ### Changed

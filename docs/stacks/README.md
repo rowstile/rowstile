@@ -8,7 +8,7 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 | FastAPI, SQLAlchemy (async), Alembic | [fastapi.md](fastapi.md) | `pip install --pre rowstile` |
 | Next.js, Prisma, React | [nextjs.md](nextjs.md) | `@rowstile/prisma`, `/next`, `/react` |
 | Node: pg, postgres.js, Drizzle (Express, Hono, workers) | [node.md](node.md) | `@rowstile/pg`, `/postgres`, `/drizzle` |
-| Python: SQLAlchemy (sync), SQLModel, psycopg, asyncpg | [python.md](python.md) | `pip install --pre rowstile` |
+| Python: SQLAlchemy (sync), SQLModel, psycopg, asyncpg; Celery and RQ workers (preview) | [python.md](python.md) | `pip install --pre rowstile` |
 | Anything else (Go, Ruby, Java, Rust, ...) | [sql.md](sql.md) | none: a few SQL statements |
 
 Every line of code these pages show is in a tested app (`integrations/fastapi`, `integrations/nextjs`, the

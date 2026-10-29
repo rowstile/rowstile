@@ -92,6 +92,7 @@ IDENT = "docs/reference/identity.md"
 MIGR = "docs/reference/migrations.md"
 FASTAPI = "integrations/fastapi/tests/test_conformance.py"
 FASTAPI_SDK = "integrations/fastapi/tests/test_sdk.py"
+FASTAPI_JOBS = "integrations/fastapi/tests/test_jobs.py"
 NEXT = "integrations/nextjs/tests/conformance.test.ts"
 NEXT_SDK = "integrations/nextjs/tests/sdk.test.ts"
 NEXT_NEXT = "integrations/nextjs/tests/next.test.ts"
@@ -1023,6 +1024,21 @@ FEATURES: list[Feature] = [
             Check(FASTAPI_SDK, "test_a_principal_as_it_is_and_one_without_an_id"),
         ),
         note="the SDK's own code is not measured by the coverage runs",
+    ),
+    Feature(
+        "sdk.python.jobs",
+        2,
+        "The Python SDK's background jobs, in Celery's and RQ's workers (preview)",
+        ("sdk.py.job",),
+        Doc("docs/stacks/python.md", "Background jobs: Celery and RQ (preview)"),
+        (
+            Check(FASTAPI_JOBS, "test_10_a_job_in_a_worker_acts_as_its_service"),
+            Check(FASTAPI_JOBS, "test_10_a_job_acts_for_the_user_who_asked"),
+            Check(FASTAPI_JOBS, "test_4_a_workers_connection_carries_no_one_over"),
+            Check(FASTAPI_JOBS, "test_6_a_refused_insert_in_a_job_raises_refused"),
+            Check(FASTAPI_JOBS, "test_refused_and_not_found_cross_a_queue_whole"),
+            Check(FASTAPI_SDK, "test_a_job_block_raises_the_databases_refusals_as_the_sdks"),
+        ),
     ),
     Feature(
         "sdk.python.stacks",
