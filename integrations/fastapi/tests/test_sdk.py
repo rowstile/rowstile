@@ -108,6 +108,41 @@ def test_a_job_in_a_plain_function() -> None:
     assert report.__name__ == "report"
 
 
+def test_a_job_block_raises_the_databases_refusals_as_the_sdks() -> None:
+    # a refused insert, psycopg's error: Refused, with what the database said, and the error as its cause
+    with pytest.raises(Refused) as e, rowstile.job(2) as me, psycopg.connect(libpq(APP)) as conn, pgp.transaction(conn):
+        assert me == Principal("user", "2") and rowstile.current() == me
+        with rowstile.job(("service", 1)):  # a block inside another, and back
+            assert rowstile.current() == Principal("service", "1")
+        assert rowstile.current() == me
+        conn.execute("INSERT INTO app.notes (project_id, author_id, body) VALUES (3, 2, 'hi')")
+    assert e.value.table == "app.notes" and e.value.command == "insert" and e.value.why, e.value
+    assert isinstance(e.value.__cause__, psycopg.Error) and rowstile.current() is None
+    # an ORM update the rules refuse (StaleDataError): Refused, as the SDK asked the database in the flush's own
+    # transaction
+    engine = authz_sa.install(create_engine(SYNC))
+    try:
+        with pytest.raises(Refused) as e, rowstile.job(3), Session(engine) as s, s.begin():
+            note = s.get(Note, 1)
+            assert note is not None
+            note.body = "x"
+        assert e.value.message == REFUSED and isinstance(e.value.__cause__, StaleDataError), e.value
+        # a database error that is no refusal, and the job's own errors, stay as they are
+        with pytest.raises(ProgrammingError), rowstile.job(1), Session(engine) as s:
+            s.execute(text("SELECT nothing_here"))
+        with pytest.raises(NotFound) as hidden, rowstile.job(1):
+            raise NotFound("app.notes", 7)
+        assert hidden.value.__cause__ is None
+        with pytest.raises(ValueError, match="the job's own"), rowstile.job(1):
+            try:
+                with psycopg.connect(libpq(APP)) as conn, pgp.transaction(conn):
+                    conn.execute("INSERT INTO app.notes (project_id, author_id, body) VALUES (2, 1, 'hi')")
+            except psycopg.Error as refused:  # the job's own error, though a refusal caused it
+                raise ValueError("the job's own") from refused
+    finally:
+        engine.dispose()
+
+
 # --- SQLAlchemy -------------------------------------------------------------------------------------------------
 def test_install_once_and_user_when_nothing_else_says() -> None:
     asked: list[str] = []

@@ -46,6 +46,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.types import TypeEngine
 
 from . import (
+    _ASKED,
     NOBODY,
     Id,
     NotFound,
@@ -86,7 +87,6 @@ _orm_events = False
 _Row: TypeAlias = "tuple[str, str, tuple[object, ...]]"
 _ROWS = "rowstile_rows"  # in a connection's info: the rows of the flush on it, as SQLAlchemy told them
 _FLUSHING = "rowstile_flushing"  # in a session's info: a flush began, and its first row starts the rows again
-_ASKED = "_rowstile_asked"  # on a StaleDataError: what the database said, NotFound or Refused; True: the rules allow
 
 
 def install(engine: AnyEngine, user: Callable[[], Who] | None = None) -> AnyEngine:

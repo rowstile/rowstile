@@ -4,12 +4,22 @@
 #   POOLER=pgbouncer integrations/fastapi/test.sh     # the app through PgBouncer in transaction mode
 #   RESOLUTION=lowest-direct integrations/fastapi/test.sh     # the oldest versions the bounds allow, not uv.lock's
 # Check 11 first: a fresh database, migrated with Alembic (rowstile's policy is one of the revisions), then
-# the policy's tests, then Alembic's own diff, which must show no change. Then the other checks (pytest).
+# the policy's tests, then Alembic's own diff, which must show no change. Then the other checks (pytest), the
+# background jobs' among them, in Celery's and RQ's workers on a Redis of their own (CONFORMANCE_REDIS_PORT).
 set -u
 cd "$(dirname "$0")"
 PG=${PG_MAJOR:-16}
 NAME=rowstile-conformance-py
 PORT=${CONFORMANCE_PORT:-25440}
+REDIS_PORT=${CONFORMANCE_REDIS_PORT:-26379}
+# Redis's image, pinned in ../images/Dockerfile
+REDIS_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS redis$/\1/p' ../images/Dockerfile)
+cleanup() {
+  [ -n "${KEEP:-}" ] && return
+  declare -F pooler_stop >/dev/null && pooler_stop "$NAME"   # the pooler, if it was started
+  docker rm -f -v "$NAME" "$NAME-redis" >/dev/null 2>&1
+}
+trap cleanup EXIT
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" >/dev/null || exit 1
@@ -29,6 +39,12 @@ if [ "${POOLER:-}" = pgbouncer ]; then          # the app through PgBouncer in t
   pooler_start "$NAME" "$APP_PORT" conf_app:app || exit 1
 fi
 export ROWSTILE_APP_URL="postgresql+asyncpg://conf_app:app@localhost:$APP_PORT/conf"
+# the queues' broker, for the background jobs (tests/test_jobs.py starts the workers)
+docker rm -f -v "$NAME-redis" >/dev/null 2>&1
+docker image inspect "$REDIS_IMAGE" >/dev/null 2>&1 || docker pull -q "$REDIS_IMAGE" >/dev/null || exit 1
+docker run -d --name "$NAME-redis" -p "$REDIS_PORT:6379" "$REDIS_IMAGE" >/dev/null || exit 1
+for _ in $(seq 30); do docker exec "$NAME-redis" redis-cli ping 2>/dev/null | grep -q PONG && break; sleep 1; done
+export ROWSTILE_REDIS_URL="redis://localhost:$REDIS_PORT/0"
 if [ -n "${RESOLUTION:-}" ]; then
   # the lowest version of each dependency pyproject.toml names (FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic: the
   # same floors as the SDK's extras), on the oldest Python the SDK supports (the oldest of them build on no newer
@@ -36,7 +52,7 @@ if [ -n "${RESOLUTION:-}" ]; then
   export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv" UV_NO_SYNC=1
   uv venv -q --python 3.11 "$UV_PROJECT_ENVIRONMENT" &&
     uv pip install -q --python "$UV_PROJECT_ENVIRONMENT" --resolution "$RESOLUTION" -r pyproject.toml || exit 1
-  uv pip list -q --python "$UV_PROJECT_ENVIRONMENT" | grep -iE '^(fastapi|starlette|sqlalchemy|psycopg|asyncpg|alembic) '
+  uv pip list -q --python "$UV_PROJECT_ENVIRONMENT" | grep -iE '^(fastapi|starlette|sqlalchemy|psycopg|asyncpg|alembic|celery|rq) '
 fi
 # What the checks run of the SDK (sdk/python/rowstile), lines and branches (pyproject.toml's [tool.coverage]): every
 # Python process from here on, the tests' own subprocesses too, measures itself into CONFORMANCE_COVERAGE (a folder
@@ -68,5 +84,4 @@ elif [ $covered = 0 ]; then
 else
   echo "FAIL  lines or branches of the Python SDK no check runs (the report above: $COVERAGE/report.txt)"; rc=1
 fi
-[ -n "${KEEP:-}" ] || { [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"; docker rm -f -v "$NAME" >/dev/null; }
 exit $rc

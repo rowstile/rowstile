@@ -21,6 +21,7 @@ import enum
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from types import TracebackType
 from typing import LiteralString, ParamSpec, TypeAlias, TypeVar, cast
 
 from ._version import __version__
@@ -79,6 +80,9 @@ class Principal:
 
 NOBODY = Principal("user", None)
 _current: contextvars.ContextVar[Principal | None] = contextvars.ContextVar("rowstile_principal", default=None)
+# on an ORM flush's StaleDataError: what the database said of its rows (rowstile.sqlalchemy), NotFound or Refused;
+# True: the rules allow every row
+_ASKED = "_rowstile_asked"
 
 
 class _Unset(enum.Enum):
@@ -103,31 +107,67 @@ def acting_as(who: Who) -> Iterator[Principal | None]:
         _current.reset(token)
 
 
-def job(who: Who) -> Callable[[Callable[P, R]], Callable[P, R]]:
-    """A decorator for background jobs (Celery, RQ, FastAPI's BackgroundTasks): the job acts for `who`, e.g.
-    @rowstile.job(("service", 3)). Async functions work too."""
-    import functools
-    import inspect
+class _Job:
+    """What job(who) gives: a decorator, or a with block."""
 
-    def wrap(fn: Callable[P, R]) -> Callable[P, R]:
+    def __init__(self, who: Who) -> None:
+        self.who = Principal.of(who)
+        self._tokens: list[contextvars.Token[Principal | None]] = []
+
+    def __call__(self, fn: Callable[P, R]) -> Callable[P, R]:
+        import functools
+        import inspect
+
+        who = self.who
         if inspect.iscoroutinefunction(fn):
             coroutine = fn
 
             @functools.wraps(fn)
             async def run_async(*a: P.args, **kw: P.kwargs) -> object:
-                with acting_as(who):
+                with _Job(who):  # a block of its own for each call: calls side by side don't share one
                     return await coroutine(*a, **kw)
 
             return cast("Callable[P, R]", run_async)  # R is the coroutine run_async returns too
 
         @functools.wraps(fn)
         def run(*a: P.args, **kw: P.kwargs) -> R:
-            with acting_as(who):
+            with _Job(who):
                 return fn(*a, **kw)
 
         return run
 
-    return wrap
+    def __enter__(self) -> Principal:
+        self._tokens.append(_current.set(self.who))
+        return self.who
+
+    def __exit__(
+        self, kind: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        _current.reset(self._tokens.pop())
+        raised = None if exc is None else _in_job(exc)
+        if raised is not None:
+            raise raised from exc
+
+
+def job(who: Who) -> _Job:
+    """A background job (Celery, RQ, any worker) acts for `who`: a decorator, @rowstile.job(("service", 3)) (async
+    functions too), or a block, `with rowstile.job(Principal.parse(asked_by)):` for the user a job's argument
+    names. Inside, in either form, the database's refusals are raised as Refused, an ORM update the rules refuse
+    (StaleDataError) as Refused too, or NotFound for a row the job can't see: what a request would answer. Both
+    carry what they say in their arguments, so a worker's result (Celery's) gives them back whole."""
+    return _Job(who)
+
+
+def _in_job(exc: BaseException) -> Refused | NotFound | None:
+    """What a job raises for an error: Refused for a write the database refused; NotFound or Refused for an ORM
+    update or delete that matched no row, as rowstile.sqlalchemy asked the database in the flush's transaction.
+    None: the error stays as it is (one of the job's own, even when a refusal caused it, or no refusal)."""
+    asked = getattr(exc, _ASKED, None)
+    if isinstance(asked, (NotFound, Refused)):
+        return asked
+    if not any(hasattr(exc, name) for name in ("orig", "sqlstate", "pgcode")):
+        return None  # not the database's error (SQLAlchemy's, psycopg's or asyncpg's, psycopg2's)
+    return refusal(exc)
 
 
 def _literal(value: object) -> str:
@@ -157,7 +197,8 @@ def act_as_sql(who: Who | _Unset = _UNSET) -> str:
 
 # --- errors -------------------------------------------------------------------------------------------
 class Refused(Exception):
-    """The database refused a write, and said why: the rule (table and command), and the explanation."""
+    """The database refused a write, and said why: the rule (table and command), and the explanation. Its arguments
+    are what it was made with, so a copy made from them (pickle's, a Celery result's) says the same."""
 
     code = "AZ709"  # rowstile help AZ709: a rule's refusal; the database's own for another (AZ705: a share)
 
@@ -169,10 +210,16 @@ class Refused(Exception):
         why: Sequence[str] = (),
         code: str | None = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(message, table, command, list(why), code)
         self.message, self.table, self.command, self.why = message, table, command, list(why)
         if code:
             self.code = code
+
+    def __str__(self) -> str:
+        return self.message
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.message!r})"
 
     def problem(self) -> Problem:
         """An RFC 9457 problem body for a 403."""
@@ -189,13 +236,20 @@ class Refused(Exception):
 
 
 class NotFound(Exception):
-    """The row isn't there, or whoever the transaction acts for can't see it."""
+    """The row isn't there, or whoever the transaction acts for can't see it. Its arguments are the table and the
+    key, as Refused's are what it was made with."""
 
     def __init__(self, table: str | None = None, id_: object = None) -> None:
         self.table, self.id = table, _key_text(id_)
+        super().__init__(table, self.id)
+
+    def __str__(self) -> str:
         # 'app.notes 7 not found', 'app.notes not found', 'row 7 not found', or 'not found'
-        named = [table or "row", self.id] if self.id is not None else [table] if table else []
-        super().__init__(" ".join([*named, "not found"]))
+        named = [self.table or "row", self.id] if self.id is not None else [self.table] if self.table else []
+        return " ".join([*named, "not found"])
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({str(self)!r})"
 
     def problem(self) -> Problem:
         return {
