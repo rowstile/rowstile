@@ -11307,10 +11307,12 @@ class StackPages(unittest.TestCase):
         "go.md": ["integrations/go"],
         "rails.md": ["integrations/rails"],
         "aspnetcore.md": ["integrations/aspnetcore"],
+        "spring.md": ["integrations/spring"],
         "sql.md": ["docs/getting-started.md", "sdk/python/rowstile", "sdk/typescript"],
     }
     SKIP: ClassVar[set[str]] = {"node_modules", ".venv", ".next", ".work", "generated", "__pycache__", "dist", "tmp"}
     SKIP |= {"bin", "obj", ".feed"}  # what dotnet builds and packs
+    SKIP |= {"target"}  # what Maven builds
     CHECKED = (
         "python",
         "ts",
@@ -11322,6 +11324,9 @@ class StackPages(unittest.TestCase):
         "csharp",
         "ruby",
         "yaml",
+        "java",
+        "xml",
+        "properties",
     )  # sh blocks are commands to type
 
     def lines(self, rel: str) -> set[str]:
@@ -11338,7 +11343,25 @@ class StackPages(unittest.TestCase):
         )
         out: set[str] = set()
         for f in files:
-            if f.endswith((".py", ".ts", ".tsx", ".toml", ".authz", ".md", ".sql", ".go", ".cs", ".rb", ".ru", ".yml")):
+            if f.endswith(
+                (
+                    ".py",
+                    ".ts",
+                    ".tsx",
+                    ".toml",
+                    ".authz",
+                    ".md",
+                    ".sql",
+                    ".go",
+                    ".cs",
+                    ".rb",
+                    ".ru",
+                    ".yml",
+                    ".java",
+                    ".xml",
+                    ".properties",
+                )
+            ):
                 with open(f, encoding="utf-8") as fh:
                     out |= {" ".join(line.split()) for line in fh}
         return out
