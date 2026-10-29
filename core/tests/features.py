@@ -348,11 +348,16 @@ FEATURES: list[Feature] = [
     Feature(
         "api.feed",
         2,
-        "The change feed: `authz.changes_since`, `authz.trim_changes`",
-        ("api.changes_since", "api.trim_changes", "err.AZ712"),
+        "The change feed: `authz.changes_since`, `authz.trim_changes`, `authz.announce_timed_shares`",
+        ("api.changes_since", "api.trim_changes", "api.announce_timed_shares", "err.AZ712"),
         Doc(GOV, "Change feed"),
         (
             T("governance.sh", "moving a folder announces it (and what sits below it)"),
+            T("governance.sh", "bob leaves Backend: the team it sits in, the folders either is given"),
+            T(
+                "governance.sh",
+                "authz.announce_timed_shares() announces the shares that ended or began since it last ran",
+            ),
             T("governance.sh", "a reader behind the trimmed part is told to read everything again"),
             T("governance.sh", "the feed keeps 7 days by default: older entries are trimmed"),
             Check(NEXT_SDK, "one connection listens for every subscriber, until the last one leaves"),

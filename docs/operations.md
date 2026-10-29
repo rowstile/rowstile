@@ -143,6 +143,14 @@ SELECT authz.trim_audit(interval '2 years');    -- how long is your compliance d
 A change feed reader that falls behind the trimmed part gets an error from `authz.changes_since()` and
 must read everything again, then follow from where the feed was when it started ([Governance](reference/governance.md)).
 
+Shares that end or begin with time (an expiry, a break glass, an approved request for a week) are announced by
+a schedule too, if something reads the change feed: run it as often as that reader should hear of them. Until
+it runs, the feed says nothing of a share that ended or began.
+
+```sql
+SELECT authz.announce_timed_shares();           -- every minute, say: the shares that ended or began since
+```
+
 ## What to watch
 
 | | how |

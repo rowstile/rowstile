@@ -454,7 +454,7 @@ case "$out" in *"app.files was governed by the removed policy, and row-level sec
 [ "$(PSQL -c "SELECT string_agg(proname, ',' ORDER BY proname) FROM pg_proc WHERE pronamespace = 'authz'::regnamespace")" = "ctx,link_hashes" ] &&
   ok "only the base functions are left in authz" || bad "functions left" "$(PSQL -c "SELECT string_agg(proname, ',') FROM pg_proc WHERE pronamespace = 'authz'::regnamespace")"
 idx=$(PSQL -c "SELECT string_agg(indexrelid::regclass::text, ' ' ORDER BY indexrelid::regclass::text) FROM pg_index WHERE indrelid = 'authz.shares'::regclass")
-[ "$idx" = "authz.shares_by_subject authz.shares_pkey" ] && ok "the indexes it made on authz.shares are gone, the base's stay" || bad "indexes left on authz.shares" "$idx"
+[ "$idx" = "authz.shares_by_end authz.shares_by_start authz.shares_by_subject authz.shares_pkey" ] && ok "the indexes it made on authz.shares are gone, the base's stay" || bad "indexes left on authz.shares" "$idx"
 [ "$(PSQL -c "SELECT count(*) FROM authz.shares")" = "$nshares" ] && ok "the $nshares shares are kept" || bad "shares lost"
 run test; case "$out" in *"no policy is applied"*) ok "nothing to test once removed";; *) bad "test after remove" "$out";; esac
 out=$(CLI apply example/docs.authz 2>&1 && PSQL -c "SELECT authz.verify()" && CLI remove --yes 2>/dev/null)

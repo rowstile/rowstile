@@ -304,7 +304,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | Group sync from an identity provider: `authz.sync_members` | 1 | [app-code](reference/app-code.md) | `identity.sh` | `difftest.py` |
 | Requests for access and breaking the glass: `authz.request_access`, `authz.decide_request`, `authz.cancel_request`, `authz.pending_requests`, `authz.break_glass` | 1 | [governance](reference/governance.md) | `governance.sh`, `concurrency.sh` | `difftest.py`, hand answers |
 | Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review` | 1 | [governance](reference/governance.md) | `governance.sh`, `principals.sh` | `difftest.py` |
-| The change feed: `authz.changes_since`, `authz.trim_changes` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` |  |
+| The change feed: `authz.changes_since`, `authz.trim_changes`, `authz.announce_timed_shares` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` |  |
 | The audit trail: `authz.audit`, `authz.trim_audit` | 1 | [governance](reference/governance.md) | `governance.sh` | `difftest.py` |
 | Checking the database: `authz.lint`, `authz.check_invariants` | 2 | [governance](reference/governance.md) | `governance.sh`, `adversarial.sh`, `apply.sh` | `around.py` |
 | What apps see of a refusal: each code's SQLSTATE and HTTP answer, the reason in the error | 1 | [app-code](reference/app-code.md) | `unit_test.py`, `reference.sh`, `adversarial.sh`, `integrations/fastapi`, `integrations/nextjs` | `around.py` |

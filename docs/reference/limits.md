@@ -31,6 +31,11 @@ rules' lookups are estimated once per row. Applying analyzes the tables the poli
 analyzed: a table never analyzed is planned as ten pages of rows (6 rows as thousands), and a read of it as one
 JIT compiles. <!-- checked: tests/apply.sh "and leaves none of the tables the policy reads, nor of its own, never analyzed" -->
 The audit trail and change feed add about 15 µs per changed row (10,000 owner changes: 292 ms instead of 137 ms).
+The feed also looks up what reads the objects a write changed, a thousand objects of a type at most: on the docs
+app a member leaving a team or a share on a folder takes about half a millisecond more (0.8 ms instead of 0.3), a
+folder moved or made to stop inheriting 1.5 to 2 ms more; with 300 folders and 2,000 files below the folder, 4.5 ms
+more, where the files pass a thousand and the feed says `{*}` for them. An update of a column no rule reads (a
+folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms (measured 2026-10-29).
 
 ## Limits
 

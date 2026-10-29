@@ -698,7 +698,8 @@ CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
         migration fills authz_int."<tree>__next" reading only the app's tables; the second swaps it in
         (it is kept, trees.swap_in_kept) and does again what changed since the first one's snapshot: rows
         of the type written since (their xmin), links changed since (the feed the relationship triggers
-        write), and rows deleted since (no longer there)."""
+        write: not what it announces because something it reads changed, its dependents), and rows deleted since
+        (no longer there)."""
         g: Namer = lambda suffix: f"authz_int.{q(name + '__next' + suffix)}"
         tbl, pkt = qt(t.table), t.pktype
         # a row's xmin as a full transaction id (xmin has no epoch: take the current one, or the one before)
@@ -710,12 +711,14 @@ CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
         ids = (
             f"SELECT {self.key(t, 'x')} FROM {tbl} x WHERE NOT pg_catalog.pg_visible_in_snapshot({xid8}, v.snap)\n"
             f"      UNION SELECT y::{pkt} FROM authz.changes c, unnest(c.object_ids) y\n"
-            f"      WHERE c.object_type = {lit(t.name)} AND c.txid >= pg_catalog.pg_snapshot_xmin(v.snap)::text::bigint\n"
+            f"      WHERE c.object_type = {lit(t.name)} AND c.cause <> 'dependent'\n"
+            f"        AND c.txid >= pg_catalog.pg_snapshot_xmin(v.snap)::text::bigint\n"
             f"        AND NOT pg_catalog.pg_visible_in_snapshot(c.txid::text::xid8, v.snap) AND y <> '*'"
         )
         full = (
             f"coalesce((SELECT s.value::bigint FROM authz.settings s WHERE s.key = 'changes_trimmed_to'), 0) > v.feed\n"
             f"     OR EXISTS (SELECT 1 FROM authz.changes c WHERE c.object_type = {lit(t.name)} AND '*' = ANY (c.object_ids)\n"
+            f"                AND c.cause <> 'dependent'\n"
             f"                AND NOT pg_catalog.pg_visible_in_snapshot(c.txid::text::xid8, v.snap))"
         )
         return {

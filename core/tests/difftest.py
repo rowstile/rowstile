@@ -67,8 +67,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import compile_policy  # noqa: E402
 from authzlib import evaluate  # noqa: E402
-from authzlib.parse import Caveat, Cols, Policy, Rule, Source, Type  # noqa: E402
-from authzlib.sqlutil import ident, q, qt  # noqa: E402  (names as the policy writes them, quoted: capitals, ...)
+from authzlib.parse import Arrow, ArrowOn, Caveat, Cols, Cond, Policy, Ref, Rule, Source, Type, leaves  # noqa: E402
+from authzlib.sqlutil import ident, q, qt, reads_more  # noqa: E402  (names as the policy writes them, quoted: ...)
 from decisions import Decisions, Gain, Plan, allows, scope_items  # noqa: E402
 
 # the database's answers, read back as JSON: their shape is what the checks compare
@@ -403,6 +403,53 @@ class Reference(evaluate.Reference):
 # ----------------------------------------------------------------------
 # Comparing
 # ----------------------------------------------------------------------
+def unfed(pol: Policy) -> set[tuple[str, str]]:
+    """The permissions whose answer may change with no change the feed hears of: those reading a condition that
+    reads other rows (a subquery, the app's function), in themselves, a relation's `where` or `shared if`, a caveat
+    or the type's where, or through what they read."""
+    types = pol.types
+    caveats = any(reads_more(c.sql) for c in pol.caveats.values())
+
+    def rel_reads(t: Type, rname: str) -> bool:
+        r = t.relations.get(rname)
+        if r is None:
+            return False
+        for src in r.sources:
+            where = src.where if src.kind == "table" else src.shared_if if src.kind == "shared" else None
+            if (where and reads_more(where)) or (src.kind in ("shared", "roles") and caveats):
+                return True
+        return False
+
+    out: set[tuple[str, str]] = set()
+    changed = True
+    while changed:
+        changed = False
+        for t in types.values():
+            for p in t.perms.values():
+                if (t.name, p.name) in out:
+                    continue
+                bad = bool(t.where and reads_more(t.where))
+                for x, _ in leaves(p.expr):
+                    if isinstance(x, Cond):
+                        bad = bad or reads_more(x.sql)
+                    elif isinstance(x, Ref):
+                        bad = bad or (t.name, x.name) in out or rel_reads(t, x.name)
+                        for st, sr in t.relations[x.name].subjects() if x.name in t.relations else []:
+                            bad = (
+                                bad
+                                or (st, sr or "") in out
+                                or (st in types and bool(sr) and rel_reads(types[st], sr or ""))
+                            )
+                    elif isinstance(x, (Arrow, ArrowOn)):
+                        bad = bad or rel_reads(t, x.rel)
+                        for st, _ in t.relations[x.rel].subjects() if x.rel in t.relations else []:
+                            bad = bad or (st, x.perm) in out
+                if bad:
+                    out.add((t.name, p.name))
+                    changed = True
+    return out
+
+
 class Checker:
     # requests, breaking the glass and reviews tried in each snapshot (workflow_setup, workflow_problems)
     workflows: ClassVar[bool] = True
@@ -476,6 +523,41 @@ class Checker:
             self.column_rules.append((r, f"{w.group(1)}(the_row)"))  # asked of each row, FROM <table> the_row
         self.checks = 0  # how many snapshots so far: who is asked with a scope, and which
         self.scoped: tuple[str, str] = ("", "read")
+        # the change feed: where it was after the last snapshot, what each user held then, and who signed in
+        self.fed: tuple[int, dict[tuple[str, str, str], frozenset[str]], dict[str, bool]] | None = None
+        self.unfed = unfed(self.pol)
+
+    def feed_position(self) -> int:
+        rows = self.db.rows("SELECT coalesce(max(pos), 0) FROM authz.changes")
+        return int(rows[0][0]) if rows else 0  # (none: a database made up for a test, which keeps no feed)
+
+    def feed_problems(
+        self, start: int, held: dict[tuple[str, str, str], frozenset[str]], signed: dict[str, bool]
+    ) -> list[str]:
+        """The change feed names every object whose answer changed for anyone since the last snapshot (by its id,
+        or `*` for its type): what the reference says each user held then and holds now, against what the feed
+        announced in between. Not a user whose row came or went (all they hold changes with it), nor a permission
+        that reads a condition on other rows (unfed: what a subquery reads is the app's SQL)."""
+        if self.fed is None:
+            return []
+        end, before, was = self.fed
+        announced: dict[str, set[str]] = {}
+        for t, ids in self.db.rows(
+            f"SELECT object_type, array_to_json(object_ids) FROM authz.changes WHERE pos > {end} AND pos <= {start}"
+        ):
+            announced.setdefault(t, set()).update(json.loads(ids))
+        problems: list[str] = []
+        for (u, t, p), now in sorted(held.items()):
+            if (t, p) in self.unfed or was.get(u) != signed[u] or (u, t, p) not in before:
+                continue
+            fed = announced.get(t, set())
+            for i in sorted(now ^ before[(u, t, p)]):
+                if "*" not in fed and i not in fed:
+                    problems.append(
+                        f"the change feed: user {u} {'gained' if i in now else 'lost'} {p} on {t} {i}, "
+                        f"which the feed did not announce (it announced {sorted(fed)[:8]})"
+                    )
+        return problems[:12]
 
     def context(self, u: str) -> dict[str, str]:
         return self.gen.context(u)
@@ -1460,6 +1542,7 @@ class Checker:
 
     def check(self) -> list[str]:
         self._nocontext = self._nocontext_all = None
+        start = self.feed_position()
         snap = self.snapshot()
         problems: list[str] = []
         if snap[("verify",)] is not True:
@@ -1468,9 +1551,15 @@ class Checker:
         among: dict[tuple[str, str, str], set[str]] = {}  # every user id signed in, a row or not (who_among)
         if self.decisions is not None:
             self.decisions.snapshots += 1
+        held: dict[tuple[str, str, str], frozenset[str]] = {}  # what each user holds, for the change feed
+        signed: dict[str, bool] = {}
         for u in self.users:
             data = evaluate.Data.of({tuple(k[2:]): v for k, v in snap.items() if k[0] == u and k[1] == "data"})
             state = self.ref.evaluate(data, u, self.links_of(u))
+            signed[u] = self.ref.principal is not None
+            for t in self.types.values():
+                for p in t.perms:
+                    held[(u, t.name, p)] = state[(t.name, p)] & self.ref.ids(t)
             if self.decisions is not None:
                 # (the shares that don't count, by why: what --decisions asks besides)
                 shares: dict[tuple[str | int, ...], Answer] = {
@@ -1707,6 +1796,9 @@ class Checker:
                             f"authz.who_among('{t.name}', {i}, '{p}', every user) extra {sorted(set(got) - want)} "
                             f"missing {sorted(want - set(got))}"
                         )
+        problems += self.feed_problems(start, held, signed)
+        # (after this snapshot's own writes, tried and undone: the next change's entries are what follow)
+        self.fed = (self.feed_position(), held, signed)
         return problems
 
     def check_scoped(self, snap: Snapshot, state: evaluate.State) -> list[str]:
