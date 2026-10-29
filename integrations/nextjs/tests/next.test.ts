@@ -66,6 +66,16 @@ test("checkAtStart: the server stops on a connection that skips row-level securi
     exit.mockClear();
     await checkAtStart(db.$authz);                                           // the app's role: it starts
     expect(exit).not.toHaveBeenCalled();
+    // the edge runtime has no server to stop (nor process.exit): it says where to call it instead of checking
+    const runtime = process.env.NEXT_RUNTIME;
+    process.env.NEXT_RUNTIME = "edge";
+    try {
+      await expect(checkAtStart(rowstile(owner))).rejects.toThrow('call it in register() where NEXT_RUNTIME is "nodejs"');
+      expect(exit).not.toHaveBeenCalled();
+    } finally {
+      if (runtime === undefined) delete process.env.NEXT_RUNTIME;
+      else process.env.NEXT_RUNTIME = runtime;
+    }
   } finally {
     exit.mockRestore();
     said.mockRestore();

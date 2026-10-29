@@ -10,6 +10,7 @@ reads never land in a cache another user could be served from.
 Everything here comes from `integrations/nextjs`, the conformance suite: a small app and the checks every
 supported stack passes (`integrations/nextjs/test.sh`, against the production build). Drizzle, pg and
 postgres.js: [Node apps](node.md).
+Neon's serverless driver, the edge runtime, a BullMQ queue and `after()` are a preview, each in its section.
 
 To start from an app that runs instead of from this page: the
 [Next.js and Prisma starter](https://github.com/rowstile/starter-nextjs-prisma), a template repository.
@@ -315,6 +316,77 @@ export async function register() {
 }
 ```
 
+## The Neon serverless driver and the edge runtime (preview)
+
+*Preview: this part may change in any release, and is not part of the 1.0 freeze.*
+
+Neon's serverless driver, `@neondatabase/serverless`, talks to Postgres over WebSockets, which the edge runtime
+has where it has no TCP. Its `Pool` works as pg's does, and `@rowstile/pg` takes it: `authz(pool, { user })`, its
+transactions, `expect` and the runtime's calls, typed with Neon's own client. Install the driver beside
+`@rowstile/pg@next`: `npm install @neondatabase/serverless`.
+
+On Neon the driver needs no settings. In front of your own Postgres (in development, and in the conformance
+suite) it needs a WebSocket proxy, Neon's `wsproxy`, and three settings:
+
+```ts
+import { Pool, neonConfig } from "@neondatabase/serverless";
+
+const proxy = process.env.ROWSTILE_WSPROXY;           // host:port of a local wsproxy; unset on Neon
+if (proxy) {
+  neonConfig.wsProxy = (host, port) => `${proxy}/v1?address=${host}:${port}`;
+  neonConfig.useSecureWebSocket = false;              // ws://, to localhost
+  neonConfig.pipelineConnect = false;                 // the startup pipelining only Neon's own proxy takes
+}
+```
+
+On the Node.js runtime, one pool serves the server, as with pg:
+
+```ts
+const neonUrl = process.env.ROWSTILE_NEON_URL;
+export const neonPool = new Pool({ connectionString: neonUrl, max: Number(process.env.PG_POOL_MAX ?? 5) });
+export const neon = authz(neonPool, { user: requestUser });
+```
+
+On the edge runtime a WebSocket can't outlive the request that opened it. Each request makes a pool of its own,
+and ends it once the response is sent:
+
+```ts
+export function edgeSql() {
+  const pool = new Pool({ connectionString: neonUrl });
+  after(() => pool.end());
+  return authz(pool, { user: requestUser });
+}
+```
+
+A route on the edge reads and writes as the request's user, and `route()` answers a refusal there as anywhere:
+
+```ts
+export const runtime = "edge";
+
+export const GET = route(async () => {
+  const { rows } = await edgeSql().query("SELECT id FROM app.notes ORDER BY id");
+  return Response.json(rows.map((r) => r.id));
+});
+```
+
+Neon's pooled URL (the host with `-pooler`) is PgBouncer in transaction mode. That is safe: every transaction
+signs in, and nothing uses a session-level `SET`.
+
+What the edge runtime can't do, and what happens:
+
+- **An app with `"use cache"` has no edge routes.** Next.js refuses a route's `runtime` when `cacheComponents`
+  (or `experimental.useCache`) is on: `Route segment config "runtime" is not compatible with
+  nextConfig.cacheComponents`. The conformance suite's edge routes are an app of their own for that reason
+  (`integrations/nextjs/edge`).
+- **`checkAtStart` throws there.** The edge runtime has no server to stop, and no `process.exit`. Keep it in
+  `register()` where `NEXT_RUNTIME` is `"nodejs"`: the edge routes connect as the same role.
+- **pg, `@prisma/adapter-pg` and postgres.js connect over TCP**, which the edge runtime doesn't have. Use Neon's
+  driver there.
+- **The change feed needs a connection that outlives a request.** Keep `authzRoutes()` (its `/events`) and
+  `changes()` on the Node.js runtime.
+
+Next.js 16 says the edge runtime is deprecated, and suggests the Node.js runtime. Neon's driver works on both.
+
 ## Background jobs
 
 A job acts for a principal of its own (`type service = app.services principal` in the policy), whatever
@@ -327,6 +399,69 @@ export const digest = job(["service", 1], async () => ({ count: await db.project
 ```
 
 Anywhere else, `actingAs("3", () => ...)` signs in what runs inside it.
+
+### A queue: BullMQ (preview)
+
+*Preview: this part may change in any release, and is not part of the 1.0 freeze.*
+
+BullMQ 6 on Redis, with ioredis (`npm install bullmq ioredis`). A worker runs the job as `job()` says, whoever
+queued it: the request's user queues the digest, and the worker signs in as service 1. The worker's own code
+outside the job (its `completed` handler, say) acts for nobody.
+
+```ts
+import { Queue, Worker } from "bullmq";
+import { digest } from "./jobs.ts";
+
+const connection = { url: process.env.REDIS_URL, maxRetriesPerRequest: null };
+
+// made on first use: next build loads the routes, with no Redis to reach
+let queue: Queue | undefined;
+export const digests = () => (queue ??= new Queue("digest", { connection }));
+
+// the worker runs the job as job() says: signed in as service 1
+export const digestWorker = () => new Worker("digest", digest, { connection });
+```
+
+```ts
+export const POST = route(async () => Response.json({ id: (await digests().add("digest", {})).id }, { status: 202 }));
+```
+
+Start the worker in a process of its own, at its top level, not inside a request.
+
+### Work after the response: after() (preview)
+
+*Preview: this part may change in any release, and is not part of the 1.0 freeze.*
+
+Next's `after()` runs once the response is sent. In a route handler, a transaction there signs in as the
+request's user, as every other one does: Next lets `after()` read the request's headers there, so `user()` still
+finds the session. Wrap the work in `job()` to act for a service instead. Neither carries over to the next
+request, on the same connection or not.
+
+```ts
+import { after } from "next/server";
+import { job } from "@rowstile/client";
+```
+
+```ts
+  after(async () => {
+    const notes = (await db.note.findMany({ select: { id: true }, orderBy: { id: "asc" } })).map((n) => n.id);
+```
+
+```ts
+  after(job(["service", 1], async () => {
+    const projects = (await db.project.findMany({ select: { id: true }, orderBy: { id: "asc" } })).map((p) => p.id);
+```
+
+In a page, Next lets `after()` read nothing of the request: the work fails, in Next's words "used `headers()`
+inside `after()` while rendering. This is not supported." Read the user while the page renders, and act for
+them in the work with `actingAs`:
+
+```tsx
+export default async function Later() {
+  const reader = await requestUser();
+  after(() => actingAs(reader, () =>
+    db.$executeRaw`INSERT INTO app.inbox (sender_id, recipient_id, body) VALUES (${Number(reader ?? 0)}, 2, 'later')`));
+```
 
 ## Migrations
 

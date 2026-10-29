@@ -9,19 +9,45 @@
  * else nobody. Nothing uses a session-level SET, so pools and poolers in transaction mode are safe. A refused write
  * throws Refused (with the rule and why), the not-signed-in error (AZ701) NotSignedIn.
  */
-import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
+import type { QueryResult, QueryResultRow } from "pg";
 import {
   actAs, calls, signingIn, transactionScope, translate,
   type Principal, type Queryable, type UserResolver, type Who,
 } from "@rowstile/client";
+
+/** What authz() uses of a client from the pool: pg's PoolClient, or one that works as it does. */
+export interface ClientLike {
+  query<T extends QueryResultRow = any>(text: string, values?: unknown[]): Promise<QueryResult<T>>;
+  on(event: "error", listener: (e: Error) => void): unknown;
+  removeListener(event: "error", listener: (e: Error) => void): unknown;
+  release(err?: Error | boolean): void;
+}
+
+/** What changes() uses of its client: it listens, and hears the connection end. */
+interface ListeningClient extends ClientLike {
+  on(event: "error", listener: (e: Error) => void): unknown;
+  on(event: "end", listener: () => void): unknown;
+  on(event: "notification", listener: () => void): unknown;
+  removeAllListeners(event: "notification" | "end" | "error"): unknown;
+}
+
+/** A pool: pg's Pool, or a driver's that works as it does (the Neon serverless driver's Pool, over WebSockets). */
+export interface PoolLike<C extends ClientLike = ClientLike> {
+  connect(): Promise<C>;
+}
+
+/** The client a pool's connect() gives (pg's PoolClient for pg's Pool, Neon's for Neon's): connect() has two
+ *  overloads, a promise and a callback, and this reads both. */
+type ClientOf<P> = P extends { connect: { (...a: any[]): infer A; (...a: any[]): infer B } }
+  ? Extract<Awaited<A> | Awaited<B>, ClientLike> : ClientLike;
 
 export interface Options {
   /** Who the request is, when nothing set it with actingAs. */
   user?: UserResolver;
 }
 
-async function signedIn<R>(pool: Pool, who: Who | undefined, options: Options,
-                           fn: (client: PoolClient, p: Principal) => Promise<R>): Promise<R> {
+async function signedIn<C extends ClientLike, R>(pool: PoolLike<C>, who: Who | undefined, options: Options,
+                                                 fn: (client: C, p: Principal) => Promise<R>): Promise<R> {
   const p = await signingIn(options.user, who);
   const client = await pool.connect();
   let broken: unknown;
@@ -49,17 +75,19 @@ async function signedIn<R>(pool: Pool, who: Who | undefined, options: Options,
   }
 }
 
-export function authz(pool: Pool, options: Options = {}) {
-  const scope = transactionScope<PoolClient>();
+export function authz<P extends PoolLike>(pool: P, options: Options = {}) {
+  type C = ClientOf<P>;
+  const clients = pool as unknown as PoolLike<C>;  // (connect() gives a C: what ClientOf<P> reads)
+  const scope = transactionScope<C>();
   // inside transaction(fn), in its transaction; elsewhere, in one of its own
   const query = <T extends QueryResultRow = any>(text: string, values?: unknown[]): Promise<QueryResult<T>> =>
-    scope.open()?.query<T>(text, values) ?? signedIn(pool, undefined, options, (c) => c.query<T>(text, values));
+    scope.open()?.query<T>(text, values) ?? signedIn(clients, undefined, options, (c) => c.query<T>(text, values));
   return {
     pool,
     /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). fn acts for them too:
      *  this object's own calls made inside it (query, expect, can, ...) run in the same transaction. */
-    transaction: <R>(fn: (client: PoolClient) => Promise<R>, who?: Who) =>
-      signedIn(pool, who, options, (client, p) => scope.run(client, p, () => fn(client))),
+    transaction: <R>(fn: (client: C) => Promise<R>, who?: Who) =>
+      signedIn(clients, who, options, (client, p) => scope.run(client, p, () => fn(client))),
     /** One statement: inside transaction(fn), in that transaction; elsewhere, in a signed-in transaction of its own. */
     query,
     /** The runtime's functions (can, permsOf, list, share, ...): inside transaction(fn), in that transaction;
@@ -80,9 +108,9 @@ export { calls };
  *  drops, the feed listens again (after half a second, then longer). Give it a pool of its own, straight to
  *  Postgres or through a pooler in session mode: LISTEN lasts the session, and through a pooler in transaction
  *  mode it hears nothing. */
-export function changes(pool: Pool): (onChange: () => void) => () => void {
+export function changes(pool: PoolLike<ListeningClient>): (onChange: () => void) => () => void {
   const subscribers = new Set<() => void>();
-  let listening: PoolClient | null = null;
+  let listening: ListeningClient | null = null;
   let starting = false;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let wait = 500;                                  // before listening again, doubled up to 30 s
@@ -132,7 +160,7 @@ export function changes(pool: Pool): (onChange: () => void) => () => void {
     const client = listening;
     if (!client) return;
     listening = null;
-    for (const event of ["notification", "end", "error"]) client.removeAllListeners(event);
+    for (const event of ["notification", "end", "error"] as const) client.removeAllListeners(event);
     const quiet = () => undefined;                 // until it is back in the pool, which listens itself
     client.on("error", quiet);
     const back = (e?: Error) => {
