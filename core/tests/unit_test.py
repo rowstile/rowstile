@@ -1003,9 +1003,9 @@ class SlowPlans(unittest.TestCase):
 
 class LanguageForms(unittest.TestCase):
     def test_a_line_is_lexed_once_and_read_from_anywhere(self) -> None:
-        # a line's pieces are lexed in one pass, as piece_at reads each one: a doubled quote inside a quote, -> as
-        # one mark, a quote left open a mark; a reader placed where no piece ends lexes from there
-        from authzlib.parse import Piece, Words, piece_at
+        # a line's pieces are lexed as piece_at reads each one: a doubled quote inside a quote, -> as one mark, a
+        # quote left open a mark; a reader placed where no piece ends lexes from there
+        from authzlib.parse import Loc, Piece, Words, braced, piece_at, tokenize
 
         text = "x 'it''s' -> ''' {a}"
         pieces = Words(text).all()
@@ -1014,6 +1014,15 @@ class LanguageForms(unittest.TestCase):
             [("name", "x"), ("quote", "'it''s'"), ("mark", "->"), ("mark", "'"), ("quote", "''"), ("cond", "a")],
         )
         self.assertEqual(pieces, [piece_at(text, p.start) for p in pieces])
+        # a condition without a quote, $, comment or brace is read in one step, the others as braced_at reads them;
+        # the same in an expression (-- in braces is SQL's comment, to the line's end: that condition is left open)
+        conds = "{a - b} {c / d} {g /* } */} {'}'} {h {i}} {$$}$$} {j}"
+        pieces = Words(conds + " {e -- f}").all()
+        self.assertEqual(pieces, [piece_at(conds + " {e -- f}", p.start) for p in pieces])
+        expected = ["a - b", "c / d", "g /* } */", "'}'", "h {i}", "$$}$$", "j"]
+        self.assertEqual([(p.kind, p.text) for p in pieces], [("cond", c) for c in expected] + [("open", "e -- f}")])
+        self.assertEqual(braced(conds), expected)
+        self.assertEqual([t.text for t in tokenize(conds, Loc(None, 1, conds))], expected)
         self.assertEqual(Words("ab cd", 1).peek(), Piece("name", "b", 1, 2))
         # a mark that must be glued to the piece before isn't taken after a space, and stays to be read
         spaced = Words("a -b")
