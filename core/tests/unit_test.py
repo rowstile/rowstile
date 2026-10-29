@@ -2048,6 +2048,35 @@ class Command(unittest.TestCase):
         self.assertIn("permissions: typeof permissions;", names)
         self.assertNotIn("class Refused", names)  # the SDK's own errors, or instanceof would fail
 
+    def test_ruby_gets_the_names_and_their_signatures(self) -> None:
+        # rowstile client ruby: the policy's names as constants; rowstile client rbs: their signatures, literal types
+        # that make Steep refuse a misspelled name (integrations/rails checks it with Steep)
+        from authzlib import devtools
+
+        names = database.client("ruby", read(POLICIES["docs"]))
+        self.assertIn("module Authz\n  PERMISSIONS = {\n", names)
+        self.assertIn('  module Folder\n    TYPE = "folder"\n', names)
+        self.assertIn("  def self.queries = Rowstile::Queries.new\n", names)
+        signatures = database.client("rbs", read(POLICIES["docs"]))
+        self.assertIn("  type object_type = ", signatures)
+        self.assertIn("  def self.queries: () -> Rowstile::Queries[object_type, permission]\n", signatures)
+        self.assertIn('    TYPE: "folder"\n', signatures)
+        # a module or a constant two names would share, or that isn't a Ruby constant, or is TYPE, is left out
+        perms = {
+            "org_unit": ["edit"],
+            "orgUnit": ["view"],
+            "_1": ["view"],
+            "doc": ["type", "editRows", "edit_rows", "_x", "_9", "view"],
+        }
+        self.assertEqual(devtools._ruby_names(perms), {"doc": ("Doc", {"_x": "X", "view": "VIEW"})})
+        none = devtools._client_ruby({}, {}, [], "the policy", True)
+        self.assertIn("  type object_type = String\n", none)
+        shared = devtools._client_ruby(
+            {"doc": ["view"]}, {"doc": {"viewer": ["user", "team#member"]}}, ["read"], "p", False
+        )
+        self.assertIn('    "doc" => { "viewer" => ["user", "team#member"].freeze }.freeze,\n', shared)
+        self.assertIn('  SCOPES = ["read"].freeze\n', shared)
+
     def folder(self, files: dict[str, str]) -> str:
         """A project's folder holding these files (name: text), removed when the test ends, however it ends."""
         tmp = tempfile.TemporaryDirectory()
@@ -3168,6 +3197,19 @@ class Migrations(unittest.TestCase):
         ):
             self.assertEqual(written(tool, *before)[0], after, (tool, before))
         self.assertEqual(written("flyway", "V007__a.sql"), ["V008__authz_x.sql", "V008__authz_x.sql.conf"])
+        # Rails: the time, and a class named after the file; a name the folder has already gets the next number
+        # (Rails refuses two migrations of one name)
+        self.assertEqual(
+            written("rails", "20250101000000_schema.rb"), ["20260101000000_authz_x.rb", "20260101000000_authz_x.sql"]
+        )
+        self.assertEqual(
+            written("rails", "20250101000000_authz_x.rb", "20250101000001_authz_x_2.rb")[0],
+            "20260101000000_authz_x_3.rb",
+        )
+        with tempfile.TemporaryDirectory() as d:
+            rb, _ = migrations.write_migration("rails", d, "file comment", "SELECT 1;\n", now=now)
+            with open(rb, encoding="utf-8") as fh:
+                self.assertIn("\nclass AuthzFileComment < ActiveRecord::Migration[8.0]\n", fh.read())
         # Prisma's folders always start with the time
         self.assertEqual(written("prisma", "0001_init"), ["20260101000000_authz_x/migration.sql"])
 
