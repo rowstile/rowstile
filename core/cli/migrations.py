@@ -1,13 +1,13 @@
 """Writing a migration where the app's own migration tool expects it.
 
     [migrations]                    in rowstile.toml
-    tool = "alembic"                alembic | prisma | drizzle | sql | goose | dbmate | flyway
-    dir  = "alembic/versions"       where the tool keeps its migrations (each tool has a default)
+    tool = "alembic"                alembic | prisma | drizzle | sql | goose | dbmate | flyway | django
+    dir  = "alembic/versions"       where the tool keeps its migrations (each tool has a default; Django: the app's)
     lock = "db/policy.lock"         the lock file (default: next to the policy, <policy>.lock)
     write_after = 300               rowstile dev writes the migration this long after the last save (0: never)
 
 Each writer gets the migration's SQL and a name, and returns the files it wrote, named so that they come after
-the folder's others: Alembic chains a revision after the head; Drizzle Kit takes the journal's next number; sql,
+the folder's others: Alembic chains a revision after the head, Django a migration after the app's latest; Drizzle Kit takes the journal's next number; sql,
 goose, dbmate and Flyway take the number after the folder's last when it is a number (0005 after 0004, V3 after
 V2), else the time (UTC), as Prisma always does.
 """
@@ -25,7 +25,7 @@ from typing import TypedDict
 
 from authzlib.statements import split
 
-TOOLS = ("alembic", "prisma", "drizzle", "sql", "goose", "dbmate", "flyway")
+TOOLS = ("alembic", "prisma", "drizzle", "sql", "goose", "dbmate", "flyway", "django")
 DEFAULT_DIRS = {
     "alembic": "alembic/versions",
     "prisma": "prisma/migrations",
@@ -34,6 +34,7 @@ DEFAULT_DIRS = {
     "goose": "migrations",
     "dbmate": "db/migrations",
     "flyway": "sql",
+    "django": "migrations",  # an app's own: [migrations] dir = "<app>/migrations"
 }
 
 
@@ -161,6 +162,8 @@ def write_migration(tool: str, folder: str, name: str, sql: str, now: float | No
         return [write(os.path.join(folder, f"{ts}_{name}", "migration.sql"), sql)]
     if tool == "drizzle":
         return drizzle(folder, name, sql, now)
+    if tool == "django":
+        return django(folder, name, sql)
     return alembic(folder, name, sql, now)
 
 
@@ -311,5 +314,98 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     raise NotImplementedError("a rowstile migration isn't undone: change the policy back and write a new one")
+'''
+    return [write(os.path.join(folder, f"{base}.py"), py), write(os.path.join(folder, f"{base}.sql"), sql)]
+
+
+# --- Django: a migration after the app's latest, with its SQL beside it ---------------------------------
+def _pairs(node: object) -> list[tuple[str, str]]:
+    """The pairs of strings written in a migration's list: ("app", "0001_initial")."""
+    import ast
+
+    out: list[tuple[str, str]] = []
+    for t in ast.walk(node) if isinstance(node, ast.AST) else []:
+        if isinstance(t, ast.Tuple) and len(t.elts) == 2:
+            a, b = t.elts
+            if isinstance(a, ast.Constant) and isinstance(b, ast.Constant) and isinstance(a.value, str):
+                out.append((a.value, str(b.value)))
+    return out
+
+
+def django_graph(folder: str) -> tuple[str, list[str], int]:
+    """The app's label, its latest migrations (those no other of the folder depends on, nor replaces: one, but for
+    a branch to merge) and the highest number among them all. The label is what the folder's migrations name the
+    app by in their dependencies, else the app's folder name (Django's label, unless its AppConfig gives another)."""
+    import ast
+
+    names: list[str] = []
+    deps: list[tuple[str, str, str]] = []  # (the migration, the app it depends on, that app's migration)
+    replaced: dict[str, list[tuple[str, str]]] = {}
+    for f in sorted(os.listdir(folder)):
+        if not f.endswith(".py") or f.startswith("_"):
+            continue
+        with open(os.path.join(folder, f), encoding="utf-8") as fh:
+            tree = ast.parse(fh.read(), f)
+        names.append(f[:-3])
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and any(isinstance(x, ast.Name) for x in node.targets):
+                target = next(x.id for x in node.targets if isinstance(x, ast.Name))
+                if target == "dependencies":
+                    deps += [(f[:-3], lbl, name) for lbl, name in _pairs(node.value)]
+                elif target == "replaces":
+                    replaced[f[:-3]] = _pairs(node.value)
+    own = os.path.basename(os.path.dirname(os.path.abspath(folder)))
+    labels = [lbl for _, lbl, name in deps if name in names]
+    label = own if own in labels or not labels else max(set(labels), key=labels.count)
+    # a squashed migration stands for those it replaces: what depends on one of them depends on it
+    stands = {name: squash for squash, pairs in replaced.items() for lbl, name in pairs if lbl == label}
+    needed = {stands.get(name, name) for src, lbl, name in deps if lbl == label and src not in stands}
+    latest = sorted(n for n in names if n not in needed and n not in stands)
+    numbers = [int(m.group(1)) for n in names for m in [re.match(r"(\d+)_", n)] if m]
+    return label, latest, max(numbers, default=0)
+
+
+def django(folder: str, name: str, sql: str) -> list[str]:
+    """A migration the app's own makemigrations would number next, depending on the latest: RunSQL with the SQL
+    beside it, read when it runs. Undoing it is refused, in a line: rowstile's migrations go forward only."""
+    if not os.path.isfile(os.path.join(folder, "__init__.py")):
+        raise Error(
+            f"{folder} is no Django app's migrations folder (it has no __init__.py): name the app's, "
+            '[migrations] dir = "<app>/migrations" in rowstile.toml (or --dir)'
+        )
+    label, latest, number = django_graph(folder)
+    if len(latest) > 1:
+        raise Error(
+            f"{folder} has several latest migrations ({', '.join(latest)}): merge them first "
+            "(python manage.py makemigrations --merge)"
+        )
+    base = f"{number + 1:04d}_{name}"
+    depends = f"({json.dumps(label)}, {json.dumps(latest[0])})" if latest else ""
+    py = f'''"""rowstile: {name.replace("_", " ")}
+
+Generated by rowstile migrate from the policy: the SQL is in {base}.sql, beside this file. Don't edit either;
+change the policy and run rowstile migrate again.
+"""
+
+from pathlib import Path
+
+from django.db import migrations
+
+# one script, sent as it is: in a list, so Django doesn't split it, and with no parameters, so its % signs stay
+SQL = Path(__file__).with_suffix(".sql").read_text(encoding="utf-8")
+
+
+def forward_only(apps: object, schema_editor: object) -> None:
+    raise RuntimeError("a rowstile migration isn't undone: change the policy back and write a new one")
+
+
+class Migration(migrations.Migration):
+    dependencies = [{depends}]
+
+    operations = [
+        migrations.RunSQL([SQL], reverse_sql=migrations.RunSQL.noop),
+        # undone, this runs first, and refuses: the database would keep the policy and lose its record of it
+        migrations.RunPython(migrations.RunPython.noop, forward_only),
+    ]
 '''
     return [write(os.path.join(folder, f"{base}.py"), py), write(os.path.join(folder, f"{base}.sql"), sql)]

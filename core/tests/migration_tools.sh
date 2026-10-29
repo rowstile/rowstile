@@ -3,10 +3,11 @@
 # (tests/migrations.sh checks their files' names and markers; only the tools can say they run them): the docs app's
 # policy, then a change, written in an empty folder (versions by the time) and in one the app numbers by hand (the
 # next numbers), applied by the tool as the tables' owner; then the app's next migration, numbered after rowstile's,
-# runs too (goose, dbmate --strict and Flyway refuse one below a version applied already).
+# runs too (goose, dbmate --strict and Flyway refuse one below a version applied already; Django's depends on it).
 # On the machine, beside a Postgres of its own (the image core/Dockerfile names, on a port Docker picks, removed
 # after): docker, python3, curl and sha256sum. goose and dbmate are their releases' Linux x86-64 binaries, checked
-# against their hashes, run in the Postgres container; Flyway is its image. Nightly (nightly.yml's tools job).
+# against their hashes, run in the Postgres container; Flyway is its image; Django runs in Python's image beside it,
+# its release and psycopg's installed by version. Nightly (nightly.yml's tools job).
 #   bash core/tests/migration_tools.sh
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -14,10 +15,12 @@ CORE=$(dirname "$HERE")
 GOOSE=v3.29.0 GOOSE_SHA=cc56e2f75532a4dd52f5ef2d31db0121e91079a9c2617bc0ad4e04e2d41c228b
 DBMATE=v2.37.0 DBMATE_SHA=f855e99a0f0a81322014bf686b1cb820d2b4d8074e4eadafd64b851b80ecb15a
 FLYWAY=flyway/flyway:13.10.3-alpine@sha256:f6358224a41866888c3341b9c1e286fa2be8e1ccc18270b219dc0e8ea26e789f
+PYTHON=python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+DJANGO="django==6.1.2 psycopg[binary]==3.3.6"
 PG=$(sed -n 's/^FROM \(postgres:16@sha256:[0-9a-f]*\) AS pg16$/\1/p' "$CORE/Dockerfile")
 NAME="rowstile-migration-tools-$$"
 T=$(mktemp -d)
-trap 'docker rm -f -v "$NAME" >/dev/null 2>&1; rm -rf "$T"' EXIT
+trap 'docker rm -f -v "$NAME" "$NAME-python" >/dev/null 2>&1; rm -rf "$T"' EXIT
 fails=0 passed=0
 ok() { echo "ok    $1"; passed=$((passed + 1)); }
 bad() { echo "FAIL  $1${2:+: $2}"; fails=$((fails + 1)); }
@@ -94,6 +97,51 @@ $out"; continue; }
     [ "$(PSQL -d "$db" -c "SELECT to_regclass('app_next') IS NOT NULL")" = t ] &&
       ok "... and then the app's next migration, $next, numbered after them" || bad "$tool: the app's next migration" "$out"
   done
+done
+# Django: the app's migrations folder (a package), its migrations run by Django's migrate, in Python's image on the
+# Postgres container's network
+docker run -d --name "$NAME-python" --network "container:$NAME" "$PYTHON" sleep infinity >/dev/null &&
+  docker exec "$NAME-python" pip install -q --root-user-action=ignore --disable-pip-version-check $DJANGO ||
+  { echo "FAIL  django: $DJANGO, in $PYTHON"; exit 1; }
+for folder in empty numbered; do
+  W="$T/django-$folder" db="tools_django_$folder" M="$T/django-$folder/app/migrations"
+  mkdir -p "$M" && : > "$W/app/__init__.py" && : > "$M/__init__.py"
+  printf '%s\n' 'import os' 'SECRET_KEY = "migration tools"' 'USE_TZ = True' 'INSTALLED_APPS = ["app"]' \
+    'DATABASES = {"default": {"ENGINE": "django.db.backends.postgresql", "NAME": os.environ["DB"], "USER": "authz_owner", "HOST": "localhost"}}' \
+    > "$W/settings.py"
+  sed '/^test$/,$d' "$CORE/example/docs.authz" > "$W/policy.authz"
+  PSQL -d postgres -c "CREATE DATABASE $db" && PSQL -d "$db" < "$CORE/example/app_schema.sql" > /dev/null ||
+    { bad "django, $folder folder: the database"; continue; }
+  want="0001_authz_first.py 0002_authz_print.py"
+  # a migration of the app's own, as makemigrations would write one: before rowstile's, and after them
+  django_migration() {  # django_migration <file> <dependency> <table>
+    printf '%s\n' 'from django.db import migrations' '' '' 'class Migration(migrations.Migration):' \
+      "    dependencies = [$2]" "    operations = [migrations.RunSQL(\"CREATE TABLE $3 (id int)\")]" > "$1"
+  }
+  if [ $folder = numbered ]; then
+    want="0001_app.py 0002_authz_first.py 0003_authz_print.py"
+    django_migration "$M/0001_app.py" "" app_first
+  fi
+  out=$( cd "$W" && python3 "$CORE/cli/rowstile_cli.py" migrate policy.authz --tool django --dir app/migrations --name first 2>&1 ) &&
+    sed -i 's/^  can view  = edit or viewer$/&\n  can print = edit/' "$W/policy.authz" &&
+    out=$( cd "$W" && python3 "$CORE/cli/rowstile_cli.py" migrate policy.authz --tool django --dir app/migrations --name print 2>&1 ) ||
+    { bad "django, $folder folder: rowstile migrate" "$out"; continue; }
+  files=$(ls "$M" | grep '\.py$' | grep -v '^__init__' | tr '\n' ' ') files=${files% }
+  [ "$files" = "$want" ] && ok "django, a$([ $folder = empty ] && echo "n") $folder folder: $files" ||
+    bad "django, $folder folder: the files' names" "$files"
+  run_django() {
+    docker exec "$NAME-python" rm -rf /w && docker cp -q "$W" "$NAME-python:/w" &&
+      docker exec -e DB="$db" -e PYTHONPATH=/w -w /w "$NAME-python" python -m django migrate --settings settings --verbosity 0
+  }
+  out=$(run_django 2>&1)
+  got=$(PSQL -d "$db" -c "SELECT authz.verify(), count(*) FROM authz.policy_versions" 2>&1)
+  [ "$got" = "t|2" ] && ok "... which django runs, both" || { bad "django, $folder folder: the tool's run" "$got
+$out"; continue; }
+  [ $folder = numbered ] || continue
+  django_migration "$M/0004_app_next.py" '("app", "0003_authz_print")' app_next
+  out=$(run_django 2>&1)
+  [ "$(PSQL -d "$db" -c "SELECT to_regclass('app_next') IS NOT NULL")" = t ] &&
+    ok "... and then the app's next migration, 0004_app_next.py, after them" || bad "django: the app's next migration" "$out"
 done
 echo "--- passed: $passed, failed: $fails"
 [ $fails -eq 0 ]

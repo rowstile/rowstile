@@ -92,7 +92,7 @@ rowstile.toml:
     ts = "frontend/src/authz.ts"
     go = "internal/authz/authz.go"         # the policy's names, for the Go SDK
     [migrations]
-    tool = "alembic"                       # alembic, prisma, drizzle, sql, goose, dbmate or flyway
+    tool = "alembic"                       # alembic, prisma, drizzle, sql, goose, dbmate, flyway or django
     dir  = "alembic/versions"              # where the tool keeps them (each tool has a default)
     lock = "db/policy.lock"                # what the migrations made so far (default: next to the policy)
     write_after = 300                      # rowstile dev writes the migration this long after the last save
