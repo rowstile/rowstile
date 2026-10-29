@@ -14,6 +14,10 @@ dependencies = [
   "pytest>=8",
   "mypy>=1.10",
   "coverage>=7.16",
+  # the background jobs' workers (tests/test_jobs.py), and Celery's types, which it doesn't ship
+  "celery[redis]>=5.4",
+  "celery-types>=0.26",
+  "rq>=2.0",
 ]
 
 [tool.uv]

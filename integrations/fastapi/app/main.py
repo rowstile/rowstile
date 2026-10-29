@@ -1,6 +1,7 @@
 """The conformance app: no permission checks anywhere. rowstile signs each request's transactions in, the
 database filters reads and refuses writes, and the SDK turns refusals into 403 and hidden rows into 404."""
 
+import asyncio
 import os
 
 import rowstile
@@ -12,6 +13,7 @@ from rowstile.fastapi import Rowstile
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from . import jobs, worker
 from .auth import session_user
 from .authz_client import ObjectType, Permission
 from .models import Folder, Message, Note, Project
@@ -175,6 +177,39 @@ def make_app(url: str | None = None, check_connection: bool = True, pool_size: i
                 {"s": signed_in(), "r": m.recipient_id, "b": m.body},
             )
         return {}
+
+    # background jobs, on Celery's queue and RQ's: the ids of the two, which a worker process runs
+    @app.post("/jobs/digest", status_code=202)
+    async def start_digest() -> dict[str, str]:
+        started = [worker.digest.delay(), worker.digest_async.delay()]
+        queued = [worker.queue.enqueue(jobs.digest), worker.queue.enqueue(jobs.digest_async)]
+        return {"celery": started[0].id, "celery_async": started[1].id, "rq": queued[0].id, "rq_async": queued[1].id}
+
+    @app.post("/jobs/notes", status_code=202)
+    async def add_note_later(n: NewNote) -> dict[str, str]:
+        # who asked goes with the job, as text: the job acts for them
+        asked_by = str(rowstile.current())
+        task = worker.add_note.delay(asked_by, n.project_id, n.body)
+        job = worker.queue.enqueue(jobs.add_note, asked_by, n.project_id, n.body)
+        return {"celery": task.id, "rq": job.id}
+
+    @app.patch("/jobs/notes/{note_id}", status_code=202)
+    async def edit_note_later(note_id: int, b: Body) -> dict[str, str]:
+        asked_by = str(rowstile.current())
+        task = worker.edit_note.delay(asked_by, note_id, b.body)
+        return {"celery": task.id, "rq": worker.queue.enqueue(jobs.edit_note, asked_by, note_id, b.body).id}
+
+    @app.delete("/jobs/notes/{note_id}", status_code=202)
+    async def remove_note_later(note_id: int) -> dict[str, str]:
+        asked_by = str(rowstile.current())
+        task = worker.remove_note.delay(asked_by, note_id)
+        return {"celery": task.id, "rq": worker.queue.enqueue(jobs.remove_note, asked_by, note_id).id}
+
+    @app.get("/jobs/celery/{task_id}")
+    async def celery_result(task_id: str) -> dict[str, int | None]:
+        # what the job returned; one the database refused raises its Refused or NotFound here: 403 or 404
+        done = worker.celery.AsyncResult(task_id)
+        return {"result": await asyncio.to_thread(done.get, timeout=60)}
 
     return app
 
