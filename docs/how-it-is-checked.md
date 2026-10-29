@@ -387,10 +387,10 @@ would catch it and is still to write.
 ## When something is found
 
 Vulnerabilities are reported privately ([SECURITY.md](../SECURITY.md)) and published as advisories once
-fixed. There have been eleven so far, each found by the project itself: GHSA-6g93-673q-c29f, in `@rowstile/prisma`,
-fixed and published the same day, five fixed in 0.1.0-alpha.7 and five in 0.1.0-alpha.9, each five published the
-day its release came out. Two of
-those are rated high: a rule on a column that was not checked on the rows of a partition made since the last
+fixed. There have been twenty-two so far, each found by the project itself: GHSA-6g93-673q-c29f, in
+`@rowstile/prisma`, fixed and published the same day; five fixed in 0.1.0-alpha.7 and five in 0.1.0-alpha.9; nine
+in 0.1.0-beta.1, found by the audit before it; two in 0.1.0-beta.2. Each release's were published the day it came
+out. Two of those are rated high: a rule on a column that was not checked on the rows of a partition made since the last
 apply (GHSA-h92j-8v4p-93hc), and the command's Postgres client, which sent the password before it honoured
 `channel_binding=require` (GHSA-g2rq-h47r-5v2c). [The advisories](https://github.com/rowstile/rowstile/security/advisories)
 are all listed there.
