@@ -3202,6 +3202,90 @@ class Migrations(unittest.TestCase):
             with open(os.path.join(d, "meta", "_journal.json"), encoding="utf-8") as fh:
                 self.assertEqual([e["tag"] for e in json.load(fh)["entries"]], ["0000_init", "0001_authz_x"])
 
+    def test_the_django_migration_follows_the_apps_latest(self) -> None:
+        # after the migration of the app's no other depends on (its label as its migrations name it), numbered as
+        # makemigrations numbers the next; a squashed migration counts for those it replaces; two latest are refused
+        import migrations
+
+        def written(app: str, files: dict[str, str], package: bool = True) -> tuple[list[str], str]:
+            """The files written in app/migrations holding these, and the dependency the new migration names."""
+            with tempfile.TemporaryDirectory() as d:
+                folder = os.path.join(d, app, "migrations")
+                os.makedirs(folder)
+                if package:
+                    open(os.path.join(folder, "__init__.py"), "w", encoding="utf-8").close()
+                for name, deps in files.items():
+                    with open(os.path.join(folder, f"{name}.py"), "w", encoding="utf-8") as fh:
+                        fh.write(
+                            f"from django.db import migrations\n\n\nclass Migration(migrations.Migration):\n{deps}"
+                        )
+                paths = migrations.write_migration("django", folder, "x", "SELECT 1;\n")
+                with open(paths[0], encoding="utf-8") as fh:
+                    depends = search(r"\n    dependencies = \[(.*)\]\n", fh.read()).group(1)
+                return [os.path.basename(p) for p in paths], depends
+
+        def needs(*pairs: tuple[str, str], replaces: tuple[tuple[str, str], ...] = ()) -> str:
+            replaced = f"    replaces = {list(replaces)!r}\n" if replaces else ""
+            return f"    dependencies = {list(pairs)!r}\n" + replaced
+
+        self.assertEqual(written("notes", {}), (["0001_authz_x.py", "0001_authz_x.sql"], ""))
+        chain = {"0001_initial": needs(("auth", "0012_x")), "0002_more": needs(("notes", "0001_initial"))}
+        self.assertEqual(written("notes", chain), (["0003_authz_x.py", "0003_authz_x.sql"], '("notes", "0002_more")'))
+        # an AppConfig whose label isn't its folder's name: the label its migrations name it by
+        relabelled = {"0001_initial": needs(), "0002_more": needs(("users", "0001_initial"))}
+        self.assertEqual(written("accounts", relabelled)[1], '("users", "0002_more")')
+        squashed = {
+            "0001_a": needs(),
+            "0002_b": needs(("app", "0001_a")),
+            "0001_squashed_0002_b": needs(replaces=(("app", "0001_a"), ("app", "0002_b"))),
+        }
+        self.assertEqual(written("app", squashed)[1], '("app", "0001_squashed_0002_b")')
+        after = {**squashed, "0003_c": needs(("app", "0002_b"))}
+        self.assertEqual(written("app", after), (["0004_authz_x.py", "0004_authz_x.sql"], '("app", "0003_c")'))
+        branches = {
+            "0001_initial": needs(),
+            "0002_a": needs(("app", "0001_initial")),
+            "0002_b": needs(("app", "0001_initial")),
+        }
+        with self.assertRaisesRegex(migrations.Error, re.escape("several latest migrations (0002_a, 0002_b): merge")):
+            written("app", branches)
+        with self.assertRaisesRegex(
+            migrations.Error, re.escape('has no __init__.py): name the app\'s, [migrations] dir = "<app>/migrations"')
+        ):
+            written("app", {}, package=False)
+
+    def test_the_django_migration_runs_its_sql_and_refuses_to_be_undone(self) -> None:
+        # the SQL, read from beside the file, in a list (Django splits a string into statements, and the policy's
+        # dollar quotes and BEGIN ATOMIC bodies are no statements of its own); undone, a line that says why
+        import migrations
+
+        class Operation:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args, self.kwargs = args, kwargs
+
+        fake = types.ModuleType("django.db")
+        noop = object()
+        fake.__dict__["migrations"] = types.SimpleNamespace(
+            Migration=object,
+            RunSQL=type("RunSQL", (Operation,), {"noop": noop}),
+            RunPython=type("RunPython", (Operation,), {"noop": noop}),
+        )
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "__init__.py"), "w", encoding="utf-8").close()
+            py, sql = migrations.write_migration("django", d, "x", "SELECT '50%';\n")
+            with open(py, encoding="utf-8") as fh:
+                code = compile(fh.read(), py, "exec")
+            scope: dict[str, object] = {"__file__": py}
+            with mock.patch.dict(sys.modules, {"django": types.ModuleType("django"), "django.db": fake}):
+                exec(code, scope)
+            self.assertEqual(os.path.basename(sql), "0001_authz_x.sql")
+        run, undo = cast(list[Operation], vars(cast(type, scope["Migration"]))["operations"])
+        self.assertEqual((run.args, run.kwargs), ((["SELECT '50%';\n"],), {"reverse_sql": noop}))
+        self.assertEqual(undo.args[0], noop)
+        refuse = cast(Callable[[object, object], None], undo.args[1])
+        with self.assertRaisesRegex(RuntimeError, "a rowstile migration isn't undone: change the policy back"):
+            refuse(None, None)
+
     def test_the_alembic_revision_says_asyncpg_in_a_line(self) -> None:
         # a policy's revision is one script, and asyncpg takes one statement at a time: its own error carries the
         # whole script (four thousand lines for a small policy). The revision says it first, with the way out; with a

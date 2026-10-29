@@ -361,7 +361,8 @@ echo "-- each tool's files"
 W="$T/w"
 mkdir -p "$W"
 cp "$P/db/policy.authz" "$W/policy.authz"
-for tool in sql goose dbmate flyway prisma drizzle alembic; do
+mkdir -p "$W/m_django" && : > "$W/m_django/__init__.py"     # a Django app's migrations folder is a package
+for tool in sql goose dbmate flyway prisma drizzle alembic django; do
   rm -f "$W/policy.lock"
   out=$( cd "$W" && python3 "$OLDPWD/cli/rowstile_cli.py" migrate policy.authz --tool $tool --dir "m_$tool" --name first 2>&1) || { bad "$tool" "$out"; continue; }
   sed -i 's/^  can print = edit$/  can print = share/' "$W/policy.authz"
@@ -418,6 +419,18 @@ for f in sorted(os.listdir(d)):
         revs[rev] = down
         assert os.path.exists(os.path.join(d, f[:-3] + ".sql")), f
 assert len(revs) == 2 and sorted(revs.values()) == sorted(["None", repr(next(r for r, dn in revs.items() if dn == "None"))]), revs
+PY
+      ;;
+    django)
+      python3 - "$W/m_django" <<'PY' && ok "django: numbered migrations, the second depending on the first, each with its SQL beside it" || bad "django"
+import ast, os, sys
+d = sys.argv[1]
+py = sorted(f for f in os.listdir(d) if f.endswith(".py") and f != "__init__.py")
+assert [f[:5] for f in py] == ["0001_", "0002_"] and py[0] == "0001_authz_first.py", py
+assert all(os.path.exists(os.path.join(d, f[:-3] + ".sql")) for f in py), os.listdir(d)
+second = open(os.path.join(d, py[1])).read()
+ast.parse(second)
+assert f'dependencies = [("w", "{py[0][:-3]}")]' in second and "migrations.RunSQL([SQL]" in second, second
 PY
       ;;
   esac
