@@ -109,6 +109,9 @@ NODE_JEST = "integrations/node/tests/package.test.ts"
 ASPNET = "integrations/aspnetcore/Tests/ConformanceTests.cs"
 ASPNET_SDK = "integrations/aspnetcore/Tests/SdkTests.cs"
 ASPNET_BUILD = "integrations/aspnetcore/Tests/BuildTests.cs"
+RAILS = "integrations/rails/test/conformance_test.rb"
+RAILS_CHECKS = "integrations/rails/test/checks_test.rb"
+RAILS_SDK = "integrations/rails/test/sdk_test.rb"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1198,6 +1201,23 @@ FEATURES: list[Feature] = [
             Check(ASPNET_BUILD, "Check_14_a_policy_change_ships_as_the_next_migration"),
         ),
     ),
+    Feature(
+        "sdk.ruby",
+        2,
+        "The Ruby SDK for Rails (preview): signing in, refusals as answers, jobs, tests",
+        ("sdk.rb.*",),
+        Doc("docs/stacks/rails.md", "The app"),
+        (
+            Check(RAILS, "3: not signed in is an error that says how"),
+            Check(RAILS, "7: a row hidden before the update is 404"),
+            Check(RAILS, "10: a job acts as its service"),
+            Check(RAILS_CHECKS, "4: a pooled connection carries no one over"),
+            Check(RAILS_CHECKS, "12: a test database per worker has the policy"),
+            Check(RAILS_CHECKS, "13: the app does not start on the owner's connection"),
+            Check(RAILS_SDK, "a transaction run on by code that acts for no one is nobody's"),
+            Check(RAILS_SDK, "db:prepare migrates an empty database, and db:schema:load refuses the dump"),
+        ),
+    ),
 ]
 
 
@@ -1403,6 +1423,17 @@ def sdk_dotnet() -> set[str]:
     return out
 
 
+def sdk_ruby() -> set[str]:
+    """What the gem declares in its signatures (sdk/ruby/sig/rowstile.rbs): Rowstile's methods, classes and modules."""
+    text = read("sdk/ruby/sig/rowstile.rbs")
+    # (and not what the gem's code keeps to itself: private_constant)
+    hidden = set(
+        re.findall(r":(\w+)", " ".join(re.findall(r"private_constant (.+)", read("sdk/ruby/lib/rowstile.rb"))))
+    )
+    out = {f"sdk.rb.{m}" for m in re.findall(r"(?m)^  def self\.(\w+[?!]?):", text)}  # not `private def self.`
+    return out | {f"sdk.rb.{m}" for m in re.findall(r"(?m)^  (?:class|module) (\w+)", text) if m not in hidden}
+
+
 def language() -> set[str]:
     """The language's forms, as the editors' grammar names them: its rules, less the hidden ones (`_x`) and the
     ones that read a token's characters (names, values, comments) rather than a word of the language."""
@@ -1428,6 +1459,7 @@ SURFACES: dict[str, Callable[[], set[str]]] = {
     "the TypeScript SDK": sdk_typescript,
     "the Go SDK": sdk_go,
     "the .NET SDK": sdk_dotnet,
+    "the Ruby SDK": sdk_ruby,
     "the language": language,
 }
 

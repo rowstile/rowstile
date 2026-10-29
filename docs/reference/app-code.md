@@ -9,6 +9,9 @@ kept out of caches, 403 and 404 from route handlers and server actions), `/react
 headless share dialog, live updates), `/vitest` and `/jest` (a preview); `integrations/nextjs` is their
 conformance suite, `integrations/node` a plain Express server's (a preview), and
 `rowstile client` writes only the policy's names for them (`src/authz.gen.ts`). <!-- checked: tests/unit_test.py "test_typescript_sdk_gets_only_the_names" -->
+Rails apps use [the Ruby SDK](../../sdk/ruby/README.md), a preview: its Railtie signs every Active Record transaction
+in, answers a refusal with 403 and a hidden row with 404, and checks the app's connection when it is served;
+`integrations/rails` is its conformance suite.
 The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
 `listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
 `ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,
@@ -112,3 +115,7 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   permissions (`Policy.Note.Edit`), which the SDK's calls take, so a misspelled one doesn't compile. A name is the
   policy's in PascalCase (`org_unit` is `OrgUnit`); two that would get the same, `doc` and `Doc`, get none, and
   the file says so. It may change before it is supported.
+- **Ruby: preview.** `rowstile client ruby` writes the policy's names as constants (`Authz::Note::EDIT`), and
+  `rowstile client rbs` their signatures, for Steep: `Authz.queries` has `can`, `perms_of` and `permitted` taking
+  the policy's types and permissions. The gem has `Rowstile.acting_as`, `Rowstile::Refused`, `Rowstile::NotFound`,
+  `Rowstile.refusal(e)` and `Rowstile.expect`. It may change before it is supported.
