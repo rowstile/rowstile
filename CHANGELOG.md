@@ -16,6 +16,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).
   The two keep what they say in their arguments, so pickle and Celery's results give them back whole. The FastAPI
   conformance suite runs them in both workers, on Redis.
+- Preview: the TypeScript SDK on Neon's serverless driver (`@neondatabase/serverless`): `@rowstile/pg` takes its
+  `Pool`, over WebSockets, on Node.js and on Next.js's edge runtime, where `checkAtStart` now throws, saying why,
+  instead of reaching for `process.exit`. A BullMQ worker and Next's `after()` sign in as `job()` or the request
+  say. The Next.js suite checks each, through Neon's `wsproxy` and a real Redis.
 
 ## 0.1.0-beta.2 (2026-10-29)
 
