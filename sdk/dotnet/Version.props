@@ -1,0 +1,6 @@
+<Project>
+  <!-- the version every Rowstile package carries, and the conformance app asks for: packaging/version.py sets it -->
+  <PropertyGroup>
+    <RowstileVersion>0.1.0-dev</RowstileVersion>
+  </PropertyGroup>
+</Project>

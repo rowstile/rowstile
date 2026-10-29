@@ -1,0 +1,26 @@
+<Project>
+  <!-- What every Rowstile package shares: .NET 10, nullable references, the recommended analyzers, and every
+       warning an error. The PDB is embedded, so a test project's coverage tool can read the packages' lines. -->
+  <Import Project="Version.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <DebugType>embedded</DebugType>
+    <Version>$(RowstileVersion)</Version>
+    <Authors>rowstile</Authors>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://rowstile.dev</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/rowstile/rowstile</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>rowstile;postgres;postgresql;authorization;row-level-security;rls;permissions;access-control</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

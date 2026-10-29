@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>rowstile with EF Core on Npgsql (preview): every transaction and every command outside one signed in as the request's user; an update or delete the rules refuse answered with the database's reason</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Rowstile/Rowstile.csproj" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+  </ItemGroup>
+</Project>

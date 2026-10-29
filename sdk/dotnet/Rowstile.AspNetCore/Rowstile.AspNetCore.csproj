@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>rowstile with ASP.NET Core (preview): each request acts for its user, refusals answered as problem bodies (403, 404, ...), and an app that won't start on a connection that skips row-level security</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Rowstile/Rowstile.csproj" />
+  </ItemGroup>
+</Project>

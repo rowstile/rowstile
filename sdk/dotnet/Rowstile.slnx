@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Rowstile.AspNetCore/Rowstile.AspNetCore.csproj" />
+  <Project Path="Rowstile.EntityFrameworkCore/Rowstile.EntityFrameworkCore.csproj" />
+  <Project Path="Rowstile/Rowstile.csproj" />
+</Solution>
