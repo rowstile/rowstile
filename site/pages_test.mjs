@@ -5,8 +5,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createMarkdownRenderer } from "vitepress";
 
-// what site.yml gives the build when it is built from a tag (read when pages.mjs is imported)
+// what site.yml gives the build when a blog tag publishes onto a site tag (read when pages.mjs is imported)
 process.env.SITE_CODE = "site-v4";
+process.env.SITE_CONTENT = "blog-v2";
 const { PAGES, POSTS, REPO, checkMenus, deadAnchors, inSitemap, menuLinks, pageTitle, rewriteLinks, siteLink, slug, structured, url } =
   await import("./pages.mjs");
 const { KEY, KEY_FILE, payload } = await import("./indexnow.mjs");
@@ -32,13 +33,13 @@ function refused(fn) {
 /** @param {unknown} got @param {unknown} want */
 const same = (got, want) => JSON.stringify(got) === JSON.stringify(want);
 
-// a link to a file on GitHub: the tag the site is built from
+// a link to a file on GitHub: the tag the site is built from, or the blog tag for its two folders
 const GH = "https://github.com/rowstile/rowstile";
 for (const [label, source, href, want] of [
   ["a recipe's folder", "docs/cookbook/tenants.md", "tenants/", `${GH}/tree/site-v4/docs/cookbook/tenants`],
   ["a file, its anchor kept", "docs/troubleshooting.md", "../core/tests/unit_test.py#L1", `${GH}/blob/site-v4/core/tests/unit_test.py#L1`],
   ["a workflow", "docs/how-it-is-checked.md", "../.github/workflows/nightly.yml", `${GH}/blob/site-v4/.github/workflows/nightly.yml`],
-  ["a post's run", "docs/blog/README.md", "recursive-row-level-security", `${GH}/tree/site-v4/docs/blog/recursive-row-level-security`],
+  ["a post's run: the blog tag's", "docs/blog/README.md", "recursive-row-level-security", `${GH}/tree/blog-v2/docs/blog/recursive-row-level-security`],
   ["a page stays a page", "docs/troubleshooting.md", "operations.md#behind-a-pooler", "/operations#behind-a-pooler"],
 ]) {
   const got = siteLink(source, href);
@@ -171,9 +172,9 @@ check("IndexNow: refused, an address elsewhere", refused(() => payload("<loc>htt
 check("IndexNow: refused, an empty sitemap", refused(() => payload("<urlset></urlset>")) === "the sitemap lists no address");
 check("IndexNow: the key is what it accepts (8 to 128 of a-z, A-Z, 0-9, -)", /^[a-zA-Z0-9-]{8,128}$/.test(KEY));
 
-// site.yml gives the build the tag it is built from (else its links go to main), and builds only what deploys
+// site.yml gives the build the tags it is built from (else its links go to main), and builds only what deploys
 const workflow = readFileSync(join(REPO, ".github", "workflows", "site.yml"), "utf8");
-check("site.yml builds with the tag it deploys", /- if: steps\.from\.outputs\.deploy == 'true'\n\s+env:\n\s+SITE_CODE: \$\{\{ env\.GIVEN \}\}\n\s+run: [^\n]*node build\.mjs/.test(workflow));
+check("site.yml builds with the tags source.mjs named", /- if: steps\.from\.outputs\.deploy == 'true'\n\s+env:\n\s+SITE_CODE: \$\{\{ steps\.from\.outputs\.code \}\}\n\s+SITE_CONTENT: \$\{\{ steps\.from\.outputs\.content \}\}\n\s+run: [^\n]*node build\.mjs/.test(workflow));
 
 check("site.yml sends IndexNow after the deploy, never failing it",
   /\n  indexnow:\n    needs: deploy\n[\s\S]*- run: node site\/indexnow\.mjs\n\s+continue-on-error: true\n/.test(workflow));

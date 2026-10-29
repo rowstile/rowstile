@@ -179,9 +179,10 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   the tab's icon, the navigation's) and what is rendered from it and committed, by `node site/assets/render.mjs`
   with a headless Chrome or Edge: `card.png` (what a shared link shows, from `card.html`) and `editor/icon.png`.
   `.github/workflows/site.yml` deploys it to GitHub Pages (rowstile.dev), the whole site built from a tag's
-  commit of `main`, without waiting for a release: a site tag (`site-vN`), or a release's tag on `main`; one on a
-  commit older than another's deploys nothing. `source.mjs` is the rule (whether a tag deploys, and the
-  checkout), `source_test.mjs` its test, `RELEASING.md` the steps
+  commit of `main`, without waiting for a release: a site tag (`site-vN`), or a release's tag on `main`; a blog
+  tag (`blog-vN`) publishes `docs/blog/` and `docs/compare/` alone, on the site of the newest of those. One on a
+  commit older than another of its kind deploys nothing. `source.mjs` is the rule (whether a tag deploys, what
+  from, and the checkout), `source_test.mjs` its test, `RELEASING.md` the steps
 - `.github/workflows/ci.yml` — on each pull request and push to `main`: `tests/unit_test.py` and the type checks
   (`unit`), the suites (`suites.yml`, called once per version: every suite on PG 16, `ci.sh`, and what depends on
   the version on 17 and 18, `ci.sh --short`), what they run of the code (`coverage`: on a pull request, a line or
