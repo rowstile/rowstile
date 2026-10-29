@@ -1,0 +1,3 @@
+# rowstile writes these: reviews show them collapsed (sqlc's code and the policy's names say so in their first line)
+db/policy.lock linguist-generated=true
+migrations/*_authz_* linguist-generated=true

@@ -1,0 +1,8 @@
+policy   = "db/policy.authz"
+tests    = ["db/tests/*.authz"]
+database = "env:ROWSTILE_OWNER_DSN"
+[clients]
+go = "internal/authz/authz.go"
+[migrations]
+tool = "goose"
+dir  = "migrations"
