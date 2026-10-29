@@ -1,0 +1,13 @@
+<Project>
+  <!-- The conformance app and its tests: .NET 10, nullable references, the recommended analyzers, every warning an
+       error, as the SDK itself is built; and the SDK's version (packaging/version.py sets it) -->
+  <Import Project="../../sdk/dotnet/Version.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+  </PropertyGroup>
+</Project>

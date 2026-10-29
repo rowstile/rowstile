@@ -1,0 +1,4 @@
+bin/
+obj/
+# the SDK's packages, as test.sh packs them
+.feed/
