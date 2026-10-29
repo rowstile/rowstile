@@ -189,15 +189,30 @@ pages and the playground are all built from one commit of `main`. A **site tag**
   deploys nothing, and a release's tag off `main` (a patch to an older line) neither: the site never goes back
   by itself. To put it back on purpose, run it by hand: `gh workflow run site.yml -f tag=site-vN` deploys
   that tag, whatever comes after it.
-- `site/source.mjs` holds the rule and `site/source_test.mjs` checks it; `node site/source.mjs site-vN` says
-  whether a tag deploys.
-- The release workflow doesn't run on a site tag, which publishes no package (`Delivery` in
+- A **blog tag** publishes the articles and the comparison pages alone, when the rest of `main` shouldn't go
+  out yet:
+
+      git fetch origin
+      git tag -a blog-vN -m "the blog, N" origin/main
+      git push origin blog-vN
+
+  The site is built from the newest site or release tag on `main`, with `docs/blog/` and `docs/compare/` as
+  they are at the blog tag; nothing else comes from it. Blog tags are a count of their own (`blog-v1`,
+  `blog-v2`, ...), on a commit of `main`, never moved or deleted. One on a commit the newest site or release
+  tag already holds deploys nothing, nor one older than another blog tag; a site or release tag deploys the
+  newer blog tag's two folders with its own site, so an article never leaves it. A post that links to a page
+  that site doesn't have fails the build, and so does a post or a comparison page its code can't make: nothing
+  is deployed, and the workflow's run says which. Then a site tag is what it needs.
+- `site/source.mjs` holds the rule and `site/source_test.mjs` checks it; `node site/source.mjs site-vN` (or
+  `blog-vN`) says whether a tag deploys, and what from. The site's links to files in the two folders go to the
+  blog tag.
+- The release workflow doesn't run on a site or blog tag, which publish no package (`Delivery` in
   `core/tests/unit_test.py` checks that no pattern of its own matches one).
 - What the comparison pages say of other projects is quoted from their documentation, with the day it was
   read, and wants reading again each quarter. `python3 docs/compare_readings.py` lists each page's reading
   and the day it is due again, and the nightly's `readings` job fails once one is past it. Read the
   documentation again from its sources, correct what changed, write the new day, and publish the pages with
-  a site tag.
+  a blog tag.
 
 ## The repository's settings
 

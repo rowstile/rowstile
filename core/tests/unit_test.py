@@ -15519,9 +15519,9 @@ class Delivery(unittest.TestCase):
             if path.startswith(".github/"):
                 self.assertIn("permissions: {contents: read}", lines, path)
 
-    def test_a_site_tag_deploys_the_site_and_no_package(self) -> None:
-        # site-v3 deploys the whole site, from its commit (site.yml); only a release's tag reaches the registries,
-        # so no pattern release.yml runs on may match a site tag
+    def test_a_site_or_blog_tag_deploys_the_site_and_no_package(self) -> None:
+        # site-v3 deploys the whole site from its commit, blog-v3 the articles and comparison pages (site.yml); only
+        # a release's tag reaches the registries, so no pattern release.yml runs on may match either
         on_tags: dict[str, list[str]] = {}
         for path, lines in self.workflows().items():
             for line in lines:
@@ -15530,13 +15530,20 @@ class Delivery(unittest.TestCase):
                     on_tags[path] = re.findall(r'"([^"]+)"', m.group(1))
         self.assertEqual(
             on_tags,
-            {".github/workflows/release.yml": ["v*"], ".github/workflows/site.yml": ["v*", "site-v*"]},
+            {".github/workflows/release.yml": ["v*"], ".github/workflows/site.yml": ["v*", "site-v*", "blog-v*"]},
         )
         for pattern in on_tags[".github/workflows/release.yml"]:
             self.assertFalse(fnmatch.fnmatchcase("site-v3", pattern), pattern)
-        # the release steps say how a site tag is made, as the site's rule names one
-        self.assertIn("const SITE = /^site-v([1-9]\\d*)$/;", read("../site/source.mjs"))
-        self.assertIn("git tag -a site-vN", read("../RELEASING.md"))
+            self.assertFalse(fnmatch.fnmatchcase("blog-v3", pattern), pattern)
+        # the release steps say how each is made, as the site's rule names it, and which folders a blog tag publishes
+        source, releasing = read("../site/source.mjs"), read("../RELEASING.md")
+        for kind in ("site", "blog"):
+            self.assertIn(f"const {kind.upper()} = /^{kind}-v([1-9]\\d*)$/;", source)
+            self.assertIn(f"git tag -a {kind}-vN", releasing)
+        folders = re.findall(r'"([^"]+)"', search(r"export const FOLDERS = \[(.*?)\];", source).group(1))
+        self.assertEqual(folders, ["docs/blog", "docs/compare"])
+        for folder in folders:
+            self.assertIn(f"`{folder}/`", releasing)
 
     def test_the_launcher_knows_the_platforms_built(self) -> None:
         build = read("../packaging/npm/build.mjs")

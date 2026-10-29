@@ -1,16 +1,17 @@
 # The docs site on GitHub Pages (rowstile.dev): the whole site (its code, the home page, the docs, the playground)
 # built from a tag's own commit, without waiting for a release. A site tag (site-v1, site-v2, ...) on a commit of
-# main deploys it, and so does a release's tag on main; one pushed on a commit older than another's deploys nothing,
-# so the site never goes back by itself (site/source.mjs holds the rule). Run by hand, it deploys the tag it is
-# given, whatever comes after it:
+# main deploys it, and so does a release's tag on main. A blog tag (blog-v1, blog-v2, ...) publishes the articles and
+# the comparison pages alone: the site of the newest site or release tag, with docs/blog/ and docs/compare/ as they
+# are at the blog tag. One pushed on a commit older than another of its kind deploys nothing, so the site never goes
+# back by itself (site/source.mjs holds the rule). Run by hand, it deploys the tag it is given, whatever comes after:
 #   gh workflow run site.yml -f tag=site-v3
 name: site
 on:
   push:
-    tags: ["v*", "site-v*"]
+    tags: ["v*", "site-v*", "blog-v*"]
   workflow_dispatch:
     inputs:
-      tag: {description: "the tag to deploy: a site tag (site-v3) or a release's (v0.1.0), on main", required: true}
+      tag: {description: "the tag to deploy: a site tag (site-v3), a blog tag (blog-v3) or a release's (v0.1.0), on main", required: true}
 permissions: {contents: read}
 concurrency: {group: pages, cancel-in-progress: false}
 jobs:
@@ -22,8 +23,8 @@ jobs:
     env:
       GIVEN: ${{ inputs.tag || github.ref_name }}
     steps:
-      # this workflow's own commit, with every tag: its site/source.mjs says whether the tag deploys, and checks it
-      # out. It is kept aside, since the tag's files replace it
+      # this workflow's own commit, with every tag: its site/source.mjs says whether the tag deploys and what from,
+      # and checks that out. It is kept aside, since the tag's files replace it
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {fetch-depth: 0, persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
@@ -38,11 +39,15 @@ jobs:
         env:
           WHY: ${{ steps.from.outputs.why }}
         run: echo "::notice::$GIVEN deploys nothing ($WHY)"
-      # its links to the repository's files go to the tag it is built from, not main (site/pages.mjs)
+      # its links to the repository's files go to the tags it is built from, not main (site/pages.mjs)
       - if: steps.from.outputs.deploy == 'true'
         env:
-          SITE_CODE: ${{ env.GIVEN }}
+          SITE_CODE: ${{ steps.from.outputs.code }}
+          SITE_CONTENT: ${{ steps.from.outputs.content }}
         run: cd site && npm ci --no-audit --no-fund && node build.mjs
+      # a site whose code is older than an article or a comparison page builds without it: say so, and deploy nothing
+      - if: steps.from.outputs.deploy == 'true'
+        run: node "$RUNNER_TEMP/source.mjs" --built
       - if: steps.from.outputs.deploy == 'true'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9   # v5.0.0
         with: {path: site/dist/}

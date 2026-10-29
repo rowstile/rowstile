@@ -7,12 +7,14 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { FOLDERS } from "./source.mjs";
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const GITHUB = "https://github.com/rowstile/rowstile";
-// Where a link to a file on GitHub points: the tag the site is built from (site.yml sets it). A build of a branch
-// links to main.
+// Where a link to a file on GitHub points: the tag the site is built from, and the blog tag whose articles and
+// comparison pages it shows (site.yml sets both, from site/source.mjs). A build of a branch links to main.
 const CODE = process.env.SITE_CODE || "main";
+const CONTENT = process.env.SITE_CONTENT || CODE;
 
 const errorPages = readdirSync(join(REPO, "docs", "errors")).filter((f) => /^AZ\d+\.md$/.test(f)).sort();
 // a recipe with a page of its own: docs/cookbook/<name>.md, beside the folder that holds what it shows
@@ -308,7 +310,8 @@ export function siteLink(source, href) {
   const page = PAGES[target] ?? (dir ? PAGES[posix.join(target, "README.md")] : undefined);
   if (page) return url(page) + hash;
   if (target === ".") return GITHUB;
-  return `${GITHUB}/${dir ? "tree" : "blob"}/${CODE}/${target}${hash}`;
+  const at = FOLDERS.some((f) => target === f || target.startsWith(`${f}/`)) ? CONTENT : CODE;
+  return `${GITHUB}/${dir ? "tree" : "blob"}/${at}/${target}${hash}`;
 }
 
 /** A heading's anchor as GitHub makes it, so a link written for GitHub (operations.md#behind-a-pooler) finds its
