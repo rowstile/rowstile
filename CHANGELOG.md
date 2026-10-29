@@ -23,6 +23,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A Go SDK, as a preview (`github.com/rowstile/rowstile/sdk/go`, on pgx): transactions signed in, refusals as
   `Refused` and `NotFound`, `net/http` answers, a test database per package; `rowstile client go` writes the
   policy's names for it. Its conformance suite runs a `net/http` app with sqlc's queries and goose's migrations.
+- `@rowstile/jest`, a preview: `@rowstile/vitest`'s matchers, `asUser` and a test database per worker, for Jest 30.
+  And a conformance suite for a plain Node server, also a preview: Express 5 on pg, Drizzle and postgres.js, with
+  Drizzle Kit's migrations and its tests on Jest (`integrations/node`, the Node page).
 
 ## 0.1.0-beta.2 (2026-10-29)
 

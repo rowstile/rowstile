@@ -177,14 +177,14 @@ jobs:
           name: full-16-${{ matrix.part }}
           path: /tmp/rowstile-ci-16.log
   # The SDKs' conformance suites on 17 and 18 (ci.yml runs them on 16), and on 16 with the app through PgBouncer in
-  # transaction mode (integrations/pooler.sh), side by side. On 17 the TypeScript one runs on the lowest Node
-  # the packages' engines state (sdk/typescript/*/package.json), the others on the Node CI uses. The Python one also
+  # transaction mode (integrations/pooler.sh), side by side. On 17 the TypeScript ones (Next.js, Node) run on the
+  # lowest Node the packages' engines state (sdk/typescript/*/package.json), the others on the Node CI uses. The Python one also
   # on 16 with the oldest versions of FastAPI, SQLAlchemy, psycopg and asyncpg the Python package's extras allow, not
   # uv.lock's
   conformance:
     if: ${{ !inputs.only || inputs.only == 'conformance' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -209,6 +209,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - if: ${{ !matrix.resolution }}
         run: bash integrations/nextjs/test.sh
+      - if: ${{ !matrix.resolution }}
+        run: bash integrations/node/test.sh
       - if: ${{ !matrix.resolution }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e   # v7.0.0
         with: {go-version: "1.26", cache-dependency-path: integrations/go/go.sum}

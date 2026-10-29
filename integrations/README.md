@@ -41,7 +41,8 @@ the Node.js runtime and on the edge (`edge/`, an app of its own), behind Neon's 
 BullMQ queue on Redis: a preview.
 
 The suites: `fastapi` (the Python SDK: FastAPI, SQLAlchemy, Alembic), `nextjs` (the TypeScript SDK: Next.js,
-Prisma, pg, postgres.js, Drizzle) and `go` (the Go SDK, a preview: `net/http`, pgx, sqlc, goose; every check but
-15, which is Next.js's).
+Prisma, pg, postgres.js, Drizzle, React, Vitest), `node` (a preview: a plain Express server on pg, Drizzle and
+postgres.js, Drizzle Kit's migrations, its tests on Jest; `authzRoutes()` is `@rowstile/next`'s) and `go` (the Go
+SDK, a preview: `net/http`, pgx, sqlc, goose). Check 15 is Next.js's alone.
 
 A new stack gets its own folder here, with every check that applies to it.
