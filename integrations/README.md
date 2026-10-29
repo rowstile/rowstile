@@ -1,6 +1,7 @@
 # Conformance suites
 
-One list of checks, run by a small app per stack (`integrations/<stack>/`, each with its own `test.sh`), in CI
+One list of checks, run by a small app per stack (`integrations/<stack>/`, each with its own `test.sh`: `fastapi`,
+`nextjs`, and `aspnetcore`, the .NET SDK's, a preview, which runs every check but 15), in CI
 on PostgreSQL 16 for each push, and on 17 and 18 every night (`PG_MAJOR=17` or `18` runs a suite on another
 version). Every night they also run on 16 with the app connecting through PgBouncer in transaction mode
 (`POOLER=pgbouncer`, `pooler.sh`; the owner and the change feed stay direct). The tests are numbered after

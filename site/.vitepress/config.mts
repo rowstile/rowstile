@@ -40,6 +40,7 @@ const stacks = [
   { text: "Python", link: "/stacks/python" },
   { text: "Go (preview)", link: "/stacks/go" },
   { text: "Django (preview)", link: "/stacks/django" },
+  { text: "ASP.NET Core, EF Core (preview)", link: "/stacks/aspnetcore" },
   { text: "Any other stack: SQL", link: "/stacks/sql" },
 ];
 const sdks = [
