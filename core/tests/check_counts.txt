@@ -28,7 +28,7 @@ language server 122
 masks 39
 mcp 75
 migrate vs apply 77
-migrations 73
+migrations 75
 moves 23
 multi scenario 99
 policy errors 246
@@ -40,5 +40,5 @@ signed sessions 74
 small policies 4
 studio 226
 tools 42
-unit 661
+unit 663
 upgrade 71

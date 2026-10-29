@@ -34,6 +34,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   (`starts_at`) since it last ran, and of what reads their objects. Run it on a schedule, as `authz.trim_changes()`
   is run ([Operations](docs/operations.md)): no write marks the moment a share ends, so until it runs a reader of
   the feed doesn't hear of it.
+- A .NET SDK, as a preview (it may change in any release): `Rowstile`, `Rowstile.EntityFrameworkCore` and
+  `Rowstile.AspNetCore` sign each transaction in as the request's user and answer refusals as the other SDKs do,
+  `rowstile migrate` writes EF Core migrations (`tool = "efcore"`), and `rowstile client csharp` the policy's names.
 
 ### Fixed
 

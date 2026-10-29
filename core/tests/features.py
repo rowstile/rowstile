@@ -106,6 +106,9 @@ GO_SDK = "integrations/go/app/sdk_test.go"
 GO_POLICY = "integrations/go/policychange/policychange_test.go"
 NODE = "integrations/node/tests/conformance.test.ts"
 NODE_JEST = "integrations/node/tests/package.test.ts"
+ASPNET = "integrations/aspnetcore/Tests/ConformanceTests.cs"
+ASPNET_SDK = "integrations/aspnetcore/Tests/SdkTests.cs"
+ASPNET_BUILD = "integrations/aspnetcore/Tests/BuildTests.cs"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1178,6 +1181,23 @@ FEATURES: list[Feature] = [
             Check("integrations/node/test.sh", "Drizzle Kit's own diff shows no change"),
         ),
     ),
+    Feature(
+        "sdk.dotnet",
+        2,
+        "The .NET SDK (preview): `Rowstile`, `Rowstile.EntityFrameworkCore`, `Rowstile.AspNetCore`",
+        ("sdk.dotnet.*",),
+        Doc(APP, "C#: preview."),
+        (
+            Check(ASPNET, "Check_3_not_signed_in_is_an_error_that_says_how"),
+            Check(ASPNET, "Check_5_concurrent_requests_never_mix_users"),
+            Check(ASPNET, "Check_7_a_row_hidden_before_the_update_is_404"),
+            Check(ASPNET, "Check_16_each_code_answers_as_its_page_says"),
+            Check(ASPNET_SDK, "Postgres_own_refusals_name_the_rule"),
+            Check(ASPNET_SDK, "SaveChanges_answers_each_way_a_write_can_match_nothing"),
+            Check(ASPNET_BUILD, "Check_12_a_test_database_per_collection_has_the_policy"),
+            Check(ASPNET_BUILD, "Check_14_a_policy_change_ships_as_the_next_migration"),
+        ),
+    ),
 ]
 
 
@@ -1364,6 +1384,25 @@ def sdk_go() -> set[str]:
     return out
 
 
+def sdk_dotnet() -> set[str]:
+    """What each .NET package makes public: its public types, `sdk.dotnet.<package>.<type>`."""
+    out: set[str] = set()
+    root = os.path.join(REPO, "sdk", "dotnet")
+    for pkg in sorted(os.listdir(root)):
+        folder = os.path.join(root, pkg)
+        if not os.path.isfile(os.path.join(folder, f"{pkg}.csproj")):
+            continue
+        for name in sorted(f for f in os.listdir(folder) if f.endswith(".cs")):
+            text = read(f"sdk/dotnet/{pkg}/{name}")
+            types = re.findall(
+                r"^public (?:(?:static|sealed|abstract|partial) )*(?:class|record|struct|interface|enum) (\w+)",
+                text,
+                re.M,
+            )
+            out |= {f"sdk.dotnet.{pkg}.{t}" for t in types}
+    return out
+
+
 def language() -> set[str]:
     """The language's forms, as the editors' grammar names them: its rules, less the hidden ones (`_x`) and the
     ones that read a token's characters (names, values, comments) rather than a word of the language."""
@@ -1388,6 +1427,7 @@ SURFACES: dict[str, Callable[[], set[str]]] = {
     "the Python SDK": sdk_python,
     "the TypeScript SDK": sdk_typescript,
     "the Go SDK": sdk_go,
+    "the .NET SDK": sdk_dotnet,
     "the language": language,
 }
 

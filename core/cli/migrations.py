@@ -1,7 +1,7 @@
 """Writing a migration where the app's own migration tool expects it.
 
     [migrations]                    in rowstile.toml
-    tool = "alembic"                alembic | prisma | drizzle | sql | goose | dbmate | flyway | django
+    tool = "alembic"                alembic | prisma | drizzle | efcore | sql | goose | dbmate | flyway | django
     dir  = "alembic/versions"       where the tool keeps its migrations (each tool has a default; Django: the app's)
     lock = "db/policy.lock"         the lock file (default: next to the policy, <policy>.lock)
     write_after = 300               rowstile dev writes the migration this long after the last save (0: never)
@@ -9,7 +9,7 @@
 Each writer gets the migration's SQL and a name, and returns the files it wrote, named so that they come after
 the folder's others: Alembic chains a revision after the head, Django a migration after the app's latest; Drizzle Kit takes the journal's next number; sql,
 goose, dbmate and Flyway take the number after the folder's last when it is a number (0005 after 0004, V3 after
-V2), else the time (UTC), as Prisma always does.
+V2), else the time (UTC), as Prisma and EF Core always do.
 """
 
 from __future__ import annotations
@@ -25,11 +25,12 @@ from typing import TypedDict
 
 from authzlib.statements import split
 
-TOOLS = ("alembic", "prisma", "drizzle", "sql", "goose", "dbmate", "flyway", "django")
+TOOLS = ("alembic", "prisma", "drizzle", "efcore", "sql", "goose", "dbmate", "flyway", "django")
 DEFAULT_DIRS = {
     "alembic": "alembic/versions",
     "prisma": "prisma/migrations",
     "drizzle": "drizzle",
+    "efcore": "Migrations",
     "sql": "migrations",
     "goose": "migrations",
     "dbmate": "db/migrations",
@@ -96,7 +97,7 @@ def generated_patterns(tool: str, folder_rel: str | None, lock_rel: str | None) 
     migrations folder, each named from the .gitattributes file's folder (None: outside it, so no line)."""
     # the .gitattributes file's own folder: /*_authz_*, as git takes no pattern starting with ./
     top = "" if folder_rel == "." else folder_rel
-    pat = f"{top}/*_authz_*/**" if tool == "prisma" else f"{top}/*_authz_*"
+    pat = f"{top}/*_authz_*/**" if tool == "prisma" else f"{top}/*_Authz*" if tool == "efcore" else f"{top}/*_authz_*"
     paths = ([lock_rel] if lock_rel else []) + ([pat] if folder_rel else [])
     return [f"{path} linguist-generated=true" for path in paths]
 
@@ -164,6 +165,8 @@ def write_migration(tool: str, folder: str, name: str, sql: str, now: float | No
         return drizzle(folder, name, sql, now)
     if tool == "django":
         return django(folder, name, sql)
+    if tool == "efcore":
+        return efcore(folder, name, sql, ts)
     return alembic(folder, name, sql, now)
 
 
@@ -412,3 +415,131 @@ class Migration(migrations.Migration):
     ]
 '''
     return [write(os.path.join(folder, f"{base}.py"), py), write(os.path.join(folder, f"{base}.sql"), sql)]
+
+
+# --- EF Core: a migration class and its .Designer.cs, after the folder's others --------------------------
+def snapshot_of(folder: str) -> tuple[str, str]:
+    """The folder's model snapshot (EF Core keeps one per DbContext, beside its migrations): its path and text."""
+    found = sorted(f for f in os.listdir(folder) if f.endswith("ModelSnapshot.cs")) if os.path.isdir(folder) else []
+    if not found:
+        raise Error(
+            f"{folder} has no model snapshot (a *ModelSnapshot.cs): add the migration that makes the app's tables "
+            "first (dotnet ef migrations add), so that the policy's knows its DbContext"
+        )
+    if len(found) > 1:
+        raise Error(
+            f"{folder} has a snapshot for several DbContexts ({', '.join(found)}): give the policy's a folder of its own"
+        )
+    path = os.path.join(folder, found[0])
+    with open(path, encoding="utf-8-sig") as fh:
+        return path, fh.read().replace("\r\n", "\n")
+
+
+def target_model(snapshot: str, path: str) -> tuple[list[str], str, bool, str, list[str]]:
+    """What a migration's .Designer.cs copies from the snapshot: its usings, its namespace (and whether it is
+    file-scoped), its DbContext, and the model it builds, as written (this migration changes nothing EF Core models)."""
+    usings = re.findall(r"^using ([\w.]+);$", snapshot, re.M)
+    ns = re.search(r"^namespace ([\w.]+)\s*(;?)", snapshot, re.M)
+    context = re.search(r"\[DbContext\(typeof\(([\w.]+)\)\)\]", snapshot)
+    lines = snapshot.split("\n")
+    start = next((i for i, line in enumerate(lines) if "void BuildModel(ModelBuilder modelBuilder)" in line), None)
+    if ns is None or context is None or start is None or start + 1 >= len(lines) or lines[start + 1].strip() != "{":
+        raise Error(f"{path} isn't a model snapshot as EF Core writes it (a namespace, [DbContext], BuildModel)")
+    brace = lines[start + 1]
+    close = brace[: len(brace) - len(brace.lstrip())] + "}"
+    end = next((i for i in range(start + 2, len(lines)) if lines[i].rstrip() == close), None)
+    if end is None:
+        raise Error(f"{path}: BuildModel has no end")
+    return usings, ns.group(1), ns.group(2) == ";", context.group(1), lines[start + 2 : end]
+
+
+def free_tag(sql: str, base: str) -> str:
+    """A dollar quote the SQL doesn't hold: $base$, else $base_2$, ..."""
+    tag, n = f"${base}$", 1
+    while tag in sql:
+        n += 1
+        tag = f"${base}_{n}$"
+    return tag
+
+
+def efcore(folder: str, name: str, sql: str, ts: str) -> list[str]:
+    """A migration class whose Up() runs the SQL (one statement: Npgsql would split a function written BEGIN ATOMIC
+    ... END at its semicolons, so the script runs in a DO block, in the migration's transaction), and its
+    .Designer.cs, which names the DbContext and the migration's id (the time, as `dotnet ef migrations add` names
+    them) and builds the model the snapshot holds: so `dotnet ef migrations has-pending-model-changes` shows no
+    change, and a migration added later starts from the same model."""
+    path, snapshot = snapshot_of(folder)
+    usings, ns, file_scoped, context, model = target_model(snapshot, path)
+    base = "".join(part[:1].upper() + part[1:] for part in name.split("_"))
+    taken = {m.group(1) for f in os.listdir(folder) for m in [re.fullmatch(r"\d{14}_(\w+)\.cs", f)] if m}
+    cls, n = base, 1
+    while cls in taken:
+        n += 1
+        cls = f"{base}{n}"
+    mid = f"{ts}_{cls}"
+    outer, inner = free_tag(sql, "efcore"), free_tag(sql, "efcore_sql")
+    script = f"DO {outer} BEGIN EXECUTE {inner}\n{sql}{'' if sql.endswith(chr(10)) else chr(10)}{inner}; END {outer}"
+    quotes = '"' * max(3, max((len(r) for r in re.findall(r'"+', script)), default=0) + 1)
+
+    def scoped(body: str) -> str:
+        """The body in the snapshot's namespace, block-scoped or file-scoped as it is."""
+        lines = body.split("\n")
+        if file_scoped:
+            return f"namespace {ns};\n\n" + body
+        return f"namespace {ns}\n{{\n" + "\n".join(("    " + x) if x else x for x in lines) + "}\n"
+
+    main = scoped(
+        f"""/// <inheritdoc />
+public partial class {cls} : Migration
+{{
+    /// <inheritdoc />
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {{
+        // the policy's SQL as one statement, in a DO block: Npgsql splits a command at each semicolon it sees,
+        // and a function written BEGIN ATOMIC ... END has some inside it
+        migrationBuilder.Sql(Script);
+    }}
+
+    /// <inheritdoc />
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {{
+        throw new NotSupportedException("a rowstile migration isn't undone: change the policy back and write a new one");
+    }}
+
+    private const string Script = @@SCRIPT@@;
+}}
+"""
+    ).replace("@@SCRIPT@@", f"{quotes}\n{script}\n{quotes}")
+    designer_usings = sorted(
+        set(usings) | {"Microsoft.EntityFrameworkCore.Migrations", "Microsoft.EntityFrameworkCore.Infrastructure"}
+    )
+    designer = (
+        "// <auto-generated />\n"
+        + "".join(f"using {u};\n" for u in designer_usings)
+        + "\n#nullable disable\n\n"
+        + scoped(
+            f"""[DbContext(typeof({context}))]
+[Migration("{mid}")]
+partial class {cls}
+{{
+    /// <inheritdoc />
+    protected override void BuildTargetModel(ModelBuilder modelBuilder)
+    {{
+@@MODEL@@
+    }}
+}}
+"""
+        ).replace("    @@MODEL@@" if not file_scoped else "@@MODEL@@", "\n".join(model))
+    )
+    head = (
+        "// <auto-generated />\n"
+        f"// rowstile: {name.replace('_', ' ')}. Generated by rowstile migrate from the policy: don't edit it; change the\n"
+        "// policy and run rowstile migrate again.\n"
+        "using System;\n"
+        "using Microsoft.EntityFrameworkCore.Migrations;\n\n"
+        "#nullable disable\n\n"
+    )
+    return [
+        write(os.path.join(folder, f"{mid}.cs"), head + main),
+        write(os.path.join(folder, f"{mid}.Designer.cs"), designer),
+    ]

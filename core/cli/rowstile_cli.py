@@ -52,8 +52,9 @@
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
-    rowstile client  [py|ts|go] [POLICY.authz]     typed helpers for app code; with neither, writes the
-                                                   clients rowstile.toml names
+    rowstile client  [py|ts|go|csharp] [POLICY.authz]
+                                                   typed helpers for app code (go, csharp: the policy's names,
+                                                   for those SDKs); with none, writes the clients rowstile.toml names
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
                                                    a first policy from the database's tables (every schema of
                                                    the app's, or those --schema names), and rowstile.toml
@@ -91,8 +92,9 @@ rowstile.toml:
     py = "backend/app/authz_client.py"
     ts = "frontend/src/authz.ts"
     go = "internal/authz/authz.go"         # the policy's names, for the Go SDK
+    csharp = "Api/Authz.g.cs"
     [migrations]
-    tool = "alembic"                       # alembic, prisma, drizzle, sql, goose, dbmate, flyway or django
+    tool = "alembic"                       # alembic, prisma, drizzle, efcore, sql, goose, dbmate, flyway or django
     dir  = "alembic/versions"              # where the tool keeps them (each tool has a default)
     lock = "db/policy.lock"                # what the migrations made so far (default: next to the policy)
     write_after = 300                      # rowstile dev writes the migration this long after the last save
@@ -496,10 +498,12 @@ class Config:
         return ENV.files(["DATABASE_URL"] if os.environ.get("DATABASE_URL") else PG_NAMES)
 
 
+# the languages rowstile client writes
+CLIENTS = ("py", "ts", "go", "csharp")
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
-    "clients": {"py": "text", "ts": "text", "go": "text"},
+    "clients": {"py": "text", "ts": "text", "go": "text", "csharp": "text"},
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
 }
@@ -1200,8 +1204,8 @@ def main(argv: list[str]) -> None:
             sys.stdout.write(database.graph(text, files))
             return
         if cmd == "client" and args[1:]:
-            if args[0] not in ("py", "ts", "go"):
-                fail("rowstile client: which language, py, ts or go?", 2)
+            if args[0] not in CLIENTS:
+                fail("rowstile client: which language, py, ts, go or csharp?", 2)
             _, text, files = policy_arg()
             sys.stdout.write(database.client(args[0], text, files))
             return
@@ -1395,8 +1399,8 @@ def main(argv: list[str]) -> None:
                 for path in cfg.clients.values():
                     print(f"wrote {relative(path)}")
                 return
-            if not args or args[0] not in ("py", "ts", "go"):
-                fail("rowstile client: which language, py, ts or go?", 2)
+            if not args or args[0] not in CLIENTS:
+                fail("rowstile client: which language, py, ts, go or csharp?", 2)
             sys.stdout.write(database.client(args[0], text, files))
         elif cmd == "why":
             if not opts.get("--as"):

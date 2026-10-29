@@ -114,7 +114,7 @@ adds the SDK's packages to `package.json` (for Python, names the one to add) and
 | folder | what |
 |---|---|
 | [`core/`](core/README.md) | the compiler and the `rowstile` command, their tests and the benchmarks |
-| `sdk/` | the SDKs: [Python](sdk/python/README.md) (FastAPI, SQLAlchemy, psycopg, asyncpg) and [TypeScript](sdk/typescript/README.md) (Next.js, Prisma, Drizzle, pg, postgres.js, React) |
+| `sdk/` | the SDKs: [Python](sdk/python/README.md) (FastAPI, SQLAlchemy, psycopg, asyncpg) and [TypeScript](sdk/typescript/README.md) (Next.js, Prisma, Drizzle, pg, postgres.js, React), and [.NET](sdk/dotnet/README.md) (ASP.NET Core, EF Core; a preview) |
 | [`integrations/`](integrations/README.md) | each SDK's conformance suite: a small app and the checks it must pass |
 | [`examples/`](examples/README.md) | complete apps built on rowstile: a file manager and a messenger |
 | [`editor/`](editor/README.md) | the VS Code and Zed extensions, a Tree-sitter grammar (Helix, Neovim); other editors start `rowstile lsp` |

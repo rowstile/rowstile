@@ -11,10 +11,11 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 | Python: SQLAlchemy (sync), SQLModel, psycopg, asyncpg; Celery and RQ workers (preview) | [python.md](python.md) | `pip install --pre rowstile` |
 | Go: pgx, sqlc, net/http, goose (preview) | [go.md](go.md) | `go get github.com/rowstile/rowstile/sdk/go` |
 | Django (a preview) | [django.md](django.md) | `pip install --pre "rowstile[django]"` |
+| ASP.NET Core, EF Core, Npgsql (a preview) | [aspnetcore.md](aspnetcore.md) | `Rowstile.EntityFrameworkCore`, `Rowstile.AspNetCore` |
 | Anything else (Ruby, Java, Rust, ...) | [sql.md](sql.md) | none: a few SQL statements |
 
 Every line of code these pages show is in a tested app (`integrations/fastapi`, `integrations/nextjs`,
-`integrations/go`, `integrations/django`, the conformance suites), in `docs/getting-started.md`, which runs as written, or, for the SQL the SDKs send, in
+`integrations/go`, `integrations/django`, `integrations/aspnetcore`, the conformance suites), in `docs/getting-started.md`, which runs as written, or, for the SQL the SDKs send, in
 the SDKs' own code. `core/tests/unit_test.py` checks each line, and that the install lines have each rowstile
 package the code imports. It checks lines one by one: a block may be a few lines of a longer file, so read
 the text around it too.
