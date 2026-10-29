@@ -93,6 +93,8 @@ MIGR = "docs/reference/migrations.md"
 FASTAPI = "integrations/fastapi/tests/test_conformance.py"
 FASTAPI_SDK = "integrations/fastapi/tests/test_sdk.py"
 FASTAPI_JOBS = "integrations/fastapi/tests/test_jobs.py"
+DJANGO = "integrations/django/tests/test_conformance.py"
+DJANGO_SDK = "integrations/django/tests/test_sdk.py"
 NEXT = "integrations/nextjs/tests/conformance.test.ts"
 NEXT_SDK = "integrations/nextjs/tests/sdk.test.ts"
 NEXT_NEXT = "integrations/nextjs/tests/next.test.ts"
@@ -1068,6 +1070,23 @@ FEATURES: list[Feature] = [
         ),
     ),
     Feature(
+        "sdk.python.django",
+        2,
+        "The Python SDK's Django integration (a preview): every transaction signed in, the middleware, pytest-django",
+        ("sdk.py.django.*",),
+        Doc("docs/stacks/django.md", "Django"),
+        (
+            Check(DJANGO, "test_4_a_pooled_connection_carries_no_one_over"),
+            Check(DJANGO, "test_5_concurrent_requests_never_mix_users"),
+            Check(DJANGO, "test_7_hidden_is_404_and_not_allowed_is_403"),
+            Check(DJANGO, "test_13_the_app_does_not_start_on_a_connection_that_skips_rls"),
+            Check(DJANGO, "test_14_a_policy_change_ships_as_the_next_migration"),
+            Check(DJANGO_SDK, "test_an_atomic_block_signs_in_as_whoever_the_code_acts_for_now"),
+            Check(DJANGO_SDK, "test_a_savepoint_rolled_back_leaves_the_transaction_signed_in_as_the_code_acts_for"),
+            Check(DJANGO_SDK, "test_pytest_djangos_own_transaction_around_a_test"),
+        ),
+    ),
+    Feature(
         "sdk.typescript",
         2,
         "The TypeScript SDK: `@rowstile/client`",
@@ -1268,10 +1287,22 @@ def lsp_methods() -> set[str]:
 
 
 def sdk_python() -> set[str]:
-    """What the Python package exports: its __all__, and the public names of the modules beside it."""
+    """What the Python package exports: its __all__, the public names of the modules beside it, and the __all__ of
+    each package inside it."""
     out: set[str] = set()
     folder = os.path.join(REPO, "sdk", "python", "rowstile")
     for name in sorted(os.listdir(folder)):
+        if os.path.isfile(os.path.join(folder, name, "__init__.py")):  # a package of its own (rowstile.django)
+            tree = ast.parse(read(f"sdk/python/rowstile/{name}/__init__.py"))
+            out |= {
+                f"sdk.py.{name}.{ast.literal_eval(e)}"
+                for node in tree.body
+                if isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)
+                and isinstance(node.value, ast.List | ast.Tuple)
+                for e in node.value.elts
+            }
+            continue
         if not name.endswith(".py") or (name.startswith("_") and name != "__init__.py"):
             continue
         tree = ast.parse(read(f"sdk/python/rowstile/{name}"))

@@ -32,6 +32,8 @@ jobs:
       - run: uvx ty@0.0.56 check && uvx ruff@0.15.12 check && uvx ruff@0.15.12 format --check
       # the Python SDK, in its conformance app's environment (the SDK with every extra), that app, and the examples
       - run: uv sync --project integrations/fastapi --frozen && uvx ty@0.0.56 check --project sdk/python && uvx ty@0.0.56 check --project integrations/fastapi
+      # the SDK's Django module, in the Django conformance app's environment (the SDK's has no Django), and that app
+      - run: uv sync --project integrations/django --frozen && uvx ty@0.0.56 check --project integrations/django integrations/django sdk/python/rowstile/django
       - run: |
           for app in filemanager messenger; do
             uv sync --project examples/$app/backend --frozen && uvx ty@0.0.56 check --project examples/$app || exit 1
@@ -144,6 +146,26 @@ jobs:
         with:
           name: sdk-coverage-python
           path: ${{ runner.temp }}/sdk-coverage-python/report.txt
+          if-no-files-found: ignore
+  # The Python SDK's Django module's conformance suite, a preview: Django on psycopg 3, Django's migrations,
+  # pytest-django and two of pytest-xdist's workers (integrations/django). It fails unless its checks run every line
+  # and branch of the module; the report it prints is kept
+  conformance-django:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884   # v10.3.0
+        with: {version: "0.12.21"}
+      - run: bash integrations/django/test.sh
+        env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-django"}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: sdk-coverage-django
+          path: ${{ runner.temp }}/sdk-coverage-django/report.txt
           if-no-files-found: ignore
   # The TypeScript SDK's conformance suite: Next.js, Prisma 7 (Prisma Migrate), pg, postgres.js, Drizzle, the
   # React kit, Vitest (integrations/nextjs). It fails unless its checks run every line, branch and function of the
