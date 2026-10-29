@@ -74,6 +74,7 @@
 
 always | dfe903189e02
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
+function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 45dbc2c29b55 shape=77f3e79f
 function authz.break_glass(p_type text, p_id uuid, p_relation text, p_reason text, p_duration interval) | a1a184cb7abc shape=3b6da0b2
@@ -284,7 +285,7 @@ function authz_int."folder__col_audit_del"() | b9a8e2b4863d shape=09f230d2
 function authz_int."folder__col_audit_ins"() | 3d40925a4a8c shape=ccf8c653
 function authz_int."folder__col_audit_row"() | 041b6c2ef9fd shape=08554970
 function authz_int."folder__col_audit_trunc"() | 67018f2df92f shape=54802037
-function authz_int."folder__col_audit_upd"() | 43722dedbdfe shape=89500885
+function authz_int."folder__col_audit_upd"() | e3ebc969c495 shape=89500885
 function authz_int."folder__edit__has"(p_id bigint) | 445e4c9667f5 shape=9bfa87ef
 function authz_int."folder__edit__start"() | 355e0defb064 shape=43cb2f64
 function authz_int."folder__edit__who"(p_id bigint) | 1cab217e72ba shape=63eeed89
@@ -324,7 +325,7 @@ function authz_int."group__col_audit_del"() | 91aabad9c43c shape=a8a65b1a
 function authz_int."group__col_audit_ins"() | c1f3ba3c8bbd shape=f8f3c1fd
 function authz_int."group__col_audit_row"() | b9d00c003ad1 shape=16636837
 function authz_int."group__col_audit_trunc"() | 73257eca8cf7 shape=61aec545
-function authz_int."group__col_audit_upd"() | f5e3afbd9b4a shape=51fbef2e
+function authz_int."group__col_audit_upd"() | dd6d328547ee shape=51fbef2e
 function authz_int."group__forget"() | 4e3cdced5c6e shape=caafd6db
 function authz_int."group__forget_all"() | 0fcdd7b9edea shape=b3999b8d
 function authz_int."group__forget_id"() | c07321f7327e shape=1b4af2c6
@@ -351,7 +352,7 @@ function authz_int."membership__col_audit_del"() | 1271b517e4f2 shape=41bc195b
 function authz_int."membership__col_audit_ins"() | aee8511ffe47 shape=35407a17
 function authz_int."membership__col_audit_row"() | aa1db03c00dc shape=1a410f20
 function authz_int."membership__col_audit_trunc"() | b122db11e85f shape=16b0496a
-function authz_int."membership__col_audit_upd"() | c758e9b0977e shape=2aef2bec
+function authz_int."membership__col_audit_upd"() | 787fc4bcbc14 shape=2aef2bec
 function authz_int."membership__group__why"(p_id bigint, p_depth int, p_seen text[]) | 6a27dc01f8c9 shape=d506081c
 function authz_int."membership__manage__who"(p_id bigint) | 51e395d94848 shape=e7f1ebb5
 function authz_int."membership__manage__why"(p_id bigint, p_depth int, p_seen text[]) | 07ca0669d999 shape=0485eb69
@@ -365,6 +366,10 @@ function authz_int."rel_audit_2_del"() | f00728fc5103 shape=4fcddc5e
 function authz_int."rel_audit_2_ins"() | 5754f15720e4 shape=6b6ccb7f
 function authz_int."rel_audit_2_trunc"() | c45d950b5c66 shape=b50b49ff
 function authz_int."rel_audit_2_upd"() | 1f814d269f4c shape=bdeab240
+function authz_int."user__col_audit_del"() | 550865ecbaed shape=fc64ec43
+function authz_int."user__col_audit_ins"() | 51b037fe507a shape=dba70c6d
+function authz_int."user__col_audit_trunc"() | e8a01f21ab0e shape=f87e3f72
+function authz_int."user__col_audit_upd"() | 6c4014fc2d89 shape=9e749ca9
 function authz_int."user__forget"() | f9515de18e8f shape=4753fdb6
 function authz_int."user__forget_all"() | a9b311db3ffc shape=1ea7139a
 function authz_int."user__forget_id"() | ff845dd1857b shape=d0d8b00d
@@ -375,23 +380,25 @@ function authz_int."version__col_audit_del"() | f0a28f12e2b5 shape=23066411
 function authz_int."version__col_audit_ins"() | 5468898aa74a shape=5a3c9906
 function authz_int."version__col_audit_row"() | 5a1b18641370 shape=4d979c70
 function authz_int."version__col_audit_trunc"() | 4dbd60319c97 shape=b26acdd0
-function authz_int."version__col_audit_upd"() | 8cfc731b153e shape=f0413007
+function authz_int."version__col_audit_upd"() | 7837721f84ff shape=f0413007
 function authz_int."version__edit__who"(p_id bigint) | 583238f5e680 shape=303786dc
 function authz_int."version__edit__why"(p_id bigint, p_depth int, p_seen text[]) | ccd2bfb907dd shape=8672c1fa
 function authz_int."version__file__why"(p_id bigint, p_depth int, p_seen text[]) | fe74c772da88 shape=1d534d04
 function authz_int."version__view__who"(p_id bigint) | 58090dd828c7 shape=6f38b4bb
 function authz_int."version__view__why"(p_id bigint, p_depth int, p_seen text[]) | 56474923139d shape=3248bace
 function authz_int.actor() | 597a3fabb14f shape=36514ce1
+function authz_int.announce(p_type text, p_ids text[], p_cause text, p_notify boolean) | a3b10eaa806f shape=6c0e52b6
 function authz_int.audit(p_action text, p_object_type text, p_object_id text, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_detail jsonb) | dd7473f6f4fb shape=4b9c4b05
 function authz_int.audit_is_append_only() | 8c5ce299a394 shape=6d19848d
 function authz_int.b64url(p text) | 5692fc0b5c1e shape=17f0c842
 function authz_int.caller_is_admin() | 33a690b7bfd1 shape=268ddaf7
 function authz_int.caller_role() | f21245c06777 shape=96997846
 function authz_int.canon(p_type text, p_id text) | 2a3ac59562a6 shape=ab774d8a
-function authz_int.changed(p_type text, p_ids text[], p_cause text) | 3c2e76af9dc3 shape=7a5b1adc
+function authz_int.changed(p_type text, p_ids text[], p_cause text) | a711a89ca6d9 shape=7a5b1adc
 function authz_int.check_manage_keys(p_type text, p_id text) | 1e1b710abecd shape=391727a0
 function authz_int.check_writable() | 87ff3161cc1d shape=a16d3e7b
 function authz_int.child_triggers() | 00d9e2928aa2 shape=52e92456
+function authz_int.dependents(p_type text, p_ids text[]) | 57366c08cd8d shape=8a4f5a6e
 function authz_int.forget_marks(p_type text, p_ids text[]) | 2ddee1fcc0be shape=8933fd55
 function authz_int.hmac_sha256(p_key bytea, p_msg bytea) | 33edf164bad5 shape=4d6b17ae
 function authz_int.hold(p_type text, p_id text) | 3122469f8567 shape=bc067713
@@ -403,6 +410,7 @@ function authz_int.mark_row(p_type text, p_id text) | a3fe56708926 shape=267bf94
 function authz_int.may_inspect(p_type text, p_id text) | c144ba24c8dd shape=0942af2e
 function authz_int.may_manage(p_type text, p_id text, p_relation text, p_subject text) | a92f01d8d85a shape=4b7f1aa2
 function authz_int.on_role() | 374a49793145 shape=e9d1adac
+function authz_int.on_role_permissions() | 6223f05b396c shape=0026fdba
 function authz_int.on_share() | 0856cdef73f8 shape=56b3e887
 function authz_int.policy_path() | e79bf262c639 shape=79d267c2
 function authz_int.requests_gone(p_type text, p_ids text[]) | ba4366db286f shape=3524efd2
@@ -452,7 +460,7 @@ rls "fm"."group_members" | 66b0ddcfe314
 rls "fm"."groups" | 406eec0a030a
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
-step base | 35f1643104a2
+step base | c621017d9647
 step cascades | 4b3dc6c5499f
 step grant_api | 16c9ffbabbf1
 step grant_functions | b71705286cf2
@@ -540,6 +548,10 @@ trigger "authz_update_after group_id" ON "fm"."group_members" | 3a3edcb7723f
 trigger "authz_update_after object_key" ON "fm"."files" | e569447cc523
 trigger "authz_update_after parent_id" ON "fm"."folders" | 22f519896a87
 trigger "authz_update_after parent_id" ON "fm"."groups" | 756456ede219
+trigger "authz_user_col_audit_del" ON "fm"."users" | 4f50a8df166b
+trigger "authz_user_col_audit_ins" ON "fm"."users" | 069d0b191254
+trigger "authz_user_col_audit_trunc" ON "fm"."users" | 3ac8048277dd
+trigger "authz_user_col_audit_upd" ON "fm"."users" | 15f53e24ad85
 trigger "authz_user_forget_del" ON "fm"."users" | 19e58b0c744d
 trigger "authz_user_forget_id" ON "fm"."users" | c9a5492fbe73
 trigger "authz_user_forget_moved" ON "fm"."users" | 54b77d5d468f
@@ -560,6 +572,8 @@ trigger authz_audit_no_truncate ON authz.audit | fa619d666219
 trigger authz_role_audit ON authz.roles | d4799a1152c8
 trigger authz_role_gone ON authz.roles | c1f1e6ba7c5c
 trigger authz_role_perm_audit ON authz.role_permissions | 00c06f622ad5
+trigger authz_role_perm_feed_del ON authz.role_permissions | 718bb2791f0d
+trigger authz_role_perm_feed_ins ON authz.role_permissions | 8eadbd50d772
 trigger authz_share_audit ON authz.shares | 71f2e2c3290d
 trigger authz_shares_canon ON authz.shares | 93a3fd26e809
 view authz_int."file__edit" | 994cbaada15d

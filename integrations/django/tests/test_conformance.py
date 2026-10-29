@@ -338,9 +338,12 @@ def test_14_a_policy_change_ships_as_the_next_migration(tmp_path: Path) -> None:
     )
     cli = "-m", "rowstile"  # the command, as the rowstile package installs it
     owner_env = {**os.environ, "DATABASE_URL": f"{server}/{name}"}  # manage.py migrate, as the tables' owner
+    # the app's latest migration now, and the number the next one takes
+    latest = max(f.name[:-3] for f in (work / "app" / "migrations").glob("[0-9][0-9][0-9][0-9]_*.py"))
+    following = f"{int(latest[:4]) + 1:04d}"
     try:
         wrote = subprocess.run([sys.executable, *cli, "migrate"], cwd=work, check=True, capture_output=True, text=True)
-        assert re.search(r"wrote app/migrations/0004_authz_\w+\.py", wrote.stdout), wrote.stdout
+        assert re.search(rf"wrote app/migrations/{following}_authz_\w+\.py", wrote.stdout), wrote.stdout
         manage = [sys.executable, "manage.py"]
         subprocess.run([*manage, "migrate", "--verbosity", "0"], cwd=work, env=owner_env, check=True)
         # Django's own diff still shows no change, rowstile's migration the latest
@@ -367,7 +370,7 @@ def test_14_a_policy_change_ships_as_the_next_migration(tmp_path: Path) -> None:
         assert said == [(True, True), (False, False)], said
         # and undoing rowstile's migration is refused, in a line: they go forward only
         back = subprocess.run(
-            [*manage, "migrate", "app", "0003"], cwd=work, env=owner_env, capture_output=True, text=True
+            [*manage, "migrate", "app", latest], cwd=work, env=owner_env, capture_output=True, text=True
         )
         assert back.returncode != 0, back.stdout
         assert "RuntimeError: a rowstile migration isn't undone" in back.stderr, back.stderr[-2000:]
