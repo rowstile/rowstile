@@ -1,0 +1,62 @@
+[project]
+name = "rowstile-conformance-django"
+version = "0.0.0"
+description = "The Django integration's conformance suite (a preview): a small Django app on psycopg 3, migrated with Django's migrations, tested with pytest-django"
+requires-python = ">=3.11"
+dependencies = [
+  "rowstile[django]",
+  "django>=5.2",
+  "psycopg[binary]>=3.1.8",
+  "psycopg-pool>=3.2",
+  "pytest>=8",
+  "pytest-django>=4.9",
+  "pytest-xdist>=3.6",
+  "mypy>=1.10",
+  "django-stubs>=5.2",
+  "coverage>=7.16",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+rowstile = {path = "../../sdk/python", editable = true}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+DJANGO_SETTINGS_MODULE = "conformance.settings"
+
+# What the checks run of the SDK's Django module (sdk/python/rowstile/django), lines and branches. test.sh has every
+# Python process it starts measure itself, the tests' own subprocesses too (coverage's .pth file reads
+# COVERAGE_PROCESS_START), then combines them, prints the report and fails below 100%
+[tool.coverage.run]
+branch = true
+parallel = true
+source_pkgs = ["rowstile.django"]
+concurrency = ["thread"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
+# what only the type checker reads
+exclude_also = ["if TYPE_CHECKING:"]
+
+# strongly typed, as the repository's Python (ty.toml): uv sync, then, from the repository's root, with the SDK's
+# Django module (the SDK's own check leaves it out: its environment has no Django)
+#   uvx ty@0.0.56 check --project integrations/django integrations/django sdk/python/rowstile/django
+[tool.ty.environment]
+python-version = "3.11"
+python = ".venv"
+
+[tool.ty.rules]
+all = "error"
+missing-override-decorator = "ignore"
+
+# mypy, as check 9 runs it on the app's code (tests/test_conformance.py), with django-stubs' plugin
+[tool.mypy]
+plugins = ["mypy_django_plugin.main"]
+strict = true
+
+[tool.django-stubs]
+django_settings_module = "conformance.settings"

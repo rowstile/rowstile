@@ -37,8 +37,9 @@ pythonpath = ["."]
 branch = true
 parallel = true
 source_pkgs = ["rowstile"]
-# not the command's Postgres client, which rowstile.testing loads as rowstile._pgwire (core's suites measure it)
-omit = ["*/core/cli/*"]
+# not the command's Postgres client, which rowstile.testing loads as rowstile._pgwire (core's suites measure it), nor
+# the Django module (the Django suite measures it: integrations/django)
+omit = ["*/core/cli/*", "*/rowstile/django/*"]
 # SQLAlchemy's async engine runs the driver's calls in greenlets
 concurrency = ["greenlet", "thread"]
 

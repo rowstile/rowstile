@@ -3,7 +3,7 @@
 <!-- tested: every line of code below is in integrations/fastapi (tests/unit_test.py checks it) -->
 
 Any Python app (Flask, Litestar, a worker, a script) on SQLAlchemy's sync engine, SQLModel, psycopg or
-asyncpg. (The SDK has no adapter for Django's ORM.) Each transaction signs in as whoever the code acts for, the database filters what it
+asyncpg. (Django: [Django](django.md), a preview.) Each transaction signs in as whoever the code acts for, the database filters what it
 reads and refuses what it may not write, and the SDK raises `Refused` (403) or `NotFound` (404). FastAPI:
 [FastAPI](fastapi.md).
 
@@ -221,5 +221,5 @@ password can. Keep the broker as private as the database.
 ## Migrations
 
 Policy changes ship as migrations for your tool: `tool = "alembic"` (see [FastAPI](fastapi.md)), `"sql"`,
-`"goose"`, `"dbmate"` or `"flyway"` in `rowstile.toml`. `rowstile migrate` writes the next one;
+`"goose"`, `"dbmate"`, `"flyway"` or `"django"` ([Django](django.md)) in `rowstile.toml`. `rowstile migrate` writes the next one;
 `rowstile migrate --check` in CI fails if a policy change has none.

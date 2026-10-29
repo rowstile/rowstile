@@ -20,6 +20,10 @@ ignore = [
     "SIM105",           # try/except/pass reads as well as contextlib.suppress
 ]
 
+[lint.per-file-ignores]
+# Django's migrations are classes whose lists Django reads: as makemigrations and rowstile migrate write them
+"integrations/django/app/migrations/*.py" = ["RUF012"]
+
 [lint.flake8-bugbear]
 # FastAPI's dependencies are declared as default values
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Cookie", "fastapi.File",

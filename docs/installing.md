@@ -25,7 +25,7 @@ one exists), but the image has no `latest` tag: name its version.
   and stops.
 - **pip**: Python 3.11 or newer. The same package is the [Python SDK](../sdk/python/README.md), and its extras
   bring what each part of it uses: `rowstile[fastapi]`, `rowstile[sqlalchemy]`, `rowstile[psycopg]`,
-  `rowstile[asyncpg]`. The command needs none of them.
+  `rowstile[asyncpg]`, `rowstile[django]` (a preview). The command needs none of them.
 - **Docker**: the image holds the command and git (`rowstile review` asks git for the base branch's files),
   and works in the folder mounted at `/work`. It is built for Linux on x64 and arm64: Docker takes the one for
   your machine, an Apple Silicon Mac's the arm64 one. It runs as root unless told otherwise: `-u` makes the
