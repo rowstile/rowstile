@@ -97,6 +97,8 @@ NEXT = "integrations/nextjs/tests/conformance.test.ts"
 NEXT_SDK = "integrations/nextjs/tests/sdk.test.ts"
 NEXT_NEXT = "integrations/nextjs/tests/next.test.ts"
 REACT = "integrations/nextjs/tests/react.test.tsx"
+NEXT_NEON = "integrations/nextjs/tests/neon.test.ts"
+NEXT_JOBS = "integrations/nextjs/tests/jobs.test.ts"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1100,6 +1102,21 @@ FEATURES: list[Feature] = [
             Check(NEXT_NEXT, "GET: a list's permissions, the shares, and nothing else"),
             Check(REACT, "usePerms"),
             Check(NEXT_SDK, "@rowstile/vitest"),
+        ),
+    ),
+    Feature(
+        "sdk.typescript.serverless",
+        2,
+        "The TypeScript SDK on Neon's serverless driver, the edge runtime, BullMQ and `after()` (preview)",
+        ("sdk.ts.pg.PoolLike", "sdk.ts.pg.ClientLike"),
+        Doc("docs/stacks/nextjs.md", "The Neon serverless driver and the edge runtime (preview)"),
+        (
+            Check(NEXT_NEON, "4 (Neon): a pooled connection carries no one over"),
+            Check(NEXT_NEON, "7 (Neon): hidden is 404, not allowed is 403, on either runtime"),
+            Check(NEXT_NEON, "edge: what has no edge runtime says so (checkAtStart)"),
+            Check(NEXT_NEON, "9 (Neon): a pool that works as pg's type-checks, and its client is its own"),
+            Check(NEXT_JOBS, "10: a job through a queue (BullMQ) acts for its service, whoever queued it"),
+            Check(NEXT_JOBS, "after(): work once the response is sent signs in as the request's user or a service"),
         ),
     ),
 ]

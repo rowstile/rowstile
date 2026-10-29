@@ -36,4 +36,8 @@ this list.
 its own (`tests/test_jobs.py`, preview): a job started by a request acts for its service, or for the user who
 asked, given to it as an argument, and the next job on the worker's one connection never acts for the one before.
 
+The Next.js suite (`integrations/nextjs`) also runs checks 1, 2, 4 to 7 and 9 through Neon's serverless driver, on
+the Node.js runtime and on the edge (`edge/`, an app of its own), behind Neon's `wsproxy`, and check 10 through a
+BullMQ queue on Redis: a preview.
+
 A new stack gets its own folder here, with every check that applies to it.

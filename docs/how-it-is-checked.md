@@ -347,6 +347,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The TypeScript SDK: `@rowstile/client` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
 | The TypeScript SDK's drivers: `/pg`, `/postgres`, `/prisma`, `/drizzle` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
 | The TypeScript SDK for Next.js and React: `/next`, `/react`, `/vitest` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
+| The TypeScript SDK on Neon's serverless driver, the edge runtime, BullMQ and `after()` (preview) | 2 | [nextjs](stacks/nextjs.md) | `integrations/nextjs` |  |
 
 <!-- features: end of the table -->
 
