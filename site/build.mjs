@@ -1,7 +1,7 @@
 // Builds the docs site into site/dist/: the pages (VitePress), the playground at /playground/, each page's
 // Markdown beside it (/getting-started.md, its links pointing to the others'), llms.txt with its links pointing
-// there, llms-full.txt, and the blog's feed (/blog/feed.xml) once there is a post. Any static host serves dist/. A link
-// to a file, a page or a heading that isn't there fails it (pages.mjs). Plain JavaScript, typed with JSDoc and checked
+// there, llms-full.txt, IndexNow's key (indexnow.mjs), and the blog's feed (/blog/feed.xml) once there is a post.
+// Any static host serves dist/. A link to a file, a page or a heading that isn't there fails it (pages.mjs). Plain JavaScript, typed with JSDoc and checked
 // strictly (site/tsconfig.json). Its links to files on GitHub go to SITE_CODE's tag (site.yml), else to main.
 //   cd site && npm ci && node build.mjs          (PYTHON=... if python3 isn't the one)
 import { spawnSync } from "node:child_process";
@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, createMarkdownRenderer } from "vitepress";
 import { FEED, LANGUAGES, feed, forFeed, postBody } from "./blog.mjs";
+import { KEY, KEY_FILE } from "./indexnow.mjs";
 import { ORIGIN, PAGES, POSTS, REPO, deadAnchors, rewriteLinks, siteLink, url } from "./pages.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -64,6 +65,8 @@ if (unlisted.length) throw new Error(`sitemap.xml doesn't list ${unlisted.join("
 // the mark and the card for shared links, at the site's root (no public/ folder: see above)
 for (const f of ["mark.svg", "card.png"]) cpSync(join(HERE, "assets", f), join(DIST, f));
 writeFileSync(join(DIST, "robots.txt"), `User-agent: *\nAllow: /\n\nSitemap: ${ORIGIN}/sitemap.xml\n`);
+// IndexNow's key, at the root: what says the site's own deploy sent the addresses (indexnow.mjs, site.yml)
+writeFileSync(join(DIST, KEY_FILE), KEY);
 
 // the blog's feed: each post whole, as HTML, its links to the site's pages by their full address
 if (POSTS.length) {

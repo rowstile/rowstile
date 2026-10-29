@@ -8,7 +8,9 @@ import { createMarkdownRenderer } from "vitepress";
 // what site.yml gives the build when it is built from a site tag on a release (read when pages.mjs is imported)
 process.env.SITE_CODE = "v0.2.0";
 process.env.SITE_CONTENT = "site-v4";
-const { PAGES, REPO, checkMenus, deadAnchors, menuLinks, rewriteLinks, siteLink, slug, url } = await import("./pages.mjs");
+const { PAGES, POSTS, REPO, checkMenus, deadAnchors, menuLinks, pageTitle, rewriteLinks, siteLink, slug, structured, url } =
+  await import("./pages.mjs");
+const { KEY, KEY_FILE, payload } = await import("./indexnow.mjs");
 
 let failed = 0;
 /** @param {string} label @param {unknown} ok @param {unknown} [detail] */
@@ -137,9 +139,41 @@ check("refused: pages no menu lists", refused(() => checkMenus(without)) ===
 check("refused: a menu's link to no page", refused(() => checkMenus([...menuLinks(menus), "/reference/nothing"])) ===
   "site/.vitepress/config.mts: a menu links to /reference/nothing, which is no page");
 
+// a page's title says what rowstile is after its own words, once; the home page says it in one title
+check("title: the home page's, alone", same(pageTitle("index.md", "rowstile"),
+  { title: "rowstile: authorization for Postgres, compiled into row-level security", template: false }));
+check("title: a page's, then what rowstile is", same(pageTitle("getting-started.md", "Getting started"),
+  { title: "Getting started", template: ":title | rowstile, authorization for Postgres" }));
+check("title: a page that names rowstile doesn't name it twice", pageTitle("compare/spicedb.md", "rowstile and SpiceDB").template
+  === ":title | authorization for Postgres");
+check("title: a recipe's says row-level security", pageTitle("cookbook/tenants.md", "Multi-tenant").template
+  === ":title | Postgres row-level security, rowstile");
+// what a page says of itself as JSON-LD: the software on the home page, an article on a post, nothing elsewhere
+const home = /** @type {Record<string, unknown>} */ (structured("index.md", "d"));
+check("JSON-LD: the home page is the software", home["@type"] === "SoftwareApplication" && home.description === "d"
+  && home.url === "https://rowstile.dev/", home);
+check("JSON-LD: nothing for a page that is neither", structured("getting-started.md", "d") === null);
+const post = POSTS[0];
+if (post) {
+  const article = /** @type {Record<string, unknown>} */ (structured(post.address, "d"));
+  check("JSON-LD: a post is an article, with its date and author", article["@type"] === "BlogPosting"
+    && article.datePublished === post.date && same(article.author, { "@type": "Person", name: post.author }), article);
+}
+// IndexNow: the sitemap's addresses, on the site's host only, and the key's file at the root
+const sent = payload("<urlset><url><loc>https://rowstile.dev/</loc></url><url><loc>https://rowstile.dev/reference</loc></url></urlset>");
+check("IndexNow: the sitemap's addresses", same(sent, { host: "rowstile.dev", key: KEY,
+  keyLocation: `https://rowstile.dev/${KEY_FILE}`, urlList: ["https://rowstile.dev/", "https://rowstile.dev/reference"] }), JSON.stringify(sent));
+check("IndexNow: refused, an address elsewhere", refused(() => payload("<loc>https://rowstile.dev.evil/x</loc>")) ===
+  "the sitemap lists addresses elsewhere: https://rowstile.dev.evil/x");
+check("IndexNow: refused, an empty sitemap", refused(() => payload("<urlset></urlset>")) === "the sitemap lists no address");
+check("IndexNow: the key is what it accepts (8 to 128 of a-z, A-Z, 0-9, -)", /^[a-zA-Z0-9-]{8,128}$/.test(KEY));
+
 // site.yml gives the build the tags it is built from (else its links go to main)
 const workflow = readFileSync(join(REPO, ".github", "workflows", "site.yml"), "utf8");
 check("site.yml builds with the tags source.mjs named", /- env:\n\s+SITE_CODE: \$\{\{ steps\.from\.outputs\.code \}\}\n\s+SITE_CONTENT: \$\{\{ steps\.from\.outputs\.content \}\}\n\s+run: [^\n]*node build\.mjs/.test(workflow));
+
+check("site.yml sends IndexNow after the deploy, never failing it",
+  /\n  indexnow:\n    needs: deploy\n[\s\S]*- run: node site\/indexnow\.mjs\n\s+continue-on-error: true\n/.test(workflow));
 
 console.log(failed ? `pages: ${failed} failed` : "pages: all passed");
 process.exit(failed ? 1 : 0);
