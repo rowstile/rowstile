@@ -99,6 +99,9 @@ NEXT_NEXT = "integrations/nextjs/tests/next.test.ts"
 REACT = "integrations/nextjs/tests/react.test.tsx"
 NEXT_NEON = "integrations/nextjs/tests/neon.test.ts"
 NEXT_JOBS = "integrations/nextjs/tests/jobs.test.ts"
+GO = "integrations/go/app/conformance_test.go"
+GO_SDK = "integrations/go/app/sdk_test.go"
+GO_POLICY = "integrations/go/policychange/policychange_test.go"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1077,6 +1080,22 @@ FEATURES: list[Feature] = [
         ),
     ),
     Feature(
+        "sdk.go",
+        2,
+        "The Go SDK (a preview): pgx transactions signed in, refusals as errors, `net/http`, a database per test package",
+        ("sdk.go.*",),
+        Doc(APP, "Go: preview."),
+        (
+            Check(GO, "3: not signed in: the not-signed-in error (AZ701), naming act_as"),
+            Check(GO, "5: concurrent requests never mix users"),
+            Check(GO, "9: the generated names type-check"),
+            Check(GO_SDK, "a transaction inside a transaction is a savepoint"),
+            Check(GO_SDK, "Postgres's own refusals (an update out of sight, an upsert, MERGE) name the rule"),
+            Check(GO_POLICY, "12: ... each package its own copy"),
+            Check(GO_POLICY, "14: after a policy change and a new migration"),
+        ),
+    ),
+    Feature(
         "sdk.typescript.drivers",
         2,
         "The TypeScript SDK's drivers: `/pg`, `/postgres`, `/prisma`, `/drizzle`",
@@ -1280,6 +1299,19 @@ def sdk_typescript() -> set[str]:
     return out
 
 
+def sdk_go() -> set[str]:
+    """What the Go module exports: the names its packages declare at the top level with a capital (rowstile's,
+    and rowstiletest's), not their methods."""
+    out: set[str] = set()
+    root = os.path.join(REPO, "sdk", "go")
+    for folder, prefix in ((root, "sdk.go."), (os.path.join(root, "rowstiletest"), "sdk.go.rowstiletest.")):
+        for name in sorted(os.listdir(folder)):
+            if name.endswith(".go") and not name.endswith("_test.go"):
+                with open(os.path.join(folder, name), encoding="utf-8") as fh:
+                    out |= {prefix + n for n in re.findall(r"^(?:func|type|var|const) ([A-Z]\w*)", fh.read(), re.M)}
+    return out
+
+
 def language() -> set[str]:
     """The language's forms, as the editors' grammar names them: its rules, less the hidden ones (`_x`) and the
     ones that read a token's characters (names, values, comments) rather than a word of the language."""
@@ -1303,6 +1335,7 @@ SURFACES: dict[str, Callable[[], set[str]]] = {
     "the language server": lsp_methods,
     "the Python SDK": sdk_python,
     "the TypeScript SDK": sdk_typescript,
+    "the Go SDK": sdk_go,
     "the language": language,
 }
 
@@ -1422,9 +1455,15 @@ def suite_texts() -> dict[str, str]:
     """The suites' files (core/tests, and the conformance apps' tests), each file's text: not the unit tests,
     which name what they look for."""
     out: dict[str, str] = {}
-    for pattern in ("core/tests/*.*", "core/tests/hand/*.*", "integrations/*/test.sh", "integrations/*/tests/*.*"):
+    for pattern in (
+        "core/tests/*.*",
+        "core/tests/hand/*.*",
+        "integrations/*/test.sh",
+        "integrations/*/tests/*.*",
+        "integrations/*/*/*_test.go",
+    ):
         for path in sorted(glob.glob(os.path.join(REPO, *pattern.split("/")))):
-            if path.endswith((".sh", ".py", ".sql", ".ts", ".tsx", ".authz")) and os.path.basename(path) not in (
+            if path.endswith((".sh", ".py", ".sql", ".ts", ".tsx", ".authz", ".go")) and os.path.basename(path) not in (
                 "unit_test.py",  # names the words it looks for
                 "features.py",
             ):

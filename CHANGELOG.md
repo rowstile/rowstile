@@ -20,6 +20,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `Pool`, over WebSockets, on Node.js and on Next.js's edge runtime, where `checkAtStart` now throws, saying why,
   instead of reaching for `process.exit`. A BullMQ worker and Next's `after()` sign in as `job()` or the request
   say. The Next.js suite checks each, through Neon's `wsproxy` and a real Redis.
+- A Go SDK, as a preview (`github.com/rowstile/rowstile/sdk/go`, on pgx): transactions signed in, refusals as
+  `Refused` and `NotFound`, `net/http` answers, a test database per package; `rowstile client go` writes the
+  policy's names for it. Its conformance suite runs a `net/http` app with sqlc's queries and goose's migrations.
 
 ## 0.1.0-beta.2 (2026-10-29)
 

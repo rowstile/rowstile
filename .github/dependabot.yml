@@ -51,6 +51,15 @@ updates:
     groups:
       compose: {patterns: ["*"]}
 
+  # the Go conformance app's modules (its go.sum is its lock file); the Go SDK's own go.mod names the oldest pgx it
+  # takes, which users may run with, not a version to bump
+  - package-ecosystem: gomod
+    directories: ["/integrations/go"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    groups:
+      gomod: {patterns: ["*"]}
+
   # Atheris, for the nightly fuzz job, pinned by its wheels' hashes (core/tests/fuzz-requirements.txt)
   - package-ecosystem: pip
     directory: /core/tests

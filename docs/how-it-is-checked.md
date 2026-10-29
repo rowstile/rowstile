@@ -345,6 +345,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The Python SDK's background jobs, in Celery's and RQ's workers (preview) | 2 | [python](stacks/python.md) | `integrations/fastapi` |  |
 | The Python SDK's stacks: FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic, pytest | 2 | [app-code](reference/app-code.md) | `integrations/fastapi` |  |
 | The TypeScript SDK: `@rowstile/client` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
+| The Go SDK (a preview): pgx transactions signed in, refusals as errors, `net/http`, a database per test package | 2 | [app-code](reference/app-code.md) | `integrations/go` |  |
 | The TypeScript SDK's drivers: `/pg`, `/postgres`, `/prisma`, `/drizzle` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
 | The TypeScript SDK for Next.js and React: `/next`, `/react`, `/vitest` | 2 | [app-code](reference/app-code.md) | `integrations/nextjs` |  |
 | The TypeScript SDK on Neon's serverless driver, the edge runtime, BullMQ and `after()` (preview) | 2 | [nextjs](stacks/nextjs.md) | `integrations/nextjs` |  |
