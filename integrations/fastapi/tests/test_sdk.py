@@ -192,6 +192,91 @@ def test_install_once_and_user_when_nothing_else_says() -> None:
     assert asked == ["user()"]
 
 
+ALREADY = "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: "
+AFTER = " run inside it. Run it after, or in a transaction of its own (another connection)"
+
+
+def last_sent(pid: int) -> str:
+    """The last statement the session with this pid sent, as Postgres shows it to the same role."""
+    with psycopg.connect(libpq(APP), autocommit=True) as other:
+        row = other.execute("SELECT query FROM pg_stat_activity WHERE pid = %s", (pid,)).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
+def test_sqlalchemy_one_principal_a_transaction() -> None:
+    """A transaction is one principal's: a statement in it while the code acts for someone else, or for no one, is
+    refused before it is sent, and the transaction goes on as its principal's: it reads, writes and commits."""
+    engine = authz_sa.install(create_engine(SYNC))
+    try:
+        with engine.connect() as conn:
+            with rowstile.acting_as(1):  # the transaction begins: ann's
+                with conn.begin_nested():  # a savepoint, the same principal's
+                    assert projects(conn) == [1, 3]
+                assert projects(conn) == [1, 3]
+            with pytest.raises(RuntimeError) as no_one:
+                projects(conn)
+            raw = conn.connection.driver_connection
+            assert isinstance(raw, psycopg.Connection)
+            assert last_sent(raw.info.backend_pid) == PROJECTS  # nothing sent for it
+            with rowstile.acting_as(2), pytest.raises(RuntimeError) as bo:
+                projects(conn)
+            with rowstile.acting_as(None), pytest.raises(RuntimeError) as nobody:
+                projects(conn)
+            with rowstile.acting_as(1):
+                assert conn.scalar(text(SIGNED_IN_AS)) == "1" and projects(conn) == [1, 3]
+                assert conn.execute(text("UPDATE app.notes SET body = body WHERE id = 1")).rowcount == 1
+                conn.commit()
+            with rowstile.acting_as(2):  # the next transaction is another's
+                assert projects(conn) == [2, 3]
+        assert str(no_one.value) == ALREADY + "the work of code that acts for no one can't" + AFTER
+        assert str(bo.value) == ALREADY + "user 2's work can't" + AFTER
+        assert str(nobody.value) == ALREADY + "nobody's work can't" + AFTER
+        with rowstile.acting_as(1), Session(engine) as s, pytest.raises(RuntimeError, match="user 3's work can't"):
+            s.get(Note, 1)
+            with rowstile.acting_as(3):  # the ORM's statements too
+                s.get(Note, 4)
+    finally:
+        engine.dispose()
+
+    asked: list[str] = []
+
+    def user() -> rowstile.Who:
+        asked.append("user()")
+        return 2
+
+    engine = authz_sa.install(create_engine(SYNC), user=user)
+    try:
+        with engine.connect() as conn:  # signed in as user() says: asked once, not at each statement
+            assert projects(conn) == [2, 3] and projects(conn) == [2, 3]
+            with rowstile.acting_as(2):
+                assert projects(conn) == [2, 3]
+            with rowstile.acting_as(3), pytest.raises(RuntimeError, match="as user 2 already"):
+                projects(conn)
+        assert asked == ["user()"]
+        with engine.connect() as conn:
+            with rowstile.acting_as(1):
+                assert projects(conn) == [1, 3]
+            with pytest.raises(RuntimeError, match=ALREADY + "user 2's work can't"):  # nothing set: user() says
+                projects(conn)
+    finally:
+        engine.dispose()
+
+
+async def test_sqlalchemy_async_one_principal_a_transaction() -> None:
+    engine = authz_sa.install(create_async_engine(APP))
+    try:
+        async with engine.connect() as conn:
+            with rowstile.acting_as(1):
+                assert (await conn.scalars(text(PROJECTS))).all() == [1, 3]
+            with rowstile.acting_as(2), pytest.raises(RuntimeError, match=ALREADY + "user 2's work can't"):
+                await conn.execute(text(PROJECTS))
+            with rowstile.acting_as(1):
+                assert await conn.scalar(text(SIGNED_IN_AS)) == "1"
+    finally:
+        await engine.dispose()
+
+
 def test_a_driver_with_another_parameter_style_signs_in_with_the_values_written_in() -> None:
     engine = authz_sa.install(create_engine(SYNC, paramstyle="named"))  # neither %s nor $1
     try:

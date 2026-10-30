@@ -3,6 +3,10 @@
     engine = create_async_engine(url)
     rowstile.sqlalchemy.install(engine)           # every transaction signs in as rowstile.current()
 
+A transaction is one principal's: a statement in it while the code acts for someone else (or for no one, when the
+transaction is someone's) raises a RuntimeError before it is sent, and the transaction goes on as its principal's.
+Run that work after the transaction, or in one of its own (another session or connection).
+
 Queries by permission use set checks, never a function call per row:
 
     select(Folder).where(Folder.id.in_(ids("folder", "edit")))
@@ -57,6 +61,7 @@ from . import (
     _explain_rule_args,
     _explain_rule_sql,
     _key_text,
+    _signed_in_already,
     act_as_args,
     act_as_sql,
     current,
@@ -86,14 +91,17 @@ _orm_events = False
 # a row an ORM flush updates or deletes: (the table, update or delete, the row's key)
 _Row: TypeAlias = "tuple[str, str, tuple[object, ...]]"
 _ROWS = "rowstile_rows"  # in a connection's info: the rows of the flush on it, as SQLAlchemy told them
+# in a connection's info: who its transaction signed in as, and whether install()'s user() said so (nothing else did)
+_SIGNED = "rowstile_signed"
 _FLUSHING = "rowstile_flushing"  # in a session's info: a flush began, and its first row starts the rows again
 
 
 def install(engine: AnyEngine, user: Callable[[], Who] | None = None) -> AnyEngine:
     """Signs every transaction on `engine` in as whoever the code acts for (rowstile.acting_as, or the web
-    integration), else as user() if given, else as nobody. When an ORM flush on it fails with StaleDataError, asks
-    the database why, for why_stale(). Installing an engine again changes nothing, but gives it user() if it had
-    none (Rowstile(app, engine) installs it without one); another user() than the one it has is a ValueError."""
+    integration), else as user() if given, else as nobody; a statement in it while the code acts for anyone else is
+    a RuntimeError, before it is sent. When an ORM flush on it fails with StaleDataError, asks the database why, for
+    why_stale(). Installing an engine again changes nothing, but gives it user() if it had none (Rowstile(app,
+    engine) installs it without one); another user() than the one it has is a ValueError."""
     global _orm_events
     sync = engine.sync_engine if isinstance(engine, AsyncEngine) else engine
     if sync in _users:
@@ -106,11 +114,12 @@ def install(engine: AnyEngine, user: Callable[[], Who] | None = None) -> AnyEngi
     @event.listens_for(sync, "begin")
     def _sign_in(conn: Connection) -> None:
         conn.info[_ROWS] = []
-        who = current()
-        given = _users[sync]
-        if who is None and given is not None:
+        who, given = current(), _users[sync]
+        by_user = who is None and given is not None
+        if by_user:
             who = Principal.of(given())
         who = who or NOBODY
+        conn.info[_SIGNED] = (who, by_user)  # before the sign-in, whose own statement is checked against it
         # the id as a parameter where the driver takes them this way: psycopg reads % in a statement, so an id
         # written into it would be changed ('%s') or refused ('50%')
         style = conn.dialect.paramstyle
@@ -120,6 +129,20 @@ def install(engine: AnyEngine, user: Callable[[], Who] | None = None) -> AnyEngi
             conn.exec_driver_sql("SELECT authz.act_as($1, $2)", act_as_args(who))
         else:
             conn.exec_driver_sql(act_as_sql(who))
+
+    @event.listens_for(sync, "before_cursor_execute")
+    def _one_principal(conn: Connection, *_: object) -> None:
+        """A transaction is one principal's: a statement while the code acts for anyone else is refused."""
+        # every statement runs in a transaction, begun (and signed in) before it; the dialect's own statements on a
+        # new connection run before any listener is told of them
+        signed: tuple[Principal, bool] = conn.info[_SIGNED]
+        who, given = current(), _users[sync]
+        if who is None and given is not None:
+            if signed[1]:
+                return  # signed in as user() said, and nothing says otherwise since: whom it says, as it did then
+            who = Principal.of(given())
+        if (who or NOBODY) != signed[0]:
+            raise _signed_in_already(signed[0], who)
 
     event.listen(sync, "rollback", _ask)
     event.listen(sync, "rollback_savepoint", _ask)

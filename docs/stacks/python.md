@@ -19,9 +19,12 @@ pip install --pre "rowstile[sqlalchemy,psycopg]"   # or [asyncpg]; the command c
 principal type of the policy), or `None` (nobody: only what `anyone` may see). In a web app, enter it around
 each request. A background job is `@rowstile.job(who)` ([Background jobs](#background-jobs-celery-and-rq-preview)). Every transaction signs in, even as nobody, and
 nothing uses a session-level `SET`, so pools and poolers in transaction mode are safe (behind one that keeps no
-prepared statements, turn the driver's off: [Behind a pooler](../operations.md#behind-a-pooler)). A transaction
-already begun keeps who it
-acts for: `acting_as` decides for the ones begun inside it.
+prepared statements, turn the driver's off: [Behind a pooler](../operations.md#behind-a-pooler)).
+
+A sign-in lasts the database transaction, so a transaction is one principal's: `acting_as` decides for the ones
+begun inside it. A statement in a transaction while the code acts for someone else, or for no one, raises a
+`RuntimeError` before it is sent, and the transaction goes on as its principal's. Run that work after the
+transaction, or in one of its own (another session or connection).
 
 ## SQLAlchemy (sync) and SQLModel
 
