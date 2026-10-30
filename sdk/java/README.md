@@ -16,7 +16,8 @@ Three artifacts, group `dev.rowstile`:
 - `rowstile-spring-boot-starter`: Spring Boot 4. Every transaction Spring's transaction managers begin (JDBC's and
   JPA's: `@Transactional`, `TransactionTemplate`, Spring Data's repositories) signs in first, as the request's user
   from Spring Security; a refusal answers with problem details (RFC 9457); and the app doesn't start on a connection
-  that skips row-level security.
+  that skips row-level security. A transaction is one principal's: work for someone else that joins one is refused
+  (`IllegalStateException`) before anything is sent.
 - `rowstile-kotlin`: Kotlin's idioms over `rowstile`. Transactions signed in from coroutines, Exposed's transactions
   signed in, a Ktor plugin, and test helpers: [its README](rowstile-kotlin/README.md), and its page,
   [docs/stacks/ktor.md](../../docs/stacks/ktor.md).

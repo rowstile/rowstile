@@ -31,6 +31,8 @@ import org.postgresql.util.PSQLException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.dao.InvalidDataAccessApiUsageException;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
@@ -54,6 +56,12 @@ class ConformanceTest extends Conformance {
 
     @Autowired
     Digest digest;
+
+    @Autowired
+    Projects projects;
+
+    @Autowired
+    JdbcClient jdbc;
 
     @BeforeEach
     void rows() throws SQLException {
@@ -308,6 +316,38 @@ class ConformanceTest extends Conformance {
         } finally {
             pool.shutdown();
         }
+    }
+
+    @Test
+    @DisplayName("10: ... and a transaction is one principal's: a job's work inside a user's is refused before it runs")
+    void onePrincipal() throws SQLException {
+        TransactionTemplate tx = new TransactionTemplate(transactions);
+        List<String> ran = new ArrayList<>();
+        List<Object> seen = Rowstile.actingAs(Principal.user(1), () -> tx.execute(s -> {
+            Note note = notes.findById(1L).orElseThrow();
+            long same = Rowstile.actingAs(Principal.user(1), () -> projects.count()); // the same user's joins it
+            // the job's repository call: Spring Data hands the refusal on as its own error, the refusal its cause
+            InvalidDataAccessApiUsageException job = assertThrows(InvalidDataAccessApiUsageException.class, digest::run);
+            IllegalStateException joined = assertThrows(IllegalStateException.class,
+                    () -> Rowstile.actingAs(Principal.user(3), () -> tx.execute(t -> ran.add("joined"))));
+            // the transaction goes on as ann's, and commits what she wrote
+            note.setBody("still ann's");
+            return List.of(same, job.getCause().getMessage(), joined.getMessage(), projects.count(),
+                    jdbc.sql("SELECT current_setting('authz.user_id', true)").query(String.class).single());
+        }));
+        assertEquals(List.of(), ran);
+        assertEquals(List.of(2L, "this transaction is signed in as 1 already, and a sign-in lasts the database "
+                + "transaction: service:1's work can't run inside it. Run it after, or in a transaction of its own "
+                + "(another connection)"), seen.subList(0, 2));
+        assertTrue(seen.get(2).toString().startsWith("this transaction is signed in as 1 already") && seen.get(2)
+                .toString().contains(": 3's work can't run inside it"), seen.get(2).toString());
+        assertEquals(List.of(2L, "1"), seen.subList(3, 5));
+        try (Connection conn = owner(); Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery("SELECT body FROM app.notes WHERE id = 1")) {
+            assertTrue(rs.next());
+            assertEquals("still ann's", rs.getString(1));
+        }
+        assertEquals(2L, digest.run().projects()); // after it, the job runs as its own
     }
 
     @Test

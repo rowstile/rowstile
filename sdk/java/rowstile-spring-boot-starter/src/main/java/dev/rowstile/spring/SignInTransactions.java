@@ -6,7 +6,8 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 
 /**
  * Adds the sign-in to every {@link DataSourceTransactionManager} (and {@code JdbcTransactionManager}) of the app,
- * Spring Boot's or its own: each transaction they begin signs in first.
+ * Spring Boot's or its own: each transaction they begin signs in first, and work for someone else can't join one
+ * (the bean is the manager behind a stand-in: inject it as a {@code PlatformTransactionManager}).
  */
 class SignInTransactions implements BeanPostProcessor {
     private final ObjectProvider<PrincipalSource> source;
@@ -18,7 +19,9 @@ class SignInTransactions implements BeanPostProcessor {
     @Override
     public Object postProcessAfterInitialization(Object bean, String beanName) {
         if (bean instanceof DataSourceTransactionManager manager) {
-            manager.addListener(new SignIn(manager, manager::getDataSource, this::source));
+            SignIn signIn = new SignIn(manager, manager::getDataSource, this::source);
+            manager.addListener(signIn);
+            return signIn.guard(manager);
         }
         return bean;
     }

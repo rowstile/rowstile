@@ -3,6 +3,7 @@ package dev.rowstile.conformance;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,6 +18,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -96,6 +98,58 @@ class AutoConfigurationTest extends Conformance {
             DatabaseError outside = assertThrows(DatabaseError.class, () -> authz.can(AuthzNames.ProjectPermission.EDIT, 1));
             assertTrue(Errors.notSignedIn(outside), outside.toString());
         });
+    }
+
+    @Test
+    @DisplayName("a transaction is one principal's: someone else's work can't join it, and it goes on as its own")
+    void onePrincipal() throws SQLException {
+        seed();
+        app(WORKER.appUrl()).run(ctx -> {
+            JdbcClient jdbc = ctx.getBean(JdbcClient.class);
+            PlatformTransactionManager tm = ctx.getBean(PlatformTransactionManager.class);
+            TransactionTemplate tx = new TransactionTemplate(tm);
+            TransactionTemplate nested = new TransactionTemplate(tm);
+            nested.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
+            List<String> ran = new ArrayList<>();
+            List<Object> seen = Rowstile.actingAs(Principal.user(1), () -> tx.execute(s -> {
+                // the same user's work joins it (and a savepoint of it), as it is
+                List<Long> same = Rowstile.actingAs(Principal.user(1), () -> nested.execute(n -> projects(jdbc, tm)));
+                // anyone else's is refused before it runs, joined or in a savepoint, and nothing is sent for it
+                IllegalStateException other = assertThrows(IllegalStateException.class,
+                        () -> Rowstile.actingAs(Principal.of("service", 1), () -> tx.execute(n -> ran.add("joined"))));
+                IllegalStateException savepoint = assertThrows(IllegalStateException.class,
+                        () -> Rowstile.actingAs(Principal.user(2), () -> nested.execute(n -> ran.add("savepoint"))));
+                IllegalStateException nobody = assertThrows(IllegalStateException.class,
+                        () -> Rowstile.actingAs(Principal.NOBODY, () -> tx.execute(n -> ran.add("nobody"))));
+                // the transaction goes on as ann's: it reads and writes as hers, and commits
+                int changed = jdbc.sql("UPDATE app.notes SET body = 'still ann''s' WHERE id = 1").update();
+                return List.of(same, other.getMessage(), savepoint.getMessage(), nobody.getMessage(), changed,
+                        signedIn(jdbc), projects(jdbc, tm));
+            }));
+            assertEquals(List.of(), ran);
+            assertEquals(List.of(1L, 3L), seen.get(0));
+            assertEquals("this transaction is signed in as 1 already, and a sign-in lasts the database transaction: "
+                    + "service:1's work can't run inside it. Run it after, or in a transaction of its own (another "
+                    + "connection)", seen.get(1));
+            assertTrue(seen.get(2).toString().contains("signed in as 1 already") && seen.get(2).toString().contains(
+                    ": 2's work can't run inside it"), seen.get(2).toString());
+            assertTrue(seen.get(3).toString().contains(": the work of code that acts for no one can't run inside it. "
+                    + "Run it after, or in a transaction of its own"), seen.get(3).toString());
+            assertEquals(List.of(1, "1", List.of(1L, 3L)), seen.subList(4, 7));
+            assertEquals(List.of("still ann's"), Rowstile.actingAs(Principal.user(1), () -> tx.execute(s ->
+                    jdbc.sql("SELECT body FROM app.notes WHERE id = 1").query(String.class).list())));
+            // a transaction of its own, after or on another connection, is the other's
+            assertEquals(List.of(2L, 3L), Rowstile.actingAs(Principal.user(2), () -> projects(jdbc, tm)));
+            // the manager the app gets stands in for Spring Boot's: itself, and no other
+            assertEquals(tm, ctx.getBean(PlatformTransactionManager.class));
+            assertNotEquals(tm, new Object());
+            assertEquals(System.identityHashCode(tm), tm.hashCode());
+        });
+    }
+
+    /** Who the transaction open now is signed in as, asked of the database. */
+    static String signedIn(JdbcClient jdbc) {
+        return jdbc.sql("SELECT current_setting('authz.user_id', true)").query(String.class).single();
     }
 
     @Test
