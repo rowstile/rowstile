@@ -21,7 +21,7 @@ in CI already there.
 
 ```sh
 # Prisma 7 and its Postgres adapter, if the app doesn't have them yet
-npm install @prisma/client@7 @prisma/adapter-pg@7 pg && npm install --save-dev prisma@7
+npm install @prisma/client@7 @prisma/adapter-pg@7 pg && npm install --save-dev prisma@7 dotenv
 # @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
 npm install @rowstile/client@next @rowstile/prisma@next @rowstile/pg@next @rowstile/next@next @rowstile/react@next
 npm install --save-dev rowstile@next @rowstile/vitest@next
@@ -47,10 +47,11 @@ dir  = "prisma/migrations"
 
 Two roles connect. The owner of the tables runs the migrations (`ROWSTILE_OWNER_DSN`), and the app connects
 as the role the policy names, which row-level security applies to (`ROWSTILE_APP_URL`). Prisma migrates, so
-its own configuration takes the owner's URL:
+its own configuration takes the owner's URL. Prisma 7 doesn't read `.env` itself: `dotenv/config` loads it.
 
 ```ts
 // prisma.config.ts
+import "dotenv/config";
 import { defineConfig, env } from "prisma/config";
 
 export default defineConfig({
@@ -133,11 +134,22 @@ is `src/instrumentation.ts`, and it imports `./db.ts`.
 
 ## Pages, route handlers and server actions
 
-A page reads as the request's user:
+A page reads as the request's user. With Cache Components (`cacheComponents: true`, which `create-next-app`
+writes), what reads the request goes inside `<Suspense>`; without it, `next dev` works and `next build` stops
+with "uncached or runtime data during prerendering":
 
 ```tsx
-export default async function Notes() {
+import { Suspense } from "react";
+import { db } from "@/db";
+
+async function Notes() {
   const notes = await db.note.findMany({ select: { id: true, body: true }, orderBy: { id: "asc" } });
+```
+
+```tsx
+export default function Page() {
+  return <Suspense><Notes /></Suspense>;
+}
 ```
 
 `route()` answers a refusal with a problem body: 404 for a row the user can't see, 403 with the rule and the
@@ -454,10 +466,10 @@ import { job } from "@rowstile/client";
 
 In a page, Next lets `after()` read nothing of the request: the work fails, in Next's words "used `headers()`
 inside `after()` while rendering. This is not supported." Read the user while the page renders, and act for
-them in the work with `actingAs`:
+them in the work with `actingAs` (the page inside `<Suspense>`, as above):
 
 ```tsx
-export default async function Later() {
+async function Later() {
   const reader = await requestUser();
   after(() => actingAs(reader, () =>
     db.$executeRaw`INSERT INTO app.inbox (sender_id, recipient_id, body) VALUES (${Number(reader ?? 0)}, 2, 'later')`));

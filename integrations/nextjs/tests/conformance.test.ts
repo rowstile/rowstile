@@ -425,7 +425,9 @@ test("15: signed-in pages are never cached for another user", async () => {
   for (const [page, why] of Object.entries(refusedBy)) {
     for (const user of ["1", "2", "1"]) {
       const { status, body, logged } = await served(page, user);
-      expect(status, `${page} as ${user}`).toBe(500);
+      // 200: the page streams inside <Suspense> (Cache Components), so its status is sent before the read fails;
+      // what it serves holds no row, and the error is the one below
+      expect(status, `${page} as ${user}`).toBe(200);
       expect(ids(body), `${page} as ${user}`).toEqual([]);
       const errors = logged.split(/^(?=⨯ )/m).filter((e) => e.includes("digest"));
       expect(errors.length, `${page} as ${user}: ${logged}`).toBe(1);
