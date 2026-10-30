@@ -33,6 +33,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.Database
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.core.DatabaseConfig
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
@@ -131,6 +133,59 @@ class SdkTest {
         val bare = Database.connect(PGSimpleDataSource().apply { setURL(Conformance.TESTS.replaceFirst("/conf_tests?", "/postgres?")) })
         val e = assertFailsWith<DatabaseError> { transaction(Principal.NOBODY, bare) { 1 } }
         assertTrue(e.message!!.contains("schema \"authz\" does not exist"), e.message)
+    }
+
+    /** Who the database transaction is signed in as, asked of the database. */
+    private fun JdbcTransaction.signedIn(): String? =
+        exec("SELECT current_setting('authz.user_id', true)") { rs -> rs.takeIf { it.next() }?.getString(1) }
+
+    @Test
+    @DisplayName("a transaction inside another: as the same principal it runs, as another it is refused before it runs")
+    fun nested() {
+        for (each in listOf(db, Database.connect(app, databaseConfig = DatabaseConfig { useNestedTransactions = true }))) {
+            // the same user: the inner block runs in the outer transaction, and the outer is still that user's after
+            val same = transaction(Principal.user(1), each) {
+                val inner = transaction(Principal.user(1), each) { Projects.selectAll().count() }
+                listOf(inner, Projects.selectAll().count(), signedIn())
+            }
+            assertEquals(listOf(2L, 2L, "1"), same)
+            // someone else: refused before the block runs, and the outer transaction goes on as its user
+            val ran = mutableListOf<String>()
+            val other = transaction(Principal.user(1), each) {
+                val refused = assertFailsWith<IllegalStateException> {
+                    transaction(Principal.of("service", 1), each) { ran.add("inner") }
+                }
+                Notes.update({ Notes.id eq 1 }) { it[body] = "still ann's" }
+                listOf(refused.message, signedIn(), Projects.selectAll().count())
+            }
+            assertEquals(listOf<String>(), ran)
+            assertTrue(other[0].toString().contains("signed in as 1 already"), other[0].toString())
+            assertTrue(other[0].toString().contains("service:1's work can't run inside it"), other[0].toString())
+            assertEquals(listOf("1", 2L), other.drop(1))
+            assertEquals(1L, transaction(Principal.user(1), each) { Notes.selectAll().where { Notes.body eq "still ann's" }.count() })
+        }
+        // the same with suspendTransaction, and inside a transaction signed in by hand
+        runBlocking {
+            assertEquals(Principal.user(2), suspendTransaction(Principal.user(2), db) {
+                suspendTransaction(Principal.user(2), db) { actingFor() }
+            })
+            val refused = suspendTransaction(Principal.user(2), db) {
+                assertFailsWith<IllegalStateException> { suspendTransaction(Principal.NOBODY, db) { 1 } }
+                signedIn()
+            }
+            assertEquals("2", refused)
+        }
+        assertFailsWith<IllegalStateException> {
+            org.jetbrains.exposed.v1.jdbc.transactions.transaction(db) {
+                signIn(Principal.user(3))
+                transaction(Principal.user(1), db) { 1 }
+            }
+        }
+        // a pool's transaction inside an Exposed one takes a connection of its own: a transaction apart, as its user
+        assertEquals(listOf("2", "3"), transaction(Principal.user(3), db) {
+            val apart = runBlocking { app.transaction(Principal.user(2)) { calls.list(AuthzNames.ProjectPermission.EDIT) } }
+            apart + signedIn().orEmpty()
+        })
     }
 
     @Test

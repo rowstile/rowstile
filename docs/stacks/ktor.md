@@ -91,7 +91,9 @@ this page doesn't show its `Auth.kt`.
 ## Routes
 
 A transaction signs in first: Exposed's `suspendTransaction` (what `newSuspendedTransaction` became) and
-`transaction`, with `who` before the database, from `dev.rowstile.kotlin.exposed`. A list is plain Exposed:
+`transaction`, with `who` before the database, from `dev.rowstile.kotlin.exposed`. A sign-in lasts the database
+transaction, so one inside another (which Exposed runs in the outer one) signs in nothing: as the same principal it
+runs as it is, and as anyone else it is refused before it runs. A list is plain Exposed:
 
 ```kotlin
 get("/notes") {

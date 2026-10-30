@@ -61,6 +61,9 @@ public fun actingFor(): Principal = CURRENT.get()?.principal ?: Principal.NOBODY
  * the block holds the one connection the transaction is on, wherever it resumes; inside, [actingFor] is [who]. A
  * database error is thrown as [DatabaseError].
  *
+ * It always takes a connection of its own: called inside another transaction (this one's, or Exposed's), it is a
+ * separate database transaction, signed in as [who], which sees what the other has committed and nothing it hasn't.
+ *
  * ```
  * val ids = pool.transaction(Principal.user(42)) { prepareStatement("SELECT id FROM app.notes").use { ... } }
  * ```
