@@ -63,6 +63,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- `rowstile init` no longer tells a Prisma 7 app to sign in inside Prisma's generated client
+  (`src/generated/prisma/client.ts`), which the next `prisma generate` replaces: it skips generated files.
+- The Next.js page: its `prisma.config.ts` loads `.env` (`import "dotenv/config"`; Prisma 7 doesn't), and its
+  page reads inside `<Suspense>`, which `next build` needs with Cache Components, on in a new `create-next-app`.
+  The conformance app now runs with Cache Components.
 - The change feed announces what reads a changed object through a relation, and what reads those in turn, with
   the cause `dependent`. It announced only the object itself, so a reader missed objects whose access had
   changed: the files in a moved folder (whose view reads the folder's); the folders and files a team is given,
