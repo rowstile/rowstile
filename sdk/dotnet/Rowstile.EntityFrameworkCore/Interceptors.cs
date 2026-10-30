@@ -1,3 +1,4 @@
+using System;
 using System.Data.Common;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -10,8 +11,9 @@ using Npgsql;
 namespace Rowstile.EntityFrameworkCore;
 
 /// <summary>
-/// Every transaction the context begins signs in first. Before SaveChanges rolls back to its savepoint because a
-/// write matched no row, the database is asked why (<see cref="Asking"/>).
+/// Every transaction the context begins signs in first, and is that principal's (<see cref="SignedIn"/>). Before
+/// SaveChanges rolls back to its savepoint because a write matched no row, the database is asked why
+/// (<see cref="Asking"/>).
 /// </summary>
 internal sealed class TransactionSignIn(SignIn signIn, SaveChangesInTransaction saves) : DbTransactionInterceptor
 {
@@ -48,8 +50,10 @@ internal sealed class TransactionSignIn(SignIn signIn, SaveChangesInTransaction 
         DbTransaction result
     )
     {
-        using var cmd = Command(connection, result);
+        var who = signIn.Who();
+        using var cmd = Command(connection, result, who);
         cmd.ExecuteNonQuery();
+        SignedIn.Record(result, who, signIn);
         return result;
     }
 
@@ -60,16 +64,69 @@ internal sealed class TransactionSignIn(SignIn signIn, SaveChangesInTransaction 
         CancellationToken cancellationToken = default
     )
     {
-        await using var cmd = Command(connection, result);
+        var who = signIn.Who();
+        await using var cmd = Command(connection, result, who);
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        SignedIn.Record(result, who, signIn);
         return result;
     }
 
-    private NpgsqlCommand Command(DbConnection connection, DbTransaction transaction)
+    // a transaction the app brought is its own to sign in; Npgsql reuses a connection's transaction object, so what a
+    // context's transaction on it signed in as is forgotten
+    public override DbTransaction TransactionUsed(DbConnection connection, TransactionEventData eventData, DbTransaction result)
+    {
+        SignedIn.Forget(result);
+        return result;
+    }
+
+    public override ValueTask<DbTransaction> TransactionUsedAsync(
+        DbConnection connection,
+        TransactionEventData eventData,
+        DbTransaction result,
+        CancellationToken cancellationToken = default
+    ) => ValueTask.FromResult(TransactionUsed(connection, eventData, result));
+
+    private static NpgsqlCommand Command(DbConnection connection, DbTransaction transaction, Principal who)
     {
         var cmd = new NpgsqlCommand(RowstileNpgsql.ActAs, (NpgsqlConnection)connection, (NpgsqlTransaction)transaction);
-        cmd.Parameters.AddRange(RowstileNpgsql.ActAsParameters(signIn.Who()));
+        cmd.Parameters.AddRange(RowstileNpgsql.ActAsParameters(who));
         return cmd;
+    }
+}
+
+/// <summary>
+/// Whom each transaction a context began signed in as. A sign-in lasts the database transaction, so a transaction is
+/// one principal's: inside it, a command, a SaveChanges or a call of the runtime's while the code acts for someone
+/// else (or for no one) is refused before anything is sent for it, and the transaction is left as it was. A
+/// transaction the app brought (<c>UseTransaction</c>) is the app's to sign in: it isn't checked.
+/// </summary>
+internal static class SignedIn
+{
+    private static readonly ConditionalWeakTable<DbTransaction, Signed> Transactions = [];
+
+    private sealed record Signed(Principal Who, SignIn By);
+
+    public static void Record(DbTransaction transaction, Principal who, SignIn by) =>
+        Transactions.AddOrUpdate(transaction, new Signed(who, by));
+
+    public static void Forget(DbTransaction transaction) => Transactions.Remove(transaction);
+
+    /// <summary>Throws if <paramref name="transaction"/> is signed in as someone else than whoever the code acts for now.</summary>
+    public static void Check(DbTransaction transaction)
+    {
+        if (!Transactions.TryGetValue(transaction, out var signed))
+        {
+            return;
+        }
+        var who = signed.By.Who();
+        if (who != signed.Who)
+        {
+            string whose = who.Id is null ? "the work of code that acts for no one can't" : $"{who}'s work can't";
+            throw new InvalidOperationException(
+                $"this transaction is signed in as {signed.Who} already, and a sign-in lasts the database transaction: "
+                    + $"{whose} run inside it. Run it after, or in a transaction of its own (another connection)"
+            );
+        }
     }
 }
 
@@ -189,7 +246,8 @@ internal sealed class CommandSignIn(SignIn signIn) : DbCommandInterceptor
     {
         if (command.Transaction is not null)
         {
-            return false; // the transaction signed in when it began
+            SignedIn.Check(command.Transaction); // the transaction signed in when it began, as whoever it is for
+            return false;
         }
         command.CommandText = Prefix + command.CommandText;
         command.Parameters.AddRange(RowstileNpgsql.ActAsParameters(signIn.Who()));
@@ -255,7 +313,11 @@ internal sealed class SaveChangesInTransaction : SaveChangesInterceptor
     {
         var db = eventData.Context!;
         var s = Of(db);
-        if (db.Database.CurrentTransaction is null)
+        if (db.Database.CurrentTransaction is { } open)
+        {
+            SignedIn.Check(open.GetDbTransaction()); // before the savepoint EF Core makes in it
+        }
+        else
         {
             s.Ours = db.Database.BeginTransaction();
         }
@@ -270,7 +332,11 @@ internal sealed class SaveChangesInTransaction : SaveChangesInterceptor
     {
         var db = eventData.Context!;
         var s = Of(db);
-        if (db.Database.CurrentTransaction is null)
+        if (db.Database.CurrentTransaction is { } open)
+        {
+            SignedIn.Check(open.GetDbTransaction());
+        }
+        else
         {
             s.Ours = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         }

@@ -127,6 +127,22 @@ public static class Data
         return await cmd.ExecuteScalarAsync();
     }
 
+    /// <summary>The notes' bodies, as the owner reads them, in the order of <paramref name="ids"/>.</summary>
+    public static async Task<List<string>> Bodies(string connectionString, long[] ids)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand("SELECT body FROM app.notes n JOIN unnest(@ids) WITH ORDINALITY w(id, i) ON w.id = n.id ORDER BY w.i", conn);
+        cmd.Parameters.AddWithValue("ids", ids);
+        var bodies = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            bodies.Add(reader.GetString(0));
+        }
+        return bodies;
+    }
+
     private static async Task Sql(NpgsqlConnection conn, string sql)
     {
         await using var cmd = new NpgsqlCommand(sql, conn);

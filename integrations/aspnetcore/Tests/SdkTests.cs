@@ -398,6 +398,68 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task A_transaction_is_one_principals()
+    {
+        const string Service1 =
+            "this transaction is signed in as 1 already, and a sign-in lasts the database transaction: service:1's work "
+            + "can't run inside it. Run it after, or in a transaction of its own (another connection)";
+        await using var ctx = Context();
+        using (Acting.As(Principal.User(1)))
+        {
+            await using var tx = await ctx.Database.BeginTransactionAsync();
+            var note = await ctx.Notes.SingleAsync(n => n.Id == 1);
+            note.Body = "ann's";
+            // the same user's work goes on in it, as it is
+            using (Acting.As(Principal.User(1)))
+            {
+                Assert.Equal([1L, 3L, 4L], Notes(ctx));
+            }
+            // anyone else's is refused before anything is sent for it: a query, a write, SaveChanges, the runtime's calls
+            using (Acting.As(new Principal("service", "1")))
+            {
+                Assert.Equal(Service1, Assert.Throws<InvalidOperationException>(() => Notes(ctx)).Message);
+                Assert.Equal(Service1, (await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Notes.CountAsync())).Message);
+                await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Notes.Where(n => n.Id == 3).ExecuteUpdateAsync(s => s.SetProperty(n => n.Body, "the job's")));
+                Assert.Equal(Service1, Assert.Throws<InvalidOperationException>(() => ctx.SaveChanges()).Message);
+                Assert.Equal(Service1, (await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.SaveChangesAsync())).Message);
+                await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Database.CanAsync(Policy.Note.Edit, 1));
+            }
+            using (Acting.As(Principal.User(2)))
+            {
+                Assert.Contains(": 2's work can't run inside it", Assert.Throws<InvalidOperationException>(() => Notes(ctx)).Message, StringComparison.Ordinal);
+            }
+            using (Acting.As(Principal.Nobody))
+            {
+                var nobody = Assert.Throws<InvalidOperationException>(() => ctx.Notes.Count());
+                Assert.Contains(": the work of code that acts for no one can't run inside it. Run it after", nobody.Message, StringComparison.Ordinal);
+            }
+            // the transaction goes on as ann's: it reads and writes as hers, and commits
+            Assert.Equal("1", await ctx.Database.SqlQuery<string>($"SELECT current_setting('authz.user_id', true) AS \"Value\"").SingleAsync());
+            Assert.Equal(1, await ctx.SaveChangesAsync());
+            await tx.CommitAsync();
+        }
+        Assert.Equal(["ann's", "hello"], await Data.Bodies(db.Owner, [1, 3])); // nothing of the job's was sent
+        // a transaction of its own, after it, is the other's
+        using (Acting.As(new Principal("service", "1")))
+        {
+            Assert.Equal(2, await ctx.Projects.CountAsync());
+        }
+        // a transaction the app brought (UseTransaction) is the app's to sign in: the SDK doesn't check it
+        await using var conn = new NpgsqlConnection(db.App);
+        await conn.OpenAsync();
+        await using var bos = await conn.BeginSignedInAsync(Principal.User(2));
+        await using var brought = new AppDb(new DbContextOptionsBuilder<AppDb>().UseNpgsql(conn).UseRowstile().Options);
+        await brought.Database.UseTransactionAsync(bos);
+        await using var again = new AppDb(new DbContextOptionsBuilder<AppDb>().UseNpgsql(conn).UseRowstile().Options);
+        again.Database.UseTransaction(bos);
+        using (Acting.As(Principal.User(1)))
+        {
+            Assert.Equal([2L, 3L], Notes(brought));
+            Assert.Equal([2L, 3L], Notes(again));
+        }
+    }
+
     // --- ASP.NET Core ------------------------------------------------------------------------------------------------
     private static async Task<WebApplication> Host(Action<WebApplicationBuilder> services, Action<WebApplication> routes)
     {

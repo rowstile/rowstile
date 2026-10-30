@@ -11,7 +11,9 @@ namespace Rowstile.EntityFrameworkCore;
 /// Every transaction the context begins (its own, for SaveChanges, and the app's, <c>BeginTransactionAsync</c>)
 /// signs in with <c>authz.act_as()</c> as whoever the code acts for (<see cref="Acting"/>: the web integration, a
 /// job), else as <c>user()</c> if given, else as nobody; so does every command outside a transaction (a query, an
-/// <c>ExecuteUpdate</c>), in the transaction of its own Postgres runs it in. SaveChanges runs in a transaction: when
+/// <c>ExecuteUpdate</c>), in the transaction of its own Postgres runs it in. A transaction is one principal's: inside
+/// one the context began, a command, a SaveChanges or a call of the runtime's while the code acts for someone else
+/// throws an <see cref="InvalidOperationException"/> before anything is sent. SaveChanges runs in a transaction: when
 /// an update or a delete it sends matches no row (EF's <c>DbUpdateConcurrencyException</c>), the SDK asks the database
 /// why, in that transaction and as the same user, before it is rolled back, and records the answer on the error
 /// (<see cref="Stale.Why"/>): the row is hidden (404), the user may not change it (403, with the reason), or the

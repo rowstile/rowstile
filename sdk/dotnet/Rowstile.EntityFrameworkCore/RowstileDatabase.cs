@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 
 namespace Rowstile.EntityFrameworkCore;
@@ -93,8 +94,9 @@ public static class RowstileDatabase
     {
         ArgumentNullException.ThrowIfNull(database);
         var conn = (NpgsqlConnection)database.GetDbConnection();
-        if (database.CurrentTransaction is not null)
+        if (database.CurrentTransaction is { } open)
         {
+            SignedIn.Check(open.GetDbTransaction());
             return await run(conn).ConfigureAwait(false);
         }
         // signed in as it begins (UseRowstile's interceptor)
