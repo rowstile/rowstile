@@ -167,6 +167,15 @@ public Seen run() {
 
 `Rowstile.job(who, work)` is the same for an executor's task or a `@Scheduled` method's body.
 
+A sign-in lasts the database transaction, so a transaction is one principal's. Work that joins the transaction
+open now (a `@Transactional` method, a `TransactionTemplate`, a repository's call, a `NESTED` savepoint) runs as it
+is while the code acts for the principal it signed in as. For anyone else, or for no one, it is refused before
+anything is sent for it, with an `IllegalStateException`, and the transaction goes on as it was (Spring Data's
+repositories hand it on as `InvalidDataAccessApiUsageException`, the refusal its cause). Run a job after the
+request's transaction, or in a transaction of its own: `REQUIRES_NEW` takes another connection and signs in as the
+job. To see work join a transaction, the starter puts each transaction manager behind a stand-in: inject it as a
+`PlatformTransactionManager`, not by its class.
+
 ## Migrations
 
 The policy ships as Flyway migrations. `rowstile migrate` writes the next one (only what changed since

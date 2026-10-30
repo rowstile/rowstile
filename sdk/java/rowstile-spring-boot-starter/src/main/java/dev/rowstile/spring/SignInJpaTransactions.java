@@ -7,7 +7,8 @@ import org.springframework.orm.jpa.JpaTransactionManager;
 
 /**
  * Adds the sign-in to every {@link JpaTransactionManager} of the app, Spring Boot's or its own, and asks why when a
- * flush before the commit changed nothing. JDBC code inside those transactions ({@code JdbcClient}) runs on their
+ * flush before the commit changed nothing; work for someone else can't join a transaction it began (the bean is the
+ * manager behind a stand-in: inject it as a {@code PlatformTransactionManager}). JDBC code inside those transactions ({@code JdbcClient}) runs on their
  * connection, signed in too.
  */
 class SignInJpaTransactions implements BeanPostProcessor {
@@ -22,7 +23,9 @@ class SignInJpaTransactions implements BeanPostProcessor {
     @Override
     public Object postProcessAfterInitialization(Object bean, String beanName) {
         if (bean instanceof JpaTransactionManager manager) {
-            manager.addListener(new JpaSignIn(manager, transactions::source, authz::getObject));
+            JpaSignIn signIn = new JpaSignIn(manager, transactions::source, authz::getObject);
+            manager.addListener(signIn);
+            return signIn.guard(manager);
         }
         return bean;
     }

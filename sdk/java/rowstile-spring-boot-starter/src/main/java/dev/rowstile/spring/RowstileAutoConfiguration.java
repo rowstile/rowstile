@@ -20,9 +20,9 @@ import org.springframework.web.servlet.DispatcherServlet;
 
 /**
  * rowstile for Spring Boot: every transaction Spring begins (JDBC's and JPA's transaction managers, {@code
- * @Transactional}, {@code TransactionTemplate}) signs in first, as the request's user; refusals answer as problem
- * details; and the app doesn't start on a connection that skips row-level security ({@code rowstile.check-connection},
- * on unless set to false).
+ * @Transactional}, {@code TransactionTemplate}) signs in first, as the request's user, and work for someone else
+ * can't join it (an {@link IllegalStateException}); refusals answer as problem details; and the app doesn't start on a
+ * connection that skips row-level security ({@code rowstile.check-connection}, on unless set to false).
  */
 @AutoConfiguration(
         afterName = {
