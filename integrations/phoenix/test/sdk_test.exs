@@ -30,15 +30,40 @@ defmodule Conformance.SdkTest do
              {:ok, ["3"]}
   end
 
-  test "a transaction inside another signs in as its own principal, then as before" do
+  test "inside a transaction signed in already: the same principal's work runs, anyone else's is refused" do
+    # a sign-in lasts the database transaction (Ecto runs the inner transaction in the outer one)
     seen =
       as(1, fn ->
-        first = ids()
-        {:ok, inside} = as(2, &ids/0)
-        {first, inside, ids()}
+        {:ok, inside} = as(1, &ids/0)
+        ran = self()
+
+        refused =
+          assert_raise RuntimeError, fn ->
+            as(2, fn ->
+              send(ran, :ran)
+              Repo.query!("UPDATE app.notes SET body = 'bo' WHERE id = 2")
+            end)
+          end
+
+        refute_received :ran
+        # the outer transaction, as it was: still ann's, who writes as herself
+        %{num_rows: 1} = Repo.query!("UPDATE app.notes SET body = 'ann' WHERE id = 1")
+        {inside, refused.message, ids()}
       end)
 
-    assert seen == {:ok, {expected()["1"], expected()["2"], expected()["1"]}}
+    assert {:ok, {inside, refused, after_it}} = seen
+    assert {inside, after_it} == {expected()["1"], expected()["1"]}
+    assert refused =~ "signed in as 1 already"
+    assert refused =~ "2's work can't run inside it"
+
+    # committed as ann's, and bo's note left as it was
+    bodies =
+      Rows.owner(
+        &Postgrex.query!(&1, "SELECT body FROM app.notes WHERE id IN (1, 2) ORDER BY id", []).rows
+      )
+
+    assert bodies == [["ann"], ["mine"]]
+
     # the function given the transaction's repo; acting for whoever the process acts for
     Rowstile.put_principal(Rowstile.user(3))
 
@@ -82,22 +107,35 @@ defmodule Conformance.SdkTest do
         )
 
       assert seen == {:ok, [[2], [3]]}
-      # inside it, another as someone else, then as before
+
+      # inside it, the same principal's work runs as it is, anyone else's is refused before it runs
       nested =
         Rowstile.transact(
           conn,
           fn tx ->
             {:ok, inside} =
               Rowstile.transact(tx, fn tx -> {:ok, Rowstile.can?(tx, Authz.Note.edit(), 2)} end,
-                as: Rowstile.user(1)
+                as: Rowstile.user(2)
               )
+
+            assert_raise RuntimeError, ~r/signed in as 2 already/, fn ->
+              Rowstile.transact(tx, fn _ -> flunk("ran") end, as: Rowstile.user(1))
+            end
 
             {:ok, {inside, Rowstile.can?(tx, Authz.Note.edit(), 2)}}
           end,
           as: Rowstile.user(2)
         )
 
-      assert nested == {:ok, {false, true}}
+      assert nested == {:ok, {true, true}}
+      # a Postgrex transaction on another connection is one of its own: signed in as usual
+      can_edit = fn tx -> {:ok, Rowstile.can?(tx, Authz.Note.edit(), 2)} end
+
+      Rows.app(fn other ->
+        anns = fn _ -> Rowstile.transact(other, can_edit, as: Rowstile.user(1)) end
+        assert Rowstile.transact(conn, anns, as: Rowstile.user(2)) == {:ok, false}
+      end)
+
       insert = "INSERT INTO app.notes (project_id, author_id, body) VALUES (3, 2, 'hi')"
 
       refused =

@@ -104,14 +104,25 @@ defmodule Rowstile do
   not-signed-in error as `Rowstile.NotSignedIn`).
 
   `fun` takes no argument, or the transaction's `db`: the repo, or Postgrex's connection, on which to run the
-  statements. Inside a transaction already, it signs in as `who` for `fun` alone, then as before. Other options
-  go to the repo's (or Postgrex's) `transaction`.
+  statements. Other options go to the repo's (or Postgrex's) `transaction`.
+
+  A sign-in lasts the whole database transaction. So inside a transaction `transact` signed in already (Ecto runs
+  a `Repo.transaction` inside another in the outer one; so does Postgrex, on the connection it gives), `fun` runs
+  as it is when `who` is the principal it is signed in as, and is refused when it is someone else: a
+  `RuntimeError`, raised before `fun` runs or anything is sent, the outer transaction left as it was. A
+  transaction of its own (another process, or a Postgrex transaction on another connection) signs in as usual.
   """
   @spec transact(db(), (-> {:ok, v} | {:error, e}) | (db() -> {:ok, v} | {:error, e}), keyword()) ::
           {:ok, v} | {:error, e | error()}
         when v: term(), e: term()
   def transact(db, fun, opts \\ []) when is_function(fun, 0) or is_function(fun, 1) do
     {who, opts} = Keyword.pop_lazy(opts, :as, fn -> current() || nobody() end)
+    signed = Process.get({:rowstile_signed, db})
+
+    if signed && signed != who do
+      raise "this transaction is signed in as #{signed} already, and a sign-in lasts the database transaction: " <>
+              "#{who}'s work can't run inside it. Run it after, or in a transaction of its own (another connection)"
+    end
 
     try do
       if repo?(db),
@@ -122,24 +133,19 @@ defmodule Rowstile do
     end
   end
 
-  # the transaction's body: signed in, fun's result, and back to who signed in before, inside another
+  # the transaction's body: signed in (unless the transaction around it is), and fun's result
   defp run(tx, who, fun) do
-    # who the transaction around this one signed in as, if transact began one
-    before = Process.get({:rowstile_signed, tx})
-    sign_in(tx, who)
+    # inside a transaction transact signed in as who already (transact refused anyone else): as it is
+    outer = Process.get({:rowstile_signed, tx})
+    _ = if !outer, do: sign_in(tx, who)
     Process.put({:rowstile_signed, tx}, who)
 
     result =
       try do
         acting_as(who, fn -> attempt(tx, fun) end)
       after
-        if before,
-          do: Process.put({:rowstile_signed, tx}, before),
-          else: Process.delete({:rowstile_signed, tx})
+        if !outer, do: Process.delete({:rowstile_signed, tx})
       end
-
-    # a transaction inside another: signed in again as the one around it was
-    _ = if before, do: sign_in(tx, before)
 
     case result do
       {:ok, value} -> value
