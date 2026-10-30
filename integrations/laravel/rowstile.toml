@@ -1,0 +1,8 @@
+policy   = "database/policy.authz"
+tests    = ["database/tests/*.authz"]
+database = "env:ROWSTILE_OWNER_URL"
+[clients]
+php = "database/authz.php"
+[migrations]
+tool = "laravel"
+dir  = "database/migrations"
