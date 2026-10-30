@@ -180,6 +180,13 @@ the policy):
 Anywhere else, `using (Acting.As(Principal.User(2)))` signs in the transactions inside it. An id is always a
 user's, whatever it holds: `Principal.User("service:1")` is the user with that id.
 
+A sign-in lasts the database transaction, so a transaction is one principal's. Inside one a context began, a
+query, a write, `SaveChanges` or a call such as `CanAsync` runs as it is while the code acts for the principal it
+signed in as. For anyone else, or for nobody, it throws an `InvalidOperationException` before anything is sent for
+it, and the transaction goes on as it was. Run a job after the request's transaction, or in a transaction of its
+own (a context of its own, on another connection). A transaction the app brings to a context (`UseTransaction`) is
+the app's to sign in, and the SDK doesn't check it.
+
 ## Migrations
 
 The policy ships as EF Core migrations. `rowstile migrate` writes the next one (only what changed since
