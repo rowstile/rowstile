@@ -1013,15 +1013,20 @@ def graph(policy: str, files: Mapping[str, object] | str | None = None) -> str:
 
 
 def client(
-    lang: str, policy: str, files: Mapping[str, object] | str | None = None, java_class: str = "AuthzNames"
+    lang: str,
+    policy: str,
+    files: Mapping[str, object] | str | None = None,
+    java_class: str = "AuthzNames",
+    elixir_module: str = "Authz",
 ) -> str:
     """The client in a language the command takes, py, ts, go, csharp (the names, for the .NET SDK), ruby, rbs,
-    java (the names alone, as the class `java_class`: com.example.AuthzNames) or rust (the names, for the Rust SDK);
-    or ts-sdk, the names alone (rowstile.toml's ts, for an app on the TypeScript SDK)."""
+    java (the names alone, as the class `java_class`: com.example.AuthzNames), rust (the names, for the Rust SDK)
+    or elixir (the names, as the module `elixir_module`: MyApp.Authz); or ts-sdk, the names alone (rowstile.toml's
+    ts, for an app on the TypeScript SDK)."""
 
     def make(c: Compiler) -> str:
         c.compile("the policy", transaction=False)
-        return c.client(lang, "the policy", java_class)
+        return c.client(lang, "the policy", java_class, elixir_module)
 
     return compiled(policy, files, make)
 

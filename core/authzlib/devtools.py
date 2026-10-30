@@ -1,5 +1,5 @@
 """Developer tools: a diagram of the policy (Mermaid) and typed client helpers (TypeScript, Python, Go,
-C#, Ruby, Java, Rust)."""
+C#, Ruby, Java, Rust, Elixir)."""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ Shared: TypeAlias = "dict[str, dict[str, list[str]]]"
 
 # the Java names' class when nothing names one: its file's name, in no package
 JAVA_CLASS = "AuthzNames"
+# the Elixir names' module when nothing names one
+ELIXIR_MODULE = "Authz"
 
 
 def _java_constant(name: str) -> str:
@@ -300,11 +302,16 @@ class DevMixin(Core):
         scopes = list(self.pol.scopes)
         return perms, shared, scopes
 
-    def client(self, lang: str, source_name: str, java_class: str = JAVA_CLASS) -> str:
-        """The client in `lang`; for java, the class `java_class` (its package, then its name: a.b.AuthzNames)."""
+    def client(
+        self, lang: str, source_name: str, java_class: str = JAVA_CLASS, elixir_module: str = ELIXIR_MODULE
+    ) -> str:
+        """The client in `lang`; for java, the class `java_class` (its package, then its name: a.b.AuthzNames); for
+        elixir, the module `elixir_module` (MyApp.Authz)."""
         perms, shared, scopes = self._client_model()
         if lang == "java":
             return _client_java(perms, java_class, source_name)
+        if lang == "elixir":
+            return _client_elixir(perms, shared, scopes, elixir_module, source_name)
         if lang == "ts":
             return self._client_ts(perms, shared, scopes, source_name)
         if lang == "ts-sdk":  # rowstile.toml's ts, for an app on the TypeScript SDK
@@ -1046,4 +1053,130 @@ def _client_ruby(perms: Perms, shared: Shared, scopes: list[str], source_name: s
         "  def self.queries = Rowstile::Queries.new",
         "end",
     ]
+    return "\n".join(lines) + "\n"
+
+
+# Elixir's reserved words, and the functions every module has or each type's module defines: no permission's name
+ELIXIR_TAKEN = {"true", "false", "nil", "when", "and", "or", "not", "in", "fn", "do", "end", "catch", "rescue"}
+ELIXIR_TAKEN |= {"after", "else", "type", "module_info"}
+
+
+def _elixir_names(perms: Perms) -> tuple[dict[str, tuple[str, dict[str, str]]], list[str]]:
+    """({type: (its module, {permission: its function})}, what has no name, said in a comment): Project and edit
+    for project's edit (org_unit and orgUnit are OrgUnit, manage_keys and manageKeys manage_keys). A type whose
+    module would be another's, or isn't an Elixir alias, gets none; nor does a permission whose function would be
+    another's of its type, or isn't a function's name (a reserved word, type: the type's own)."""
+    module: Callable[[str], str] = lambda t: "".join(p[:1].upper() + p[1:] for p in t.split("_"))
+    function: Callable[[str], str] = lambda p: re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", p).lower()
+    modules: dict[str, list[str]] = {}
+    for t in perms:
+        modules.setdefault(module(t), []).append(t)
+    out: dict[str, tuple[str, dict[str, str]]] = {}
+    unnamed: list[str] = []
+    for t, ps in perms.items():
+        m = module(t)
+        if len(modules[m]) > 1 or not re.fullmatch(r"[A-Z][A-Za-z0-9_]*", m):
+            unnamed.append(t)
+            continue
+        functions: dict[str, list[str]] = {}
+        for p in ps:
+            functions.setdefault(function(p), []).append(p)
+        named = {
+            p: f
+            for f, same in functions.items()
+            for p in same
+            if len(same) == 1 and re.fullmatch(r"[a-z][a-z0-9_]*", f) and f not in ELIXIR_TAKEN
+        }
+        unnamed += [f"{t}.{p}" for p in ps if p not in named]
+        out[t] = (m, named)
+    return out, unnamed
+
+
+def _client_elixir(perms: Perms, shared: Shared, scopes: list[str], module: str, source_name: str) -> str:
+    """For apps on the Elixir SDK (rowstile on Hex): the policy's names as functions, a module for each type, so
+    that a misspelled type or permission is an undefined function, and a plain string the compiler's type error,
+    in the SDK's own calls (Rowstile.can?/3 takes a Rowstile.Permission). Laid out as mix format lays it out."""
+    q: Callable[[str], str] = json.dumps
+    names, unnamed = _elixir_names(perms)
+
+    def listed(xs: list[str], indent: str, before: int = 0) -> list[str]:
+        """A list on one line when it fits well within mix format's 98 columns (`before` of them are taken), else one
+        item a line (mix format keeps a list written so)."""
+        one = "[" + ", ".join(q(x) for x in xs) + "]"
+        if before + len(one) <= 90:
+            return [one]
+        return ["[", *[f"{indent}  {q(x)}," for x in xs[:-1]], f"{indent}  {q(xs[-1])}", f"{indent}]"]
+
+    def entries(pairs: list[tuple[str, list[str]]], indent: str) -> list[str]:
+        """The entries of a map whose values are lists, one entry a line, each list as listed() writes it."""
+        lines: list[str] = []
+        for i, (key, xs) in enumerate(pairs):
+            first, *rest = listed(xs, indent, len(f"{indent}{q(key)} => ,"))
+            comma = "," if i < len(pairs) - 1 else ""
+            item = [f"{indent}{q(key)} => {first}", *rest]
+            item[-1] += comma
+            lines += item
+        return lines
+
+    def mapping(lines: list[str], indent: str) -> list[str]:
+        return ["%{}"] if not lines else ["%{", *lines, f"{indent}}}"]
+
+    def shared_entries() -> list[str]:
+        lines: list[str] = []
+        for i, (t, rels) in enumerate(shared.items()):
+            inner = mapping(entries(list(rels.items()), "        "), "      ")
+            item = [f"      {q(t)} => {inner[0]}", *inner[1:]]
+            item[-1] += "," if i < len(shared) - 1 else ""
+            lines += item
+        return lines
+
+    def body(spec: str, name: str, value: list[str]) -> list[str]:
+        """A function of no argument returning the value: on one line when the value is, else a do block."""
+        if len(value) == 1:
+            return [f"  @spec {name}() :: {spec}", f"  def {name}, do: {value[0]}"]
+        return [f"  @spec {name}() :: {spec}", f"  def {name} do", *[f"    {x}" for x in value], "  end"]
+
+    perm_lines = mapping(entries(list(perms.items()), "      "), "    ")
+    scope_lines = listed(scopes, "    ", len("  def scopes, do: "))
+    lines = [
+        f"# Generated by rowstile client from {source_name}. Do not edit; re-run after changing the policy.",
+        f"defmodule {module} do",
+        '  @moduledoc """',
+        "  The policy's names, for the Elixir SDK (rowstile): a module for each type, a function for each permission,",
+        "  so that a misspelled one doesn't compile, and the SDK's calls take only these:",
+        f"  `Rowstile.can?(repo, {module}.Note.edit(), id)`.",
+        '  """',
+        "",
+        '  @doc "Each type\'s permissions."',
+        *body("%{String.t() => [String.t()]}", "permissions", [x.removeprefix("    ") for x in perm_lines]),
+        "",
+        '  @doc "The relations people may share with authz.share(), and with whom (a subject type, or type#relation)."',
+        *body(
+            "%{String.t() => %{String.t() => [String.t()]}}",
+            "shared_relations",
+            [x.removeprefix("    ") for x in mapping(shared_entries(), "    ")],
+        ),
+        "",
+        '  @doc "The scopes an API key or a session may be limited to."',
+        *body("[String.t()]", "scopes", [x.removeprefix("    ") for x in scope_lines]),
+    ]
+    if unnamed:
+        lines += ["", f"  # no name in Elixir: {', '.join(unnamed)} (%Rowstile.Permission{{type: type, name: name}})"]
+    for t, (m, functions) in names.items():
+        lines += [
+            "",
+            f"  defmodule {m} do",
+            f'    @moduledoc "The type {t}, and its permissions."',
+            "",
+            "    @spec type() :: Rowstile.ObjectType.t()",
+            f"    def type, do: %Rowstile.ObjectType{{name: {q(t)}}}",
+        ]
+        for p, f in functions.items():
+            lines += [
+                "",
+                "    @spec " + f + "() :: Rowstile.Permission.t()",
+                f"    def {f}, do: %Rowstile.Permission{{type: {q(t)}, name: {q(p)}}}",
+            ]
+        lines.append("  end")
+    lines.append("end")
     return "\n".join(lines) + "\n"

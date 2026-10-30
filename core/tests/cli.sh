@@ -96,7 +96,8 @@ run client ts; case "$out" in *"export const permissions"*) ok "client ts";; *) 
 run client go; case "$out" in *"package authz"*'const FolderBreakGlass FolderPermission = "break_glass"'*) ok "client go: the policy's names in Go";; *) bad "client go" "${out:0:200}";; esac
 run client java; case "$out" in *"public final class AuthzNames"*"enum FilePermission implements Permission"*) ok "client java: the policy's names";; *) bad "client java" "${out:0:200}";; esac
 run client rust; case "$out" in *"pub enum FilePermission {"*"impl rowstile::Permission for FilePermission {"*) ok "client rust: the policy's names";; *) bad "client rust" "${out:0:200}";; esac
-run client rb; [ "$rc $out" = "2 rowstile client: which language, py, ts, go, csharp, ruby, rbs, java or rust?" ] && ok "client with an unknown language: exit 2" || bad "client rb" "$rc $out"
+run client elixir; case "$out" in *"defmodule Authz do"*"  defmodule File do"*"def view, do: %Rowstile.Permission{"*) ok "client elixir: the policy's names";; *) bad "client elixir" "${out:0:200}";; esac
+run client rb; [ "$rc $out" = "2 rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust or elixir?" ] && ok "client with an unknown language: exit 2" || bad "client rb" "$rc $out"
 
 echo "-- reapply and remove"
 run reapply; [ $rc -eq 0 ] && ok "reapply" || bad "reapply" "$out"
@@ -197,7 +198,7 @@ run studio --port 70000; [ $rc -eq 2 ] && [ "$out" = "--port needs a port, a who
   ok "a port above 65535 is refused" || bad "studio --port 70000" "$rc ${out: -200}"
 run dev --once --studio-port 99999 "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "--studio-port needs a port, a whole number from 1 to 65535, not '99999'" ] &&
   ok "... and one for Studio beside dev" || bad "dev --studio-port 99999" "$rc ${out: -200}"
-run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java or rust?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
+run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust or elixir?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
 run client py; fromdb=$out
 run client py "$T/main.authz"; [ $rc -eq 0 ] && [ -n "$out" ] && [ "$out" = "$fromdb" ] && ok "client py from the file alone is the one the applied policy gives" || bad "client py from a file" "$rc ${out:0:120}"
 which='which policy file? (or name it in rowstile.toml: policy = "db/policy.authz")'
@@ -406,10 +407,10 @@ envrun sql --as user:1 "SELECT 1"
 echo "-- the clients rowstile.toml names"
 # (from its policy file: without --db, which would name the database's policy)
 OWN() { ( cd "$P" && python3 "$OLDPWD/cli/rowstile_cli.py" "$@" ); }
-printf 'policy = "db/policy.authz"\n[clients]\npy = "out/c.py"\njava = "out/java/com/example/Names.java"\nrust = "out/authz.rs"\n' > "$P/rowstile.toml"
+printf 'policy = "db/policy.authz"\n[clients]\npy = "out/c.py"\njava = "out/java/com/example/Names.java"\nrust = "out/authz.rs"\nelixir = "out/lib/my_app/authz.ex"\n' > "$P/rowstile.toml"
 out=$(OWN client 2>&1); rc=$?
 [ $rc -eq 0 ] && [ -s "$P/out/c.py" ] && grep -q "^package com.example;" "$P/out/java/com/example/Names.java" &&
-  grep -q "^impl rowstile::Permission for " "$P/out/authz.rs" &&
+  grep -q "^impl rowstile::Permission for " "$P/out/authz.rs" && grep -q "^defmodule MyApp.Authz do$" "$P/out/lib/my_app/authz.ex" &&
   ok "rowstile client writes them" || bad "client files" "$rc $out"
 printf 'policy = "db/policy.authz"\n[clients]\nruby = "out/authz.rb"\nrbs = "out/authz.rbs"\n' > "$P/rowstile.toml"
 out=$(OWN client 2>&1); rc=$?
