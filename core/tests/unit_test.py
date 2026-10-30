@@ -13692,10 +13692,54 @@ END outer;"""
         for name in (".coverage", "functions.tsv", "plpgsql.jsonl", "plpgsql-memory.txt"):
             self.assertIn(f".ci/coverage-16/{name}", workflow)
         self.assertIn("tests/coverage_report.py --out /src/.ci/statements /src/.ci/parts/statements-pg16-*", workflow)
+        # and each pull request's parts on 16 count them, which the coverage job holds to the floor
+        suites = read("../.github/workflows/suites.yml")
+        self.assertIn("bash core/ci.sh ${{ inputs.pg == '16' && '--statements' || '' }}", suites)
+        for name in ("plpgsql.jsonl", "plpgsql-memory.txt"):
+            self.assertIn(".ci/coverage-${{ inputs.pg }}/" + name, suites)
+        self.assertIn("--floor tests/plpgsql_floor.txt", read("../.github/workflows/ci.yml"))
+        floor = self.p.read_floor()
+        self.assertEqual(sorted(floor), sorted(self.p.FLOORED))
         # the read is rolled back: the extension is never left in a database a suite checks
         wrapper = read("tests/coverage_functions.sh")
         self.assertLess(wrapper.index("CREATE EXTENSION plpgsql_check"), wrapper.index("ROLLBACK;"))
         self.assertNotIn("COMMIT;", wrapper)
+
+    def test_the_floor(self) -> None:
+        # what stays never run, statements then branches, by schema: the same passes; more fails (a change whose
+        # PL/pgSQL no suite runs); fewer fails too, saying what to write; a schema the floor lacks fails
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "floor.txt")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("# a comment\nauthz 10 20  # and another\n\nauthz_gen 3 4\n")
+            floor = self.p.read_floor(path)
+        self.assertEqual(floor, {"authz": (10, 20), "authz_gen": (3, 4)})
+        said, failed = self.p.judge({"authz": (10, 20), "authz_gen": (3, 4)}, floor, "f.txt")
+        self.assertEqual(
+            (said[1:], failed), (["  authz: 10 20, as the floor says", "  authz_gen: 3 4, as the floor says"], False)
+        )
+        said, failed = self.p.judge({"authz": (10, 21), "authz_gen": (3, 4)}, floor, "f.txt")
+        self.assertTrue(failed)
+        self.assertIn("  authz: 10 21, more than the floor's 10 20: a suite must run what the change adds", said[1])
+        said, failed = self.p.judge({"authz": (9, 20), "authz_gen": (3, 4)}, floor, "f.txt")
+        self.assertEqual(
+            (said[1], failed), ("  authz: 9 20, fewer than the floor's 10 20: write `authz 9 20` there", True)
+        )
+        said, failed = self.p.judge({"authz": (10, 20), "authz_gen": (3, 4)}, {"authz": (10, 20)}, "f.txt")
+        self.assertEqual(
+            (said[2], failed), ("  authz_gen: 3 4, and the floor has no line for it: add `authz_gen 3 4`", True)
+        )
+        # counted from the totals: a statement or branch never run, in the floor's schemas alone
+        line = {"schema": "authz", "name": "share", "args": "x integer", "md5": "m", "ratios": self.RATIOS}
+        with tempfile.TemporaryDirectory() as d:
+            self.p.save(
+                d,
+                "step",
+                "authz_a",
+                ["connected", json.dumps({**line, "source": self.SOURCE, "statements": self.PROFILE}), "read"],
+            )
+            m = self.p.measured([d])
+        self.assertEqual(self.p.never_run(self.p.totals(m, self.kind)), {"authz": (3, 3), "authz_gen": (0, 0)})
 
     def test_a_raise_never_run_comes_first(self) -> None:
         profile = [[*r[:5], 0 if r[0] == 5 else r[5], 0] for r in self.PROFILE]

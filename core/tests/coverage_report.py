@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """coverage_report: what the suites run of authzlib and cli, and what nothing runs.
 
-    python3 tests/coverage_report.py [--out DIR] [--diff REF] DIR [DIR ...]
+    python3 tests/coverage_report.py [--out DIR] [--diff REF] [--floor FILE] DIR [DIR ...]
 
 Each DIR is one that run_tests.sh measured into (ROWSTILE_COVERAGE=DIR; core/ci.sh --coverage makes
 .ci/coverage-<version>), whose data/ holds a file per Python process the suites started, or such a data folder
@@ -20,7 +20,8 @@ them into --out (the first DIR if not given): .coverage, coverage.json (coverage
     file; tests/coverage_plpgsql.py): the RAISEs, other statements and branches of rowstile's PL/pgSQL no suite ran.
 
 With --diff REF it also prints the lines changed since REF (git diff REF...HEAD) that nothing runs, and exits 1 if
-there are any.
+there are any. With --floor FILE (tests/plpgsql_floor.txt) it exits 1 unless the PL/pgSQL never run in the schemas
+the floor holds is what FILE says: more is a change whose PL/pgSQL no suite runs, fewer a floor to write anew.
 """
 
 from __future__ import annotations
@@ -502,6 +503,7 @@ def main(argv: Sequence[str]) -> int:
     ap.add_argument("dirs", nargs="+", metavar="DIR", help="where run_tests.sh measured (ROWSTILE_COVERAGE)")
     ap.add_argument("--out", metavar="DIR", help="where the combined data and the report go (the first DIR)")
     ap.add_argument("--diff", metavar="REF", help="also the lines changed since REF that nothing runs (exit 1 if any)")
+    ap.add_argument("--floor", metavar="FILE", help="the PL/pgSQL never run, by schema (exit 1 unless it is FILE's)")
     a = ap.parse_args(argv)
     out = a.out or a.dirs[0]
     data, json_report = combine(a.dirs, out)
@@ -530,8 +532,18 @@ def main(argv: Sequence[str]) -> int:
         calls += f"; {coverage_plpgsql.summary(each)}"
         print(*coverage_plpgsql.memory(a.dirs), sep="\n")
     print(f"\n{summary(files)}{calls}; what nothing runs, line by line: {os.path.join(out, 'report.txt')}")
+    floor_failed = False
+    if a.floor:
+        if not statements.runs:
+            print(f"\nThe floor ({a.floor}): nothing was counted statement by statement (core/ci.sh --statements)")
+            floor_failed = True
+        else:
+            said, floor_failed = coverage_plpgsql.judge(
+                coverage_plpgsql.never_run(each), coverage_plpgsql.read_floor(a.floor), a.floor
+            )
+            print("", *said, sep="\n")
     if not a.diff:
-        return 0
+        return 1 if floor_failed else 0
     # (in a container the checkout is someone else's, which git refuses unless told: this only reads)
     diff = subprocess.run(
         ["git", "-c", "safe.directory=*", "diff", "-U0", "--no-color", "--no-ext-diff", f"{a.diff}...HEAD", "--"]
@@ -547,7 +559,7 @@ def main(argv: Sequence[str]) -> int:
     for f in files:
         if f.name in new and (lines := not_run(f, new[f.name])):
             print(f.name, *lines, sep="\n")
-    return 1 if found else 0
+    return 1 if found or floor_failed else 0
 
 
 if __name__ == "__main__":

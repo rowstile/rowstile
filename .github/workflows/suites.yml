@@ -24,17 +24,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {persist-credentials: false}
-      # --coverage, on 16: each Python process also measures what it runs of authzlib and cli (the coverage job reads
-      # it). 17 and 18 run less and added nothing (2026-10-10: the same lines, branches and functions as 16 alone)
-      - run: bash core/ci.sh ${{ inputs.pg == '16' && '--coverage' || '' }} ${{ inputs.mode }} ${{ inputs.pg }}
+      # --statements, on 16: each Python process also measures what it runs of authzlib and cli, and plpgsql_check's
+      # profiler each statement of rowstile's PL/pgSQL (the coverage job reads both). 17 and 18 run less and added
+      # nothing (2026-10-10: the same lines, branches and functions as 16 alone)
+      - run: bash core/ci.sh ${{ inputs.pg == '16' && '--statements' || '' }} ${{ inputs.mode }} ${{ inputs.pg }}
         env: {ROWSTILE_PART: "${{ matrix.part }}"}
       - if: failure() || cancelled()   # cancelled by hand too: what had run, and the hung step
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
           name: logs-pg${{ inputs.pg }}-${{ matrix.part }}
           path: /tmp/rowstile-ci-${{ inputs.pg }}.log
-      # what it measured: the lines, combined in one file (ci.sh's report made it, its name starts with a dot), and
-      # the calls of rowstile's functions
+      # what it measured: the lines, combined in one file (ci.sh's report made it, its name starts with a dot), the
+      # calls of rowstile's functions, and the profiler's counts
       - if: success() && inputs.pg == '16'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
@@ -42,6 +43,8 @@ jobs:
           path: |
             .ci/coverage-${{ inputs.pg }}/.coverage
             .ci/coverage-${{ inputs.pg }}/functions.tsv
+            .ci/coverage-${{ inputs.pg }}/plpgsql.jsonl
+            .ci/coverage-${{ inputs.pg }}/plpgsql-memory.txt
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
