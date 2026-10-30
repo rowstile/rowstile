@@ -88,6 +88,11 @@ pub async fn digest(pool: &PgPool) -> Result<i64, Error> {
 On tokio-postgres, `rowstile::pg::begin(&mut client, &who)` begins the transaction, signed in, on a client (a
 pooled one derefs to it).
 
+A transaction is one principal's, and neither `begin` runs inside another. `rowstile::sqlx::begin` takes a connection
+of its own from the pool: a job begun while a request's transaction is open is a transaction apart, on another
+connection (on a pool of one, it waits for the request's to end, up to the pool's timeout). `rowstile::pg::begin`
+takes the client, which its open transaction holds until it ends: a second `begin` on it doesn't compile.
+
 ## Refusals
 
 A refused INSERT is the database's error, which `?` turns into `Error::Refused`, with the table, the command, the

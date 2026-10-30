@@ -6,6 +6,7 @@
 # 14: in a copy of the app, the policy changes; rowstile migrate writes the next migration (after the folder's last
 #    one, whatever its number), sqlx's migrator runs it alone on a copy of the migrated test database, rowstile
 #    client writes the new names, and a program that uses them asks the database.
+# And a transaction is one principal's: neither begin builds inside a transaction open on the same connection.
 set -u
 T=$1
 HERE=$PWD
@@ -60,6 +61,34 @@ CASES
   fi
 else
   cat "$T/names.diff"; bad "9: src/authz.rs is out of date: run rowstile client"
+fi
+
+# a transaction is one principal's: tokio-postgres's begin takes the client, which its open transaction holds, and
+# sqlx's takes a pool, never a transaction (a connection of its own: a transaction apart, tests/sdk.rs)
+W=$T/one
+copy "$W" || exit 1
+said=()
+while IFS='|' read -r code wrong; do
+  cat >"$W/tests/one.rs" <<EOF
+use rowstile::Principal;
+
+#[allow(dead_code)]
+async fn twice(client: &mut tokio_postgres::Client, pool: &sqlx::PgPool) -> Result<(), rowstile::Error> {
+    $code;
+    Ok(())
+}
+EOF
+  (cd "$W" && cargo check --locked --quiet --test one --message-format short) >"$T/one.log" 2>&1
+  built=$?
+  [ $built != 0 ] && grep -qF "$wrong" "$T/one.log" || said+=("$code: built $([ $built = 0 ] && echo yes || echo no): $(cat "$T/one.log")")
+done <<'CASES'
+let tx = rowstile::pg::begin(client, &Principal::user("1")).await?; rowstile::pg::begin(client, &Principal::user("2")).await?; drop(tx)|cannot borrow `*client` as mutable more than once at a time
+let mut tx = rowstile::sqlx::begin(pool, &Principal::user("1")).await?; rowstile::sqlx::begin(&mut *tx, &Principal::user("2")).await?|mismatched types
+CASES
+if [ ${#said[@]} = 0 ]; then
+  ok "a transaction is one principal's: a second begin doesn't build inside one open on the same connection"
+else
+  printf '%s\n' "${said[@]}"; bad "a second begin builds inside a transaction open on the same connection"
 fi
 
 # 14: a policy change, shipped as the next migration

@@ -39,7 +39,8 @@ impl From<tokio_postgres::Error> for Error {
 
 /// A transaction on `client`, signed in as `who` (`authz.act_as`): commit it, or drop it to roll it back. The
 /// sign-in lasts the transaction alone, so pools and poolers in transaction mode are safe. A pooled client
-/// (deadpool's, bb8's) derefs to a [`Client`].
+/// (deadpool's, bb8's) derefs to a [`Client`]. A transaction is one principal's: the transaction holds the client
+/// until it ends, so no other begins on it meanwhile.
 ///
 /// # Errors
 ///

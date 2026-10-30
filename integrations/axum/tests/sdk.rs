@@ -151,6 +151,47 @@ async fn sqlx_paths_the_app_doesnt_take() {
     assert!(rowstile::sqlx::check(&pool).await.is_err());
 }
 
+/// Who the transaction is signed in as, and its connection's backend.
+async fn signed_in(conn: &mut sqlx::PgConnection) -> (String, i32) {
+    let who = "SELECT (SELECT principal_type || ' ' || principal_id FROM authz.principal()), pg_backend_pid()";
+    sqlx::query_as(who).fetch_one(conn).await.unwrap()
+}
+
+#[tokio::test]
+async fn a_transaction_is_one_principals() {
+    let _check = Check(
+        "a transaction is one principal's: sqlx's begin takes a connection of its own from the pool, so another \
+         principal's work is a transaction apart, and the first goes on as its principal's",
+    );
+    let pool = pool().await;
+    let mut bo = rowstile::sqlx::begin(&pool, &Principal::user("2")).await.unwrap();
+    let mut job = rowstile::sqlx::begin(&pool, &Principal::of("service", "1")).await.unwrap();
+    let (first, second) = (signed_in(&mut bo).await, signed_in(&mut job).await);
+    assert_eq!((first.0.as_str(), second.0.as_str()), ("user 2", "service 1"));
+    assert_ne!(first.1, second.1, "another connection");
+    job.commit().await.unwrap();
+    // bo's still: it reads and writes as bo, and commits
+    assert_eq!(signed_in(&mut bo).await, first);
+    let notes: Vec<i64> = sqlx::query_scalar("SELECT id FROM app.notes ORDER BY id").fetch_all(&mut *bo).await.unwrap();
+    assert_eq!(notes, [2, 3]);
+    let changed = bo.execute("UPDATE app.notes SET body = body WHERE id IN (1, 2)").await.unwrap();
+    assert_eq!(changed.rows_affected(), 1);
+    bo.commit().await.unwrap();
+    // on a pool of one, the second waits for the first to end, up to the pool's timeout
+    let one = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_millis(300))
+        .connect(copied().app_url.as_deref().unwrap())
+        .await
+        .unwrap();
+    let ann = rowstile::sqlx::begin(&one, &Principal::user("1")).await.unwrap();
+    let waited = rowstile::sqlx::begin(&one, &Principal::user("2")).await.unwrap_err();
+    assert!(matches!(&waited, Error::Other(e) if e.to_string().contains("timed out")), "{waited:?}");
+    drop(ann);
+    let mut after = rowstile::sqlx::begin(&one, &Principal::user("2")).await.unwrap();
+    assert_eq!(signed_in(&mut after).await.0, "user 2");
+}
+
 #[tokio::test]
 async fn postgres_own_refusals_name_the_rule() {
     let _check = Check("Postgres's own refusals (an update out of sight, an upsert, MERGE) name the rule");
