@@ -1,0 +1,20 @@
+# PHPStan at its strictest (level max, its strict rules, Larastan for Laravel's own types), no baseline: the SDK
+# (sdk/php/src), and the app with its migrations, its tests and the policy's names
+includes:
+    - vendor/larastan/larastan/extension.neon
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+parameters:
+    level: max
+    phpVersion: 80200
+    paths:
+        - ../../sdk/php/src
+        - app
+        - bootstrap
+        - database
+        - routes
+        - tests
+    tmpDir: .phpstan.cache
+    strictRules:
+        # Laravel's builders declare the methods they forward as static (@method static), so every call on a builder
+        # would read as a call to a static method on an object
+        dynamicCallOnStaticMethod: false

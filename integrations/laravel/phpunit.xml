@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The checks (tests/): test.sh runs them with paratest, two workers, each on its own copy of the migrated test
+     database, and measures what they run of the SDK (sdk/php/src): lines and branches, with Xdebug -->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         cacheDirectory=".phpunit.cache"
+         failOnRisky="true"
+         failOnWarning="true"
+         failOnDeprecation="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         colors="false">
+    <testsuites>
+        <testsuite name="checks">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+    <!-- branches and paths too (Xdebug), and no line kept out of the count -->
+    <coverage pathCoverage="true" disableCodeCoverageIgnore="true"/>
+    <source>
+        <include>
+            <directory>../../sdk/php/src</directory>
+        </include>
+    </source>
+    <php>
+        <ini name="memory_limit" value="2G"/>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_KEY" value="base64:cm93c3RpbGUtY29uZm9ybWFuY2UtbGFyYXZlbC1rZXk="/>
+        <env name="DB_CONNECTION" value="pgsql"/>
+        <env name="CACHE_STORE" value="array"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="QUEUE_FAILED_DRIVER" value="null"/>
+        <env name="LOG_CHANNEL" value="null" force="true"/>
+    </php>
+</phpunit>

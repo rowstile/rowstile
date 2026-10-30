@@ -1,0 +1,5 @@
+# rowstile writes these: reviews show them collapsed
+database/policy.lock linguist-generated=true
+database/migrations/*_authz_* linguist-generated=true
+composer.lock linguist-generated=true
+database/authz.php linguist-generated=true

@@ -15,3 +15,6 @@ FROM ruby:4.0-slim@sha256:e41d40671d359ccc3431371e0af7c6430bd1b3886b47ac06674435
 FROM rust:1.99-slim@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 AS rust
 # the Phoenix suite's Elixir (phoenix/test.sh builds phoenix/elixir.Dockerfile on it)
 FROM elixir:1.20-slim@sha256:6245171c91cf90808437f203f22856738d0095d310f4f9030219e53111823ff8 AS elixir
+# the Laravel suite's PHP and Composer (laravel/test.sh builds laravel/php.Dockerfile on them)
+FROM php:8.4-cli-alpine@sha256:d8784155c4d37986be9ddd7a8950df7e78998cc48e35472cd69e2b9371424a65 AS php
+FROM composer:2.9@sha256:b09bccd91a78fe8a9ab4b33d707b862e8fe54fec17782e32683ad2a69c46867d AS composer
