@@ -101,6 +101,13 @@ never mix users. Code that acts for no one (a migration, the console, a rake tas
 role, the database refuses what needs to know who asks (AZ701). `Rowstile.acting_as(2) { ... }` acts for someone
 anywhere else. Active Record's query cache is emptied each time who the code acts for changes.
 
+A transaction is one principal's. Inside one signed in already, work for the same principal goes on as it is,
+nested transactions and savepoints too. A statement while the code acts for someone else, or for no one, raises a
+`RuntimeError` before anything is sent for it, and the transaction is as it was: `this transaction is signed in as
+user 1 already, and a sign-in lasts the database transaction: user 2's work can't run inside it`. Run that work
+after the transaction, or in a transaction of its own on another connection. A savepoint rolled back over the
+sign-in undoes it in Postgres: the same principal signs in again before the next statement.
+
 Then controllers are plain Active Record. A list shows only the user's rows:
 
 ```ruby
@@ -244,8 +251,10 @@ connected to it), and connects the app to the copy.
     Rowstile::Testing.database_per_worker(TESTS_OWNER, worker)
 ```
 
-Transactional tests (`use_transactional_tests`, Rails' default) work too: a statement in the test's transaction
-signs in as the code acts for, and again when that changes.
+Transactional tests (`use_transactional_tests`, Rails' default) work too. What the app runs in the test's
+transaction goes as it would without it: a statement outside a transaction signs in as the code acts for, and again
+when that changes, so a test may act for one user and then another. Each transaction the app begins there (a
+savepoint, to Postgres) is one principal's, as above. The console's sandbox (`rails console --sandbox`) is the same.
 
 ## What the preview leaves out
 

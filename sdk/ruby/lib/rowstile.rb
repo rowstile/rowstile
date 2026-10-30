@@ -80,8 +80,9 @@ module Rowstile
       ActiveSupport::IsolatedExecutionState[KEY]
     end
 
-    # Every transaction begun in the block signs in as who (nil: nobody). Active Record's query cache is emptied
-    # as the block begins and ends: what it kept was read as someone else.
+    # Every transaction begun in the block signs in as who (nil: nobody). A transaction is one principal's: inside
+    # one signed in as someone else already, the block's first statement raises, and nothing is sent for it.
+    # Active Record's query cache is emptied as the block begins and ends: what it kept was read as someone else.
     def acting_as(who)
       before = current
       ActiveSupport::IsolatedExecutionState[KEY] = Principal.of(who)

@@ -95,14 +95,21 @@ module Rowstile
   module SignIn : ActiveRecord::ConnectionAdapters::PostgreSQLAdapter
     UNSIGNED: Array[String]
     @rowstile_signed: Principal?
+    @rowstile_for: Principal?
+    @rowstile_tests: bool?
+    def begin_transaction: (?isolation: Symbol?, ?joinable: bool, ?_lazy: bool) -> untyped
     def begin_db_transaction: () -> void
     def begin_isolated_db_transaction: (Symbol isolation) -> void
     def commit_db_transaction: () -> void
     def exec_rollback_db_transaction: () -> void
+    def release_savepoint: (?String name) -> void
     def exec_rollback_to_savepoint: (?String name) -> void
     def exec_restart_db_transaction: () -> void
+    private def rowstile_ended: () -> void
     private def raw_execute: (String sql, ?String? name, ?Array[untyped] binds, ?materialize_transactions: bool,
                               **untyped options) -> untyped
+    def self.signed_in_already: (Principal signed, Principal? who) -> String
+    private def self.name_of: (Principal principal) -> String
   end
 
   module Model : ActiveRecord::Base
