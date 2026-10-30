@@ -213,9 +213,10 @@ async def digest(Session: async_sessionmaker[AsyncSession]) -> tuple[int, Princi
     """A background job: it signs in as service 1, whatever request started it."""
 ```
 
-Anywhere else, `with rowstile.acting_as(2):` signs in the transactions inside it. Jobs in Celery's worker or
-RQ's, and a job for the user who asked: [Background jobs](python.md#background-jobs-celery-and-rq-preview)
-(preview).
+Anywhere else, `with rowstile.acting_as(2):` signs in the transactions begun inside it. A transaction is one
+principal's: inside one begun for someone else, its statements raise a `RuntimeError` before they are sent ([Who a
+transaction acts for](python.md#who-a-transaction-acts-for)). Jobs in Celery's worker or RQ's, and a job for the
+user who asked: [Background jobs](python.md#background-jobs-celery-and-rq-preview) (preview).
 
 ## Migrations
 
