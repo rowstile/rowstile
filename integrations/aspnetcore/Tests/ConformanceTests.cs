@@ -115,6 +115,7 @@ public sealed class ConformanceTests(ConformanceDatabase db) : IAsyncLifetime
         Assert.Equal("insert", (string?)body["command"]);
         Assert.Equal("AZ709", (string?)body["code"]); // rowstile help AZ709
         Assert.Contains("user 2 may not insert this row into app.notes", (string)body["detail"]!, StringComparison.Ordinal);
+        // the reasons are the database's DETAIL: the app's connection string doesn't ask for it, the SDK's data source does
         Assert.Contains(body["why"]!.AsArray(), line => ((string)line!).Contains("project.edit", StringComparison.Ordinal));
     }
 

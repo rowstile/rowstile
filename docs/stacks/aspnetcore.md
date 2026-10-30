@@ -42,8 +42,12 @@ role the policy names (`app role conf_app`), which row-level security applies to
 must be able to switch to the app role, since the command looks at the data as the app does when it runs the
 policy's tests: `GRANT conf_app TO conf_owner`, once, by whoever made the app role.
 
-Put `Include Error Detail=true` in the app's connection string. Npgsql hides the database's DETAIL otherwise,
-and a refused insert's reasons are there.
+A refused insert's reasons are in the database's DETAIL, which Npgsql hides unless the connection string says
+`Include Error Detail=true`. The SDK turns it on where it builds the app's connections: the data source
+`AddRowstile` builds from `o.ConnectionString`, and a context's connection string (`UseNpgsql(connectionString)`
+before `UseRowstile()`). A data source or a connection you build yourself is yours, and the SDK leaves it as it
+is: put `Include Error Detail=true` in its connection string. (It shows the DETAIL of every error, the values in a
+unique key's error too: the SDK doesn't turn it on behind an app that built its own without it.)
 
 ## The policy
 
@@ -80,10 +84,10 @@ rules app.notes
 
 `UseRowstile()` on the context's options signs in every transaction the context begins (SaveChanges' own, and
 the app's, `BeginTransactionAsync`), and every command outside a transaction (a query, an `ExecuteDeleteAsync`),
-as whoever the code acts for. `AddRowstile` says who a request acts for, and `UseRowstile()` on the app runs it
-for each request: `User(context)` returns a `Principal`, or null for nobody, who sees only what `anyone` may.
-It also refuses to start on a connection that skips row-level security (the `NpgsqlDataSource` the services
-hold, unless `o.DataSource` gives another).
+as whoever the code acts for. `AddRowstile` builds the `NpgsqlDataSource` the services hold, from
+`o.ConnectionString`, and says who a request acts for, and `UseRowstile()` on the app runs it for each request:
+`User(context)` returns a `Principal`, or null for nobody, who sees only what `anyone` may. It also refuses to
+start on a connection that skips row-level security (that data source, unless `o.DataSource` gives another).
 
 Here `User` is `Auth.SessionUser`, the app's own: yours reads `context.User`, once your authentication ran. The
 conformance app has no sign-in, so its `Auth.cs` stands in for one: it takes the user from a header its checks
@@ -91,12 +95,12 @@ set, which a real app must never believe. That is why this page doesn't show it.
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
-var url = builder.Configuration["ROWSTILE_APP_CONN"];
-builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(url!));
-builder.Services.AddDbContext<AppDb>((services, o) => o.UseNpgsql(services.GetRequiredService<NpgsqlDataSource>()).UseRowstile());
 builder.Services.AddRowstile(o =>
 {
+    o.ConnectionString = builder.Configuration["ROWSTILE_APP_CONN"];
     o.User = Auth.SessionUser;
+});
+builder.Services.AddDbContext<AppDb>((services, o) => o.UseNpgsql(services.GetRequiredService<NpgsqlDataSource>()).UseRowstile());
 var app = builder.Build();
 app.UseRowstile();
 ```
