@@ -92,7 +92,8 @@ jobs:
         env: {SUITES: "${{ needs.suites-18.result }}"}
   # What the suites run of authzlib and cli, every part's measure together (core/tests/coverage_report.py:
   # the table here, what nothing runs line by line in the artifact). On a pull request, a line it adds or changes
-  # there that nothing runs fails the job
+  # there that nothing runs fails the job; and on any run, rowstile's PL/pgSQL never run other than
+  # core/tests/plpgsql_floor.txt says (more: a suite must run it; fewer: the file is written anew)
   coverage:
     needs: suites-16   # (16's parts measure: suites.yml)
     runs-on: ubuntu-latest
@@ -105,7 +106,7 @@ jobs:
       - run: docker build -q -t rowstile:16-coverage --build-arg PG_MAJOR=16 --build-arg COVERAGE=1 -f core/Dockerfile .
       - run: >-
           docker run --rm -v "$PWD:/src" -w /src/core --entrypoint bash rowstile:16-coverage
-          -c "python3 tests/coverage_report.py --out /src/.ci/coverage $DIFF /src/.ci/parts/coverage-pg*/.coverage"
+          -c "python3 tests/coverage_report.py --out /src/.ci/coverage $DIFF --floor tests/plpgsql_floor.txt /src/.ci/parts/coverage-pg*/.coverage"
         env: {DIFF: "${{ github.event_name == 'pull_request' && '--diff origin/main' || '' }}"}
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2

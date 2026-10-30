@@ -186,8 +186,9 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
 - `.github/workflows/ci.yml` — on each pull request and push to `main`: `tests/unit_test.py` and the type checks
   (`unit`), the suites (`suites.yml`, called once per version: every suite on PG 16, `ci.sh`, and what depends on
   the version on 17 and 18, `ci.sh --short`), what they run of the code (`coverage`: on a pull request, a line or
-  branch it changes in `authzlib` or `cli` that no suite runs fails it), the review, the examples, the conformance
-  suites, the editors, packaging, the playground, Studio's page and the site. Every job has a `timeout-minutes`
+  branch it changes in `authzlib` or `cli` that no suite runs fails it, and on any run PL/pgSQL never run other
+  than `core/tests/plpgsql_floor.txt` says), the review, the examples, the conformance suites, the editors,
+  packaging, the playground, Studio's page and the site. Every job has a `timeout-minutes`
   (about three times its longest run, ten at least), so a step that hangs fails soon. The suites run in parts, a
   job each, side by side (`ROWSTILE_PART`; `run_tests.sh` names them and puts each step in one: a new step goes in
   a unit inside an `if part ...` (a function, then `unit PART SECONDS NAME`: a part's units run in lanes,
@@ -221,7 +222,8 @@ simplest is Docker, from the repo root:
     ROWSTILE_PART=command core/ci.sh 16   # one part of a run (`run_tests.sh` names them: unit, policy, command, random)
     ROWSTILE_LANES=1 core/ci.sh 16        # a part's steps one after the other (else in 3 lanes side by side)
     core/ci.sh --coverage 16     # and what the suites run of authzlib and cli: .ci/coverage-16/report.txt says
-                                 # what nothing runs (tests/coverage_report.py; CI's coverage job, --diff on PRs)
+                                 # what nothing runs (tests/coverage_report.py; CI's coverage job, --diff on PRs;
+                                 # --statements: the PL/pgSQL too, held to tests/plpgsql_floor.txt)
     python3 core/tests/unit_test.py   # two to three minutes, no database; --update rewrites tests/golden/ after
                                       # an intended change
 

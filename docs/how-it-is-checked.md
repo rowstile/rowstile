@@ -258,7 +258,8 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   [`tests/check_counts.txt`](../core/tests/check_counts.txt) says, no fewer and no more, or the run fails. A
   suite that stopped checking something (a glob that matches nothing, a loop over an empty list, a test that
   skips) can't stay green unseen. <!-- checked: tests/unit_test.py "test_fewer_or_more_is_said"; tests/unit_test.py "test_skipped_tests_are_not_passed"; tests/unit_test.py "test_each_suite_written_is_one_run_tests_records" -->
-- **What the database runs**: [every night](../.github/workflows/nightly.yml) the suites run on PostgreSQL 16 with
+- **What the database runs**: [for each change](../.github/workflows/suites.yml) and
+  [every night](../.github/workflows/nightly.yml) the suites run on PostgreSQL 16 with
   plpgsql_check's profiler on (in the test image: rowstile itself needs no extension), and
   [`tests/coverage_report.py`](../core/tests/coverage_report.py) lists each statement and branch of rowstile's
   PL/pgSQL that no suite runs, by kind of function, each `RAISE` first. It reads each function's source to know
@@ -269,6 +270,11 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   A rule on columns counts once for each form of its refusal (a key of one column, of several), not once per
   policy. A function Postgres counts as called whose statements the profiler read none of is listed: a GRANT, a
   REVOKE or an apply after the calls made its catalog row anew, and the counts with it. <!-- checked: tests/unit_test.py "test_statements_lost_with_the_catalog_row" -->
+  A change fails if it leaves more of the runtime's own PL/pgSQL (`authz`) or of the rules' (`authz_gen`) never
+  run than [`tests/plpgsql_floor.txt`](../core/tests/plpgsql_floor.txt) says, and one that leaves fewer writes the
+  file anew, so the count only goes down. <!-- checked: tests/unit_test.py "test_the_floor" -->
+  The policies' own functions (`authz_int`) are reported, not held: the random checks write other policies on each
+  run, and their counts move with them.
 
 ## Every feature, and what checks it
 

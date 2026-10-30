@@ -109,7 +109,7 @@ measured (`.ci/coverage-16/`) and says:
   apply is lost (applying makes the functions anew), unless the suite measures first, as `tests/governance.sh`,
   `tests/devx.sh` and `tests/principals.sh` do (`bash tests/coverage_functions.sh "$DB"`); a plain SQL function,
   which Postgres may inline, is listed apart too;
-- with `core/ci.sh --statements 16` (nightly), each statement and branch of rowstile's PL/pgSQL (schemas `authz`,
+- with `core/ci.sh --statements 16` (each pull request's parts on 16, and nightly), each statement and branch of rowstile's PL/pgSQL (schemas `authz`,
   `authz_int`, `authz_gen`) that no suite runs, by kind of function, each `RAISE` first: the coverage image has
   plpgsql_check (PGDG's package) and `--statements` preloads it with its profiler on, which counts every statement
   any session runs, in the server's shared memory.
@@ -118,10 +118,13 @@ measured (`.ci/coverage-16/`) and says:
   them (`plpgsql.jsonl`) and reads each function's source to know which statements begin which arm of an `IF`, a
   `CASE`, a loop or an `EXCEPTION` block (it checks its shares against plpgsql_check's own). What can't run says
   why in `tests/coverage_plpgsql.txt` (`KIND | WORDS | WHY`), and is listed apart;
-- with `--diff main`: the lines changed since `main` that nothing runs (exit 1 if there are any).
+- with `--diff main`: the lines changed since `main` that nothing runs (exit 1 if there are any);
+- with `--floor tests/plpgsql_floor.txt`: exit 1 unless the PL/pgSQL never run in `authz` and `authz_gen`
+  (statements, then branches) is what the file says. More is a change whose PL/pgSQL no suite runs; fewer, a file
+  to write anew with the counts the report prints. `authz_int` is left out: the random part's policies move it.
 
 CI measures on 16 alone: 17 and 18 ran the same lines, branches and functions (compared on 2026-10-10). Code that
-only another version runs would need theirs measured again (`--coverage` in `.github/workflows/suites.yml`).
+only another version runs would need theirs measured again (`--statements` in `.github/workflows/suites.yml`).
 
 ### How many checks each suite passes
 

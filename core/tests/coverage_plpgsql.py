@@ -648,6 +648,62 @@ def pct(part: int, whole: int) -> str:
     return f"{100 * part / whole:.1f}%" if whole else "-"
 
 
+# --- the floor: what a pull request may not leave more of never run ---------------------------------------------
+
+# The schemas the floor holds (CI's coverage job: coverage_report.py --floor). Their counts stay the same from run to
+# run of one commit; authz_int's don't (the random part writes other policies each run, and their functions with
+# them), so it is reported, not judged.
+FLOORED = ("authz", "authz_gen")
+FLOOR = os.path.join(HERE, "plpgsql_floor.txt")
+
+
+def never_run(t: Totals) -> dict[str, tuple[int, int]]:
+    """For each schema the floor holds: its statements, then its branches, that no suite ran."""
+    return {
+        schema: (
+            sum(1 for x in t.statements.values() if x.schema == schema and not x.ran),
+            sum(1 for x in t.branches.values() if x.schema == schema and not x.ran),
+        )
+        for schema in FLOORED
+    }
+
+
+def read_floor(path: str = FLOOR) -> dict[str, tuple[int, int]]:
+    """The floor's file: `<schema> <statements> <branches>` on a line; # starts a comment."""
+    out: dict[str, tuple[int, int]] = {}
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            words = line.split("#", 1)[0].split()
+            if words:
+                out[words[0]] = (int(words[1]), int(words[2]))
+    return out
+
+
+def judge(now: dict[str, tuple[int, int]], floor: dict[str, tuple[int, int]], name: str) -> tuple[list[str], bool]:
+    """What the floor (the file `name`) says of this run, and whether it fails: more never run than it allows (a
+    change that adds PL/pgSQL no suite runs, or stops running some), or fewer (the floor goes down with the change
+    that ran more: it is written anew)."""
+    out = [f"The floor ({name}): what may stay never run, statements then branches"]
+    failed = False
+    for schema, (s, b) in now.items():
+        was = floor.get(schema)
+        if was is None:
+            out.append(f"  {schema}: {s} {b}, and the floor has no line for it: add `{schema} {s} {b}`")
+            failed = True
+        elif (s, b) == was:
+            out.append(f"  {schema}: {s} {b}, as the floor says")
+        elif s > was[0] or b > was[1]:
+            out.append(
+                f"  {schema}: {s} {b}, more than the floor's {was[0]} {was[1]}: a suite must run what the change adds "
+                "(the report's lists say what nothing runs)"
+            )
+            failed = True
+        else:
+            out.append(f"  {schema}: {s} {b}, fewer than the floor's {was[0]} {was[1]}: write `{schema} {s} {b}` there")
+            failed = True
+    return out, failed
+
+
 def summary(t: Totals) -> str:
     """The totals, in a line."""
     s, b = list(t.statements.values()), list(t.branches.values())
