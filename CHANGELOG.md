@@ -63,6 +63,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- The TypeScript SDKs (`@rowstile/pg`, `@rowstile/postgres`, `@rowstile/drizzle`): work that `transaction(fn)`
+  (`begin(fn)`) started and that ran after it ended (a promise `fn` didn't await, a timer) still ran on the
+  transaction's connection, which by then could be serving another request's transaction, signed in as someone
+  else. That work now runs in a transaction of its own, as whoever it acts for.
 - `rowstile init` no longer tells a Prisma 7 app to sign in inside Prisma's generated client
   (`src/generated/prisma/client.ts`), which the next `prisma generate` replaces: it skips generated files.
 - The Next.js page: its `prisma.config.ts` loads `.env` (`import "dotenv/config"`; Prisma 7 doesn't), and its

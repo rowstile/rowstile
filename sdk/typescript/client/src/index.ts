@@ -142,14 +142,23 @@ export function job<A extends unknown[], R>(who: Who, fn: (...args: A) => R): (.
  *  the code running now still acts for p: the package's own calls made inside fn (`a.expect`, `a.can`) run in
  *  it, as p, see what it wrote, and wait for no second connection. */
 export function transactionScope<T>(): { run<R>(tx: T, p: Principal, fn: () => Promise<R>): Promise<R>; open(): T | undefined } {
-  const store = new AsyncLocalStorage<{ tx: T; p: Principal }>();
+  const store = new AsyncLocalStorage<{ tx: T; p: Principal; ended: boolean }>();
   return {
-    run: (tx, p, fn) => store.run({ tx, p }, () => inScope(p, fn)),
+    run: async (tx, p, fn) => {
+      const entry = { tx, p, ended: false };
+      try {
+        return await store.run(entry, () => inScope(p, fn));
+      } finally {
+        // work fn started keeps this entry after the transaction ends, when its connection may be another
+        // request's: from then on that work asks in a transaction of its own
+        entry.ended = true;
+      }
+    },
     open: () => {
       const t = store.getStore();
       const now = current();
       // (code inside fn that acts for someone else, with actingAs, asks in a transaction of its own)
-      return t && now && now.type === t.p.type && now.id === t.p.id ? t.tx : undefined;
+      return t && !t.ended && now && now.type === t.p.type && now.id === t.p.id ? t.tx : undefined;
     },
   };
 }

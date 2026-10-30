@@ -672,6 +672,48 @@ describe("without Prisma", () => {
     }
   });
 
+  // Work fn starts and doesn't await (a promise left running, a timer) may run after the transaction has ended, when
+  // its connection serves another request's transaction: it asks in a transaction of its own, as whoever it acts for.
+  // On a pool of one, bo's late call is made while ann's transaction holds the connection
+  test("work a transaction started, run after it ended, runs in a transaction of its own", async () => {
+    const p = new pg.Pool({ connectionString: APP, max: 1 });
+    const sql = postgres(APP, { max: 1 });
+    const pause = "SELECT pg_sleep(0.3)";
+    type Driver = { list: AuthzCalls["list"]; run: (fn: (pause: () => Promise<unknown>) => Promise<void>) => Promise<void> };
+    const onPg = withAuthz(drizzle(p));
+    const onPostgres = withAuthz(drizzlePostgres(sql));
+    const pgA = rowstile(p);
+    const postgresA = postgresAuthz(sql);
+    const drivers: Record<string, Driver> = {
+      pg: { list: pgA.list, run: (fn) => pgA.transaction((c) => fn(() => c.query(pause))) },
+      "postgres.js": { list: postgresA.list, run: (fn) => postgresA.begin((tx) => fn(() => tx.unsafe(pause))) },
+      "Drizzle on pg": { list: onPg.list, run: (fn) => onPg.transaction((tx) => fn(() => tx.execute(sqlTag.raw(pause)))) },
+      "Drizzle on postgres.js": {
+        list: onPostgres.list, run: (fn) => onPostgres.transaction((tx) => fn(() => tx.execute(sqlTag.raw(pause)))),
+      },
+    };
+    const answered: Record<string, string[]> = {};
+    try {
+      for (const [name, d] of Object.entries(drivers)) {
+        let go!: () => void;
+        const gate = new Promise<void>((r) => { go = r; });
+        let later!: Promise<string[]>;
+        await actingAs("2", () => d.run(async () => {
+          later = gate.then(() => d.list("project", "view"));   // bo's, made once ann's transaction holds the connection
+        }));
+        await actingAs("1", () => d.run(async (pause) => {
+          go();
+          await pause();
+        }));
+        answered[name] = await later;
+      }
+      expect(answered).toEqual(Object.fromEntries(Object.keys(drivers).map((name) => [name, ["2", "3"]])));
+    } finally {
+      await p.end();
+      await sql.end();
+    }
+  });
+
   // a connection that drops while a transaction holds it fails that transaction, not the process; the next works
   test("pg and Drizzle on pg: a connection lost inside a transaction", async () => {
     const p = new pg.Pool({ connectionString: APP, max: 1 });
