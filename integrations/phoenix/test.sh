@@ -32,7 +32,9 @@ cleanup() {
   [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"
   docker rm -f -v "$NAME" >/dev/null 2>&1
 }
-trap cleanup EXIT
+# the containers the suite runs in the background, by name: a docker client stopped can leave its container running
+cleanup_runs() { docker rm -f "$NAME-server" "$NAME-test-1" "$NAME-test-2" >/dev/null 2>&1; }
+trap 'cleanup_runs; cleanup' EXIT
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 docker build -q -t "$IMAGE" --build-arg "ELIXIR_IMAGE=$ELIXIR_IMAGE" -f elixir.Dockerfile . >/dev/null || exit 1
 # What the checks run of the SDK (test/support/cover.ex): each partition's, kept in CONFORMANCE_COVERAGE (a folder of
@@ -40,13 +42,15 @@ docker build -q -t "$IMAGE" --build-arg "ELIXIR_IMAGE=$ELIXIR_IMAGE" -f elixir.D
 export CONFORMANCE_COVERAGE=${CONFORMANCE_COVERAGE:-$LOG/coverage}
 mkdir -p "$CACHE" "$CONFORMANCE_COVERAGE" && find "$CONFORMANCE_COVERAGE" -mindepth 1 -delete
 # Elixir, in a folder of the repository, with the suite's environment (its databases, and what a step sets); the
-# Mix and Hex homes, the packages and the builds in the cache, a build for each folder and environment
+# Mix and Hex homes, the packages and the builds in the cache, a build for each folder and environment; RUN_NAME
+# names its container
 elixir_run() {
-  local dir=$1 passed=() name; shift
+  local dir=$1 passed=() named=() name; shift
+  [ -n "${RUN_NAME:-}" ] && named=(--name "$RUN_NAME")
   for name in $(compgen -e | grep -E '^(ROWSTILE_[A-Z_]+|CONFORMANCE_[A-Z_]+|DATABASE_URL|PORT|MIX_ENV|MIX_TEST_PARTITION)$'); do
     passed+=(-e "$name")
   done
-  docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e MIX_HOME="$CACHE/mix" \
+  docker run --rm "${named[@]}" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e MIX_HOME="$CACHE/mix" \
     -e HEX_HOME="$CACHE/hex" -e MIX_DEPS_PATH="$CACHE/deps/$(basename "$dir")" \
     -e MIX_BUILD_ROOT="$CACHE/build/$(basename "$dir")" -e ROWSTILE_CLI="$ROOT/core/cli/rowstile_cli.py" \
     -e PYTHONDONTWRITEBYTECODE=1 -e ERL_AFLAGS="+S 4" "${passed[@]}" \
@@ -112,7 +116,7 @@ DATABASE_URL=$ROWSTILE_OWNER_URL PORT=$WEB elixir_run "$HERE" timeout 120 mix ru
 if [ $? = 1 ] && grep -q "an owner skips row-level security" "$LOG/server-owner.log"; then
   echo "ok    13: the app refuses to start on the owner's connection"
 else cat "$LOG/server-owner.log"; echo "FAIL  13: the app started on the owner's connection"; rc=1; fi
-DATABASE_URL="postgres://conf_app:app@localhost:$APP_PORT/conf" PORT=$WEB elixir_run "$HERE" mix run --no-halt \
+RUN_NAME=$NAME-server DATABASE_URL="postgres://conf_app:app@localhost:$APP_PORT/conf" PORT=$WEB elixir_run "$HERE" mix run --no-halt \
   >"$LOG/server.log" 2>&1 & server=$!
 for _ in $(seq 60); do curl -sf "http://localhost:$WEB/projects" >"$LOG/projects.json" 2>/dev/null && break; sleep 1; done
 [ "$(cat "$LOG/projects.json" 2>/dev/null)" = "[]" ] &&
@@ -120,7 +124,7 @@ for _ in $(seq 60); do curl -sf "http://localhost:$WEB/projects" >"$LOG/projects
 kill "$server" 2>/dev/null; wait "$server" 2>/dev/null; server=
 # the checks: two partitions side by side (mix test --partitions 2), each on its own copy of the test database
 for p in 1 2; do
-  MIX_ENV=test MIX_TEST_PARTITION=$p elixir_run "$HERE" mix test --partitions 2 --cover "$@" >"$LOG/test-$p.log" 2>&1 &
+  RUN_NAME=$NAME-test-$p MIX_ENV=test MIX_TEST_PARTITION=$p elixir_run "$HERE" mix test --partitions 2 --cover "$@" >"$LOG/test-$p.log" 2>&1 &
   eval "tests_$p=\$!"
 done
 tested=0
