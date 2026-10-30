@@ -47,6 +47,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A Kotlin module for the Java SDK, in preview: `dev.rowstile:rowstile-kotlin` signs in transactions from coroutines
   and Exposed's, and its Ktor plugin signs in each request's and answers refusals with problem details
   (`docs/stacks/ktor.md`). It may change in any release.
+- A Rust SDK, in preview: the `rowstile` crate signs sqlx and tokio-postgres transactions in, turns refusals into
+  typed errors and problem details, and gives Axum an extractor for each request's transaction
+  (`docs/stacks/axum.md`). `rowstile migrate` writes sqlx migrations (`tool = "sqlx"`), and `rowstile client rust`
+  the policy's names. It may change in any release.
 
 ### Fixed
 
