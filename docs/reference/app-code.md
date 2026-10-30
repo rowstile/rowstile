@@ -20,6 +20,10 @@ Kotlin apps use its Kotlin module, [`dev.rowstile:rowstile-kotlin`](../../sdk/ja
 (preview): transactions signed in from coroutines, Exposed's transactions signed in, and a Ktor plugin that signs in
 each request's transactions and answers refusals with problem details; `integrations/ktor` is its conformance suite,
 on the names `rowstile client java` writes.
+Rust apps use [the Rust SDK](../../sdk/rust/README.md) (preview): the `rowstile` crate signs sqlx and tokio-postgres
+transactions in, turns refusals into typed errors and problem details, and gives Axum an extractor for each request's
+transaction; `integrations/axum` is its conformance suite, and `rowstile client rust` writes the policy's names for
+it (`src/authz.rs`).
 The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
 `listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
 `ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,
@@ -141,3 +145,9 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   rowstile's errors with problem details (`respondProblem`). `calls`, on a connection or in an Exposed transaction, is
   the Java SDK's `Authz`, and `expect` takes an Exposed table. `problem()`, `refusal()` and `errorCode()` read an
   error, or give null; `assertRefused` and `assertNotFound` are for tests. It may change before it is supported.
+- **Rust: preview.** `rowstile::sqlx::begin(pool, who)` and `rowstile::pg::begin(client, who)` begin a transaction
+  signed in; each module has `can`, `perms_of`, `list` (with a `Page`), `expect` and `check`. `Error` is `Refused`,
+  `NotFound`, `Call`, `NotSignedIn`, `Connection`, `Database` or `Other`, with `code()` and `problem()`. With the
+  `axum` feature, `Tx` is an extractor for a state that is `SignIn`, and `Error` a response; with `testing`,
+  `per_binary`, `refused` and `not_found`. `rowstile client rust` writes the policy's names: a constant for each
+  type and an enum of each type's permissions, implementing `Permission`. It may change before it is supported.
