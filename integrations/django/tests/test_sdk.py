@@ -43,16 +43,61 @@ def who() -> str | None:
 
 
 # --- each transaction signed in -----------------------------------------------------------------------
+ALREADY = "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: "
+AFTER = " run inside it. Run it after, or in a transaction of its own (another connection)"
+
+
+def signed_in_as() -> str:
+    """Who the open transaction is signed in as, asked on the driver's connection itself: past the SDK."""
+    raw = connection.connection
+    assert raw is not None
+    row = raw.execute("SELECT coalesce(current_setting('authz.user_id', true), '')").fetchone()
+    assert row is not None
+    return str(row[0])
+
+
+def last_sent() -> str:
+    """The last statement Django's connection sent, as Postgres shows it to the same role (on another connection)."""
+    raw = connection.connection
+    assert raw is not None
+    s = connection.settings_dict
+    with psycopg.connect(
+        dbname=s["NAME"], user=s["USER"], password=s["PASSWORD"], host=s["HOST"], port=s["PORT"], autocommit=True
+    ) as other:
+        row = other.execute("SELECT query FROM pg_stat_activity WHERE pid = %s", (raw.info.backend_pid,)).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
 def test_an_atomic_block_signs_in_as_whoever_the_code_acts_for_now() -> None:
-    with rowstile.acting_as(2), transaction.atomic():
-        assert projects() == BO
-        with rowstile.acting_as(1):  # inside the transaction: the statements from here on act for ann
-            assert projects() == ANN
-        assert projects() == BO
+    """A transaction is one principal's: no one's until a statement while the code acts for someone signs it in,
+    theirs from then on. A statement for someone else, or for no one, is refused before it is sent, and the
+    transaction goes on as its principal's: it reads, writes and commits."""
     with transaction.atomic():
-        with rowstile.acting_as(2):
-            assert projects() == BO
-        assert who() is None and projects() == NOBODY  # no one named any more: nobody, not bo
+        with connection.cursor() as cursor:  # not signed in yet: acts for no one
+            cursor.execute("SELECT 1")
+        with rowstile.acting_as(1):  # signs in: ann's from here on
+            with transaction.atomic():  # a savepoint, the same principal's
+                assert projects() == ANN
+            assert projects() == ANN
+        with pytest.raises(RuntimeError) as no_one:
+            projects()
+        assert last_sent() == "SELECT id FROM projects ORDER BY id"  # nothing sent for it
+        with rowstile.acting_as(2), pytest.raises(RuntimeError) as bo:
+            projects()
+        with rowstile.acting_as(None), pytest.raises(RuntimeError) as nobody:
+            projects()
+        with transaction.atomic():  # a savepoint made, and released, while the code acts for no one: no one's work
+            pass
+        with rowstile.acting_as(1):
+            assert who() == "user 1" and projects() == ANN
+            assert Note.objects.filter(pk=1).update(body="plan") == 1
+    assert not connection.in_atomic_block  # committed
+    assert str(no_one.value) == ALREADY + "the work of code that acts for no one can't" + AFTER
+    assert str(bo.value) == ALREADY + "user 2's work can't" + AFTER
+    assert str(nobody.value) == ALREADY + "nobody's work can't" + AFTER
+    with rowstile.acting_as(2), transaction.atomic():  # the next transaction is another's
+        assert projects() == BO
     with transaction.atomic():  # a transaction no one is named in: the database refuses what needs to know
         with pytest.raises(DatabaseError) as e:
             projects()
@@ -60,23 +105,27 @@ def test_an_atomic_block_signs_in_as_whoever_the_code_acts_for_now() -> None:
 
 
 def test_a_savepoint_rolled_back_leaves_the_transaction_signed_in_as_the_code_acts_for() -> None:
-    with rowstile.acting_as(2), transaction.atomic():
+    """Rolled back to a savepoint made before the sign-in, Postgres has undone it: the transaction is still the same
+    principal's, who signs in again at the next statement, and another is still refused. Rolled back to a
+    savepoint made after it, the sign-in stays."""
+    with transaction.atomic():
         try:
-            with transaction.atomic(), rowstile.acting_as(1):  # a savepoint, signed in again as ann inside it
+            with transaction.atomic(), rowstile.acting_as(1):  # the first sign-in, inside a savepoint
                 assert projects() == ANN
                 raise ValueError("undone")
         except ValueError:
             pass
-        assert who() == "user 2" and projects() == BO
+        assert signed_in_as() == ""  # undone
+        with rowstile.acting_as(2), pytest.raises(RuntimeError, match=ALREADY + "user 2's work can't"):
+            projects()
         with rowstile.acting_as(1):
+            assert projects() == ANN and signed_in_as() == "1"  # signed in again
             try:
-                with transaction.atomic(), rowstile.acting_as(3):
-                    assert who() == "user 3"
+                with transaction.atomic():
                     raise ValueError("undone")
             except ValueError:
                 pass
-            # the rollback took the transaction back to whom it acted for before the savepoint: ann, as the code does
-            assert who() == "user 1" and projects() == ANN
+            assert signed_in_as() == "1" and projects() == ANN  # kept
 
 
 def test_a_statement_in_a_broken_transaction_fails_as_it_would() -> None:
@@ -104,7 +153,9 @@ def test_atomic_requests_and_a_server_side_cursor() -> None:
 
 @pytest.mark.django_db
 def test_pytest_djangos_own_transaction_around_a_test(client: Client) -> None:
-    """The way most Django test suites run: each test in a transaction pytest-django rolls back."""
+    """The way most Django test suites run: each test in a transaction pytest-django rolls back. What the app runs
+    goes as it would without it: a test acts for ann, then for bo. An atomic block the app begins in it is one
+    principal's, as a transaction is, and is forgotten once released or rolled back."""
     assert client.get("/notes", headers={"x-user": "1"}).json() == [1, 3, 4]
     made = client.post(
         "/notes",
@@ -116,6 +167,27 @@ def test_pytest_djangos_own_transaction_around_a_test(client: Client) -> None:
     with rowstile.acting_as(1):
         assert Note.objects.filter(pk=made.json()["id"]).exists()
     assert client.get("/notes", headers={"x-user": "2"}).json() == [2, 3]
+    with rowstile.acting_as(None):
+        assert projects() == NOBODY
+    with transaction.atomic():  # the app's own block: ann's from its first statement for her
+        with rowstile.acting_as(1):
+            assert projects() == ANN
+            with transaction.atomic():  # a savepoint inside it, hers too
+                assert projects() == ANN
+        with rowstile.acting_as(2), pytest.raises(RuntimeError, match=ALREADY + "user 2's work can't"):
+            projects()
+        with transaction.atomic():  # a savepoint made and released while the code acts for no one: no one's work
+            pass
+    with rowstile.acting_as(2):  # the block is released: bo again
+        assert projects() == BO
+    try:
+        with transaction.atomic(), rowstile.acting_as(1):
+            assert projects() == ANN
+            raise ValueError("undone")
+    except ValueError:
+        pass
+    with rowstile.acting_as(2):  # rolled back, forgotten too
+        assert projects() == BO and who() == "user 2"
 
 
 def test_only_postgres_with_psycopg_3_is_signed_in() -> None:

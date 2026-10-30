@@ -90,10 +90,14 @@ ROWSTILE_USER = "app.auth.session_user"
 ```
 
 An atomic block signs in when its transaction begins, whether `ATOMIC_REQUESTS` is on or not, and a query
-outside one, which Django runs as a transaction of its own, signs in too. A transaction already open follows the
-code: inside `with rowstile.acting_as(2):`, its next statements act for user 2. The sign-in lasts the
-transaction, so a persistent connection (`CONN_MAX_AGE`) or one from Django's pool (`OPTIONS["pool"]`) carries no
-one into the next request. Async views and the async ORM sign in the same way.
+outside one, which Django runs as a transaction of its own, signs in too. The sign-in lasts the transaction, so a
+persistent connection (`CONN_MAX_AGE`) or one from Django's pool (`OPTIONS["pool"]`) carries no one into the next
+request. Async views and the async ORM sign in the same way.
+
+A transaction is one principal's. One that no one has signed in to yet signs in at its first statement while the
+code acts for someone, and is theirs from then on: inside it, a statement while the code acts for someone else, or
+for no one, raises a `RuntimeError` before it is sent, and the transaction goes on as its principal's. Run that
+work after the transaction, or in one of its own on another connection.
 
 Code that acts for no one signs nothing in: `manage.py migrate` as the owner, a management command, the shell. A
 query on a table with rules then fails with AZ701, saying how (`with rowstile.acting_as(...)`, or a job). A
@@ -239,4 +243,8 @@ def django_db_setup() -> WorkerDatabase:
 
 `ROWSTILE_TESTS_URL` is the owner's URL to the migrated test database. `@pytest.mark.django_db` works as usual
 (each test in a transaction rolled back after), and so do the SDK's fixtures: `as_user`, `assert_refused`,
-`assert_not_found` ([Python apps](python.md)).
+`assert_not_found` ([Python apps](python.md)). Inside the test's transaction, what the app runs goes as it would
+without it: each statement signs in as whoever the code acts for then, so a test may act for one user, then for
+another, by requests or with `rowstile.acting_as`. An atomic block the app begins there is one principal's, as a
+transaction is outside tests: another's statement inside it raises the `RuntimeError`, and once the block ends, the
+next statement signs in as whoever the code acts for again.

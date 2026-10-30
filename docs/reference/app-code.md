@@ -2,8 +2,9 @@
 
 Python apps use [the Python SDK](../../sdk/python/README.md): `Rowstile(app, engine, user=...)` for FastAPI, `install(engine)` for
 SQLAlchemy, and transactions for psycopg and asyncpg sign each transaction in, turn refusals into 403 and
-hidden rows into 404, and check the app's connection at start-up. `integrations/fastapi` is its conformance
-suite. TypeScript apps use [the TypeScript SDK](../../sdk/typescript/README.md): `@rowstile/prisma` (a driver adapter that signs every
+hidden rows into 404, and check the app's connection at start-up. A transaction is one principal's: inside one
+signed in already, work for someone else raises a `RuntimeError` before any SQL is sent for it, with SQLAlchemy,
+psycopg, asyncpg and Django alike. `integrations/fastapi` is its conformance suite. TypeScript apps use [the TypeScript SDK](../../sdk/typescript/README.md): `@rowstile/prisma` (a driver adapter that signs every
 transaction in, and a client extension), `/pg`, `/postgres` (postgres.js), `/drizzle`, `/next` (signed-in reads
 kept out of caches, 403 and 404 from route handlers and server actions), `/react` (`usePerms`, `<Can>`, a
 headless share dialog, live updates), `/vitest` and `/jest` (a preview); `integrations/nextjs` is their
