@@ -1,0 +1,31 @@
+{
+    "name": "rowstile/rowstile",
+    "description": "Authorization for Postgres apps: access rules compiled to row-level security. The SDK for PHP and Laravel apps (preview)",
+    "type": "library",
+    "keywords": ["authorization", "postgres", "row-level security", "laravel", "pdo"],
+    "homepage": "https://rowstile.dev",
+    "license": "Apache-2.0",
+    "authors": [{"name": "Salaheddine EL HSSANI"}],
+    "support": {
+        "docs": "https://rowstile.dev/stacks/laravel",
+        "issues": "https://github.com/rowstile/rowstile/issues",
+        "source": "https://github.com/rowstile/rowstile/tree/main/sdk/php"
+    },
+    "require": {
+        "php": ">=8.2",
+        "ext-pdo": "*",
+        "ext-pdo_pgsql": "*"
+    },
+    "suggest": {
+        "laravel/framework": "Laravel (checked on 13): each request's and each job's transactions signed in, refusals answered 403 and 404",
+        "phpunit/phpunit": "Rowstile\\Testing: assertions on refusals, and a test database per worker"
+    },
+    "autoload": {
+        "psr-4": {"Rowstile\\": "src/"}
+    },
+    "extra": {
+        "laravel": {
+            "providers": ["Rowstile\\Laravel\\RowstileServiceProvider"]
+        }
+    }
+}
