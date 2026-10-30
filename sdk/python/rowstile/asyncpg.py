@@ -3,8 +3,10 @@
     async with rowstile.asyncpg.transaction(conn, 42):
         rows = await conn.fetch("SELECT id, body FROM app.notes")
 
-Inside a transaction already open the block is a savepoint: when it ends, the transaction acts again for
-whoever it acted for before the block (the block around it, else nobody).
+A sign-in lasts the database transaction, so a transaction is one principal's. A block inside another for the
+same principal is a savepoint. A block for someone else (or, with no `who`, for code that acts for no one) is
+refused with a RuntimeError before anything is sent, the transaction left as it was: run it after, or on another
+connection. So is a block inside a transaction no block began, whose sign-in can't be known.
 """
 
 from __future__ import annotations
@@ -15,11 +17,15 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from . import (
     _UNSET,
+    NOBODY,
+    Principal,
     Who,
     _answer,
+    _begins,
     _check_problems,
     _explain_rule_args,
     _explain_rule_sql,
+    _for,
     _literal,
     _Unset,
     act_as_args,
@@ -34,8 +40,8 @@ Result = TypeVar("Result")
 _Args = tuple[str | None, str | None]
 
 _EXPLAIN = _explain_rule_sql("$1::text", "$2", "$3")
-# who each open block of ours signed in, by connection (asyncpg's connections take no attributes), outermost first
-_signed: dict[int, list[_Args]] = {}
+# who each open block of ours signed in as, by connection (asyncpg's connections take no attributes), outermost first
+_signed: dict[int, list[Principal]] = {}
 
 
 def _act_as(args: _Args) -> str:
@@ -45,19 +51,19 @@ def _act_as(args: _Args) -> str:
 
 @contextlib.asynccontextmanager
 async def transaction(conn: Conn, who: Who | _Unset = _UNSET) -> AsyncIterator[Conn]:
-    """A transaction signed in as `who` (None: nobody; left out: whoever the code acts for now, nobody if unset)."""
-    args, inside = act_as_args(who), conn.is_in_transaction()
-    blocks = _signed.setdefault(id(conn), [])
+    """A transaction signed in as `who` (None: nobody; left out: whoever the code acts for now, nobody if unset).
+    Inside a block for the same principal, a savepoint; for anyone else, a RuntimeError before anything is sent."""
+    p, blocks = _for(who), _signed.setdefault(id(conn), [])
     try:
-        async with conn.transaction():
-            await conn.execute(_act_as(args))
-            blocks.append(args)
+        begins = _begins(blocks, p, conn.is_in_transaction(), "rowstile.asyncpg.transaction()")
+        async with conn.transaction():  # inside a block of ours, a savepoint: the sign-in, made before it, stays
+            if begins:
+                await conn.execute(_act_as(act_as_args(p)))
+            blocks.append(p or NOBODY)
             try:
                 yield conn
             finally:
                 blocks.pop()
-            if inside:  # a savepoint keeps what act_as set: back to who it was (an error undoes it by itself)
-                await conn.execute(_act_as(blocks[-1] if blocks else (None, None)))
     finally:
         if not blocks:
             _signed.pop(id(conn), None)

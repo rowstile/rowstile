@@ -185,6 +185,45 @@ def _literal(value: object) -> str:
     return "E'" + text.replace("\\", "\\\\") + "'" if "\\" in text else "'" + text + "'"
 
 
+def _signed_in_already(signed: Principal, who: Principal | None) -> RuntimeError:
+    """What refuses work for `who` (None: code that acts for no one) in a transaction signed in as someone else. A
+    sign-in lasts the database transaction: a second one would make everything after it, in the same transaction,
+    the second principal's. Raised before anything is sent for that work; the transaction is left as it was."""
+    whose = "the work of code that acts for no one can't" if who is None else f"{_name(who)}'s work can't"
+    return RuntimeError(
+        f"this transaction is signed in as {_name(signed)} already, and a sign-in lasts the database transaction: "
+        f"{whose} run inside it. Run it after, or in a transaction of its own (another connection)"
+    )
+
+
+def _begins(blocks: Sequence[Principal], who: Principal | None, open_: bool, function: str) -> bool:
+    """Whether a driver's transaction block for `who` begins the transaction, and signs it in: True on a connection
+    with none open; False inside one a block of the SDK's signed in as `who` already (the block is a savepoint
+    there). `blocks`: who the SDK's blocks open on the connection signed in as, outermost first. Refused, a
+    RuntimeError raised before anything is sent, inside one signed in as someone else, and inside one no block of
+    the SDK's began, whose sign-in can't be known."""
+    if blocks:
+        if (who or NOBODY) != blocks[0]:
+            raise _signed_in_already(blocks[0], who)
+        return False
+    if open_:
+        raise RuntimeError(
+            f"this connection is in a transaction {function} didn't begin: who it is signed in as can't be known, "
+            f"and a sign-in lasts the database transaction. Begin it with {function}, or run this after it"
+        )
+    return True
+
+
+def _for(who: Who | _Unset) -> Principal | None:
+    """Whom a transaction's work is for: `who`, or with no argument whoever the code acts for now (None: no one)."""
+    return current() if isinstance(who, _Unset) else Principal.of(who)
+
+
+def _name(p: Principal) -> str:
+    """A principal as the database's refusals name it: 'user 42', 'service 3', or 'nobody'."""
+    return "nobody" if p.id is None else f"{p.type} {p.id}"
+
+
 def act_as_args(who: Who | _Unset = _UNSET) -> tuple[str | None, str | None]:
     """authz.act_as's arguments, (type, id): ('user', '42'), or (None, None) for nobody (who is None). With
     no argument, as whoever the code acts for now (nobody if unset)."""

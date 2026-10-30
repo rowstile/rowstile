@@ -591,35 +591,85 @@ async def test_none_is_nobody_inside_acting_as() -> None:
             await aconn.close()
 
 
-# a block inside a transaction already open is a savepoint: the sign-in ends with the block all the same
-async def test_a_block_inside_an_open_transaction_signs_out_again() -> None:
+# a transaction is one principal's: inside one signed in already, a block for the same principal is a savepoint, and
+# one for someone else, or for code that acts for no one, is refused before anything is sent for it; the transaction
+# goes on as its own principal's, writes and commits. A block inside a transaction no block began is refused too: who
+# it is signed in as can't be known
+ALREADY = "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: "
+AFTER = " run inside it. Run it after, or in a transaction of its own (another connection)"
+SIGNED_IN_AS = "SELECT current_setting('authz.user_id', true)"
+
+
+def last_sent(pid: int) -> str:
+    """The last statement the session with this pid sent, as Postgres shows it to the same role."""
+    with psycopg.connect(libpq(APP), autocommit=True) as other:
+        row = other.execute("SELECT query FROM pg_stat_activity WHERE pid = %s", (pid,)).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
+async def test_a_transaction_is_one_principals() -> None:
     import rowstile.asyncpg as pga
     import rowstile.psycopg as pgp
 
     projects = "SELECT id FROM app.projects ORDER BY id"  # (the projects: no test adds one)
+    write = "UPDATE app.notes SET body = body WHERE id = 1"  # ann may; it changes nothing another check reads
+    ran: list[str] = []
     with psycopg.connect(libpq(APP)) as conn:
-        conn.execute("SELECT 1")  # psycopg begins a transaction here
-        with pgp.transaction(conn, 2):
-            assert [r[0] for r in conn.execute(projects)] == PROJECTS["2"]
-        assert [r[0] for r in conn.execute(projects)] == PROJECTS[None]  # nobody, not bo
-        conn.rollback()
         with pgp.transaction(conn, 1):
-            with pgp.transaction(conn, 2):
-                assert [r[0] for r in conn.execute(projects)] == PROJECTS["2"]
-            assert [r[0] for r in conn.execute(projects)] == PROJECTS["1"]  # back to the block around it
+            with pgp.transaction(conn, 1):  # the same principal: a savepoint
+                assert conn.execute(SIGNED_IN_AS).fetchone() == ("1",)
+            assert [r[0] for r in conn.execute(projects)] == PROJECTS["1"]
+            with pytest.raises(RuntimeError) as bo, pgp.transaction(conn, 2):
+                ran.append("bo")
+            assert last_sent(conn.info.backend_pid) == projects  # nothing sent for bo
+            with pytest.raises(RuntimeError) as nobody, pgp.transaction(conn, None):
+                ran.append("nobody")
+            with pytest.raises(RuntimeError) as no_one, pgp.transaction(conn):  # the code acts for no one
+                ran.append("no one")
+            assert conn.execute(SIGNED_IN_AS).fetchone() == ("1",)
+            assert conn.execute(write).rowcount == 1
+        assert conn.info.transaction_status == psycopg.pq.TransactionStatus.IDLE  # committed
+        assert str(bo.value) == ALREADY + "user 2's work can't" + AFTER
+        assert str(nobody.value) == ALREADY + "nobody's work can't" + AFTER
+        assert str(no_one.value) == ALREADY + "the work of code that acts for no one can't" + AFTER
+        conn.execute("SELECT 1")  # psycopg begins a transaction here, which no block began
+        unknown = r"transaction rowstile\.psycopg\.transaction\(\) didn't begin"
+        with pytest.raises(RuntimeError, match=unknown), pgp.transaction(conn, 1):
+            ran.append("unknown")
+        conn.rollback()
     async with await psycopg.AsyncConnection.connect(libpq(APP)) as aconn:  # (a selector loop: conftest.py)
+        async with pgp.atransaction(aconn, 1):
+            async with pgp.atransaction(aconn, 1):
+                assert [r[0] for r in await (await aconn.execute(projects)).fetchall()] == PROJECTS["1"]
+            with pytest.raises(RuntimeError, match=ALREADY + "service 1's work can't"):
+                async with pgp.atransaction(aconn, ("service", 1)):
+                    ran.append("service")
+            assert (await aconn.execute(write)).rowcount == 1
         await aconn.execute("SELECT 1")
-        async with pgp.atransaction(aconn, 2):
-            pass
-        assert [r[0] for r in await (await aconn.execute(projects)).fetchall()] == PROJECTS[None]
+        with pytest.raises(RuntimeError, match=r"rowstile\.psycopg\.atransaction\(\) didn't begin"):
+            async with pgp.atransaction(aconn, 1):
+                ran.append("unknown")
     pconn = await asyncpg.connect(libpq(APP))
     try:
+        async with pga.transaction(pconn, 1):
+            async with pga.transaction(pconn, 1):
+                assert await pconn.fetchval(SIGNED_IN_AS) == "1"
+            assert [r["id"] for r in await pconn.fetch(projects)] == PROJECTS["1"]
+            with pytest.raises(RuntimeError, match=ALREADY + "user 2's work can't"):
+                async with pga.transaction(pconn, 2):
+                    ran.append("bo")
+            assert last_sent(pconn.get_server_pid()) == projects
+            assert await pconn.fetchval(SIGNED_IN_AS) == "1"
+            assert await pconn.execute(write) == "UPDATE 1"
+        assert not pconn.is_in_transaction()
         async with pconn.transaction():
-            async with pga.transaction(pconn, 2):
-                assert [r["id"] for r in await pconn.fetch(projects)] == PROJECTS["2"]
-            assert [r["id"] for r in await pconn.fetch(projects)] == PROJECTS[None]
+            with pytest.raises(RuntimeError, match=r"rowstile\.asyncpg\.transaction\(\) didn't begin"):
+                async with pga.transaction(pconn, 1):
+                    ran.append("unknown")
     finally:
         await pconn.close()
+    assert ran == []
 
 
 # a flush of several rows: the verdict is about the row that was refused, not the last one written;
