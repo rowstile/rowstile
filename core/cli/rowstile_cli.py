@@ -52,9 +52,9 @@
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
-    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust] [POLICY.authz]
-                                                   typed helpers for app code (go, csharp, ruby, java, rust: the
-                                                   policy's names, for those SDKs; rbs: the Ruby names'
+    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust|elixir] [POLICY.authz]
+                                                   typed helpers for app code (go, csharp, ruby, java, rust,
+                                                   elixir: the policy's names, for those SDKs; rbs: the Ruby names'
                                                    signatures); with none, writes the clients rowstile.toml names
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
                                                    a first policy from the database's tables (every schema of
@@ -98,9 +98,10 @@ rowstile.toml:
     rbs = "sig/authz.rbs"                  # ... and their signatures, for Steep
     java = "src/main/java/com/example/AuthzNames.java"   # the policy's names, for the Java SDK
     rust = "src/authz.rs"                  # the policy's names, for the Rust SDK
+    elixir = "lib/my_app/authz.ex"         # the policy's names, for the Elixir SDK (MyApp.Authz)
     [migrations]
-    tool = "alembic"                       # alembic, prisma, drizzle, efcore, rails, sql, goose, dbmate,
-                                           # flyway, django or sqlx
+    tool = "alembic"                       # alembic, prisma, drizzle, efcore, rails, ecto, sql, goose,
+                                           # dbmate, flyway, django or sqlx
     dir  = "alembic/versions"              # where the tool keeps them (each tool has a default)
     lock = "db/policy.lock"                # what the migrations made so far (default: next to the policy)
     write_after = 300                      # rowstile dev writes the migration this long after the last save
@@ -462,6 +463,17 @@ class Config:
         return ".".join([*package, name.removesuffix(".java")])
 
     @property
+    def elixir_module(self) -> str:
+        """The module [clients] elixir holds, named by its path as Elixir names a file's module: what follows its
+        last folder named lib, each part camelized (lib/my_app/authz.ex is MyApp.Authz); Authz when there is none."""
+        path = self.section("clients").get("elixir")
+        if not isinstance(path, str):
+            return "Authz"
+        *folders, name = re.split(r"[\\/]", path.removesuffix(".ex"))
+        parts = [*(folders[len(folders) - folders[::-1].index("lib") :] if "lib" in folders else []), name]
+        return ".".join("".join(w[:1].upper() + w[1:] for w in part.split("_")) for part in parts)
+
+    @property
     def tool(self) -> str | None:
         """[migrations] tool: the app's migration tool."""
         return self.setting("migrations", "tool")
@@ -516,7 +528,7 @@ class Config:
 
 
 # the languages rowstile client writes: for Ruby, the policy's names and their signatures (RBS)
-CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust")
+CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust", "elixir")
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
@@ -529,6 +541,7 @@ SETTINGS: dict[str, dict[str, str]] = {
         "rbs": "text",
         "java": "text",
         "rust": "text",
+        "elixir": "text",
     },
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
@@ -680,7 +693,10 @@ class Unreadable(Exception):
 def write_clients(cfg: Config, text: str, files: dict[str, str]) -> list[str]:
     """Writes the clients rowstile.toml names; returns the files that changed. Every client is made before any
     file is opened: a mistake in the policy, or a language rowstile doesn't know, leaves the files as they were."""
-    made = {path: database.client(lang, text, files, cfg.java_class) for lang, path in cfg.clients.items()}
+    made = {
+        path: database.client(lang, text, files, cfg.java_class, cfg.elixir_module)
+        for lang, path in cfg.clients.items()
+    }
     written: list[str] = []
     for path, code in made.items():
         try:
@@ -1231,9 +1247,9 @@ def main(argv: list[str]) -> None:
             return
         if cmd == "client" and args[1:]:
             if args[0] not in CLIENTS:
-                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs, java or rust?", 2)
+                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust or elixir?", 2)
             _, text, files = policy_arg()
-            sys.stdout.write(database.client(args[0], text, files, cfg.java_class))
+            sys.stdout.write(database.client(args[0], text, files, cfg.java_class, cfg.elixir_module))
             return
         if cmd == "prove":
             from authzlib import parse_policy, prove
@@ -1426,8 +1442,8 @@ def main(argv: list[str]) -> None:
                     print(f"wrote {relative(path)}")
                 return
             if not args or args[0] not in CLIENTS:
-                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs, java or rust?", 2)
-            sys.stdout.write(database.client(args[0], text, files, cfg.java_class))
+                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust or elixir?", 2)
+            sys.stdout.write(database.client(args[0], text, files, cfg.java_class, cfg.elixir_module))
         elif cmd == "why":
             if not opts.get("--as"):
                 fail("rowstile why --as user:42 TYPE ID PERM", 2)

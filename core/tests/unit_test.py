@@ -1602,6 +1602,69 @@ class ClientNames(unittest.TestCase):
                 self.assertEqual(cfg.java_class, named, path)
             self.assertEqual(sorted(rowstile_cli.Config(toml, {"clients": {"java": "N.java"}}).clients), ["java"])
 
+    def test_elixir_names(self) -> None:
+        # a module for each type and a function for each permission, in the module rowstile.toml's path names; two
+        # names Elixir would spell the same get neither, nor does a name no function may have, and a comment says so
+        from authzlib import devtools
+
+        policy = (
+            self.CASES + "type t = app.t\n  owner : user = owner_id\n  can editAll = owner\n  can edit_all = owner\n"
+        )
+        lines = database.client(
+            "elixir", policy + "  can type = owner\n  can ok = owner\n", elixir_module="A.Names"
+        ).split("\n")
+        for line in (
+            "defmodule A.Names do",
+            "  `Rowstile.can?(repo, A.Names.Note.edit(), id)`.",
+            "  # no name in Elixir: doc, Doc, t.editAll, t.edit_all, t.type (%Rowstile.Permission{type: type, name: name})",
+            "  defmodule OrgUnit do",
+            '    def type, do: %Rowstile.ObjectType{name: "orgUnit"}',
+            '    def see, do: %Rowstile.Permission{type: "orgUnit", name: "see"}',
+            '    def ok, do: %Rowstile.Permission{type: "t", name: "ok"}',
+            "  def shared_relations, do: %{}",
+            "  def scopes, do: []",
+        ):
+            self.assertIn(line, lines)
+        self.assertNotIn("  defmodule Doc do", lines)
+        # a module that isn't an alias, a function that isn't a name; no module named: Authz
+        names, unnamed = devtools._elixir_names({"_1": ["view"], "doc": ["module_info", "_x", "viewAll"]})
+        self.assertEqual(
+            (names, unnamed), ({"doc": ("Doc", {"viewAll": "view_all"})}, ["_1", "doc.module_info", "doc._x"])
+        )
+        self.assertTrue(database.client("elixir", self.CASES).split("\n")[1] == "defmodule Authz do")
+        # shared relations and scopes, and a list too long for a line: an item a line, as mix format lays it out
+        long = [f"permission_{i}" for i in range(9)]
+        made = devtools._client_elixir(
+            {"doc": long},
+            {"doc": {"viewer": ["user", "team#member"]}, "team": {"member": ["user"]}},
+            ["read"],
+            "M",
+            "p",
+        ).split("\n")
+        for line in (
+            '      "doc" => [',
+            '        "permission_0",',
+            '        "permission_8"',
+            "      ]",
+            '      "doc" => %{',
+            '        "viewer" => ["user", "team#member"]',
+            "      },",
+            '      "team" => %{',
+            '  def scopes, do: ["read"]',
+        ):
+            self.assertIn(line, made)
+        with tempfile.TemporaryDirectory() as d:
+            toml = os.path.join(d, "rowstile.toml")
+            for path, named in (
+                ("lib/my_app/authz.ex", "MyApp.Authz"),
+                ("apps/web/lib/web/policy_names.ex", "Web.PolicyNames"),
+                ("lib/authz.ex", "Authz"),
+                ("names.ex", "Names"),
+                (None, "Authz"),
+            ):
+                cfg = rowstile_cli.Config(toml, {"clients": {"elixir": path}} if path else {})
+                self.assertEqual(cfg.elixir_module, named, path)
+
     def test_share_takes_caveat_args_as_a_dict(self) -> None:
         sent: list[Sequence[object]] = []
 
@@ -3295,6 +3358,29 @@ class Migrations(unittest.TestCase):
             rb, _ = migrations.write_migration("rails", d, "file comment", "SELECT 1;\n", now=now)
             with open(rb, encoding="utf-8") as fh:
                 self.assertIn("\nclass AuthzFileComment < ActiveRecord::Migration[8.0]\n", fh.read())
+        # Ecto: the time, and a module named as the folder's latest migration names its own (Rowstile.Migrations
+        # when none says); a name the folder has already gets the next number (Ecto refuses two migrations of one name)
+        self.assertEqual(
+            written("ecto", "20250101000000_schema.exs"), ["20260101000000_authz_x.exs", "20260101000000_authz_x.sql"]
+        )
+        self.assertEqual(
+            written("ecto", "20250101000000_authz_x.exs", "20250101000001_authz_x_2.exs")[0],
+            "20260101000000_authz_x_3.exs",
+        )
+        with tempfile.TemporaryDirectory() as d:
+            exs, _ = migrations.write_migration("ecto", d, "file comment", "SELECT 1;\n", now=now)
+            with open(exs, encoding="utf-8") as fh:
+                self.assertTrue(fh.read().startswith("defmodule Rowstile.Migrations.AuthzFileComment do\n"))
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "20250101000000_schema.exs"), "w", encoding="utf-8") as fh:
+                fh.write("defmodule MyApp.Repo.Migrations.Schema do\nend\n")
+            open(os.path.join(d, "20250101000001_empty.exs"), "w", encoding="utf-8").close()
+            exs, sql = migrations.write_migration("ecto", d, "next", "SELECT 2;\n", now=now)
+            with open(exs, encoding="utf-8") as fh:
+                text = fh.read()
+            self.assertTrue(text.startswith("defmodule MyApp.Repo.Migrations.AuthzNext do\n"), text)
+            self.assertIn(f'      file = "{os.path.basename(sql)}"\n', text)
+            self.assertIn("query_type: :text, log: false)", text)
         # Prisma's folders always start with the time
         self.assertEqual(written("prisma", "0001_init"), ["20260101000000_authz_x/migration.sql"])
 
