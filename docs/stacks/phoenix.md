@@ -70,7 +70,9 @@ transaction alone, so pools and PgBouncer in transaction mode are safe. A list s
 ```
 
 A Postgrex connection works the same way, `Rowstile.transact(conn, fn tx -> ... end)`: `fun` gets the
-transaction's connection. Inside a transaction already, `transact` signs in for `fun` alone, then as before.
+transaction's connection. A sign-in lasts the whole database transaction: inside a transaction `transact`
+signed in already (Ecto runs a transaction inside another in the outer one), `fun` runs as it is for the same
+principal, and is refused for anyone else, before it runs (a `RuntimeError`), the outer transaction left as it was.
 
 A background job acts for a principal of its own, whatever started it (`type service = app.services principal`
 in the policy): `as:` names who.
