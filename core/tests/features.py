@@ -113,6 +113,7 @@ RAILS = "integrations/rails/test/conformance_test.rb"
 RAILS_CHECKS = "integrations/rails/test/checks_test.rb"
 RAILS_SDK = "integrations/rails/test/sdk_test.rb"
 SPRING = "integrations/spring/src/test/java/dev/rowstile/conformance/"
+KTOR = "integrations/ktor/src/test/kotlin/dev/rowstile/conformance/"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1236,6 +1237,21 @@ FEATURES: list[Feature] = [
             Check(SPRING + "GeneratedNamesTest.java", "9: the generated names type-check"),
         ),
     ),
+    Feature(
+        "sdk.kotlin",
+        2,
+        "The Kotlin module of the Java SDK (preview): coroutines, Exposed and Ktor",
+        ("sdk.kotlin.*",),
+        Doc(APP, "Kotlin: preview."),
+        (
+            Check(KTOR + "ConformanceTest.kt", "5: concurrent requests never mix users"),
+            Check(KTOR + "ConformanceTest.kt", "10: a background job signs in as a service principal"),
+            Check(KTOR + "PoolOfOneTest.kt", "4: with a pool of one connection"),
+            Check(KTOR + "SdkTest.kt", "a transaction signs in, commits what its block did, and rolls back what fails"),
+            Check(KTOR + "SdkTest.kt", "Ktor: who a request is, from Authentication's principal"),
+            Check(KTOR + "GeneratedNamesTest.kt", "9: the generated names type-check"),
+        ),
+    ),
 ]
 
 
@@ -1467,6 +1483,23 @@ def sdk_java() -> set[str]:
     return out
 
 
+def sdk_kotlin() -> set[str]:
+    """What the Kotlin module makes public: its public declarations at the top of a file, each by its package under
+    dev.rowstile.kotlin (`sdk.kotlin.transaction`, `sdk.kotlin.ktor.Rowstile`, `sdk.kotlin.exposed.expect`)."""
+    out: set[str] = set()
+    root = os.path.join(REPO, "sdk", "java", "rowstile-kotlin", "src", "main", "kotlin")
+    for path in sorted(glob.glob(os.path.join(root, "**", "*.kt"), recursive=True)):
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        package = re.search(r"^package dev\.rowstile\.kotlin((?:\.\w+)*)$", text, re.M)
+        assert package, path
+        for name in re.findall(
+            r"^public (?:suspend )?(?:fun|val|var|class|object|interface) (?:<[^>]+> )?(?:\w+\.)?(\w+)", text, re.M
+        ):
+            out.add(f"sdk.kotlin{package.group(1)}.{name}")
+    return out
+
+
 def language() -> set[str]:
     """The language's forms, as the editors' grammar names them: its rules, less the hidden ones (`_x`) and the
     ones that read a token's characters (names, values, comments) rather than a word of the language."""
@@ -1494,6 +1527,7 @@ SURFACES: dict[str, Callable[[], set[str]]] = {
     "the .NET SDK": sdk_dotnet,
     "the Ruby SDK": sdk_ruby,
     "the Java SDK": sdk_java,
+    "the Kotlin SDK": sdk_kotlin,
     "the language": language,
 }
 

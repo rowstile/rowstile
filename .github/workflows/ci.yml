@@ -299,6 +299,26 @@ jobs:
           name: sdk-coverage-java
           path: ${{ runner.temp }}/sdk-coverage-java/
           if-no-files-found: ignore
+  # The Kotlin SDK's conformance suite (preview): Ktor, Exposed over HikariCP, Flyway (integrations/ktor). It fails
+  # unless its checks run every line and branch of the Kotlin module (JaCoCo); the report it prints is kept, with its
+  # pages
+  conformance-ktor:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad   # v6.1.0
+        with: {distribution: temurin, java-version: "21", cache: maven}
+      - run: bash integrations/ktor/test.sh
+        env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-kotlin"}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: sdk-coverage-kotlin
+          path: ${{ runner.temp }}/sdk-coverage-kotlin/
+          if-no-files-found: ignore
   # The playground: the compiler in Pyodide and its SQL in PGlite, headless (every example's tests pass), then the
   # page in Chrome (loaded from the CDN, a mistake and its page, asking as someone, links; loading, cached, under
   # 10 s: the design's limit is 5 s, and GitHub's runners took up to 5.9 s)
