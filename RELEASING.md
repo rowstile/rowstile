@@ -222,7 +222,8 @@ went public: [SECURITY.md](SECURITY.md) sends reports there.
 
 ## Security releases
 
-A vulnerability reported privately ([SECURITY.md](SECURITY.md)) is fixed in the GitHub security advisory's
-private fork, released as a patch (while no final release exists, as the next pre-release: there is no
-release to patch), and the advisory is published with the release, crediting the reporter if
-they want it.
+A vulnerability, reported privately ([SECURITY.md](SECURITY.md)) or found here, gets a draft security advisory
+at once, and its fix lands as an ordinary pull request, with its check, as soon as it is ready. The advisory stays
+a draft until a release carries the fix; it is published with that release, as patched in it, crediting the
+reporter if they want it. The next release is the next pre-release while no final release exists, there being no
+release to patch.
