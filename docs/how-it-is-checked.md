@@ -415,6 +415,8 @@ are all listed there.
 - Managed Postgres services other than the two [it was tried on](managed-postgres.md).
 - macOS and Windows: no machine or runner here has either. The npm packages for them are read by the packaging
   tests (their Python is built for that system and CPU, and holds every library and module the command loads),
-  but not started. The Linux ones are started, x64 and arm64, glibc and musl.
+  but not started. The Linux ones are started, x64 and arm64, glibc and musl. What the command does differently
+  on Windows (a drive in an editor's address, paths on two drives, the console's code page, the shell's quotes,
+  libpq's folder and its default user) is checked by unit tests that stand in for Windows, not on Windows itself.
 - Your policy. rowstile enforces what the policy says; whether it says what you meant is what its tests, its
   invariants and [the review of each change](reference/review.md) are for.
