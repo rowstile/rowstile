@@ -120,6 +120,7 @@ AXUM_COMPILE = "integrations/axum/tests/compile.sh"
 PHOENIX = "integrations/phoenix/test/conformance_test.exs"
 PHOENIX_CHECKS = "integrations/phoenix/test/checks_test.exs"
 PHOENIX_SDK = "integrations/phoenix/test/sdk_test.exs"
+LARAVEL = "integrations/laravel/tests/Feature/"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1293,6 +1294,30 @@ FEATURES: list[Feature] = [
             Check(PHOENIX_SDK, "an Ecto update the rules allow that matched nothing is 409"),
         ),
     ),
+    Feature(
+        "sdk.php",
+        2,
+        "The PHP SDK (preview): PDO, and Laravel's connections, middleware, jobs and tests",
+        ("sdk.php.*",),
+        Doc("docs/stacks/laravel.md", "The app"),
+        (
+            Check(LARAVEL + "ConformanceTest.php", "7: a row hidden before the update is 404"),
+            Check(LARAVEL + "ConformanceTest.php", "16: each code answers as its page says"),
+            Check(LARAVEL + "ChecksTest.php", "4: a pooled connection carries no one over"),
+            Check(LARAVEL + "ChecksTest.php", "5: concurrent requests never mix users"),
+            Check(LARAVEL + "ChecksTest.php", "9: the generated names type-check"),
+            Check(LARAVEL + "ChecksTest.php", "10: jobs on the queue's worker each act for their own"),
+            Check(LARAVEL + "ChecksTest.php", "13: the app does not start on the owner's connection"),
+            Check(
+                LARAVEL + "SdkTest.php", "a transaction over PDO signs in, and work inside it is its principal's alone"
+            ),
+            Check(
+                LARAVEL + "SdkTest.php",
+                "a transaction is one principal's: another's statement, or no one's, is refused",
+            ),
+            Check(LARAVEL + "SdkTest.php", "what the database says, read: refusals, codes, and what is none of them"),
+        ),
+    ),
 ]
 
 
@@ -1571,6 +1596,23 @@ def sdk_elixir() -> set[str]:
     return out
 
 
+def sdk_php() -> set[str]:
+    """What the PHP SDK makes public: its classes, interfaces and traits, by their names under Rowstile
+    (`sdk.php.Rowstile`, `sdk.php.Laravel.SignIn`), less those marked @internal."""
+    out: set[str] = set()
+    root = os.path.join(REPO, "sdk", "php", "src")
+    for path in sorted(glob.glob(os.path.join(root, "**", "*.php"), recursive=True)):
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        if re.search(r"^ \* @internal$", text.split("\nfinal class ")[0].split("\nclass ")[0], re.M):
+            continue
+        folder = os.path.relpath(os.path.dirname(path), root).replace(os.sep, ".")
+        prefix = "" if folder == "." else folder + "."
+        for name in re.findall(r"^(?:final |abstract )?(?:class|interface|trait|enum) (\w+)", text, re.M):
+            out.add(f"sdk.php.{prefix}{name}")
+    return out
+
+
 def language() -> set[str]:
     """The language's forms, as the editors' grammar names them: its rules, less the hidden ones (`_x`) and the
     ones that read a token's characters (names, values, comments) rather than a word of the language."""
@@ -1601,6 +1643,7 @@ SURFACES: dict[str, Callable[[], set[str]]] = {
     "the Kotlin SDK": sdk_kotlin,
     "the Rust SDK": sdk_rust,
     "the Elixir SDK": sdk_elixir,
+    "the PHP SDK": sdk_php,
     "the language": language,
 }
 
@@ -1737,7 +1780,8 @@ def suite_texts() -> dict[str, str]:
     return out
 
 
-COMMENT = re.compile(r"\s*(?:#|--(?:\s|$)|//)")  # a line that is a comment, in the suites' languages
+# a line that is a comment, in the suites' languages (not a PHP attribute: #[TestDox('...')])
+COMMENT = re.compile(r"\s*(?:#(?!\[)|--(?:\s|$)|//)")
 
 
 def runs(text: str, cmd: str) -> re.Pattern[str]:

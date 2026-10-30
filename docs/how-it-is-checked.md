@@ -357,6 +357,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The Kotlin module of the Java SDK (preview): coroutines, Exposed and Ktor | 2 | [app-code](reference/app-code.md) | `integrations/ktor` |  |
 | The Rust SDK (preview): sqlx and tokio-postgres transactions signed in, refusals as errors, Axum | 2 | [app-code](reference/app-code.md) | `integrations/axum` |  |
 | The Elixir SDK (preview): Ecto and Postgrex transactions, a Plug, Oban jobs, tests | 2 | [phoenix](stacks/phoenix.md) | `integrations/phoenix` |  |
+| The PHP SDK (preview): PDO, and Laravel's connections, middleware, jobs and tests | 2 | [laravel](stacks/laravel.md) | `integrations/laravel` |  |
 
 <!-- features: end of the table -->
 

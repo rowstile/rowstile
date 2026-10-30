@@ -98,6 +98,16 @@ updates:
     groups:
       elixir: {patterns: ["*"]}
 
+  - package-ecosystem: composer
+    directories: ["/integrations/laravel"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      php: {patterns: ["*"]}
+
   - package-ecosystem: cargo
     directory: /editor/zed
     schedule: {interval: monthly}

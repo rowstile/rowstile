@@ -56,6 +56,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   security, signs Oban jobs in for the user who asked, and copies the test database for each test partition
   (`docs/stacks/phoenix.md`). `rowstile migrate` writes Ecto migrations (`tool = "ecto"`), and `rowstile client
   elixir` the policy's names. It may change in any release.
+- A PHP SDK, a preview (it may change in any release): `rowstile/rowstile` signs PDO transactions in, and in Laravel
+  every transaction as the request's or the job's principal, answers refusals 403 and hidden rows 404, and copies
+  the test database for each worker. `rowstile migrate` writes Laravel migrations (`tool = "laravel"`), and
+  `rowstile client php` the policy's names as enums ([Laravel](docs/stacks/laravel.md)).
 
 ### Fixed
 

@@ -46,6 +46,7 @@ const stacks = [
   { text: "Kotlin: Ktor, Exposed (preview)", link: "/stacks/ktor" },
   { text: "Rust: Axum, sqlx (preview)", link: "/stacks/axum" },
   { text: "Phoenix, Ecto (preview)", link: "/stacks/phoenix" },
+  { text: "Laravel (preview)", link: "/stacks/laravel" },
   { text: "Any other stack: SQL", link: "/stacks/sql" },
 ];
 const sdks = [
@@ -56,6 +57,7 @@ const sdks = [
   { text: "Kotlin SDK (preview)", link: "/sdk/kotlin" },
   { text: "Rust SDK (preview)", link: "/sdk/rust" },
   { text: "Elixir SDK (preview)", link: "/sdk/elixir" },
+  { text: "PHP SDK (preview)", link: "/sdk/php" },
   { text: "Conformance suites", link: "/sdk/conformance" },
 ];
 const reference = [
