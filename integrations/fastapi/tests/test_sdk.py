@@ -746,11 +746,12 @@ async def test_asyncpg_blocks_inside_a_block_and_expect() -> None:
     conn = await asyncpg.connect(libpq(APP))
     try:
         async with pga.transaction(conn, 1):
-            async with pga.transaction(conn, 2):
-                assert [r["id"] for r in await conn.fetch(PROJECTS)] == [2, 3]
-            async with pga.transaction(conn, 3):
-                pass
-            assert [r["id"] for r in await conn.fetch(PROJECTS)] == [1, 3]  # back to the block around them
+            async with pga.transaction(conn, 1):  # the same principal: a savepoint
+                assert [r["id"] for r in await conn.fetch(PROJECTS)] == [1, 3]
+            with pytest.raises(RuntimeError, match="signed in as user 1 already"):
+                async with pga.transaction(conn, 3):
+                    pass
+            assert [r["id"] for r in await conn.fetch(PROJECTS)] == [1, 3]  # still ann's
         async with pga.transaction(conn, 3):
             done = await conn.execute("UPDATE app.notes SET body = body WHERE id = 4")
             assert await pga.expect(conn, done, "app.notes", "update", 4) == "UPDATE 1"
@@ -774,9 +775,7 @@ async def test_an_id_written_into_the_sign_in_is_that_id_whatever_standard_confo
         assert await conn.fetchval("SHOW standard_conforming_strings") == conforming
         for awkward in AWKWARD_IDS:
             async with pga.transaction(conn, awkward):
-                async with pga.transaction(conn, 2):
-                    assert await conn.fetchval(SIGNED_IN_AS) == "2"
-                assert await conn.fetchval(SIGNED_IN_AS) == awkward  # back to the block around, its id written in
+                assert await conn.fetchval(SIGNED_IN_AS) == awkward  # its id written into the sign-in
     finally:
         await conn.close()
     options = {"options": f"-c standard_conforming_strings={conforming}"}

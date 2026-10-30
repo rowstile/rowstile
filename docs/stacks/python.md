@@ -61,8 +61,12 @@ was read):
 ```
 
 `transaction(conn, who)` signs in as `who`; `None` is nobody, and with no `who` it is whoever the code acts
-for. Inside a transaction already open (psycopg opens one at the first statement unless `autocommit` is on)
-the block is a savepoint, and when it ends the transaction acts again for whoever it did before the block.
+for. A sign-in lasts the database transaction, so a transaction is one principal's. A block inside another for
+the same principal is a savepoint. One for someone else, or for code that acts for no one, raises a
+`RuntimeError` before anything is sent, and the transaction goes on as its principal's: run that work after it, or
+in a transaction of its own on another connection. So does a block inside a transaction no block began (psycopg
+opens one at the first statement unless `autocommit` is on): who it is signed in as can't be known. asyncpg's
+`transaction` does the same.
 
 An UPDATE or DELETE the rules refuse changes 0 rows, without an error; `expect` asks why, and raises
 `Refused` or `NotFound` (it takes the row count, the rows, or the cursor):

@@ -7,9 +7,11 @@
         ...
 
 A pooled connection never carries one request's user into another's: the sign-in ends with the transaction.
-Inside a transaction already open (psycopg opens one at the first statement unless autocommit is on), the
-block is a savepoint: when it ends, the transaction acts again for whoever it acted for before the block
-(the block around it, else nobody).
+A sign-in lasts the database transaction, so a transaction is one principal's. A block inside another for the
+same principal is a savepoint. A block for someone else (or, with no `who`, for code that acts for no one) is
+refused with a RuntimeError before anything is sent, the transaction left as it was: run it after, or on another
+connection. So is a block inside a transaction no block began (psycopg opens one at the first statement unless
+autocommit is on), whose sign-in can't be known.
 """
 
 from __future__ import annotations
@@ -20,11 +22,15 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from . import (
     _UNSET,
+    NOBODY,
+    Principal,
     Who,
     _answer,
+    _begins,
     _check_problems,
     _explain_rule_args,
     _explain_rule_sql,
+    _for,
     _Unset,
     act_as_args,
     verdict,
@@ -36,22 +42,21 @@ if TYPE_CHECKING:
 Conn = TypeVar("Conn", bound="psycopg.Connection[Any]")
 AsyncConn = TypeVar("AsyncConn", bound="psycopg.AsyncConnection[Any]")
 Result = TypeVar("Result")
-_Args = tuple[str | None, str | None]
 
 _ACT_AS = "SELECT authz.act_as(%s, %s)"
 _EXPLAIN = _explain_rule_sql("%(t)s", "%(c)s", "%(k)s")
-_SIGNED = "_rowstile_signed_in"  # on the connection: who each open block of ours signed in, outermost first
+_SIGNED = "_rowstile_signed_in"  # on the connection: who each open block of ours signed in as, outermost first
 
 
 def _open(conn: psycopg.Connection[Any] | psycopg.AsyncConnection[Any]) -> bool:
-    """Whether a transaction is open on the connection: a block that begins now is a savepoint in it."""
+    """Whether a transaction is open on the connection."""
     from psycopg import pq
 
     return conn.info.transaction_status != pq.TransactionStatus.IDLE
 
 
-def _blocks(conn: object) -> list[_Args]:
-    blocks: list[_Args] | None = getattr(conn, _SIGNED, None)
+def _blocks(conn: object) -> list[Principal]:
+    blocks: list[Principal] | None = getattr(conn, _SIGNED, None)
     if blocks is None:
         blocks = []
         setattr(conn, _SIGNED, blocks)
@@ -60,31 +65,32 @@ def _blocks(conn: object) -> list[_Args]:
 
 @contextlib.contextmanager
 def transaction(conn: Conn, who: Who | _Unset = _UNSET) -> Iterator[Conn]:
-    """A transaction signed in as `who` (None: nobody; left out: whoever the code acts for now, nobody if unset)."""
-    args, inside, blocks = act_as_args(who), _open(conn), _blocks(conn)
-    with conn.transaction():
-        conn.execute(_ACT_AS, args)
-        blocks.append(args)
+    """A transaction signed in as `who` (None: nobody; left out: whoever the code acts for now, nobody if unset).
+    Inside a block for the same principal, a savepoint; for anyone else, a RuntimeError before anything is sent."""
+    p, blocks = _for(who), _blocks(conn)
+    begins = _begins(blocks, p, _open(conn), "rowstile.psycopg.transaction()")
+    with conn.transaction():  # inside a block of ours, a savepoint: the sign-in, made before it, stays
+        if begins:
+            conn.execute(_ACT_AS, act_as_args(p))
+        blocks.append(p or NOBODY)
         try:
             yield conn
         finally:
             blocks.pop()
-        if inside:  # a savepoint keeps what act_as set: back to who it was (an error undoes it by itself)
-            conn.execute(_ACT_AS, blocks[-1] if blocks else (None, None))
 
 
 @contextlib.asynccontextmanager
 async def atransaction(aconn: AsyncConn, who: Who | _Unset = _UNSET) -> AsyncIterator[AsyncConn]:
-    args, inside, blocks = act_as_args(who), _open(aconn), _blocks(aconn)
+    p, blocks = _for(who), _blocks(aconn)
+    begins = _begins(blocks, p, _open(aconn), "rowstile.psycopg.atransaction()")
     async with aconn.transaction():
-        await aconn.execute(_ACT_AS, args)
-        blocks.append(args)
+        if begins:
+            await aconn.execute(_ACT_AS, act_as_args(p))
+        blocks.append(p or NOBODY)
         try:
             yield aconn
         finally:
             blocks.pop()
-        if inside:
-            await aconn.execute(_ACT_AS, blocks[-1] if blocks else (None, None))
 
 
 def _changed(result: object) -> bool:
