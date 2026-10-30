@@ -26,7 +26,8 @@ err := rowstile.Tx(ctx, pool, func(ctx context.Context, tx pgx.Tx) error {
 
 - `Tx`, `TxAs`: a transaction signed in (`authz.act_as`), on a `*pgxpool.Pool`, a `*pgx.Conn` or a `pgx.Tx`. The
   sign-in lasts the transaction alone, so pools and PgBouncer in transaction mode are safe. sqlc's code runs in
-  it: `db.New(tx)`.
+  it: `db.New(tx)`. A transaction is one principal's: inside one, `Tx` for the same principal is a savepoint, and
+  for anyone else an error, before anything is sent.
 - `Expect`: an UPDATE or DELETE that changed no row, asked about: `*NotFound` or `*Refused`, with the reason.
 - `Refused`, `NotFound`, `CallError` (the codes a call can meet, each with its status), `NotSignedIn`, read with
   `errors.As`; `ErrorCode(err)` is rowstile's code (`rowstile help AZ709`).
