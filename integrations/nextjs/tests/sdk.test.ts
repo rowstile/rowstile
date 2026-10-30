@@ -413,6 +413,69 @@ describe("@rowstile/prisma", () => {
     }
   });
 
+  // A transaction is one principal's: inside ann's (1) interactive transaction, work through the same adapter for
+  // anyone else (outside tx: a read, a findUnique, the runtime's functions, a transaction inside it) throws before a
+  // connection is asked for; ann's own goes on, the transaction stays hers, and commits
+  test("a transaction is one principal's: another's work inside it is refused before a connection is asked for", async () => {
+    const own = new pg.Pool({ connectionString: APP, max: 2 });
+    let acquired = 0;
+    own.on("acquire", () => { acquired += 1; });
+    const client = new PrismaClient({ adapter: signedIn(new PrismaPg(own)) }).$extends(authz());
+    const said = (who: string) => "this transaction is signed in as user 1 already, and a sign-in lasts the database " +
+      `transaction: ${who}'s work can't run inside it. Run it after, or in a transaction of its own (another connection)`;
+    const refused = (work: () => PromiseLike<unknown>) => Promise.resolve(work()).then(() => "it ran", (e: Error) => e.message);
+    const ran: string[] = [];
+    try {
+      const seen = await actingAs("1", () => client.$transaction(async (tx) => {
+        const before = acquired;
+        const others = [
+          await refused(() => actingAs("2", () => client.note.findMany())),
+          await refused(() => actingAs("2", () => client.note.findUnique({ where: { id: 2 } }))),
+          await refused(() => actingAs(["service", 1], () => client.$transaction(async () => ran.push("inner")))),
+          await refused(() => actingAs(null, () => client.$authz.can("project", 3, "view"))),
+        ];
+        const sent = acquired - before;
+        // ann's own, outside tx: a transaction of its own, as before (the pool's second connection)
+        const mine = [(await client.note.findUnique({ where: { id: 1 } }))?.id, await client.note.count()];
+        const me = await tx.$queryRawUnsafe<{ x: string }[]>("SELECT current_setting('authz.user_id') AS x");
+        await tx.note.update({ where: { id: 1 }, data: { body: "still ann's" } });
+        return [others, sent, mine, me[0].x];
+      }));
+      expect(seen).toEqual([[said("user 2"), said("user 2"), said("service 1"), said("nobody")], 0, [1, 3], "1"]);
+      expect(ran).toEqual([]);
+      expect((await actingAs("1", () => client.note.findUnique({ where: { id: 1 } })))?.body).toBe("still ann's");
+    } finally {
+      await client.$disconnect();
+      await own.end();
+    }
+  });
+
+  // Work an interactive transaction started and didn't await, run after it ended: nothing to refuse, it signs in on
+  // its own, as whoever it acts for (bo's and cy's, started in ann's transaction)
+  test("work an interactive transaction started, run after it ended, signs in on its own", async () => {
+    const own = new pg.Pool({ connectionString: APP, max: 2 });
+    const client = new PrismaClient({ adapter: signedIn(new PrismaPg(own)) }).$extends(authz());
+    let go!: () => void;
+    const gate = new Promise<void>((r) => { go = r; });
+    const ids = async () => (await client.project.findMany({ orderBy: { id: "asc" } })).map((r) => r.id);
+    try {
+      let later!: Promise<unknown[]>;
+      await actingAs("1", () => client.$transaction(async (tx) => {
+        later = gate.then(async () => [
+          await actingAs("2", ids),
+          (await actingAs("3", () => client.note.findUnique({ where: { id: 4 } })))?.id,
+          await actingAs("2", () => client.$transaction(async (t) => t.project.count())),
+        ]);
+        return tx.project.count();
+      }));
+      go();
+      expect(await later).toEqual([[2, 3], 4, 2]);
+    } finally {
+      await client.$disconnect();
+      await own.end();
+    }
+  });
+
   test("a table that can't be looked up is named as the model names it", async () => {
     // who the request is can be told once only (the session ended): the lookup, in a transaction of its own after
     // the read's, can't sign in

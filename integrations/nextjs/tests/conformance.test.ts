@@ -634,12 +634,11 @@ describe("without Prisma", () => {
   });
 
   // Inside transaction(fn, who), the object's own calls run in that transaction: as who, not as whoever the code
-  // around it acts for; they see what it wrote; and on a pool of one they wait for no second connection. Code in
-  // fn that acts for someone else (actingAs) asks in a transaction of its own.
+  // around it acts for; they see what it wrote; and on a pool of one they wait for no second connection. (Code in
+  // fn that acts for someone else is refused: the next check.)
   test("inside a transaction, the object's own calls run in it, as who it signed in as", async () => {
     const p = new pg.Pool({ connectionString: APP, max: 1, connectionTimeoutMillis: 2000 });
     const sql = postgres(APP, { max: 1 });
-    const two = new pg.Pool({ connectionString: APP, max: 2 });
     const NEW = "INSERT INTO app.notes (project_id, author_id, body) VALUES (1, 3, 'new') RETURNING id";
     // bo (2) acts around it; the transaction signs in as cy (3), who writes a note bo can't see: cy may edit it
     const asked = (a: Pick<AuthzCalls, "can">, id: number) => Promise.all([current()?.id, a.can("note", id, "edit")]);
@@ -661,20 +660,62 @@ describe("without Prisma", () => {
       const onPostgres = withAuthz(drizzlePostgres(sql));
       expect(await actingAs("2", () => onPostgres.transaction(async (tx) =>
         asked(onPostgres, (await drizzleQueryable(tx).query(NEW)).rows[0].id), "3"))).toEqual(["3", true]);
-      // someone else inside it: in a transaction of their own, as them
-      const twoA = rowstile(two);
-      expect(await actingAs("2", () => twoA.transaction(async () =>
-        [await twoA.can("project", 2, "edit"), await actingAs("2", () => twoA.can("project", 2, "edit"))], "3"))).toEqual([false, true]);
     } finally {
       await p.end();
       await sql.end();
-      await two.end();
+    }
+  });
+
+  // A transaction is one principal's: a sign-in lasts the database transaction. Inside one, the object's work for
+  // anyone else (a user, a service, nobody) throws at once, before anything is sent for it: on a pool of one, a
+  // second connection would wait until the pool's timeout. The transaction goes on as its own principal, and commits.
+  test("a transaction is one principal's: another's work inside it is refused, and it goes on as its own", async () => {
+    const p = new pg.Pool({ connectionString: APP, max: 1, connectionTimeoutMillis: 2000 });
+    const sql = postgres(APP, { max: 1 });
+    const said = (who: string) => "this transaction is signed in as user 1 already, and a sign-in lasts the database " +
+      `transaction: ${who}'s work can't run inside it. Run it after, or in a transaction of its own (another connection)`;
+    const refused = (work: () => Promise<unknown>) => work().then(() => "it ran", (e: Error) => `${e.constructor.name}: ${e.message}`);
+    const ME = "SELECT current_setting('authz.user_id') AS x";
+    const KEPT = "UPDATE app.notes SET body = 'still ann''s' WHERE id = 1 RETURNING id AS x";
+    const ran: string[] = [];
+    // inside ann's (1) transaction: bo's (2) question, a service's transaction, nobody's question; then ann's own
+    const inside = async (a: Pick<AuthzCalls, "can">, begin: (fn: () => Promise<unknown>, who: [string, number]) => Promise<unknown>,
+                          q: (text: string) => Promise<{ x: unknown }[]>) => [
+      await refused(() => actingAs("2", () => a.can("project", 2, "edit"))),
+      await refused(() => begin(async () => ran.push("inner"), ["service", 1])),
+      await refused(() => actingAs(null, () => a.can("project", 3, "view"))),
+      (await q(ME))[0].x, (await q(KEPT))[0].x, await a.can("note", 1, "edit"),
+    ];
+    const expected = ["Error: " + said("user 2"), "Error: " + said("service 1"), "Error: " + said("nobody"), "1", 1, true];
+    try {
+      const pgA = rowstile(p);
+      expect(await actingAs("1", () => pgA.transaction(async (c) => [
+        await refused(() => actingAs("2", () => pgA.query("INSERT INTO app.notes (project_id, author_id, body) VALUES (2, 2, 'bo''s')"))),
+        ...await inside(pgA, (fn, who) => pgA.transaction(fn, who), async (t) => (await c.query(t)).rows),
+      ]))).toEqual(["Error: " + said("user 2"), ...expected]);
+      const postgresA = postgresAuthz(sql);
+      expect(await actingAs("1", () => postgresA.begin((tx) =>
+        inside(postgresA, (fn, who) => postgresA.begin(fn, who), async (t) => [...await tx.unsafe<{ x: unknown }[]>(t)])))).toEqual(expected);
+      const onPg = withAuthz(drizzle(p));
+      expect(await actingAs("1", () => onPg.transaction((tx) =>
+        inside(onPg, (fn, who) => onPg.transaction(fn, who), async (t) => (await drizzleQueryable(tx).query(t)).rows)))).toEqual(expected);
+      const onPostgres = withAuthz(drizzlePostgres(sql));
+      expect(await actingAs("1", () => onPostgres.transaction((tx) =>
+        inside(onPostgres, (fn, who) => onPostgres.transaction(fn, who), async (t) => (await drizzleQueryable(tx).query(t)).rows)))).toEqual(expected);
+      expect(ran).toEqual([]);
+      // what each transaction wrote was committed; bo's insert was never sent
+      expect((await actingAs("2", () => pgA.query("SELECT count(*)::int AS n FROM app.notes WHERE body = 'bo''s'"))).rows[0].n).toBe(0);
+      expect((await actingAs("1", () => pgA.query("SELECT body FROM app.notes WHERE id = 1"))).rows[0].body).toBe("still ann's");
+    } finally {
+      await p.end();
+      await sql.end();
     }
   });
 
   // Work fn starts and doesn't await (a promise left running, a timer) may run after the transaction has ended, when
-  // its connection serves another request's transaction: it asks in a transaction of its own, as whoever it acts for.
-  // On a pool of one, bo's late call is made while ann's transaction holds the connection
+  // its connection serves another request's transaction: it asks in a transaction of its own, as whoever it acts for,
+  // someone else too (the transaction it was started in is over: nothing to refuse). On a pool of one, bo's late call
+  // is made while ann's transaction holds the connection
   test("work a transaction started, run after it ended, runs in a transaction of its own", async () => {
     const p = new pg.Pool({ connectionString: APP, max: 1 });
     const sql = postgres(APP, { max: 1 });
@@ -692,14 +733,15 @@ describe("without Prisma", () => {
         list: onPostgres.list, run: (fn) => onPostgres.transaction((tx) => fn(() => tx.execute(sqlTag.raw(pause)))),
       },
     };
-    const answered: Record<string, string[]> = {};
+    const answered: Record<string, string[][]> = {};
     try {
       for (const [name, d] of Object.entries(drivers)) {
         let go!: () => void;
         const gate = new Promise<void>((r) => { go = r; });
-        let later!: Promise<string[]>;
+        let later!: Promise<string[][]>;
         await actingAs("2", () => d.run(async () => {
-          later = gate.then(() => d.list("project", "view"));   // bo's, made once ann's transaction holds the connection
+          // bo's, made once ann's transaction holds the connection; then cy's, from the same late work
+          later = gate.then(async () => [await d.list("project", "view"), await actingAs("3", () => d.list("project", "view"))]);
         }));
         await actingAs("1", () => d.run(async (pause) => {
           go();
@@ -707,7 +749,7 @@ describe("without Prisma", () => {
         }));
         answered[name] = await later;
       }
-      expect(answered).toEqual(Object.fromEntries(Object.keys(drivers).map((name) => [name, ["2", "3"]])));
+      expect(answered).toEqual(Object.fromEntries(Object.keys(drivers).map((name) => [name, [["2", "3"], ["1", "3"]]])));
     } finally {
       await p.end();
       await sql.end();

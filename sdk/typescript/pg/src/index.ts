@@ -46,9 +46,10 @@ export interface Options {
   user?: UserResolver;
 }
 
-async function signedIn<C extends ClientLike, R>(pool: PoolLike<C>, who: Who | undefined, options: Options,
-                                                 fn: (client: C, p: Principal) => Promise<R>): Promise<R> {
+async function signedIn<C extends ClientLike, R>(pool: PoolLike<C>, enter: (p: Principal) => void, who: Who | undefined,
+                                                 options: Options, fn: (client: C, p: Principal) => Promise<R>): Promise<R> {
   const p = await signingIn(options.user, who);
+  enter(p);                                        // inside a transaction of this object's, as no one else
   const client = await pool.connect();
   let broken: unknown;
   // node-postgres listens for a lost connection only on idle clients: while this one is out, an error with
@@ -81,13 +82,14 @@ export function authz<P extends PoolLike>(pool: P, options: Options = {}) {
   const scope = transactionScope<C>();
   // inside transaction(fn), in its transaction; elsewhere, in one of its own
   const query = <T extends QueryResultRow = any>(text: string, values?: unknown[]): Promise<QueryResult<T>> =>
-    scope.open()?.query<T>(text, values) ?? signedIn(clients, undefined, options, (c) => c.query<T>(text, values));
+    scope.open()?.query<T>(text, values) ?? signedIn(clients, scope.enter, undefined, options, (c) => c.query<T>(text, values));
   return {
     pool,
     /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). fn acts for them too:
-     *  this object's own calls made inside it (query, expect, can, ...) run in the same transaction. */
+     *  this object's own calls made inside it (query, expect, can, ...) run in the same transaction.
+     *  A transaction is one principal's: inside it, this object's work for anyone else throws before it is sent. */
     transaction: <R>(fn: (client: C) => Promise<R>, who?: Who) =>
-      signedIn(clients, who, options, (client, p) => scope.run(client, p, () => fn(client))),
+      signedIn(clients, scope.enter, who, options, (client, p) => scope.run(client, p, () => fn(client))),
     /** One statement: inside transaction(fn), in that transaction; elsewhere, in a signed-in transaction of its own. */
     query,
     /** The runtime's functions (can, permsOf, list, share, ...): inside transaction(fn), in that transaction;

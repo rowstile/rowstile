@@ -168,6 +168,33 @@ test("10: a job acts for its service", async () => {
   expect(await actingAs(["service", 1], () => db.list("project", "view"))).toEqual(["1", "3"]);
 });
 
+// A transaction is one principal's (a sign-in lasts the database transaction): inside ann's, the same object's work for
+// a service or for nobody throws before anything is sent for it; the transaction goes on as ann's, and commits
+test("a transaction is one principal's: another's work inside it is refused", async () => {
+  const said = (who: string) => "this transaction is signed in as user 1 already, and a sign-in lasts the database " +
+    `transaction: ${who}'s work can't run inside it. Run it after, or in a transaction of its own (another connection)`;
+  const refused = (work: () => Promise<unknown>) => work().then(() => "it ran", (e: Error) => e.message);
+  const ME = "SELECT current_setting('authz.user_id') AS x";
+  const ran: string[] = [];
+  const seen = await actingAs("1", () => db.transaction(async (tx) => [
+    await refused(() => actingAs(["service", 1], () => db.list("project", "view"))),
+    await refused(() => db.transaction(async () => ran.push("drizzle"), null)),
+    ((await tx.execute(sqlTag.raw(ME))).rows[0] as { x: string }).x,
+    (await tx.update(notes).set({ body: "still ann's" }).where(eq(notes.id, 1)).returning({ id: notes.id }))[0].id,
+  ]));
+  expect(seen).toEqual([said("service 1"), said("nobody"), "1", 1]);
+  expect(await actingAs("1", () => sql.transaction(async (c) => [
+    await refused(() => sql.transaction(async () => ran.push("pg"), "2")),
+    (await c.query(ME)).rows[0].x,
+  ]))).toEqual([said("user 2"), "1"]);
+  expect(await actingAs("1", () => pgjs.begin(async (tx) => [
+    await refused(() => actingAs("2", () => pgjs.can("project", 2, "edit"))),
+    (await tx.unsafe(ME))[0].x,
+  ]))).toEqual([said("user 2"), "1"]);
+  expect(ran).toEqual([]);
+  expect((await actingAs("1", () => sql.query("SELECT body FROM app.notes WHERE id = 1"))).rows).toEqual([{ body: "still ann's" }]);
+});
+
 // 12: the framework's test database has the policy: a copy of the migrated one for each Jest worker (this file's,
 // and tests/package.test.ts's: test.sh counts them)
 test("12: a test database per worker has the policy", async () => {
