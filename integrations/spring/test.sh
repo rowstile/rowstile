@@ -40,9 +40,10 @@ export ROWSTILE_APP_URL="jdbc:postgresql://localhost:$APP_PORT/conf?user=conf_ap
 export ROWSTILE_CLI="$PYTHON $PWD/../../core/cli/rowstile_cli.py"   # the command, for checks 9 and 14
 LOG=$(mktemp -d)
 rc=0
-# the SDK first, built and installed in the local repository, where the app's build finds it: Maven resolves the app's
-# dependencies for Flyway's goals too (a clean local repository, as on CI's runners, has no other copy of it)
-$MVN -f ../../sdk/java/pom.xml install >"$LOG/sdk.log" 2>&1 || { cat "$LOG/sdk.log"; echo "FAIL  the SDK doesn't build"; exit 1; }
+# the SDK first (the starter, and the JDBC SDK under it: not the Kotlin module), built and installed in the local
+# repository, where the app's build finds it: Maven resolves the app's dependencies for Flyway's goals too (a clean
+# local repository, as on CI's runners, has no other copy of it)
+$MVN -f ../../sdk/java/pom.xml -pl rowstile-spring-boot-starter -am install >"$LOG/sdk.log" 2>&1 || { cat "$LOG/sdk.log"; echo "FAIL  the SDK doesn't build"; exit 1; }
 $MVN flyway:migrate >"$LOG/migrate.log" 2>&1 || { cat "$LOG/migrate.log"; echo "FAIL  11: flyway:migrate"; exit 1; }
 $CLI test >"$LOG/policy-tests.log" 2>&1 &&
   echo "ok    11: a fresh database, migrated, passes the policy's tests" || { cat "$LOG/policy-tests.log"; echo "FAIL  11: policy tests"; rc=1; }
@@ -60,8 +61,8 @@ mkdir -p "$COVERAGE" && rm -rf "$COVERAGE"/jacoco.exec "$COVERAGE"/report.txt "$
 verified=$?
 grep -E '^(ok|FAIL)  ' "$LOG/verify.log"
 [ $verified = 0 ] || { grep -E '^\[ERROR\]' "$LOG/verify.log" | head -40; echo "(Maven's log: $LOG/verify.log)"; rc=1; }
-$MVN -f ../../sdk/java/pom.xml org.jacoco:jacoco-maven-plugin:0.8.16:report -Djacoco.dataFile="$COVERAGE/jacoco.exec" >"$LOG/report.log" 2>&1 ||
-  { cat "$LOG/report.log"; rc=1; }
+$MVN -f ../../sdk/java/pom.xml -pl rowstile,rowstile-spring-boot-starter org.jacoco:jacoco-maven-plugin:0.8.16:report \
+  -Djacoco.dataFile="$COVERAGE/jacoco.exec" >"$LOG/report.log" 2>&1 || { cat "$LOG/report.log"; rc=1; }
 for m in rowstile rowstile-spring-boot-starter; do
   cp -r "../../sdk/java/$m/target/site/jacoco" "$COVERAGE/$m" 2>/dev/null
 done
