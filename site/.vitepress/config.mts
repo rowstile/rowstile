@@ -43,6 +43,7 @@ const stacks = [
   { text: "ASP.NET Core, EF Core (preview)", link: "/stacks/aspnetcore" },
   { text: "Rails (preview)", link: "/stacks/rails" },
   { text: "Spring Boot, JPA, Flyway (preview)", link: "/stacks/spring" },
+  { text: "Kotlin: Ktor, Exposed (preview)", link: "/stacks/ktor" },
   { text: "Any other stack: SQL", link: "/stacks/sql" },
 ];
 const sdks = [
@@ -50,6 +51,7 @@ const sdks = [
   { text: "TypeScript SDK", link: "/sdk/typescript" },
   { text: "Ruby SDK (preview)", link: "/sdk/ruby" },
   { text: "Java SDK (preview)", link: "/sdk/java" },
+  { text: "Kotlin SDK (preview)", link: "/sdk/kotlin" },
   { text: "Conformance suites", link: "/sdk/conformance" },
 ];
 const reference = [

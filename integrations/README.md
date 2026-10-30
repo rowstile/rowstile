@@ -47,6 +47,7 @@ postgres.js, Drizzle Kit's migrations, its tests on Jest; `authzRoutes()` is `@r
 SDK, a preview: `net/http`, pgx, sqlc, goose) and `django` (the Python SDK's Django module, a preview: Django's
 ORM on psycopg 3, Django's migrations, pytest-django) and `rails` (the Ruby SDK, a preview: Rails 8, Active
 Record, Puma, Minitest) and `spring` (the Java SDK, a preview: Spring Boot, Spring Security, JPA and
-JdbcClient over HikariCP, Flyway, JUnit). Check 15 is Next.js's alone.
+JdbcClient over HikariCP, Flyway, JUnit) and `ktor` (the Java SDK's Kotlin module, a preview: Ktor, Exposed over
+HikariCP, Flyway, JUnit; the Java SDK's names, used from Kotlin). Check 15 is Next.js's alone.
 
 A new stack gets its own folder here, with every check that applies to it.

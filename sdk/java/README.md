@@ -7,7 +7,7 @@ refused writes become a 403 with the database's reason, rows the user can't see 
 a connection that skips row-level security. It holds no rowstile logic: it calls the `authz.*` functions the policy
 made, and translates their answers. Java 21 or newer, PostgreSQL's JDBC driver.
 
-Two artifacts, group `dev.rowstile`:
+Three artifacts, group `dev.rowstile`:
 
 - `rowstile`: over JDBC alone. `Rowstile.transaction(conn, who, work)` runs `work` in a transaction signed in
   (`BEGIN; SELECT authz.act_as(...)`), `Authz.on(conn)` has the runtime's calls (`can`, `perms`, `permsOf`, `list`,
@@ -17,6 +17,9 @@ Two artifacts, group `dev.rowstile`:
   JPA's: `@Transactional`, `TransactionTemplate`, Spring Data's repositories) signs in first, as the request's user
   from Spring Security; a refusal answers with problem details (RFC 9457); and the app doesn't start on a connection
   that skips row-level security.
+- `rowstile-kotlin`: Kotlin's idioms over `rowstile`. Transactions signed in from coroutines, Exposed's transactions
+  signed in, a Ktor plugin, and test helpers: [its README](rowstile-kotlin/README.md), and its page,
+  [docs/stacks/ktor.md](../../docs/stacks/ktor.md).
 
 ```java
 @PatchMapping("/notes/{id}")
@@ -35,4 +38,4 @@ The page for Spring: [docs/stacks/spring.md](../../docs/stacks/spring.md). Its c
 `integrations/spring` (`test.sh`), which builds and installs this folder (`./mvnw install`) the way an app's build
 gets it, and fails unless its checks run every line and branch here.
 
-Not on Maven Central yet: until it is, `./mvnw install` here puts both in your local repository.
+Not on Maven Central yet: until it is, `./mvnw install` here puts them in your local repository.

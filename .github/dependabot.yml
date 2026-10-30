@@ -79,7 +79,7 @@ updates:
       python: {patterns: ["*"]}
 
   - package-ecosystem: maven
-    directories: ["/sdk/java", "/integrations/spring"]
+    directories: ["/sdk/java", "/integrations/spring", "/integrations/ktor"]
     schedule: {interval: monthly}
     cooldown: {default-days: 7}
     ignore:

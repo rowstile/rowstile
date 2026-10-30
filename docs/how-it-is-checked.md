@@ -354,6 +354,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The .NET SDK (preview): `Rowstile`, `Rowstile.EntityFrameworkCore`, `Rowstile.AspNetCore` | 2 | [app-code](reference/app-code.md) | `integrations/aspnetcore` |  |
 | The Ruby SDK for Rails (preview): signing in, refusals as answers, jobs, tests | 2 | [rails](stacks/rails.md) | `integrations/rails` |  |
 | The Java SDK (preview): JDBC, and the Spring Boot starter | 2 | [app-code](reference/app-code.md) | `integrations/spring` |  |
+| The Kotlin module of the Java SDK (preview): coroutines, Exposed and Ktor | 2 | [app-code](reference/app-code.md) | `integrations/ktor` |  |
 
 <!-- features: end of the table -->
 

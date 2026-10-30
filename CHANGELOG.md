@@ -44,6 +44,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A Java SDK, in preview: `dev.rowstile:rowstile` over JDBC, and a Spring Boot starter that signs in every
   transaction Spring begins as the request's user and answers refusals with problem details
   (`docs/stacks/spring.md`). `rowstile client java` writes the policy's names for it. It may change in any release.
+- A Kotlin module for the Java SDK, in preview: `dev.rowstile:rowstile-kotlin` signs in transactions from coroutines
+  and Exposed's, and its Ktor plugin signs in each request's and answers refusals with problem details
+  (`docs/stacks/ktor.md`). It may change in any release.
 
 ### Fixed
 
