@@ -1665,6 +1665,35 @@ class ClientNames(unittest.TestCase):
                 cfg = rowstile_cli.Config(toml, {"clients": {"elixir": path}} if path else {})
                 self.assertEqual(cfg.elixir_module, named, path)
 
+    def test_php_names(self) -> None:
+        # an enum of each type's permissions, in the namespace Authz; two names PHP would spell the same get neither, nor
+        # does a name PHP doesn't take (9Permission, Class: ::class is PHP's), and the file says why
+        policy = (
+            self.CASES
+            + "type t = app.t\n  owner : user = owner_id\n  can editAll = owner\n  can edit_all = owner\n"
+            + "  can class = owner\n  can _9 = owner\n  can read_all = owner\n"
+            + "type _9 = app.u\n  owner : user = owner_id\n  can see = owner\n"
+        )
+        lines = database.client("php", policy).split("\n")
+        for line in (
+            "<?php",
+            "namespace Authz;",
+            "use Rowstile\\Permission;",
+            "// doc and Doc would both be DocPermission: neither has one",
+            "enum OrgUnitPermission: string implements Permission",
+            "        return 'orgUnit';",
+            "enum TPermission: string implements Permission",
+            "    // editAll and edit_all would both be EditAll: neither has one",
+            "    // class would be Class, which isn't a name PHP takes: it has none",
+            "    // _9 would be 9, which isn't a name PHP takes: it has none",
+            "    case ReadAll = 'read_all';",
+            "// _9 would be 9Permission, which isn't a name PHP takes: it has none",
+        ):
+            self.assertIn(line, lines)
+        self.assertEqual(sum(line.startswith("enum ") for line in lines), 2)
+        # hidden permissions stay off it
+        self.assertNotIn("view__base", Compiler(parse_policy(read(POLICIES["alt"]))).client("php", "x"))
+
     def test_share_takes_caveat_args_as_a_dict(self) -> None:
         sent: list[Sequence[object]] = []
 
@@ -3381,6 +3410,23 @@ class Migrations(unittest.TestCase):
             self.assertTrue(text.startswith("defmodule MyApp.Repo.Migrations.AuthzNext do\n"), text)
             self.assertIn(f'      file = "{os.path.basename(sql)}"\n', text)
             self.assertIn("query_type: :text, log: false)", text)
+        # Laravel: the time as make:migration writes it, after the folder's last migration (Laravel runs them in the
+        # order of their names), an anonymous class running the SQL beside it
+        self.assertEqual(
+            written("laravel", "0001_01_01_000000_create_users_table.php"),
+            ["2026_01_01_000000_authz_x.php", "2026_01_01_000000_authz_x.sql"],
+        )
+        self.assertEqual(
+            written("laravel", "2026_01_01_000000_a.php", "2026_01_01_000005_b.php", "README.md")[0],
+            "2026_01_01_000006_authz_x.php",
+        )
+        with tempfile.TemporaryDirectory() as d:
+            php, _ = migrations.write_migration("laravel", d, "file comment", "SELECT 1;\n", now=now)
+            with open(php, encoding="utf-8") as fh:
+                text = fh.read()
+            self.assertIn("\nreturn new class extends Migration\n{\n", text)
+            self.assertIn("\nuse Illuminate\\Database\\Migrations\\Migration;\n", text)
+            self.assertIn("$sql = file_get_contents(__DIR__.'/2026_01_01_000000_authz_file_comment.sql');", text)
         # Prisma's folders always start with the time
         self.assertEqual(written("prisma", "0001_init"), ["20260101000000_authz_x/migration.sql"])
 
