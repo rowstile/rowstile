@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- rowstile for Java apps (preview): the JDBC SDK (rowstile) and its Spring Boot starter (rowstile-spring-boot-starter).
-     ./mvnw install builds and installs both; integrations/spring/test.sh is their conformance suite. -->
+<!-- rowstile for JVM apps (preview): the JDBC SDK (rowstile), its Spring Boot starter (rowstile-spring-boot-starter) and
+     its Kotlin module (rowstile-kotlin). ./mvnw install builds and installs them; integrations/spring/test.sh is the
+     Java ones' conformance suite, integrations/ktor/test.sh the Kotlin one's. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
@@ -40,6 +41,7 @@
   <modules>
     <module>rowstile</module>
     <module>rowstile-spring-boot-starter</module>
+    <module>rowstile-kotlin</module>
   </modules>
 
   <properties>

@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.rowstile</groupId>
+    <artifactId>rowstile-parent</artifactId>
+    <version>0.1.0-dev</version>
+  </parent>
+
+  <artifactId>rowstile-kotlin</artifactId>
+  <name>rowstile for Kotlin</name>
+  <description>rowstile for Kotlin apps (preview): transactions signed in from coroutines, Exposed's transactions
+    signed in, a Ktor plugin that signs in each request and answers refusals with problem details (403, 404).</description>
+
+  <properties>
+    <!-- the Kotlin that Ktor 3.6, Exposed 1.6 and Spring Boot 4.1 are built with: apps on Kotlin 2.2 or newer read it -->
+    <kotlin.version>2.3.21</kotlin.version>
+    <coroutines.version>1.11.0</coroutines.version>
+    <ktor.version>3.6.0</ktor.version>
+    <exposed.version>1.6.0</exposed.version>
+    <serialization.version>1.11.0</serialization.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.rowstile</groupId>
+      <artifactId>rowstile</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib</artifactId>
+      <version>${kotlin.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlinx</groupId>
+      <artifactId>kotlinx-coroutines-core-jvm</artifactId>
+      <version>${coroutines.version}</version>
+    </dependency>
+    <!-- each of these is the app's, when it has it: Exposed's transactions, Ktor's server (with its Authentication),
+         and the JSON the problem details are written with -->
+    <dependency>
+      <groupId>org.jetbrains.exposed</groupId>
+      <artifactId>exposed-jdbc</artifactId>
+      <version>${exposed.version}</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>io.ktor</groupId>
+      <artifactId>ktor-server-core-jvm</artifactId>
+      <version>${ktor.version}</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>io.ktor</groupId>
+      <artifactId>ktor-server-auth-jvm</artifactId>
+      <version>${ktor.version}</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlinx</groupId>
+      <artifactId>kotlinx-serialization-json-jvm</artifactId>
+      <version>${serialization.version}</version>
+      <optional>true</optional>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <sourceDirectory>src/main/kotlin</sourceDirectory>
+    <plugins>
+      <plugin>
+        <groupId>org.jetbrains.kotlin</groupId>
+        <artifactId>kotlin-maven-plugin</artifactId>
+        <version>${kotlin.version}</version>
+        <executions>
+          <execution>
+            <id>compile</id>
+            <goals><goal>compile</goal></goals>
+          </execution>
+        </executions>
+        <configuration>
+          <jvmTarget>21</jvmTarget>
+          <!-- every warning an error, and every public declaration says it is public, with its type -->
+          <args>
+            <arg>-Werror</arg>
+            <arg>-Xexplicit-api=strict</arg>
+          </args>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- Maven Central's release (the parent's profile): Javadoc's tool reads no Kotlin, so Dokka writes the javadoc
+         jar Central asks for -->
+    <profile>
+      <id>release</id>
+      <properties>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.jetbrains.dokka</groupId>
+            <artifactId>dokka-maven-plugin</artifactId>
+            <version>2.2.0</version>
+            <executions>
+              <execution>
+                <id>javadoc</id>
+                <phase>package</phase>
+                <goals><goal>javadocJar</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>
