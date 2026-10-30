@@ -138,7 +138,8 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   ([ASP.NET Core and EF Core](../stacks/aspnetcore.md)): a class for each type, holding its `ObjectType` and its
   permissions (`Policy.Note.Edit`), which the SDK's calls take, so a misspelled one doesn't compile. A name is the
   policy's in PascalCase (`org_unit` is `OrgUnit`); two that would get the same, `doc` and `Doc`, get none, and
-  the file says so. It may change before it is supported.
+  the file says so. A transaction is one principal's: in EF Core, work for someone else inside one signed in
+  already throws an `InvalidOperationException` before any SQL is sent. It may change before it is supported.
 - **Ruby: preview.** `rowstile client ruby` writes the policy's names as constants (`Authz::Note::EDIT`), and
   `rowstile client rbs` their signatures, for Steep: `Authz.queries` has `can`, `perms_of` and `permitted` taking
   the policy's types and permissions. The gem has `Rowstile.acting_as`, `Rowstile::Refused`, `Rowstile::NotFound`,
@@ -148,9 +149,9 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
 - **Java: preview.** `Rowstile.transaction(conn, who, work)` runs `work` in a transaction signed in, and
   `Rowstile.signIn(conn, who)` signs in one already open; `Rowstile.actingAs(who, work)` and `Rowstile.job(who, work)`
   say whom the transactions Spring begins act for. A transaction is one principal's: in Spring, work for someone else
-  that joins one signed in already throws an `IllegalStateException` before any SQL is sent. `Authz` has `can`, `perms`, `permsOf`, `list` (with `after` and
-  `limit`), `verdict`, `expect`, `connectionCheck` and `check`, over one connection (`Authz.on(conn)`) or, in Spring,
-  the transaction open now. It also has `Refused`, `NotFound`, `ConnectionProblem`, `Problem` and
+  that joins one signed in already throws an `IllegalStateException` before any SQL is sent. `Authz` has `can`,
+  `perms`, `permsOf`, `list` (with `after` and `limit`), `verdict`, `expect`, `connectionCheck` and `check`, over
+  one connection (`Authz.on(conn)`) or, in Spring, the transaction open now. It also has `Refused`, `NotFound`, `ConnectionProblem`, `Problem` and
   `Errors.problem(e)`, and the policy's names as `ObjectType` constants and an enum of each type's permissions. It may
   change before it is supported.
 - **Kotlin: preview.** `DataSource.transaction(who) { ... }` runs a block in a transaction signed in, on
