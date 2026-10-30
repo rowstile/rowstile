@@ -20,6 +20,11 @@ around each request. A background job is `job(who, fn)`. Every transaction signs
 uses a session-level `SET`, so pools and poolers in transaction mode are safe. The change feed (`changes()`)
 needs its own connection to Postgres: [Behind a pooler](../operations.md#behind-a-pooler).
 
+A transaction is one principal's: a sign-in lasts the database transaction. Inside `transaction(fn)`, the same
+object's work for anyone else (code in `fn` that calls `actingAs` or a job, a `who` given, or nobody) throws an
+`Error` before anything is sent for it, and the transaction goes on as its own principal. Run that work after it,
+or in a transaction of its own on another connection.
+
 ```sh
 # @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
 npm install @rowstile/client@next @rowstile/pg@next   # or @rowstile/postgres@next, @rowstile/drizzle@next

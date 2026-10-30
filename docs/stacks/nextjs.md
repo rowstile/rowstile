@@ -201,6 +201,12 @@ as long as Prisma's `transactionOptions` say, 2 seconds by default: with the dat
 `findUnique` calls at once, give the client a longer `maxWait` (or a bigger pool), or they fail with
 "Unable to start a transaction in the given time".
 
+A transaction is one principal's: a sign-in lasts the database transaction. Inside `$transaction(async (tx) =>
+...)`, a query through `db` (not `tx`) for anyone else, after `actingAs` or in a job, throws an `Error` before a
+connection is asked for, and so does a `$transaction` inside it; the transaction goes on as its own principal.
+Run that work after it, or in a transaction of its own on another connection. The same holds for `@rowstile/pg`,
+`/postgres` and `/drizzle` ([Node apps](node.md#who-a-transaction-acts-for)).
+
 ## Buttons, sharing and live updates (React)
 
 `authzRoutes()` is what the React kit calls: permissions for a list, shares, access requests, and live updates

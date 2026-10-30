@@ -30,6 +30,8 @@ export const digest = job(["service", 1], async () => ({ count: await db.project
 - `actingAs(who, fn)` and `job(who, fn)`: every transaction `fn` begins signs in as `who`. `42` or `"42"` is
   a user, `["service", 3]` another principal type of the policy, `null` nobody.
 - `current()`: who the code running now acts for.
+- `signedInAlready(signed, who)`: the `Error` the drivers' packages throw, before anything is sent, for work for
+  `who` inside a transaction signed in as `signed` (a transaction is one principal's).
 - `Refused` (403, with the rule and the reason), `NotFound` (404), `NotSignedIn`, `ConnectionProblem`.
 - `translate(e)`: any driver's error as one of those, or `null`. `problemOf(e)` and `problemResponse(e)`: the
   status and an RFC 9457 body for an HTTP answer (and 404 for what a call names that isn't there, AZ708; 400

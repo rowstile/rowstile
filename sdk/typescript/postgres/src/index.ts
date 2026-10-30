@@ -32,6 +32,7 @@ export function authz(sql: Sql, options: Options = {}) {
   const scope = transactionScope<TransactionSql>();
   const begin = async <R>(fn: (tx: TransactionSql) => Promise<R>, who?: Who): Promise<R> => {
     const p = await signingIn(options.user, who);
+    scope.enter(p);                                // inside a transaction of this object's, as no one else
     try {
       return (await sql.begin(async (tx) => {
         const a = actAs(p);
@@ -52,7 +53,8 @@ export function authz(sql: Sql, options: Options = {}) {
   return {
     sql,
     /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). fn acts for them too:
-     *  this object's own calls made inside it (expect, can, ...) run in the same transaction. */
+     *  this object's own calls made inside it (expect, can, ...) run in the same transaction.
+     *  A transaction is one principal's: inside it, this object's work for anyone else throws before it is sent. */
     begin,
     /** The runtime's functions (can, permsOf, list, share, ...): inside begin(fn), in that transaction;
      *  elsewhere, each in a signed-in transaction of its own. */

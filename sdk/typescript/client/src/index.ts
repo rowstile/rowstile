@@ -140,8 +140,14 @@ export function job<A extends unknown[], R>(who: Who, fn: (...args: A) => R): (.
 /** For the drivers' packages: the transaction their `transaction(fn, who)` runs fn in. `run` runs fn acting for
  *  p, whom the transaction signed in as, so what fn begins signs in as p too. `open()` is that transaction while
  *  the code running now still acts for p: the package's own calls made inside fn (`a.expect`, `a.can`) run in
- *  it, as p, see what it wrote, and wait for no second connection. */
-export function transactionScope<T>(): { run<R>(tx: T, p: Principal, fn: () => Promise<R>): Promise<R>; open(): T | undefined } {
+ *  it, as p, see what it wrote, and wait for no second connection. `enter(p)`, before a transaction of the
+ *  package's signs in as p: inside fn, while its transaction is open, a sign-in as anyone else throws
+ *  (signedInAlready), and nothing is sent. */
+export function transactionScope<T>(): {
+  run<R>(tx: T, p: Principal, fn: () => Promise<R>): Promise<R>;
+  open(): T | undefined;
+  enter(p: Principal): void;
+} {
   const store = new AsyncLocalStorage<{ tx: T; p: Principal; ended: boolean }>();
   return {
     run: async (tx, p, fn) => {
@@ -157,10 +163,31 @@ export function transactionScope<T>(): { run<R>(tx: T, p: Principal, fn: () => P
     open: () => {
       const t = store.getStore();
       const now = current();
-      // (code inside fn that acts for someone else, with actingAs, asks in a transaction of its own)
-      return t && !t.ended && now && now.type === t.p.type && now.id === t.p.id ? t.tx : undefined;
+      // (code inside fn that acts for someone else, with actingAs, is refused when it asks: enter)
+      return t && !t.ended && now && same(now, t.p) ? t.tx : undefined;
+    },
+    enter: (p) => {
+      const t = store.getStore();
+      // (once the transaction has ended, work it started signs in on its own)
+      if (t && !t.ended && !same(t.p, p)) throw signedInAlready(t.p, p);
     },
   };
+}
+
+function same(a: Principal, b: Principal): boolean {
+  return a.type === b.type && a.id === b.id;
+}
+
+/** What work for `who` inside a transaction signed in as `signed` throws, before anything is sent for it. A sign-in
+ *  lasts the database transaction: signed in again, everything after it in the transaction would be who's. */
+export function signedInAlready(signed: Principal, who: Principal): Error {
+  return new Error(`this transaction is signed in as ${named(signed)} already, and a sign-in lasts the database ` +
+    `transaction: ${named(who)}'s work can't run inside it. Run it after, or in a transaction of its own (another connection)`);
+}
+
+/** "user 42", "service 3" or "nobody", as the database's own words name a principal. */
+function named(p: Principal): string {
+  return p.id === null ? "nobody" : `${p.type} ${p.id}`;
 }
 
 /** Who the request is, when nothing set it with actingAs: e.g. async () => (await auth())?.user.id */

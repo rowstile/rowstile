@@ -68,6 +68,7 @@ export function withAuthz<Tx extends Executes>(db: Transacts<Tx>, options: Optio
   const scope = transactionScope<Tx>();
   const transaction = async <R>(fn: (tx: Tx) => Promise<R>, who?: Who): Promise<R> => {
     const p = await signingIn(options.user, who);
+    scope.enter(p);                                // inside a transaction of this object's, as no one else
     // node-postgres listens for a lost connection only on idle clients, and Drizzle doesn't listen on the one it
     // checks out: while the transaction holds it, an error with nobody listening would stop the process. The
     // transaction fails at its next query instead. (Taken off once Drizzle has given the client back.)
@@ -96,7 +97,8 @@ export function withAuthz<Tx extends Executes>(db: Transacts<Tx>, options: Optio
   };
   return {
     /** Runs fn in a transaction signed in as whoever the code acts for (or `who`, if given). fn acts for them too:
-     *  this object's own calls made inside it (can, permsOf, ...) run in the same transaction. */
+     *  this object's own calls made inside it (can, permsOf, ...) run in the same transaction.
+     *  A transaction is one principal's: inside it, this object's work for anyone else throws before it is sent. */
     transaction,
     /** The runtime's functions (can, permsOf, list, share, ...): inside transaction(fn), in that transaction;
      *  elsewhere, each in a signed-in transaction of its own. */

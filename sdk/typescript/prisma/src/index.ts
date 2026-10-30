@@ -21,8 +21,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Prisma } from "@prisma/client/extension";
 import {
-  actAs, calls, idShown, idText, NotFound, signingIn, translate,
-  type AuthzCalls, type Id, type ObjectType, type Permission, type Queryable, type UserResolver,
+  actAs, calls, idShown, idText, NotFound, signedInAlready, signingIn, translate,
+  type AuthzCalls, type Id, type ObjectType, type Permission, type Principal, type Queryable, type UserResolver,
 } from "@rowstile/client";
 
 export interface Options {
@@ -77,19 +77,35 @@ function mustBeExtended(): void {
     "only that one: export const db = new PrismaClient({ adapter }).$extends(authz())");
 }
 
+// The interactive transactions the code running now is in ($transaction(async (tx) => ...) on a client authz()
+// returned): whom each adapter's signed in as, and whether it has ended (work it started may run after: then it
+// signs in on its own). `mine` is the one this $transaction began. One store for the process, as above.
+interface Signed { p: Principal; ended: boolean }
+interface Began { signed: Map<object, Signed>; started: boolean; mine?: Signed }
+const BEGAN = Symbol.for("rowstile.prisma.transaction");
+const began: AsyncLocalStorage<Began> = ((globalThis as Record<symbol, unknown>)[BEGAN] as AsyncLocalStorage<Began> | undefined) ??
+  ((globalThis as Record<symbol, unknown>)[BEGAN] = new AsyncLocalStorage<Began>()) as AsyncLocalStorage<Began>;
+
 /** A driver adapter whose every transaction signs in (authz.act_as), and whose queries outside a transaction
- *  each run in a signed-in transaction of their own. */
+ *  each run in a signed-in transaction of their own. Inside an interactive transaction, its work for anyone but
+ *  whom the transaction signed in as throws before it is sent: a sign-in lasts the database transaction. */
 export function signedIn<F extends object>(factory: F, options: Options = {}): F {
   const inner = factory as unknown as AdapterFactory;
   // who, before the transaction begins: at build time Next.js stops a render there (a signed-in page is dynamic)
-  const who = async () => actAs(await signingIn(options.user));
+  const who = async () => {
+    const p = await signingIn(options.user);
+    // inside a transaction of this adapter's, signed in as someone else: refused, before a connection is asked for
+    const signed = began.getStore()?.signed.get(inner);
+    if (signed && !signed.ended && (signed.p.type !== p.type || signed.p.id !== p.id)) throw signedInAlready(signed.p, p);
+    return p;
+  };
   const signIn = async (tx: Transaction, a: { text: string; values: (string | null)[] }) => {
     await tx.executeRaw({ sql: a.text, args: a.values, argTypes: a.values.map(() => ARG_TEXT) });
   };
   const wrap = (adapter: Adapter): Adapter => {
     const alone = async <R>(run: (tx: Transaction) => Promise<R>): Promise<R> => {
       mustBeExtended();
-      const a = await who();
+      const a = actAs(await who());
       const tx = await adapter.startTransaction();
       let out: R;
       try {
@@ -109,10 +125,16 @@ export function signedIn<F extends object>(factory: F, options: Options = {}): F
         if (prop === "startTransaction") {
           return async (isolationLevel?: string) => {
             mustBeExtended();
-            const a = await who();
+            const p = await who();
+            const b = began.getStore();
+            if (b && !b.started) {                                    // the app's transaction, beginning
+              b.started = true;
+              b.mine = { p, ended: false };
+              b.signed.set(inner, b.mine);
+            }
             const tx = await target.startTransaction(isolationLevel);
             try {
-              await signIn(tx, a);
+              await signIn(tx, actAs(p));
             } catch (e) {
               await end(tx, "ROLLBACK").catch(() => undefined);
               throw e;
@@ -305,7 +327,15 @@ export function authz(options: ExtensionOptions = {}) {
         const [fn, ...rest] = args;
         const app = typeof fn === "function"
           ? (tx: unknown) => through.exit(async () => await (fn as (tx: unknown) => unknown)(tx)) : fn;
-        return extended(() => parent.$transaction(app, ...rest));
+        // (awaited inside: the transaction begins, and signs in, in the store's scope)
+        const b: Began = { signed: new Map(began.getStore()?.signed), started: false };   // (and those it is inside)
+        return extended(() => began.run(b, async () => {
+          try {
+            return await parent.$transaction(app, ...rest);
+          } finally {
+            if (b.mine) b.mine.ended = true;
+          }
+        }));
       },
       // An extension added to this client goes before authz(), which is then applied again: Prisma calls query
       // hooks in the order they were added, so a hook added after authz()'s would run inside what it lets

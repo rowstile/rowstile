@@ -10,6 +10,8 @@ kept out of caches, 403 and 404 from route handlers and server actions), `/react
 headless share dialog, live updates), `/vitest` and `/jest` (a preview); `integrations/nextjs` is their
 conformance suite, `integrations/node` a plain Express server's (a preview), and
 `rowstile client` writes only the policy's names for them (`src/authz.gen.ts`). <!-- checked: tests/unit_test.py "test_typescript_sdk_gets_only_the_names" -->
+A transaction is one principal's: inside one these packages signed in, their work for anyone else throws an `Error`
+before anything is sent for it ([Node apps](../stacks/node.md#who-a-transaction-acts-for)).
 Rails apps use [the Ruby SDK](../../sdk/ruby/README.md), a preview: its Railtie signs every Active Record transaction
 in, answers a refusal with 403 and a hidden row with 404, and checks the app's connection when it is served;
 `integrations/rails` is its conformance suite.

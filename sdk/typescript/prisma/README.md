@@ -49,6 +49,10 @@ and a query by permission is one call:
 - `$transaction([...])` is refused: Prisma starts an array's transaction from whichever request came first.
   Use `$transaction(async (tx) => ...)`. Inside it, why a write was refused is asked through the transaction:
   it needs no second connection.
+- A transaction is one principal's: inside `$transaction(async (tx) => ...)`, a query through `db` (not `tx`) for
+  anyone else (after `actingAs`, in a job, nobody), or a `$transaction` inside it, throws an `Error` before a
+  connection is asked for, and the transaction goes on as its own principal. Run that work after it, or in a
+  transaction of its own on another connection.
 - A `create` reads its row back, so it needs the select rule too. A refusal there is `Refused` naming it.
 - A refusal's `table` is the table as the policy names it, with its schema: `public.Note` for a model `Note`.
   `db.$authz.tableName("Note")` gives that name.
