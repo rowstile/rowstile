@@ -16,6 +16,10 @@ Java apps use [the Java SDK](../../sdk/java/README.md) (preview): `dev.rowstile:
 `dev.rowstile:rowstile-spring-boot-starter`, which signs in every transaction Spring begins as the request's user and
 answers refusals with problem details; `integrations/spring` is their conformance suite, and `rowstile client java`
 writes the policy's names for them (`AuthzNames.java`).
+Kotlin apps use its Kotlin module, [`dev.rowstile:rowstile-kotlin`](../../sdk/java/rowstile-kotlin/README.md)
+(preview): transactions signed in from coroutines, Exposed's transactions signed in, and a Ktor plugin that signs in
+each request's transactions and answers refusals with problem details; `integrations/ktor` is its conformance suite,
+on the names `rowstile client java` writes.
 The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
 `listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
 `ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,
@@ -130,3 +134,10 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   the transaction open now. It also has `Refused`, `NotFound`, `ConnectionProblem`, `Problem` and
   `Errors.problem(e)`, and the policy's names as `ObjectType` constants and an enum of each type's permissions. It may
   change before it is supported.
+- **Kotlin: preview.** `DataSource.transaction(who) { ... }` runs a block in a transaction signed in, on
+  `Dispatchers.IO`. `transaction(who, db)` and `suspendTransaction(who, db)` are Exposed's, signed in first, and
+  `JdbcTransaction.signIn(who)` signs in one already open. `ActingAs(who)`, an element of a coroutine's context, says
+  whom the code acts for, and `actingFor()` reads it; the Ktor plugin `Rowstile` gives each request one, and answers
+  rowstile's errors with problem details (`respondProblem`). `calls`, on a connection or in an Exposed transaction, is
+  the Java SDK's `Authz`, and `expect` takes an Exposed table. `problem()`, `refusal()` and `errorCode()` read an
+  error, or give null; `assertRefused` and `assertNotFound` are for tests. It may change before it is supported.
