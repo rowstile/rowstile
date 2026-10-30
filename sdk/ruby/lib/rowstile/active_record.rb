@@ -19,40 +19,67 @@ module Rowstile
   private_constant :EXPLAIN
 
   # Signs in every transaction an Active Record connection to Postgres runs while the code acts for someone
-  # (Rowstile.current: a request, a job, acting_as): before the transaction's first statement, and again before the
-  # next one whenever who the code acts for changed (acting_as inside a transaction, or a savepoint rolled back over
-  # the sign-in); once the code acts for no one again, as nobody. A statement outside a transaction is one of its own (BEGIN, the sign-in, the statement, COMMIT),
-  # as Postgres would run it alone. While the code acts for no one (the owner's migrations, a console) nothing is
-  # signed in, and the database refuses what needs to know who asks (AZ701). A sign-in lasts one transaction, so a
-  # pooled connection carries no one into the next.
+  # (Rowstile.current: a request, a job, acting_as), before the transaction's first statement. A statement outside a
+  # transaction is one of its own (BEGIN, the sign-in, the statement, COMMIT), as Postgres would run it alone. While
+  # the code acts for no one (the owner's migrations, a console) nothing is signed in, and the database refuses what
+  # needs to know who asks (AZ701). A sign-in lasts one transaction, so a pooled connection carries no one into the
+  # next.
+  #
+  # A transaction is one principal's: once it is signed in, a statement while the code acts for someone else, or for
+  # no one, raises before anything is sent for it, the transaction as it was. A savepoint rolled back over the
+  # sign-in undoes it in Postgres: the same principal signs in again before the next statement.
+  #
+  # Rails' transactional tests run each test in a transaction of the test's (and the console's sandbox runs in one
+  # of its own): what the app runs in it goes as it would without it. Each transaction the app begins there (a
+  # savepoint, to Postgres) is one principal's, and a statement outside one signs in as the code acts for, again
+  # whenever that changes (as nobody once a sign-in is there and the code acts for no one).
   module SignIn
     UNSIGNED = %w[TRANSACTION SCHEMA].freeze
 
+    # the test's transaction (and the console's sandbox), as Rails begins it: on the connection, not joinable,
+    # outside any other (the app's transactions begin in the transaction manager)
+    def begin_transaction(isolation: nil, joinable: true, _lazy: true)
+      super.tap { @rowstile_tests ||= !joinable && open_transactions == 1 }
+    end
+
     def begin_db_transaction
       super
-      @rowstile_signed = nil
+    ensure
+      @rowstile_signed = @rowstile_for = nil
     end
 
     def begin_isolated_db_transaction(isolation)
       super
-      @rowstile_signed = nil
+    ensure
+      @rowstile_signed = @rowstile_for = nil
     end
 
+    # (a COMMIT or a ROLLBACK that fails has ended the transaction too: a connection lost, a check at the commit)
     def commit_db_transaction
       super
-      @rowstile_signed = nil
+    ensure
+      rowstile_ended
     end
 
     def exec_rollback_db_transaction
       super
-      @rowstile_signed = nil
+    ensure
+      rowstile_ended
+    end
+
+    # Rails names the app's outermost transaction inside the test's active_record_1: it ends as a savepoint does
+    def release_savepoint(name = current_savepoint_name)
+      super
+      @rowstile_for = nil if @rowstile_tests && name == "active_record_1"
     end
 
     def exec_rollback_to_savepoint(name = current_savepoint_name)
       super
       @rowstile_signed = nil
+      @rowstile_for = nil if @rowstile_tests && name == "active_record_1"
     end
 
+    # (Rails rolls a transaction back to its beginning this way, in place of a savepoint: still the same principal's)
     def exec_restart_db_transaction
       super
       @rowstile_signed = nil
@@ -60,17 +87,29 @@ module Rowstile
 
     private
 
+    def rowstile_ended
+      @rowstile_signed = @rowstile_for = nil
+      @rowstile_tests = false
+    end
+
     # Rails names the statements that begin and end transactions and savepoints TRANSACTION, and its reads of the
     # catalog SCHEMA: neither is signed in (a ROLLBACK must go through in a transaction an error aborted, and row-level
     # security doesn't apply to the catalog)
     def raw_execute(sql, name = nil, binds = [], materialize_transactions: true, **options)
-      # a transaction that signed someone in, run on by code that acts for no one: nobody, from here on
-      who = Rowstile.current || (NOBODY if @rowstile_signed)
-      return super if who.nil? || !materialize_transactions || UNSIGNED.include?(name)
+      who = Rowstile.current
+      return super if !materialize_transactions || UNSIGNED.include?(name) ||
+                      (who.nil? && @rowstile_signed.nil? && @rowstile_for.nil?)
       # (in a transaction of its own, this again: the sign-in, then the statement)
       return transaction { raw_execute(sql, name, binds, materialize_transactions:, **options) } unless transaction_open?
 
+      # the app's transaction (in a test's, the one the app began in it) is one principal's
+      apps = open_transactions > (@rowstile_tests ? 1 : 0)
+      signed = @rowstile_for if apps
+      raise SignIn.signed_in_already(signed, who) unless signed.nil? || signed == who
+
       self.materialize_transactions # (the method: the argument has its name)
+      @rowstile_for = who if apps
+      who ||= NOBODY # (the code acts for no one in a test's transaction a sign-in is in: nobody, from here on)
       unless @rowstile_signed == who
         internal_execute("SELECT authz.act_as($1, $2)", "rowstile", Rowstile.act_as_args(who),
                          materialize_transactions: false)
@@ -78,6 +117,20 @@ module Rowstile
       end
       super
     end
+
+    # The error for work another principal's transaction can't run: a sign-in lasts the database transaction, so a
+    # second one would make all that follows in it the second principal's.
+    def self.signed_in_already(signed, who)
+      whose = who.nil? ? "the work of code that acts for no one" : "#{name_of(who)}'s work"
+      "this transaction is signed in as #{name_of(signed)} already, and a sign-in lasts the database transaction: " \
+        "#{whose} can't run inside it. Run it after, or in a transaction of its own (another connection)"
+    end
+
+    # user 1, service 3, nobody
+    def self.name_of(principal)
+      principal.id.nil? ? "nobody" : "#{principal.type} #{principal.id}"
+    end
+    private_class_method :name_of
   end
 
   # An update or a delete of a record that changed no row: row-level security left it out. Asks the database why,

@@ -78,6 +78,9 @@ module ActiveRecord
       def transaction: [T] () { () -> T } -> T
       def transaction_open?: () -> bool
       def materialize_transactions: () -> void
+      def begin_transaction: (?isolation: Symbol?, ?joinable: bool, ?_lazy: bool) -> untyped
+      def open_transactions: () -> Integer
+      def release_savepoint: (?String name) -> void
       def current_savepoint_name: () -> String
       def begin_db_transaction: () -> void
       def begin_isolated_db_transaction: (Symbol isolation) -> void

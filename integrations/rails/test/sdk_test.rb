@@ -42,41 +42,73 @@ class SdkTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # who the code acts for changes inside a transaction: the next statement signs in again, and the query cache
-  # forgets what it read as someone else
-  test "acting for someone else inside a transaction, and the query cache" do
+  # a transaction is one principal's: inside one signed in already, a statement while the code acts for someone else
+  # (nobody too) raises before anything is sent for it, the transaction as it was. The same principal goes on (in a
+  # savepoint too), and the transaction reads, writes and commits as its own
+  test "a transaction is one principal's" do
+    Note.load_schema # (what Rails reads of the catalog first)
+    sent = []
+    log = ->(*, payload) { sent << payload[:sql] }
     seen = Rowstile.acting_as(1) do
       ApplicationRecord.cache do
         Note.transaction do
-          [ids, Rowstile.acting_as(2) { ids }, ids]
+          first = ids
+          same = Rowstile.acting_as(1) { Note.transaction(requires_new: true) { ids } }
+          refused = ActiveSupport::Notifications.subscribed(log, "sql.active_record") do
+            [assert_raises(RuntimeError) { Rowstile.acting_as(2) { ids } },
+             assert_raises(RuntimeError) { Rowstile.acting_as(["service", 1]) { Note.transaction(requires_new: true) { ids } } },
+             assert_raises(RuntimeError) { Rowstile.acting_as(nil) { Note.find(3) } }]
+          end
+          Note.find(1).update!(body: "ann's")
+          [first, same, refused, ids, ids("SELECT current_setting('authz.user_id')")]
         end
       end
     end
-    assert_equal [EXPECTED["1"], EXPECTED["2"], EXPECTED["1"]], seen
+    assert_equal [], sent
+    first, same, refused, last, signed = seen
+    assert_equal [EXPECTED["1"], EXPECTED["1"], EXPECTED["1"], ["1"]], [first, same, last, signed]
+    assert_equal [RuntimeError] * 3, refused.map(&:class)
+    assert_equal "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: " \
+                 "user 2's work can't run inside it. Run it after, or in a transaction of its own (another connection)",
+                 refused[0].message
+    assert_includes refused[1].message, "as user 1 already, and a sign-in lasts the database transaction: service 1's work can't"
+    assert_includes refused[2].message, "as user 1 already, and a sign-in lasts the database transaction: nobody's work can't"
+    assert_equal "ann's", Rows.owner { |c| c.exec("SELECT body FROM app.notes WHERE id = 1").getvalue(0, 0) } # committed
   end
 
-  # a transaction begun while the code acted for no one, which signed someone in: nobody once the code acts for no
-  # one again, not whoever it last signed in
-  test "a transaction run on by code that acts for no one is nobody's" do
-    seen = Note.transaction { [Rowstile.acting_as(1) { ids }, ids] }
-    assert_equal [EXPECTED["1"], EXPECTED[nil]], seen
+  # a transaction begun while the code acted for no one, which signed someone in: code that acts for no one again
+  # can't run on in it (before the sign-in it could), and the next transaction is no one's
+  test "code that acts for no one can't run on in a transaction signed in" do
+    seen = Note.transaction do
+      plain = ids("SELECT 1") # not signed in: acts for no one
+      ann = Rowstile.acting_as(1) { ids }
+      after = assert_raises(RuntimeError) { ids }
+      [plain, ann, after.message, Rowstile.acting_as(1) { ids }]
+    end
+    assert_equal [[1], EXPECTED["1"], EXPECTED["1"]], seen.values_at(0, 1, 3)
+    assert_equal "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: the " \
+                 "work of code that acts for no one can't run inside it. Run it after, or in a transaction of its own " \
+                 "(another connection)", seen[2]
     assert_raises(ActiveRecord::StatementInvalid) { Note.count } # and the next transaction is no one's: refused
   end
 
-  # a savepoint rolled back over a sign-in, a transaction with an isolation level, a transaction Rails restarts
-  # (ROLLBACK AND CHAIN): the next statement signs in as the code acts for
-  test "a sign-in a rollback undid is made again" do
-    seen = Rowstile.acting_as(1) do
-      Note.transaction do
-        first = ids
-        Note.transaction(requires_new: true) do
-          Rowstile.acting_as(2) { ids }
-          raise ActiveRecord::Rollback
-        end
-        [first, ids]
+  # a savepoint rolled back over the sign-in undoes it in Postgres: the same principal signs in again, and another is
+  # still refused; the same after a transaction Rails restarts (ROLLBACK AND CHAIN); a transaction with an isolation
+  # level signs in too
+  test "a sign-in a rollback undid is made again, for the same principal" do
+    seen = Note.transaction do
+      ids("SELECT 1") # (so that the next one is a savepoint)
+      Note.transaction(requires_new: true) do
+        Rowstile.acting_as(1) { ids }
+        raise ActiveRecord::Rollback
       end
+      undone = ApplicationRecord.with_connection do |c|
+        c.raw_connection.exec("SELECT coalesce(current_setting('authz.user_id', true), '')").getvalue(0, 0)
+      end
+      [undone, Rowstile.acting_as(1) { ids }, assert_raises(RuntimeError) { Rowstile.acting_as(2) { ids } }.message]
     end
-    assert_equal [EXPECTED["1"], EXPECTED["1"]], seen
+    assert_equal ["", EXPECTED["1"]], seen[0..1]
+    assert_includes seen[2], "signed in as user 1 already"
     assert_equal EXPECTED["2"], Rowstile.acting_as(2) { Note.transaction(isolation: :repeatable_read) { ids } }
     restarted = Rowstile.acting_as(3) do
       Note.transaction do
@@ -84,10 +116,22 @@ class SdkTest < ActionDispatch::IntegrationTest
           ids
           raise ActiveRecord::Rollback
         end
-        ids
+        [ids, assert_raises(RuntimeError) { Rowstile.acting_as(2) { ids } }.message]
       end
     end
-    assert_equal EXPECTED["3"], restarted
+    assert_equal EXPECTED["3"], restarted[0]
+    assert_includes restarted[1], "signed in as user 3 already"
+  end
+
+  # the console's sandbox begins its transaction as a test's is begun (on the connection, not joinable, rolled back
+  # at the end): what runs in it goes as in a test's
+  test "a transaction begun as the console's sandbox begins one" do
+    ApplicationRecord.with_connection do |c|
+      c.begin_transaction(joinable: false)
+      assert_equal [EXPECTED["1"], EXPECTED["2"]], [Rowstile.acting_as(1) { ids }, Rowstile.acting_as(2) { ids }]
+    ensure
+      c.rollback_transaction
+    end
   end
 
   # while the code acts for no one, nothing is signed in: the app's role is refused (strict sign-in), and the owner's
@@ -290,16 +334,29 @@ class SdkTest < ActionDispatch::IntegrationTest
   end
 end
 
-# Rails' default for tests: each in a transaction the test begins (as the app's role, before anyone acts). Its
-# statements sign in as the code acts for, and again when that changes
+# Rails' default for tests: each in a transaction the test begins (as the app's role, before anyone acts). What the
+# app runs in it goes as it would without it: a statement outside a transaction signs in as the code acts for, and
+# again when that changes; each transaction the app begins (a savepoint) is one principal's
 class TransactionalTest < ActionDispatch::IntegrationTest
   self.use_transactional_tests = true
   setup { Rows.load! }
 
   test "a test in a transaction signs in its statements" do
     assert_equal [EXPECTED["2"], EXPECTED["1"]], [as_user(2) { Note.order(:id).ids }, as_user(1) { Note.order(:id).ids }]
+    assert_equal EXPECTED[nil], Note.order(:id).ids # the code acts for no one now: nobody, after a sign-in
     get "/notes", headers: as("3")
     assert_equal EXPECTED["3"], JSON.parse(response.body)
     as_user(1) { Note.find(1).update!(body: "rolled back") } # undone with the test's transaction
+  end
+
+  test "each transaction the app begins in a test's is one principal's" do
+    refused = as_user(1) do
+      Note.transaction { [Note.order(:id).ids, as_user(2) { assert_raises(RuntimeError) { Note.count } }.message] }
+    end
+    assert_equal EXPECTED["1"], refused[0]
+    assert_includes refused[1], "signed in as user 1 already, and a sign-in lasts the database transaction: user 2's work"
+    as_user(2) { assert_refused(command: "insert") { Note.create!(project_id: 1, author_id: 2, body: "x") } } # rolled back
+    note = as_user(1) { Note.create!(project_id: 1, author_id: 1, body: "x") } # another principal's, after each
+    assert_equal [EXPECTED["2"], note.id], [as_user(2) { Note.order(:id).ids }, as_user(1) { Note.find(note.id).id }]
   end
 end

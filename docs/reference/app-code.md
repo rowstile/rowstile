@@ -140,7 +140,9 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
 - **Ruby: preview.** `rowstile client ruby` writes the policy's names as constants (`Authz::Note::EDIT`), and
   `rowstile client rbs` their signatures, for Steep: `Authz.queries` has `can`, `perms_of` and `permitted` taking
   the policy's types and permissions. The gem has `Rowstile.acting_as`, `Rowstile::Refused`, `Rowstile::NotFound`,
-  `Rowstile.refusal(e)` and `Rowstile.expect`. It may change before it is supported.
+  `Rowstile.refusal(e)` and `Rowstile.expect`. A transaction is one principal's: inside one signed in already, a
+  statement while the code acts for someone else raises a `RuntimeError` before it is sent. It may change before it
+  is supported.
 - **Java: preview.** `Rowstile.transaction(conn, who, work)` runs `work` in a transaction signed in, and
   `Rowstile.signIn(conn, who)` signs in one already open; `Rowstile.actingAs(who, work)` and `Rowstile.job(who, work)`
   say whom the transactions Spring begins act for. `Authz` has `can`, `perms`, `permsOf`, `list` (with `after` and
