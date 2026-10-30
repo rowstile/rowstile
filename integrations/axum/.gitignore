@@ -1,0 +1,2 @@
+# cargo's builds, when it runs here without test.sh (which keeps them outside the checkout)
+target/

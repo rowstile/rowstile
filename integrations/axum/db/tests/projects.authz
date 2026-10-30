@@ -1,0 +1,14 @@
+test "members edit, others read public projects only"
+  given ann = {INSERT INTO app.users VALUES (901, 'ann') RETURNING id}
+  given bo = {INSERT INTO app.users VALUES (902, 'bo') RETURNING id}
+  given cy = {INSERT INTO app.users VALUES (903, 'cy') RETURNING id}
+  given p = {INSERT INTO app.projects VALUES (901, 901, 'Plans', false) RETURNING id}
+  given q = {INSERT INTO app.projects VALUES (902, 901, 'Public', true) RETURNING id}
+  given {INSERT INTO app.members VALUES ($p, $cy)}
+  user $ann can edit project $p
+  user $cy can edit project $p
+  user $cy cannot edit project $q
+  user $bo cannot view project $p
+  user $bo can view project $q
+  anyone can view project $q
+  as user $bo refused {INSERT INTO app.notes (project_id, author_id, body) VALUES ($q, $bo, 'hi')}
