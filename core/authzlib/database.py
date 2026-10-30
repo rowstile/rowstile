@@ -1015,9 +1015,9 @@ def graph(policy: str, files: Mapping[str, object] | str | None = None) -> str:
 def client(
     lang: str, policy: str, files: Mapping[str, object] | str | None = None, java_class: str = "AuthzNames"
 ) -> str:
-    """The client in a language the command takes, py, ts, go, csharp (the names, for the .NET SDK), ruby, rbs or
-    java (the names alone, as the class `java_class`: com.example.AuthzNames); or ts-sdk, the names alone
-    (rowstile.toml's ts, for an app on the TypeScript SDK)."""
+    """The client in a language the command takes, py, ts, go, csharp (the names, for the .NET SDK), ruby, rbs,
+    java (the names alone, as the class `java_class`: com.example.AuthzNames) or rust (the names, for the Rust SDK);
+    or ts-sdk, the names alone (rowstile.toml's ts, for an app on the TypeScript SDK)."""
 
     def make(c: Compiler) -> str:
         c.compile("the policy", transaction=False)

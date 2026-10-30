@@ -2,15 +2,15 @@
 
     [migrations]                    in rowstile.toml
     tool = "alembic"                alembic | prisma | drizzle | efcore | rails | sql | goose | dbmate | flyway |
-                                    django
+                                    django | sqlx
     dir  = "alembic/versions"       where the tool keeps its migrations (each tool has a default; Django: the app's)
     lock = "db/policy.lock"         the lock file (default: next to the policy, <policy>.lock)
     write_after = 300               rowstile dev writes the migration this long after the last save (0: never)
 
 Each writer gets the migration's SQL and a name, and returns the files it wrote, named so that they come after
 the folder's others: Alembic chains a revision after the head, Django a migration after the app's latest; Drizzle Kit takes the journal's next number; sql,
-goose, dbmate and Flyway take the number after the folder's last when it is a number (0005 after 0004, V3 after
-V2), else the time (UTC), as Prisma, EF Core and Rails always do.
+goose, dbmate, Flyway and sqlx take the number after the folder's last when it is a number (0005 after 0004, V3
+after V2), else the time (UTC), as Prisma, EF Core and Rails always do.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from typing import TypedDict
 
 from authzlib.statements import split
 
-TOOLS = ("alembic", "prisma", "drizzle", "efcore", "rails", "sql", "goose", "dbmate", "flyway", "django")
+TOOLS = ("alembic", "prisma", "drizzle", "efcore", "rails", "sql", "goose", "dbmate", "flyway", "django", "sqlx")
 DEFAULT_DIRS = {
     "alembic": "alembic/versions",
     "prisma": "prisma/migrations",
@@ -38,6 +38,7 @@ DEFAULT_DIRS = {
     "dbmate": "db/migrations",
     "flyway": "sql",
     "django": "migrations",  # an app's own: [migrations] dir = "<app>/migrations"
+    "sqlx": "migrations",
 }
 
 
@@ -145,7 +146,9 @@ def write_migration(tool: str, folder: str, name: str, sql: str, now: float | No
     if existing and max(existing) >= ts:
         ts = stamp(calendar.timegm(time.strptime(max(existing), "%Y%m%d%H%M%S")) + 1)
     version = (next_version(names, VERSIONS[tool]) if tool in VERSIONS else None) or ts
-    if tool == "sql":
+    if tool in ("sql", "sqlx"):
+        # sqlx's: a simple migration (forward only, as rowstile's are), which its migrator runs in a transaction; a
+        # folder of reversible ones (.up.sql and .down.sql) runs it too, in order
         return [write(os.path.join(folder, f"{version}_{name}.sql"), sql)]
     if tool == "flyway":
         # the SQL holds ${ (a dollar quote before a JSON object), which Flyway would read as a placeholder: its
@@ -181,6 +184,7 @@ VERSIONS = {
     "goose": r"(\d+)_.*\.(?:sql|go)",
     "dbmate": r"(\d+).*\.sql",
     "flyway": r"V(\d+(?:[._]\d+)*)__.*\.sql",
+    "sqlx": r"(\d+)_.*\.sql",  # .up.sql and .down.sql too
 }
 
 

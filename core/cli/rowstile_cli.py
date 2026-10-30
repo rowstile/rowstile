@@ -52,8 +52,8 @@
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
-    rowstile client  [py|ts|go|csharp|ruby|rbs|java] [POLICY.authz]
-                                                   typed helpers for app code (go, csharp, ruby, java: the
+    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust] [POLICY.authz]
+                                                   typed helpers for app code (go, csharp, ruby, java, rust: the
                                                    policy's names, for those SDKs; rbs: the Ruby names'
                                                    signatures); with none, writes the clients rowstile.toml names
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
@@ -97,9 +97,10 @@ rowstile.toml:
     ruby = "app/lib/authz.rb"              # the policy's names, for the Ruby SDK
     rbs = "sig/authz.rbs"                  # ... and their signatures, for Steep
     java = "src/main/java/com/example/AuthzNames.java"   # the policy's names, for the Java SDK
+    rust = "src/authz.rs"                  # the policy's names, for the Rust SDK
     [migrations]
     tool = "alembic"                       # alembic, prisma, drizzle, efcore, rails, sql, goose, dbmate,
-                                           # flyway or django
+                                           # flyway, django or sqlx
     dir  = "alembic/versions"              # where the tool keeps them (each tool has a default)
     lock = "db/policy.lock"                # what the migrations made so far (default: next to the policy)
     write_after = 300                      # rowstile dev writes the migration this long after the last save
@@ -515,7 +516,7 @@ class Config:
 
 
 # the languages rowstile client writes: for Ruby, the policy's names and their signatures (RBS)
-CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java")
+CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust")
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
@@ -527,6 +528,7 @@ SETTINGS: dict[str, dict[str, str]] = {
         "ruby": "text",
         "rbs": "text",
         "java": "text",
+        "rust": "text",
     },
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
@@ -1229,7 +1231,7 @@ def main(argv: list[str]) -> None:
             return
         if cmd == "client" and args[1:]:
             if args[0] not in CLIENTS:
-                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs or java?", 2)
+                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs, java or rust?", 2)
             _, text, files = policy_arg()
             sys.stdout.write(database.client(args[0], text, files, cfg.java_class))
             return
@@ -1424,7 +1426,7 @@ def main(argv: list[str]) -> None:
                     print(f"wrote {relative(path)}")
                 return
             if not args or args[0] not in CLIENTS:
-                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs or java?", 2)
+                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs, java or rust?", 2)
             sys.stdout.write(database.client(args[0], text, files, cfg.java_class))
         elif cmd == "why":
             if not opts.get("--as"):
