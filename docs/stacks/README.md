@@ -17,10 +17,11 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 | Kotlin: Ktor, Exposed, coroutines, Flyway (preview) | [ktor.md](ktor.md) | `dev.rowstile:rowstile-kotlin` |
 | Rust: Axum, sqlx, tokio-postgres (preview) | [axum.md](axum.md) | `cargo add rowstile` (from the repository) |
 | Phoenix, Ecto, Postgrex, Oban (preview) | [phoenix.md](phoenix.md) | `:rowstile` in `mix.exs` |
+| Laravel, Eloquent, queued jobs; PHP on PDO (preview) | [laravel.md](laravel.md) | `composer require rowstile/rowstile` |
 | Anything else | [sql.md](sql.md) | none: a few SQL statements |
 
 Every line of code these pages show is in a tested app (`integrations/fastapi`, `integrations/nextjs`,
-`integrations/go`, `integrations/django`, `integrations/aspnetcore`, `integrations/rails`, `integrations/spring`, `integrations/ktor`, `integrations/axum`, `integrations/phoenix`, the conformance suites), in `docs/getting-started.md`, which runs as written, or, for the SQL the SDKs send, in
+`integrations/go`, `integrations/django`, `integrations/aspnetcore`, `integrations/rails`, `integrations/spring`, `integrations/ktor`, `integrations/axum`, `integrations/phoenix`, `integrations/laravel`, the conformance suites), in `docs/getting-started.md`, which runs as written, or, for the SQL the SDKs send, in
 the SDKs' own code. `core/tests/unit_test.py` checks each line, and that the install lines have each rowstile
 package the code imports. It checks lines one by one: a block may be a few lines of a longer file, so read
 the text around it too.

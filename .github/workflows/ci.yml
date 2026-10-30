@@ -359,6 +359,24 @@ jobs:
           name: sdk-coverage-elixir
           path: ${{ runner.temp }}/sdk-coverage-elixir/report.txt
           if-no-files-found: ignore
+  # The PHP SDK's conformance suite (preview): Laravel, Eloquent on pdo_pgsql, the queue's worker, PHPUnit with paratest
+  # (integrations/laravel). PHP and Composer run in a container, on the images integrations/images/Dockerfile pins. It
+  # fails unless its checks run every line and branch of the SDK (Xdebug); the report it prints is kept
+  conformance-laravel:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - run: bash integrations/laravel/test.sh
+        env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-php"}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: sdk-coverage-php
+          path: ${{ runner.temp }}/sdk-coverage-php/report.txt
+          if-no-files-found: ignore
   # The playground: the compiler in Pyodide and its SQL in PGlite, headless (every example's tests pass), then the
   # page in Chrome (loaded from the CDN, a mistake and its page, asking as someone, links; loading, cached, under
   # 10 s: the design's limit is 5 s, and GitHub's runners took up to 5.9 s)

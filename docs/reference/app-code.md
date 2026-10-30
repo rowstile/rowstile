@@ -28,6 +28,10 @@ Elixir apps use [the Elixir SDK](../../sdk/elixir/README.md) (preview): `Rowstil
 transaction in, `Rowstile.Plug` says whom each request acts for, and its Phoenix fallback answers refusals with
 problem details; `integrations/phoenix` is its conformance suite, and `rowstile client elixir` writes the policy's
 names for it (`lib/my_app/authz.ex`).
+PHP apps use [the PHP SDK](../../sdk/php/README.md) (preview): `rowstile/rowstile` over PDO, and in Laravel a service
+provider that signs in every transaction as the request's or the job's principal and answers refusals with problem
+details; `integrations/laravel` is its conformance suite, and `rowstile client php` writes the policy's names for it
+(`database/authz.php`).
 The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
 `listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
 `ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,
@@ -160,3 +164,11 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   doesn't compile. The package has `Rowstile.transact`, `Rowstile.expect`, `Rowstile.Refused`, `Rowstile.NotFound`,
   `Rowstile.CallError` and `Rowstile.problem(e)`: [Phoenix](../stacks/phoenix.md). It may change before it is
   supported.
+- **PHP: preview.** `Rowstile::transaction($pdo, fn)` and `transactionAs($pdo, $who, fn)` run `fn` in a PDO
+  transaction signed in; `Rowstile::actingAs($who, fn)` says whom the transactions Laravel's connections begin act
+  for. A transaction is one principal's: inside one signed in already, work for someone else throws a
+  `LogicException` before any SQL is sent. `Queries` has `can`, `permsOf` and `list` (with `after` and `limit`), over
+  PDO or a Laravel connection (`Laravel\Database::queries()`), and the SDK has `Rowstile::expect`, `Rowstile::check`,
+  `Refused`, `NotFound`, `CallError`, `Problem` and `Rowstile::problemOf($e)`. `rowstile client php` writes an enum of
+  each type's permissions, in the namespace `Authz` (`Authz\NotePermission::Edit`), which the SDK's calls take, so
+  PHPStan finds a misspelled one. It may change before it is supported.

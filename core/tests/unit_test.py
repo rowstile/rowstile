@@ -11485,12 +11485,14 @@ class StackPages(unittest.TestCase):
         "ktor.md": ["integrations/ktor"],
         "axum.md": ["integrations/axum"],
         "phoenix.md": ["integrations/phoenix"],
+        "laravel.md": ["integrations/laravel"],
         "sql.md": ["docs/getting-started.md", "sdk/python/rowstile", "sdk/typescript"],
     }
     SKIP: ClassVar[set[str]] = {"node_modules", ".venv", ".next", ".work", "generated", "__pycache__", "dist", "tmp"}
     SKIP |= {"bin", "obj", ".feed"}  # what dotnet builds and packs
     SKIP |= {"target"}  # what Maven builds
     SKIP |= {"_build", "deps"}  # what Mix builds and fetches
+    SKIP |= {"vendor"}  # what Composer installs
     CHECKED = (
         "python",
         "ts",
@@ -11508,6 +11510,7 @@ class StackPages(unittest.TestCase):
         "kotlin",
         "rust",
         "elixir",
+        "php",
     )  # sh blocks are commands to type
 
     def lines(self, rel: str) -> set[str]:
@@ -11545,6 +11548,7 @@ class StackPages(unittest.TestCase):
                     ".rs",
                     ".ex",
                     ".exs",
+                    ".php",
                 )
             ):
                 with open(f, encoding="utf-8") as fh:
