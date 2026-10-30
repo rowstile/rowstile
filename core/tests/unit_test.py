@@ -11351,6 +11351,7 @@ class StackPages(unittest.TestCase):
         "aspnetcore.md": ["integrations/aspnetcore"],
         "spring.md": ["integrations/spring"],
         "ktor.md": ["integrations/ktor"],
+        "axum.md": ["integrations/axum"],
         "sql.md": ["docs/getting-started.md", "sdk/python/rowstile", "sdk/typescript"],
     }
     SKIP: ClassVar[set[str]] = {"node_modules", ".venv", ".next", ".work", "generated", "__pycache__", "dist", "tmp"}
@@ -11371,6 +11372,7 @@ class StackPages(unittest.TestCase):
         "xml",
         "properties",
         "kotlin",
+        "rust",
     )  # sh blocks are commands to type
 
     def lines(self, rel: str) -> set[str]:
@@ -11405,6 +11407,7 @@ class StackPages(unittest.TestCase):
                     ".xml",
                     ".properties",
                     ".kt",
+                    ".rs",
                 )
             ):
                 with open(f, encoding="utf-8") as fh:

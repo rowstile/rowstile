@@ -44,6 +44,7 @@ const stacks = [
   { text: "Rails (preview)", link: "/stacks/rails" },
   { text: "Spring Boot, JPA, Flyway (preview)", link: "/stacks/spring" },
   { text: "Kotlin: Ktor, Exposed (preview)", link: "/stacks/ktor" },
+  { text: "Rust: Axum, sqlx (preview)", link: "/stacks/axum" },
   { text: "Any other stack: SQL", link: "/stacks/sql" },
 ];
 const sdks = [
@@ -52,6 +53,7 @@ const sdks = [
   { text: "Ruby SDK (preview)", link: "/sdk/ruby" },
   { text: "Java SDK (preview)", link: "/sdk/java" },
   { text: "Kotlin SDK (preview)", link: "/sdk/kotlin" },
+  { text: "Rust SDK (preview)", link: "/sdk/rust" },
   { text: "Conformance suites", link: "/sdk/conformance" },
 ];
 const reference = [

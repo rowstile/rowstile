@@ -355,6 +355,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The Ruby SDK for Rails (preview): signing in, refusals as answers, jobs, tests | 2 | [rails](stacks/rails.md) | `integrations/rails` |  |
 | The Java SDK (preview): JDBC, and the Spring Boot starter | 2 | [app-code](reference/app-code.md) | `integrations/spring` |  |
 | The Kotlin module of the Java SDK (preview): coroutines, Exposed and Ktor | 2 | [app-code](reference/app-code.md) | `integrations/ktor` |  |
+| The Rust SDK (preview): sqlx and tokio-postgres transactions signed in, refusals as errors, Axum | 2 | [app-code](reference/app-code.md) | `integrations/axum` |  |
 
 <!-- features: end of the table -->
 

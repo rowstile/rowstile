@@ -114,6 +114,9 @@ RAILS_CHECKS = "integrations/rails/test/checks_test.rb"
 RAILS_SDK = "integrations/rails/test/sdk_test.rb"
 SPRING = "integrations/spring/src/test/java/dev/rowstile/conformance/"
 KTOR = "integrations/ktor/src/test/kotlin/dev/rowstile/conformance/"
+AXUM = "integrations/axum/tests/conformance.rs"
+AXUM_SDK = "integrations/axum/tests/sdk.rs"
+AXUM_COMPILE = "integrations/axum/tests/compile.sh"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1252,6 +1255,23 @@ FEATURES: list[Feature] = [
             Check(KTOR + "GeneratedNamesTest.kt", "9: the generated names type-check"),
         ),
     ),
+    Feature(
+        "sdk.rust",
+        2,
+        "The Rust SDK (preview): sqlx and tokio-postgres transactions signed in, refusals as errors, Axum",
+        ("sdk.rust.*",),
+        Doc(APP, "Rust: preview."),
+        (
+            Check(AXUM, "3: not signed in: the not-signed-in error (AZ701), naming act_as"),
+            Check(AXUM, "5: concurrent requests never mix users"),
+            Check(AXUM, "16: a login refused or a call that needs someone signed in 401"),
+            Check(AXUM_SDK, "tokio-postgres: a transaction signed in, as a user, a service or nobody"),
+            Check(AXUM_SDK, "Postgres's own refusals (an update out of sight, an upsert, MERGE) name the rule"),
+            Check(AXUM_SDK, "12: ... each binary its own copy"),
+            Check(AXUM_COMPILE, "9: the generated names type-check"),
+            Check(AXUM_COMPILE, "14: after a policy change and a new migration"),
+        ),
+    ),
 ]
 
 
@@ -1500,6 +1520,19 @@ def sdk_kotlin() -> set[str]:
     return out
 
 
+def sdk_rust() -> set[str]:
+    """What the Rust crate makes public: the items its modules declare `pub` at the top level, by the path an app
+    names them by (`sdk.rust.Error`, re-exported from its error module; `sdk.rust.sqlx.begin`)."""
+    out: set[str] = set()
+    for path in sorted(glob.glob(os.path.join(REPO, "sdk", "rust", "src", "*.rs"))):
+        module = os.path.basename(path)[:-3]
+        prefix = "sdk.rust." if module in ("lib", "error") else f"sdk.rust.{module}."
+        with open(path, encoding="utf-8") as fh:
+            names = re.findall(r"^pub (?:async )?(?:fn|struct|enum|trait|const|mod|type) (\w+)", fh.read(), re.M)
+        out |= {prefix + name for name in names}
+    return out
+
+
 def language() -> set[str]:
     """The language's forms, as the editors' grammar names them: its rules, less the hidden ones (`_x`) and the
     ones that read a token's characters (names, values, comments) rather than a word of the language."""
@@ -1528,6 +1561,7 @@ SURFACES: dict[str, Callable[[], set[str]]] = {
     "the Ruby SDK": sdk_ruby,
     "the Java SDK": sdk_java,
     "the Kotlin SDK": sdk_kotlin,
+    "the Rust SDK": sdk_rust,
     "the language": language,
 }
 
