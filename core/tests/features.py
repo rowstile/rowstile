@@ -1223,7 +1223,7 @@ FEATURES: list[Feature] = [
             Check(RAILS_CHECKS, "4: a pooled connection carries no one over"),
             Check(RAILS_CHECKS, "12: a test database per worker has the policy"),
             Check(RAILS_CHECKS, "13: the app does not start on the owner's connection"),
-            Check(RAILS_SDK, "a transaction run on by code that acts for no one is nobody's"),
+            Check(RAILS_SDK, "a transaction is one principal's"),
             Check(RAILS_SDK, "db:prepare migrates an empty database, and db:schema:load refuses the dump"),
         ),
     ),

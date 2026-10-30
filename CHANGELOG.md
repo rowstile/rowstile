@@ -61,6 +61,34 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   the test database for each worker. `rowstile migrate` writes Laravel migrations (`tool = "laravel"`), and
   `rowstile client php` the policy's names as enums ([Laravel](docs/stacks/laravel.md)).
 
+### Changed
+
+- A transaction is one principal's, in every SDK. Inside a transaction an SDK signed in already, work for someone
+  else, or for no one, is refused before anything is sent for it, with the same words everywhere ("this
+  transaction is signed in as … already, and a sign-in lasts the database transaction: …'s work can't run inside
+  it. Run it after, or in a transaction of its own (another connection)"); the transaction goes on as its own
+  principal's. Work for the same principal goes on as before. Until now the SDKs differed:
+  - Python: `rowstile.psycopg` and `rowstile.asyncpg` blocks took a savepoint and signed back after;
+    SQLAlchemy's `install(engine)` kept the outer principal; `rowstile.django` switched statement by statement.
+    Each now raises a `RuntimeError`. A psycopg or asyncpg block inside a transaction it didn't begin is refused
+    too (who it is signed in as can't be known): psycopg without autocommit opens one at the first statement.
+  - TypeScript (`@rowstile/pg`, `/postgres`, `/drizzle`, `/prisma`): opened a second connection (on a pool of one,
+    it waited until the pool's timeout). It now throws an `Error`; `@rowstile/client` exports `signedInAlready`.
+  - Go: `Tx`/`TxAs` for someone else took a savepoint signed in as them; now an error. So is `Tx` on a transaction
+    it didn't begin, or on a `*pgx.Conn` in a transaction.
+  - Ruby: switched statement by statement; now a `RuntimeError`. In Rails' transactional tests, each transaction
+    the app begins is one principal's, so a test may still act for one person, then another.
+  - Django's tests the same: inside the test's transaction, each atomic block the app begins is one principal's.
+  - EF Core (`UseRowstile()`) and the Spring Boot starter kept the transaction's principal without a word; now an
+    `InvalidOperationException` and an `IllegalStateException`. Spring's transaction managers are handed out
+    wrapped, so inject `PlatformTransactionManager`, not a manager's class.
+  - Rust, Kotlin, Elixir and PHP: unchanged (Rust's types already keep a transaction to one principal; the other
+    three refused already).
+- The .NET SDK turns on Npgsql's `Include Error Detail` where it builds the app's connections:
+  `AddRowstile(o => o.ConnectionString = ...)`, which now builds the `NpgsqlDataSource`, and a context's
+  connection string before `UseRowstile()`. A refused write says why without the app setting it. A data source the
+  app builds itself keeps what it was built with.
+
 ### Fixed
 
 - The TypeScript SDKs (`@rowstile/pg`, `@rowstile/postgres`, `@rowstile/drizzle`): work that `transaction(fn)`
