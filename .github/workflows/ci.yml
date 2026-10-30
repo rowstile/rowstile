@@ -336,6 +336,29 @@ jobs:
           name: sdk-coverage-rust
           path: ${{ runner.temp }}/sdk-coverage-rust/report.txt
           if-no-files-found: ignore
+  # The Elixir SDK's conformance suite (preview): Phoenix on Bandit, Ecto on Postgrex, Oban, ExUnit
+  # (integrations/phoenix). Elixir runs in a container, on the image integrations/images/Dockerfile pins; Hex's
+  # packages, the builds and Dialyzer's tables are kept in the cache, by the lock files. It fails unless its checks
+  # run every line of the SDK (Erlang's cover); the report it prints is kept
+  conformance-phoenix:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
+        with:
+          path: ~/.cache/rowstile/phoenix
+          key: phoenix-${{ hashFiles('sdk/elixir/mix.lock', 'integrations/phoenix/mix.lock', 'integrations/images/Dockerfile') }}
+      - run: bash integrations/phoenix/test.sh
+        env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-elixir"}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: sdk-coverage-elixir
+          path: ${{ runner.temp }}/sdk-coverage-elixir/report.txt
+          if-no-files-found: ignore
   # The playground: the compiler in Pyodide and its SQL in PGlite, headless (every example's tests pass), then the
   # page in Chrome (loaded from the CDN, a mistake and its page, asking as someone, links; loading, cached, under
   # 10 s: the design's limit is 5 s, and GitHub's runners took up to 5.9 s)

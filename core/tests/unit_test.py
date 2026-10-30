@@ -11438,11 +11438,13 @@ class StackPages(unittest.TestCase):
         "spring.md": ["integrations/spring"],
         "ktor.md": ["integrations/ktor"],
         "axum.md": ["integrations/axum"],
+        "phoenix.md": ["integrations/phoenix"],
         "sql.md": ["docs/getting-started.md", "sdk/python/rowstile", "sdk/typescript"],
     }
     SKIP: ClassVar[set[str]] = {"node_modules", ".venv", ".next", ".work", "generated", "__pycache__", "dist", "tmp"}
     SKIP |= {"bin", "obj", ".feed"}  # what dotnet builds and packs
     SKIP |= {"target"}  # what Maven builds
+    SKIP |= {"_build", "deps"}  # what Mix builds and fetches
     CHECKED = (
         "python",
         "ts",
@@ -11459,6 +11461,7 @@ class StackPages(unittest.TestCase):
         "properties",
         "kotlin",
         "rust",
+        "elixir",
     )  # sh blocks are commands to type
 
     def lines(self, rel: str) -> set[str]:
@@ -11494,6 +11497,8 @@ class StackPages(unittest.TestCase):
                     ".properties",
                     ".kt",
                     ".rs",
+                    ".ex",
+                    ".exs",
                 )
             ):
                 with open(f, encoding="utf-8") as fh:

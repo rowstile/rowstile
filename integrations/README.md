@@ -49,7 +49,8 @@ ORM on psycopg 3, Django's migrations, pytest-django) and `rails` (the Ruby SDK,
 Record, Puma, Minitest) and `spring` (the Java SDK, a preview: Spring Boot, Spring Security, JPA and
 JdbcClient over HikariCP, Flyway, JUnit), `ktor` (the Java SDK's Kotlin module, a preview: Ktor, Exposed over
 HikariCP, Flyway, JUnit; the Java SDK's names, used from Kotlin)
-and `axum` (the Rust SDK, a preview: Axum on sqlx, sqlx's migrations,
-tokio-postgres, cargo test). Check 15 is Next.js's alone.
+`axum` (the Rust SDK, a preview: Axum on sqlx, sqlx's migrations,
+tokio-postgres, cargo test) and `phoenix` (the Elixir SDK, a preview: Phoenix on Bandit, Ecto on Postgrex, Ecto's
+migrations, Oban, ExUnit). Check 15 is Next.js's alone.
 
 A new stack gets its own folder here, with every check that applies to it.

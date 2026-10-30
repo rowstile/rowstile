@@ -45,6 +45,7 @@ const stacks = [
   { text: "Spring Boot, JPA, Flyway (preview)", link: "/stacks/spring" },
   { text: "Kotlin: Ktor, Exposed (preview)", link: "/stacks/ktor" },
   { text: "Rust: Axum, sqlx (preview)", link: "/stacks/axum" },
+  { text: "Phoenix, Ecto (preview)", link: "/stacks/phoenix" },
   { text: "Any other stack: SQL", link: "/stacks/sql" },
 ];
 const sdks = [
@@ -54,6 +55,7 @@ const sdks = [
   { text: "Java SDK (preview)", link: "/sdk/java" },
   { text: "Kotlin SDK (preview)", link: "/sdk/kotlin" },
   { text: "Rust SDK (preview)", link: "/sdk/rust" },
+  { text: "Elixir SDK (preview)", link: "/sdk/elixir" },
   { text: "Conformance suites", link: "/sdk/conformance" },
 ];
 const reference = [

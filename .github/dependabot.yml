@@ -88,6 +88,16 @@ updates:
     groups:
       java: {patterns: ["*"]}
 
+  # the Elixir package's and the Phoenix conformance app's packages (their mix.lock); the package's mix.exs names the
+  # ranges it takes, which users may run with, not versions to bump
+  - package-ecosystem: mix
+    directories: ["/sdk/elixir", "/integrations/phoenix"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    versioning-strategy: lockfile-only
+    groups:
+      elixir: {patterns: ["*"]}
+
   - package-ecosystem: cargo
     directory: /editor/zed
     schedule: {interval: monthly}
