@@ -1,0 +1,7 @@
+policy   = "db/policy.authz"
+tests    = ["db/tests/*.authz"]
+database = "env:ROWSTILE_OWNER_URL"
+[clients]
+elixir = "lib/conformance/authz.ex"
+[migrations]
+tool = "ecto"

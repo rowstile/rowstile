@@ -13,3 +13,5 @@ FROM sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a27
 FROM ruby:4.0-slim@sha256:e41d40671d359ccc3431371e0af7c6430bd1b3886b47ac0667443525b7dcec1a AS ruby
 # the Axum suite's Rust (axum/test.sh builds axum/rust.Dockerfile on it)
 FROM rust:1.99-slim@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 AS rust
+# the Phoenix suite's Elixir (phoenix/test.sh builds phoenix/elixir.Dockerfile on it)
+FROM elixir:1.20-slim@sha256:6245171c91cf90808437f203f22856738d0095d310f4f9030219e53111823ff8 AS elixir
