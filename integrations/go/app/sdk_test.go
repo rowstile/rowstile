@@ -6,8 +6,10 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -28,38 +30,118 @@ func whom(ctx context.Context, tx pgx.Tx) string {
 	return who
 }
 
-func TestASavepointSignsInAgainAsTheTransactionAroundIt(t *testing.T) {
-	check(t, "a transaction inside a transaction is a savepoint: when it ends, the one around acts as before")
+// signedInAlready is the error for who's work inside a transaction signed in as signed
+func signedInAlready(signed, who string) string {
+	return "this transaction is signed in as " + signed + " already, and a sign-in lasts the database transaction: " +
+		who + "'s work can't run inside it. Run it after, or in a transaction of its own (another connection)"
+}
+
+func TestATransactionIsOnePrincipals(t *testing.T) {
+	check(t, "a transaction inside a transaction is a savepoint when it is the same principal's; anyone else's is "+
+		"refused before anything is sent, and the transaction goes on as its principal's")
 	ctx := rowstile.ActingAs(context.Background(), rowstile.User("2"))
-	var said []string
+	var said, ran []string
+	var refused []error
+	var notes []int64
 	err := rowstile.Tx(ctx, pool, func(ctx context.Context, tx pgx.Tx) error {
 		said = append(said, whom(ctx, tx))
-		err := rowstile.TxAs(ctx, tx, rowstile.As("service", "1"), func(ctx context.Context, inner pgx.Tx) error {
+		// bo's work inside bo's: a savepoint, as bo; one that fails rolls back its own part alone
+		err := rowstile.TxAs(ctx, tx, rowstile.User("2"), func(ctx context.Context, inner pgx.Tx) error {
 			who, _ := rowstile.Current(ctx)
-			said = append(said, whom(ctx, inner), who.Type)
-			return nil
+			said = append(said, whom(ctx, inner), who.ID)
+			return rowstile.Tx(ctx, inner, func(ctx context.Context, deeper pgx.Tx) error {
+				said = append(said, whom(ctx, deeper))
+				return nil
+			})
 		})
-		said = append(said, whom(ctx, tx))
-		// one that fails is rolled back to the savepoint, and takes its sign-in with it
-		failed := rowstile.TxAs(ctx, tx, rowstile.Nobody, func(ctx context.Context, inner pgx.Tx) error {
+		said = append(said, fmt.Sprint(err))
+		failed := rowstile.Tx(ctx, tx, func(ctx context.Context, inner pgx.Tx) error {
+			_, _ = inner.Exec(ctx, "UPDATE app.notes SET body = 'gone' WHERE id = 2")
 			return errors.New("no")
 		})
-		said = append(said, whom(ctx, tx), failed.Error())
+		said = append(said, failed.Error())
+		// anyone else's: refused, and their work never runs; on the transaction's connection too
+		for _, other := range []struct {
+			db  rowstile.Beginner
+			who rowstile.Principal
+		}{{tx, rowstile.As("service", "1")}, {tx, rowstile.Nobody}, {tx.Conn(), rowstile.User("1")}} {
+			refused = append(refused, rowstile.TxAs(ctx, other.db, other.who, func(context.Context, pgx.Tx) error {
+				ran = append(ran, other.who.ID)
+				return nil
+			}))
+		}
+		// the transaction's connection, as bo: pgx begins no savepoint on a *pgx.Conn
+		refused = append(refused, rowstile.Tx(ctx, tx.Conn(), func(context.Context, pgx.Tx) error {
+			ran = append(ran, "conn")
+			return nil
+		}))
+		// still bo's: it reads and writes as bo, and commits
+		said = append(said, whom(ctx, tx))
+		rows, _ := tx.Query(ctx, "SELECT id FROM app.notes WHERE body <> 'gone' ORDER BY id")
+		notes, err = pgx.CollectRows(rows, pgx.RowTo[int64])
+		if err == nil {
+			var changed pgconn.CommandTag
+			changed, err = tx.Exec(ctx, "UPDATE app.notes SET body = body WHERE id IN (1, 2)")
+			said = append(said, changed.String())
+		}
 		return err
 	})
-	if err != nil || strings.Join(said, ", ") != "user 2, service 1, service, user 2, user 2, no" {
-		t.Errorf("%v %v", said, err)
+	if err != nil || strings.Join(said, ", ") != "user 2, user 2, 2, user 2, <nil>, no, user 2, UPDATE 1" ||
+		!slices.Equal(notes, []int64{2, 3}) || len(ran) != 0 {
+		t.Errorf("%v %v %v %v", said, notes, ran, err)
 	}
-	// around a transaction Tx didn't begin: nobody, after it
-	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		if err := rowstile.Tx(ctx, tx, func(ctx context.Context, inner pgx.Tx) error { return nil }); err != nil {
-			return err
+	for i, want := range []string{
+		signedInAlready("user 2", "service 1"),
+		signedInAlready("user 2", "nobody"),
+		signedInAlready("user 2", "user 1"),
+		"this connection is in a transaction already, and pgx begins no savepoint on a *pgx.Conn: run this on the " +
+			"transaction's pgx.Tx, or after it",
+	} {
+		if e := refused[i]; e == nil || e.Error() != want || rowstile.ErrorCode(e) != "" {
+			t.Errorf("%d: %v", i, e)
 		}
-		said = append(said, whom(ctx, tx))
-		return nil
+	}
+	// nobody's transaction refuses a user's work too
+	err = rowstile.TxAs(ctx, pool, rowstile.Nobody, func(ctx context.Context, tx pgx.Tx) error {
+		return rowstile.TxAs(ctx, tx, rowstile.User("2"), func(context.Context, pgx.Tx) error { return nil })
 	})
-	if err != nil || said[len(said)-1] != "nobody" {
-		t.Errorf("%v %v", said, err)
+	if err == nil || err.Error() != signedInAlready("nobody", "user 2") {
+		t.Errorf("%v", err)
+	}
+	// a transaction Tx didn't begin: who it is signed in as can't be known, so the work is refused, and the
+	// transaction is as it was
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		err := rowstile.Tx(ctx, tx, func(context.Context, pgx.Tx) error {
+			ran = append(ran, "foreign")
+			return nil
+		})
+		var signedIn string
+		_ = tx.QueryRow(ctx, "SELECT coalesce(current_setting('authz.user_id', true), '')").Scan(&signedIn)
+		said = append(said, "signed in: "+signedIn)
+		return err
+	})
+	if err == nil || err.Error() != "this connection is in a transaction rowstile.Tx didn't begin: who it is signed "+
+		"in as can't be known, and a sign-in lasts the database transaction. Begin it with rowstile.Tx, or run this "+
+		"after it" || len(ran) != 0 || said[len(said)-1] != "signed in: " {
+		t.Errorf("%v %v %v", said, ran, err)
+	}
+	// after it ends, the connection begins anew: a *pgx.Conn, as cy
+	c, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Release()
+	for _, who := range []string{"3", "1"} {
+		err = rowstile.TxAs(ctx, c.Conn(), rowstile.User(who), func(ctx context.Context, tx pgx.Tx) error {
+			said = append(said, whom(ctx, tx))
+			return nil
+		})
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	if strings.Join(said[len(said)-2:], ", ") != "user 3, user 1" {
+		t.Errorf("%v", said)
 	}
 	if _, set := rowstile.Current(context.Background()); set {
 		t.Error("nothing set who a bare context acts for")

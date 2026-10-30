@@ -84,8 +84,11 @@ in the policy): `rowstile.TxAs` signs in as who it is given.
 		count, err = db.New(tx).CountProjects(ctx)
 ```
 
-On a `pgx.Tx`, `Tx` is a savepoint: when it ends, the transaction signs in again as whoever it was signed in as
-before.
+A transaction is one principal's: a sign-in lasts the database transaction. On the `pgx.Tx` of a transaction `Tx`
+signed in, `Tx` for the same principal is a savepoint of it. For anyone else (or for nobody, in someone's), it gives
+an error before anything is sent, and the transaction goes on as it was: run that work after it, or in a transaction
+of its own (on the pool, another connection). So does `Tx` on a transaction it didn't begin, whose sign-in it can't
+know.
 
 ## Refusals
 
