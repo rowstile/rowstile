@@ -460,6 +460,36 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task A_refused_write_says_why_on_the_connections_the_sdk_builds()
+    {
+        const string Insert = "INSERT INTO app.notes (project_id, author_id, body) VALUES (3, 2, 'hi')"; // bo, ann's project
+        // test.sh's connection strings don't ask Npgsql for the database's DETAIL, where the reasons are
+        Assert.False(new NpgsqlConnectionStringBuilder(db.App).IncludeErrorDetail);
+        async Task<string?> Detail(NpgsqlDataSource dataSource)
+        {
+            await using var conn = await dataSource.OpenConnectionAsync();
+            await using var tx = await conn.BeginSignedInAsync(Principal.User(2));
+            return Assert.IsType<PostgresException>(await Record.ExceptionAsync(() => Run(conn, Insert))).Detail;
+        }
+        // the data source AddRowstile builds from a connection string turns it on
+        await using (var services = new ServiceCollection().AddRowstile(o => o.ConnectionString = db.App).BuildServiceProvider())
+        {
+            Assert.Contains("project.edit", await Detail(services.GetRequiredService<NpgsqlDataSource>()), StringComparison.Ordinal);
+        }
+        // and so does UseRowstile, on a context's connection string
+        using (Acting.As(Principal.User(2)))
+        {
+            await using var ctx = Context();
+            ctx.Notes.Add(new Note { ProjectId = 3, AuthorId = 2, Body = "hi" });
+            var e = await Assert.ThrowsAsync<DbUpdateException>(() => ctx.SaveChangesAsync());
+            Assert.Contains(Errors.Refusal(e)!.Why, line => line.Contains("project.edit", StringComparison.Ordinal));
+        }
+        // a data source the app built itself is its own: the SDK leaves it as it was built
+        await using var own = NpgsqlDataSource.Create(db.App);
+        Assert.DoesNotContain("project.edit", await Detail(own), StringComparison.Ordinal);
+    }
+
     // --- ASP.NET Core ------------------------------------------------------------------------------------------------
     private static async Task<WebApplication> Host(Action<WebApplicationBuilder> services, Action<WebApplication> routes)
     {

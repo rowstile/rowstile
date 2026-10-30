@@ -32,10 +32,11 @@ sleep 2
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
   -c "CREATE DATABASE conf_tests OWNER conf_owner" >/dev/null || exit 1
-# the command's (a URL), and Npgsql's (key=value), for the same owner; Npgsql hides the database's DETAIL, which says
-# why a write was refused, unless it is asked to include it
+# the command's (a URL), and Npgsql's (key=value), for the same owner. None asks Npgsql for the database's DETAIL,
+# which says why a write was refused: the SDK turns it on where it builds the app's connections (AddRowstile,
+# UseRowstile), and the checks hold that it does
 export ROWSTILE_OWNER_DSN="postgresql://conf_owner:owner@localhost:$PORT/conf"
-NPGSQL="Host=localhost;Include Error Detail=true"
+NPGSQL="Host=localhost"
 export ROWSTILE_OWNER_CONN="$NPGSQL;Port=$PORT;Username=conf_owner;Password=owner;Database=conf"
 export ROWSTILE_TESTS_CONN="$NPGSQL;Port=$PORT;Username=conf_owner;Password=owner;Database=conf_tests"
 APP_PORT=$PORT

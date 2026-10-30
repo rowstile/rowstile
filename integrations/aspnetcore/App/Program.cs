@@ -10,14 +10,13 @@ using Rowstile.EntityFrameworkCore;
 using Rowstile.Generated;
 
 var builder = WebApplication.CreateBuilder(args);
-var url = builder.Configuration["ROWSTILE_APP_CONN"];
-builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(url!));
-builder.Services.AddDbContext<AppDb>((services, o) => o.UseNpgsql(services.GetRequiredService<NpgsqlDataSource>()).UseRowstile());
 builder.Services.AddRowstile(o =>
 {
+    o.ConnectionString = builder.Configuration["ROWSTILE_APP_CONN"];
     o.User = Auth.SessionUser;
     o.CheckConnection = builder.Configuration.GetValue("ROWSTILE_CHECK_CONNECTION", true);
 });
+builder.Services.AddDbContext<AppDb>((services, o) => o.UseNpgsql(services.GetRequiredService<NpgsqlDataSource>()).UseRowstile());
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
 var app = builder.Build();
 app.UseRowstile();

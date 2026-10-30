@@ -20,6 +20,14 @@ public sealed class RowstileOptions
     /// </summary>
     public Func<HttpContext, Principal?>? User { get; set; }
 
+    /// <summary>
+    /// The app role's connection string: given, <see cref="RowstileServices.AddRowstile"/> builds the services'
+    /// <see cref="NpgsqlDataSource"/> from it, with Npgsql's <c>Include Error Detail</c> on, so a refused write says
+    /// why (the database's DETAIL holds the reasons, which Npgsql hides otherwise). Left unset, the app registers its
+    /// own data source, and sets that itself.
+    /// </summary>
+    public string? ConnectionString { get; set; }
+
     /// <summary>Whether the app refuses to start on a connection that skips row-level security (yes, unless set to false).</summary>
     public bool CheckConnection { get; set; } = true;
 
@@ -30,7 +38,11 @@ public sealed class RowstileOptions
 /// <summary>
 /// rowstile with ASP.NET Core:
 /// <code>
-/// builder.Services.AddRowstile(o => o.User = SessionUser);   // SessionUser(context): its user, or null for nobody
+/// builder.Services.AddRowstile(o =>
+/// {
+///     o.ConnectionString = url;                              // the NpgsqlDataSource the services hold
+///     o.User = SessionUser;                                  // SessionUser(context): its user, or null for nobody
+/// });
 /// var app = builder.Build();
 /// app.UseRowstile();                                         // before the endpoints
 /// </code>
@@ -45,12 +57,20 @@ public sealed class RowstileOptions
 /// </summary>
 public static class RowstileServices
 {
-    /// <summary>The options the middleware reads, and the start-up check (see <see cref="RowstileServices"/>).</summary>
+    /// <summary>
+    /// The options the middleware reads, the data source if a connection string is given, and the start-up check (see
+    /// <see cref="RowstileServices"/>).
+    /// </summary>
     public static IServiceCollection AddRowstile(this IServiceCollection services, Action<RowstileOptions>? configure = null)
     {
         var options = new RowstileOptions();
         configure?.Invoke(options);
         services.AddSingleton(options);
+        if (options.ConnectionString is { } connectionString)
+        {
+            var withDetail = new NpgsqlConnectionStringBuilder(connectionString) { IncludeErrorDetail = true };
+            services.AddSingleton(_ => NpgsqlDataSource.Create(withDetail));
+        }
         if (options.CheckConnection)
         {
             services.AddHostedService<ConnectionCheck>();

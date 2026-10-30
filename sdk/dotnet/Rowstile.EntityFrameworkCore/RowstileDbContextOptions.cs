@@ -1,5 +1,8 @@
 using System;
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Npgsql;
 
 namespace Rowstile.EntityFrameworkCore;
 
@@ -21,12 +24,23 @@ namespace Rowstile.EntityFrameworkCore;
 /// </summary>
 public static class RowstileDbContextOptions
 {
-    /// <summary>Signs every transaction, and every command outside one, in (see <see cref="RowstileDbContextOptions"/>).</summary>
+    /// <summary>
+    /// Signs every transaction, and every command outside one, in (see <see cref="RowstileDbContextOptions"/>). A
+    /// connection string given before it (<c>UseNpgsql(connectionString).UseRowstile()</c>) gets Npgsql's
+    /// <c>Include Error Detail</c>, so a refused write says why; a data source or a connection the app built is its own,
+    /// and keeps what it was built with.
+    /// </summary>
     /// <param name="builder">The context's options, on Npgsql.</param>
     /// <param name="user">Who the code acts for when nothing set it with <see cref="Acting"/> (null: nobody).</param>
     public static DbContextOptionsBuilder UseRowstile(this DbContextOptionsBuilder builder, Func<Principal?>? user = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
+        var given = builder.Options.Extensions.OfType<RelationalOptionsExtension>().Where(r => r.ConnectionString is not null);
+        foreach (var relational in given.ToList())
+        {
+            var withDetail = new NpgsqlConnectionStringBuilder(relational.ConnectionString) { IncludeErrorDetail = true };
+            ((IDbContextOptionsBuilderInfrastructure)builder).AddOrUpdateExtension(relational.WithConnectionString(withDetail.ConnectionString));
+        }
         var signIn = new SignIn(user);
         var saves = new SaveChangesInTransaction();
         return builder.AddInterceptors(new TransactionSignIn(signIn, saves), new CommandSignIn(signIn), saves);
