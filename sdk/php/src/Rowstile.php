@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Rowstile;
 
 use Closure;
+use LogicException;
 use PDO;
 use Throwable;
 use WeakMap;
@@ -89,10 +90,12 @@ final class Rowstile
 
     /**
      * Runs $fn in a transaction on $pdo signed in as who (and acting for them), and commits it if $fn returns. The
-     * sign-in lasts the transaction alone, so persistent connections and poolers in transaction mode are safe. In a
-     * transaction already, it is a savepoint: when it ends, the transaction signs in again as whoever it was signed in
-     * as before (nobody, if transaction() didn't begin it). A database error comes out as rowstile's when it is one:
-     * Refused, NotSignedIn, CallError (translate).
+     * sign-in lasts the transaction, so persistent connections and poolers in transaction mode are safe; and a
+     * transaction is one principal's. Inside a transaction transaction() began already, work for the same principal
+     * runs as it is, in a savepoint (its failure rolls back its own part alone); work for someone else is refused
+     * before anything is sent (signedInAlready), and so is work in a transaction transaction() didn't begin, whose
+     * sign-in it can't know. A database error comes out as rowstile's when it is one: Refused, NotSignedIn,
+     * CallError (translate).
      *
      * @template T
      * @param Closure(PDO): T $fn
@@ -103,22 +106,31 @@ final class Rowstile
         $who = Principal::from($who);
         $signed = self::$signed ??= new WeakMap();
         $inside = $pdo->inTransaction();
-        $before = $signed[$pdo] ?? Principal::nobody();
+        if ($inside) {
+            $outer = $signed[$pdo] ?? throw new LogicException('this connection is in a transaction Rowstile::transaction() '
+                ."didn't begin: who it is signed in as can't be known, and a sign-in lasts the database transaction. "
+                .'Begin it with Rowstile::transaction(), or run this after it');
+            if (!$outer->equals($who)) {
+                throw self::signedInAlready($outer, $who);
+            }
+        }
         try {
-            $inside ? $pdo->exec('SAVEPOINT rowstile') : $pdo->beginTransaction();
-            self::signIn($pdo, $who);
-            $signed[$pdo] = $who;
+            if ($inside) {
+                $pdo->exec('SAVEPOINT rowstile'); // (the sign-in is before it: rolled back to it, it stays)
+            } else {
+                $pdo->beginTransaction();
+                self::signIn($pdo, $who);
+                $signed[$pdo] = $who;
+            }
             $result = self::actingAs($who, static fn (): mixed => $fn($pdo));
             if ($inside) {
-                self::signIn($pdo, $before);
                 $pdo->exec('RELEASE SAVEPOINT rowstile');
             } else {
                 $pdo->commit();
             }
             return $result;
         } catch (Throwable $e) {
-            // (rolled back to the savepoint, the sign-in before it is back too: Postgres undoes settings with it; a
-            // COMMIT that failed has ended the transaction already)
+            // (a COMMIT that failed has ended the transaction already)
             if ($inside) {
                 $pdo->exec('ROLLBACK TO SAVEPOINT rowstile; RELEASE SAVEPOINT rowstile');
             } elseif ($pdo->inTransaction()) {
@@ -126,12 +138,25 @@ final class Rowstile
             }
             throw self::translate($e);
         } finally {
-            if ($inside) {
-                $signed[$pdo] = $before;
-            } else {
+            if (!$inside) {
                 unset($signed[$pdo]);
             }
         }
+    }
+
+    /**
+     * The error for work that would run as someone else inside a transaction signed in already: a transaction is
+     * one principal's (a sign-in lasts the database transaction, and checks deferred to the commit run as whoever is
+     * signed in then). Nothing has been sent for it; the transaction is as it was.
+     *
+     * @internal
+     */
+    public static function signedInAlready(Principal $signed, ?Principal $who): LogicException
+    {
+        $whose = $who === null ? "the work of code that acts for no one can't" : "{$who->name()}'s work can't";
+        return new LogicException("this transaction is signed in as {$signed->name()} already, and a sign-in lasts the "
+            ."database transaction: {$whose} run inside it. Run it after, or in a transaction of its own (another "
+            .'connection)');
     }
 
     private static function signIn(PDO $pdo, Principal $who): void

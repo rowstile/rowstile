@@ -50,6 +50,12 @@ final class Principal
         return $this->type === $other->type && $this->id === $other->id;
     }
 
+    /** As the database's refusals name it: "user 42", "service 3", or "nobody". */
+    public function name(): string
+    {
+        return $this->id === null ? 'nobody' : "{$this->type} {$this->id}";
+    }
+
     public function isNobody(): bool
     {
         return $this->id === null;

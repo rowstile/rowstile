@@ -66,7 +66,7 @@ final class SdkTest extends TestCase
         return $statement->fetchAll(PDO::FETCH_COLUMN);
     }
 
-    #[TestDox('a transaction over PDO signs in, and a savepoint in it signs in again after')]
+    #[TestDox("a transaction over PDO signs in, and work inside it is its principal's alone")]
     public function test_transactions_over_pdo(): void
     {
         $pdo = $this->app();
@@ -75,15 +75,29 @@ final class SdkTest extends TestCase
         // transaction(): as the code acts for (bo), and nobody when nothing set it
         self::assertSame(self::EXPECTED['2'], Rowstile::actingAs(2, static fn (): array => Rowstile::transaction($pdo, self::notes(...))));
         self::assertSame(self::EXPECTED[''], Rowstile::transaction($pdo, self::notes(...)));
+        // one principal a transaction: ann's work inside ann's runs as it is (a savepoint: a refusal rolls back its own
+        // part); bo's is refused before anything is sent, and the transaction is still ann's after each
         $seen = Rowstile::transactionAs($pdo, Principal::user(1), static function (PDO $pdo): array {
-            $inside = Rowstile::transactionAs($pdo, 2, static fn (PDO $pdo): array => [self::notes($pdo), Rowstile::current()]);
-            $refused = self::thrown(static fn () => Rowstile::transactionAs($pdo, 2, static fn (PDO $pdo): mixed => $pdo->exec("INSERT INTO app.notes (project_id, author_id, body) VALUES (3, 2, 'hi')")));
-            return [$inside, $refused, self::notes($pdo), Rowstile::current()];
+            $inside = Rowstile::transactionAs($pdo, 1, static fn (PDO $pdo): array => [self::notes($pdo), Rowstile::current()]);
+            $refused = self::thrown(static fn () => Rowstile::transactionAs($pdo, 1, static fn (PDO $pdo): mixed => $pdo->exec("INSERT INTO app.notes (project_id, author_id, body) VALUES (2, 1, 'hi')")));
+            $bo = self::thrown(static fn () => Rowstile::transactionAs($pdo, 2, static fn (PDO $pdo): never => self::fail("bo's work ran")));
+            $nobody = self::thrown(static fn () => Rowstile::transactionAs($pdo, null, static fn (PDO $pdo): never => self::fail("nobody's work ran")));
+            return [$inside, $refused, $bo, $nobody, self::notes($pdo), Rowstile::current()];
         });
-        // bo inside, a refusal rolled back to its savepoint, and ann again after each
-        self::assertEquals([[self::EXPECTED['2'], Principal::user(2)], self::EXPECTED['1'], Principal::user(1)], [$seen[0], $seen[2], $seen[3]]);
+        self::assertEquals([self::EXPECTED['1'], Principal::user(1)], $seen[0]);
         self::assertInstanceOf(Refused::class, $seen[1]);
         self::assertSame(['app.notes', 'insert'], [$seen[1]->table, $seen[1]->command]);
+        self::assertInstanceOf(\LogicException::class, $seen[2]);
+        self::assertSame("this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: user 2's work can't run inside it. Run it after, or in a transaction of its own (another connection)", $seen[2]->getMessage());
+        self::assertInstanceOf(\LogicException::class, $seen[3]);
+        self::assertStringContainsString("as user 1 already, and a sign-in lasts the database transaction: nobody's work can't run", $seen[3]->getMessage());
+        self::assertEquals([self::EXPECTED['1'], Principal::user(1)], [$seen[4], $seen[5]]);
+        // a transaction the SDK didn't begin: who it is signed in as can't be known, so the SDK's is refused
+        $pdo->beginTransaction();
+        $foreign = self::thrown(static fn () => Rowstile::transactionAs($pdo, 1, static fn (PDO $pdo): never => self::fail('it ran')));
+        $pdo->rollBack();
+        self::assertInstanceOf(\LogicException::class, $foreign);
+        self::assertStringContainsString("a transaction Rowstile::transaction() didn't begin", $foreign->getMessage());
         // a refusal ends the transaction it is in: rolled back, and rowstile's error
         $refused = self::thrown(static fn () => Rowstile::transactionAs($pdo, 2, static fn (PDO $pdo): mixed => $pdo->exec("INSERT INTO app.notes (project_id, author_id, body) VALUES (3, 2, 'hi')")));
         self::assertInstanceOf(Refused::class, $refused);
@@ -246,15 +260,40 @@ final class SdkTest extends TestCase
         self::assertSame($call, Rowstile::translate($call));
     }
 
-    #[TestDox("a transaction run on by code that acts for no one is nobody's")]
-    public function test_acting_for_no_one_inside_a_transaction(): void
+    #[TestDox("a transaction is one principal's: another's statement, or no one's, is refused, the transaction as it was")]
+    public function test_one_principal_a_transaction(): void
     {
-        $counts = DB::transaction(static function (): array {
-            $plain = DB::scalar('SELECT 1'); // not signed in: acts for no one
-            $ann = Rowstile::actingAs(1, static fn (): int => Note::query()->count());
-            return [$plain, $ann, Note::query()->count()]; // signed in once: nobody from here on
+        $seen = DB::transaction(static function (): array {
+            $plain = DB::scalar('SELECT 1'); // not signed in yet: acts for no one
+            $ann = Rowstile::actingAs(1, static fn (): int => Note::query()->count()); // signs in: ann's from here on
+            $nobody = self::thrown(static fn () => Note::query()->count());
+            $bo = self::thrown(static fn () => Rowstile::actingAs(2, static fn (): int => Note::query()->count()));
+            return [$plain, $ann, $nobody, $bo, Rowstile::actingAs(1, static fn (): int => Note::query()->count())];
         });
-        self::assertSame([1, 3, 1], $counts);
+        self::assertSame([1, 3, 3], [$seen[0], $seen[1], $seen[4]]);
+        self::assertInstanceOf(\LogicException::class, $seen[2]);
+        self::assertSame("this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: the work of code that acts for no one can't run inside it. Run it after, or in a transaction of its own (another connection)", $seen[2]->getMessage());
+        self::assertInstanceOf(\LogicException::class, $seen[3]);
+        self::assertStringContainsString("user 2's work can't run inside it", $seen[3]->getMessage());
+        // a savepoint rolled back over the sign-in undoes it in Postgres: the same principal signs in again, and
+        // another is still refused; rolled back to a savepoint after it, the sign-in stays
+        $pdo = DB::connection()->getPdo();
+        $seen = DB::transaction(static function () use ($pdo): array {
+            $undone = self::thrown(static fn () => DB::transaction(static function (): never {
+                Rowstile::actingAs(1, static fn (): int => Note::query()->count());
+                throw new QueryFailed();
+            }));
+            $after = self::value($pdo, "SELECT coalesce(current_setting('authz.user_id', true), '')");
+            $again = Rowstile::actingAs(1, static fn (): int => Note::query()->count());
+            $bo = self::thrown(static fn () => Rowstile::actingAs(2, static fn (): int => Note::query()->count()));
+            $kept = self::thrown(static fn () => DB::transaction(static fn (): never => throw new QueryFailed()));
+            return [$undone, $after, $again, $bo, $kept, self::value($pdo, "SELECT current_setting('authz.user_id', true)")];
+        });
+        self::assertInstanceOf(QueryFailed::class, $seen[0]);
+        self::assertSame(['', 3], [$seen[1], $seen[2]]);
+        self::assertInstanceOf(\LogicException::class, $seen[3]);
+        self::assertInstanceOf(QueryFailed::class, $seen[4]);
+        self::assertSame('1', $seen[5]);
     }
 
     #[TestDox('the request acts for the user Laravel authenticated, by default')]

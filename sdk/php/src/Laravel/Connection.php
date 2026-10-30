@@ -11,18 +11,21 @@ use Rowstile\Rowstile;
 
 /**
  * Laravel's Postgres connection, signing in every transaction it runs while the code acts for someone
- * (Rowstile::current(): a request, a job, Rowstile::actingAs()): before the transaction's first statement, and again
- * before the next one whenever who the code acts for changed (actingAs inside a transaction, or a savepoint rolled
- * back over the sign-in); once the code acts for no one again, as nobody. A statement outside a transaction is a
- * transaction of its own (BEGIN, the sign-in, the statement, COMMIT), as Postgres would run it alone. While the code
- * acts for no one (the owner's migrations, an artisan command) nothing is signed in, and the database refuses what
- * needs to know who asks (AZ701). A sign-in lasts one transaction, so a persistent connection carries no one into the
- * next request. The service provider makes every pgsql connection one.
+ * (Rowstile::current(): a request, a job, Rowstile::actingAs()), before the transaction's first statement. A statement
+ * outside a transaction is a transaction of its own (BEGIN, the sign-in, the statement, COMMIT), as Postgres would run
+ * it alone. A transaction is one principal's: once it is signed in, a statement while the code acts for someone else,
+ * or for no one, is refused before it is sent (a LogicException, Rowstile::signedInAlready), the transaction as it
+ * was. While the code acts for no one (the owner's migrations, an artisan command) nothing is signed in, and the
+ * database refuses what needs to know who asks (AZ701). A sign-in lasts one transaction, so a persistent connection
+ * carries no one into the next request. The service provider makes every pgsql connection one.
  */
 class Connection extends PostgresConnection
 {
-    /** Who this connection's open transaction signed in as, if it signed someone in. */
-    private ?Principal $signed = null;
+    /** Who this connection's open transaction is for, once it signed in. */
+    private ?Principal $for = null;
+
+    /** The transaction level it signed in at; 0 when the sign-in is undone (rolled back to a savepoint before it). */
+    private int $signedAt = 0;
 
     /**
      * @param string $query
@@ -30,19 +33,20 @@ class Connection extends PostgresConnection
      */
     protected function run($query, $bindings, Closure $callback): mixed
     {
-        // a transaction that signed someone in, run on by code that acts for no one: nobody, from here on
-        $who = Rowstile::current() ?? ($this->transactionLevel() > 0 && $this->signed !== null ? Principal::nobody() : null);
-        if ($who === null) {
-            return parent::run($query, $bindings, $callback);
-        }
+        $who = Rowstile::current();
         if ($this->transactionLevel() === 0) {
-            return $this->transaction(fn (): mixed => $this->run($query, $bindings, $callback));
+            return $who === null
+                ? parent::run($query, $bindings, $callback)
+                : $this->transaction(fn (): mixed => $this->run($query, $bindings, $callback));
         }
-        if ($this->signed === null || !$this->signed->equals($who)) {
+        if ($this->for !== null && ($who === null || !$this->for->equals($who))) {
+            throw Rowstile::signedInAlready($this->for, $who);
+        }
+        if ($who !== null && $this->signedAt === 0) {
             parent::run('SELECT authz.act_as(?, ?)', $who->actAsArguments(), function (string $sql, array $args): bool {
                 return $this->getPdo()->prepare($sql)->execute($args);
             });
-            $this->signed = $who;
+            [$this->for, $this->signedAt] = [$who, $this->transactionLevel()];
         }
         return parent::run($query, $bindings, $callback);
     }
@@ -50,7 +54,7 @@ class Connection extends PostgresConnection
     protected function createTransaction(): void
     {
         if ($this->transactionLevel() === 0) {
-            $this->signed = null;
+            [$this->for, $this->signedAt] = [null, 0];
         }
         parent::createTransaction();
     }
@@ -59,7 +63,10 @@ class Connection extends PostgresConnection
     protected function performRollBack($toLevel): void
     {
         parent::performRollBack($toLevel);
-        // (rolled back to a savepoint, the sign-in may be undone with it: Postgres undoes settings too)
-        $this->signed = null;
+        // rolled back to a savepoint made before the sign-in, Postgres has undone it: the transaction is still the
+        // same principal's, who signs in again before the next statement
+        if ($toLevel < $this->signedAt) {
+            $this->signedAt = 0;
+        }
     }
 }
