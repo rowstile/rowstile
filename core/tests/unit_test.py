@@ -3231,6 +3231,19 @@ class Migrations(unittest.TestCase):
         self.assertEqual(written("notes", {}), (["0001_authz_x.py", "0001_authz_x.sql"], ""))
         chain = {"0001_initial": needs(("auth", "0012_x")), "0002_more": needs(("notes", "0001_initial"))}
         self.assertEqual(written("notes", chain), (["0003_authz_x.py", "0003_authz_x.sql"], '("notes", "0002_more")'))
+        # as makemigrations writes one: fields are pairs of a name and a call, a swappable dependency is a call (or a
+        # pair whose label is computed), other names are assigned, and the module may set the class's attributes; only the strings' pairs count
+        made = (
+            "    initial = True\n"
+            '    dependencies = [("notes", "0002_more"), migrations.swappable_dependency(settings.AUTH_USER_MODEL),\n'
+            '                    (settings.AUTH_USER_MODEL.split(".")[0], "__first__")]\n'
+            '    operations = [migrations.CreateModel(name="Tag", fields=[("id", models.BigAutoField())])]\n'
+            "\n\nMigration.atomic = False\n"
+        )
+        self.assertEqual(
+            written("notes", {**chain, "0003_tag": made}),
+            (["0004_authz_x.py", "0004_authz_x.sql"], '("notes", "0003_tag")'),
+        )
         # an AppConfig whose label isn't its folder's name: the label its migrations name it by
         relabelled = {"0001_initial": needs(), "0002_more": needs(("users", "0001_initial"))}
         self.assertEqual(written("accounts", relabelled)[1], '("users", "0002_more")')
