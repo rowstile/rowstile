@@ -25,7 +25,10 @@ tx.commit().await?;
 ```
 
 - `sqlx::begin`, `pg::begin`: a transaction signed in (`authz.act_as`), on a sqlx pool or a tokio-postgres client.
-  The sign-in lasts the transaction alone, so pools and PgBouncer in transaction mode are safe.
+  The sign-in lasts the transaction alone, so pools and PgBouncer in transaction mode are safe. A transaction is one
+  principal's, and neither begins inside another: `sqlx::begin` takes a connection of its own from the pool (on a
+  pool of one, it waits for the open transaction to end, up to the pool's timeout), and `pg::begin` takes the
+  client, which its open transaction holds until it ends.
 - `expect`: an UPDATE or DELETE that changed no row, asked about: `Error::NotFound` or `Error::Refused`, with the
   reason.
 - `Error`: `Refused`, `NotFound`, `Call` (the codes a call can meet, each with its status), `NotSignedIn`,

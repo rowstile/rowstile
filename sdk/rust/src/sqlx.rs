@@ -39,7 +39,9 @@ impl From<::sqlx::Error> for Error {
 }
 
 /// A transaction on the pool, signed in as `who` (`authz.act_as`): commit it, or drop it to roll it back. The
-/// sign-in lasts the transaction alone, so pools and poolers in transaction mode are safe.
+/// sign-in lasts the transaction alone, so pools and poolers in transaction mode are safe. A transaction is one
+/// principal's: this one takes a connection of its own from the pool, apart from any transaction open already (on a
+/// pool of one, it waits for that one to end, up to the pool's timeout).
 ///
 /// # Errors
 ///

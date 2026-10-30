@@ -160,7 +160,9 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   `NotFound`, `Call`, `NotSignedIn`, `Connection`, `Database` or `Other`, with `code()` and `problem()`. With the
   `axum` feature, `Tx` is an extractor for a state that is `SignIn`, and `Error` a response; with `testing`,
   `per_binary`, `refused` and `not_found`. `rowstile client rust` writes the policy's names: a constant for each
-  type and an enum of each type's permissions, implementing `Permission`. It may change before it is supported.
+  type and an enum of each type's permissions, implementing `Permission`. A transaction is one principal's, and
+  neither `begin` runs inside another: `sqlx::begin` takes a connection of its own from the pool, and `pg::begin`
+  takes the client, which its open transaction holds. It may change before it is supported.
 - **Elixir: preview.** `rowstile client elixir` writes the policy's names as a module for each type and a function for
   each permission (`MyApp.Authz.Note.edit()`), which `Rowstile.can?`, `perms_of` and `list` take, so a misspelled one
   doesn't compile. The package has `Rowstile.transact`, `Rowstile.expect`, `Rowstile.Refused`, `Rowstile.NotFound`,
