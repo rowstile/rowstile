@@ -117,6 +117,9 @@ KTOR = "integrations/ktor/src/test/kotlin/dev/rowstile/conformance/"
 AXUM = "integrations/axum/tests/conformance.rs"
 AXUM_SDK = "integrations/axum/tests/sdk.rs"
 AXUM_COMPILE = "integrations/axum/tests/compile.sh"
+PHOENIX = "integrations/phoenix/test/conformance_test.exs"
+PHOENIX_CHECKS = "integrations/phoenix/test/checks_test.exs"
+PHOENIX_SDK = "integrations/phoenix/test/sdk_test.exs"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -1272,6 +1275,24 @@ FEATURES: list[Feature] = [
             Check(AXUM_COMPILE, "14: after a policy change and a new migration"),
         ),
     ),
+    Feature(
+        "sdk.elixir",
+        2,
+        "The Elixir SDK (preview): Ecto and Postgrex transactions, a Plug, Oban jobs, tests",
+        ("sdk.ex.*",),
+        Doc("docs/stacks/phoenix.md", "Sign in every transaction"),
+        (
+            Check(PHOENIX, "3: not signed in: the not-signed-in error (AZ701), naming act_as"),
+            Check(PHOENIX, "7: ... and a row hidden between the read and the update is 404: the database's answer"),
+            Check(PHOENIX, "10: ... on Oban's queue: a job a request starts acts for the user who asked"),
+            Check(PHOENIX_CHECKS, "4: with a pool of one connection, a request as Ann, then one as Bob"),
+            Check(PHOENIX_CHECKS, "9: the generated names type-check, and a wrong permission name doesn't"),
+            Check(PHOENIX_CHECKS, "12: the framework's test database has the policy"),
+            Check(PHOENIX_CHECKS, "14: after a policy change and a new migration, the app works"),
+            Check(PHOENIX_SDK, "on a Postgrex connection: the same transactions, refusals and rollbacks"),
+            Check(PHOENIX_SDK, "an Ecto update the rules allow that matched nothing is 409"),
+        ),
+    ),
 ]
 
 
@@ -1533,6 +1554,23 @@ def sdk_rust() -> set[str]:
     return out
 
 
+def sdk_elixir() -> set[str]:
+    """What the Elixir package makes public: its modules (`sdk.ex.Rowstile.Plug`), and their public functions
+    (`sdk.ex.Rowstile.transact`), not the modules it hides (`@moduledoc false`)."""
+    out: set[str] = set()
+    for path in sorted(glob.glob(os.path.join(REPO, "sdk", "elixir", "lib", "**", "*.ex"), recursive=True)):
+        with open(path, encoding="utf-8") as fh:
+            text = re.sub(r'"""\n.*?"""', '""', fh.read(), flags=re.S)  # (the docs' examples aren't the code)
+        # each module, from its defmodule to the next one's (or a protocol's implementation: no surface of its own)
+        modules = re.findall(r"^\s*defmodule ([\w.]+) do\n(.*?)(?=^\s*def(?:module|impl) |\Z)", text, re.M | re.S)
+        for module, body in modules:
+            if "@moduledoc false" in body:
+                continue
+            out.add(f"sdk.ex.{module}")
+            out |= {f"sdk.ex.{module}.{f}" for f in re.findall(r"^\s*def(?:delegate)? ([a-z_]\w*[?!]?)", body, re.M)}
+    return out
+
+
 def language() -> set[str]:
     """The language's forms, as the editors' grammar names them: its rules, less the hidden ones (`_x`) and the
     ones that read a token's characters (names, values, comments) rather than a word of the language."""
@@ -1562,6 +1600,7 @@ SURFACES: dict[str, Callable[[], set[str]]] = {
     "the Java SDK": sdk_java,
     "the Kotlin SDK": sdk_kotlin,
     "the Rust SDK": sdk_rust,
+    "the Elixir SDK": sdk_elixir,
     "the language": language,
 }
 

@@ -356,6 +356,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The Java SDK (preview): JDBC, and the Spring Boot starter | 2 | [app-code](reference/app-code.md) | `integrations/spring` |  |
 | The Kotlin module of the Java SDK (preview): coroutines, Exposed and Ktor | 2 | [app-code](reference/app-code.md) | `integrations/ktor` |  |
 | The Rust SDK (preview): sqlx and tokio-postgres transactions signed in, refusals as errors, Axum | 2 | [app-code](reference/app-code.md) | `integrations/axum` |  |
+| The Elixir SDK (preview): Ecto and Postgrex transactions, a Plug, Oban jobs, tests | 2 | [phoenix](stacks/phoenix.md) | `integrations/phoenix` |  |
 
 <!-- features: end of the table -->
 

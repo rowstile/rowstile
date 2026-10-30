@@ -51,6 +51,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   typed errors and problem details, and gives Axum an extractor for each request's transaction
   (`docs/stacks/axum.md`). `rowstile migrate` writes sqlx migrations (`tool = "sqlx"`), and `rowstile client rust`
   the policy's names. It may change in any release.
+- An Elixir SDK, a preview: the `rowstile` Hex package signs Ecto and Postgrex transactions in, answers refusals
+  403 and hidden rows 404 (a Plug, and a Phoenix fallback), refuses to start on a connection that skips row-level
+  security, signs Oban jobs in for the user who asked, and copies the test database for each test partition
+  (`docs/stacks/phoenix.md`). `rowstile migrate` writes Ecto migrations (`tool = "ecto"`), and `rowstile client
+  elixir` the policy's names. It may change in any release.
 
 ### Fixed
 
