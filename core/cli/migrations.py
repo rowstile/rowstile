@@ -348,11 +348,14 @@ def django_graph(folder: str) -> tuple[str, list[str], int]:
             tree = ast.parse(fh.read(), f)
         names.append(f[:-3])
         for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and any(isinstance(x, ast.Name) for x in node.targets):
-                target = next(x.id for x in node.targets if isinstance(x, ast.Name))
-                if target == "dependencies":
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue  # Migration.atomic = False, after the class
+                if target.id == "dependencies":
                     deps += [(f[:-3], lbl, name) for lbl, name in _pairs(node.value)]
-                elif target == "replaces":
+                elif target.id == "replaces":
                     replaced[f[:-3]] = _pairs(node.value)
     own = os.path.basename(os.path.dirname(os.path.abspath(folder)))
     labels = [lbl for _, lbl, name in deps if name in names]
