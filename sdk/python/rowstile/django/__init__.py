@@ -12,6 +12,14 @@ one into the next request, and a streaming response acts for the request's user 
 no one (a management command, a migration as the tables' owner) signs nothing in: a query on a table with rules then
 fails, saying how (AZ701).
 
+A transaction is one principal's. One no one has signed in to yet signs in at its first statement while the code
+acts for someone, and is theirs from then on: a statement while the code acts for someone else, or for no one, is
+refused with a RuntimeError before it is sent, the transaction as it was. Run that work after the transaction, or
+in one of its own on another connection. (What Django sends around the work, a savepoint made, released or rolled
+back to, is no one's work: it runs.) In a test case's own transaction (Django's TestCase, pytest-django's db), what
+the app runs goes as it would without it: a test may act for one user, then another, and each atomic block the app
+begins there is one principal's.
+
 A refused write answers 403 with the reason (an RFC 9457 problem body), and a row the user can't see 404, as
 rowstile.fastapi does: raise NotFound, and give an update or a delete that changed nothing to expect(), or save an
 instance with save(). A call the database turns down that is no refusal answers as its code's page says (AZ703 and
@@ -37,6 +45,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpRe
 from django.utils.module_loading import import_string
 
 from .. import (
+    NOBODY,
     ConnectionProblem,
     Id,
     NotFound,
@@ -51,6 +60,7 @@ from .. import (
     _current,
     _explain_rule_args,
     _explain_rule_sql,
+    _signed_in_already,
     act_as_args,
     current,
     not_signed_in,
@@ -59,6 +69,7 @@ from .. import (
 )
 
 if TYPE_CHECKING:
+    import psycopg
     from django.db.backends.base.base import BaseDatabaseWrapper
 
 # who a request acts for, from the request: a user id, ("service", 3), a Principal, or None; or an awaitable of one
@@ -69,53 +80,98 @@ Response = TypeVar("Response")
 TypeName = TypeVar("TypeName", bound=str)
 PermissionName = TypeVar("PermissionName", bound=str)
 KeyType: TypeAlias = "Literal['bigint', 'integer', 'uuid'] | None"
-_Args: TypeAlias = "tuple[str | None, str | None]"
 _Execute: TypeAlias = "Callable[[str, Any, bool, dict[str, Any]], Any]"
 
 _ACT_AS = "SELECT authz.act_as(%s, %s)"
 _EXPLAIN = _explain_rule_sql("%(t)s", "%(c)s", "%(k)s")
-_SIGNED = "_rowstile_signed_in"  # on the driver's connection: who its open transaction was signed in as
-_STALE: _Args = ("", "")  # ... not known any more: a ROLLBACK TO SAVEPOINT may have undone the last sign-in
+# on the driver's connection: who its open transaction signed in as, and whether the sign-in is surely still there (a
+# ROLLBACK TO SAVEPOINT made before it undoes it in Postgres: the same principal then signs in again)
+_SIGNED = "_rowstile_signed_in"
 _ROLLBACK = re.compile(r"\s*ROLLBACK\b", re.IGNORECASE)
+# on the driver's connection, in a test case's transaction: the atomic block the app began there, and whose it is
+_BLOCK = "_rowstile_block"
+# what Django sends around the work, no one's: a savepoint made, released or rolled back to (atomic blocks), and the
+# deferred constraints checked (a test case's end)
+_AROUND = re.compile(r"\s*(SAVEPOINT|RELEASE|ROLLBACK|SET\s+CONSTRAINTS)\b", re.IGNORECASE)
 _checked: set[str] = set()  # the aliases authz.connection_check() found fine, in this process
 
 
 # --- every transaction signed in ----------------------------------------------------------------------
 def _sign_in(execute: _Execute, sql: str, params: object, many: bool, context: dict[str, Any]) -> object:
     """Django's execute wrapper: before a statement, its transaction is signed in as whoever the code acts for
-    now. A statement outside a transaction (Django's autocommit) runs in one of its own, signed in first."""
+    now, if no one has signed it in yet. A statement outside a transaction (Django's autocommit) runs in one of its
+    own, signed in first. In a transaction signed in as someone else, a statement for anyone else is refused."""
     from psycopg import pq
 
     db: BaseDatabaseWrapper = context["connection"]
     raw = db.connection
     who = current()
     status = raw.info.transaction_status
+    signed: tuple[Principal, bool] | None = None
     if status == pq.TransactionStatus.IDLE:
-        setattr(raw, _SIGNED, None)
+        setattr(raw, _BLOCK, None)
         if who is None:  # nobody said who: the database refuses what needs to know (AZ701)
+            setattr(raw, _SIGNED, None)
             return execute(sql, params, many, context)
-        args = act_as_args(who)
         if raw.autocommit:  # outside an atomic block: this statement is a transaction of its own
             with db.wrap_database_errors, raw.transaction():
-                raw.execute(_ACT_AS, args)
+                raw.execute(_ACT_AS, act_as_args(who))
                 return execute(sql, params, many, context)
         with db.wrap_database_errors:
-            raw.execute(_ACT_AS, args)  # it begins the transaction the atomic block opened
-        setattr(raw, _SIGNED, args)
+            raw.execute(_ACT_AS, act_as_args(who))  # it begins the transaction the atomic block opened
+        signed = (who, True)
     elif status == pq.TransactionStatus.INTRANS:
-        signed: _Args | None = getattr(raw, _SIGNED, None)
-        # who the code acts for changed inside the transaction (acting_as in an atomic block, or after it): the
-        # statements from here on act for them, and for nobody once no one is named
-        if signed is not None or who is not None:
-            args = act_as_args(who)
-            if args != signed:
-                with db.wrap_database_errors:
-                    raw.execute(_ACT_AS, args)
-                setattr(raw, _SIGNED, args)
+        signed = getattr(raw, _SIGNED, None)
+        if db.atomic_blocks and getattr(db.atomic_blocks[0], "_from_testcase", False):
+            signed = _in_a_test(db, raw, who, sql, signed)
+        elif signed is not None and who != signed[0]:
+            if not _AROUND.match(sql):
+                raise _signed_in_already(signed[0], who)
+        elif who is not None and (signed is None or not signed[1]):
+            # the transaction's first sign-in, or the same principal's again after a rollback that may have undone it
+            with db.wrap_database_errors:
+                raw.execute(_ACT_AS, act_as_args(who))
+            signed = (who, True)
+    else:  # a transaction in error: the statement fails as it would, and the transaction is still whose it was
+        signed = getattr(raw, _SIGNED, None)
+    setattr(raw, _SIGNED, signed)
     result = execute(sql, params, many, context)
-    if _ROLLBACK.match(sql):
-        setattr(raw, _SIGNED, _STALE)
+    if signed is not None and _ROLLBACK.match(sql):
+        setattr(raw, _SIGNED, (signed[0], False))
     return result
+
+
+def _in_a_test(
+    db: BaseDatabaseWrapper,
+    raw: psycopg.Connection[Any],
+    who: Principal | None,
+    sql: str,
+    signed: tuple[Principal, bool] | None,
+) -> tuple[Principal, bool] | None:
+    """A statement in a test case's own transaction (Django's TestCase, pytest-django's db: Django marks the atomic
+    blocks a test case enters _from_testcase). What the app runs there goes as it would without that transaction:
+    outside the app's own atomic blocks, each statement signs in as whoever the code acts for then (nobody once no
+    one is named), so a test may act for ann, then for bo. The outermost atomic block the app begins inside it is one
+    principal's, as a transaction is: theirs from its first statement while the code acts for someone, another's
+    statement refused, and forgotten once the block is released or rolled back. Returns who the transaction is
+    signed in as now."""
+    block = next((b for b in db.atomic_blocks if not getattr(b, "_from_testcase", False)), None)
+    owner: tuple[object, Principal] | None = getattr(raw, _BLOCK, None)
+    if owner is not None and owner[0] is not block:
+        owner = None  # the block it was for is released or rolled back
+    if owner is not None and who != owner[1]:
+        if not _AROUND.match(sql):
+            raise _signed_in_already(owner[1], who)
+        return signed
+    if block is not None and owner is None and who is not None:
+        owner = (block, who)
+    setattr(raw, _BLOCK, owner)
+    wanted = who or (NOBODY if signed is not None else None)
+    if wanted is not None and signed != (wanted, True) and not _AROUND.match(sql):  # (not for Django's own)
+        with db.wrap_database_errors:
+            raw.execute(_ACT_AS, act_as_args(wanted))
+        signed = (wanted, True)
+    return signed
 
 
 def _install(sender: object, connection: BaseDatabaseWrapper, **kwargs: object) -> None:
