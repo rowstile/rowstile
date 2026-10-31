@@ -47,6 +47,7 @@ const stacks = [
   { text: "Rust: Axum, sqlx (preview)", link: "/stacks/axum" },
   { text: "Phoenix, Ecto (preview)", link: "/stacks/phoenix" },
   { text: "Laravel (preview)", link: "/stacks/laravel" },
+  { text: "Electric, sync (preview)", link: "/stacks/electric" },
   { text: "Any other stack: SQL", link: "/stacks/sql" },
 ];
 const sdks = [
