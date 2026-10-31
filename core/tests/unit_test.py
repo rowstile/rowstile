@@ -1491,6 +1491,8 @@ class ClientNames(unittest.TestCase):
         self.assertIn('const OrgUnitSee OrgUnitPermission = "see"', lines)
         self.assertIn('func (OrgUnitPermission) ObjectType() string { return "orgUnit" }', lines)
         self.assertIn('const TypeOrgUnit ObjectType = "orgUnit"', lines)
+        # each exported name has its comment (golint, go vet's doc checks)
+        self.assertIn("// OrgUnitPermission is a permission of orgUnit.", lines)
         self.assertIn('const OrgTeamCanSee OrgTeamPermission = "can_see"', lines)
         self.assertEqual([x for x in lines if "DocPermission " in x or x.startswith("const Doc")], [])
         self.assertIn("// doc and Doc would both be DocPermission: neither has it", lines)
@@ -1536,6 +1538,9 @@ class ClientNames(unittest.TestCase):
         self.assertNotIn("DocPermission {", text)
         self.assertNotIn("EditAll,", text)
         self.assertEqual(sum("would both be" in x for x in lines), 2, "said once for each name")
+        # the match of none closes on its own line, and the function after it
+        at = lines.index("        match self {}")
+        self.assertEqual(lines[at + 1 : at + 3], ["    }", ""])
 
     def test_csharp_names_are_each_types_class(self) -> None:
         # rowstile client csharp: a class for each type (its name in PascalCase), its ObjectType and permissions
@@ -1653,6 +1658,9 @@ class ClientNames(unittest.TestCase):
             '  def scopes, do: ["read"]',
         ):
             self.assertIn(line, made)
+        # the last entry of a map has no comma after it (mix format takes it away)
+        at = made.index('      "team" => %{')
+        self.assertEqual(made[at + 1 : at + 4], ['        "member" => ["user"]', "      }", "    }"])
         with tempfile.TemporaryDirectory() as d:
             toml = os.path.join(d, "rowstile.toml")
             for path, named in (
@@ -3061,6 +3069,8 @@ class Statements(unittest.TestCase):
 
         self.assertEqual(split("'a\\'; SELECT 1 e"), [("", "'a\\'"), ("", "SELECT 1 e")])
         self.assertEqual(split("$a$ x; $a$; SELECT 1"), [("", "$a$ x; $a$"), ("", "SELECT 1")])
+        # an E alone before it is an E'' string, whatever the text's last character (a digit, as in 1E'')
+        self.assertEqual(split("E'a\\'; SELECT 1"), [("", "E'a\\'; SELECT 1")])
 
     def test_names_past_ascii(self) -> None:
         # Postgres reads any character past ASCII as a letter, unquoted (archivé, ², →): psql splits these so
@@ -4164,6 +4174,18 @@ rules app.folders
             )
             self.assertEqual([f["why"] for f in r["risk"]], whys)
             self.assertEqual(self.review.summary(r)["Meaning"], f"1 cascade {kind}")
+        # one without columns is named without them
+        bare = self.SMALL.replace("  update : edit\n", "  update : edit\n  cascade from app.orgs\n")
+        r = self.review.review((self.SMALL, {}, {}), (bare, {}, {}), worlds=40)
+        self.assertEqual([c["what"] for c in r["meaning"]["changed"]], ["cascade app.folders from app.orgs"])
+
+    def test_what_changes_through_two_changes(self) -> None:
+        h = self.SMALL.replace("can edit = owner or org.admin", "can edit = org.admin")
+        h = h.replace("can remove = owner and", "can remove = org.admin and")
+        r = self.review.review((self.SMALL, {}, {}), (h, {}, {}), worlds=40)
+        self.assertEqual(
+            self.review.summary(r)["Meaning"], "2 permissions changed, 3 permissions and rules change through them"
+        )
 
     def test_a_tightening_is_not_flagged(self) -> None:
         for old, new in (
@@ -7237,6 +7259,15 @@ class Fmt(unittest.TestCase):
         self.assertEqual(format(src), want)
         self.assertEqual(format(want), want)
 
+    def test_a_condition_goes_on_as_written(self) -> None:
+        # the lines of a condition after its first are its SQL: their spaces are kept, only the indent changes
+        from authzlib.fmt import format
+
+        head = "app role app_user\n\ntype user = app.users\n\ntype doc = app.docs\n  owner : user = owner_id\n"
+        src = head + "  can see = owner and {kind = 1\n      and size  >  2   -- a  comment\n  or  big}\n"
+        want = head + "  can see = owner and {kind = 1\n        and size  >  2   -- a  comment\n         or  big}\n"
+        self.assertEqual(format(src), want)
+
     def test_a_comment_inside_a_relation_or_at_the_end(self) -> None:
         # a comment line inside a relation's condition: what follows it lines up as it would without it, under the
         # subjects (no source) or the source; and a policy may end on a comment
@@ -7682,6 +7713,12 @@ class Confidence(unittest.TestCase):
             "type doc = app.docs\n  owner : user = owner_id\n  crew : team#member = team_id\n"
         )
         self.assertFalse(self.same(team + "  can view = owner\n", team + "  can view = owner or crew\n"))
+
+    def test_a_column_only_tested_for_null_also_holds_a_value(self) -> None:
+        # `{archived_at is null}` names no value: the worlds give the column one too, so the review sees a doc
+        # archived, which the condition leaves out
+        doc = "type doc = app.docs\n  owner : user = owner_id\n  can view = owner{}\n"
+        self.assertFalse(self.same(doc.format(" and {archived_at is null}"), doc.format("")))
 
     def test_anyone_nobody_and_signed_in_are_the_same_on_every_row(self) -> None:
         folder = "type folder = app.folders\n  owner : user = owner_id\n  viewer : user = viewer_id\n"
