@@ -598,6 +598,8 @@ async def test_none_is_nobody_inside_acting_as() -> None:
 ALREADY = "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: "
 AFTER = " run inside it. Run it after, or in a transaction of its own (another connection)"
 SIGNED_IN_AS = "SELECT current_setting('authz.user_id', true)"
+# the server's own pid (behind PgBouncer, the one the client was given is the pooler's)
+SERVER_PID = "SELECT pg_backend_pid()"
 
 
 def last_sent(pid: int) -> str:
@@ -619,10 +621,12 @@ async def test_a_transaction_is_one_principals() -> None:
         with pgp.transaction(conn, 1):
             with pgp.transaction(conn, 1):  # the same principal: a savepoint
                 assert conn.execute(SIGNED_IN_AS).fetchone() == ("1",)
+            pid = conn.execute(SERVER_PID).fetchone()
+            assert pid is not None
             assert [r[0] for r in conn.execute(projects)] == PROJECTS["1"]
             with pytest.raises(RuntimeError) as bo, pgp.transaction(conn, 2):
                 ran.append("bo")
-            assert last_sent(conn.info.backend_pid) == projects  # nothing sent for bo
+            assert last_sent(pid[0]) == projects  # nothing sent for bo
             with pytest.raises(RuntimeError) as nobody, pgp.transaction(conn, None):
                 ran.append("nobody")
             with pytest.raises(RuntimeError) as no_one, pgp.transaction(conn):  # the code acts for no one
@@ -655,11 +659,12 @@ async def test_a_transaction_is_one_principals() -> None:
         async with pga.transaction(pconn, 1):
             async with pga.transaction(pconn, 1):
                 assert await pconn.fetchval(SIGNED_IN_AS) == "1"
+            server_pid = await pconn.fetchval(SERVER_PID)
             assert [r["id"] for r in await pconn.fetch(projects)] == PROJECTS["1"]
             with pytest.raises(RuntimeError, match=ALREADY + "user 2's work can't"):
                 async with pga.transaction(pconn, 2):
                     ran.append("bo")
-            assert last_sent(pconn.get_server_pid()) == projects
+            assert last_sent(server_pid) == projects
             assert await pconn.fetchval(SIGNED_IN_AS) == "1"
             assert await pconn.execute(write) == "UPDATE 1"
         assert not pconn.is_in_transaction()

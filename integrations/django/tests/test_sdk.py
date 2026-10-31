@@ -56,15 +56,23 @@ def signed_in_as() -> str:
     return str(row[0])
 
 
-def last_sent() -> str:
-    """The last statement Django's connection sent, as Postgres shows it to the same role (on another connection)."""
-    raw = connection.connection
-    assert raw is not None
+def server_pid() -> int:
+    """The server's own pid for Django's connection (behind PgBouncer, the one the client was given is the pooler's)."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_backend_pid()")
+        row = cursor.fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def last_sent(pid: int) -> str:
+    """The last statement the session with this pid sent, as Postgres shows it to the same role (on another
+    connection)."""
     s = connection.settings_dict
     with psycopg.connect(
         dbname=s["NAME"], user=s["USER"], password=s["PASSWORD"], host=s["HOST"], port=s["PORT"], autocommit=True
     ) as other:
-        row = other.execute("SELECT query FROM pg_stat_activity WHERE pid = %s", (raw.info.backend_pid,)).fetchone()
+        row = other.execute("SELECT query FROM pg_stat_activity WHERE pid = %s", (pid,)).fetchone()
     assert row is not None
     return str(row[0])
 
@@ -79,10 +87,11 @@ def test_an_atomic_block_signs_in_as_whoever_the_code_acts_for_now() -> None:
         with rowstile.acting_as(1):  # signs in: ann's from here on
             with transaction.atomic():  # a savepoint, the same principal's
                 assert projects() == ANN
+            pid = server_pid()
             assert projects() == ANN
         with pytest.raises(RuntimeError) as no_one:
             projects()
-        assert last_sent() == "SELECT id FROM projects ORDER BY id"  # nothing sent for it
+        assert last_sent(pid) == "SELECT id FROM projects ORDER BY id"  # nothing sent for it
         with rowstile.acting_as(2), pytest.raises(RuntimeError) as bo:
             projects()
         with rowstile.acting_as(None), pytest.raises(RuntimeError) as nobody:
