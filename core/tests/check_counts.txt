@@ -4,7 +4,7 @@
 adversarial 112
 apply 162
 capitals 105
-children 101
+children 105
 cli 167
 concurrency 35
 confidence 64
@@ -23,11 +23,11 @@ interleavings (read committed, cross) 21
 interleavings (read committed, docs) 36
 interleavings (read committed, parts) 21
 invariance of the fixed policies 27
-keep unchanged trees 9
+keep unchanged trees 11
 language server 125
 masks 39
 mcp 75
-migrate vs apply 77
+migrate vs apply 81
 migrations 79
 moves 23
 multi scenario 99

@@ -20,7 +20,7 @@ same() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected '$3', got '$2
 schema() { PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$1" -f tests/children_schema.sql >/dev/null; }
 T=$(mktemp -d)
 # whatever way the suite ends: its databases, its files
-cleanup() { [ -n "${KEEP:-}" ] || for d in "$DB" "$DB2"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
+cleanup() { [ -n "${KEEP:-}" ] || for d in "$DB" "$DB2" "${DB}_sync"; do dropdb --force --if-exists "$d" 2>/dev/null; done; rm -rf "$T"; }
 trap cleanup EXIT
 # runs the command in the project; sets $out (stdout and stderr) and $rc
 run() { out=$(cd "$T" && python3 "$ROOT/cli/rowstile_cli.py" "$@" 2>&1); rc=$?; }
@@ -277,6 +277,25 @@ same "... and an allowed one is made, there and where the rule reads other rows"
 same "a column a rule reads can't be dropped: Postgres names what reads it" \
   "$(PSQL -v VERBOSITY=default -c "ALTER TABLE ch.docs DROP COLUMN title" 2>&1 | head -n 2 | tr '\n' '|')" \
   "ERROR:  cannot drop desired object(s) because other objects depend on them|DETAIL:  trigger authz_update owner_id, title on table ch.docs depends on column title of table ch.docs|"
+
+echo "-- the sync index (a preview): what is written through a partition, or a table that inherits, reaches it"
+DB3=${DB}_sync
+dropdb --if-exists "$DB3" 2>/dev/null; createdb "$DB3" && schema "$DB3" || exit 1
+psql -X -q -d postgres -c "DO \$r\$ BEGIN CREATE ROLE authz_sync_engine; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END \$r\$;" >/dev/null
+{ cat tests/children.authz; printf '\nsync role authz_sync_engine\nsync ch.notes : view\nsync ch.docs : edit\nsync ch.topics : view\n'; } > "$T/synced.authz"
+python3 cli/rowstile_cli.py --db "dbname=$DB3" apply "$T/synced.authz" --force >/dev/null 2>&1 || bad "the policy with sync lines applies"
+# whether user $1 reads $2 $3 through the index (as the tables' owner)
+synced() { D=$DB3 PSQL -c "SELECT EXISTS (SELECT 1 FROM authz_sync.${2}__readers r WHERE r.id = $3 AND r.key IN
+                      (SELECT k.key FROM authz_sync.keys k WHERE k.principal_type = 'user' AND k.principal_id = '$1'))"; }
+D=$DB3 PSQL -c "UPDATE ch.notes SET owner_id = 2 WHERE id = 1" >/dev/null
+same "a note moved under another, through the partition it is stored in: its new parent's owner reads it" \
+  "$(synced 2 note 101)|$(D=$DB3 PSQL -c "UPDATE ch.notes_high SET parent_id = 1 WHERE id = 101" && synced 2 note 101)" "f|t"
+same "a row of the table that inherits, its owner changed there: its readers follow" \
+  "$(synced 2 doc 12)|$(D=$DB3 PSQL -c "UPDATE ch.docs_old SET owner_id = 2 WHERE id = 12" && synced 2 doc 12)" "f|t"
+same "a topic frozen through a partition of the table its inheritance condition reads: its readers follow" \
+  "$(synced 1 topic 2)|$(D=$DB3 PSQL -c "INSERT INTO ch.frozen_hold (topic_id) VALUES (2)" && synced 1 topic 2)" "t|f"
+same "... and the index matches a rebuild" "$(D=$DB3 PSQL -c "SELECT authz.sync_verify()")" t
+dropdb --force --if-exists "$DB3" 2>/dev/null
 
 echo "-- removed"
 run remove --yes

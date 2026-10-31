@@ -42,7 +42,7 @@ After each schedule, as the owner:
     row gone, each by its words), or 40001 or 40P01, to retry, in a session that isn't in READ COMMITTED: READ
     COMMITTED never needs a retry;
   - authz.verify(): the inheritance tables match a rebuild (and the conditions noted for them, where they read
-    other rows, are what the rows say now);
+    other rows, are what the rows say now); in docs, authz.sync_verify() too: the sync index (a preview) does;
   - no row sits inside itself through its parents;
   - no share is left on a row that isn't there;
   - what authz.list says the users the subtree concerns may do with each row equals the reference evaluator's
@@ -227,11 +227,15 @@ def docs_op(kind: str, s: int) -> Op:
             return Op(kind, f"SELECT authz.unshare('folder', {C}, 'viewer', 'user', 7)", "1", (gone,))
 
 
+# (with the sync index, a preview: its readers and keys are kept at each commit, under lock rows of their own, and
+# must match a rebuild after every schedule; the role the lines name is made by the setup)
+SYNC_LINES = "\nsync role authz_sync_engine\nsync app.files : view\nsync app.folders\n"
+MAKE_SYNC_ROLE = "DO $r$ BEGIN CREATE ROLE authz_sync_engine; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $r$;"
 DOCS = World(
     name="docs",
-    policy=("docs.authz", core_file("example/docs.authz")),
+    policy=("docs.authz", core_file("example/docs.authz") + SYNC_LINES),
     schema=("example/app_schema.sql",),
-    setup="",
+    setup=MAKE_SYNC_ROLE,
     reset=DOCS_RESET,
     rows=DOCS_ROWS,
     loops=DOCS_LOOPS,
@@ -775,6 +779,9 @@ class Scheduler:
         if self.owner.query("SELECT authz.verify()") != [(True,)]:
             run.problems.append("the inheritance tables don't match a rebuild")
             self.owner.script(self.rebuild)
+        if SYNC_LINES in self.world.policy[1] and self.owner.query("SELECT authz.sync_verify()") != [(True,)]:
+            run.problems.append("the sync index doesn't match a rebuild")
+            self.owner.script("SELECT authz_int.sync_refresh(NULL, true)")
         loops = str(self.owner.query(self.world.loops)[0][0])
         if loops:
             run.problems.append(f"rows inside themselves: {loops}")
