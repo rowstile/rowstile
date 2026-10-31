@@ -343,6 +343,13 @@ PSQL -c "REVOKE SELECT (name) ON app.files FROM $OTHER" -c "CREATE PUBLICATION $
 if PSQL -c "SELECT 1 FROM pg_publication WHERE pubname = '${DB}_pub'" | grep -q 1; then
   [ "$(PSQL -c "SELECT EXISTS (SELECT 1 FROM authz.lint() WHERE severity = 'error' AND problem LIKE '%publication ${DB}_pub publishes it%')")" = t ] &&
     ok "lint finds a publication that publishes a masked column" || bad "lint: publication" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE severity = 'error'")"
+  [ "$(PSQL -c "SELECT EXISTS (SELECT 1 FROM authz.lint() WHERE severity = 'error' AND problem LIKE '%publication ${DB}_pub publishes it%Give the publication a column list without it')")" = t ] &&
+    ok "... and says to give the publication a column list without it" || bad "lint: publication's advice" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE severity = 'error'")"
+  # a FULL replica identity, as Electric asks: Postgres refuses the table's updates with a column list that leaves one out
+  PSQL -c "ALTER TABLE app.files REPLICA IDENTITY FULL" >/dev/null
+  [ "$(PSQL -c "SELECT EXISTS (SELECT 1 FROM authz.lint() WHERE severity = 'error' AND problem LIKE '%publication ${DB}_pub publishes it%replica identity is FULL%a table of its own%')")" = t ] &&
+    ok "... and, for a table whose replica identity is FULL, to keep the column in a table of its own" || bad "lint: publication, FULL" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE severity = 'error'")"
+  PSQL -c "ALTER TABLE app.files REPLICA IDENTITY DEFAULT" >/dev/null
   PSQL -c "DROP PUBLICATION ${DB}_pub" >/dev/null
 else
   ok "lint finds a publication that publishes a masked column (skipped: this role can't make a publication here)"

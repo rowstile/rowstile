@@ -6257,11 +6257,14 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     END LOOP;
   END IF;
   END;
-  FOR r IN SELECT p.pubname, m.tbl, m.col FROM authz_int.masked_columns m
+  FOR r IN SELECT p.pubname, m.tbl, m.col, c.relreplident = 'f' AS whole FROM authz_int.masked_columns m
            JOIN pg_class c ON c.oid = to_regclass(m.tbl) JOIN pg_namespace n ON n.oid = c.relnamespace
            JOIN pg_publication_tables p ON p.schemaname = n.nspname AND p.tablename = c.relname AND m.col = ANY (p.attnames) LOOP
     severity := 'error'; object := r.tbl || '.' || r.col;
-    problem := format('is masked, and the publication %s publishes it: an engine that reads the publication reads it. Give the publication a column list without it', r.pubname); RETURN NEXT;
+    -- (a column list that leaves out a column of the replica identity makes Postgres refuse the table's updates)
+    problem := format('is masked, and the publication %s publishes it: an engine that reads the publication reads it. %s', r.pubname,
+      CASE WHEN r.whole THEN 'The table''s replica identity is FULL (Electric asks for it), so a column list must hold every column: keep the column in a table of its own, which isn''t published'
+           ELSE 'Give the publication a column list without it' END); RETURN NEXT;
   END LOOP;
   -- governed tables
   FOR r IN SELECT c.oid::regclass AS tbl, c.relrowsecurity, c.relowner,
