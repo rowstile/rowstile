@@ -102,6 +102,34 @@
           }
         },
         {
+          "match": "^(sync\\s+role)\\b\\s*([A-Za-z_][A-Za-z0-9_]*)?",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.authz"
+            },
+            "2": {
+              "name": "entity.name.function.authz"
+            }
+          }
+        },
+        {
+          "match": "^(sync)\\s+([A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.authz"
+            },
+            "2": {
+              "name": "entity.name.tag.table.authz"
+            },
+            "3": {
+              "name": "punctuation.separator.authz"
+            },
+            "4": {
+              "name": "entity.name.function.permission.authz"
+            }
+          }
+        },
+        {
           "match": "^(app\\s+role|scope|caveat)\\b\\s*([A-Za-z_][A-Za-z0-9_:\\-]*)?",
           "captures": {
             "1": {

@@ -128,7 +128,7 @@ def number(message: Message, key: str) -> int:
 THIS = "(this-file)"  # what a test file is called while it is checked
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 ERROR = re.compile(r"^(?:(\S+?) )?line (\d+): (.*)$", re.S)
-TOP_WORDS = ["app role", "type", "rules", "include", "scope", "caveat", "invariants", "test"]
+TOP_WORDS = ["app role", "type", "rules", "include", "scope", "caveat", "sync role", "sync", "invariants", "test"]
 EXPR_WORDS = ["or", "and", "not", "signed_in", "anyone", "nobody"]
 RULE_WORDS = ["select", "insert", "update", "delete", "mask", "after", "before", "cascade", "from"]
 TYPE_WORDS = ["can", "shared", "by", "if", "where", "roles", "from", "principal"]
@@ -482,6 +482,11 @@ class Server:
                 return Symbol(t)
             if t and name in t.perms:
                 return Symbol(t, name)
+        # a sync line (a preview): sync schema.table : PERM
+        m = re.match(r"sync\s+(\S+)\s*:\s*(\w+)", stripped)
+        if m and name == m.group(2):
+            t = next((x for x in pol.types.values() if x.table == m.group(1)), None)
+            return Symbol(t, name) if t and name in t.perms else None
         if re.match(r"type\s+" + re.escape(name) + r"\b", stripped) or (
             name in pol.types
             and not stripped.startswith(("can ",))
@@ -708,7 +713,15 @@ class Server:
         kind, _ = self.block(lines, line)
         if not s[:1].isspace():
             # a line that begins a block: its first word, then the table after `type x =` and `rules`
-            if re.match(r"(type\s+\w+\s*=|rules\s)\s*\S*$", before):
+            synced = re.match(rf"sync\s+({QNAME})\s*:\s*\w*$", before)
+            if synced:  # a sync line's permission: one of its type's
+                t = next((x for x in pol.types.values() if x.table == synced.group(1)), None) if pol else None
+                if t:
+                    add([p for p, x in t.perms.items() if not x.hidden], C_METHOD, f"{t.name} permission")
+            elif re.match(r"sync\s+(?!role\b)\S*$", before):  # the table a sync line names: a type's
+                if pol:
+                    add(sorted({t.table for t in pol.types.values()}), C_MODULE, "a type's table")
+            elif re.match(r"(type\s+\w+\s*=|rules\s)\s*\S*$", before):
                 add(self.tables(), C_MODULE, "table")
             elif not re.search(r"\s", before):
                 add(TOP_WORDS, C_KEYWORD)

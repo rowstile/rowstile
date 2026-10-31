@@ -203,6 +203,11 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   `cascade from app.users (owner_id)`. Applying refuses a line that names no such key, or several (AZ625). <!-- checked: tests/apply.sh "a cascade line that two keys answer to is refused"; tests/apply.sh "a cascade line that names no foreign key that acts is refused (AZ625)" -->
   **Invariants** state what must never be true, for everyone who can sign in (each user, each
   service or other principal) and for nobody. <!-- checked: tests/principals.sh "invariants are asked as each service too, named as the audit trail names it"; tests/principals.sh "and as nobody: the row with no user" --> <!-- answer: invariants -->
+- **The sync index** (a preview): `sync role sync_engine` names a sync engine's Postgres role, and
+  `sync app.files : view` keeps, for each row of a type's table, the keys that may read it (`sync app.files`
+  alone: those its select rule lets read it), for engines such as Electric to replicate ([The sync index](sync.md)). <!-- checked: tests/sync.sh "applied: for every user, the index holds what authz.list gives (files, and folders by their select rule)" -->
+  What a synced permission reads can't depend on the clock, on who asks, or on other rows than its own: that is
+  refused (AZ804, AZ805, AZ806). <!-- checked: tests/policy_errors.py "a synced permission reading the clock"; tests/policy_errors.py "a synced permission reading who asks"; tests/policy_errors.py "a synced permission reading other rows" -->
 - **Tests**: the unnamed `test` section checks the data already in the database, with lines
   `user|<principal type> X can|cannot PERM TYPE ID` (or `anyone ...`). A named test,
   `test "..."`, brings its own: `given name = {SQL ... RETURNING id}` rows (as whoever applies

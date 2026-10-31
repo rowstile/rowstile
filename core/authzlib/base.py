@@ -154,6 +154,9 @@ CREATE OR REPLACE FUNCTION authz.link_hashes() RETURNS text[] LANGUAGE sql STABL
   FROM unnest(string_to_array(nullif(current_setting('authz_ctx.links', true), ''), ',')) x
   WHERE btrim(x) <> '' $$;"""
 
+# The sync index's (a preview), made only by a policy that syncs: dropped and made again with the others then.
+SYNC_FUNCTIONS = ("sync_tick", "sync_verify")
+
 # Functions each apply recreates (dropped first, whatever their old signature).
 GENERATED_FUNCTIONS = (
     "act_as",

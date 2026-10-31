@@ -769,3 +769,39 @@ test
       permission: (identifier)
       type: (identifier)
       object: (value))))
+
+================================================================================
+Sync lines: the sync role, a table with its permission, a table alone (its select rule)
+================================================================================
+
+sync role sync_engine
+sync app.files : view
+sync app.folders
+type t = app.t
+  sync : user = owner_id
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (sync_role
+    name: (identifier))
+  (sync
+    table: (table_name
+      schema: (identifier)
+      name: (identifier))
+    permission: (identifier))
+  (sync
+    table: (table_name
+      schema: (identifier)
+      name: (identifier)))
+  (type
+    name: (identifier)
+    table: (table_name
+      schema: (identifier)
+      name: (identifier))
+    (relation
+      name: (identifier)
+      (subject
+        type: (identifier))
+      (column
+        (identifier)))))

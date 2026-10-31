@@ -81,6 +81,19 @@ apply "$(echo "$LONG" | sed 's/^  can break_glass = org.member$/  can break_glas
 [ "$(trees)" = "$BEFORE" ] && verify && ok "a new permission keeps a tree whose name is too long for Postgres" ||
   bad "a long name kept" "$BEFORE -> $(trees)"
 
+# the sync index (a preview): a new permission keeps its rows too, where the trees it reads are kept
+psql -X -q -d postgres -c "DO \$r\$ BEGIN CREATE ROLE authz_sync_engine; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END \$r\$;" >/dev/null
+SYNCED="$DOCS
+sync role authz_sync_engine
+sync app.files : view"
+apply "$SYNCED"
+BEFORE=$(trees)
+INDEX=$(PSQL -c "SELECT md5(string_agg(id || key || xmin, ',' ORDER BY id, key)) FROM authz_sync.file__readers")
+apply "$(echo "$SYNCED" | sed 's/^  can break_glass = org.member$/  can break_glass = org.member\n  can peek = view/')"
+[ "$(trees)" = "$BEFORE" ] && [ "$(PSQL -c "SELECT md5(string_agg(id || key || xmin, ',' ORDER BY id, key)) FROM authz_sync.file__readers")" = "$INDEX" ] &&
+  ok "a new permission keeps the trees and the sync index's rows" || bad "the sync index kept"
+[ "$(PSQL -c 'SELECT authz.sync_verify()')" = t ] && ok "...and the index matches a rebuild" || bad "sync_verify after keeping"
+
 rm -r "$T"
 dropdb "$DB"
 echo "keep: $fails failure(s)"

@@ -102,6 +102,14 @@ def compiled(name: str, transaction: bool = True) -> str:
     return Compiler(parse_policy(read(POLICIES[name]), POLICIES[name])).compile(POLICIES[name], transaction)
 
 
+# the docs app's policy with sync lines (a preview: the sync index), as tests/sync.sh applies it
+SYNC_LINES = "\nsync role sync_engine\nsync app.files : view\nsync app.folders\n"
+
+
+def compiled_sync() -> str:
+    return Compiler(parse_policy(read(POLICIES["docs"]) + SYNC_LINES, POLICIES["docs"])).compile(POLICIES["docs"])
+
+
 def search(pattern: str, text: str, flags: int = 0) -> re.Match[str]:
     m = re.search(pattern, text, flags)
     assert m is not None, f"{pattern!r} is not in the text"
@@ -464,6 +472,10 @@ class Golden(unittest.TestCase):
         for name in POLICIES:
             self.check(f"{name}.sql", compiled(name))
 
+    def test_a_sync_policy(self) -> None:
+        # the docs app's policy with sync lines (a preview): the sync index's tables, functions and steps
+        self.check("sync.sql", compiled_sync())
+
     def test_diff_script(self) -> None:
         c = Compiler(parse_policy(read(POLICIES["multi"]), POLICIES["multi"]))
         self.check("multi.diff.sql", c.compile_diff(POLICIES["multi"], ["1", "2"]))
@@ -504,6 +516,34 @@ class Golden(unittest.TestCase):
 
         made = set(re.findall(r"(?m)^CREATE (?:OR REPLACE )?FUNCTION authz\.(\w+)\(", compiled("docs")))
         self.assertEqual(made - {"ctx", "link_hashes", "uid"}, set(GENERATED_FUNCTIONS))
+        # ... and with sync lines, base.SYNC_FUNCTIONS too, which the drop list names then
+        from authzlib.base import SYNC_FUNCTIONS
+
+        sync = compiled_sync()
+        made = set(re.findall(r"(?m)^CREATE (?:OR REPLACE )?FUNCTION authz\.(\w+)\(", sync))
+        self.assertEqual(made - {"ctx", "link_hashes", "uid"}, set(GENERATED_FUNCTIONS + SYNC_FUNCTIONS))
+        self.assertIn("'sync_tick', 'sync_verify']) LOOP", sync)
+
+
+class SyncIndex(unittest.TestCase):
+    def test_the_hash_follows_what_the_index_is_worked_out_by(self) -> None:
+        # applying keeps the sync index's rows where its hash is the same: a principal type's where (the keys) and
+        # the condition of a closure table always rebuilt (it reads another table) change it; a permission nothing
+        # synced reads doesn't
+        base = read(POLICIES["cross"]) + "\nsync role eng\nsync cx.folders : edit\n"
+
+        def hashed(text: str) -> str:
+            c = Compiler(parse_policy(text, POLICIES["cross"]))
+            c.compile("x")
+            return c.sync_hash()
+
+        frozen = '"z""s".folder_id = this.id)'
+        self.assertIn(frozen, base)
+        self.assertNotEqual(hashed(base), hashed(base.replace(frozen, '"z""s".folder_id = this.id AND true)')))
+        self.assertNotEqual(
+            hashed(base), hashed(base.replace("type user = cx.users\n", "type user = cx.users where {id > 0}\n"))
+        )
+        self.assertEqual(hashed(base), hashed(base.replace("  can judge = ", "  can peek = lead\n  can judge = ")))
 
 
 class Compiling(unittest.TestCase):
@@ -2951,6 +2991,7 @@ class Imports(unittest.TestCase):
             "authzlib.output",
             "authzlib.refusals",
             "authzlib.statements",
+            "authzlib.sync",
             "authzlib.testing",
             "authzlib.trees",
             "hashlib",
@@ -7239,6 +7280,17 @@ class Fmt(unittest.TestCase):
             head
             + "rules app.docs\n  select : owner\n  cascade from app.users (owner_id, editor_id)\n  cascade from app.orgs\n"
         )
+        self.assertEqual(format(src), want)
+        self.assertEqual(format(want), want)
+
+    def test_sync_lines(self) -> None:
+        # the sync index's lines (a preview) are lines of their own, kept together as scopes are, one space between
+        # their words; a blank line before them, after a block
+        from authzlib.fmt import format
+
+        head = "app role app_user\n\ntype user = app.users\n\ntype doc = app.docs\n  owner : user = owner_id\n"
+        src = head + "  can view = owner\nsync   role  sync_engine\nsync app.docs :  view   -- its readers\n"
+        want = head + "  can view = owner\n\nsync role sync_engine\nsync app.docs : view  -- its readers\n"
         self.assertEqual(format(src), want)
         self.assertEqual(format(want), want)
 
@@ -12537,7 +12589,7 @@ class DocPages(unittest.TestCase):
         self.assertEqual(re.findall(r"passed \d+ of \d+|\d+ of \d+ checks", " ".join(text.split())), [])
 
     def test_each_call_a_page_writes_is_one_the_functions_take(self) -> None:
-        sql = Compiler(parse_policy(read("example/docs.authz"))).compile("x")
+        sql = compiled_sync()  # (the docs app's policy, with the sync index's functions too)
         made: dict[str, list[list[tuple[str, bool]]]] = {}  # name -> each form's (type, has a default)
         for name, params in calls(sql, "FUNCTION authz."):
             form = [(p.split()[1], "DEFAULT" in p.split()) for p in params if p.split()[0] != "OUT"]

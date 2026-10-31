@@ -151,6 +151,16 @@ it runs, the feed says nothing of a share that ended or began.
 SELECT authz.announce_timed_shares();           -- every minute, say: the shares that ended or began since
 ```
 
+With the sync index (a preview, [The sync index](reference/sync.md)), the same shares leave or reach the engines'
+clients when `authz.sync_tick()` runs: schedule it as often as a share that ends should leave them. After the first
+apply with sync lines, which fills the index's tables, vacuum them (`VACUUM authz_sync.file__readers` for each
+synced table): until autovacuum has, a write that reads many of their rows is slow ([Speed and limits](reference/limits.md)).
+
+<!-- not run: it needs a policy with sync lines, which the docs app the reference runs on doesn't have; tests/sync.sh calls it -->
+```sql
+SELECT authz.sync_tick();                       -- every minute, say: the shares whose start or end passed since
+```
+
 ## What to watch
 
 | | how |

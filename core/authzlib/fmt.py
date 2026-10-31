@@ -1,6 +1,6 @@
 """rowstile fmt: one way to write a policy, so a text diff holds only real changes.
 
-- top-level lines (app role, type, rules, scope, caveat, include, invariants, test) start the line; the lines
+- top-level lines (app role, type, rules, scope, caveat, sync, include, invariants, test) start the line; the lines
   of a block are indented by two spaces; a continuation (or, and, where, if) lines up under the
   expression it continues
 - one blank line between blocks, none at the start or the end, never two in a row
@@ -21,7 +21,7 @@ from typing import NamedTuple, TypeAlias
 
 from .parse import Scanner, Step, meaning_lines
 
-TOP = re.compile(r"^(type|rules|scope|caveat|app\s+role|include|invariants|test)\b")
+TOP = re.compile(r"^(type|rules|scope|caveat|app\s+role|sync|include|invariants|test)\b")
 CONT = re.compile(r"^(or|and|where|if)\b")
 CASCADE = re.compile(r"cascade from\s*([\w.]+)\s*(?:\((.*)\))?")
 
@@ -202,7 +202,7 @@ def hang(col: int, code: str) -> str:
 
 
 def _single(code: str) -> bool:
-    return code.startswith(("scope ", "caveat ", "app role ", "include "))
+    return code.startswith(("scope ", "caveat ", "app role ", "sync ", "include "))
 
 
 def _expr_col(code: str, indent: int) -> int:

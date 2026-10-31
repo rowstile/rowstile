@@ -14,6 +14,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile dev`'s access lines name, under a permission someone gains, the rules that read it (`read by the
   rules of app.folders: update id, owner_id, org_id, inherit; delete`): whoever gains `share` may then also do what
   those rules let `share` do, such as give a folder away.
+- The sync index, a preview (its lines, tables and functions may change in any release): `sync role sync_engine`
+  names the sync engine's Postgres role, and `sync app.files : view` (or `sync app.folders`, for the table's select
+  rule) keeps, in the schema `authz_sync`, the keys that may read each row and the keys each user holds, current in
+  the same transaction as each change, for engines such as Electric to replicate. `authz.sync_tick()` follows shares
+  that start or end, and `authz.sync_verify()` compares the index with a rebuild. AZ801 to AZ809 are its mistakes
+  ([The sync index](docs/reference/sync.md)).
 - Background jobs in Celery's and RQ's workers, for the Python SDK (preview): `rowstile.job(who)` is a `with` block
   too, for a job that acts for the user its argument names (`Principal.parse`). In either form, the database's
   refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).

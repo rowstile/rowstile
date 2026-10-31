@@ -70,6 +70,7 @@ const reference = [
   { text: "Reviewing a change", link: "/reference/review" },
   { text: "How it works", link: "/reference/guarantees" },
   { text: "Speed and limits", link: "/reference/limits" },
+  { text: "The sync index (a preview)", link: "/reference/sync" },
   { text: "Error codes", link: "/errors/" },
   { text: "Words", link: "/words" },
   { text: "Editor", link: "/editor" },

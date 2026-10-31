@@ -24,7 +24,8 @@ module.exports = grammar({
   rules: {
     source_file: ($) => repeat($._top),
 
-    _top: ($) => choice($.app_role, $.include, $.type, $.rules, $.scope, $.caveat, $.invariants, $.test),
+    _top: ($) =>
+      choice($.app_role, $.include, $.type, $.rules, $.scope, $.caveat, $.sync_role, $.sync, $.invariants, $.test),
 
     comment: (_) => token(seq("--", /.*/)),
 
@@ -67,6 +68,11 @@ module.exports = grammar({
 
     caveat: ($) => seq("caveat", field("name", $.identifier), "=", $.sql),
 
+    // the sync index (a preview): the sync engine's Postgres role, and each table synced with the permission its
+    // readers hold (none: the table's select rule)
+    sync_role: ($) => seq("sync", "role", field("name", $.identifier)),
+    sync: ($) => seq("sync", field("table", $.table_name), optional(seq(":", field("permission", $.identifier)))),
+
     // ---- types -----------------------------------------------------------------------------------
     type: ($) =>
       seq(
@@ -88,7 +94,7 @@ module.exports = grammar({
       choice(
         $.identifier,
         alias(
-          choice("app", "role", "include", "type", "rules", "scope", "caveat", "invariants", "test", "principal"),
+          choice("app", "role", "include", "type", "rules", "scope", "caveat", "sync", "invariants", "test", "principal"),
           $.identifier,
         ),
       ),

@@ -371,6 +371,20 @@ CASES: list[tuple[str, str, str, str]] = [
         ),
     ),
 ]
+# the sync index (a preview): sync lines added (and back: removed, the index dropped), and the permission a synced
+# table's readers hold changed (its rows worked out again, by difference). The role the lines name needs only to be
+# there (main makes it)
+SYNC_ROLE = "authz_sync_engine"
+SYNCED = DOCS + f"\nsync role {SYNC_ROLE}\nsync app.files : view\nsync app.folders\n"
+CASES += [
+    ("sync lines added", "docs", DOCS, SYNCED),
+    (
+        "a synced table's permission changed",
+        "docs",
+        SYNCED,
+        edit(SYNCED, ("sync app.files : view\n", "sync app.files : edit\n")),
+    ),
+]
 # functions made with another search path than the migration's (the schemas on it changed since: one made, one
 # dropped); a migration changes only some functions, and the others must take the path the migration runs with
 OTHER_PATHS = "functions made with another search path (they take the migration's)"
@@ -578,7 +592,7 @@ SELECT format('SELECT %L || E''\n'' || coalesce(string_agg(x, E''\n'' ORDER BY x
               'rows ' || c.oid::regclass::text,
               CASE WHEN c.relname = 'trees' THEN 't.name || '' '' || t.hash' ELSE 't::text' END, c.oid::regclass)
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'authz_int' AND c.relkind = 'r' AND c.relname NOT IN ('locks', 'session_key', 'row_marks')
+WHERE n.nspname IN ('authz_int', 'authz_sync') AND c.relkind = 'r' AND c.relname NOT IN ('locks', 'session_key', 'row_marks')
 ORDER BY 1;
 """
 # (row_marks holds a row for each row shared on or to, written as shares, keys and requests are made: a migration keeps
@@ -735,6 +749,10 @@ def check(label: str, name: str, schema: str, ms: list[migrate.Migration], new: 
 
 def main() -> None:
     failed = 0
+    psql(
+        "postgres",
+        f"DO $r$ BEGIN CREATE ROLE {SYNC_ROLE}; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $r$;",
+    )
     for name, schema, old, new in CASES:
         if ONLY and not any(o in name for o in ONLY):
             continue

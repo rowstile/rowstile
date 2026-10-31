@@ -1,7 +1,8 @@
 #!/bin/bash
 # stress.sh: 16 clients writing a folder tree at once (create, move, link, unlink, delete, at random places)
 # for SECONDS seconds at each isolation level, retrying 40001/40P01 as an app would; afterwards the
-# inheritance tables must match a rebuild (authz.verify()). Moves that would make a loop, and deletes of
+# inheritance tables must match a rebuild (authz.verify()), and so must the sync index (authz.sync_verify(), a preview:
+# the docs app is applied with sync lines). Moves that would make a loop, and deletes of
 # folders that still hold something, are refused and count as done. So that a tree no write reached can't pass, each
 # level must leave folders created, moved, linked and deleted, and no more than half its transactions failed after
 # 50 tries (a tenth to a seventh on CI's runners, at 100 s a level).
@@ -27,7 +28,11 @@ cleanup() { [ -n "${KEEP:-}" ] || dropdb --force --if-exists "$DB" 2>/dev/null; 
 trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null || exit 1
-python3 compile_policy.py example/docs.authz > "$W/docs.sql" || exit 1
+# the docs app's policy with the sync index (a preview): its readers and keys are kept at each commit too, under lock
+# rows of their own, and must match a rebuild after each level; the role its lines name needs only to be there
+psql -X -q -d postgres -c "DO \$r\$ BEGIN CREATE ROLE authz_sync_engine; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END \$r\$;" >/dev/null
+{ cat example/docs.authz; printf '\nsync role authz_sync_engine\nsync app.files : view\nsync app.folders\n'; } > "$W/docs.authz"
+python3 compile_policy.py "$W/docs.authz" > "$W/docs.sql" || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "$W/docs.sql" >/dev/null || exit 1
 psql -X -q -v ON_ERROR_STOP=1 -d "$DB" >/dev/null <<'SQL' || exit 1
 SET client_min_messages = warning;
@@ -174,6 +179,11 @@ for level in "read committed" "repeatable read" "serializable"; do
     echo "ok    $level: the inheritance tables match a rebuild"
   else
     echo "FAIL  $level: the inheritance tables don't match a rebuild"; fails=$((fails + 1))
+  fi
+  if [ "$(psql -X -At -d "$DB" -c "SELECT authz.sync_verify()")" = t ]; then
+    echo "ok    $level: the sync index matches a rebuild"
+  else
+    echo "FAIL  $level: the sync index doesn't match a rebuild"; fails=$((fails + 1))
   fi
   # the biggest moves on the tree as it is now, each alone
   if ! moves=$(psql -X -At -F ' ' -v ON_ERROR_STOP=1 -d "$DB" -c "SELECT took, written, stmt FROM stress.biggest_moves()" 2>&1) || [ -z "$moves" ]; then

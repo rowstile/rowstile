@@ -392,6 +392,13 @@ record $? "moves"
 }
 unit policy 8 moves
 
+sync_index() {
+step "the sync index (a preview): readers and keys against authz.list after each kind of change, apply, lint, two writers"
+tests/sync.sh
+record $? "sync index"
+}
+unit policy 20 sync_index
+
 adversarial() {
 step "the app role trying every way around the policy"
 tests/adversarial.sh

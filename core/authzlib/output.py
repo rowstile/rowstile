@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .base import BASE_SQL, GENERATED_FUNCTIONS
+from .base import BASE_SQL, GENERATED_FUNCTIONS, SYNC_FUNCTIONS
 from .compiler import rule_name
 from .governance import GovernanceMixin, trigger_if_partitioned
 from .hardening import LintMixin, path_writers_sql
@@ -29,6 +29,7 @@ from .sqlutil import (
     qt,
     row_cond,
 )
+from .sync import SyncMixin
 from .trees import TreeMixin
 
 DEFINER = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
@@ -171,7 +172,7 @@ def cascade_check(c: Cascade) -> str:
     )
 
 
-class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, LintMixin, TreeMixin):
+class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, LintMixin, TreeMixin, SyncMixin):
     def late_conditions(self) -> list[tuple[str, str, Loc]]:
         """(rows, condition, line) for each condition only a PL/pgSQL function holds: a signing-in type's where,
         a `shared ... if`. Nothing in the catalog depends on what they read, so the app may drop a column they
@@ -1203,6 +1204,11 @@ END $kv$;"""
         for t in self.types.values():
             for p in t.perms.values():
                 self.ensure_view(t, p)
+        # the sync index (a preview): what the sync lines say is checked, and its functions worked out
+        syncing = bool(self.pol.syncs or self.pol.sync_role)
+        if syncing:
+            self.sync_check()
+            self.sync_build()
         policies: list[str] = []
         column_rules: list[str] = []
         by_table: dict[str, list[Rule]] = {}
@@ -1449,7 +1455,7 @@ DO $g$
 DECLARE f record; kept text := '';
 BEGIN
   FOR f IN SELECT p.oid, p.ctid, p.oid::regprocedure AS name FROM pg_proc p WHERE p.pronamespace = to_regnamespace('authz')
-           AND p.proname = ANY (ARRAY[{", ".join(lit(n) for n in GENERATED_FUNCTIONS)}]) LOOP
+           AND p.proname = ANY (ARRAY[{", ".join(lit(n) for n in GENERATED_FUNCTIONS + (SYNC_FUNCTIONS if syncing else ()))}]) LOOP
     BEGIN
       EXECUTE format('DROP FUNCTION %s', f.name);
     EXCEPTION WHEN dependent_objects_still_exist THEN
@@ -1540,6 +1546,7 @@ END $w$;"""
             ("full", "reset", "DROP SCHEMA IF EXISTS authz_gen, authz_int CASCADE;"),
             ("full", "reset", drop_generated),
             ("changed", "base", BASE_SQL),
+            ("changed", "sync_base", self.sync_base_sql() if syncing else ""),
             (
                 "changed",
                 "tables",
@@ -1555,6 +1562,7 @@ END $w$;"""
             *[("objects", "catalog", c) for c in catalog if c],
             ("changed", "share_indexes", "\n".join(share_indexes)),
             ("objects", "scopes", self.scope_sql()),
+            ("objects", "sync_capture", self.sync_capture_sql() if syncing else ""),
             ("objects", "feed", self.feed_sql()),
             (
                 "changed",
@@ -1597,6 +1605,7 @@ END $w$;"""
                 "CREATE FUNCTION authz.verify() RETURNS boolean LANGUAGE sql STABLE AS\n"
                 f"  $$ SELECT {verify} $$;",
             ),
+            ("objects", "sync", self.sync_functions_sql() if syncing else ""),
             # last: the generators above say which lines their messages name
             ("objects", "lines", self.lines_sql()),
             ("full", "kept_functions", kept_functions),
@@ -1604,6 +1613,8 @@ END $w$;"""
             ("full", "lost_rules", LOST_RULES),
             # after every trigger is made
             ("always", "children", CHILD_TRIGGERS),
+            # the sync index worked out again where what it is worked out by changed
+            ("changed", "sync_refresh", self.sync_refresh_sql() if syncing else ""),
             # before the step that takes back what the policy doesn't give: a view the rules no longer read is
             # no grant made since, and a migration says nothing of it
             (
@@ -1612,6 +1623,7 @@ END $w$;"""
                 f"REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM {q(self.role)};\n"
                 f"GRANT SELECT ON {grant_views} TO {q(self.role)};",
             ),
+            ("always", "sync_grants", self.sync_grants_sql() if syncing else ""),
             ("always", "revoke", self.revoke_sql()),
             ("always", "revoke", "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA authz FROM PUBLIC;"),
             ("always", "grant_usage", f"GRANT USAGE ON SCHEMA authz, authz_gen TO {q(self.role)};"),
@@ -1640,6 +1652,7 @@ END $w$;"""
     def analyze_sql(self) -> str:
         """ANALYZE the tables the policy reads, and rowstile's own, that were never analyzed."""
         tables = ", ".join(f"{lit(qt(tb))}" for tb in dict.fromkeys(tb for tb, _, _ in self.columns))
+        sync = ", 'authz_sync'" if self.pol.syncs else ""  # (the sync index's tables, a preview, with sync lines)
         return f"""-- Tables never analyzed (made just now, or too small for autovacuum to have reached them) are planned
 -- as ten pages of rows: a table of 6 rows as thousands. Through the rules' lookups that becomes an estimate of
 -- hundreds of thousands, and Postgres compiles (JIT) and plans for reads of a few rows. ANALYZE reads a
@@ -1650,7 +1663,7 @@ BEGIN
   FOR r IN SELECT c.oid::regclass AS tbl FROM pg_class c
            WHERE c.relkind = 'r' AND c.relpersistence <> 't' AND c.reltuples < 0
              AND pg_has_role(c.relowner, 'USAGE')
-             AND (c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_int'))
+             AND (c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_int'{sync}))
                   OR c.oid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY[{tables or "NULL"}]::text[]) x)) LOOP
     EXECUTE format('ANALYZE %s', r.tbl);
   END LOOP;

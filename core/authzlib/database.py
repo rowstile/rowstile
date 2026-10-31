@@ -545,6 +545,8 @@ def apply(
         refuse_newer_database(db)
     sql, comp, c = migratable(policy, files, made)
     run_policy(db, sql, policy, files)
+    if not c.pol.syncs:
+        run(db, SYNC_GONE_SQL)
     if rebuild:
         rebuild_trees(db)
     record(db, "apply", policy, files, lock_hash(comp))
@@ -554,9 +556,26 @@ def apply(
 
 
 def rebuild_trees(db: Db) -> None:
-    """Every inheritance table computed again from the app's tables, under its lock: the kept ones too."""
+    """Every inheritance table computed again from the app's tables, under its lock: the kept ones too; and the sync
+    index, where the policy keeps one."""
     for r in db.rows("SELECT name FROM authz_int.trees ORDER BY name"):
         db.rows(f"SELECT authz_int.{q(text(r, 'name') + '_rebuild')}()")
+    if flag(
+        db.rows("SELECT to_regprocedure('authz_int.sync_refresh(text, boolean)') IS NOT NULL AS there")[0], "there"
+    ):
+        db.rows("SELECT authz_int.sync_refresh(NULL, true)")
+
+
+# A policy without sync lines applied where one with them was: the sync index and its functions go (the compiled
+# policy of one without sync is the same as before the index was: it doesn't drop them itself)
+SYNC_GONE_SQL = """DO $sg$ BEGIN
+  IF to_regnamespace('authz_sync') IS NOT NULL THEN
+    DROP SCHEMA authz_sync CASCADE;
+    RAISE NOTICE 'the sync index was dropped: this policy has no sync lines';
+  END IF;
+END $sg$;
+DROP FUNCTION IF EXISTS authz.sync_tick();
+DROP FUNCTION IF EXISTS authz.sync_verify();"""
 
 
 def development(db: Db) -> bool:
@@ -656,6 +675,12 @@ def intact(db: Db, sql: str, compiler: Compiler) -> bool:
     from . import statements
 
     rules = compiler.rules
+    # the sync index's tables, where the policy keeps one (a preview): apply makes them again if one is gone
+    if compiler.pol.syncs and not all(
+        there(db, f"authz_sync.{q(n)}")
+        for n in ["keys", "groups", "expanded", "definitions"] + [t + "__readers" for t in compiler.sync_build().tops]
+    ):
+        return False
     # each rule on a whole row is a policy named authz_<command> (output.compile)
     made = sorted(
         {
@@ -1233,6 +1258,7 @@ REMOVE_SQL = "\n\n".join(
         DROP_OLD_POLICIES,
         DROP_MASKED_VIEWS,
         "DROP SCHEMA IF EXISTS authz_gen, authz_int CASCADE;",
+        "DROP SCHEMA IF EXISTS authz_sync CASCADE;",
         GIVE_BACK_MASKED,
         """DO $rf$
 DECLARE f regprocedure; i regclass;

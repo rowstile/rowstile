@@ -1,0 +1,19 @@
+-- The sync index (a preview): sync role names the engine's role, and each sync line a table and the permission its
+-- readers hold, or none (the table's select rule).
+app role app_user
+type user = app.users
+type file = app.files
+  owner : user = owner_id
+  can view = owner
+
+rules app.files
+  select : view
+
+sync role sync_engine
+-- <--------- keyword.declaration.authz
+--        ^^^^^^^^^^^ entity.name.function.authz
+sync app.files : view
+-- <---- keyword.declaration.authz
+--   ^^^^^^^^^ entity.name.tag.table.authz
+--             ^ punctuation.separator.authz
+--               ^^^^ entity.name.function.permission.authz

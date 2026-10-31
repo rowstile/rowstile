@@ -366,6 +366,33 @@ FEATURES: list[Feature] = [
         (T(DIFF, "authz.start_review('"), T(DIFF, "the decisions say"), T(DIFF, "authz.close_review of")),
     ),
     Feature(
+        "sync.index",
+        1,
+        "The sync index, a preview: `sync role`, `sync <table> : <permission>`, `authz.sync_tick`, `authz.sync_verify`",
+        (
+            "lang.sync_role",
+            "lang.sync",
+            "api.sync_tick",
+            "api.sync_verify",
+            *(f"err.AZ80{n}" for n in range(1, 10)),
+        ),
+        Doc("docs/reference/sync.md", "Declaring it"),
+        (
+            T("sync.sh", "applied: for every user, the index holds what authz.list gives"),
+            T("sync.sh", "a team left: bob no longer reads file 13, reached through Backend"),
+            T("sync.sh", "a folder moved out of reach: the file in it leaves those who read it through Engineering"),
+            T("sync.sh", "authz.sync_tick() works out again the readers of the shares that ended or began"),
+            T("sync.sh", "applying again leaves the index's rows where they are (none written again)"),
+            T("sync.sh", "REPEATABLE READ: a writer with a snapshot older than another's index write"),
+            T("sync.sh", "a sync role that may read a masked column is refused"),
+            T("sync.sh", "lint finds a sync role without BYPASSRLS"),
+            T("policy_errors.py", "a synced permission reading who asks"),
+        ),
+        (T(DIFF, "def sync_problems("),),
+        grammar=("Sync lines: the sync role, a table with its permission, a table alone (its select rule)",),
+        note="a preview: the index in the database; the engines' filters, a proxy and their conformance suites come later",
+    ),
+    Feature(
         "api.feed",
         2,
         "The change feed: `authz.changes_since`, `authz.trim_changes`, `authz.announce_timed_shares`",
@@ -1337,10 +1364,11 @@ def read(rel: str) -> str:
 
 
 def api() -> set[str]:
-    """The authz.* functions applying makes (GENERATED_FUNCTIONS), and those the app role may call."""
-    from authzlib.base import GENERATED_FUNCTIONS
+    """The authz.* functions applying makes (GENERATED_FUNCTIONS, and SYNC_FUNCTIONS with sync lines), and those the
+    app role may call."""
+    from authzlib.base import GENERATED_FUNCTIONS, SYNC_FUNCTIONS
 
-    return {f"api.{n}" for n in GENERATED_FUNCTIONS} | app_callable()
+    return {f"api.{n}" for n in GENERATED_FUNCTIONS + SYNC_FUNCTIONS} | app_callable()
 
 
 def app_callable() -> set[str]:

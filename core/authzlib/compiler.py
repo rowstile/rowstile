@@ -328,6 +328,14 @@ class Core:
         """The closure table of a recursion across types (trees.py)."""
         raise NotImplementedError
 
+    def sync_lint_sql(self) -> str:
+        """authz.lint()'s findings about the sync role (sync.py; none without sync lines)."""
+        raise NotImplementedError
+
+    def sync_extra_grants_sql(self) -> str:
+        """extra_grants_sql's rows for authz_sync (sync.py; none without sync lines)."""
+        raise NotImplementedError
+
     # --- the model ------------------------------------------------------
     def T(self, name: str) -> Type:
         return self.types[name]

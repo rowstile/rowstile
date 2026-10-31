@@ -1,4 +1,4 @@
-; the outline: types with their relations and permissions, rules by table and command, tests, scopes, caveats
+; the outline: types with their relations and permissions, rules by table and command, tests, scopes, caveats, sync lines
 (type "type" @context name: (identifier) @name) @item
 (relation name: (identifier) @name) @item
 (permission "can" @context name: (identifier) @name) @item
@@ -13,3 +13,5 @@
 (scope "scope" @context name: (scope_name) @name) @item
 (caveat "caveat" @context name: (identifier) @name) @item
 (app_role "role" @context name: (identifier) @name) @item
+(sync_role "role" @context name: (identifier) @name) @item
+(sync "sync" @context table: (table_name) @name) @item
