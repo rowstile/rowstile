@@ -15,7 +15,11 @@ dependencies = [
   "mypy>=1.10",
   "coverage>=7.16",
   # the background jobs' workers (tests/test_jobs.py), and Celery's types, which it doesn't ship
-  "celery[redis]>=5.4",
+  "celery[redis]>=5.6",
+  # redis-py before 6.4 (the oldest Celery that takes it is 5.6) locks its pub/sub connection with a plain Lock: a
+  # result's __del__ that runs while get() subscribes, in the same thread, waits for it forever (the checks wait
+  # for results in threads)
+  "redis>=6.4",
   "celery-types>=0.26",
   "rq>=2.0",
 ]
