@@ -46,7 +46,8 @@ class SdkTest < ActionDispatch::IntegrationTest
   # (nobody too) raises before anything is sent for it, the transaction as it was. The same principal goes on (in a
   # savepoint too), and the transaction reads, writes and commits as its own
   test "a transaction is one principal's" do
-    Note.load_schema # (what Rails reads of the catalog first)
+    Note.load_schema # (what Rails reads of the catalog first: the columns, then the table and its key, for find)
+    Note.primary_key
     sent = []
     log = ->(*, payload) { sent << payload[:sql] }
     seen = Rowstile.acting_as(1) do
