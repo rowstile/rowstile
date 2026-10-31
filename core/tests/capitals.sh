@@ -591,6 +591,8 @@ run --db "dbname=$DB6" apply "$T/cross.authz"
 psql -X -q -At -d "$DB6" -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('Team', '1', 'within', 'Folder', '4')" >/dev/null
 got=$(psql -X -q -At -d "$DB6" -c "SELECT string_agg(w, ',') FROM authz.who('Team', '1', 'view') w" 2>&1)
 [ $rc -eq 0 ] && [ "$got" = 2 ] && ok "who: Team 1, inside Bo's folder, is viewed by bo, through the table of Folder and Team" || bad "who across Folder and Team" "$got: $out"
+got=$(psql -X -q -At -d "$DB6" -c "SET authz.user_id = 2" -c "SELECT concat_ws(',', authz.can('Folder', '4', 'view'), authz.can('Team', '1', 'view'), authz.can('Team', '2', 'view'))" 2>&1)
+[ "$got" = "t,t,f" ] && ok "can: bo views her folder and Team 1 inside it, not Team 2" || bad "can across Folder and Team" "$got"
 [ -z "${KEEP:-}" ] && dropdb "$DB6"
 
 rm -rf "$T"

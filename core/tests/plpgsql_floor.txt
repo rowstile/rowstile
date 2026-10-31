@@ -1,5 +1,5 @@
 # The PL/pgSQL no suite runs, on 16, in the schemas whose counts stay the same from run to run of one commit (authz,
 # the runtime's own functions; authz_gen, the rules'): statements, then branches. CI's coverage job fails a change
 # that leaves more never run (coverage_report.py --floor), and one that leaves fewer until this file says so.
-authz 756 1054
-authz_gen 489 295
+authz 751 1050
+authz_gen 488 295

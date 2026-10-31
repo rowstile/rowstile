@@ -425,6 +425,10 @@ got=$(XSQL -c "SELECT coalesce(string_agg(coalesce(x, 'NULL'), ',' ORDER BY x), 
 [ "$got" = 2 ] && [ "$(XSQL -c "SET authz.user_id = 1" -c "SELECT authz.can('folder', 2, 'view')")" = t ] &&
   echo "ok    two links into a project, one naming no folder: the feed announces folder 2, and no NULL" ||
   { echo "FAIL  the feed after a link naming no folder: $got"; fails=$((fails + 1)); }
+got=$(XSQL -c "SET authz.user_id = 1" -c "SELECT concat_ws(',', authz.can('box', 1, 'view'), authz.can('box', 2, 'view'), authz.can('doc', 900, 'view'),
+  authz.can('team', 1, 'manage_roles'), authz.can('project', 10, 'view'))")
+[ "$got" = "f,t,t,t,t" ] && echo "ok    ... and authz.can answers there: box 1 is no longer hers, the docs her team holds roles on, her team, the project in her folder" ||
+  { echo "FAIL  authz.can on the feed's policy: $got"; fails=$((fails + 1)); }
 dropdb "$X"; rm -f $T/governance_feed.authz $T/governance_feed.sql
 
 

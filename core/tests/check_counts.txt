@@ -3,7 +3,7 @@
 # or taking away checks on purpose, write the new count here, or python3 tests/check_counts.py --write LOG.
 adversarial 112
 apply 162
-capitals 104
+capitals 105
 children 101
 cli 167
 concurrency 35
@@ -14,7 +14,7 @@ cuts half way, every statement 31
 cuts half way, other policies 1
 devx 150
 docs 37
-governance 263
+governance 264
 hand answers 366
 identity 91
 interleavings 792
