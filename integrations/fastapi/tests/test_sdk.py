@@ -194,6 +194,8 @@ def test_install_once_and_user_when_nothing_else_says() -> None:
 
 ALREADY = "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: "
 AFTER = " run inside it. Run it after, or in a transaction of its own (another connection)"
+# the server's own pid (behind PgBouncer, the one the client was given is the pooler's)
+SERVER_PID = "SELECT pg_backend_pid()"
 
 
 def last_sent(pid: int) -> str:
@@ -213,12 +215,11 @@ def test_sqlalchemy_one_principal_a_transaction() -> None:
             with rowstile.acting_as(1):  # the transaction begins: ann's
                 with conn.begin_nested():  # a savepoint, the same principal's
                     assert projects(conn) == [1, 3]
+                pid = int(conn.execute(text(SERVER_PID)).scalar_one())
                 assert projects(conn) == [1, 3]
             with pytest.raises(RuntimeError) as no_one:
                 projects(conn)
-            raw = conn.connection.driver_connection
-            assert isinstance(raw, psycopg.Connection)
-            assert last_sent(raw.info.backend_pid) == PROJECTS  # nothing sent for it
+            assert last_sent(pid) == PROJECTS  # nothing sent for it
             with rowstile.acting_as(2), pytest.raises(RuntimeError) as bo:
                 projects(conn)
             with rowstile.acting_as(None), pytest.raises(RuntimeError) as nobody:

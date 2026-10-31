@@ -68,6 +68,20 @@ ROWSTILE_OWNER_DSN="$OWNER_AT/conf_push" timeout 120 $KIT push --verbose --stric
 docker exec "$NAME" psql -q -U conf_owner -d postgres -c "DROP DATABASE conf_push" >/dev/null
 statements=$(grep -E ';$' "$LOG/push.log")
 others=$(grep -v -E '^(ALTER TABLE "app"\."[a-z_]+" DISABLE ROW LEVEL SECURITY|DROP POLICY "authz_[a-z_]+" ON "app"\."[a-z_]+" CASCADE);$' <<<"$statements")
+# Drizzle Kit 0.31 reads a composite primary key's columns in no set order (on PG 18, beside the NOT NULL
+# constraints): it may drop a key and add it back as it is. Such a pair passes only for a key the database has,
+# with those columns in its order
+add_pk='^ALTER TABLE "app"\."([a-z_]+)" ADD CONSTRAINT "([a-z_]+)" PRIMARY KEY\((.*)\);$'
+while IFS= read -r line; do
+  [[ $line =~ $add_pk ]] || continue
+  table=${BASH_REMATCH[1]} key=${BASH_REMATCH[2]} columns=${BASH_REMATCH[3]}
+  drop="ALTER TABLE \"app\".\"$table\" DROP CONSTRAINT \"$key\";"
+  has=$(docker exec "$NAME" psql -XAtq -U conf_owner -d conf -c "SELECT string_agg('\"' || a.attname || '\"', ',' ORDER BY k.n)
+    FROM pg_constraint c CROSS JOIN unnest(c.conkey) WITH ORDINALITY AS k(att, n)
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.att
+    WHERE c.conrelid = 'app.$table'::regclass AND c.conname = '$key' AND c.contype = 'p'")
+  [ "$has" = "$columns" ] && grep -qxF "$drop" <<<"$others" && others=$(grep -vxF -e "$line" -e "$drop" <<<"$others")
+done <<<"$others"
 if grep -q "Pulling schema from database" "$LOG/push.log" && [ -n "$statements" ] && [ -z "$others" ]; then
   echo "ok    11: ... and drizzle-kit push would change nothing but rowstile's row-level security, which it would turn off"
 else cat "$LOG/push.log"; echo "FAIL  11: drizzle-kit push would change the database's tables"; rc=1; fi
