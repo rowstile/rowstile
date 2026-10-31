@@ -217,6 +217,10 @@ test("E9: not signed in: 401, and no shape is made", async () => {
   expect((await fetch(`${SERVER}/shapes/files?offset=-1`, { headers: as("99") })).status).toBe(401);
   // a route for a table nothing syncs is none of the proxy's, and another method than GET or POST isn't Electric's
   expect((await fetch(`${SERVER}/shapes/users?offset=-1`, { headers: as("1") })).status).toBe(404);
+  // ... nor is a name every object has (the routes are a Map, not an object's properties)
+  for (const name of ["constructor", "toString", "__proto__"]) {
+    expect((await fetch(`${SERVER}/shapes/${name}?offset=-1`, { headers: as("1") })).status).toBe(404);
+  }
   const deleting = await fetch(`${SERVER}/shapes/files?offset=-1`, { method: "DELETE", headers: as("1") });
   expect([deleting.status, deleting.headers.get("allow")]).toEqual([405, "GET, POST"]);
 });
