@@ -804,6 +804,17 @@ for call in 'app."Member"(this.id)' '=!= this.id'; do
     ok "a function a condition calls runs with the policy's rights where a view reads it too (an arrow, a masked view): {$call}" ||
     bad "a called function's rights in the views" "{$call}: $got: $out"
 done
+# one such condition, the same words, on two link tables of a type: each table's rows are read by a function of its own
+quiet -d "$CDB" -c "CREATE TABLE app.leads (project_id bigint, user_id bigint)" -c "INSERT INTO app.leads VALUES (11, 2), (12, 2)" \
+  -c "GRANT SELECT ON app.leads TO app_user" >/dev/null || exit 1
+printf '%s\n' "app role app_user" "type user = app.users" "type project = app.projects" \
+  '  member : user = app.memberships(project_id -> user_id) where {app."Member"(project_id)}' \
+  '  lead   : user = app.leads(project_id -> user_id) where {app."Member"(project_id)}' \
+  "  can view = member or lead" "rules app.projects" "  select : view" > "$T/two_links.authz"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/two_links.authz" 2>&1)
+case "$out" in *"$T/two_links.authz: applied") true;; *) false;; esac && [ "$(seen)" = "10,12" ] &&
+  ok "one condition that calls a function, on two link tables: applied, and each table's rows read as they are" ||
+  bad "one condition on two link tables" "select $(seen): $out"
 dropdb "$CDB"
 # a write rule that follows a relation kept in shares or a link table: the app role may not read authz.shares
 fresh "$CDB"

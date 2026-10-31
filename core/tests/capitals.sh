@@ -18,7 +18,7 @@ T=$(mktemp -d)
 # whatever way the suite ends: its databases, the role it made, its files
 cleanup() {
   if [ -z "${KEEP:-}" ]; then
-    for d in "$DB" "$DB2" authz_capitals_link authz_capitals_approle authz_capitals_roles authz_capitals_accents; do
+    for d in "$DB" "$DB2" authz_capitals_link authz_capitals_approle authz_capitals_roles authz_capitals_accents authz_capitals_cross; do
       dropdb --force --if-exists "$d" 2>/dev/null
     done
     psql -X -q -d postgres -c 'DROP ROLE IF EXISTS "AppUser"' >/dev/null 2>&1
@@ -82,6 +82,11 @@ else
   echo "skip  lint on oids another catalog shares: only a superuser may write pg_depend (PGSUPERUSER)"
 fi
 PSQL -c 'DROP TABLE "Lookup"'
+# a policy on Folder that rowstile didn't make: lint finds it on the table by its quoted name
+PSQL -c 'CREATE POLICY mine ON "Folder" FOR SELECT TO app_user USING (true)'
+got=$(PSQL -c "SELECT severity || ' ' || object FROM authz.lint() WHERE problem LIKE 'the policy mine (select) on it is not rowstile''s:%'")
+PSQL -c 'DROP POLICY mine ON "Folder"'
+[ "$got" = 'error public."Folder"' ] && ok "lint: a policy on Folder that isn't rowstile's" || bad "lint, a policy on Folder not rowstile's" "$got"
 # the app's own check of its connection finds the tables by their quoted names too
 PSQL -c 'ALTER TABLE "Folder" DISABLE ROW LEVEL SECURITY'
 got=$(PSQL -c "SET ROLE app_user" -c "SELECT problem FROM authz.connection_check() WHERE problem LIKE 'row-level security%'")
@@ -109,6 +114,14 @@ run apply "$T/user_captured.authz"
 case "$out" in *'the condition {exists (select 1 from public."Folder" f where f."ownerId" = id)} names id, a column of public.User'"'"'s rows, but reads it from another table the condition names'*"for the row's, write this.id"*)
   [ $rc -eq 0 ] && ok "... and one with a bare id that Folder takes: applied, with the warning" || bad "the captured id on User: exit" "$rc";;
   *) bad "the captured id on User" "$out";; esac
+# a select rule on User whose condition reads another table: a function checks it, reading the row as "User"; and
+# plans reads User, a table with a select rule alone
+{ cat tests/prisma.authz; printf '\nrules public.User\n  select : {exists (select 1 from public."Folder" f where f."ownerId" = this.id)}\n'; } > "$T/user_reads.authz"
+run apply "$T/user_reads.authz"
+[ $rc -eq 0 ] && [ "$(as 2 "SET ROLE app_user; SELECT string_agg(id::text, ',' ORDER BY id) FROM \"User\"")" = "1,2,4" ] &&
+  ok "a select rule on User whose condition reads Folder: applied, and the users who own a folder are read" || bad "a select rule on User reading Folder" "$out"
+run plans --as user:1
+case "$out" in *failed*) bad "plans, User" "$out";; *$'\n'"  public.User: "[0-9]*" ms"*) ok "plans: User, whose rules are a select rule alone, is read too";; *) bad "plans, User" "$out";; esac
 run apply; is applied || bad "applying the policy again" "$out"
 
 echo "-- asking, reading and writing as someone"
@@ -567,6 +580,18 @@ in_accents apply db/alias.authz
 case "$out" in *"HINT: d.archivé names a table only where the query reads one by that name: for the row the condition is about, write this.archivé")
   ok "a condition naming d.archivé: refused, the hint names archivé whole";; *) bad "the hint on d.archivé" "$out";; esac
 [ -z "${KEEP:-}" ] && dropdb "$DB5"
+
+echo "-- types named with capitals, inside each other (one inheritance table for the two)"
+DB6=authz_capitals_cross
+dropdb --if-exists "$DB6" 2>/dev/null; createdb "$DB6" || exit 1; schema "$DB6" || exit 1
+printf '%s\n' "app role app_user" "type user = public.User (id int)" "type Folder = public.Folder (id int)" "  owner  : user = ownerId" \
+  "  within : Team shared by view" "  can view = owner or within.view" "type Team = public.Team (id int)" \
+  "  within : Folder shared by view" "  can view = within.view" > "$T/cross.authz"
+run --db "dbname=$DB6" apply "$T/cross.authz"
+psql -X -q -At -d "$DB6" -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('Team', '1', 'within', 'Folder', '4')" >/dev/null
+got=$(psql -X -q -At -d "$DB6" -c "SELECT string_agg(w, ',') FROM authz.who('Team', '1', 'view') w" 2>&1)
+[ $rc -eq 0 ] && [ "$got" = 2 ] && ok "who: Team 1, inside Bo's folder, is viewed by bo, through the table of Folder and Team" || bad "who across Folder and Team" "$got: $out"
+[ -z "${KEEP:-}" ] && dropdb "$DB6"
 
 rm -rf "$T"
 [ -z "${KEEP:-}" ] && dropdb "$DB" && dropdb "$DB2"
