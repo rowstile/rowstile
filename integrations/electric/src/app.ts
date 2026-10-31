@@ -23,12 +23,13 @@ export async function signedIn(req: Request) {
 }
 
 const electric = { url: process.env.ELECTRIC_URL ?? "", secret: process.env.ELECTRIC_SECRET, signedIn, vary: [USER, KEY] };
-export const routes: Record<string, (req: Request) => Promise<Response>> = {
-  files: electricShape(shapes["app.files"], electric),
-  folders: electricShape(shapes["app.folders"], electric),
+// a Map, so that a name such as constructor finds no route
+export const routes = new Map<string, (req: Request) => Promise<Response>>([
+  ["files", electricShape(shapes["app.files"], electric)],
+  ["folders", electricShape(shapes["app.folders"], electric)],
   // the policy masks the notes' body: the columns to sync leave it out
-  notes: electricShape(shapes["app.notes"] satisfies ElectricShape, { ...electric, columns: ["id", "file_id", "author_id"] }),
-};
+  ["notes", electricShape(shapes["app.notes"] satisfies ElectricShape, { ...electric, columns: ["id", "file_id", "author_id"] })],
+]);
 
 /** Express's request as fetch's, and fetch's response back: Express 5 runs on Node's own http. */
 async function fetched(handler: (req: Request) => Promise<Response>, req: ExpressRequest, res: ExpressResponse) {
@@ -48,8 +49,8 @@ async function fetched(handler: (req: Request) => Promise<Response>, req: Expres
 }
 
 app.all("/shapes/:table", async (req, res, next) => {
-  const handler = routes[String(req.params.table)];
-  if (!handler) return next();
+  const handler = routes.get(String(req.params.table));
+  if (typeof handler !== "function") return next();
   await fetched(handler, req, res);
 });
 
