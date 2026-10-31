@@ -13,6 +13,9 @@ CREATE TABLE app.orgs (id bigint PRIMARY KEY);
 CREATE TABLE app.org_admins (org_id bigint NOT NULL, user_id bigint NOT NULL, PRIMARY KEY (org_id, user_id));
 CREATE TABLE app.org_members (org_id bigint NOT NULL, user_id bigint NOT NULL, PRIMARY KEY (org_id, user_id));
 CREATE TABLE app.teams (id bigint PRIMARY KEY, parent_id bigint);
+-- a team's members, and the teams inside a team by the rows of a link table that are active
+CREATE TABLE app.team_members (team_id bigint NOT NULL, user_id bigint NOT NULL);
+CREATE TABLE app.team_teams (team_id bigint NOT NULL, sub_id bigint NOT NULL, active boolean);
 CREATE TABLE app.projects (id bigint PRIMARY KEY, owner_id bigint, public boolean NOT NULL DEFAULT false);
 CREATE TABLE app.memberships (
   id bigint PRIMARY KEY, project_id bigint NOT NULL, user_id bigint NOT NULL, revoked boolean NOT NULL DEFAULT false);

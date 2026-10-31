@@ -462,6 +462,23 @@ def main() -> None:
         any(w.startswith("add user 3 to app.team_members for team") for w in ways),
         out,
     )
+    # a share of hers there for good of another relation (a viewer's, which gives no edit): the editor's is offered still
+    mine = "object_type = 'folder' AND object_id = '3' AND subject_type = 'user' AND subject_id = '3'"
+    psql(
+        db,
+        "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', '3', 'viewer', 'user', '3')",
+    )
+    _, out = cli(db, "why", "--as", "user:3", "folder", "3", "edit")
+    psql(db, f"DELETE FROM authz.shares WHERE {mine} AND relation = 'viewer'")
+    lines = out.splitlines()
+    ways = (
+        [x.strip() for x in lines[lines.index("would be granted by:") + 1 :]] if "would be granted by:" in lines else []
+    )
+    check(
+        "... and beside a share of hers of another relation there, the editor's share still comes first",
+        ways and ways[0].startswith("share editor on folder 3 with user 3"),
+        out,
+    )
 
     def granted_by(*question: str) -> tuple[list[str], str]:
         _, said = cli(db, "why", *question)

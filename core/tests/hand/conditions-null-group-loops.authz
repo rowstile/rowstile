@@ -1,0 +1,26 @@
+-- answer: conditions-null, relation-sources
+-- Groups inside groups through a link table whose where is NULL: the row links no team, so the members of the team
+-- it names are no members of the team above, to authz.can, authz.list and authz.who. Team 2 is inside team 1 by an
+-- active row, team 3 by one whose active is unknown.
+app role app_user
+
+type user = app.users
+
+type team = app.teams
+  member : user        = app.team_members(team_id -> user_id)
+  member : team#member = app.team_teams(team_id -> sub_id) where {active}
+  can see   = member
+  can share = member
+
+test "a team inside another by a link whose where is NULL"
+  given {INSERT INTO app.users (id) VALUES (1), (2)}
+  given {INSERT INTO app.teams (id) VALUES (1), (2), (3)}
+  given {INSERT INTO app.team_members (team_id, user_id) VALUES (2, 1), (3, 2)}
+  given {INSERT INTO app.team_teams (team_id, sub_id, active) VALUES (1, 2, true), (1, 3, NULL)}
+  user 1 can see team 1
+  user 2 can see team 3
+  user 2 cannot see team 1
+  as user 2 sees 1 {SELECT WHERE ARRAY(SELECT x FROM authz.list('team', 'see') x ORDER BY x) = '{3}'}
+  as user 1 sees 1 {SELECT WHERE ARRAY(SELECT w FROM authz.who('team', 1, 'see') w ORDER BY w) = '{1}'}
+  given {UPDATE app.team_teams SET active = true WHERE sub_id = 3}
+  user 2 can see team 1
