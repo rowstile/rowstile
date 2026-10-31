@@ -271,6 +271,41 @@ def notnull(a: str, columns: Cols | None) -> str:
 NOT_EXPIRED = "(g.expires_at IS NULL OR g.expires_at > now())"
 STARTED = "(g.starts_at IS NULL OR g.starts_at <= now())"
 
+# The sync index (a preview): each policy is checked with its types synced, by a sync line each, which the reference's
+# answers hold the index to (Checker.sync_problems). The role the lines name needs only to be there for applying.
+SYNC_ROLE = "authz_sync_engine"
+MAKE_SYNC_ROLE = (
+    f"DO $r$ BEGIN CREATE ROLE {SYNC_ROLE}; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $r$;"
+)
+
+
+def synced(text: str, path: str, seed: int) -> str:
+    """The policy, with a sync line for each type the index takes one of: one public permission each, or the
+    table's select rule (no permission), in turn by seed; a type of which it takes none (a condition on who asks,
+    one reading other rows) isn't synced."""
+    from authzlib import Compiler, PolicyError
+
+    pol = compile_policy.parse_policy(text, path)
+    lines: list[str] = []
+    for n, t in enumerate(pol.types.values()):
+        ways = [f" : {p}" for p, x in t.perms.items() if not x.hidden]
+        if any(r.table == t.table and r.command == "select" and not r.columns for r in pol.rules):
+            ways.append("")
+        taken = []
+        for way in ways:
+            try:
+                Compiler(
+                    compile_policy.parse_policy(f"{text}\nsync role {SYNC_ROLE}\nsync {t.table}{way}\n", path)
+                ).compile(path)
+                taken.append(way)
+            except PolicyError:
+                continue
+        if taken:
+            lines.append(f"sync {t.table}{taken[(seed + n) % len(taken)]}")
+    if not lines:
+        return text
+    return f"{text.rstrip(chr(10))}\n\n-- the sync index (difftest)\nsync role {SYNC_ROLE}\n" + "\n".join(lines) + "\n"
+
 
 class Reference(evaluate.Reference):
     """The reference evaluator (authzlib/evaluate.py: relations and permissions as sets of ids, computed as a
@@ -400,6 +435,14 @@ class Reference(evaluate.Reference):
         return out
 
 
+class SyncReference(Reference):
+    """The reference as the sync index holds to it: a share with a caveat gives nothing (a caveat is checked at each
+    request, with what it says), and nobody presents a link."""
+
+    def live(self) -> str:
+        return f"{NOT_EXPIRED} AND {STARTED} AND g.caveat IS NULL"
+
+
 # ----------------------------------------------------------------------
 # Comparing
 # ----------------------------------------------------------------------
@@ -454,16 +497,19 @@ class Checker:
     # requests, breaking the glass and reviews tried in each snapshot (workflow_setup, workflow_problems)
     workflows: ClassVar[bool] = True
 
-    def __init__(self, db: DB, policy_path: str, gen: Gen, decisions: bool = False) -> None:
+    def __init__(self, db: DB, policy_path: str, gen: Gen, decisions: bool = False, text: str | None = None) -> None:
         self.db, self.gen = db, gen
         # everyone who signs in, and nobody ('': signed out, what `anyone` and links are for)
         self.users, self.role = [*gen.users, ""], gen.role
-        self.pol = compile_policy.parse_policy(read(policy_path), policy_path)
+        # (text: the policy as applied, where it isn't the file's: with sync lines, synced())
+        text = read(policy_path) if text is None else text
+        self.pol = compile_policy.parse_policy(text, policy_path)
+        self.sync_ref = SyncReference(self.pol)
         self.refuse = refusals_of(self.pol)
         self.types, self.rules = self.pol.types, self.pol.rules
         self.ref = Reference(self.pol)
         # with decisions: which parts of the policy decided an answer, over every snapshot (tests/decisions.py)
-        self.decisions = Decisions(self.pol, read(policy_path)) if decisions else None
+        self.decisions = Decisions(self.pol, text) if decisions else None
         gen.ledger = self.decisions
         self.decisions_queries = self.ref.decisions_queries() if decisions else []
         self._nocontext: dict[tuple[str, str, str], set[str]] | None = None
@@ -669,6 +715,15 @@ class Checker:
                 lines.append(f"SET authz_ctx.{k} = {lit(v)};")
             for key, sql in self.ref.data_queries():
                 emit([u, "data", *key], sql)
+            # the sync index: the rows of each synced table whose readers hold a key the principal holds
+            for table in self.pol.syncs:
+                t = self.ref.type_of_table(table)
+                emit(
+                    [u, "sync", t.name],
+                    f"SELECT coalesce(json_agg(DISTINCT {idsql(t, 'r')}), '[]') FROM authz_sync.{q(t.name + '__readers')} r "
+                    f"WHERE r.key IN (SELECT k.key FROM authz_sync.keys k WHERE k.principal_type = {lit(kind)} "
+                    f"AND k.principal_id = {lit(pid)})",
+                )
             for key, sql in self.decisions_queries:
                 emit([u, "decisions", *key], sql)
             # a `shared if` on the shares the one whose turn it is tries: the rows on which it holds, for the share as
@@ -937,6 +992,14 @@ class Checker:
                     f"FROM (SELECT {idsql(t)} AS i FROM {qt(t.table)} ORDER BY md5({idsql(t)} || 'w') LIMIT 6) s",
                 )
         lines.append("SELECT '[\"verify\"]', to_json(authz.verify());")
+        if self.pol.syncs:
+            # what the sync index reads that differs from what the reference reads for each user: the shares, without
+            # those with a caveat; and whether it matches a rebuild
+            ours = dict(self.ref.data_queries())
+            for key, sql in self.sync_ref.data_queries():
+                if ours.get(key) != sql:
+                    emit(["sync data", *key], sql)
+            lines.append("SELECT '[\"sync verify\"]', to_json(authz.sync_verify());")
         # two blocks or more to a session, where there are enough
         random.Random(self.checks).shuffle(blocks)
         n = max(1, min(SESSIONS, len(blocks) // 2))
@@ -1540,6 +1603,45 @@ class Checker:
         tokens = [x.strip() for x in self.context(u).get("links", "").split(",") if x.strip()]
         return {hashlib.sha256(x.encode()).hexdigest() for x in tokens}
 
+    def sync_problems(self, snap: Snapshot) -> list[str]:
+        """The sync index: for every principal signed in (a row of its type, passing its where), the rows of each
+        synced table its keys read are those the reference says it holds the synced permission (or the table's select
+        rule) on, without shares that have a caveat and without links. And it matches a rebuild."""
+        if not self.pol.syncs:
+            return []
+        problems = [] if snap[("sync verify",)] is True else ["authz.sync_verify() is false: the sync index is stale"]
+        theirs: dict[tuple[object, ...], Answer] = {tuple(k[1:]): v for k, v in snap.items() if k[0] == "sync data"}
+        for u in self.users:
+            if not u:
+                continue
+            raw: dict[tuple[object, ...], Answer] = {
+                tuple(k[2:]): v for k, v in snap.items() if k[0] == u and k[1] == "data"
+            }
+            raw.update(theirs)
+            state = self.sync_ref.evaluate(evaluate.Data.of(raw), u, set())
+            if self.sync_ref.principal is None:
+                continue  # nobody: an id no row has, or failing the type's where, holds no keys
+            for table, line in self.pol.syncs.items():
+                t = self.ref.type_of_table(table)
+                if line.perm is None:
+                    want = self.sync_ref.eval_expr(
+                        state,
+                        t,
+                        next(
+                            r.expr for r in self.rules if r.table == table and r.command == "select" and not r.columns
+                        ),
+                    )
+                else:
+                    want = state[(t.name, line.perm)]
+                want = want & self.sync_ref.ids(t) & self.sync_ref.valid(t)
+                got = set(snap[(u, "sync", t.name)])
+                if got != want:
+                    problems.append(
+                        f"the sync index: {u} reads {sorted(got - want)} of {table} it may not "
+                        f"({line.perm or 'select'}), and not {sorted(want - got)} it may"
+                    )
+        return problems[:12]
+
     def check(self) -> list[str]:
         self._nocontext = self._nocontext_all = None
         start = self.feed_position()
@@ -1547,6 +1649,7 @@ class Checker:
         problems: list[str] = []
         if snap[("verify",)] is not True:
             problems.append("authz.verify() is false: a closure table is stale")
+        problems += self.sync_problems(snap)
         holders: dict[tuple[str, str, str], set[str]] = {}
         among: dict[tuple[str, str, str], set[str]] = {}  # every user id signed in, a row or not (who_among)
         if self.decisions is not None:
@@ -3295,12 +3398,12 @@ def main() -> None:
     db.recreate()
     db.run(read(gen.schema))
     db.run(gen.initial())
-    compiled = subprocess.run(
-        [sys.executable, "compile_policy.py", gen.policy], capture_output=True, text=True, check=True
-    ).stdout
+    db.run(MAKE_SYNC_ROLE)
+    text = synced(read(gen.policy), gen.policy, args.seed)
+    compiled = compile_policy.Compiler(compile_policy.parse_policy(text, gen.policy)).compile(gen.policy)
     db.run(compiled)
     db.run(gen.grants())
-    checker = Checker(db, gen.policy, gen, decisions=args.decisions)
+    checker = Checker(db, gen.policy, gen, decisions=args.decisions, text=text)
 
     failures, refused, made = 0, 0, 0
     for step in range(args.steps + 1):

@@ -58,6 +58,8 @@ class GovernanceMixin(Core):
     # audit trail and change feed
     # ------------------------------------------------------------------
     def feed_sql(self) -> str:
+        # (with sync lines, what changed is noted for the sync index too, worked on at commit: sync.py)
+        sync = "\n  PERFORM authz_int.sync_dirty(p_type, p_ids);" if self.pol.syncs else ""
         return f"""-- The change feed: objects whose access may have changed. Consumers poll authz.changes_since(pos).
 -- NOTIFY on channel authz_changes only with INSERT INTO authz.settings VALUES ('notify_changes', 'on'):
 -- Postgres commits notifying transactions one at a time, so it would queue every write.
@@ -78,7 +80,7 @@ LANGUAGE plpgsql {DEF} AS $f$
 BEGIN
   IF coalesce(cardinality(p_ids), 0) = 0 THEN RETURN; END IF;
   PERFORM authz_int.announce(p_type, p_ids, p_cause);
-  PERFORM authz_int.dependents(p_type, p_ids);
+  PERFORM authz_int.dependents(p_type, p_ids);{sync}
 END $f$;
 {self.dependents_sql()}
 -- Read the feed from a position: SELECT * FROM authz.changes_since(0)  (administrators, sync jobs).

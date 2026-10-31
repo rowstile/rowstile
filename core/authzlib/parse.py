@@ -411,6 +411,18 @@ class Invariant:
 
 
 @dataclass
+class Sync:
+    """`sync app.files : view` (a preview): the readers of each row of a table, kept in authz_sync for sync engines.
+    perm: the permission they hold; None for the table's select rule."""
+
+    table: str
+    perm: str | None
+    loc: Loc
+    perm_span: Span | None = field(default=None, compare=False, repr=False)
+    table_span: Span | None = field(default=None, compare=False, repr=False)
+
+
+@dataclass
 class Policy:
     role: str | None = None  # the app role (`app role app_user`): the Postgres role the rules apply to
     types: dict[str, Type] = field(default_factory=dict)
@@ -423,6 +435,9 @@ class Policy:
     invariants: list[Invariant] = field(default_factory=list)
     views: dict[str, str] = field(default_factory=dict)  # rules table -> masked view name
     view_locs: dict[str, Loc] = field(default_factory=dict)  # rules table -> where the view was named
+    sync_role: str | None = None  # `sync role sync_engine`: the sync engine's Postgres role (a preview)
+    sync_role_loc: Loc | None = None
+    syncs: dict[str, Sync] = field(default_factory=dict)  # table -> its sync line
 
 
 # ----------------------------------------------------------------------
@@ -1358,12 +1373,12 @@ def skip(_: Line) -> None:
 
 
 # what a line at the left margin starts with, and what it is if it starts with none of them
-TOP_WORDS = ("type", "rules", "test", "invariants", "app", "scope", "caveat")
+TOP_WORDS = ("type", "rules", "test", "invariants", "app", "scope", "caveat", "sync")
 
 
 def expected_top(s: str) -> str:
     return (
-        f"expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', "
+        f"expected 'app role', 'type', 'rules', 'scope', 'caveat', 'sync', 'invariants', 'test', "
         f"'test \"name\"' or 'include', got: {s}"
     )
 
@@ -1377,6 +1392,7 @@ TOP_FORMS = {
     "app": "write the app role as: app role name",
     "scope": "write scopes as: scope name = select, view, app.files.update, file.edit",
     "caveat": "write caveats as: caveat name = {sql}",
+    "sync": "write sync lines as: sync role name, or sync schema.table [: permission]",
     "include": 'write includes as: include "file.authz" (the file\'s name in double quotes)',
 }
 
@@ -1454,6 +1470,8 @@ class Reader:
                     self.app_role(role.text, loc)
                 case "scope":
                     self.scope(w, loc)
+                case "sync":
+                    self.sync(w, loc)
                 case _:
                     self.caveat(w, loc)
             return None
@@ -1516,6 +1534,35 @@ class Reader:
         if name.text in self.pol.caveats:
             fail(loc, f"caveat {name.text} is defined twice", "AZ109", at=(name.start, name.end))
         self.pol.caveats[name.text] = Caveat(name.text, sql.strip(), loc)
+
+    def sync(self, w: Words, loc: Loc) -> None:
+        """sync role name, or sync schema.table [: permission]"""
+        table: Piece | None = None
+        probe = w.copy()
+        try:
+            qname(probe)
+            table = qname(w)
+        except Unread:
+            w.need(w.name("role"))
+        if table is None:
+            role = w.need(w.name())
+            w.end()
+            at = (role.start, role.end)
+            if self.pol.sync_role is not None:
+                fail(loc, f"the sync role is named twice ({self.pol.sync_role} and {role.text})", "AZ109", at=at)
+            self.pol.sync_role, self.pol.sync_role_loc = role.text, loc
+            return
+        perm = w.need(w.name()) if w.mark(":") else None
+        w.end()
+        if table.text in self.pol.syncs:
+            fail(loc, f"{table.text} is synced twice: one sync line per table", "AZ109", at=(table.start, table.end))
+        self.pol.syncs[table.text] = Sync(
+            table.text,
+            perm.text if perm else None,
+            loc,
+            loc.span(perm.start, perm.end) if perm else None,
+            loc.span(table.start, table.end),
+        )
 
     def test_section(self, line: Line) -> None:
         # the same checks as a named test's: user 3 can view file 11, service 2 cannot ..., anyone can ...

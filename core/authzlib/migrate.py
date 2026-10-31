@@ -576,6 +576,11 @@ def migration(compiled_sql: str, c: Compiled, old: Lock, name: str = "policy", l
             "  IF NOT EXISTS (SELECT 1 FROM authz_int.next_trees) THEN DROP TABLE authz_int.next_trees; END IF;\n"
             "END $authz_built$;"
         )
+    if "sync_base" in old.steps and not any(isinstance(it, Step) and it.name == "sync_base" for it in c.items):
+        # the policy no longer syncs: the sync index goes (its functions with the objects that went, above)
+        parts.append(
+            "-- the policy no longer has sync lines: the sync index goes\nDROP SCHEMA IF EXISTS authz_sync CASCADE;"
+        )
     for tbl in sorted(lost_rules):
         parts.append(
             f"DO $authz_lost$ BEGIN\n  RAISE WARNING '% has no rules any more, and row-level security is still on, "

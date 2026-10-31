@@ -1030,6 +1030,14 @@
           "named": true
         },
         {
+          "type": "sync",
+          "named": true
+        },
+        {
+          "type": "sync_role",
+          "named": true
+        },
+        {
           "type": "test",
           "named": true
         },
@@ -1108,6 +1116,48 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "sync",
+    "named": true,
+    "fields": {
+      "permission": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "table": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "table_name",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "sync_role",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -1490,6 +1540,10 @@
   },
   {
     "type": "subject",
+    "named": false
+  },
+  {
+    "type": "sync",
     "named": false
   },
   {

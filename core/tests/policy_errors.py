@@ -1011,10 +1011,172 @@ COMPILE = [
     (
         "a block's word misspelt: the words a block starts with",
         "tpye thing = alt.things\n",
-        "line 10: expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', 'test \"name\"' or "
+        "line 10: expected 'app role', 'type', 'rules', 'scope', 'caveat', 'sync', 'invariants', 'test', 'test \"name\"' or "
         "'include', got: tpye thing = alt.things [AZ101]",
         10,
         "AZ101",
+    ),
+    # the sync index (a preview)
+    (
+        "a sync line naming a table no type maps to",
+        "sync role eng\nsync alt.nothing : share\n",
+        "no type maps to alt.nothing",
+        11,
+        "AZ801",
+    ),
+    (
+        "a sync line naming a table two types map to",
+        "type d2 = alt.docs (doc_no)\nsync role eng\nsync alt.docs : share\n",
+        "two types map to alt.docs",
+        12,
+        "AZ801",
+    ),
+    (
+        "a sync line naming a permission its type hasn't",
+        "sync role eng\nsync alt.docs : view\n",
+        "doc has no permission view (it has: share)",
+        11,
+        "AZ801",
+    ),
+    (
+        "a sync line naming no permission, for a table without a select rule",
+        "sync role eng\nsync alt.docs\n",
+        "the table has no select rule",
+        11,
+        "AZ801",
+    ),
+    (
+        "a synced type whose key column is called key",
+        "type t3 = alt.projects (key)\n  lead : user = lead_id\n  can view = lead\nsync role eng\nsync alt.projects : view\n",
+        "can't be called key too",
+        14,
+        "AZ801",
+    ),
+    (
+        "sync lines and no sync role",
+        "sync alt.docs : share\n",
+        "sync lines need the sync engine's Postgres role",
+        10,
+        "AZ802",
+    ),
+    ("a sync role and nothing synced", "sync role eng\n", "a sync role and nothing synced", 10, "AZ802"),
+    (
+        "the app role as the sync role",
+        "sync role app_user\nsync alt.docs : share\n",
+        "so it can't be the app role",
+        10,
+        "AZ803",
+    ),
+    ("PUBLIC as the sync role", "sync role Public\nsync alt.docs : share\n", "so it can't be PUBLIC", 10, "AZ803"),
+    (
+        "the sync role named twice",
+        "sync role a\nsync role b\nsync alt.docs : share\n",
+        "the sync role is named twice (a and b)",
+        11,
+        "AZ109",
+    ),
+    (
+        "a table synced twice",
+        "sync role a\nsync alt.docs : share\nsync alt.docs : share\n",
+        "alt.docs is synced twice",
+        12,
+        "AZ109",
+    ),
+    (
+        "a sync line without its colon",
+        "sync role a\nsync alt.docs share\n",
+        "write sync lines as: sync role name, or sync schema.table",
+        11,
+        "AZ101",
+    ),
+    ("a sync role line without its role", "sync role\nsync alt.docs : share\n", "write sync lines as", 10, "AZ101"),
+    (
+        "a synced permission reading the clock",
+        "  can view = owner and {now() > '2020-01-01'}\nsync role eng\nsync alt.docs : view\n",
+        "reads now(), which changes without a write",
+        10,
+        "AZ804",
+    ),
+    (
+        "a synced permission reading 'today'",
+        "  can view = owner and {up < 'today'}\nsync role eng\nsync alt.docs : view\n",
+        "reads 'today', the current time",
+        10,
+        "AZ804",
+    ),
+    (
+        "a synced permission reading chance",
+        "  can view = owner or {random() < 0.5}\nsync role eng\nsync alt.docs : view\n",
+        "reads random()",
+        10,
+        "AZ804",
+    ),
+    (
+        "a synced permission reading age() of one argument",
+        "  can view = owner and {age(up::text::date) < interval '1 day'}\nsync role eng\nsync alt.docs : view\n",
+        "age() with one argument",
+        10,
+        "AZ804",
+    ),
+    (
+        "a synced permission reading who asks",
+        "  can view = {owner_id = authz.uid()}\nsync role eng\nsync alt.docs : view\n",
+        "reads authz.uid(): who asks, or the session",
+        10,
+        "AZ805",
+    ),
+    (
+        "a synced permission reading the session",
+        "  can view = owner and {current_setting('app.x') = 'y'}\nsync role eng\nsync alt.docs : view\n",
+        "reads current_setting()",
+        10,
+        "AZ805",
+    ),
+    (
+        "a synced permission reading the user's role",
+        "  can view = owner and not {current_user = 'x'}\nsync role eng\nsync alt.docs : view\n",
+        "reads current_user",
+        10,
+        "AZ805",
+    ),
+    (
+        "a synced permission reading other rows",
+        "  can view = owner and {not exists (select 1 from alt.holds h where h.target = this.doc_no)}\nsync role eng\nsync alt.docs : view\n",
+        "reads more than its row",
+        10,
+        "AZ806",
+    ),
+    (
+        "a synced type whose where reads other rows",
+        "type t2 = alt.projects where {exists (select 1 from alt.holds)}\n  lead : user = lead_id\n  can view = lead\nsync role eng\nsync alt.projects : view\n",
+        "(the where of t2, which is synced) reads more than its row",
+        10,
+        "AZ806",
+    ),
+    (
+        "a synced permission through a link table whose where reads other rows",
+        "  helper : user = alt.group_members(group_id -> user_id) where {exists (select 1 from alt.holds)}\n  can view = helper\nsync role eng\nsync alt.docs : view\n",
+        "(the where of alt.group_members) reads more than its row",
+        10,
+        "AZ806",
+    ),
+    (
+        "a principal type whose where reads other rows, with sync",
+        "type svc = alt.users principal where {exists (select 1 from alt.holds)}\nsync role eng\nsync alt.docs : share\n",
+        "(the where of svc, which says who holds keys) reads more than its row",
+        10,
+        "AZ806",
+    ),
+    (
+        "a nested group whose members are worked out with and / not, synced",
+        "type org = alt.orgs\n  member : user = alt.org_members(org_id -> user_id)\n"
+        "  banned : user = alt.org_bans(org_id -> user_id)\n  can good = member and not banned\n"
+        "type team = alt.teams\n  member : user = alt.team_members(team_id -> user_id)\n"
+        "  member : org#good = alt.team_orgs(team_id -> org_id)\n  member : team#member = alt.teams(parent_id -> id)\n"
+        "type d2 = alt.projects\n  team : team = lead_id\n  can view = team.member\nsync role eng\nsync alt.projects : view\n",
+        "team.member is a group in itself",
+        15,
+        "AZ807",
     ),
 ]
 
@@ -1053,7 +1215,7 @@ WHOLE = [
     (
         "the app role named without app",
         "role app_user\ntype user = alt.users\n",
-        "expected 'app role', 'type', 'rules', 'scope', 'caveat', 'invariants', 'test', 'test \"name\"' or 'include', "
+        "expected 'app role', 'type', 'rules', 'scope', 'caveat', 'sync', 'invariants', 'test', 'test \"name\"' or 'include', "
         "got: role app_user",
         1,
         "AZ101",

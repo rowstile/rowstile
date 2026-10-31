@@ -744,7 +744,8 @@ with tempfile.TemporaryDirectory() as d:
         "  owner  : user = owner_id\n"
         "  banned : user = app.bans(doc_id -> user_id)\n"
         "  can view = owner and not banned\n\n"
-        "rules app.docs\n  select : view\n"
+        "rules app.docs\n  select : view\n\n"
+        "sync role sync_engine\nsync app.docs : view\n"
     )
     path = os.path.join(d, "policy.authz")
     with open(path, "w", encoding="utf-8") as fh:
@@ -791,6 +792,14 @@ with tempfile.TemporaryDirectory() as d:
         {"authz.uid()", "now()"} <= labels("{deleted_at", 4),
         sorted(labels("{deleted_at", 4)),
     )
+    # the sync lines (a preview): a type's table after `sync`, its permissions after the colon, and what one is
+    ok("completion after sync offers the types' tables", labels("sync app.docs", 5) == {"app.docs", "app.users"})
+    ok(
+        "completion after a sync line's colon offers its type's permissions",
+        labels("sync app.docs : view", len("sync app.docs : ")) == {"view"},
+    )
+    h = c.request("textDocument/hover", where("sync app.docs : view", len("sync app.docs : ") + 1))
+    ok("hover on a sync line's permission shows it", value(h).startswith("```authz\ndoc.view = owner and not"), h)
 
     c.notify("textDocument/didSave", {"textDocument": {"uri": u}})
     clean("saving checks the file again", c, u)

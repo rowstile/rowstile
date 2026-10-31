@@ -1378,6 +1378,12 @@ def run(
     (tests/decisions.py)."""
     policy_path, schema_path = os.path.join(workdir, "gen.authz"), os.path.join(workdir, "gen_schema.sql")
     write_policy(policy_path, policy_text(spec), spec.include)
+    # the sync index (a preview): each type the index takes synced, one permission or the select rule each, which
+    # difftest's checks hold the index to (Checker.sync_problems)
+    with open(policy_path, encoding="utf-8") as fh:
+        main_text = fh.read()
+    with open(policy_path, "w", encoding="utf-8") as fh:
+        fh.write(difftest.synced(main_text, policy_path, spec.seed))
     with open(schema_path, "w", encoding="utf-8") as fh:
         fh.write(schema_text(spec))
     compiled = subprocess.run([sys.executable, "compile_policy.py", policy_path], capture_output=True, text=True)
@@ -1393,6 +1399,7 @@ def run(
     # what the data and the changes draw with SQL's random() is the seed's too: --only runs it again, on the same data
     sqlseed = random.Random(f"genpolicy/{spec.seed}/sql")
     db.recreate()
+    db.run(difftest.MAKE_SYNC_ROLE)
     db.run(schema_text(spec))
     db.run(f"SELECT setseed({sqlseed.random():.6f});\n{gen.initial()}")
     db.run(compiled.stdout)

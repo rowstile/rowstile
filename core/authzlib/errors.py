@@ -37,6 +37,7 @@ GROUPS = [
     ("AZ5", "Tests"),
     ("AZ6", "Applying and deploying"),
     ("AZ7", "What apps see"),
+    ("AZ8", "The sync index (a preview)"),
 ]
 
 CODES = {
@@ -882,6 +883,108 @@ CODES = {
         "`manage_keys` on it makes its keys (`authz.create_api_key('deploy', '', NULL, 'service', '7')`). "
         "SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this code).",
         when="runtime",
+    ),
+    "AZ801": Code(
+        "A sync line that names nothing to sync",
+        "`sync schema.table : permission` keeps, for each row of a type's table, the keys that hold the permission "
+        "on it, for sync engines. The table must be a type's, and the permission one of that type's. With no "
+        "permission (`sync app.files`), the readers hold the table's select rule, so the table needs one. The "
+        "readers table has a column `key`, so the type's key column can't be called `key` too.",
+        "type file = app.files\n  owner : user = owner_id\n  can view = owner\nsync role sync_engine\n"
+        "sync app.files : read\n",
+        "type file = app.files\n  owner : user = owner_id\n  can view = owner\nsync role sync_engine\n"
+        "sync app.files : view\n",
+    ),
+    "AZ802": Code(
+        "Sync lines and no sync role, or a sync role and nothing synced",
+        "The sync index is read by the sync engine's Postgres role, which `sync role` names: sync lines need it, "
+        "and it needs at least one sync line. The role reads every row (it holds BYPASSRLS), so it is the engine's "
+        "own: `CREATE ROLE sync_engine LOGIN REPLICATION BYPASSRLS`.",
+        "type file = app.files\n  owner : user = owner_id\n  can view = owner\nsync app.files : view\n",
+        "type file = app.files\n  owner : user = owner_id\n  can view = owner\nsync role sync_engine\n"
+        "sync app.files : view\n",
+    ),
+    "AZ803": Code(
+        "The sync role is the app role",
+        "The sync role reads every row: it bypasses row-level security, as the engine must to read the tables by "
+        "logical replication. The app role is the one the rules apply to, so the two must be different roles, and "
+        "the sync role can't be PUBLIC either. Applying also refuses a sync role that is a member of the app role or "
+        "has it as a member (AZ808).",
+        "type file = app.files\n  owner : user = owner_id\n  can view = owner\nsync role app_user\n"
+        "sync app.files : view\n",
+        "type file = app.files\n  owner : user = owner_id\n  can view = owner\nsync role sync_engine\n"
+        "sync app.files : view\n",
+    ),
+    "AZ804": Code(
+        "A synced permission reads the clock",
+        "The sync index stores who may read each row, and works it out again when a write changes what it reads. A "
+        "condition that reads the clock or chance (`now()`, `current_date`, `'today'`, `random()`) changes with no "
+        "write, so the index can't follow it. Shares that start or end later are followed: `authz.sync_tick()`, "
+        "run on a schedule, works out again the readers of those whose start or end passed. Leave the condition "
+        "out of what a synced permission reads, or say it with a share that ends.",
+        "type doc = app.docs\n  owner : user = owner_id\n  can view = owner and {published_at < now()}\n"
+        "sync role sync_engine\nsync app.docs : view\n",
+        "type doc = app.docs\n  owner : user = owner_id\n  can view = owner and {published}\n"
+        "sync role sync_engine\nsync app.docs : view\n",
+    ),
+    "AZ805": Code(
+        "A synced permission reads who asks",
+        "The sync index says who may read each row for every principal at once, as keys. A condition that reads "
+        "who asks or the session (`authz.uid()`, `authz.ctx()`, `current_user`, `current_setting()`) holds for "
+        "one person at a time, so the index can't hold it. Say it with a relation: `owner : user = owner_id`, then "
+        "`can view = owner`.",
+        "type doc = app.docs\n  can view = {owner_id = authz.uid()}\nsync role sync_engine\nsync app.docs : view\n",
+        "type doc = app.docs\n  owner : user = owner_id\n  can view = owner\nsync role sync_engine\n"
+        "sync app.docs : view\n",
+    ),
+    "AZ806": Code(
+        "A synced permission reads other rows",
+        "The sync index works a row's readers out again when a write changes what they read: the row, its links, "
+        "the shares, the trees. A condition that reads more than its row (a subquery, a function of the app's), in "
+        "a permission, a type's or a link table's `where`, can change with a write to a table the index doesn't "
+        "follow. Inheritance is the exception: a condition that limits it is followed by its closure table. Say it "
+        "with a relation, or with a condition on the row's own columns.",
+        "type doc = app.docs\n  owner : user = owner_id\n"
+        "  can view = owner and {not exists (select 1 from app.holds h where h.doc_id = this.id)}\n"
+        "sync role sync_engine\nsync app.docs : view\n",
+        "type doc = app.docs\n  owner : user = owner_id\n  can view = owner and {not held}\n"
+        "sync role sync_engine\nsync app.docs : view\n",
+    ),
+    "AZ807": Code(
+        "A nested group the sync index can't hold",
+        "A group named as a subject (`team#member`) is a key in the sync index when who holds it is a union of what "
+        "gives it: a principal in the group holds its key. When what gives it joins parts that depend on who asks "
+        "with `and` or `not`, its holders are worked out as principals instead, which a group inside itself "
+        "(`member : team#member`) would never finish. Say what gives the group without `and` / `not`, or sync a "
+        "permission that doesn't read the group.",
+        "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n"
+        "  banned : user = app.org_bans(org_id -> user_id)\n  can good = member and not banned\n"
+        "type team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
+        "  member : org#good = app.team_orgs(team_id -> org_id)\n  member : team#member = app.teams(parent_id -> id)\n"
+        "type doc = app.docs\n  team : team = team_id\n  can view = team.member\n"
+        "sync role sync_engine\nsync app.docs : view\n",
+        "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n  can good = member\n"
+        "type team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
+        "  member : org#good = app.team_orgs(team_id -> org_id)\n  member : team#member = app.teams(parent_id -> id)\n"
+        "type doc = app.docs\n  team : team = team_id\n  can view = team.member\n"
+        "sync role sync_engine\nsync app.docs : view\n",
+    ),
+    "AZ808": Code(
+        "The sync role isn't one of its own",
+        "Applying needs the sync role to be there, and a role of its own: not a member of the app role nor the app "
+        "role a member of it (the app would read every row through it), and not the role that applies the policy "
+        "or a member of it (an owner may turn the rules off). Make one for the engine: `CREATE ROLE sync_engine LOGIN "
+        "REPLICATION BYPASSRLS`, then apply again. `authz.lint()` reports a membership granted since.",
+        when="apply",
+    ),
+    "AZ809": Code(
+        "The sync role may read a masked column",
+        "A masked column (`mask body : edit`) is read through the masked view only. The sync role reads every row "
+        "(it holds BYPASSRLS), so a masked column it may read would reach every client of the engine. Applying "
+        "refuses it: revoke SELECT on the table from the sync role and grant the other columns, `GRANT SELECT (id, "
+        "folder_id, name) ON app.files TO sync_engine`. `authz.lint()` reports a grant made since, and a "
+        "publication that publishes a masked column.",
+        when="apply",
     ),
 }
 

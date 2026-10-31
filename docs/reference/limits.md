@@ -77,6 +77,26 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   stopped after two and a half minutes with "out of shared memory", and took 163 s with
   `max_locks_per_transaction = 1024`. `rowstile apply` warns before it starts and names the value to set (a
   restart; on managed Postgres, a parameter).
+- **The sync index** (a preview, [The sync index](sync.md)) **can't take back what a device holds.** <!-- unchecked: what an engine and its clients do, outside the database -->
+  Revoking
+  stops delivery: rows already on a device stay there while it is offline, and in any copy a client keeps, until
+  the engine tells the client to delete them when it next syncs. <!-- unchecked: what an engine and its clients do, outside the database -->
+  The window after a change is the engine's replication lag, and for a share that ends, until the next
+  `authz.sync_tick()` too. <!-- checked: tests/sync.sh "a second later, before the tick: the index still says so (its stated window)" -->
+  Conditions on who asks or the clock, conditions that read other rows, caveats, links, scopes and masked columns
+  can't go through: compiling refuses the first three, the others give nothing through it. <!-- checked: tests/policy_errors.py "a synced permission reading who asks"; tests/policy_errors.py "a synced permission reading the clock"; tests/policy_errors.py "a synced permission reading other rows"; tests/difftest.py "without shares that have a caveat and without links"; tests/sync.sh "a sync role that may read a masked column is refused" -->
+  The engine is trusted: it holds BYPASSRLS and every row, and rowstile can't check what it serves. <!-- unchecked: what an engine serves is the engine's -->
+  The index costs writes in the writer's transaction: a move works out again the readers of every row below the
+  moved folder and of their files, a share those of what reads its object, a membership change the member's keys
+  alone. On the scale benchmark's dev size (400,000 files in 20,000 folders 20 levels deep, 1,000 users, 100
+  teams; measured 2026-10-31 on a shared machine, Postgres 16), the index held 13.1 million readers rows for the
+  files (33 a file: mostly the owner of each folder above it) and 647,000 for the folders, 2.2 GB; working it out
+  whole took four and a half minutes. A move of a folder with 100 folders and 2,000 files below it took 3 to 7 s
+  (0.2 to 1.3 s without the index), one with 950 folders and 19,000 files 13 to 26 s (0.4 to 0.9 s), one with 9,400
+  folders and 189,000 files 150 to 350 s (2 s), writing 700,000 rows of the index; a share on a folder with 19,000
+  files below it 10 to 13 s; a member joining or leaving a team 0.3 to 1.3 s; a file made 0.4 s. Those were
+  measured once the index's tables had been vacuumed: right after the first apply, before autovacuum has run, a
+  write that reads many of their rows can take forty times as long, so run `VACUUM` on them after it. <!-- unchecked: times measured by hand on 2026-10-31 -->
 - **Identity providers**: `authz.sync_members` takes the member list; there is no SCIM
   endpoint. JWTs are HS256 only (no RS256/JWKS in plpgsql); for asymmetric tokens,
   verify in your backend and sign in from there ([Identity](identity.md)), or use an API key. <!-- checked: tests/identity.sh "alg none" -->

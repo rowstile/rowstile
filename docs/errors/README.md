@@ -102,4 +102,16 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ714](AZ714.md): Sign in first
 - [AZ715](AZ715.md): For users only
 
+## The sync index (a preview)
+
+- [AZ801](AZ801.md): A sync line that names nothing to sync
+- [AZ802](AZ802.md): Sync lines and no sync role, or a sync role and nothing synced
+- [AZ803](AZ803.md): The sync role is the app role
+- [AZ804](AZ804.md): A synced permission reads the clock
+- [AZ805](AZ805.md): A synced permission reads who asks
+- [AZ806](AZ806.md): A synced permission reads other rows
+- [AZ807](AZ807.md): A nested group the sync index can't hold
+- [AZ808](AZ808.md): The sync role isn't one of its own
+- [AZ809](AZ809.md): The sync role may read a masked column
+
 These pages are written from `core/authzlib/errors.py`; edit it, then `python3 core/tests/unit_test.py --update`.

@@ -74,7 +74,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, {app}))
     AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = {app}
              AND '"' || replace(p.proname, '"', '""') || '"' = ANY ({callable}))
-    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = {app} AND p.oid = ANY ({api}))"""
+    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = {app} AND p.oid = ANY ({api})){self.sync_extra_grants_sql()}"""
 
     def api_signatures(self) -> list[str]:
         """The authz.* functions the app role may execute (the policy grants them): everything else there is
@@ -388,7 +388,7 @@ BEGIN
         ELSE 'that guards it is missing: the trail may be changed' END);
     RETURN NEXT;
   END LOOP;
-  -- governed tables
+{self.sync_lint_sql()}  -- governed tables
   FOR r IN SELECT c.oid::regclass AS tbl, c.relrowsecurity, c.relowner,
                   c.oid = ANY (SELECT to_regclass(x) FROM unnest({arr([qt(t) for t in governed])}) x) AS governed
            FROM pg_class c WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest({arr([qt(t) for t in typed_tables])}) x) LOOP

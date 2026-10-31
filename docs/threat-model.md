@@ -29,6 +29,7 @@ outside the project.
 | **The app's backend** (the app role, or a member of it: the roles that may call `authz.act_as()`) | say who is signed in, per transaction | |
 | **The app role** (`app role` in the policy; the backend connects as it) | nothing beyond the rules | read or change rows the rules don't allow, touch rowstile's internals, turn row-level security off, share more than it holds, approve its own requests |
 | **Anyone signed in with an API key or JWT** | act as that user, within the key's scopes | widen the scopes, act as someone else |
+| **The sync engine** (`sync role`, a preview: Electric, Zero, PowerSync) | read every row (it holds BYPASSRLS) and the sync index, and serve each client the rows the index gives its keys | read a masked column, or be the app role |
 
 The trust boundary is between the app role and everything above it. A bug in the app (say, SQL
 injection) should not let an attacker read hidden rows through queries. What such an attacker can
@@ -110,4 +111,8 @@ request gets no secrets, not on `pull_request_target`.
   the other `authz.*` functions. <!-- checked: tests/identity.sh "files key: sees no folders (not in its scope)"; tests/identity.sh "read-only key: may view file 11, not edit it" -->
 - **Request context** (`authz.ctx(...)`, `authz_ctx.*` settings) is whatever the app sets: a policy that
   trusts it trusts the backend.
+- **The sync index tells the sync engine who may read what** (a preview, [The sync index](reference/sync.md)): its
+  readers tables say, for each row, the keys that may read it, and its keys table which keys each principal holds.
+  The engine holds BYPASSRLS and reads every row, so it is trusted as the backend is: rowstile can't check what it
+  serves each client, only that the index is right and that the app role can't read it. <!-- checked: tests/sync.sh "the app role can't read the index"; tests/difftest.py "the sync index: " -->
 - **No outside audit.** rowstile has had self-review only. <!-- unchecked: a fact about the project, not about the code -->
