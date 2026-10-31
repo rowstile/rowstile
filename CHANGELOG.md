@@ -29,6 +29,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   viewing as someone, believing the settings only when they are signed, as the rest of rowstile does. The app role
   may call it; `syncPrincipal()` in `@rowstile/client` now asks it instead of reading the scopes setting. A
   migration brings it ([Identity](docs/reference/identity.md)).
+- A stack page for Electric, a preview: the role an administrator makes, the publication the app's migration
+  makes, `rowstile client electric`, the route with `electricShape` and `syncPrincipal`, `Vary` and a cache, and
+  what can't be done ([Electric](docs/stacks/electric.md)).
 - Background jobs in Celery's and RQ's workers, for the Python SDK (preview): `rowstile.job(who)` is a `with` block
   too, for a job that acts for the user its argument names (`Principal.parse`). In either form, the database's
   refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).

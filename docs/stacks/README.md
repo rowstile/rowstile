@@ -18,10 +18,11 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 | Rust: Axum, sqlx, tokio-postgres (preview) | [axum.md](axum.md) | `cargo add rowstile` (from the repository) |
 | Phoenix, Ecto, Postgrex, Oban (preview) | [phoenix.md](phoenix.md) | `:rowstile` in `mix.exs` |
 | Laravel, Eloquent, queued jobs; PHP on PDO (preview) | [laravel.md](laravel.md) | `composer require rowstile/rowstile` |
+| Electric, the sync engine, behind a Node app (preview) | [electric.md](electric.md) | `@rowstile/client` |
 | Anything else | [sql.md](sql.md) | none: a few SQL statements |
 
 Every line of code these pages show is in a tested app ([`integrations/fastapi`](../../integrations/fastapi), [`integrations/nextjs`](../../integrations/nextjs),
-[`integrations/go`](../../integrations/go), [`integrations/django`](../../integrations/django), [`integrations/aspnetcore`](../../integrations/aspnetcore), [`integrations/rails`](../../integrations/rails), [`integrations/spring`](../../integrations/spring), [`integrations/ktor`](../../integrations/ktor), [`integrations/axum`](../../integrations/axum), [`integrations/phoenix`](../../integrations/phoenix), [`integrations/laravel`](../../integrations/laravel), the conformance suites), in [`docs/getting-started.md`](../getting-started.md), which runs as written, or, for the SQL the SDKs send, in
+[`integrations/go`](../../integrations/go), [`integrations/django`](../../integrations/django), [`integrations/aspnetcore`](../../integrations/aspnetcore), [`integrations/rails`](../../integrations/rails), [`integrations/spring`](../../integrations/spring), [`integrations/ktor`](../../integrations/ktor), [`integrations/axum`](../../integrations/axum), [`integrations/phoenix`](../../integrations/phoenix), [`integrations/laravel`](../../integrations/laravel), [`integrations/electric`](../../integrations/electric), the conformance suites), in [`docs/getting-started.md`](../getting-started.md), which runs as written, or, for the SQL the SDKs send, in
 the SDKs' own code. [`core/tests/unit_test.py`](../../core/tests/unit_test.py) checks each line, and that the install lines have each rowstile
 package the code imports. It checks lines one by one: a block may be a few lines of a longer file, so read
 the text around it too.

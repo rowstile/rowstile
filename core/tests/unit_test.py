@@ -11647,6 +11647,7 @@ class StackPages(unittest.TestCase):
         "axum.md": ["integrations/axum"],
         "phoenix.md": ["integrations/phoenix"],
         "laravel.md": ["integrations/laravel"],
+        "electric.md": ["integrations/electric"],
         "sql.md": ["docs/getting-started.md", "sdk/python/rowstile", "sdk/typescript"],
     }
     SKIP: ClassVar[set[str]] = {"node_modules", ".venv", ".next", ".work", "generated", "__pycache__", "dist", "tmp"}
