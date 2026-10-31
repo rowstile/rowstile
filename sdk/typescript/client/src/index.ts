@@ -599,3 +599,6 @@ export function verdict(table: string, command: string, id: Id, why: string[] | 
   const by = who ?? (p.id === null ? "someone not signed in" : `${p.type} ${p.id}`);
   return new Refused(`permission denied: ${by} may not ${command} row ${idShown(id)} of ${table}`, table, command, why);
 }
+
+// --- Electric behind the app's server (a preview): electric.ts ------------------------------------------------
+export { electricShape, syncPrincipal, type ElectricShape, type ElectricShapeOptions, type SyncPrincipal } from "./electric.js";

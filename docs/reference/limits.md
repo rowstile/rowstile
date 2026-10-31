@@ -80,7 +80,8 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
 - **The sync index** (a preview, [The sync index](sync.md)) **can't take back what a device holds.** <!-- unchecked: what an engine and its clients do, outside the database -->
   Revoking
   stops delivery: rows already on a device stay there while it is offline, and in any copy a client keeps, until
-  the engine tells the client to delete them when it next syncs. <!-- unchecked: what an engine and its clients do, outside the database -->
+  the engine tells the client to delete them when it next syncs (Electric's move-out, which its own `Shape` class
+  doesn't apply: [Electric](sync.md#its-limits)). <!-- unchecked: what an engine and its clients do, outside the database -->
   The window after a change is the engine's replication lag, and for a share that ends, until the next
   `authz.sync_tick()` too. <!-- checked: tests/sync.sh "a second later, before the tick: the index still says so (its stated window)" -->
   Conditions on who asks or the clock, conditions that read other rows, caveats, links, scopes and masked columns

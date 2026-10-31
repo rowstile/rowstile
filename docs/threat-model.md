@@ -115,4 +115,6 @@ request gets no secrets, not on `pull_request_target`.
   readers tables say, for each row, the keys that may read it, and its keys table which keys each principal holds.
   The engine holds BYPASSRLS and reads every row, so it is trusted as the backend is: rowstile can't check what it
   serves each client, only that the index is right and that the app role can't read it. <!-- checked: tests/sync.sh "the app role can't read the index"; tests/difftest.py "the sync index: " -->
+  Behind Electric, the app's route (`electricShape`) chooses whose filter a request gets, from who the database
+  says signed in: it is the backend's, and trusted as the backend is. <!-- checked: integrations/electric/tests/shapes.test.ts "E8: users at once, in rounds, each get their own" -->
 - **No outside audit.** rowstile has had self-review only. <!-- unchecked: a fact about the project, not about the code -->

@@ -54,4 +54,33 @@ tokio-postgres, cargo test), `phoenix` (the Elixir SDK, a preview: Phoenix on Ba
 migrations, Oban, ExUnit) and `laravel` (the PHP SDK, a preview: Laravel 13, Eloquent on pdo_pgsql, the queue's
 database worker, PHPUnit with paratest, PHPStan). Check 15 is Next.js's alone.
 
+`electric` (a preview) is the sync engine's suite, on the sync index: Electric behind a small Express app, whose
+shape routes are `@rowstile/client`'s `electricShape` on the shapes `rowstile client electric` writes, nginx as a
+cache in front of it, and the checks on Vitest with Electric's own client. Every user's shapes of the files and the
+folders stay open, live, and after each step each holds exactly the ids `authz.list` gives that user:
+
+- E1. The first snapshot.
+- E2. A share made: the row arrives live. Revoked: it leaves.
+- E3. A folder moved out of reach: the files below it leave. Moved back: they return.
+- E4. A team left: the rows reached only through it leave, and one also reached another way (a share) stays.
+- E5. A sub-team moved under another team: its members' rows follow.
+- E6. A share that ends: the row leaves at the next `authz.sync_tick()`, and not before.
+- E7. `confidential` set: the file leaves those who read it only through its folder.
+- E8. Every user at once, in rounds: each gets their own rows. A client's own `where`, user id (`params`), `table`
+  or secret is refused (400), a subset only narrows, and a POST's body that is more than a subset is refused.
+- E9. Not signed in: 401 with the problem body, and nothing is asked of Electric.
+- E10. Answers vary on who asks, and nginx never gives one user's answer to another.
+- E11. Writes through the app arrive in the shapes; a refused one is 403, a hidden row 404.
+- E12. Lint finds Electric's role without BYPASSRLS, a member of the app role, or reading a masked column;
+  `rowstile apply`, `reapply` and a changed policy leave the shapes as they are (the same handles, no
+  `must-refetch`), and `authz.sync_verify()` is true.
+- E13. A masked column is never in a shape, even when the client asks for it (in `columns` or a subset's filter).
+- E14. A user deleted: their keys go, and their shape empties.
+- E15. A session limited by scopes (an API key's), or viewing as someone, is refused (403).
+
+And the stack's checks that apply: 1 (E1), 4 (a pool of one), 5 (E8), 11 (a fresh database migrates with the
+app's SQL migrations, the policy's tests pass, the lock file is current) and 13 (the app refuses to start on the
+owner's connection); 16 as the routes meet it (AZ703, AZ709, a hidden row). Every night it runs on 17 and 18, and
+on 16 with the app through PgBouncer (Electric's own connection stays direct).
+
 A new stack gets its own folder here, with every check that applies to it.

@@ -20,6 +20,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   the same transaction as each change, for engines such as Electric to replicate. `authz.sync_tick()` follows shares
   that start or end, and `authz.sync_verify()` compares the index with a rebuild. AZ801 to AZ809 are its mistakes
   ([The sync index](docs/reference/sync.md)).
+- Electric on the sync index, a preview: `rowstile client electric` (or `[clients] electric`) writes each synced
+  table's shape (its filter for the signed-in principal, its key columns, the columns the policy masks), and
+  `electricShape()` in `@rowstile/client` is the route in front of Electric that sets it, whatever the client sends:
+  401 for nobody, 403 for a session limited by scopes, `Vary` on who asks. Its conformance suite runs Electric
+  (`integrations/electric`, [The sync index](docs/reference/sync.md#electric)).
 - Background jobs in Celery's and RQ's workers, for the Python SDK (preview): `rowstile.job(who)` is a `with` block
   too, for a job that acts for the user its argument names (`Principal.parse`). In either form, the database's
   refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).

@@ -18,3 +18,6 @@ FROM elixir:1.20-slim@sha256:6245171c91cf90808437f203f22856738d0095d310f4f903021
 # the Laravel suite's PHP and Composer (laravel/test.sh builds laravel/php.Dockerfile on them)
 FROM php:8.4-cli-alpine@sha256:d8784155c4d37986be9ddd7a8950df7e78998cc48e35472cd69e2b9371424a65 AS php
 FROM composer:2.9@sha256:b09bccd91a78fe8a9ab4b33d707b862e8fe54fec17782e32683ad2a69c46867d AS composer
+# Electric, the sync engine (electric/test.sh, a preview), and nginx, the shared cache it puts in front of the app
+FROM electricsql/electric:1.8.1@sha256:efb6fa43859d67cb8c73439e0c8bc0f7a3daa467500fb06f2a924bcb2070c139 AS electric
+FROM nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7 AS nginx

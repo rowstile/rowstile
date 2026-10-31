@@ -8,7 +8,8 @@ psycopg, asyncpg and Django alike. [`integrations/fastapi`](../../integrations/f
 transaction in, and a client extension), `/pg`, `/postgres` (postgres.js), `/drizzle`, `/next` (signed-in reads
 kept out of caches, 403 and 404 from route handlers and server actions), `/react` (`usePerms`, `<Can>`, a
 headless share dialog, live updates), `/vitest` and `/jest` (a preview); [`integrations/nextjs`](../../integrations/nextjs) is their
-conformance suite, [`integrations/node`](../../integrations/node) a plain Express server's (a preview), and
+conformance suite, [`integrations/node`](../../integrations/node) a plain Express server's (a preview),
+[`integrations/electric`](../../integrations/electric) that of `/client`'s route in front of Electric ([Electric](sync.md#electric), a preview), and
 `rowstile client` writes only the policy's names for them (`src/authz.gen.ts`). <!-- checked: tests/unit_test.py "test_typescript_sdk_gets_only_the_names" -->
 A transaction is one principal's: inside one these packages signed in, their work for anyone else throws an `Error`
 before anything is sent for it ([Node apps](../stacks/node.md#who-a-transaction-acts-for)).

@@ -1,0 +1,56 @@
+-- The Electric suite's policy: folders inside folders, given to teams (and the teams inside them), files in
+-- folders, shares on both, a confidential flag that keeps a file from those who read it only through its folder,
+-- and notes on files whose body only their editors read. Electric syncs the files, the folders and the notes;
+-- the sync index keeps who may read each row (sync lines), and the app's proxy sets each shape's filter.
+
+app role conf_app
+sync role conf_electric
+
+type user = app.users(id integer)
+
+type team = app.teams(id integer)
+  member : user        = app.team_members(team_id -> user_id)
+  member : team#member = app.teams(parent_id -> id)  -- the members of the teams inside it
+
+type folder = app.folders(id integer)
+  parent : folder      = parent_id
+  owner  : user        = owner_id
+  team   : team#member = app.folder_teams(folder_id -> team_id)
+  viewer : user shared by edit
+
+  can edit = owner or parent.edit
+  can view = edit or team or viewer or parent.view
+
+type file = app.files(id integer)
+  folder : folder = folder_id
+  owner  : user   = owner_id
+  viewer : user shared by edit
+
+  can edit = owner or folder.edit
+  can view = edit or viewer or (folder.view and not {confidential})
+
+type note = app.notes(id integer)
+  file   : file = file_id
+  author : user = author_id
+
+  can edit = author or file.edit
+  can view = file.view
+
+rules app.folders
+  select                 : view
+  update                 : edit
+  update parent_id after : parent.edit
+
+rules app.files
+  select          : view
+  insert          : folder.edit and owner
+  update          : edit
+  update owner_id : nobody
+
+rules app.notes view app.notes_visible
+  select    : view
+  mask body : edit
+
+sync app.files : view
+sync app.folders
+sync app.notes

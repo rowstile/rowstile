@@ -98,7 +98,8 @@ run client java; case "$out" in *"public final class AuthzNames"*"enum FilePermi
 run client rust; case "$out" in *"pub enum FilePermission {"*"impl rowstile::Permission for FilePermission {"*) ok "client rust: the policy's names";; *) bad "client rust" "${out:0:200}";; esac
 run client elixir; case "$out" in *"defmodule Authz do"*"  defmodule File do"*"def view, do: %Rowstile.Permission{"*) ok "client elixir: the policy's names";; *) bad "client elixir" "${out:0:200}";; esac
 run client php; case "$out" in "<?php"*"namespace Authz;"*"enum FilePermission: string implements Permission"*) ok "client php: the policy's names, an enum for each type";; *) bad "client php" "${out:0:200}";; esac
-run client rb; [ "$rc $out" = "2 rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir or php?" ] && ok "client with an unknown language: exit 2" || bad "client rb" "$rc $out"
+run client electric; case "$out" in *"export const shapes = {}"*"export type SyncedTable"*) ok "client electric: a policy that syncs nothing has no shapes";; *) bad "client electric" "${out:0:200}";; esac
+run client rb; [ "$rc $out" = "2 rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php or electric?" ] && ok "client with an unknown language: exit 2" || bad "client rb" "$rc $out"
 
 echo "-- reapply and remove"
 run reapply; [ $rc -eq 0 ] && ok "reapply" || bad "reapply" "$out"
@@ -199,7 +200,7 @@ run studio --port 70000; [ $rc -eq 2 ] && [ "$out" = "--port needs a port, a who
   ok "a port above 65535 is refused" || bad "studio --port 70000" "$rc ${out: -200}"
 run dev --once --studio-port 99999 "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "--studio-port needs a port, a whole number from 1 to 65535, not '99999'" ] &&
   ok "... and one for Studio beside dev" || bad "dev --studio-port 99999" "$rc ${out: -200}"
-run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir or php?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
+run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php or electric?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
 run client py; fromdb=$out
 run client py "$T/main.authz"; [ $rc -eq 0 ] && [ -n "$out" ] && [ "$out" = "$fromdb" ] && ok "client py from the file alone is the one the applied policy gives" || bad "client py from a file" "$rc ${out:0:120}"
 which='which policy file? (or name it in rowstile.toml: policy = "db/policy.authz")'

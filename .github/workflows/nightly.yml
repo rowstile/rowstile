@@ -176,8 +176,8 @@ jobs:
         with:
           name: full-16-${{ matrix.part }}
           path: /tmp/rowstile-ci-16.log
-  # The SDKs' conformance suites (.NET's among them) on 17 and 18 (ci.yml runs them on 16), and on 16 with the app through PgBouncer in
-  # transaction mode (integrations/pooler.sh), side by side. On 17 the TypeScript ones (Next.js, Node) run on the
+  # The SDKs' conformance suites (.NET's among them, and Electric's) on 17 and 18 (ci.yml runs them on 16), and on 16 with the app through PgBouncer in
+  # transaction mode (integrations/pooler.sh; Electric's own connection stays direct), side by side. On 17 the TypeScript ones (Next.js, Node, Electric) run on the
   # lowest Node the packages' engines state (sdk/typescript/*/package.json), the others on the Node CI uses. The Python
   # ones (FastAPI's, Django's) also on 16 with the oldest versions of FastAPI, SQLAlchemy, psycopg, asyncpg and Django
   # the Python package's extras allow, not uv.lock's
@@ -212,6 +212,8 @@ jobs:
         run: bash integrations/nextjs/test.sh
       - if: ${{ !matrix.resolution }}
         run: bash integrations/node/test.sh
+      - if: ${{ !matrix.resolution }}
+        run: bash integrations/electric/test.sh
       - if: ${{ !matrix.resolution }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e   # v7.0.0
         with: {go-version: "1.26", cache-dependency-path: integrations/go/go.sum}
