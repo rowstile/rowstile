@@ -138,7 +138,8 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   type's permissions a type of their own (`NotePermission`, with `NoteEdit` and `NoteView`), which the SDK's
   `Can`, `PermsOf` and `List` take. The calls themselves are the SDK's: [Go](../stacks/go.md). A transaction is
   one principal's: inside one `rowstile.Tx` signed in already, `Tx` for someone else gives an error before any SQL
-  is sent. It may change before it is supported.
+  is sent; `rowstile.WithOptions(pool, opts)` has `Tx` begin one with pgx's options. It may change before it is
+  supported.
 - **C#: preview.** `rowstile client csharp > Authz.g.cs` writes the policy's names for the .NET SDK
   ([ASP.NET Core and EF Core](../stacks/aspnetcore.md)): a class for each type, holding its `ObjectType` and its
   permissions (`Policy.Note.Edit`), which the SDK's calls take, so a misspelled one doesn't compile. A name is the
@@ -154,7 +155,8 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
 - **Java: preview.** `Rowstile.transaction(conn, who, work)` runs `work` in a transaction signed in, and
   `Rowstile.signIn(conn, who)` signs in one already open; `Rowstile.actingAs(who, work)` and `Rowstile.job(who, work)`
   say whom the transactions Spring begins act for. A transaction is one principal's: in Spring, work for someone else
-  that joins one signed in already throws an `IllegalStateException` before any SQL is sent. `Authz` has `can`,
+  that joins one signed in already, or a statement on its connection while the code acts for someone else, throws an
+  `IllegalStateException` before any SQL is sent. `Rowstile.signedInAlready(signed, who)` is that error. `Authz` has `can`,
   `perms`, `permsOf`, `list` (with `after` and `limit`), `verdict`, `expect`, `connectionCheck` and `check`, over
   one connection (`Authz.on(conn)`) or, in Spring, the transaction open now. It also has `Refused`, `NotFound`, `ConnectionProblem`, `Problem` and
   `Errors.problem(e)`, and the policy's names as `ObjectType` constants and an enum of each type's permissions. It may

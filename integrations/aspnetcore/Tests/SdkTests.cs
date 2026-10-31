@@ -401,9 +401,10 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
     [Fact]
     public async Task A_transaction_is_one_principals()
     {
-        const string Service1 =
-            "this transaction is signed in as 1 already, and a sign-in lasts the database transaction: service:1's work "
-            + "can't run inside it. Run it after, or in a transaction of its own (another connection)";
+        static string Said(string who) =>
+            "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: " + who
+            + "'s work can't run inside it. Run it after, or in a transaction of its own (another connection)";
+        var service1 = Said("service 1");
         await using var ctx = Context();
         using (Acting.As(Principal.User(1)))
         {
@@ -418,21 +419,20 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
             // anyone else's is refused before anything is sent for it: a query, a write, SaveChanges, the runtime's calls
             using (Acting.As(new Principal("service", "1")))
             {
-                Assert.Equal(Service1, Assert.Throws<InvalidOperationException>(() => Notes(ctx)).Message);
-                Assert.Equal(Service1, (await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Notes.CountAsync())).Message);
+                Assert.Equal(service1, Assert.Throws<InvalidOperationException>(() => Notes(ctx)).Message);
+                Assert.Equal(service1, (await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Notes.CountAsync())).Message);
                 await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Notes.Where(n => n.Id == 3).ExecuteUpdateAsync(s => s.SetProperty(n => n.Body, "the job's")));
-                Assert.Equal(Service1, Assert.Throws<InvalidOperationException>(() => ctx.SaveChanges()).Message);
-                Assert.Equal(Service1, (await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.SaveChangesAsync())).Message);
+                Assert.Equal(service1, Assert.Throws<InvalidOperationException>(() => ctx.SaveChanges()).Message);
+                Assert.Equal(service1, (await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.SaveChangesAsync())).Message);
                 await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Database.CanAsync(Policy.Note.Edit, 1));
             }
             using (Acting.As(Principal.User(2)))
             {
-                Assert.Contains(": 2's work can't run inside it", Assert.Throws<InvalidOperationException>(() => Notes(ctx)).Message, StringComparison.Ordinal);
+                Assert.Equal(Said("user 2"), Assert.Throws<InvalidOperationException>(() => Notes(ctx)).Message);
             }
             using (Acting.As(Principal.Nobody))
             {
-                var nobody = Assert.Throws<InvalidOperationException>(() => ctx.Notes.Count());
-                Assert.Contains(": the work of code that acts for no one can't run inside it. Run it after", nobody.Message, StringComparison.Ordinal);
+                Assert.Equal(Said("nobody"), Assert.Throws<InvalidOperationException>(() => ctx.Notes.Count()).Message);
             }
             // the transaction goes on as ann's: it reads and writes as hers, and commits
             Assert.Equal("1", await ctx.Database.SqlQuery<string>($"SELECT current_setting('authz.user_id', true) AS \"Value\"").SingleAsync());

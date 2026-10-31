@@ -20,9 +20,11 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration;
@@ -30,12 +32,18 @@ import org.springframework.boot.jdbc.autoconfigure.JdbcClientAutoConfiguration;
 import org.springframework.boot.jdbc.autoconfigure.JdbcTemplateAutoConfiguration;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.UnexpectedRollbackException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -128,22 +136,163 @@ class AutoConfigurationTest extends Conformance {
             }));
             assertEquals(List.of(), ran);
             assertEquals(List.of(1L, 3L), seen.get(0));
-            assertEquals("this transaction is signed in as 1 already, and a sign-in lasts the database transaction: "
-                    + "service:1's work can't run inside it. Run it after, or in a transaction of its own (another "
-                    + "connection)", seen.get(1));
-            assertTrue(seen.get(2).toString().contains("signed in as 1 already") && seen.get(2).toString().contains(
-                    ": 2's work can't run inside it"), seen.get(2).toString());
-            assertTrue(seen.get(3).toString().contains(": the work of code that acts for no one can't run inside it. "
-                    + "Run it after, or in a transaction of its own"), seen.get(3).toString());
+            assertEquals(List.of(said("service 1"), said("user 2"), said("nobody")), seen.subList(1, 4));
             assertEquals(List.of(1, "1", List.of(1L, 3L)), seen.subList(4, 7));
             assertEquals(List.of("still ann's"), Rowstile.actingAs(Principal.user(1), () -> tx.execute(s ->
                     jdbc.sql("SELECT body FROM app.notes WHERE id = 1").query(String.class).list())));
             // a transaction of its own, after or on another connection, is the other's
             assertEquals(List.of(2L, 3L), Rowstile.actingAs(Principal.user(2), () -> projects(jdbc, tm)));
-            // the manager the app gets stands in for Spring Boot's: itself, and no other
-            assertEquals(tm, ctx.getBean(PlatformTransactionManager.class));
-            assertNotEquals(tm, new Object());
-            assertEquals(System.identityHashCode(tm), tm.hashCode());
+            // the manager the app gets is Spring Boot's, of a subclass of its class: the app may inject it by its
+            // class (or a class above it), as by its interface
+            assertEquals(List.of(tm, tm), List.of(ctx.getBean(JdbcTransactionManager.class),
+                    ctx.getBean(DataSourceTransactionManager.class)));
+            assertNotEquals(JdbcTransactionManager.class, tm.getClass());
+        });
+    }
+
+    /** What work for {@code who} inside a transaction signed in as user 1 is refused with. */
+    static String said(String who) {
+        return "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: " + who
+                + "'s work can't run inside it. Run it after, or in a transaction of its own (another connection)";
+    }
+
+    /** What {@code work} threw (an IllegalStateException), or that it ran. */
+    static String refused(Runnable work) {
+        try {
+            work.run();
+            return "it ran";
+        } catch (IllegalStateException e) {
+            return e.getMessage();
+        }
+    }
+
+    @Test
+    @DisplayName("... and so is each statement on its connection while the code acts for someone else: JdbcClient's, Authz's")
+    void eachStatement() throws SQLException {
+        seed();
+        app(WORKER.appUrl()).run(ctx -> {
+            JdbcClient jdbc = ctx.getBean(JdbcClient.class);
+            Authz authz = ctx.getBean(Authz.class);
+            DataSource ds = ctx.getBean(DataSource.class);
+            PlatformTransactionManager tm = ctx.getBean(PlatformTransactionManager.class);
+            TransactionTemplate tx = new TransactionTemplate(tm);
+            TransactionTemplate nested = new TransactionTemplate(tm);
+            nested.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
+            TransactionTemplate supports = new TransactionTemplate(tm);
+            supports.setPropagationBehavior(TransactionDefinition.PROPAGATION_SUPPORTS);
+            List<Object> seen = Rowstile.actingAs(Principal.user(1), () -> tx.execute(s -> List.of(
+                    // a plain JdbcClient call, the runtime's, a write: nothing is sent for them
+                    refused(() -> Rowstile.actingAs(Principal.user(2), () -> signedIn(jdbc))),
+                    refused(() -> Rowstile.actingAs(Principal.of("service", 1),
+                            () -> authz.can(AuthzNames.ProjectPermission.EDIT, 1))),
+                    refused(() -> Rowstile.actingAs(Principal.NOBODY,
+                            () -> jdbc.sql("UPDATE app.notes SET body = 'gone' WHERE id = 1").update())),
+                    // work that would join it without a transaction of its own (SUPPORTS): refused as it joins
+                    refused(() -> Rowstile.actingAs(Principal.user(2), () -> supports.execute(n -> signedIn(jdbc)))),
+                    // a savepoint rolled back keeps the sign-in: still ann's, and still refused for anyone else
+                    nested.execute(n -> {
+                        jdbc.sql("UPDATE app.notes SET body = 'gone' WHERE id = 1").update();
+                        n.setRollbackOnly();
+                        return signedIn(jdbc);
+                    }),
+                    refused(() -> Rowstile.actingAs(Principal.user(2), () -> signedIn(jdbc))),
+                    // the transaction's connection is equal to itself alone
+                    sameConnection(ds),
+                    // and it goes on as ann's, and commits
+                    jdbc.sql("UPDATE app.notes SET body = 'still ann''s' WHERE id = 1").update(), signedIn(jdbc))));
+            assertEquals(List.of(said("user 2"), said("service 1"), said("nobody"), said("user 2"), "1",
+                    said("user 2"), List.of(true, false, true, SQLException.class), 1, "1"), seen);
+            assertEquals(List.of("still ann's"), Rowstile.actingAs(Principal.user(1), () -> tx.execute(s ->
+                    jdbc.sql("SELECT body FROM app.notes WHERE id = 1").query(String.class).list())));
+            // outside a transaction, a statement is anyone's (SUPPORTS begins none): the database says no one signed in
+            assertEquals("", Rowstile.actingAs(Principal.user(2), () -> supports.execute(n ->
+                    jdbc.sql("SELECT coalesce(current_setting('authz.user_id', true), '')").query(String.class).single())));
+        });
+    }
+
+    /**
+     * Whether the transaction's connection is equal to itself, to another, and hashes as itself; and what an error of
+     * the connection's own is thrown as (as it is).
+     */
+    static List<Object> sameConnection(DataSource ds) {
+        Connection conn = DataSourceUtils.getConnection(ds);
+        try {
+            return List.of(conn.equals(conn), conn.equals(new Object()), conn.hashCode() == System.identityHashCode(conn),
+                    assertThrows(SQLException.class, () -> conn.unwrap(String.class)).getClass());
+        } finally {
+            DataSourceUtils.releaseConnection(conn, ds);
+        }
+    }
+
+    /** A transaction manager of a final class, and a data source of one: stood in for as they can be. */
+    @Configuration(proxyBeanMethods = false)
+    static class FinalOnes {
+        static final class FinalDataSource extends PGSimpleDataSource {
+            private static final long serialVersionUID = 1L;
+        }
+
+        static final class FinalManager extends DataSourceTransactionManager {
+            private static final long serialVersionUID = 1L;
+
+            FinalManager(DataSource ds) {
+                super(ds);
+            }
+        }
+
+        @Bean
+        FinalDataSource dataSource() {
+            FinalDataSource ds = new FinalDataSource();
+            ds.setURL(WORKER.appUrl());
+            return ds;
+        }
+
+        @Bean
+        FinalManager transactionManager(DataSource dataSource) {
+            return new FinalManager(dataSource);
+        }
+    }
+
+    /** A transaction manager over a data source of its own, which is no bean of the app's. */
+    @Configuration(proxyBeanMethods = false)
+    static class OwnDataSource {
+        @Bean
+        DataSourceTransactionManager transactionManager() {
+            PGSimpleDataSource ds = new PGSimpleDataSource();
+            ds.setURL(WORKER.appUrl());
+            return new DataSourceTransactionManager(ds);
+        }
+    }
+
+    @Test
+    @DisplayName("a manager of a final class signs in, and work joining for someone else is refused at its first statement")
+    void finalClasses() throws SQLException {
+        seed();
+        app(WORKER.appUrl()).withUserConfiguration(FinalOnes.class).run(ctx -> {
+            JdbcClient jdbc = ctx.getBean(JdbcClient.class);
+            PlatformTransactionManager tm = ctx.getBean(PlatformTransactionManager.class);
+            assertEquals(FinalOnes.FinalManager.class, tm.getClass()); // as it is
+            assertFalse(ctx.getBean(DataSource.class) instanceof FinalOnes.FinalDataSource); // its interfaces
+            TransactionTemplate tx = new TransactionTemplate(tm);
+            List<String> seen = new ArrayList<>();
+            // the work is refused at its first statement, which fails the transaction it joined: rolled back
+            assertThrows(UnexpectedRollbackException.class, () -> Rowstile.actingAs(Principal.user(1), () -> tx.execute(s -> {
+                seen.add(signedIn(jdbc));
+                jdbc.sql("UPDATE app.notes SET body = 'gone' WHERE id = 1").update();
+                seen.add(refused(() -> Rowstile.actingAs(Principal.user(2), () -> tx.execute(n -> signedIn(jdbc)))));
+                return null;
+            })));
+            assertEquals(List.of("1", said("user 2")), seen);
+            assertEquals(List.of("plan"), Rowstile.actingAs(Principal.user(1), () -> tx.execute(s ->
+                    jdbc.sql("SELECT body FROM app.notes WHERE id = 1").query(String.class).list())));
+        });
+        // a data source that is no bean: each transaction signs in all the same, and no one else's work joins it
+        app(WORKER.appUrl()).withUserConfiguration(OwnDataSource.class).run(ctx -> {
+            DataSourceTransactionManager tm = ctx.getBean(DataSourceTransactionManager.class);
+            JdbcClient own = JdbcClient.create(tm.getDataSource());
+            TransactionTemplate tx = new TransactionTemplate(tm);
+            assertEquals(List.of("1", said("user 2")), Rowstile.actingAs(Principal.user(1), () -> tx.execute(s ->
+                    List.of(signedIn(own), refused(() -> Rowstile.actingAs(Principal.user(2),
+                            () -> tx.execute(n -> signedIn(own))))))));
         });
     }
 

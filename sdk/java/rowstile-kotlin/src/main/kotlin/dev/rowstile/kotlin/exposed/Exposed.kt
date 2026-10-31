@@ -5,9 +5,15 @@ import dev.rowstile.DatabaseError
 import dev.rowstile.Principal
 import dev.rowstile.Rowstile
 import dev.rowstile.kotlin.ActingAs
+import dev.rowstile.kotlin.actingAs
+import dev.rowstile.kotlin.checked
+import dev.rowstile.kotlin.refuseAnyoneBut
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.v1.core.Key
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.Transaction
+import org.jetbrains.exposed.v1.core.statements.GlobalStatementInterceptor
+import org.jetbrains.exposed.v1.core.statements.StatementContext
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import java.sql.Connection
@@ -19,6 +25,12 @@ private val JdbcTransaction.jdbc: Connection get() = connection.connection as Co
 /** Who the database transaction is signed in as, kept on its outermost Exposed transaction (a savepoint's outer). */
 private val SIGNED = Key<Principal>()
 
+/**
+ * The same, when [transaction] or [suspendTransaction] signed it in: then each statement in it is checked
+ * ([OnePrincipal]). A transaction signed in by hand ([signIn]) is the app's to keep to one principal.
+ */
+private val CHECKED = Key<Principal>()
+
 /** The Exposed transaction the database transaction began with: this one, or the one a savepoint is inside. */
 private val JdbcTransaction.outermost: JdbcTransaction get() = generateSequence(this) { it.outerTransaction }.last()
 
@@ -29,12 +41,29 @@ private val JdbcTransaction.outermost: JdbcTransaction get() = generateSequence(
  */
 private fun JdbcTransaction.enter(who: Principal) {
     when (val signed = outermost.getUserData(SIGNED)) {
-        null -> signIn(who)
+        null -> {
+            signIn(who)
+            outermost.putUserData(CHECKED, who)
+        }
         who -> {}
-        else -> throw IllegalStateException(
-            "this transaction is signed in as $signed already, and a sign-in lasts the database transaction: " +
-                "$who's work can't run inside it. Run it after, or in a transaction of its own (another connection)",
-        )
+        else -> throw Rowstile.signedInAlready(signed, who)
+    }
+}
+
+/** Refuses a statement for anyone but whom this transaction is signed in as, if [enter] signed it in. */
+private fun JdbcTransaction.check() {
+    outermost.getUserData(CHECKED)?.let(::refuseAnyoneBut)
+}
+
+/**
+ * Before each statement Exposed runs, in any of its transactions (a global interceptor, which Exposed finds by its
+ * service file): in one [transaction] or [suspendTransaction] signed in, while the code acts for someone else (an
+ * [ActingAs] of another principal's), or for nobody, the statement is refused before it is sent
+ * (IllegalStateException, [Rowstile.signedInAlready]), and the transaction is left as it was.
+ */
+internal class OnePrincipal : GlobalStatementInterceptor {
+    override fun beforeExecution(transaction: Transaction, context: StatementContext) {
+        (transaction as JdbcTransaction).check()
     }
 }
 
@@ -52,12 +81,20 @@ public fun JdbcTransaction.signIn(who: Principal) {
     outermost.putUserData(SIGNED, who)
 }
 
-/** The runtime's calls (`can`, `list`, `expect`, ...) in this transaction, as whoever it is signed in as. */
-public val JdbcTransaction.calls: Authz get() = Authz.on(jdbc)
+/**
+ * The runtime's calls (`can`, `list`, `expect`, ...) in this transaction, as whoever it is signed in as. In one
+ * [transaction] or [suspendTransaction] signed in, a call while the code acts for someone else is refused before it
+ * is sent, as a statement is.
+ */
+public val JdbcTransaction.calls: Authz get() = Authz.on(jdbc.checked { check() })
 
 /**
  * Exposed's `transaction`, signed in as [who] first: everything [statement] runs is as them, and the sign-in ends with
  * the transaction. Each attempt Exposed makes (it tries again after a database error) signs in again.
+ *
+ * Inside, `actingFor()` is [who]. A transaction is one principal's: in it, a statement while the code acts for
+ * someone else, or for nobody, is refused before it is sent (IllegalStateException), and the transaction is left as
+ * it was.
  *
  * Inside another transaction on the same database, Exposed runs it in the outer one (or in a savepoint of it), where
  * a sign-in would last past the block: it signs in only a transaction no one has signed in yet. In one signed in as
@@ -69,15 +106,17 @@ public val JdbcTransaction.calls: Authz get() = Authz.on(jdbc)
  * ```
  */
 public fun <T> transaction(who: Principal, db: Database? = null, statement: JdbcTransaction.() -> T): T =
-    org.jetbrains.exposed.v1.jdbc.transactions.transaction(db) {
-        enter(who)
-        statement()
+    actingAs(who) {
+        org.jetbrains.exposed.v1.jdbc.transactions.transaction(db) {
+            enter(who)
+            statement()
+        }
     }
 
 /**
  * Exposed's `suspendTransaction` (what `newSuspendedTransaction` became), signed in as [who] first; inside,
- * `actingFor()` is [who]. Inside another transaction, as [transaction]: run as it is for [who], refused for anyone
- * else.
+ * `actingFor()` is [who], and a statement while the code acts for anyone else is refused, as in [transaction].
+ * Inside another transaction, as [transaction]: run as it is for [who], refused for anyone else.
  *
  * ```
  * suspendTransaction(actingFor()) { Notes.selectAll().map { it[Notes.id].value } }  // as the request's user

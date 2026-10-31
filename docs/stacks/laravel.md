@@ -86,7 +86,9 @@ transaction, so a persistent connection carries no one into the next request. Co
 migration, an artisan command) signs nothing in: as the app role, the database refuses what needs to know who asks
 (AZ701). `Rowstile::actingAs(2, fn () => ...)` acts for someone anywhere else. A transaction is one principal's:
 once it is signed in, a statement for someone else, or for no one, throws a `LogicException` before it is sent, and
-the transaction is as it was. Run that work after it, or in a transaction of its own.
+the transaction is as it was. Run that work after it, or in a transaction of its own. On PDO alone,
+`Rowstile::transaction($pdo, fn)` refuses to run inside a transaction it didn't begin (`$pdo->beginTransaction()`):
+who it is signed in as can't be known. Let `Rowstile::transaction` (or `transactionAs`) begin it instead.
 
 Who each request acts for is the `SignIn` middleware's to say. Put it first, before route model binding reads a row:
 

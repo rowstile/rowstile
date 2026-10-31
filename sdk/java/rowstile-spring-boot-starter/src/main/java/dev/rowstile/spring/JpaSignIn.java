@@ -5,6 +5,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.OptimisticLockException;
 import java.util.Locale;
 import java.util.function.Supplier;
+import javax.sql.DataSource;
 import org.hibernate.StaleObjectStateException;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.springframework.dao.support.DataAccessUtils;
@@ -21,13 +22,20 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * rules allow the change (the row changed since it was read: 409).
  */
 final class JpaSignIn extends SignIn {
-    private final JpaTransactionManager manager;
     private final Supplier<Authz> authz;
 
     JpaSignIn(JpaTransactionManager manager, Supplier<PrincipalSource> source, Supplier<Authz> authz) {
-        super(manager, manager::getDataSource, source);
-        this.manager = manager;
+        super(manager, source);
         this.authz = authz;
+    }
+
+    private JpaTransactionManager jpa() {
+        return (JpaTransactionManager) manager();
+    }
+
+    @Override
+    DataSource dataSource() {
+        return jpa().getDataSource();
     }
 
     @Override
@@ -36,7 +44,7 @@ final class JpaSignIn extends SignIn {
             return;
         }
         EntityManagerHolder holder = (EntityManagerHolder)
-                TransactionSynchronizationManager.getResource(manager.getEntityManagerFactory());
+                TransactionSynchronizationManager.getResource(jpa().getEntityManagerFactory());
         EntityManager em = holder.getEntityManager();
         try {
             em.flush();
@@ -45,7 +53,7 @@ final class JpaSignIn extends SignIn {
                 throw why(em, stale, locked);
             }
             // anything else (Hibernate's own version checks, a constraint) as the commit would have thrown it
-            throw DataAccessUtils.translateIfNecessary(e, manager.getJpaDialect());
+            throw DataAccessUtils.translateIfNecessary(e, jpa().getJpaDialect());
         }
     }
 

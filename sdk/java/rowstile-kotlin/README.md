@@ -17,7 +17,10 @@ Artifact `dev.rowstile:rowstile-kotlin`. Its packages:
   `errorCode()`, which read an error as rowstile's answer, or give null.
 - `dev.rowstile.kotlin.exposed`: `transaction(who, db) { ... }` and `suspendTransaction(who, db) { ... }`, Exposed's
   own, signed in first; `JdbcTransaction.signIn(who)` and `JdbcTransaction.calls`; and `calls.expect(count, Table,
-  command, key)`, which asks why an UPDATE or DELETE changed nothing (404, or 403 with the reason).
+  command, key)`, which asks why an UPDATE or DELETE changed nothing (404, or 403 with the reason). A transaction is
+  one principal's: in one these signed in, a statement while the code acts for someone else (an `ActingAs` of
+  another principal's), or for nobody, is refused before it is sent (`IllegalStateException`), whether it is
+  Exposed's, a call of `calls`, or one on `DataSource.transaction`'s connection.
 - `dev.rowstile.kotlin.ktor`: the plugin, `install(Rowstile) { dataSource = pool }`. Each request's code acts for
   whoever Ktor's Authentication found (a `UserIdPrincipal`, a `dev.rowstile.Principal`; or say who with `principal =
   { call -> ... }`); rowstile's answers become problem details (RFC 9457): a refusal 403, a row that isn't there 404,

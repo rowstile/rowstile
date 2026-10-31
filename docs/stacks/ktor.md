@@ -108,6 +108,15 @@ The sign-in lasts the transaction, so a pooled connection never carries one requ
 PgBouncer in transaction mode is safe ([Behind a pooler](../operations.md#behind-a-pooler)). A query outside a
 transaction signed in fails with the not-signed-in error (AZ701).
 
+Inside `transaction` and `suspendTransaction`, `actingFor()` is the principal they signed in as. A transaction is
+one principal's: in one they signed in, a statement while the code acts for someone else (in a
+`withContext(ActingAs(...))`), or for nobody, is refused before it is sent, with an `IllegalStateException`, and the
+transaction goes on as it was. That holds for Exposed's statements, for `calls`, and for the statements on the
+connection `DataSource.transaction` gives its block. The words are every SDK's: `this transaction is signed in as
+user 1 already, and a sign-in lasts the database transaction: user 2's work can't run inside it. Run it after, or in
+a transaction of its own (another connection)`. A transaction of Exposed's own that the app signs in by hand
+(`signIn(who)`) is the app's to keep to one principal.
+
 Exposed tries a transaction again after any database error, three times by default, a refusal too. Ask for one
 attempt:
 

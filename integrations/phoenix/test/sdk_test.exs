@@ -14,6 +14,12 @@ defmodule Conformance.SdkTest do
   defp as(user, fun),
     do: Rowstile.transact(Repo, fn -> {:ok, fun.()} end, as: Rowstile.user(user))
 
+  # what work for who inside a transaction signed in as signed is refused with
+  defp said(signed, who) do
+    "this transaction is signed in as #{signed} already, and a sign-in lasts the database transaction: " <>
+      "#{who}'s work can't run inside it. Run it after, or in a transaction of its own (another connection)"
+  end
+
   test "queries by permission: a join on authz.list, and one call for a list's buttons" do
     assert json(call("GET", "/projects/editable", "3")) == [1]
 
@@ -45,16 +51,20 @@ defmodule Conformance.SdkTest do
             end)
           end
 
+        nobody =
+          assert_raise RuntimeError, fn ->
+            Rowstile.transact(Repo, fn -> {:ok, send(ran, :ran)} end, as: Rowstile.nobody())
+          end
+
         refute_received :ran
         # the outer transaction, as it was: still ann's, who writes as herself
         %{num_rows: 1} = Repo.query!("UPDATE app.notes SET body = 'ann' WHERE id = 1")
-        {inside, refused.message, ids()}
+        {inside, [refused.message, nobody.message], ids()}
       end)
 
     assert {:ok, {inside, refused, after_it}} = seen
     assert {inside, after_it} == {expected()["1"], expected()["1"]}
-    assert refused =~ "signed in as 1 already"
-    assert refused =~ "2's work can't run inside it"
+    assert refused == [said("user 1", "user 2"), said("user 1", "nobody")]
 
     # committed as ann's, and bo's note left as it was
     bodies =
@@ -118,7 +128,7 @@ defmodule Conformance.SdkTest do
                 as: Rowstile.user(2)
               )
 
-            assert_raise RuntimeError, ~r/signed in as 2 already/, fn ->
+            assert_raise RuntimeError, said("user 2", "user 1"), fn ->
               Rowstile.transact(tx, fn _ -> flunk("ran") end, as: Rowstile.user(1))
             end
 

@@ -68,8 +68,12 @@ for. A sign-in lasts the database transaction, so a transaction is one principal
 the same principal is a savepoint. One for someone else, or for code that acts for no one, raises a
 `RuntimeError` before anything is sent, and the transaction goes on as its principal's: run that work after it, or
 in a transaction of its own on another connection. So does a block inside a transaction no block began (psycopg
-opens one at the first statement unless `autocommit` is on): who it is signed in as can't be known. asyncpg's
-`transaction` does the same.
+opens one at the first statement unless `autocommit` is on, and `conn.transaction()` begins one): who it is signed
+in as can't be known. Begin the transaction with `transaction(conn, who)` instead; for an isolation level or a
+read-only transaction, set it on the connection first (`conn.isolation_level`, `conn.read_only`), and psycopg
+begins the block's transaction with it. asyncpg's `transaction` does the same, and refuses a block inside a
+transaction `conn.transaction()` began; there, begin it yourself with asyncpg's options and sign it in as its first
+statement, `await conn.execute(rowstile.act_as_sql(who))`.
 
 An UPDATE or DELETE the rules refuse changes 0 rows, without an error; `expect` asks why, and raises
 `Refused` or `NotFound` (it takes the row count, the rows, or the cursor):
