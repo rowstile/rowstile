@@ -243,9 +243,10 @@ test("queries by permission", async () => {
 test("a share made in the app's own code", async () => {
   const shares = (who: string) => fetch(`${SERVER}/api/projects/1/shares`, as(who));
   const change = (method: string, who: string, user: number) => fetch(`${SERVER}/api/projects/1/shares`, as(who, json(method, { user })));
-  const stranger = await change("POST", "2", 2);       // bo can't see project 1
+  const stranger = await change("POST", "2", 2);       // bo can't see project 1: why, as for one that isn't there
   expect([stranger.status, await stranger.json()]).toEqual([403, { type: "https://rowstile.dev/problems/refused",
-    title: "Forbidden", status: 403, detail: "you cannot share project 1", table: null, command: null, why: [], code: "AZ705" }]);
+    title: "Forbidden", status: 403, detail: "you cannot share project 1", table: null, command: null,
+    why: ["no   you have no access to project 1"], code: "AZ705" }]);
   expect((await change("POST", "3", 2)).status).toBe(204);        // cy, a member, edits it
   expect(await ids(await fetch(`${SERVER}/api/notes`, as("2")))).toEqual([1, 2, 3, 4]);
   expect(await ids(await shares("1"))).toEqual([{ relation: "viewer", user: "2" }]);   // its owner, who holds share

@@ -45,7 +45,7 @@ sleep 2
 docker exec "$NAME" psql -q -U postgres -c "CREATE ROLE conf_owner LOGIN PASSWORD 'owner' CREATEROLE CREATEDB" \
   -c "ALTER ROLE conf_owner SET createrole_self_grant = 'set, inherit'" -c "CREATE DATABASE conf OWNER conf_owner" \
   -c "CREATE DATABASE conf_tests OWNER conf_owner" >/dev/null || exit 1
-export ROWSTILE_OWNER_DSN="postgresql://conf_owner:owner@localhost:$PORT/conf"
+export DATABASE_URL="postgresql://conf_owner:owner@localhost:$PORT/conf"
 export ROWSTILE_TESTS_DSN="postgresql://conf_owner:owner@localhost:$PORT/conf_tests"
 APP_PORT=$PORT
 if [ "${POOLER:-}" = pgbouncer ]; then          # the app through PgBouncer in transaction mode (../pooler.sh)
@@ -87,7 +87,7 @@ $BIN/prisma migrate diff --from-config-datasource --to-schema prisma/schema.pris
 $PYTHON ../../core/cli/rowstile_cli.py migrate --check >/dev/null &&
   echo "ok    the policy's lock file is up to date" || { echo "FAIL  rowstile migrate --check"; rc=1; }
 # 12: the framework's test database, migrated the same way (the tests copy it for each worker)
-ROWSTILE_OWNER_DSN=$ROWSTILE_TESTS_DSN $BIN/prisma migrate deploy >"$LOG/migrate-tests.log" 2>&1 || { cat "$LOG/migrate-tests.log"; exit 1; }
+DATABASE_URL=$ROWSTILE_TESTS_DSN $BIN/prisma migrate deploy >"$LOG/migrate-tests.log" 2>&1 || { cat "$LOG/migrate-tests.log"; exit 1; }
 # with source maps: what the checks run of the built files is reported on the SDK's sources (vitest.config.ts)
 (cd "$ROOT" && $BIN/tsc -b sdk/typescript --sourceMap) || { echo "FAIL  the SDK doesn't build"; exit 1; }
 $BIN/prisma generate >/dev/null 2>&1 || { echo "FAIL  prisma generate"; exit 1; }
@@ -107,7 +107,7 @@ $NEXT start -p "$WEB" >"$LOG/server.log" 2>&1 & servers+=($!)
 PG_POOL_MAX=1 $NEXT start -p "$((WEB + 1))" >"$LOG/server-one.log" 2>&1 & servers+=($!)
 $NEXT start edge -p "$((WEB + 3))" >"$LOG/server-edge.log" 2>&1 & servers+=($!)
 # 13: the app refuses to start on a connection that skips row-level security (here, the owner's)
-ROWSTILE_APP_URL=$ROWSTILE_OWNER_DSN timeout 60 $NEXT start -p "$((WEB + 2))" >"$LOG/server-owner.log" 2>&1
+ROWSTILE_APP_URL=$DATABASE_URL timeout 60 $NEXT start -p "$((WEB + 2))" >"$LOG/server-owner.log" 2>&1
 if [ $? = 1 ] && grep -q "an owner skips row-level security" "$LOG/server-owner.log"; then
   echo "ok    13: the app refuses to start on the owner's connection"
 else cat "$LOG/server-owner.log"; echo "FAIL  13: the app started on the owner's connection"; rc=1; fi

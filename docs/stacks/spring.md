@@ -9,8 +9,8 @@ migrations are Flyway's. The controllers check nothing: every transaction Spring
 user, the database filters what it reads and refuses what it may not write, and the starter answers a refusal with
 403 and a hidden row with 404, as problem details.
 
-Everything here comes from `integrations/spring`, the conformance suite: a small app and the checks every supported
-stack passes (`integrations/spring/test.sh`). Another JVM language or framework on JDBC: the `rowstile` artifact
+Everything here comes from [`integrations/spring`](../../integrations/spring), the conformance suite: a small app and the checks every supported
+stack passes ([`integrations/spring/test.sh`](../../integrations/spring/test.sh)). Another JVM language or framework on JDBC: the `rowstile` artifact
 alone ([below](#jdbc-without-spring)), or [the SQL an app sends](sql.md).
 
 ## Install
@@ -31,7 +31,7 @@ The artifacts aren't on Maven Central yet: build them from the repository, into 
 ```sh
 git clone https://github.com/rowstile/rowstile && cd rowstile/sdk/java && ./mvnw install
 pip install --pre rowstile      # the command (or npm install rowstile@next)
-rowstile init                   # a first policy from your tables, a test file, rowstile.toml
+rowstile init                   # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 The conformance app's `rowstile.toml`, with its own name for the variable that holds the owner's connection:

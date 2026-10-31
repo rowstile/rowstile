@@ -523,7 +523,7 @@ CODES = {
         when="apply",
     ),
     "AZ607": Code(
-        "A migration applied out of order",
+        "The database holds the migration already, or isn't where it starts",
         "Each policy migration starts from the policy the one before it left, recorded in "
         "`authz.policy_versions`. This database is somewhere else: a migration was skipped, or the database was "
         "changed with `rowstile push` or `apply` since. Apply the migrations in order; a database changed by "
@@ -797,8 +797,9 @@ CODES = {
         "The signed-in person asked an `authz.*` function for something the policy doesn't let them do: share or "
         "unshare this object, share it with this subject (the relation's `shared if`), give a role, manage roles or "
         "keys, see who has access, the shares or the links, turn a link off, decide a request or a review, break "
-        "the glass. The message says what; `authz.explain(type, id, perm)` says why. SQLSTATE 42501; answer 403, "
-        "as the SDKs do (`Refused`, with this code).",
+        "the glass. The message says what; `authz.explain(type, id, perm)` says why, and a refused share or unshare "
+        "says it in its DETAIL (the SDKs' `why`). SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this "
+        "code).",
         when="runtime",
     ),
     "AZ706": Code(

@@ -209,6 +209,11 @@ FEATURES: list[Feature] = [
             T("concurrency.sh", "the share waits for the delete, then is refused"),
             T("scenario.sql", "share on the old id is gone"),
             T("principals.sh", "a viewer may share helper, but not grant assist, which they don't hold"),
+            T(
+                "devx.sh",
+                "a refused share says why: authz.explain's answer to the one sharing, and a refused unshare too",
+            ),
+            T("devx.sh", "and of a file they can't see, the words of one that isn't there"),
         ),
         (
             T(DIFF, "authz.share(t, i, r, st, sid)"),
@@ -633,6 +638,7 @@ FEATURES: list[Feature] = [
         (
             T("devx.sh", "compiles, applies, tests, writes the client"),
             T("devx.sh", "says before each push who gains and loses what: rows by table, permissions by type"),
+            T("devx.sh", "and with a permission gained, the rules that read it: what it opens"),
             T("devx.sh", "dev won't push to a database with a policy that isn't marked as a development database"),
             T("migrations.sh", "a save, then quiet: the migration is written, named after what changed"),
         ),
@@ -653,6 +659,7 @@ FEATURES: list[Feature] = [
             T("unit_test.py", "test_a_user_table_the_draft_leaves_out_is_said"),
             T("unit_test.py", "test_stack_of_sql_migrations"),
             T("devx.sh", "init finds dbmate from its files"),
+            T("devx.sh", "init takes the app role from the tables' grants: the one role they are granted to"),
         ),
     ),
     # --- the servers ------------------------------------------------------------------------------------

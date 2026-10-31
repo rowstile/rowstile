@@ -10,16 +10,16 @@ the tables; everything else here is plain SQL.
   its members) may call `act_as`, and services sign in with `authz.login_key()` or `authz.login_jwt()`.
   `SELECT * FROM authz.connection_check()` at start-up says what is wrong with the app's connection.
 - **Memory**: the inheritance tables are read on every check. Give Postgres enough shared buffers for
-  the database's hot part; on the benchmark of 2026-10-03 (a build from before the rename, `core/bench/README.md`),
+  the database's hot part; on the benchmark of 2026-10-03 (a build from before the rename, [`core/bench/README.md`](../core/bench/README.md)),
   250k folders needed more than 1 GB and a million (a 6 GB database, 3.4 GB of it inheritance tables:
-  `core/bench/results/2026-10-03-20000000-files-pg16.txt`) more than 4 GB.
+  [`core/bench/results/2026-10-03-20000000-files-pg16.txt`](../core/bench/results/2026-10-03-20000000-files-pg16.txt)) more than 4 GB.
 - **Check your setup**: `SELECT * FROM authz.lint()` lists ways around the rules it can see.
 
 ## Behind a pooler
 
 rowstile signs in each transaction, so a pooler in transaction mode works for the app's connection. Every
 night both SDKs' conformance suites run with the app's connection through PgBouncer 1.26 in transaction mode,
-keeping prepared statements (`integrations/pooler.sh`); the owner and the change feed connect directly.
+keeping prepared statements ([`integrations/pooler.sh`](../integrations/pooler.sh)); the owner and the change feed connect directly.
 Supavisor (Supabase's pooler) was tried by hand, before 0.1.0-alpha.1: [Managed Postgres](managed-postgres.md).
 Session mode works as plain connections do. Statement mode can't: signing in and the queries after it are one
 transaction, and it refuses transactions.
@@ -101,7 +101,7 @@ is not upgraded: apply the policy from scratch, on a new database, or on the sam
 `rowstile remove --yes` (shares and history stay), then `rowstile apply`. Then upgrade from release to release
 as above.
 
-The tests (`core/tests/upgrade.sh`) install the release before this one (from the beta on) and make databases
+The tests ([`core/tests/upgrade.sh`](../core/tests/upgrade.sh)) install the release before this one (from the beta on) and make databases
 with it, then upgrade them: with the next migration, with `rowstile reapply`, with `rowstile apply`, and with `rowstile push`
 for a development database. Each then holds what this version makes on a new database, and the shares, API keys
 and requests made before still work.

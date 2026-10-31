@@ -60,7 +60,7 @@ alike.
 [Open it in the playground](https://rowstile.dev/playground/#e=access-on-request): the tables, the policy and the
 tests, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
-[`docs/cookbook/access-on-request/`](access-on-request/). CI takes them on every change (`core/tests/cookbook.sh`),
+[`docs/cookbook/access-on-request/`](access-on-request/). CI takes them on every change ([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)),
 and checks that every line of policy and tests shown here is in those files.
 
 More: [requests and approvals](../reference/governance.md), [emergency access](support-and-emergency-access.md),

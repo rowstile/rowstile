@@ -345,9 +345,11 @@ test("a share made in the app's own code", async () => {
   const why = await stranger.json();
   expect(why.detail).toBe("you cannot share project 1");
   expect([why.code, why.table, why.command]).toEqual(["AZ705", null, null]);   // the database's code; a share has no table
+  expect(why.why).toEqual(["no   you have no access to project 1"]);          // what authz.explain tells him
   expect((await share("3", 2)).status).toBe(204);       // cy, a member, edits it
   expect(await (await fetch(`${SERVER}/api/notes`, as("2"))).json()).toEqual([1, 2, 3, 4]);
-  expect((await share("2", 2)).status).toBe(403);       // a viewer still may not share
+  const viewer = await share("2", 2);                   // a viewer still may not share: viewer is shared by edit
+  expect([viewer.status, (await viewer.json()).why[0]]).toEqual([403, "no   user 2 does not hold edit on project 1"]);
   // 16: with someone who isn't there: 404, in the database's words (rowstile help AZ708)
   const nobody = await share("1", 99);
   expect([nobody.status, nobody.headers.get("content-type"), await nobody.json()]).toEqual([404, "application/problem+json", {

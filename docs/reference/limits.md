@@ -2,7 +2,7 @@
 
 ## Speed
 
-`core/bench/benchmark_results.txt` (`benchmark.sql`): 200,000 files, 10,000 folders, 2,000 users, nested
+[`core/bench/benchmark_results.txt`](../../core/bench/benchmark_results.txt) (`benchmark.sql`): 200,000 files, 10,000 folders, 2,000 users, nested
 teams, 500 linked folders; JIT off. These figures, and those below, were measured on 2026-10-03 by a build from
 before the rename (`rowfence 0.1.0-dev`), on the laptop the project was developed on then; no build since has
 run these benchmarks on a machine of its own.
@@ -18,7 +18,7 @@ run these benchmarks on a machine of its own.
 
 The scale benchmark (`core/bench/scale.sh --large`: a million files, 50,000 folders, writes arriving while 400
 reads a second are served) moves the folder with the most below it, about 19,000 folders, into another root in
-0.56 to 0.62 s; reads through the rules have a p95 of 3.2 ms beside the writes (`core/bench/README.md`).
+0.56 to 0.62 s; reads through the rules have a p95 of 3.2 ms beside the writes ([`core/bench/README.md`](../../core/bench/README.md)).
 
 At twenty times that (`scale.sh --full`: 20 million files, a million folders, 40,000 users; 22 and 15 million
 rows of inheritance in a 6 GB database; the same build and laptop, 8 GB of shared buffers) the same workload has reads at

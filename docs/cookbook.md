@@ -1,9 +1,9 @@
 # Cookbook
 
 Recipes for common access rules. Each has a page of its own, with the policy lines, what each does and a
-test, and a folder under `docs/cookbook/` with its own small tables (`schema.sql`), a few rows (`rows.sql`),
+test, and a folder under [`docs/cookbook/`](cookbook/) with its own small tables (`schema.sql`), a few rows (`rows.sql`),
 policy (`policy.authz`), tests (`tests.authz`) and `rowstile.toml`. CI applies and tests every one, and checks
-that every line of policy and tests a page shows is in those files (`core/tests/cookbook.sh`). Each page links
+that every line of policy and tests a page shows is in those files ([`core/tests/cookbook.sh`](../core/tests/cookbook.sh)). Each page links
 to the playground, where the recipe runs in your browser, or
 [try it on a database of your own](#trying-a-recipe-on-your-own-database).
 
@@ -70,14 +70,14 @@ SELECT * FROM authz.who_among('channel', '7', 'read', ARRAY['1', '2', '3']);
 
 It signs each one in with `authz.act_as`, so it is for whoever may call that: the app role, a backend trusted to
 sign people in.
-The messenger does this (`examples/messenger/backend/app/events.py`): its WebSocket carries only "chat 7 changed", and
+The messenger does this ([`examples/messenger/backend/app/events.py`](../examples/messenger/backend/app/events.py)): its WebSocket carries only "chat 7 changed", and
 the browser refetches through the API.
 
 ## Signing in, when the tables are under row-level security
 
 Checking a password reads a table before anyone is signed in. Keep credentials in a table the policy doesn't
 govern, and read them through a `SECURITY DEFINER` function the app role may call
-(`examples/messenger/db/migrations/0001_schema.sql`: `ms.credentials_for`). `authz.lint()` notes such functions:
+([`examples/messenger/db/migrations/0001_schema.sql`](../examples/messenger/db/migrations/0001_schema.sql): `ms.credentials_for`). `authz.lint()` notes such functions:
 check each only reads what it must.
 
 ## Trying a recipe on your own database
@@ -98,4 +98,4 @@ DATABASE_URL=postgresql://localhost/owner_only rowstile dev
 - `rowstile dev` applies the policy and runs the tests, then does it again each time you save one of them.
   `rowstile dev --once` does it once and stops.
 
-CI takes these steps for every recipe, with `--once` (`core/tests/cookbook.sh`).
+CI takes these steps for every recipe, with `--once` ([`core/tests/cookbook.sh`](../core/tests/cookbook.sh)).

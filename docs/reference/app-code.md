@@ -4,36 +4,36 @@ Python apps use [the Python SDK](../../sdk/python/README.md): `Rowstile(app, eng
 SQLAlchemy, and transactions for psycopg and asyncpg sign each transaction in, turn refusals into 403 and
 hidden rows into 404, and check the app's connection at start-up. A transaction is one principal's: inside one
 signed in already, work for someone else raises a `RuntimeError` before any SQL is sent for it, with SQLAlchemy,
-psycopg, asyncpg and Django alike. `integrations/fastapi` is its conformance suite. TypeScript apps use [the TypeScript SDK](../../sdk/typescript/README.md): `@rowstile/prisma` (a driver adapter that signs every
+psycopg, asyncpg and Django alike. [`integrations/fastapi`](../../integrations/fastapi) is its conformance suite. TypeScript apps use [the TypeScript SDK](../../sdk/typescript/README.md): `@rowstile/prisma` (a driver adapter that signs every
 transaction in, and a client extension), `/pg`, `/postgres` (postgres.js), `/drizzle`, `/next` (signed-in reads
 kept out of caches, 403 and 404 from route handlers and server actions), `/react` (`usePerms`, `<Can>`, a
-headless share dialog, live updates), `/vitest` and `/jest` (a preview); `integrations/nextjs` is their
-conformance suite, `integrations/node` a plain Express server's (a preview), and
+headless share dialog, live updates), `/vitest` and `/jest` (a preview); [`integrations/nextjs`](../../integrations/nextjs) is their
+conformance suite, [`integrations/node`](../../integrations/node) a plain Express server's (a preview), and
 `rowstile client` writes only the policy's names for them (`src/authz.gen.ts`). <!-- checked: tests/unit_test.py "test_typescript_sdk_gets_only_the_names" -->
 A transaction is one principal's: inside one these packages signed in, their work for anyone else throws an `Error`
 before anything is sent for it ([Node apps](../stacks/node.md#who-a-transaction-acts-for)).
 Rails apps use [the Ruby SDK](../../sdk/ruby/README.md), a preview: its Railtie signs every Active Record transaction
 in, answers a refusal with 403 and a hidden row with 404, and checks the app's connection when it is served;
-`integrations/rails` is its conformance suite.
+[`integrations/rails`](../../integrations/rails) is its conformance suite.
 Java apps use [the Java SDK](../../sdk/java/README.md) (preview): `dev.rowstile:rowstile` over JDBC, and
 `dev.rowstile:rowstile-spring-boot-starter`, which signs in every transaction Spring begins as the request's user and
-answers refusals with problem details; `integrations/spring` is their conformance suite, and `rowstile client java`
+answers refusals with problem details; [`integrations/spring`](../../integrations/spring) is their conformance suite, and `rowstile client java`
 writes the policy's names for them (`AuthzNames.java`).
 Kotlin apps use its Kotlin module, [`dev.rowstile:rowstile-kotlin`](../../sdk/java/rowstile-kotlin/README.md)
 (preview): transactions signed in from coroutines, Exposed's transactions signed in, and a Ktor plugin that signs in
-each request's transactions and answers refusals with problem details; `integrations/ktor` is its conformance suite,
+each request's transactions and answers refusals with problem details; [`integrations/ktor`](../../integrations/ktor) is its conformance suite,
 on the names `rowstile client java` writes.
 Rust apps use [the Rust SDK](../../sdk/rust/README.md) (preview): the `rowstile` crate signs sqlx and tokio-postgres
 transactions in, turns refusals into typed errors and problem details, and gives Axum an extractor for each request's
-transaction; `integrations/axum` is its conformance suite, and `rowstile client rust` writes the policy's names for
+transaction; [`integrations/axum`](../../integrations/axum) is its conformance suite, and `rowstile client rust` writes the policy's names for
 it (`src/authz.rs`).
 Elixir apps use [the Elixir SDK](../../sdk/elixir/README.md) (preview): `Rowstile.transact` signs an Ecto or Postgrex
 transaction in, `Rowstile.Plug` says whom each request acts for, and its Phoenix fallback answers refusals with
-problem details; `integrations/phoenix` is its conformance suite, and `rowstile client elixir` writes the policy's
+problem details; [`integrations/phoenix`](../../integrations/phoenix) is its conformance suite, and `rowstile client elixir` writes the policy's
 names for it (`lib/my_app/authz.ex`).
 PHP apps use [the PHP SDK](../../sdk/php/README.md) (preview): `rowstile/rowstile` over PDO, and in Laravel a service
 provider that signs in every transaction as the request's or the job's principal and answers refusals with problem
-details; `integrations/laravel` is its conformance suite, and `rowstile client php` writes the policy's names for it
+details; [`integrations/laravel`](../../integrations/laravel) is its conformance suite, and `rowstile client php` writes the policy's names for it
 (`database/authz.php`).
 The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
 `listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
@@ -113,6 +113,9 @@ DETAIL:  no   insert : folder.edit and owner  (line 80)
 The error's table, schema and constraint (`authz_insert`, `authz_update`) fields are set, which is what
 `refusal(error)` reads. <!-- checked: tests/devx.sh "with the table and the policy in the error's fields" -->
 An allowed write never runs this (the check is `rule OR refuse(row)`). <!-- checked: tests/devx.sh "an allowed update is not refused" -->
+A share or an unshare refused (AZ705) says why in its DETAIL too, which the SDKs give as `why`: what
+`authz.explain` answers the one sharing, for the permission sharing takes, and for an object they can't see the
+words one that isn't there gets. <!-- checked: tests/devx.sh "a refused share says why: authz.explain's answer to the one sharing, and a refused unshare too"; tests/devx.sh "and of a file they can't see, the words of one that isn't there" -->
 Updates
 and deletes the rules don't allow change no rows instead (row-level security leaves them out):
 `az.expect(result, table, command, id)` then raises `NotFound` or `Refused` with `authz.explain_rule`'s

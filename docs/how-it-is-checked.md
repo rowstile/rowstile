@@ -302,7 +302,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | Inheritance tables that match a rebuild: `authz.verify` | 1 | [app-code](reference/app-code.md) | `scenario.sql`, `moves.sh`, `keep.sh`, `apply.sh` | `difftest.py`, `interleave.py`, `stress.sh` |
 | Who holds a permission: `authz.who`, `authz.who_among` | 2 | [app-code](reference/app-code.md) | `devx.sh`, `principals.sh` | `difftest.py` |
 | Why, or why not: `authz.explain`, `authz.explain_rule` | 2 | [app-code](reference/app-code.md) | `devx.sh`, `adversarial.sh`, `docs_test.sh` | `difftest.py` |
-| Shares: `shared`, `shared by`, `shared if`, their start and end; `authz.share`, `authz.unshare`, `authz.list_shares` | 1 | [language](reference/language.md) | `multi_scenario.sql`, `governance.sh`, `concurrency.sh`, `scenario.sql`, `principals.sh` | `difftest.py`, `around.py`, `genpolicy.py`, hand answers |
+| Shares: `shared`, `shared by`, `shared if`, their start and end; `authz.share`, `authz.unshare`, `authz.list_shares` | 1 | [language](reference/language.md) | `multi_scenario.sql`, `governance.sh`, `concurrency.sh`, `scenario.sql`, `principals.sh`, `devx.sh` | `difftest.py`, `around.py`, `genpolicy.py`, hand answers |
 | Share links: `link`, `authz.create_link`, `authz.list_links`, `authz.revoke_link` | 1 | [app-code](reference/app-code.md) | `multi_scenario.sql`, `adversarial.sh` | `difftest.py`, `genpolicy.py` |
 | Custom roles at run time: `authz.create_role`, `authz.set_role_permissions`, `authz.delete_role`, `authz.roles_of` | 1 | [app-code](reference/app-code.md) | `multi_scenario.sql` | `difftest.py`, `genpolicy.py`, hand answers |
 | Signing in: `authz.act_as`, `authz.login_key`, `authz.login_jwt`, `authz.view_as`, `authz.principal`, `authz.connection_check`; signed sessions | 1 | [identity](reference/identity.md) | `sessions.sh`, `identity.sh`, `principals.sh`, `integrations/fastapi` | `around.py` |
@@ -395,7 +395,7 @@ Since October 2026 the mistakes are made by rule rather than picked by hand: [`c
 makes about 10,000 of them in the compiler (an operator of its SQL or its Python turned round, a term dropped, a
 quoting call left out), compiles every policy in the repository with each, and runs the suites on those that change
 what one of them compiles to, on GitHub's runners, [weekly](../.github/workflows/mutants.yml). A mistake no suite
-catches is listed in `core/mutants/survivors.txt`, either as one that changes no answer or with the check that would
+catches is listed in [`core/mutants/survivors.txt`](../core/mutants/survivors.txt), either as one that changes no answer or with the check that would
 catch it, and one that isn't listed fails the run. <!-- checked: tests/unit_test.py "test_a_new_survivor_fails_the_run" -->
 Up to 20 October 2026 the runs gave a result for 2,934 of the 10,749 it makes; the rest are still to run. Of those
 2,934, 2,749 change what a policy compiles to and aren't listed as changing no answer: the suites caught 2,714 of

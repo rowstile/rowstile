@@ -65,7 +65,7 @@ test "anyone with the link"
 tests, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
 [`docs/cookbook/google-docs-sharing/`](google-docs-sharing/). CI takes them on every change
-(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
+([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and checks that every line of policy and tests shown here is in those files.
 
 More: [sharing with teams, and shares that end](sharing-and-links.md),
 [links from app code](../reference/app-code.md), [the other recipes](../cookbook.md).

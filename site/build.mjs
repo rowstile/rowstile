@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { build, createMarkdownRenderer } from "vitepress";
 import { FEED, LANGUAGES, feed, forFeed, postBody } from "./blog.mjs";
 import { KEY, KEY_FILE } from "./indexnow.mjs";
-import { ORIGIN, PAGES, POSTS, REPO, deadAnchors, inSitemap, rewriteLinks, siteLink, url } from "./pages.mjs";
+import { NOTE, ORIGIN, PAGES, POSTS, REPO, deadAnchors, inSitemap, rewriteLinks, siteLink, url, withoutNotes } from "./pages.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = join(HERE, "dist");
@@ -92,9 +92,13 @@ if (POSTS.length) {
 run(process.execPath, "playground/build.mjs");
 cpSync(join(REPO, "playground", "dist"), join(DIST, "playground"), { recursive: true });
 
+// each page's Markdown, without the notes for the repository's checks (the page doesn't show them either)
 for (const [source, address] of Object.entries(PAGES)) {
   mkdirSync(dirname(join(DIST, address)), { recursive: true });
-  writeFileSync(join(DIST, address), markdownLinks(source, readFileSync(join(REPO, source), "utf8")));
+  const copy = markdownLinks(source, withoutNotes(readFileSync(join(REPO, source), "utf8")));
+  const kept = copy.split("\n").find((line) => NOTE.test(line));
+  if (kept !== undefined) throw new Error(`${source}: its Markdown copy keeps a note: ${kept}`);
+  writeFileSync(join(DIST, address), copy);
 }
 const llms = markdownLinks("llms.txt", readFileSync(join(REPO, "llms.txt"), "utf8"));
 writeFileSync(join(DIST, "llms.txt"), llms);

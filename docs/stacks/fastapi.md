@@ -6,8 +6,8 @@ A FastAPI app on SQLAlchemy (async, asyncpg) whose migrations are Alembic's. The
 request's transactions sign in as its user, the database filters what they read and refuses what they may
 not write, and the SDK answers a refusal with 403 and a hidden row with 404.
 
-Everything here comes from `integrations/fastapi`, the conformance suite: a small app and the checks every
-supported stack passes (`integrations/fastapi/test.sh`).
+Everything here comes from [`integrations/fastapi`](../../integrations/fastapi), the conformance suite: a small app and the checks every
+supported stack passes ([`integrations/fastapi/test.sh`](../../integrations/fastapi/test.sh)).
 
 To start from an app that runs instead of from this page: the
 [FastAPI starter](https://github.com/rowstile/starter-fastapi), a template repository. `docker compose up`, and
@@ -18,7 +18,7 @@ documents are shared with people and teams, with the policy, its tests and the r
 ```sh
 # while only pre-releases are published: `>=0.1.0a0` lets uv take rowstile's, and no other package's pre-release
 uv add "rowstile[fastapi,sqlalchemy,asyncpg,psycopg]>=0.1.0a0"
-uv run rowstile init        # a first policy from your tables, a test file, rowstile.toml
+uv run rowstile init        # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 asyncpg is the app's driver and psycopg is Alembic's ([Migrations](#migrations) says why). `init` reads the

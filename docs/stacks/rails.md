@@ -9,15 +9,15 @@ A Rails 8 app on Active Record and the `pg` driver, served by Puma, whose migrat
 nothing: each Active Record transaction signs in as the request's user, the database filters what it reads and
 refuses what it may not write, and the gem answers a refusal with 403 and a hidden row with 404.
 
-Everything here comes from `integrations/rails`, the conformance suite: a small app and the checks every supported
-stack passes (`integrations/rails/test.sh`). Ruby 3.3 or newer.
+Everything here comes from [`integrations/rails`](../../integrations/rails), the conformance suite: a small app and the checks every supported
+stack passes ([`integrations/rails/test.sh`](../../integrations/rails/test.sh)). Ruby 3.3 or newer.
 
 ## Install
 
 ```sh
 bundle add rowstile --version ">= 0.1.0.pre"   # the gem: the SDK (while only pre-releases are published)
 pip install --pre rowstile                     # the command (or npm install rowstile@next, or its Docker image)
-rowstile init                                  # a first policy from your tables, a test file, rowstile.toml
+rowstile init                                  # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 The gem is the SDK alone. The `rowstile` command (`init`, `migrate`, `test`, `client`) comes from npm, PyPI or its

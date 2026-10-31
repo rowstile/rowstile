@@ -1,10 +1,10 @@
 # Threat model
 
 What rowstile protects, from whom, where it relies on the deployment, and what it does not cover.
-Checked by `core/tests/adversarial.sh` (the app role attacking the policy), `core/tests/sessions.sh` (signed
-sessions), `core/tests/identity.sh` (identity and scopes), `core/tests/principals.sh` (services that sign in as
-themselves), `core/tests/difftest.py` (the database agrees with an independent evaluator) and
-`core/tests/fuzz_parser.py` (broken policies are refused cleanly). <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
+Checked by [`core/tests/adversarial.sh`](../core/tests/adversarial.sh) (the app role attacking the policy), [`core/tests/sessions.sh`](../core/tests/sessions.sh) (signed
+sessions), [`core/tests/identity.sh`](../core/tests/identity.sh) (identity and scopes), [`core/tests/principals.sh`](../core/tests/principals.sh) (services that sign in as
+themselves), [`core/tests/difftest.py`](../core/tests/difftest.py) (the database agrees with an independent evaluator) and
+[`core/tests/fuzz_parser.py`](../core/tests/fuzz_parser.py) (broken policies are refused cleanly). <!-- checked: tests/fuzz_parser.py "refused without a line number" -->
 rowstile has not been audited by anyone
 outside the project.
 

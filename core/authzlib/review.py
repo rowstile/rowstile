@@ -337,6 +337,23 @@ def closure(graph: dict[tuple[str, str], set[tuple[str, str]]], start: tuple[str
     return seen
 
 
+def rules_reading(pol: Policy) -> dict[tuple[str, str], dict[str, list[str]]]:
+    """{(type, permission): {table: [rule, ...]}}: the rules (masks aside) that name each permission themselves, on
+    their own rows or across a relation, in the policy's order: what someone who gains it may now do. The policy
+    compiles: a type governs each rule's table (AZ401), and a table has one rule of each head (AZ109)."""
+    governing: dict[str, Type] = {}
+    for t in pol.types.values():
+        governing.setdefault(t.table, t)
+    out: dict[tuple[str, str], dict[str, list[str]]] = {}
+    for r in pol.rules:
+        if r.command == "mask":
+            continue
+        for x in sorted(names_read(pol.types, governing[r.table], r.expr)):
+            if x[1] in pol.types[x[0]].perms:
+                out.setdefault(x, {}).setdefault(r.table, []).append(rule_head(r))
+    return out
+
+
 # --- the review --------------------------------------------------------------------------------------
 def mistake_of(e: PolicyError) -> BaseMistake:
     """A policy's mistake as the review reports it: 'line 12: message [AZ203]' -> its line, message and code."""

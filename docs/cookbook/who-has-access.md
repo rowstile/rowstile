@@ -46,7 +46,7 @@ test "who may see it, and what was shared"
 [Open it in the playground](https://rowstile.dev/playground/#e=who-has-access): the tables, the policy and the
 tests, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
-[`docs/cookbook/who-has-access/`](who-has-access/). CI takes them on every change (`core/tests/cookbook.sh`), and
+[`docs/cookbook/who-has-access/`](who-has-access/). CI takes them on every change ([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and
 checks that every line of policy and tests shown here is in those files, and that the SQL shown here runs, as Ann.
 
 More: [every function apps call](../reference/app-code.md), [the audit trail](../reference/governance.md),

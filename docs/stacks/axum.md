@@ -9,8 +9,8 @@ handlers check nothing: each request's transaction signs in as its user, the dat
 refuses what it may not write, and the SDK answers a refusal with 403 and a hidden row with 404, as problem details.
 An app on tokio-postgres (deadpool, bb8) has the same calls in `rowstile::pg`.
 
-Everything here comes from `integrations/axum`, the conformance suite: a small app and the checks every supported
-stack passes (`integrations/axum/test.sh`).
+Everything here comes from [`integrations/axum`](../../integrations/axum), the conformance suite: a small app and the checks every supported
+stack passes ([`integrations/axum/test.sh`](../../integrations/axum/test.sh)).
 
 ## Install
 
@@ -21,7 +21,7 @@ Rust 1.94 or newer (sqlx 0.9's; the suite runs on 1.99). The crate isn't on crat
 cargo add rowstile --git https://github.com/rowstile/rowstile --features sqlx,axum
 cargo add rowstile --git https://github.com/rowstile/rowstile --features testing --dev
 pip install --pre rowstile      # the command (or npm install rowstile@next, or its image)
-rowstile init                   # a first policy from your tables, a test file, rowstile.toml
+rowstile init                   # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 `init` writes `rowstile.toml`; the lines that say where the policy's names go (`[clients]`) and which tool runs the

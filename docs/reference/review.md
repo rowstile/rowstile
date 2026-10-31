@@ -9,7 +9,7 @@ says what a change does, in plain words, for the pull request:
 - **Meaning**: each declaration that changed, before and after, and every permission and rule that changes
   through something it uses. <!-- checked: tests/review.sh "Meaning: what changed, and what changes through it"; tests/unit_test.py "test_what_changes_through_it" -->
   When only permissions and rules changed, each is checked against the base in
-  many small worlds (made-up users, objects and links, `core/authzlib/evaluate.py`; among them the ones where
+  many small worlds (made-up users, objects and links, [`core/authzlib/evaluate.py`](../../core/authzlib/evaluate.py); among them the ones where
   every condition holds, or where most links do, so a change behind a long `and` shows, and chains of objects
   one link longer than the policies read), and in the worlds of up to three rows of each type, listed with the
   fewest links first, every one with no link or one link among them: each row with every answer its

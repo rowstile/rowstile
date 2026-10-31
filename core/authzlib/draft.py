@@ -604,7 +604,14 @@ def draft(
     return text
 
 
-CATALOG_SQL = r"""
+# The tables a draft reads: those in the schemas named ($1), or in every schema of the app's (NULL)
+TABLES = r"""FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition
+  AND (n.nspname = ANY ($1) OR ($1 IS NULL AND n.nspname NOT LIKE 'pg\_%'
+       AND n.nspname NOT IN ('information_schema', 'authz', 'authz_gen', 'authz_int', 'authz_keep')))"""
+
+CATALOG_SQL = (
+    r"""
 SELECT n.nspname || '.' || c.relname AS name,
   (SELECT json_agg(json_build_array(a.attname, format_type(a.atttypid, a.atttypmod)) ORDER BY a.attnum)
      FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped)::text AS columns,
@@ -628,8 +635,20 @@ SELECT n.nspname || '.' || c.relname AS name,
      FROM pg_catalog.pg_index x
      WHERE x.indrelid = c.oid AND x.indisunique AND NOT x.indisprimary AND x.indpred IS NULL
        AND NOT 0 = ANY (x.indkey::int2[]))::text AS uniques
-FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition
-  AND (n.nspname = ANY ($1) OR ($1 IS NULL AND n.nspname NOT LIKE 'pg\_%'
-       AND n.nspname NOT IN ('information_schema', 'authz', 'authz_gen', 'authz_int', 'authz_keep')))
+"""
+    + TABLES
+    + "\nORDER BY 1"
+)
+
+# The roles granted a privilege on those tables, but their owners, superusers and Postgres's own: the role the app
+# connects as, when only one is
+GRANTED_SQL = (
+    r"""
+SELECT DISTINCT r.rolname AS role
+FROM (SELECT c.relowner, c.relacl """
+    + TABLES
+    + r""") t
+CROSS JOIN LATERAL pg_catalog.aclexplode(t.relacl) a JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
+WHERE a.grantee <> t.relowner AND NOT r.rolsuper AND r.rolname NOT LIKE 'pg\_%'
 ORDER BY 1"""
+)

@@ -63,7 +63,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ604](AZ604.md): An inheritance condition reading a view
 - [AZ605](AZ605.md): Links used for inheritance can't expire
 - [AZ606](AZ606.md): authz.uid() returns another type
-- [AZ607](AZ607.md): A migration applied out of order
+- [AZ607](AZ607.md): The database holds the migration already, or isn't where it starts
 - [AZ608](AZ608.md): A tree swapped in that wasn't built
 - [AZ609](AZ609.md): No policy is applied
 - [AZ610](AZ610.md): Not a development database

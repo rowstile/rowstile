@@ -75,7 +75,7 @@ test "a role the admins make"
 the tests, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
 [`docs/cookbook/roles-per-organization/`](roles-per-organization/). CI takes them on every change
-(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
+([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and checks that every line of policy and tests shown here is in those files.
 
 More: [custom roles](../reference/language.md), [a multi-tenant app](multi-tenant-app.md),
 [the other recipes](../cookbook.md).

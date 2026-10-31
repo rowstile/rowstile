@@ -85,7 +85,7 @@ image is for Linux on x64 and arm64, and runs as root unless told otherwise: `-u
 yours. [Installing](docs/installing.md)
 has the rest: pre-releases, the extras, the repository.
 
-From this repository, put `core/cli` on `PATH`. `rowstile init` then finds the stack (Next.js, Prisma,
+From this repository, put [`core/cli`](core/cli) on `PATH`. `rowstile init` then finds the stack (Next.js, Prisma,
 Drizzle, FastAPI, SQLAlchemy, Alembic, goose, dbmate, Flyway), writes `rowstile.toml` for its migration tool,
 adds the SDK's packages to `package.json` (for Python, names the one to add) and says which line to change.
 
@@ -114,15 +114,15 @@ adds the SDK's packages to `package.json` (for Python, names the one to add) and
 | folder | what |
 |---|---|
 | [`core/`](core/README.md) | the compiler and the `rowstile` command, their tests and the benchmarks |
-| `sdk/` | the SDKs: [Python](sdk/python/README.md) (FastAPI, SQLAlchemy, psycopg, asyncpg) and [TypeScript](sdk/typescript/README.md) (Next.js, Prisma, Drizzle, pg, postgres.js, React), and [.NET](sdk/dotnet/README.md) (ASP.NET Core, EF Core; a preview) |
+| [`sdk/`](sdk/) | the SDKs: [Python](sdk/python/README.md) (FastAPI, SQLAlchemy, psycopg, asyncpg) and [TypeScript](sdk/typescript/README.md) (Next.js, Prisma, Drizzle, pg, postgres.js, React), and [.NET](sdk/dotnet/README.md) (ASP.NET Core, EF Core; a preview) |
 | [`integrations/`](integrations/README.md) | each SDK's conformance suite: a small app and the checks it must pass |
 | [`examples/`](examples/README.md) | complete apps built on rowstile: a file manager and a messenger |
 | [`editor/`](editor/README.md) | the VS Code and Zed extensions, a Tree-sitter grammar (Helix, Neovim); other editors start `rowstile lsp` |
-| `review-ci/` | the policy review for pull requests: a GitHub action and a GitLab CI template |
-| `docs/` | the guides and the reference, as Markdown |
-| `site/` | the docs site, rowstile.dev (VitePress): it builds the pages from `docs/` |
+| [`review-ci/`](review-ci/) | the policy review for pull requests: a GitHub action and a GitLab CI template |
+| [`docs/`](docs/) | the guides and the reference, as Markdown |
+| [`site/`](site/) | the docs site, rowstile.dev (VitePress): it builds the pages from [`docs/`](docs/) |
 | [`playground/`](playground/README.md) | rowstile in the browser (Pyodide and PGlite) |
-| `packaging/` | how rowstile is installed: npm, PyPI and a Docker image |
+| [`packaging/`](packaging/) | how rowstile is installed: npm, PyPI and a Docker image |
 | [`demo/`](demo/README.md) | the recording at the top of this page: `record.sh` runs `demo.tape` on the guide's own app |
 
 ## Contributing

@@ -2,7 +2,7 @@
 
 rowstile decides who may see a row; file contents usually live elsewhere (S3, RustFS, MinIO, R2). The
 pattern that keeps the two in step: **the row is the file's permission, and a signed URL is handed out
-only after the row was read through row-level security.** `examples/filemanager/` does this, uploads
+only after the row was read through row-level security.** [`examples/filemanager/`](../examples/filemanager/) does this, uploads
 included (`backend/app/main.py`, `backend/app/storage.py`).
 
 ## The table

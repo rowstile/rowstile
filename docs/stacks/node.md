@@ -8,7 +8,7 @@ SDK turns a refusal into `Refused` (403) and a hidden row into `NotFound` (404).
 [Next.js](nextjs.md), which also covers the React kit, and Next.js with pg in a section of its own.
 
 These come from two conformance suites: the Next.js app's checks without Prisma
-(`integrations/nextjs/tests/conformance.test.ts`), and a plain Express server's (`integrations/node`), whose tests
+([`integrations/nextjs/tests/conformance.test.ts`](../../integrations/nextjs/tests/conformance.test.ts)), and a plain Express server's ([`integrations/node`](../../integrations/node)), whose tests
 run on Jest. The Express app and `@rowstile/jest` are a **preview**: they may change in any release, and are not
 part of what 1.0 will freeze.
 

@@ -919,8 +919,19 @@ class Dev:
         if not rows:
             self.say("~", "access: nobody gains or loses anything")
             return
+        from authzlib import parse_policy
+        from authzlib.review import rules_reading
+
+        # a permission gained opens the rules that read it: an owner_id rule reading `share` changes hands with it
+        reading = rules_reading(parse_policy(text, None, files=files))
+
+        def opens(change: str, type_: str, what: str) -> str:
+            rules = reading.get((type_, what.removeprefix("permission ")), {}) if change == "gains" else {}
+            return "".join(f"\n  read by the rules of {table}: {'; '.join(heads)}" for table, heads in rules.items())
+
         parts = [
             f"{users} user(s) {change.rstrip('s')} {what} on {objs} {type_}{'' if objs == 1 else 's'}"
+            + opens(change, type_, what)
             if what.startswith("permission ")
             else f"{users} user(s) {change.rstrip('s')} {what} in {type_} ({objs} row{'' if objs == 1 else 's'})"
             for change, type_, what, users, objs in rows[:8]
@@ -1472,12 +1483,17 @@ def main(argv: list[str]) -> None:
                 if env_files.values.get("DATABASE_URL"):
                     app_url = (env_files.values["DATABASE_URL"], env_files.source["DATABASE_URL"])
             schemas = [s for s in opts.get("--schema", "").split(",") if s] or None
-            policy = transaction(
-                conn,
-                lambda db: database.draft(db, schemas, opts.get("--users"), opts.get("--role", "app_user")),
-                keep=False,
-            )
-            init(policy, opts, cfg, ENV.where, given, app_url)
+
+            def drafted(db: Db) -> tuple[str, list[str] | None, bool | None]:
+                """The draft, the roles granted the tables (None: --role named the app's), and whether the policy's
+                app role skips row-level security (None: there is no such role yet)."""
+                granted = None if "--role" in opts else database.granted_roles(db, schemas)
+                role = opts["--role"] if granted is None else granted[0] if len(granted) == 1 else "app_user"
+                policy = database.draft(db, schemas, opts.get("--users"), role)
+                return policy, granted, database.role_bypasses(db, role)
+
+            policy, granted, bypasses = transaction(conn, drafted, keep=False)
+            init(policy, opts, cfg, ENV.where, given, app_url, granted, bypasses)
         elif cmd == "reapply":
             transaction(conn, lambda db: database.reapply(db, rebuild="--force" in flags))
             print("applied again")

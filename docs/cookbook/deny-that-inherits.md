@@ -38,7 +38,7 @@ test "a hidden page hides everything below it"
 test, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
 [`docs/cookbook/deny-that-inherits/`](deny-that-inherits/). CI takes them on every change
-(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
+([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and checks that every line of policy and tests shown here is in those files.
 
 More: [denies](../reference/language.md), [folders that inherit](folders-that-inherit.md),
 [the other recipes](../cookbook.md).

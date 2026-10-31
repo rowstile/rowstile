@@ -9,15 +9,15 @@ A Laravel app on Eloquent and PDO (`pdo_pgsql`), whose migrations are Laravel's.
 transaction signs in as the request's user, the database filters what it reads and refuses what it may not write,
 and the SDK answers a refusal with 403 and a hidden row with 404.
 
-Everything here comes from `integrations/laravel`, the conformance suite: a small app and the checks every supported
-stack passes (`integrations/laravel/test.sh`). PHP 8.2 or newer for the SDK; the suite runs Laravel 13 on PHP 8.4.
+Everything here comes from [`integrations/laravel`](../../integrations/laravel), the conformance suite: a small app and the checks every supported
+stack passes ([`integrations/laravel/test.sh`](../../integrations/laravel/test.sh)). PHP 8.2 or newer for the SDK; the suite runs Laravel 13 on PHP 8.4.
 
 ## Install
 
 ```sh
 composer require rowstile/rowstile   # the SDK: not on Packagist yet (a preview); a path repository meanwhile
 pip install --pre rowstile           # the command (or npm install rowstile@next, or its Docker image)
-rowstile init                        # a first policy from your tables, a test file, rowstile.toml
+rowstile init                        # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 The package is the SDK alone. The `rowstile` command (`init`, `migrate`, `test`, `client`) comes from npm, PyPI or its

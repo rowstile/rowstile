@@ -16,8 +16,12 @@ type document = app.documents
 
 - The words after the colon say who a relation may be given to: `user`, `team#member` (a team's members),
   `link` (whoever holds a link).
-- `shared by share` names the permission that giving it takes. Here only the owner shares; write
-  `can share = owner or editor` to let editors pass it on.
+- `shared by share` names the permission that giving it takes. Here only the owner shares. `share` is a
+  permission like the others, and the rules that name it read it too: `delete : share` here, and
+  `update owner_id : share` as well in [the guide](../getting-started.md)'s policy. So
+  `can share = owner or editor` lets editors pass a document on, and also delete it and give it away. To let
+  them pass it on and do nothing more, sharing takes a permission of its own: `can reshare = owner or editor`,
+  and `shared by reshare`.
 - The app shares with `authz.share()`, signed in as the person who shares, and the database checks them. A
   share can end, and start later:
 
@@ -64,7 +68,7 @@ test "a share that starts later, and a link"
 [Open it in the playground](https://rowstile.dev/playground/#e=sharing-and-links): the tables, the policy and the
 tests, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
-[`docs/cookbook/sharing-and-links/`](sharing-and-links/). CI takes them on every change (`core/tests/cookbook.sh`),
+[`docs/cookbook/sharing-and-links/`](sharing-and-links/). CI takes them on every change ([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)),
 and checks that every line of policy and tests shown here is in those files.
 
 More: [shares](../reference/language.md), [listing and taking back shares and links](../reference/app-code.md),

@@ -1,7 +1,7 @@
 # Troubleshooting
 
 What people run into, by what they see. Most of these were first hit while building the file manager and the
-messenger. A mistake in a policy ends with its code (`[AZ203]`): its page in `docs/errors/`, or
+messenger. A mistake in a policy ends with its code (`[AZ203]`): its page in [`docs/errors/`](errors/), or
 `rowstile help AZ203`, says what it means and shows it fixed.
 
 ## On Windows: "DLL load failed ... The filename or extension is too long", or "this project's path is too long"

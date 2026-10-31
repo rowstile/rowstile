@@ -9,8 +9,8 @@ routes check nothing: each request's transactions sign in as its user, the datab
 refuses what they may not write, and the plugin answers a refusal with 403 and a hidden row with 404, as problem
 details.
 
-Everything here comes from `integrations/ktor`, the conformance suite: a small app and the checks every supported
-stack passes (`integrations/ktor/test.sh`). The Kotlin module is built on [the Java SDK](spring.md): its `Authz`,
+Everything here comes from [`integrations/ktor`](../../integrations/ktor), the conformance suite: a small app and the checks every supported
+stack passes ([`integrations/ktor/test.sh`](../../integrations/ktor/test.sh)). The Kotlin module is built on [the Java SDK](spring.md): its `Authz`,
 `Principal`, `Refused` and `NotFound` are the Java SDK's, and Kotlin adds coroutines, Exposed and Ktor.
 
 ## Install
@@ -33,7 +33,7 @@ them there too, with `mavenLocal()`.
 ```sh
 git clone https://github.com/rowstile/rowstile && cd rowstile/sdk/java && ./mvnw install
 pip install --pre rowstile      # the command (or npm install rowstile@next)
-rowstile init                   # a first policy from your tables, a test file, rowstile.toml
+rowstile init                   # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 The conformance app's `rowstile.toml`, with its own name for the variable that holds the owner's connection. The

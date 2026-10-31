@@ -97,7 +97,7 @@ test "someone in two organisations may move a project from one to the other"
 [Open it in the playground](https://rowstile.dev/playground/#e=multi-tenant-app): the tables, the policy and the
 tests, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
-[`docs/cookbook/multi-tenant-app/`](multi-tenant-app/). CI takes them on every change (`core/tests/cookbook.sh`),
+[`docs/cookbook/multi-tenant-app/`](multi-tenant-app/). CI takes them on every change ([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)),
 and checks that every line of policy and tests shown here is in those files, and that `rowstile prove` prints what
 is shown here.
 
