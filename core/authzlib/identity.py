@@ -211,6 +211,13 @@ LANGUAGE sql STABLE {DEF} AS $f$
               WHEN coalesce(current_setting('authz.scopes', true), '') = '' THEN NULL
               ELSE ARRAY(SELECT btrim(x) FROM unnest(string_to_array(current_setting('authz.scopes', true), ',')) x
                          WHERE btrim(x) <> '') END $f$;
+-- Is the signed-in session limited, by scopes (a key's, a token's) or by viewing as someone? For the app, which
+-- refuses such a session what reads more than its scopes (a sync engine's shapes): SELECT authz.session_limited().
+-- Believed only if signed, like the user: a session that set the settings by hand gets the error session_ok() gives
+CREATE FUNCTION authz.session_limited() RETURNS boolean
+LANGUAGE sql STABLE {DEF} AS $f$
+  SELECT s IS NOT NULL OR coalesce(current_setting('authz.acting_user', true), '') <> ''
+  FROM (SELECT authz_int.scopes_active() AS s) x $f$;
 -- may this transaction run a command on a table?
 CREATE FUNCTION authz_int.scope_cmd(p_table text, p_cmd text) RETURNS boolean
 LANGUAGE sql STABLE {DEF} AS $f$

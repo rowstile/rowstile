@@ -36,6 +36,13 @@
       "when": 1793449283468,
       "tag": "0004_authz_share_refusals_say_why",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793485075185,
+      "tag": "0005_authz_session_limited",
+      "breakpoints": true
     }
   ]
 }

@@ -25,6 +25,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `electricShape()` in `@rowstile/client` is the route in front of Electric that sets it, whatever the client sends:
   401 for nobody, 403 for a session limited by scopes, `Vary` on who asks. Its conformance suite runs Electric
   (`integrations/electric`, [The sync index](docs/reference/sync.md#electric)).
+- `authz.session_limited()` says whether the signed-in session is limited, by a key's or a token's scopes or by
+  viewing as someone, believing the settings only when they are signed, as the rest of rowstile does. The app role
+  may call it; `syncPrincipal()` in `@rowstile/client` now asks it instead of reading the scopes setting. A
+  migration brings it ([Identity](docs/reference/identity.md)).
 - Background jobs in Celery's and RQ's workers, for the Python SDK (preview): `rowstile.job(who)` is a `with` block
   too, for a job that acts for the user its argument names (`Principal.parse`). In either form, the database's
   refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).

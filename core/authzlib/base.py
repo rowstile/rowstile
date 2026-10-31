@@ -201,6 +201,7 @@ GENERATED_FUNCTIONS = (
     "connection_check",
     "explain_rule",
     "who_among",
+    "session_limited",
     "list_links",
     "revoke_link",
 )

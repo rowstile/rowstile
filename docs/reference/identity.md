@@ -81,6 +81,13 @@ and superusers are believed without a signature (psql, migrations, tests). <!-- 
 [`core/tests/sessions.sh`](../../core/tests/sessions.sh) checks all
 of it, on the stock Postgres image.
 
+**Is the session limited?** `authz.session_limited()` is true while the transaction is limited, by a key's or a
+token's scopes or by viewing as someone, and false for a plain sign-in, a key without scopes and nobody. <!-- checked: tests/sessions.sh "session_limited: a plain sign-in isn't limited"; tests/sessions.sh "session_limited: nobody signed in isn't either"; tests/sessions.sh "session_limited: a key without scopes isn't"; tests/sessions.sh "session_limited: a key with scopes is"; tests/sessions.sh "session_limited: viewing as someone is" -->
+An app asks it before it serves what scopes can't limit, such as a sync engine's shapes
+([Electric's route](sync.md#the-route-electricshape) refuses such a session). <!-- checked: integrations/electric/tests/shapes.test.ts "E15: a session limited by scopes is refused, 403"; integrations/electric/tests/proxy.test.ts "E15: viewing as someone is a session limited too: refused" -->
+Like the rest, it believes the settings only when they are signed: settings set by hand are an error, as in any
+other read. <!-- checked: tests/sessions.sh "session_limited: settings set by hand aren't believed, an error"; tests/sessions.sh "session_limited: ... nor scopes cleared after a key's sign-in" -->
+
 **Signing in turns JIT off** until the transaction ends (`act_as`, the logins and `view_as`). The rules' lookups
 are hashed once per read but estimated once per row, so a read of a few thousand rows through them passes
 Postgres's `jit_above_cost`, and JIT spends most of a second compiling a read that runs in a few milliseconds

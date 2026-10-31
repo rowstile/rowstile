@@ -126,6 +126,21 @@ expect "clearing its scopes is an error, not a way to write" "28000: who is sign
 expect "who_among isn't a way out of a key's scopes" "42501: authz.who_among() signs people in, which a session limited by scopes or view-as may not" -c "SELECT authz.login_key('$key') IS NOT NULL" \
   -c "SELECT count(*) FROM authz.who_among('file', '11', 'view', ARRAY['1', '2'])"
 
+echo "-- is the session limited"
+plain=$(PSQL -c "SET authz.user_id = 3" -c "SELECT authz.create_api_key('sessions test, no scopes')" | tail -n 1)
+expect "session_limited: a plain sign-in isn't limited" "f" -c "$(ACT "'user', '3'")" -c "SELECT authz.session_limited()"
+expect "session_limited: nobody signed in isn't either" "f" -c "$(ACT "NULL, NULL")" -c "SELECT authz.session_limited()"
+expect "session_limited: a key without scopes isn't" "f" -c "SELECT authz.login_key('$plain') IS NOT NULL" -c "SELECT authz.session_limited()"
+expect "session_limited: a key with scopes is" "t" -c "SELECT authz.login_key('$key') IS NOT NULL" -c "SELECT authz.session_limited()"
+expect "session_limited: viewing as someone is" "t" -c "$(ACT "'user', '5'")" \
+  -c "DO \$\$ BEGIN PERFORM authz.view_as('3', 'ticket 7'); END \$\$" -c "SELECT authz.session_limited()"
+expect "session_limited: settings set by hand aren't believed, an error" "28000: authz.user_id was set directly, so it is not believed" \
+  -c "SET LOCAL authz.user_id = 3" -c "SET LOCAL authz.scopes = ''" -c "SELECT authz.session_limited()"
+expect "session_limited: ... nor scopes cleared after a key's sign-in" "28000: who is signed in was changed after signing in" \
+  -c "SELECT authz.login_key('$key') IS NOT NULL" -c "SET LOCAL authz.scopes = ''" -c "SELECT authz.session_limited()"
+got=$(PSQL -c "SET authz.user_id = 3" -c "SET authz.scopes = 'read'" -c "SELECT authz.session_limited()")
+[ "$got" = t ] && ok "session_limited: the owner's session sets the scopes and is believed" || bad "session_limited as the owner" "$got"
+
 echo "-- rowstile's own functions switch users and sign again"
 alice=$(as -c "$(ACT "'user', '1'")" -c "SELECT count(*) FROM app.files")
 expect "who checks each person, and alice is still signed in afterwards" "$alice" -c "$(ACT "'user', '1'")" \

@@ -32,16 +32,16 @@ export interface ElectricShape {
 }
 
 /** Whom a shape is for: who the request signed in as (id null: nobody), and whether the session is limited, by
- *  scopes (a key's, a token's) or by viewing as someone. */
+ *  scopes (a key's, a token's) or by viewing as someone (authz.session_limited()). */
 export interface SyncPrincipal {
   readonly type: string;
   readonly id: string | null;
   readonly limited: boolean;
 }
 
-// (the settings as they are, as authz.who_among reads them: a session that set them by hand isn't believed, and
-// authz.principal() says so with an error)
-const WHO = "SELECT p.principal_type, p.principal_id, coalesce(current_setting('authz.scopes', true), '') <> '' AS limited " +
+// (authz.session_limited() believes the settings only when signed, as authz.principal() does: a session that set
+// them by hand gets an error)
+const WHO = "SELECT p.principal_type, p.principal_id, authz.session_limited() AS limited " +
   "FROM (SELECT 1) one LEFT JOIN authz.principal() p ON true";
 
 /** Who the transaction q is signed in as, for a shape: call it in a transaction signed in the app's way. */
