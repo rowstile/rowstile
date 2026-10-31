@@ -76,6 +76,22 @@ public final class Rowstile {
     }
 
     /**
+     * The error for {@code who}'s work inside a transaction signed in as {@code signed}, thrown before anything is
+     * sent for it. A sign-in lasts the database transaction, so signing in again inside it would make everything after
+     * it {@code who}'s: a transaction is one principal's. The Spring starter and the Kotlin module throw it.
+     */
+    public static IllegalStateException signedInAlready(Principal signed, Principal who) {
+        return new IllegalStateException("this transaction is signed in as " + name(signed) + " already, and a "
+                + "sign-in lasts the database transaction: " + name(who) + "'s work can't run inside it. Run it after, "
+                + "or in a transaction of its own (another connection)");
+    }
+
+    /** {@code user 42}, {@code service 3} or {@code nobody}, as the database's own words name a principal. */
+    private static String name(Principal p) {
+        return p.nobody() ? "nobody" : p.type() + " " + p.id();
+    }
+
+    /**
      * A transaction on {@code conn}, signed in as {@code who}: it commits what {@code work} did, or rolls it back if
      * {@code work} throws. The connection must be in auto-commit mode (no transaction open on it); it is again after.
      * A database error is thrown as {@link DatabaseError}.

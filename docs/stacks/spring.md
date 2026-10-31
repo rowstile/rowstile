@@ -171,10 +171,18 @@ A sign-in lasts the database transaction, so a transaction is one principal's. W
 open now (a `@Transactional` method, a `TransactionTemplate`, a repository's call, a `NESTED` savepoint) runs as it
 is while the code acts for the principal it signed in as. For anyone else, or for no one, it is refused before
 anything is sent for it, with an `IllegalStateException`, and the transaction goes on as it was (Spring Data's
-repositories hand it on as `InvalidDataAccessApiUsageException`, the refusal its cause). Run a job after the
-request's transaction, or in a transaction of its own: `REQUIRES_NEW` takes another connection and signs in as the
-job. To see work join a transaction, the starter puts each transaction manager behind a stand-in: inject it as a
-`PlatformTransactionManager`, not by its class.
+repositories hand it on as `InvalidDataAccessApiUsageException`, the refusal its cause). So is each statement on the
+transaction's connection while the code acts for someone else: a `JdbcClient` call, an `EntityManager` query, an
+`Authz` call. The words are the same in every SDK: `this transaction is signed in as user 1 already, and a sign-in
+lasts the database transaction: service 1's work can't run inside it. Run it after, or in a transaction of its own
+(another connection)`. Run a job after the request's transaction, or in a transaction of its own: `REQUIRES_NEW`
+takes another connection and signs in as the job.
+
+To see work join a transaction, the starter hands out each transaction manager as a subclass of its class, holding
+what it holds: inject it as a `PlatformTransactionManager` or by its class (`JpaTransactionManager`). A manager of a
+final class is left as it is: work that joins one of its transactions for someone else is refused at its first
+statement instead, which fails the transaction it joined. The statements are checked on the connections of the app's
+`DataSource` beans, each a subclass of its class too.
 
 ## Migrations
 

@@ -96,9 +96,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   say which check holds each sentence (`<!-- checked: ... -->`), which the pages don't show either.
 - A transaction is one principal's, in every SDK. Inside a transaction an SDK signed in already, work for someone
   else, or for no one, is refused before anything is sent for it, with the same words everywhere ("this
-  transaction is signed in as … already, and a sign-in lasts the database transaction: …'s work can't run inside
-  it. Run it after, or in a transaction of its own (another connection)"); the transaction goes on as its own
-  principal's. Work for the same principal goes on as before. Until now the SDKs differed:
+  transaction is signed in as user 1 already, and a sign-in lasts the database transaction: service 1's work can't
+  run inside it. Run it after, or in a transaction of its own (another connection)", each principal named by its
+  type and id, or `nobody`); the transaction goes on as its own principal's. Work for the same principal goes on as
+  before. Until now the SDKs differed:
   - Python: `rowstile.psycopg` and `rowstile.asyncpg` blocks took a savepoint and signed back after;
     SQLAlchemy's `install(engine)` kept the outer principal; `rowstile.django` switched statement by statement.
     Each now raises a `RuntimeError`. A psycopg or asyncpg block inside a transaction it didn't begin is refused
@@ -106,15 +107,24 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   - TypeScript (`@rowstile/pg`, `/postgres`, `/drizzle`, `/prisma`): opened a second connection (on a pool of one,
     it waited until the pool's timeout). It now throws an `Error`; `@rowstile/client` exports `signedInAlready`.
   - Go: `Tx`/`TxAs` for someone else took a savepoint signed in as them; now an error. So is `Tx` on a transaction
-    it didn't begin, or on a `*pgx.Conn` in a transaction.
+    it didn't begin, or on a `*pgx.Conn` or a `*pgxpool.Conn` in a transaction. To begin one with pgx's options (an
+    isolation level, read only), `rowstile.Tx(ctx, rowstile.WithOptions(pool, opts), fn)`.
   - Ruby: switched statement by statement; now a `RuntimeError`. In Rails' transactional tests, each transaction
     the app begins is one principal's, so a test may still act for one person, then another.
   - Django's tests the same: inside the test's transaction, each atomic block the app begins is one principal's.
   - EF Core (`UseRowstile()`) and the Spring Boot starter kept the transaction's principal without a word; now an
-    `InvalidOperationException` and an `IllegalStateException`. Spring's transaction managers are handed out
-    wrapped, so inject `PlatformTransactionManager`, not a manager's class.
-  - Rust, Kotlin, Elixir and PHP: unchanged (Rust's types already keep a transaction to one principal; the other
-    three refused already).
+    `InvalidOperationException` and an `IllegalStateException`. In Spring, both work that joins the transaction and
+    each statement on its connection are checked (a `JdbcClient` call, JPA's, an `Authz` call). The transaction
+    managers are handed out as a subclass of their class, so the app may inject them by class
+    (`JpaTransactionManager`) or as a `PlatformTransactionManager`; the app's `DataSource` beans the same.
+    `Rowstile.signedInAlready(signed, who)` in the Java SDK is the error.
+  - Kotlin: `transaction` and `suspendTransaction` refused another principal's inside one of theirs already; now
+    each statement in one is checked too (Exposed's, `calls`, and those on `DataSource.transaction`'s connection),
+    and inside a blocking `transaction`, `actingFor()` is the principal it signed in as.
+  - Rust, Elixir and PHP refuse as they did (Rust's types already keep a transaction to one principal; the other
+    two refused already). .NET, Java, Kotlin and Elixir named a principal `1` or `service:1` in the words, and now
+    `user 1` and `service 1`; .NET and Java said "the work of code that acts for no one" where the others say
+    "nobody's work".
 - The .NET SDK turns on Npgsql's `Include Error Detail` where it builds the app's connections:
   `AddRowstile(o => o.ConnectionString = ...)`, which now builds the `NpgsqlDataSource`, and a context's
   connection string before `UseRowstile()`. A refused write says why without the app setting it. A data source the

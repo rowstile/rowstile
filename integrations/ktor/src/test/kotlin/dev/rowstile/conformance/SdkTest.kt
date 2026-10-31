@@ -159,9 +159,7 @@ class SdkTest {
                 listOf(refused.message, signedIn(), Projects.selectAll().count())
             }
             assertEquals(listOf<String>(), ran)
-            assertTrue(other[0].toString().contains("signed in as 1 already"), other[0].toString())
-            assertTrue(other[0].toString().contains("service:1's work can't run inside it"), other[0].toString())
-            assertEquals(listOf("1", 2L), other.drop(1))
+            assertEquals(listOf(said("service 1"), "1", 2L), other)
             assertEquals(1L, transaction(Principal.user(1), each) { Notes.selectAll().where { Notes.body eq "still ann's" }.count() })
         }
         // the same with suspendTransaction, and inside a transaction signed in by hand
@@ -185,6 +183,59 @@ class SdkTest {
         assertEquals(listOf("2", "3"), transaction(Principal.user(3), db) {
             val apart = runBlocking { app.transaction(Principal.user(2)) { calls.list(AuthzNames.ProjectPermission.EDIT) } }
             apart + signedIn().orEmpty()
+        })
+    }
+
+    /** What work for [who] inside a transaction signed in as user 1 is refused with. */
+    private fun said(who: String): String =
+        "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: $who's work " +
+            "can't run inside it. Run it after, or in a transaction of its own (another connection)"
+
+    /** What [work] threw (an IllegalStateException), or that it ran. */
+    private suspend fun refused(work: suspend () -> Any?): String =
+        try {
+            work()
+            "it ran"
+        } catch (e: IllegalStateException) {
+            e.message!!
+        }
+
+    @Test
+    @DisplayName("a transaction is one principal's: each statement in it while the code acts for someone else is refused")
+    fun eachStatement() = runBlocking {
+        // Exposed's statements, a write among them, and the runtime's calls; then ann's own, which commit
+        val suspended = suspendTransaction(Principal.user(1), db) {
+            listOf(
+                refused { withContext(ActingAs(Principal.user(2))) { Projects.selectAll().count() } },
+                refused { withContext(ActingAs(Principal.of("service", 1))) { calls.can(AuthzNames.ProjectPermission.EDIT, 1) } },
+                refused { withContext(ActingAs(Principal.NOBODY)) { Notes.update({ Notes.id eq 1 }) { it[body] = "gone" } } },
+                Notes.update({ Notes.id eq 1 }) { it[body] = "still ann's" },
+                signedIn(),
+            )
+        }
+        assertEquals(listOf(said("user 2"), said("service 1"), said("nobody"), 1, "1"), suspended)
+        // a blocking transaction acts for its principal inside, and refuses as well
+        val blocking = transaction(Principal.user(1), db) {
+            listOf(actingFor().toString(), runBlocking { refused { withContext(ActingAs(Principal.user(2))) { signedIn() } } },
+                Notes.selectAll().where { Notes.body eq "still ann's" }.count())
+        }
+        assertEquals(listOf("1", said("user 2"), 1L), blocking)
+        // a pool's transaction: its connection's statements, and the runtime's calls on it
+        val pool = app.transaction(Principal.user(1)) {
+            listOf(
+                refused { withContext(ActingAs(Principal.user(2))) { count("SELECT count(*) FROM app.notes")(this@transaction) } },
+                refused { withContext(ActingAs(Principal.NOBODY)) { calls.can(AuthzNames.ProjectPermission.EDIT, 1) } },
+                count("SELECT count(*) FROM app.projects")(this),
+                // the connection is equal to itself alone; an error of its own is thrown as it is
+                listOf(equals(this), equals(Any()), hashCode() == System.identityHashCode(this)),
+                assertFailsWith<SQLException> { unwrap(String::class.java) }::class,
+            )
+        }
+        assertEquals(listOf(said("user 2"), said("nobody"), 2L, listOf(true, false, true), SQLException::class), pool)
+        // in a transaction of Exposed's own, signed in by hand, statements are the app's to keep to one principal
+        assertEquals(2L, org.jetbrains.exposed.v1.jdbc.transactions.transaction(db) {
+            signIn(Principal.user(1))
+            Projects.selectAll().count()
         })
     }
 

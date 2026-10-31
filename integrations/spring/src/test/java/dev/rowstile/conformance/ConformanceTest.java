@@ -5,11 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.rowstile.Authz;
 import dev.rowstile.Errors;
 import dev.rowstile.NotFound;
 import dev.rowstile.Principal;
 import dev.rowstile.Refused;
 import dev.rowstile.Rowstile;
+import jakarta.persistence.EntityManager;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -33,6 +35,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
@@ -62,6 +65,16 @@ class ConformanceTest extends Conformance {
 
     @Autowired
     JdbcClient jdbc;
+
+    /** Spring Boot's transaction manager, by its class (an app may inject it so). */
+    @Autowired
+    JpaTransactionManager jpa;
+
+    @Autowired
+    EntityManager em;
+
+    @Autowired
+    Authz authz;
 
     @BeforeEach
     void rows() throws SQLException {
@@ -336,18 +349,39 @@ class ConformanceTest extends Conformance {
                     jdbc.sql("SELECT current_setting('authz.user_id', true)").query(String.class).single());
         }));
         assertEquals(List.of(), ran);
-        assertEquals(List.of(2L, "this transaction is signed in as 1 already, and a sign-in lasts the database "
-                + "transaction: service:1's work can't run inside it. Run it after, or in a transaction of its own "
-                + "(another connection)"), seen.subList(0, 2));
-        assertTrue(seen.get(2).toString().startsWith("this transaction is signed in as 1 already") && seen.get(2)
-                .toString().contains(": 3's work can't run inside it"), seen.get(2).toString());
-        assertEquals(List.of(2L, "1"), seen.subList(3, 5));
+        assertEquals(List.of(2L, AutoConfigurationTest.said("service 1"), AutoConfigurationTest.said("user 3"), 2L,
+                "1"), seen);
         try (Connection conn = owner(); Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery("SELECT body FROM app.notes WHERE id = 1")) {
             assertTrue(rs.next());
             assertEquals("still ann's", rs.getString(1));
         }
         assertEquals(2L, digest.run().projects()); // after it, the job runs as its own
+    }
+
+    @Test
+    @DisplayName("10: ... and so is each statement while the code acts for someone else: JPA's, JdbcClient's, Authz's")
+    void eachStatement() throws SQLException {
+        TransactionTemplate tx = new TransactionTemplate(jpa); // the manager, injected by its class
+        List<Object> seen = Rowstile.actingAs(Principal.user(1), () -> tx.execute(s -> List.of(
+                AutoConfigurationTest.refused(() -> Rowstile.actingAs(Principal.user(2),
+                        () -> em.createQuery("select n.body from Note n", String.class).getResultList())),
+                AutoConfigurationTest.refused(() -> Rowstile.actingAs(Principal.user(2),
+                        () -> em.createNativeQuery("UPDATE app.notes SET body = 'gone' WHERE id = 1").executeUpdate())),
+                AutoConfigurationTest.refused(() -> Rowstile.actingAs(Principal.of("service", 1),
+                        () -> jdbc.sql("SELECT count(*) FROM app.notes").query(Long.class).single())),
+                AutoConfigurationTest.refused(() -> Rowstile.actingAs(Principal.NOBODY,
+                        () -> authz.can(AuthzNames.ProjectPermission.EDIT, 1))),
+                // the transaction goes on as ann's, and commits what she wrote
+                em.createNativeQuery("UPDATE app.notes SET body = 'still ann''s' WHERE id = 1").executeUpdate(),
+                jdbc.sql("SELECT current_setting('authz.user_id', true)").query(String.class).single())));
+        assertEquals(List.of(AutoConfigurationTest.said("user 2"), AutoConfigurationTest.said("user 2"),
+                AutoConfigurationTest.said("service 1"), AutoConfigurationTest.said("nobody"), 1, "1"), seen);
+        try (Connection conn = owner(); Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery("SELECT body FROM app.notes WHERE id = 1")) {
+            assertTrue(rs.next());
+            assertEquals("still ann's", rs.getString(1));
+        }
     }
 
     @Test

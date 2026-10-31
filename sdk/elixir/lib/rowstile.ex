@@ -120,8 +120,9 @@ defmodule Rowstile do
     signed = Process.get({:rowstile_signed, db})
 
     if signed && signed != who do
-      raise "this transaction is signed in as #{signed} already, and a sign-in lasts the database transaction: " <>
-              "#{who}'s work can't run inside it. Run it after, or in a transaction of its own (another connection)"
+      raise "this transaction is signed in as #{name(signed)} already, and a sign-in lasts the database " <>
+              "transaction: #{name(who)}'s work can't run inside it. Run it after, or in a transaction of its own " <>
+              "(another connection)"
     end
 
     try do
@@ -132,6 +133,10 @@ defmodule Rowstile do
       error -> failed(error, __STACKTRACE__)
     end
   end
+
+  # "user 42", "service 3" or "nobody", as the database's own words name a principal
+  defp name(%Principal{id: nil}), do: "nobody"
+  defp name(%Principal{type: type, id: id}), do: type <> " " <> id
 
   # the transaction's body: signed in (unless the transaction around it is), and fun's result
   defp run(tx, who, fun) do

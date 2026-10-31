@@ -56,23 +56,50 @@ func Current(ctx context.Context) (Principal, bool) {
 	return p, ok
 }
 
-// Beginner is what Tx begins a transaction on: a *pgxpool.Pool, a *pgx.Conn, or a pgx.Tx (a savepoint in it).
+// Beginner is what Tx begins a transaction on: a *pgxpool.Pool, a *pgxpool.Conn, a *pgx.Conn, or a pgx.Tx (a
+// savepoint in it). WithOptions gives one that begins with pgx's options.
 type Beginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
+// TxBeginner is what begins a transaction with pgx's options: a *pgxpool.Pool, a *pgxpool.Conn or a *pgx.Conn.
+type TxBeginner interface {
+	BeginTx(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, error)
+}
+
+// WithOptions is db beginning each transaction with opts (an isolation level, read only, deferrable), for Tx and
+// TxAs to sign in:
+//
+//	err := rowstile.Tx(ctx, rowstile.WithOptions(pool, pgx.TxOptions{IsoLevel: pgx.Serializable}), fn)
+//
+// A transaction begun with pool.BeginTx itself can't be signed in by Tx (who it is signed in as can't be known).
+func WithOptions(db TxBeginner, opts pgx.TxOptions) Beginner {
+	return withOptions{db, opts}
+}
+
+type withOptions struct {
+	db   TxBeginner
+	opts pgx.TxOptions
+}
+
+func (w withOptions) Begin(ctx context.Context) (pgx.Tx, error) {
+	return w.db.BeginTx(ctx, w.opts)
 }
 
 // signed holds who each connection's open transaction is signed in as, by the *pgx.Conn under it, from the
 // moment TxAs signs it in until it ends: a sign-in lasts the database transaction, so its savepoints are theirs.
 var signed sync.Map
 
-// conn is the connection db begins on when it is one (a pgx.Tx's, a *pgx.Conn), and nil when db is a pool, which
-// begins on a connection of its own.
-func conn(db Beginner) *pgx.Conn {
+// conn is the connection db begins on when it is one (a pgx.Tx's, a *pgxpool.Conn's, a *pgx.Conn), and nil when
+// db is a pool, which begins on a connection of its own.
+func conn(db any) *pgx.Conn {
 	switch d := db.(type) {
-	case pgx.Tx:
-		return d.Conn()
 	case *pgx.Conn:
 		return d
+	case interface{ Conn() *pgx.Conn }: // a pgx.Tx, a *pgxpool.Conn
+		return d.Conn()
+	case withOptions:
+		return conn(d.db)
 	}
 	return nil
 }
@@ -101,7 +128,7 @@ func entered(db Beginner, who Principal) (inside bool, err error) {
 			"the database transaction: " + name(who) + "'s work can't run inside it. Run it after, or in a " +
 			"transaction of its own (another connection)")
 	}
-	if _, onTx := db.(pgx.Tx); !onTx {
+	if _, onTx := db.(pgx.Tx); !onTx { // (a *pgxpool.Conn's Begin is its *pgx.Conn's)
 		return true, errors.New("this connection is in a transaction already, and pgx begins no savepoint on a " +
 			"*pgx.Conn: run this on the transaction's pgx.Tx, or after it")
 	}

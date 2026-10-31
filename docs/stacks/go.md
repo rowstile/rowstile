@@ -88,7 +88,10 @@ A transaction is one principal's: a sign-in lasts the database transaction. On t
 signed in, `Tx` for the same principal is a savepoint of it. For anyone else (or for nobody, in someone's), it gives
 an error before anything is sent, and the transaction goes on as it was: run that work after it, or in a transaction
 of its own (on the pool, another connection). So does `Tx` on a transaction it didn't begin, whose sign-in it can't
-know.
+know: one begun with `pool.Begin` or `pool.BeginTx`, or on a connection (a `*pgx.Conn`, a `*pgxpool.Conn`) in a
+transaction. Let `Tx` begin it instead. For pgx's options (an isolation level, read only), give `Tx` the pool
+through `rowstile.WithOptions`: `rowstile.Tx(ctx, rowstile.WithOptions(pool, pgx.TxOptions{IsoLevel:
+pgx.Serializable}), fn)` begins the transaction with them, and signs it in as any other.
 
 ## Refusals
 

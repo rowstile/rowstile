@@ -121,13 +121,16 @@ internal static class SignedIn
         var who = signed.By.Who();
         if (who != signed.Who)
         {
-            string whose = who.Id is null ? "the work of code that acts for no one can't" : $"{who}'s work can't";
             throw new InvalidOperationException(
-                $"this transaction is signed in as {signed.Who} already, and a sign-in lasts the database transaction: "
-                    + $"{whose} run inside it. Run it after, or in a transaction of its own (another connection)"
+                $"this transaction is signed in as {Name(signed.Who)} already, and a sign-in lasts the database "
+                    + $"transaction: {Name(who)}'s work can't run inside it. Run it after, or in a transaction of its own "
+                    + "(another connection)"
             );
         }
     }
+
+    /// <summary>"user 42", "service 3" or "nobody", as the database's own words name a principal.</summary>
+    private static string Name(Principal p) => p.Id is null ? "nobody" : $"{p.Type} {p.Id}";
 }
 
 /// <summary>

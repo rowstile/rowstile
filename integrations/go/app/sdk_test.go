@@ -120,9 +120,7 @@ func TestATransactionIsOnePrincipals(t *testing.T) {
 		said = append(said, "signed in: "+signedIn)
 		return err
 	})
-	if err == nil || err.Error() != "this connection is in a transaction rowstile.Tx didn't begin: who it is signed "+
-		"in as can't be known, and a sign-in lasts the database transaction. Begin it with rowstile.Tx, or run this "+
-		"after it" || len(ran) != 0 || said[len(said)-1] != "signed in: " {
+	if err == nil || err.Error() != foreign || len(ran) != 0 || said[len(said)-1] != "signed in: " {
 		t.Errorf("%v %v %v", said, ran, err)
 	}
 	// after it ends, the connection begins anew: a *pgx.Conn, as cy
@@ -145,6 +143,65 @@ func TestATransactionIsOnePrincipals(t *testing.T) {
 	}
 	if _, set := rowstile.Current(context.Background()); set {
 		t.Error("nothing set who a bare context acts for")
+	}
+}
+
+// foreign is the error for work in a transaction Tx didn't begin; noSavepoint for work on a connection in one
+const (
+	foreign = "this connection is in a transaction rowstile.Tx didn't begin: who it is signed in as can't be " +
+		"known, and a sign-in lasts the database transaction. Begin it with rowstile.Tx, or run this after it"
+	noSavepoint = "this connection is in a transaction already, and pgx begins no savepoint on a *pgx.Conn: run " +
+		"this on the transaction's pgx.Tx, or after it"
+)
+
+func TestWithOptions(t *testing.T) {
+	check(t, "a transaction Tx begins with pgx's options (an isolation level, read only) signs in as any other; "+
+		"one begun by pool.BeginTx itself, or by a pool's connection, is refused: who it is signed in as can't be known")
+	ctx := rowstile.ActingAs(context.Background(), rowstile.User("2"))
+	var said []string
+	options := pgx.TxOptions{IsoLevel: pgx.Serializable, AccessMode: pgx.ReadOnly}
+	err := rowstile.Tx(ctx, rowstile.WithOptions(pool, options), func(ctx context.Context, tx pgx.Tx) error {
+		var level, readOnly string
+		err := tx.QueryRow(ctx, "SELECT current_setting('transaction_isolation'), "+
+			"current_setting('transaction_read_only')").Scan(&level, &readOnly)
+		said = append(said, whom(ctx, tx), level, readOnly)
+		// on the transaction's own connection, with options too: pgx would begin no savepoint there
+		inner := rowstile.Tx(ctx, rowstile.WithOptions(tx.Conn(), pgx.TxOptions{}), func(context.Context, pgx.Tx) error {
+			said = append(said, "ran")
+			return nil
+		})
+		said = append(said, fmt.Sprint(inner))
+		return err
+	})
+	if err != nil || strings.Join(said, ", ") != "user 2, serializable, on, "+noSavepoint {
+		t.Errorf("%v %v", said, err)
+	}
+	// begun with the pool's own BeginTx, on a connection of the pool: Tx refuses it, on the pgx.Tx and on the
+	// connection (a savepoint on neither would be signed in), and nothing is sent; the transaction is as it was
+	c, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Release()
+	tx, err := c.BeginTx(ctx, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	for db, want := range map[rowstile.Beginner]string{tx: foreign, c: noSavepoint,
+		rowstile.WithOptions(c, options): noSavepoint} {
+		err := rowstile.Tx(ctx, db, func(context.Context, pgx.Tx) error {
+			said = append(said, "ran")
+			return nil
+		})
+		if err == nil || err.Error() != want {
+			t.Errorf("%T: %v", db, err)
+		}
+	}
+	var signedIn string
+	err = tx.QueryRow(ctx, "SELECT coalesce(current_setting('authz.user_id', true), '')").Scan(&signedIn)
+	if err != nil || signedIn != "" || said[len(said)-1] == "ran" {
+		t.Errorf("%v %q %v", said, signedIn, err)
 	}
 }
 
