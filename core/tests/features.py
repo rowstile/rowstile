@@ -121,6 +121,8 @@ PHOENIX = "integrations/phoenix/test/conformance_test.exs"
 PHOENIX_CHECKS = "integrations/phoenix/test/checks_test.exs"
 PHOENIX_SDK = "integrations/phoenix/test/sdk_test.exs"
 LARAVEL = "integrations/laravel/tests/Feature/"
+ELECTRIC = "integrations/electric/tests/shapes.test.ts"
+ELECTRIC_PROXY = "integrations/electric/tests/proxy.test.ts"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -136,6 +138,8 @@ ORACLES: dict[str, str] = {
     "migrate_test.py": "the policy applied whole, after each kind of change",
     "conditions_test.py": "Postgres's answer, for each condition the evaluator reads itself",
     "stress.sh": "a rebuild, after sixteen clients write one tree",
+    "integrations/electric": "authz.list as each user (row-level security's answer), after each change, against "
+    "what Electric serves",
 }
 
 FEATURES: list[Feature] = [
@@ -390,7 +394,39 @@ FEATURES: list[Feature] = [
         ),
         (T(DIFF, "def sync_problems("),),
         grammar=("Sync lines: the sync role, a table with its permission, a table alone (its select rule)",),
-        note="a preview: the index in the database; the engines' filters, a proxy and their conformance suites come later",
+        note="a preview: the index in the database; Electric on it is sync.electric, Zero's and PowerSync's come later",
+    ),
+    Feature(
+        "sync.electric",
+        1,
+        "Electric on the sync index, a preview: `rowstile client electric`'s shapes, and `electricShape`, the route in "
+        "front of Electric",
+        (
+            "sdk.ts.client.electricShape",
+            "sdk.ts.client.syncPrincipal",
+            "sdk.ts.client.ElectricShape",
+            "sdk.ts.client.ElectricShapeOptions",
+            "sdk.ts.client.SyncPrincipal",
+        ),
+        Doc("docs/reference/sync.md", "Electric"),
+        (
+            T("unit_test.py", "test_electric_shapes"),
+            T("cli.sh", "client electric: a policy that syncs nothing has no shapes"),
+            Check(ELECTRIC, "E8: users at once, in rounds, each get their own"),
+            Check(ELECTRIC, "E9: not signed in: 401, and no shape is made"),
+            Check(ELECTRIC, "E10: answers vary on who asks, and a cache never gives one user's shape to another"),
+            Check(ELECTRIC, "E13: a masked column is never in a shape, even when the client asks for it"),
+            Check(ELECTRIC, "E15: a session limited by scopes is refused, 403"),
+            Check(ELECTRIC_PROXY, "E9: not signed in, nothing is asked of Electric"),
+        ),
+        (
+            Check(ELECTRIC, "E1: the first snapshot of each user's shapes is what authz.list gives them"),
+            Check(ELECTRIC, "E2: a share made: the row arrives live; revoked: it leaves"),
+            Check(ELECTRIC, "E6: a share that ends: the row leaves at the next authz.sync_tick(), and not before"),
+            Check(ELECTRIC, "E12: lint, then rowstile apply and reapply leave the shapes as they are"),
+            Check(ELECTRIC, "E14: a user deleted: their keys go, and their shape empties"),
+        ),
+        note="a preview: rows already on a device stay there; the window is Electric's lag, and a tick for time",
     ),
     Feature(
         "api.feed",

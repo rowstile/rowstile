@@ -790,7 +790,9 @@ CODES = {
         "A read-only session",
         "The session views as someone else (`authz.view_as`) or signed in with a token limited by scopes, so it may "
         "read but not change anything, sign other people in, view as someone again, or make a key with more scopes "
-        "than it has. SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this code).",
+        "than it has. SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this code). Nor may it sync: the "
+        "sync index holds what each principal may read, without scopes, so Electric's route in the TypeScript SDK "
+        "(`electricShape`) answers its shape requests 403 with this code.",
         when="runtime",
     ),
     "AZ705": Code(
@@ -841,7 +843,9 @@ CODES = {
         "`authz.explain_rule` doesn't explain, a row it can't find without an id, a page cursor for `authz.list` "
         "that isn't an id of the type, a negative page size, a member list for `authz.sync_members` that is NULL or "
         "holds a NULL). SQLSTATE 22023; answer 400, as the SDKs do, with the "
-        "database's words.",
+        "database's words. Electric's route in the TypeScript SDK (`electricShape`) answers 400 with this code a "
+        "shape request that sets the shape itself (its own `where`, `params`, another `table`), names a column the "
+        "route doesn't sync, or posts more than a subset.",
         when="runtime",
     ),
     "AZ711": Code(
@@ -869,7 +873,9 @@ CODES = {
         "Sign in first",
         "A call that needs someone signed in ran in a transaction signed in as nobody (`authz.act_as(NULL, NULL)`, "
         "a visitor who hasn't signed in): an access request, deciding one, or an API key made for oneself. SQLSTATE 42501; "
-        "answer 401, as the SDKs do, with the database's words. A transaction that never signed in says AZ701.",
+        "answer 401, as the SDKs do, with the database's words. A transaction that never signed in says AZ701. "
+        "Electric's route in the TypeScript SDK (`electricShape`) answers a shape request from nobody 401 with this "
+        "code.",
         when="runtime",
     ),
     "AZ715": Code(

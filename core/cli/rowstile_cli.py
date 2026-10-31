@@ -52,10 +52,12 @@
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
-    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust|elixir|php] [POLICY.authz]
+    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust|elixir|php|electric] [POLICY.authz]
                                                    typed helpers for app code (go, csharp, ruby, java, rust,
                                                    elixir, php: the policy's names, for those SDKs; rbs: the Ruby names'
-                                                   signatures); with none, writes the clients rowstile.toml names
+                                                   signatures; electric: the synced tables' shapes, for the app's
+                                                   proxy in front of Electric, a preview); with none, writes the
+                                                   clients rowstile.toml names
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
                                                    a first policy from the database's tables (every schema of
                                                    the app's, or those --schema names), and rowstile.toml
@@ -98,6 +100,7 @@ rowstile.toml:
     rbs = "sig/authz.rbs"                  # ... and their signatures, for Steep
     java = "src/main/java/com/example/AuthzNames.java"   # the policy's names, for the Java SDK
     rust = "src/authz.rs"                  # the policy's names, for the Rust SDK
+    electric = "src/shapes.gen.ts"         # the synced tables' shapes, for a proxy in front of Electric
     elixir = "lib/my_app/authz.ex"         # the policy's names, for the Elixir SDK (MyApp.Authz)
     php = "database/authz.php"             # the policy's names, for the PHP SDK
     [migrations]
@@ -529,7 +532,7 @@ class Config:
 
 
 # the languages rowstile client writes: for Ruby, the policy's names and their signatures (RBS)
-CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust", "elixir", "php")
+CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust", "elixir", "php", "electric")
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
@@ -544,6 +547,7 @@ SETTINGS: dict[str, dict[str, str]] = {
         "rust": "text",
         "elixir": "text",
         "php": "text",
+        "electric": "text",
     },
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
@@ -1260,7 +1264,10 @@ def main(argv: list[str]) -> None:
             return
         if cmd == "client" and args[1:]:
             if args[0] not in CLIENTS:
-                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir or php?", 2)
+                fail(
+                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php or electric?",
+                    2,
+                )
             _, text, files = policy_arg()
             sys.stdout.write(database.client(args[0], text, files, cfg.java_class, cfg.elixir_module))
             return
@@ -1455,7 +1462,10 @@ def main(argv: list[str]) -> None:
                     print(f"wrote {relative(path)}")
                 return
             if not args or args[0] not in CLIENTS:
-                fail("rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir or php?", 2)
+                fail(
+                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php or electric?",
+                    2,
+                )
             sys.stdout.write(database.client(args[0], text, files, cfg.java_class, cfg.elixir_module))
         elif cmd == "why":
             if not opts.get("--as"):

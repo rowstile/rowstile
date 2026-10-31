@@ -16,7 +16,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: [`${sdk}*/dist/*.js`],
-      exclude: [`${sdk}jest/**`],            // @rowstile/jest: integrations/node's suite runs it
+      // @rowstile/jest: integrations/node's suite runs it; Electric's proxy (client's electric.js), integrations/electric's
+      exclude: [`${sdk}jest/**`, `${sdk}client/dist/electric.js`],
       allowExternal: true,
       reporter: ["text", ["text", { file: "report.txt" }], "json-summary", "json"],
       reportsDirectory: process.env.CONFORMANCE_COVERAGE ?? "coverage",

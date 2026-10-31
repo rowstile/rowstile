@@ -1,7 +1,7 @@
 {
   "name": "rowstile-workspace",
   "private": true,
-  "description": "The TypeScript SDK's packages (sdk/typescript) and their conformance apps (integrations/nextjs, integrations/node), in one npm workspace so they share one React and one pg",
+  "description": "The TypeScript SDK's packages (sdk/typescript) and their conformance apps (integrations/nextjs, integrations/node, integrations/electric), in one npm workspace so they share one React and one pg",
   "workspaces": [
     "sdk/typescript/client",
     "sdk/typescript/pg",
@@ -13,14 +13,16 @@
     "sdk/typescript/vitest",
     "sdk/typescript/jest",
     "integrations/nextjs",
-    "integrations/node"
+    "integrations/node",
+    "integrations/electric"
   ],
   "devDependencies": {
     "typescript": "~6.0.3"
   },
-  "//": "overrides: Prisma pins mysql2 3.15.3 and deepmerge-ts 7.1.5, which npm audit reports (mysql2 before 3.23.1, deepmerge-ts before 8.0.0): the fixed releases instead. Drop each once Prisma's own pin is past it",
+  "//": "overrides: Prisma pins mysql2 3.15.3 and deepmerge-ts 7.1.5, which npm audit reports (mysql2 before 3.23.1, deepmerge-ts before 8.0.0): the fixed releases instead. Drop each once Prisma's own pin is past it. @electric-sql/client names @rollup/rollup-darwin-arm64 as an optional dependency, at ^4.18.1: a release at least two weeks old instead of the newest",
   "overrides": {
     "mysql2": "^3.23.1",
-    "deepmerge-ts": "^8.0.2"
+    "deepmerge-ts": "^8.0.2",
+    "@rollup/rollup-darwin-arm64": "4.64.7"
   }
 }

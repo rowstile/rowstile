@@ -5,7 +5,7 @@ adversarial 112
 apply 162
 capitals 105
 children 105
-cli 167
+cli 168
 concurrency 35
 confidence 64
 cookbook 102
@@ -33,7 +33,7 @@ moves 23
 multi scenario 99
 policy errors 271
 principals 130
-reference 21
+reference 24
 review 59
 scenario 95
 signed sessions 74
@@ -41,5 +41,5 @@ small policies 4
 studio 227
 sync index 97
 tools 42
-unit 676
+unit 677
 upgrade 71

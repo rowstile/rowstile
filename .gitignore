@@ -25,6 +25,8 @@ integrations/nextjs/coverage/
 integrations/node/build/
 integrations/node/.work/
 integrations/node/coverage/
+integrations/electric/build/
+integrations/electric/coverage/
 packaging/npm/out/
 packaging/npm/.cache/
 packaging/out/

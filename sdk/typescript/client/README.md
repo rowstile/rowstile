@@ -45,6 +45,9 @@ export const digest = job(["service", 1], async () => ({ count: await db.project
   refusal's `table` names it.
 - `Register`: the interface the generated names fill in (`rowstile client`), so a wrong permission name
   doesn't type-check.
+- `electricShape(shape, options)` and `syncPrincipal(q)` (a preview): a route handler in front of Electric, the
+  sync engine, that asks the database who the request is and sets the shape `rowstile client electric` wrote for
+  them, whatever the client sends ([Electric on the sync index](https://rowstile.dev/reference/sync#electric)).
 
 ## More
 
