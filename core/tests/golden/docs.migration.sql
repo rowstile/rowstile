@@ -3,16 +3,16 @@
 -- + type file: can comment = folder.view
 
 -- a migration is one transaction: outside one, nothing below changes anything
-SELECT pg_catalog.set_config('authz_ctx.migration', '76c2c55f0f2e26c7', true);
+SELECT pg_catalog.set_config('authz_ctx.migration', '2f0ebf0898bdf9eb', true);
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '76c2c55f0f2e26c7' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '2f0ebf0898bdf9eb' THEN
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '76c2c55f0f2e26c7' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '2f0ebf0898bdf9eb' THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
       USING HINT = 'nothing was changed, and this session is read-only from here on; run the file with your migration tool, or with psql -1 -f';
   END IF;
@@ -28,13 +28,13 @@ BEGIN
   IF to_regclass('authz.policy_versions') IS NOT NULL THEN
     EXECUTE 'SELECT lock FROM authz.policy_versions ORDER BY id DESC LIMIT 1' INTO v_lock;
   END IF;
-  IF v_lock = '76c2c55f0f2e26c7' THEN
+  IF v_lock = '2f0ebf0898bdf9eb' THEN
     RAISE EXCEPTION 'rowstile: this database already holds what this migration brings (it ran here before, or rowstile dev or push took the database there): don''t run it, tell your migration tool it is applied [AZ607]'
       USING HINT = 'Prisma: prisma migrate resolve --applied <the migration''s folder>. Alembic: alembic stamp head. '
                    'Others, and why: rowstile help AZ607';
-  ELSIF v_lock IS DISTINCT FROM 'ef1211d75cff5bc0' THEN
+  ELSIF v_lock IS DISTINCT FROM '4d43178364c5653b' THEN
     RAISE EXCEPTION 'rowstile: this migration changes the policy the migration before it left (%), but the database has % [AZ607]',
-      'ef1211d75cff5bc0', coalesce(v_lock, 'none')
+      '4d43178364c5653b', coalesce(v_lock, 'none')
       USING HINT = 'apply the migrations in order; a database changed with rowstile push or apply since needs the '
                    'migrations from the start (or rowstile apply of the policy the previous migration left) '
                    '(rowstile help AZ607)';
@@ -701,7 +701,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, '"app_user"'::regrole))
     AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = '"app_user"'::regrole
              AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"app.files:column folder_id after:items"', '"app.files:column folder_id after:why"', '"app.files:column id, owner_id, confidential:items"', '"app.files:column id, owner_id, confidential:why"', '"app.files:delete:items"', '"app.files:delete:why"', '"app.files:insert:items"', '"app.files:insert:refuse"', '"app.files:insert:why"', '"app.files:rules:explain"', '"app.files:update:items"', '"app.files:update:refuse"', '"app.files:update:why"', '"app.folders:column id, owner_id, org_id, inherit:items"', '"app.folders:column id, owner_id, org_id, inherit:why"', '"app.folders:column parent_id after:items"', '"app.folders:column parent_id after:why"', '"app.folders:delete:items"', '"app.folders:delete:why"', '"app.folders:insert:items"', '"app.folders:insert:refuse"', '"app.folders:insert:why"', '"app.folders:rules:explain"', '"app.folders:update:items"', '"app.folders:update:refuse"', '"app.folders:update:why"']::text[]))
-    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.create_role(text, bigint, text, text, text[])', 'authz.roles_of(text, bigint)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, bigint, timestamptz)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)', 'authz.share(text, text, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, bigint, text)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, bigint, text)']::regprocedure[])) LOOP
+    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.session_limited()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.create_role(text, bigint, text, text, text[])', 'authz.roles_of(text, bigint)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, bigint, timestamptz)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)', 'authz.share(text, text, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, bigint, text)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, bigint, text)']::regprocedure[])) LOOP
     EXECUTE g.stmt;
     v_taken := v_taken + 1;
   END LOOP;
@@ -732,6 +732,7 @@ GRANT EXECUTE ON FUNCTION
   authz.link_hashes(),
   authz.act_as(text, text),
   authz.connection_check(),
+  authz.session_limited(),
   authz.can(text, text, text),
   authz.list(text, text, text, integer),
   authz.perms(text, text),
@@ -911,4 +912,4 @@ test
   user 5 can view file 16      -- erin: Joint project is linked into Company
   user 5 cannot edit file 16   -- links pass on view rights only
 $authz_policy$,
-  $authz_files${}$authz_files$::jsonb, 'BUILD', '76c2c55f0f2e26c7');
+  $authz_files${}$authz_files$::jsonb, 'BUILD', '2f0ebf0898bdf9eb');

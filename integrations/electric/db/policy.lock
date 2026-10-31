@@ -40,7 +40,7 @@
 > sync app.folders
 > sync app.notes
 
-always | 42e2f79658cd
+always | 0697f1cf5a5d
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394
@@ -62,7 +62,7 @@ function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id integer, p_perm text, p_user text) | 1409a3a04a15 shape=7d31b532
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | f8dab212ac5f shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | b4934125ed34 shape=1223ad2f
-function authz.lint() | 2af7d1e05c37 shape=54cb1505
+function authz.lint() | 26d1778ca007 shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | e19a46b0e0c1 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id integer) | cec8e40d450f shape=92b36157
@@ -85,6 +85,7 @@ function authz.revoke_link(p_type text, p_id integer, p_link text) | 9238636c8fb
 function authz.revoke_link(p_type text, p_id text, p_link text) | 9f1e3334d1ec shape=6418747f
 function authz.roles_of(p_owner_type text, p_owner_id integer) | 54870d3667c5 shape=1679f0a4
 function authz.roles_of(p_owner_type text, p_owner_id text) | 8fb1b8f0dfaf shape=e439cd41
+function authz.session_limited() | 5a874cdc8846 shape=5f278327
 function authz.set_role_permissions(p_role bigint, p_permissions text[]) | 50ed7c0695c3 shape=3cffc528
 function authz.share(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 890550356463 shape=3259edea
 function authz.share(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text, p_expires_at timestamptz, p_starts_at timestamptz, p_caveat text, p_caveat_args jsonb) | 5d82a913c811 shape=126ff5f2
@@ -296,7 +297,7 @@ schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | c621017d9647
 step cascades | 6a1ffa438b08
-step grant_api | 2d4813f529e2
+step grant_api | ade58faa7afc
 step grant_functions | 860e26814bd8
 step grant_views | 79e8f933ff65
 step mask_privileges | f8051dad4a89

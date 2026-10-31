@@ -270,7 +270,7 @@ FEATURES: list[Feature] = [
         "api.identity",
         1,
         "Signing in: `authz.act_as`, `authz.login_key`, `authz.login_jwt`, `authz.view_as`, `authz.principal`, "
-        "`authz.connection_check`; signed sessions",
+        "`authz.connection_check`, `authz.session_limited`; signed sessions",
         (
             "api.act_as",
             "api.uid",
@@ -279,6 +279,7 @@ FEATURES: list[Feature] = [
             "api.login_jwt",
             "api.view_as",
             "api.connection_check",
+            "api.session_limited",
             "err.AZ606",
             "err.AZ701",
             "err.AZ702",
@@ -295,6 +296,9 @@ FEATURES: list[Feature] = [
             T("identity.sh", "wrong signature"),
             T("identity.sh", "and cannot change anything"),
             T("principals.sh", "an id the user table doesn't have is nobody: no uid, no principal"),
+            T("sessions.sh", "session_limited: a key with scopes is"),
+            T("sessions.sh", "session_limited: viewing as someone is"),
+            T("sessions.sh", "session_limited: settings set by hand aren't believed, an error"),
             Check(FASTAPI, "test_13_refuses_a_connection_that_skips_rls"),
         ),
         (

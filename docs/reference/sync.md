@@ -215,8 +215,9 @@ in as the request's user, or after `authz.login_key()` or `authz.login_jwt()`. E
 Then the route:
 
 - answers 401 (AZ714) for nobody, or for a user who isn't there, and asks nothing of Electric; <!-- checked: integrations/electric/tests/shapes.test.ts "E9: not signed in: 401, and no shape is made"; integrations/electric/tests/proxy.test.ts "E9: not signed in, nothing is asked of Electric" -->
-- answers 403 (AZ704) for a session limited by scopes (a key's, a token's) or viewing as someone: the index holds
-  what each principal may read, without scopes; <!-- checked: integrations/electric/tests/shapes.test.ts "E15: a session limited by scopes is refused, 403"; integrations/electric/tests/proxy.test.ts "E15: viewing as someone is a session limited too: refused" -->
+- answers 403 (AZ704) for a session limited by scopes (a key's, a token's) or viewing as someone, as
+  `authz.session_limited()` says ([Identity](identity.md)): the index holds what each principal may read, without
+  scopes; <!-- checked: integrations/electric/tests/shapes.test.ts "E15: a session limited by scopes is refused, 403"; integrations/electric/tests/proxy.test.ts "E15: viewing as someone is a session limited too: refused" -->
 - sets the shape's `table`, `where`, `params[1]` (the principal's id) and Electric's `secret` itself, whatever the
   client sent; <!-- checked: integrations/electric/tests/shapes.test.ts "E8: users at once, in rounds, each get their own" -->
 - refuses a client's own `where`, `params`, another `table`, `queryable_columns` or `secret`, 400 (AZ710). <!-- checked: integrations/electric/tests/shapes.test.ts "E8: users at once, in rounds, each get their own" -->
