@@ -1,6 +1,6 @@
 policy   = "db/policy.authz"
 tests    = ["db/tests/*.authz"]
-database = "env:ROWSTILE_OWNER_DSN"
+database = "env:DATABASE_URL"
 [clients]
 ts = "src/authz.gen.ts"
 [migrations]

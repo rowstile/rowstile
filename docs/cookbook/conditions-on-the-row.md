@@ -44,7 +44,7 @@ test "in an announcement channel, members read and only admins post"
 the test, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
 [`docs/cookbook/conditions-on-the-row/`](conditions-on-the-row/). CI takes them on every change
-(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
+([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and checks that every line of policy and tests shown here is in those files.
 
 ## What it costs
 

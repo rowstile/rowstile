@@ -2,7 +2,7 @@
 // project 3; bo (2) owns project 2. Ann's folder 1 has folder 2 inside it. The servers test.sh started, and what they answer.
 import pg from "pg";
 
-export const OWNER = process.env.ROWSTILE_OWNER_DSN ?? "";
+export const OWNER = process.env.DATABASE_URL ?? "";
 export const APP = process.env.ROWSTILE_APP_URL ?? "";
 // the change feed's own connection: straight to Postgres when the app's goes through a pooler (POOLER=pgbouncer)
 export const FEED = process.env.ROWSTILE_FEED_URL ?? APP;
@@ -13,7 +13,7 @@ export const SERVER_EDGE = process.env.CONFORMANCE_SERVER_EDGE ?? "";  // edge/:
 export const EXPECTED: Record<string, number[]> = { "1": [1, 3, 4], "2": [2, 3], "3": [1, 3, 4], "": [3] };
 
 export async function seed(): Promise<void> {
-  if (!OWNER) throw new Error("ROWSTILE_OWNER_DSN is not set (test.sh sets it)");
+  if (!OWNER) throw new Error("DATABASE_URL is not set (test.sh sets it)");
   const c = new pg.Client({ connectionString: OWNER });
   await c.connect();
   try {

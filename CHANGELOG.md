@@ -11,6 +11,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Added
 
+- `rowstile dev`'s access lines name, under a permission someone gains, the rules that read it (`read by the
+  rules of app.folders: update id, owner_id, org_id, inherit; delete`): whoever gains `share` may then also do what
+  those rules let `share` do, such as give a folder away.
 - Background jobs in Celery's and RQ's workers, for the Python SDK (preview): `rowstile.job(who)` is a `with` block
   too, for a job that acts for the user its argument names (`Principal.parse`). In either form, the database's
   refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).
@@ -63,6 +66,16 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Changed
 
+- `rowstile init` takes the policy's app role from the database: the one role the tables are granted to, where it
+  wrote `app_user` whatever the app's role was. It says so, and asks to make no role that is there (one that skips
+  row-level security: what to change). With several roles granted the tables it names them, and with no tables it
+  says the app's migrations come first.
+- A refused share or unshare (AZ705) says why, as a refused write does: its DETAIL is what `authz.explain` answers
+  the one sharing, for the permission sharing takes (for an object they can't see, what one that isn't there gets).
+  The SDKs give it as `why`, which was empty.
+- AZ607's title names its most common case: "The database holds the migration already, or isn't where it starts".
+- The site's Markdown copy of each page (`/reference/language.md`) and `llms-full.txt` leave out the notes that
+  say which check holds each sentence (`<!-- checked: ... -->`), which the pages don't show either.
 - A transaction is one principal's, in every SDK. Inside a transaction an SDK signed in already, work for someone
   else, or for no one, is refused before anything is sent for it, with the same words everywhere ("this
   transaction is signed in as … already, and a sign-in lasts the database transaction: …'s work can't run inside
@@ -91,6 +104,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- The Next.js page: `init` comes after the migrations that make the tables and the app role, not in the install
+  lines; the owner's URL is `DATABASE_URL`, the variable `init` writes in `rowstile.toml` and Prisma reads (the
+  page used another, so following it gave two); and `prisma migrate resolve --applied` is for the migrations after
+  the first, which applies over what `rowstile dev` pushed. The sharing recipe says that the rules reading `share`
+  open with it. Paths the docs name as proof are links, and `llms.txt` links the playground on the site.
 - The TypeScript SDKs (`@rowstile/pg`, `@rowstile/postgres`, `@rowstile/drizzle`): work that `transaction(fn)`
   (`begin(fn)`) started and that ran after it ended (a promise `fn` didn't await, a timer) still ran on the
   transaction's connection, which by then could be serving another request's transaction, signed in as someone

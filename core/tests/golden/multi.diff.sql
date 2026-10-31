@@ -3890,6 +3890,22 @@ CREATE OR REPLACE FUNCTION authz.can(p_type text, p_id uuid, p_perm text) RETURN
 CREATE OR REPLACE FUNCTION authz.perms(p_type text, p_id uuid) RETURNS text[] LANGUAGE sql STABLE AS
   $$ SELECT authz.perms(p_type, p_id::text) $$;
 
+-- Why the caller may not share (a refusal's DETAIL): authz.explain's answer, as the caller, for each of these
+-- permissions the type has, which they may ask for themselves; an id that isn't the type's is answered as a missing
+-- object is
+CREATE FUNCTION authz_int.share_why(p_type text, p_id text, p_perms text[]) RETURNS text
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF NOT pg_catalog.pg_input_is_valid(p_id, (SELECT keytype FROM authz_int.types WHERE name = p_type)) THEN
+    RETURN 'no   you have no access to ' || p_type || ' ' || p_id;
+  END IF;
+  RETURN coalesce((SELECT pg_catalog.string_agg(w.line, pg_catalog.chr(10) ORDER BY u.i, w.j)
+                   FROM pg_catalog.unnest(p_perms) WITH ORDINALITY u(perm, i)
+                   CROSS JOIN LATERAL authz.explain(p_type, p_id, u.perm) WITH ORDINALITY w(line, j)
+                   WHERE EXISTS (SELECT 1 FROM authz_int.perms x WHERE x.type = p_type AND x.perm = u.perm)),
+                  'no   the policy shares nothing of ' || p_type);
+END $f$;
+
 -- Share: needs the relation's 'shared by' permission on the object, and every permission
 -- the relation grants (you can't grant more than you hold); the subject must exist
 CREATE OR REPLACE FUNCTION authz.share(p_type text, p_id text, p_relation text,
@@ -3898,7 +3914,7 @@ CREATE OR REPLACE FUNCTION authz.share(p_type text, p_id text, p_relation text,
   p_caveat text DEFAULT NULL, p_caveat_args jsonb DEFAULT NULL) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_tbl text; v_find text; v_found boolean; v_key text; v_rel authz_int.shared_relations; v_need text;
-        v_role authz.roles;
+        v_role authz.roles; v_perms text[];
 BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
@@ -3910,7 +3926,8 @@ BEGIN
   SELECT t.tbl, t.find INTO v_tbl, v_find FROM authz_int.types t WHERE t.name = p_type;
   IF v_tbl IS NULL THEN RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707'; END IF;
   IF NOT pg_catalog.pg_input_is_valid(p_id, (SELECT keytype FROM authz_int.types WHERE name = p_type)) THEN
-    RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+    RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege',
+      DETAIL = authz_int.share_why(p_type, p_id, '{}'), HINT = 'rowstile help AZ705';
   END IF;
   EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s FOR KEY SHARE)', v_tbl, v_find) INTO v_found USING p_id;
   -- a caller who may share nothing on the object gets the answer a missing object gets (this same RAISE),
@@ -3922,7 +3939,14 @@ BEGIN
     WHERE CASE WHEN EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = x.perm)
                THEN authz.can(p_type, p_id, x.perm) ELSE false END);
   IF NOT v_found THEN
-    RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+    -- why, in what authz.explain tells the caller (a hidden object as a missing one): the permission sharing this
+    -- relation takes (a custom role: share), or for a relation the type doesn't share, each one sharing there takes
+    v_perms := CASE WHEN p_relation LIKE 'role:%' THEN ARRAY['share'] ELSE coalesce(
+      nullif(ARRAY(SELECT DISTINCT s.shared_by FROM authz_int.shared_relations s
+                   WHERE s.object_type = p_type AND s.relation = p_relation), '{}'),
+      ARRAY(SELECT s.shared_by FROM authz_int.shared_relations s WHERE s.object_type = p_type UNION SELECT 'share')) END;
+    RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege',
+      DETAIL = authz_int.share_why(p_type, p_id, v_perms), HINT = 'rowstile help AZ705';
   END IF;
   v_key := authz_int.subject_key(p_subject_type, p_subject_id, p_subject_relation);
   -- the subject must exist (and is locked, like the object)
@@ -3953,13 +3977,15 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = 'share')
        OR NOT authz.can(p_type, p_id, 'share') THEN
-      RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+      RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege',
+        DETAIL = authz_int.share_why(p_type, p_id, ARRAY['share']), HINT = 'rowstile help AZ705';
     END IF;
     SELECT string_agg(permission, ', ') INTO v_need FROM authz.role_permissions
     WHERE role_id = v_role.id AND NOT authz.can(p_type, p_id, permission);
     IF v_need IS NOT NULL THEN
       RAISE EXCEPTION 'you cannot give role % on % %: you do not hold %', v_role.name, p_type, p_id, v_need
-        USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+        USING ERRCODE = 'insufficient_privilege', DETAIL = authz_int.share_why(p_type, p_id, string_to_array(v_need, ', ')),
+              HINT = 'rowstile help AZ705';
     END IF;
   ELSE
     SELECT * INTO v_rel FROM authz_int.shared_relations s
@@ -3969,12 +3995,14 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = v_rel.shared_by)
        OR NOT authz.can(p_type, p_id, v_rel.shared_by) THEN
-      RAISE EXCEPTION 'you cannot share % % (needs %)', p_type, p_id, v_rel.shared_by USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+      RAISE EXCEPTION 'you cannot share % % (needs %)', p_type, p_id, v_rel.shared_by USING ERRCODE = 'insufficient_privilege',
+        DETAIL = authz_int.share_why(p_type, p_id, ARRAY[v_rel.shared_by]), HINT = 'rowstile help AZ705';
     END IF;
     SELECT string_agg(n, ', ') INTO v_need FROM unnest(v_rel.required) n WHERE NOT authz.can(p_type, p_id, n);
     IF v_need IS NOT NULL THEN
       RAISE EXCEPTION 'you cannot grant %.% on % %: you do not hold %', p_type, p_relation, p_type, p_id, v_need
-        USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+        USING ERRCODE = 'insufficient_privilege', DETAIL = authz_int.share_why(p_type, p_id, string_to_array(v_need, ', ')),
+              HINT = 'rowstile help AZ705';
     END IF;
     IF NOT authz_int.share_if(p_type || '.' || p_relation || '.' || v_key, p_id, p_subject_type,
                               p_subject_id, p_subject_relation) THEN
@@ -4056,7 +4084,8 @@ BEGIN
     IF v_by IS NULL THEN
       RAISE EXCEPTION 'you cannot unshare % on % %', p_relation, p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
     END IF;
-    RAISE EXCEPTION 'you cannot unshare % on % % (needs %)', p_relation, p_type, p_id, v_by USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+    RAISE EXCEPTION 'you cannot unshare % on % % (needs %)', p_relation, p_type, p_id, v_by USING ERRCODE = 'insufficient_privilege',
+      DETAIL = authz_int.share_why(p_type, p_id, ARRAY[v_by]), HINT = 'rowstile help AZ705';
   END IF;
   DELETE FROM authz.shares WHERE object_type = p_type AND object_id = p_id
     AND relation = p_relation AND subject_type = p_subject_type

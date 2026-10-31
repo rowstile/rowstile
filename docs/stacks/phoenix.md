@@ -8,8 +8,8 @@ A Phoenix app on Ecto (or Postgrex alone), with Ecto's migrations and Oban's job
 each request's transactions sign in as its user, the database filters what they read and refuses what they may
 not write, and the SDK answers a refusal with 403 and a hidden row with 404.
 
-Everything here comes from `integrations/phoenix`, the conformance suite: a small Phoenix app on Bandit and the
-checks every supported stack passes (`integrations/phoenix/test.sh`).
+Everything here comes from [`integrations/phoenix`](../../integrations/phoenix), the conformance suite: a small Phoenix app on Bandit and the
+checks every supported stack passes ([`integrations/phoenix/test.sh`](../../integrations/phoenix/test.sh)).
 
 ## Install
 
@@ -18,7 +18,7 @@ Add the `:rowstile` package to the deps in `mix.exs` (a preview, on Hex once it 
 ```sh
 mix deps.get
 pip install --pre rowstile                    # the command (or npm install rowstile@next, or its image)
-rowstile init                                 # a first policy from your tables, a test file, rowstile.toml
+rowstile init                                 # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 The SDK needs Postgrex, and Elixir 1.18 or newer (the suite runs on Elixir 1.20). Ecto, Plug and Oban are

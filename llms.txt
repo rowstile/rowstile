@@ -71,7 +71,7 @@ rules app.folders
 - [Managed Postgres](docs/managed-postgres.md): the setup on a managed service; Neon and Supabase, as tried
 - [Files in S3-compatible storage](docs/signed-urls.md): signed URLs handed out only after the row was read
 - [Error codes](docs/errors/README.md): every mistake's code, what it means and the same mistake fixed
-- [Playground](playground/README.md): the compiler and Postgres in the browser, nothing installed
+- [Playground](https://rowstile.dev/playground/): the compiler and Postgres in the browser, nothing installed ([how it is made](playground/README.md))
 
 ## Stacks
 

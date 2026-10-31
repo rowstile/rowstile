@@ -5,7 +5,7 @@ A policy change is a
 migration, written for the tool in `rowstile.toml`, reviewed and deployed with the app's
 other migrations. The database needs nothing installed first: `plpgsql`, which every Postgres has, is
 enough. <!-- checked: tests/apply.sh "rowstile apply, on a database with no extension"; tests/apply.sh "which needs nothing installed but plpgsql" -->
-`core/Dockerfile` builds a Postgres for development and tests: the stock image, with the command in it.
+[`core/Dockerfile`](../../core/Dockerfile) builds a Postgres for development and tests: the stock image, with the command in it.
 
     rowstile migrate                          # the next migration, and db/policy.lock (no database needed)
     rowstile migrate --check                  # in CI: exit 1 if the policy has a change no migration has
@@ -79,7 +79,7 @@ already. <!-- checked: tests/migration_tools.sh "numbered after them" -->
   refused after `rowstile remove`: taking the policy out doesn't make a database a development one. <!-- checked: tests/migrations.sh "after rowstile remove, a database the migrations set up is still one push refuses"; tests/devx.sh "dev won't push to a database with a policy that isn't marked as a development database" -->
 
 The version (semantic versioning; 1.0 will freeze the public surface) is the compiler's, in
-`core/authzlib/__init__.py`; every package carries the same one (`packaging/version.py` sets them). <!-- checked: tests/unit_test.py "test_one_version" -->
+[`core/authzlib/__init__.py`](../../core/authzlib/__init__.py); every package carries the same one ([`packaging/version.py`](../../packaging/version.py) sets them). <!-- checked: tests/unit_test.py "test_one_version" -->
 
 - **Who may apply**: whoever may change the tables' policies and triggers, which is their owner (or a
   superuser). <!-- checked: tests/apply.sh "a role that doesn't own the tables can't apply: Postgres refuses"; tests/apply.sh "the owner applies the policy, with no superuser" -->

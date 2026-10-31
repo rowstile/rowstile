@@ -7,8 +7,8 @@ pages check nothing: each transaction signs in as the request's user, the databa
 refuses what it may not write, and the SDK answers a refusal with 403 and a hidden row with 404. Signed-in
 reads never land in a cache another user could be served from.
 
-Everything here comes from `integrations/nextjs`, the conformance suite: a small app and the checks every
-supported stack passes (`integrations/nextjs/test.sh`, against the production build). Drizzle, pg and
+Everything here comes from [`integrations/nextjs`](../../integrations/nextjs), the conformance suite: a small app and the checks every
+supported stack passes ([`integrations/nextjs/test.sh`](../../integrations/nextjs/test.sh), against the production build). Drizzle, pg and
 postgres.js: [Node apps](node.md).
 Neon's serverless driver, the edge runtime, a BullMQ queue and `after()` are a preview, each in its section.
 
@@ -25,27 +25,11 @@ npm install @prisma/client@7 @prisma/adapter-pg@7 pg && npm install --save-dev p
 # @next on each: the newest pre-release (until 0.1.0 a plain install gets it too)
 npm install @rowstile/client@next @rowstile/prisma@next @rowstile/pg@next @rowstile/next@next @rowstile/react@next
 npm install --save-dev rowstile@next @rowstile/vitest@next
-npx rowstile init        # a first policy from your tables, a test file, rowstile.toml
 ```
 
-The `rowstile` package is the command, with its own Python: nothing else to install. `init` reads your
-tables, so it needs the database, as their owner: `DATABASE_URL`, or `--db`. The command reads its
-variables from the environment, then from `.env.local` and `.env` in the project's folder, where Next.js
-and Prisma keep theirs. It finds Next.js and Prisma, and writes `rowstile.toml` for them. The conformance app's, with its own name for the variable that
-holds the owner's connection:
+The `rowstile` package is the command, with its own Python: nothing else to install.
 
-```toml
-policy   = "db/policy.authz"
-tests    = ["db/tests/*.authz"]
-database = "env:ROWSTILE_OWNER_DSN"
-[clients]
-ts = "src/authz.gen.ts"
-[migrations]
-tool = "prisma"
-dir  = "prisma/migrations"
-```
-
-Two roles connect. The owner of the tables runs the migrations (`ROWSTILE_OWNER_DSN`), and the app connects
+Two roles connect. The owner of the tables runs the migrations (`DATABASE_URL`), and the app connects
 as the role the policy names, which row-level security applies to (`ROWSTILE_APP_URL`). Prisma migrates, so
 its own configuration takes the owner's URL. Prisma 7 doesn't read `.env` itself: `dotenv/config` loads it.
 
@@ -57,7 +41,7 @@ import { defineConfig, env } from "prisma/config";
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: { path: "prisma/migrations" },
-  datasource: { url: env("ROWSTILE_OWNER_DSN") },
+  datasource: { url: env("DATABASE_URL") },
 });
 ```
 
@@ -81,6 +65,32 @@ With Prisma's default schema, `public`, name the tables in the first grant: `ALL
 Prisma's own `_prisma_migrations`. The owner must also be able to switch to the app role, since the command
 looks at the data as the app does when it runs the policy's tests: an owner that isn't a superuser gives
 itself the role once, `GRANT conf_app TO conf_owner` (the command says so when it is missing, AZ618).
+
+## A first policy
+
+`init` reads your tables, so it comes once they are there: after `npx prisma migrate dev` has run the app's
+migrations, the app role's among them.
+
+```sh
+npx rowstile init        # a first policy from your tables, a test file, rowstile.toml
+```
+
+It connects as the tables' owner, with `DATABASE_URL` (or `--db`). The command reads its variables from the
+environment, then from `.env.local` and `.env` in the project's folder, where Next.js and Prisma keep theirs.
+The policy's `app role` is the role the tables are granted to, `conf_app` here; where several roles are, or
+none yet, it is `app_user`, and `init --role` names another. It finds Next.js and Prisma, and writes
+`rowstile.toml` for them, the owner's URL read from the variable Prisma reads. The conformance app's:
+
+```toml
+policy   = "db/policy.authz"
+tests    = ["db/tests/*.authz"]
+database = "env:DATABASE_URL"
+[clients]
+ts = "src/authz.gen.ts"
+[migrations]
+tool = "prisma"
+dir  = "prisma/migrations"
+```
 
 ## The database client
 
@@ -395,7 +405,7 @@ What the edge runtime can't do, and what happens:
 - **An app with `"use cache"` has no edge routes.** Next.js refuses a route's `runtime` when `cacheComponents`
   (or `experimental.useCache`) is on: `Route segment config "runtime" is not compatible with
   nextConfig.cacheComponents`. The conformance suite's edge routes are an app of their own for that reason
-  (`integrations/nextjs/edge`).
+  ([`integrations/nextjs/edge`](../../integrations/nextjs/edge)).
 - **`checkAtStart` throws there.** The edge runtime has no server to stop, and no `process.exit`. Keep it in
   `register()` where `NEXT_RUNTIME` is `"nodejs"`: the edge routes connect as the same role.
 - **pg, `@prisma/adapter-pg` and postgres.js connect over TCP**, which the edge runtime doesn't have. Use Neon's
@@ -491,7 +501,8 @@ npx rowstile migrate --name note_comment_view   # after changing the policy: <ti
 npx prisma migrate deploy                       # a new database, CI, production
 npx rowstile migrate --check                    # in CI: exit 1 if a policy change has no migration
 
-# the development database `rowstile dev` pushed to holds that change already: there, in place of deploy
+# the development database, which `rowstile dev` pushed that change to: there, for each migration after the
+# first, in place of deploy (the first, the whole policy, deploys over what dev pushed)
 npx prisma migrate resolve --applied 20261006215008_authz_note_comment_view   # the migration's folder
 ```
 
@@ -501,8 +512,9 @@ While you edit, `npx rowstile dev` checks, pushes to the development database, r
 `src/authz.gen.ts` on every save (and writes the migration once you stop editing).
 
 The development database then holds what `dev` (or `rowstile push`) pushed, not what its migrations left.
-The first migration, the whole policy, applies over that; a later `prisma migrate deploy` stops there with
-AZ607, "this database already holds what this migration brings", which Prisma keeps as a failed migration:
+The first migration, the whole policy, applies over that, as anywhere: it needs no `resolve` (on one Prisma has
+applied, `resolve --applied` answers P3008, "already recorded as applied"). A later one stops there with AZ607,
+"this database already holds what this migration brings", which Prisma keeps as a failed migration:
 `resolve --applied` is what the message asks for, and it clears that too. Or rebuild the database from the
 migrations. Production and CI only ever take migrations.
 

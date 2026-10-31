@@ -3785,6 +3785,24 @@ class Review(unittest.TestCase):
             f"Builds {tree} beside the tables in use, then swaps in.",
         )
 
+    def test_the_rules_a_permission_gained_opens(self) -> None:
+        # what rowstile dev names under a permission gained: the rules that read it, by table, in the policy's order,
+        # across a relation too; a mask reads it as well, and is left out (the access diff lists its column)
+        pol = parse_policy(read("../docs/cookbook/hiding-a-column/policy.authz"))
+        self.assertEqual(self.review.rules_reading(pol), {})
+        pol = parse_policy(
+            read("../docs/cookbook/hiding-a-column/policy.authz").replace(
+                "  select      : signed_in", "  select      : signed_in\n  update      : see_salary"
+            )
+        )
+        self.assertEqual(self.review.rules_reading(pol), {("employee", "see_salary"): {"app.employees": ["update"]}})
+        reading = self.review.rules_reading(parse_policy(self.text))
+        self.assertEqual(
+            reading[("folder", "share")],
+            {"app.folders": ["update parent_id after", "update id, owner_id, org_id, inherit", "delete"]},
+        )
+        self.assertEqual(reading[("folder", "edit")]["app.files"], ["insert", "update folder_id after"])
+
     def test_what_changes_through_a_groups_members(self) -> None:
         # who is in a team: what is shared with the team's members (team#member) changes through it
         r = self.run_review(
@@ -12464,7 +12482,8 @@ class DocPages(unittest.TestCase):
         said = " ".join(section.split())
         self.assertIn(
             "Every night both SDKs' conformance suites run with the app's connection through PgBouncer "
-            f"{version} in transaction mode, keeping prepared statements (`integrations/pooler.sh`); the owner and "
+            f"{version} in transaction mode, keeping prepared statements ([`integrations/pooler.sh`](../integrations/pooler.sh)); "
+            "the owner and "
             "the change feed connect directly.",
             said,
         )
@@ -13138,12 +13157,23 @@ class LlmsTxt(unittest.TestCase):
 
         text = read("../llms.txt")
         for link in llms_full.links(text):
+            if link.startswith("https://rowstile.dev/"):  # a page of the site's own, the playground
+                continue
             self.assertTrue(os.path.exists(os.path.join(self.REPO, *link.split("/"))), f"llms.txt links {link}")
         policy = search(r"```authz\n(.*?)```", text, re.S).group(1)
         Compiler(parse_policy(policy)).compile("x")
         full = llms_full.build()
         for link in ["docs/getting-started.md", "docs/stacks/nextjs.md", "docs/errors/AZ201.md"]:
             self.assertIn(f"<!-- {link} -->", full)
+        # without the notes for the repository's checks, which the pages don't show: after a sentence, or a line
+        self.assertNotRegex(full, r"<!-- (checked|unchecked|answer|tested|not run|features):")
+        self.assertIn("Lines that only moved need no migration.\n", full)
+        self.assertEqual(
+            llms_full.without_notes(
+                '<!-- tested: x -->\nA promise. <!-- checked: tests/x.sh "y" --> `<!-- kept -->`\n'
+            ),
+            "A promise. `<!-- kept -->`\n",
+        )
 
     def test_the_docs_index_for_agents(self) -> None:
         # context7.json says which folders an index of docs for coding agents reads, and what an agent should

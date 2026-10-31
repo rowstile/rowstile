@@ -36,7 +36,7 @@ test "people edit their own row, and only it"
 [Open it in the playground](https://rowstile.dev/playground/#e=your-own-row): the tables, the policy and the test,
 in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
-[`docs/cookbook/your-own-row/`](your-own-row/). CI takes them on every change (`core/tests/cookbook.sh`), and
+[`docs/cookbook/your-own-row/`](your-own-row/). CI takes them on every change ([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and
 checks that every line of policy and tests shown here is in those files.
 
 More: [relations](../reference/language.md), [the other recipes](../cookbook.md).

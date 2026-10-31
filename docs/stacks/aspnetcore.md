@@ -9,8 +9,8 @@ An ASP.NET Core app on EF Core and Npgsql, whose migrations are EF Core's. The e
 request's transactions sign in as its user, the database filters what they read and refuses what they may not
 write, and the SDK answers a refusal with 403 and a hidden row with 404.
 
-Everything here comes from `integrations/aspnetcore`, the conformance suite: a minimal API app, and the checks
-every supported stack passes (`integrations/aspnetcore/test.sh`). .NET 10.
+Everything here comes from [`integrations/aspnetcore`](../../integrations/aspnetcore), the conformance suite: a minimal API app, and the checks
+every supported stack passes ([`integrations/aspnetcore/test.sh`](../../integrations/aspnetcore/test.sh)). .NET 10.
 
 ## Install
 
@@ -18,7 +18,7 @@ every supported stack passes (`integrations/aspnetcore/test.sh`). .NET 10.
 dotnet add package Rowstile.EntityFrameworkCore --prerelease
 dotnet add package Rowstile.AspNetCore --prerelease
 pip install --pre rowstile      # the command; or npm install --save-dev rowstile@next, or its Docker image
-rowstile init                   # a first policy from your tables, a test file, rowstile.toml
+rowstile init                   # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 `Rowstile.EntityFrameworkCore` brings `Rowstile`, the base, which works on Npgsql alone too

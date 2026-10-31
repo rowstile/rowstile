@@ -80,7 +80,7 @@ The last line is Bo, who isn't in the project: his key is refused where he would
 the test, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
 [`docs/cookbook/api-keys-with-scopes/`](api-keys-with-scopes/). CI takes them on every change
-(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files, and that
+([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and checks that every line of policy and tests shown here is in those files, and that
 the SQL that makes the keys runs.
 
 More: [API keys, scopes and JWTs](../reference/identity.md),

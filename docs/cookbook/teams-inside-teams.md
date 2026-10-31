@@ -53,7 +53,7 @@ test "to any depth, loops included"
 tests, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
 [`docs/cookbook/teams-inside-teams/`](teams-inside-teams/). CI takes them on every change
-(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
+([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and checks that every line of policy and tests shown here is in those files.
 
 ## What it costs
 

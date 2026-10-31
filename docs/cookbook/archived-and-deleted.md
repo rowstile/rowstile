@@ -66,7 +66,7 @@ test "deleted: in its owner's trash, gone for everyone else"
 the tests, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
 [`docs/cookbook/archived-and-deleted/`](archived-and-deleted/). CI takes them on every change
-(`core/tests/cookbook.sh`), and checks that every line of policy and tests shown here is in those files.
+([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and checks that every line of policy and tests shown here is in those files.
 
 More: [rows that count, and conditions](../reference/language.md), [conditions on the row](conditions-on-the-row.md),
 [the other recipes](../cookbook.md).

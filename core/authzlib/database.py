@@ -922,13 +922,34 @@ def draft(db: Db, schemas: Sequence[str] | None = None, users: str | None = None
     rows = db.rows(CATALOG_SQL, [text_array(schemas) if schemas else None])
     tables = [table_of(r) for r in rows]
     if not tables:
-        raise Error("no tables to draft a policy from" + (f" in {', '.join(schemas)}" if schemas else "") + " [AZ620]")
+        raise Error(
+            "no tables to draft a policy from"
+            + (f" in {', '.join(schemas)}" if schemas else "")
+            + ": init reads the app's tables, so its migrations come first [AZ620]"
+        )
     try:
         return make_draft(
             tables, users, role or "app_user", schemas or sorted({t["name"].split(".")[0] for t in tables})
         )
     except DraftError as e:
         raise Error(str(e)) from None
+
+
+def granted_roles(db: Db, schemas: Sequence[str] | None = None) -> list[str]:
+    """The roles granted something on the tables a draft reads (in these schemas, or all of the app's), but their
+    owners, superusers, Postgres's own and those the policy language can't name: the role the app connects as, when
+    there is only one."""
+    from .draft import GRANTED_SQL
+    from .parse import IDENT
+
+    roles = [text(r, "role") for r in db.rows(GRANTED_SQL, [text_array(schemas) if schemas else None])]
+    return [r for r in roles if re.fullmatch(IDENT, r)]
+
+
+def role_bypasses(db: Db, role: str) -> bool | None:
+    """Whether this role skips row-level security (a superuser, or BYPASSRLS); None if there is no such role."""
+    rows = db.rows("SELECT rolsuper OR rolbypassrls AS bypasses FROM pg_catalog.pg_roles WHERE rolname = $1", [role])
+    return flag(rows[0], "bypasses") if rows else None
 
 
 def reapply(db: Db, rebuild: bool = False) -> str:

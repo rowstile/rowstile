@@ -8,15 +8,15 @@ A Go app on [pgx](https://github.com/jackc/pgx) v5 (`pgxpool`), with sqlc's quer
 handlers check nothing: each request's transactions sign in as its user, the database filters what they read and
 refuses what they may not write, and the SDK answers a refusal with 403 and a hidden row with 404.
 
-Everything here comes from `integrations/go`, the conformance suite: a small `net/http` app and the checks every
-supported stack passes (`integrations/go/test.sh`).
+Everything here comes from [`integrations/go`](../../integrations/go), the conformance suite: a small `net/http` app and the checks every
+supported stack passes ([`integrations/go/test.sh`](../../integrations/go/test.sh)).
 
 ## Install
 
 ```sh
 go get github.com/rowstile/rowstile/sdk/go    # a preview: the repository's tag sdk/go/vX.Y.Z
 pip install --pre rowstile                    # the command (or npm install rowstile@next, or its image)
-rowstile init                                 # a first policy from your tables, a test file, rowstile.toml
+rowstile init                                 # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
 
 The SDK needs pgx v5 and nothing else, and Go 1.25 or newer (its `go.mod`; the suite runs on Go 1.26). Its

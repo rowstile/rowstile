@@ -9,8 +9,8 @@ A Django app (5.2 or newer) on psycopg 3, whose migrations are Django's. The vie
 transaction signs in as the request's user, the database filters what it reads and refuses what it may not
 write, and the SDK answers a refusal with 403 and a hidden row with 404.
 
-Everything here comes from `integrations/django`, the conformance suite: a small app and the checks every
-supported stack passes (`integrations/django/test.sh`).
+Everything here comes from [`integrations/django`](../../integrations/django), the conformance suite: a small app and the checks every
+supported stack passes ([`integrations/django/test.sh`](../../integrations/django/test.sh)).
 
 ## Install
 

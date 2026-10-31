@@ -11,11 +11,23 @@ import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LINK = re.compile(r"^- \[[^\]]+\]\(([^)]+)\)", re.M)
+# the notes the repository's checks read (a promise's `<!-- checked: ... -->`, ...), which the pages don't show:
+# left out, as the site's Markdown copies leave them out (site/pages.mjs, withoutNotes)
+NOTE_KINDS = "checked|unchecked|answer|tested|not run|features"
+NOTE = re.compile(rf"<!-- (?:{NOTE_KINDS}):")
+NOTE_LINE = re.compile(rf"^<!-- (?:{NOTE_KINDS}):[^>]*-->\n", re.M)
+NOTE_AFTER = re.compile(rf" ?<!-- (?:{NOTE_KINDS}):[^>]*-->")
 
 
 def read(rel: str) -> str:
     with open(os.path.join(REPO, *rel.split("/")), encoding="utf-8") as fh:
-        return fh.read()
+        return without_notes(fh.read())
+
+
+def without_notes(text: str) -> str:
+    """A file without the notes for the repository's checks: a line that is a note, and a note after a sentence
+    with the space before it."""
+    return NOTE_AFTER.sub("", NOTE_LINE.sub("", text))
 
 
 def links(text: str) -> list[str]:

@@ -162,6 +162,21 @@ out=$(then_as 2 "SELECT 1" "UPDATE app.folders SET parent_id = 2 WHERE id = 4")
 want="DETAIL:  no   update parent_id after : parent.edit or ({parent_id is null} and share)  (line "*$'\n'"  no   parent.edit"$'\n'"    no   you have no access to folder 2"$'\n'"  no   ({parent_id is null} and share)"$'\n'"    no   {parent_id is null}"$'\n'"    no   share"$'\n'"HINT:  "
 case "$out" in *"42501: changing parent_id of app.folders 4 needs: parent.edit or ({parent_id is null} and share)"$'\n'$want*)
   ok "a refused move says which part of an and failed, each on its own line below it";; *) bad "the parts of an and" "$out";; esac
+# a refused share says why, as a refused write does: what authz.explain answers the one sharing, line by line (bob
+# may edit file 11, not share it); unsharing the same
+want=$(as 2 "SELECT * FROM authz.explain('file', 11, 'share')")
+out=$(as 2 "SELECT authz.share('file', 11, 'viewer', 'user', 4)")
+case "$out" in *"42501: you cannot share file 11"$'\n'"DETAIL:  $want"$'\n'"HINT:  rowstile help AZ705"*)
+  case "$(as 2 "SELECT authz.unshare('file', 11, 'viewer', 'user', 4)")" in
+    *"42501: you cannot unshare viewer on file 11 (needs share)"$'\n'"DETAIL:  $want"$'\n'"HINT:  rowstile help AZ705"*)
+      ok "a refused share says why: authz.explain's answer to the one sharing, and a refused unshare too";;
+    *) bad "a refused unshare's detail" "$(as 2 "SELECT authz.unshare('file', 11, 'viewer', 'user', 4)")";; esac;;
+  *) bad "a refused share's detail" "$out ($want)";; esac
+# ... and for a file they can't see, what a file that isn't there gets, as authz.explain answers both
+said() { as 3 "SELECT authz.share('file', '$1'::text, 'viewer', 'user', 4)" | grep -E "^(ERROR|DETAIL|HINT):" | sed "s/file $1\$/file N/"; }
+[ "$(said 12)" = "$(said 99999)" ] && [ "$(said abc)" = "$(said 99999)" ] && [ "$(said 12)" = "ERROR:  42501: you cannot share file N
+DETAIL:  no   you have no access to file N
+HINT:  rowstile help AZ705" ] && ok "... and of a file they can't see, the words of one that isn't there" || bad "a refused share of a hidden file" "$(said 12) / $(said 99999) / $(said abc)"
 
 echo "-- authz.explain_rule"
 out=$(as 1 "SELECT array_to_string(authz.explain_rule('app.files', 'update', '11'), '|')")
@@ -361,10 +376,30 @@ check=$(cd "$T/o3" && python3 "$OLDPWD/cli/rowstile_cli.py" check 2>&1); rc=$?
 [ $rc -eq 0 ] && grep -qF 'policy   = "a\"b\\c/policy.authz"' "$T/o3/rowstile.toml" &&
   ok "... and an --out holding a quote and a backslash: rowstile.toml escapes them, and check reads it" || bad "init --out with a quote" "$out $check $(cat "$T/o3/rowstile.toml")"
 out=$(mkdir -p "$T/j" && cd "$T/j" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema nosuch 2>&1)
-case "$out" in *"no tables to draft a policy from in nosuch [AZ620]"*) ok "a schema with no tables is named";; *) bad "draft empty" "$out";; esac
+[ "$out" = "no tables to draft a policy from in nosuch: init reads the app's tables, so its migrations come first [AZ620]" ] &&
+  ok "a schema with no tables is named, and the migrations that make them" || bad "draft empty" "$out"
 out=$(mkdir -p "$T/u" && cd "$T/u" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --users app.nosuch 2>&1)
 [ "$out" = "app.nosuch: no such table with a primary key in app [AZ621]" ] && [ -z "$(ls -A "$T/u")" ] &&
   ok "... and a --users table that isn't there, with nothing written" || bad "init --users of a table that isn't there" "$out $(ls -A "$T/u")"
+# the app role: without --role, the one role granted the tables (app_user here), there already, so nothing to make
+grep -qx "note    app role app_user: the one role granted the tables (another: --role)" "$T/init.log" &&
+  grep -qx "  2. The role your app connects as (app_user) is there, and doesn't bypass row-level security." "$T/init.log" &&
+  grep -q "^app role app_user " "$T/i/db/policy.authz" && ! grep -q "CREATE ROLE" "$T/init.log" &&
+  ok "init names the app role the tables are granted to, and asks to make no role that is there" || bad "init: the role granted the tables" "$(cat "$T/init.log")"
+# two roles granted the tables: the draft keeps app_user, and says which roles to choose from
+PSQL -c "GRANT SELECT ON app.folders TO authz_devx_other" >/dev/null
+out=$(mkdir -p "$T/r2" && cd "$T/r2" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app 2>&1)
+PSQL -c "REVOKE SELECT ON app.folders FROM authz_devx_other" >/dev/null
+case "$out" in *"note    app role app_user: 2 roles are granted the tables (app_user, authz_devx_other):
+        name the one your app connects as on the policy's app role line (or init --role)"*)
+  grep -q "^app role app_user " "$T/r2/db/policy.authz" && ok "... and with two roles granted them, names both and keeps app_user" ||
+    bad "init with two roles granted: the policy" "$(head -8 "$T/r2/db/policy.authz")";;
+  *) bad "init with two roles granted the tables" "$out";; esac
+# a role named that skips row-level security (a superuser): what to change, not a role to make
+out=$(mkdir -p "$T/r3" && cd "$T/r3" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --role "${PGSUPERUSER:-postgres}" 2>&1)
+case "$out" in *"  2. The role your app connects as (${PGSUPERUSER:-postgres}) bypasses row-level security: nothing would be filtered.
+       ALTER ROLE ${PGSUPERUSER:-postgres} NOSUPERUSER NOBYPASSRLS;"*) ok "... and a --role that bypasses row-level security: says what to change";;
+  *) bad "init --role of a superuser" "$out";; esac
 # in a Next.js app on Prisma: the tool, the generated names, the SDK packages and the setup line
 mkdir -p "$T/k/prisma" "$T/k/src"
 printf '{\n    "name": "shop",\n    "dependencies": {"next": "16", "@prisma/client": "7", "react": "19"}\n}\n' > "$T/k/package.json"
@@ -486,6 +521,8 @@ case "$draft" in *'type user = pr.User'*'author : user = authorId'*'viewer : use
   ok "a draft of a schema with capitals and awkward names: quoted where SQL reads it, the rest left out and said";; *) bad "draft names" "$out $draft";; esac
 case "$draft" in *events_low*) bad "the draft names a partition" "$draft";; *'= pr.events'*) ok "... a partitioned table its type, its partitions none";;
   *) bad "the draft of a partitioned table" "$draft";; esac
+case "$out" in *"(app_user) "*$'\n'"     No role is granted the tables yet: if your app's is another, name it on the policy's app role line."*)
+  ok "... and with no role granted the tables, says the app role is app_user for want of another";; *) bad "init with no role granted the tables" "$out";; esac
 out=$(cd "$T/n" && python3 "$OLDPWD/cli/rowstile_cli.py" check 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "... which compiles" || bad "draft names compile" "$out"
 # no --schema: every schema of the app's (here pr alone), the same draft
@@ -494,6 +531,13 @@ cmp -s "$T/n/db/policy.authz" "$T/n2/db/policy.authz" && ok "init without --sche
   bad "init without --schema" "$out $(diff "$T/n/db/policy.authz" "$T/n2/db/policy.authz" 2>&1 | head -n 5)"
 out=$(cd "$T/n" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_names" apply 2>&1); rc=$?
 case "$out" in *": applied") ok "... and applies";; *) bad "draft names apply" "$out";; esac
+# the tables granted to one role, another than app_user: the draft's app role is that one
+psql -X -q -d "${DB}_names" -c 'GRANT SELECT ON pr."User", pr."Post" TO authz_devx_other' >/dev/null
+out=$(mkdir -p "$T/n3" && cd "$T/n3" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_names" init --schema pr 2>&1)
+case "$out" in *"note    app role authz_devx_other: the one role granted the tables (another: --role)"*"(authz_devx_other) is there, and doesn't bypass"*)
+  grep -q "^app role authz_devx_other " "$T/n3/db/policy.authz" && ok "init takes the app role from the tables' grants: the one role they are granted to" ||
+    bad "init: the app role from the grants, in the policy" "$(head -8 "$T/n3/db/policy.authz")";;
+  *) bad "init: the app role from the grants" "$out";; esac
 dropdb --if-exists "${DB}_names" 2>/dev/null
 # the columns that name users point to a schema not drafted (as Supabase's auth.users), or to a table the draft
 # leaves out: init says which table, why, and what to do
@@ -654,6 +698,15 @@ devonce
   grep -qE "^       [1-9][0-9]* user\(s\) lose rows readable in app\.files \([1-9][0-9]* rows?\)$" "$T/dev.log" &&
   grep -qE "^       [1-9][0-9]* user\(s\) lose permission view on [1-9][0-9]* files?$" "$T/dev.log" &&
   ok "... says before each push who gains and loses what: rows by table, permissions by type" || bad "dev's access" "$rc $(cat "$T/dev.log")"
+grep -q "read by the rules" "$T/dev.log" && bad "dev names the rules of a permission lost" "$(cat "$T/dev.log")"
+# editors may share a folder: they gain share, and with it the rules that read it (giving the folder away, deleting it)
+sed -i 's/^  can share = owner or org.admin or (parent.share and {inherit})$/  can share = owner or editor or org.admin or (parent.share and {inherit})/' "$T/p/policy.authz"
+devonce
+grep -A1 -E "^       [1-9][0-9]* user\(s\) gain permission share on [1-9][0-9]* folders?$" "$T/dev.log" | tail -n 1 |
+  grep -qx "         read by the rules of app.folders: update parent_id after; update id, owner_id, org_id, inherit; delete" &&
+  grep -A1 -E "^       [1-9][0-9]* user\(s\) gain permission share on [1-9][0-9]* files?$" "$T/dev.log" | tail -n 1 |
+  grep -qx "         read by the rules of app.files: update id, owner_id, confidential" &&
+  ok "... and with a permission gained, the rules that read it: what it opens" || bad "dev's access: the rules a permission gained opens" "$(cat "$T/dev.log")"
 cp "$T/policy.keep" "$T/p/policy.authz"; devonce
 # a client it can't write (its path a folder): which file and why, not a lost database
 rm "$T/p/out/authz_client.py"; mkdir "$T/p/out/authz_client.py"

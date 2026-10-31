@@ -7,7 +7,7 @@ asyncpg. (Django: [Django](django.md), a preview.) Each transaction signs in as 
 reads and refuses what it may not write, and the SDK raises `Refused` (403) or `NotFound` (404). FastAPI:
 [FastAPI](fastapi.md).
 
-These come from the conformance suite (`integrations/fastapi/tests/test_conformance.py`).
+These come from the conformance suite ([`integrations/fastapi/tests/test_conformance.py`](../../integrations/fastapi/tests/test_conformance.py)).
 
 ```sh
 pip install --pre "rowstile[sqlalchemy,psycopg]"   # or [asyncpg]; the command comes with it (--pre: the newest pre-release)
@@ -104,7 +104,7 @@ SQLSTATE, 28000, but are not it.
 ## Background jobs: Celery and RQ (preview)
 
 **Preview**: what this section shows may change in any release. The conformance suite runs it in Celery's
-worker and RQ's, on Redis (`integrations/fastapi/tests/test_jobs.py`).
+worker and RQ's, on Redis ([`integrations/fastapi/tests/test_jobs.py`](../../integrations/fastapi/tests/test_jobs.py)).
 
 ```sh
 pip install --pre "rowstile[sqlalchemy,psycopg]" "celery[redis]" rq

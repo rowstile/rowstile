@@ -2,7 +2,7 @@
 
 From an empty folder to access rules enforced by Postgres, tested, in about fifteen minutes. You need a
 Postgres (Docker runs one below) and the `rowstile` command. (This guide runs as written in the tests:
-`core/tests/docs_test.sh`.)
+[`core/tests/docs_test.sh`](../core/tests/docs_test.sh).)
 
 ## 1. Postgres with rowstile
 
@@ -120,7 +120,7 @@ rules app.notes
 `can share`. The layout is `rowstile fmt`'s: run it on your own files, and `rowstile fmt --check` in CI.
 
 With an editor that speaks the Language Server Protocol, mistakes show while you type, and hovering
-`project.edit` shows what it means (`editor/README.md`).
+`project.edit` shows what it means ([`editor/README.md`](../editor/README.md)).
 
 ## 4. Tests that bring their own data
 
@@ -171,7 +171,7 @@ anything`), and a lookup that no index serves is named, with the index to add.
 A mistake stops it before anything is applied (`db/policy.authz: line 14: project has no relation or
 permission 'edtor' (it has: edit, editor, owner, share, view, viewer) [AZ203]`), and a failing check prints
 why, from the database. Every mistake ends with its code: `rowstile help AZ203` says what it means and shows
-it fixed (`docs/errors/`).
+it fixed ([`docs/errors/`](errors/)).
 
 ## 6. Ask as a user
 

@@ -40,7 +40,7 @@ test "everyone sees the directory; a salary, only the person and their manager"
 [Open it in the playground](https://rowstile.dev/playground/#e=hiding-a-column): the tables, the policy and the
 tests, in your browser, with nothing to install. Or try it on a database of your own:
 [the steps](../cookbook.md#trying-a-recipe-on-your-own-database) take the files of
-[`docs/cookbook/hiding-a-column/`](hiding-a-column/). CI takes them on every change (`core/tests/cookbook.sh`), and
+[`docs/cookbook/hiding-a-column/`](hiding-a-column/). CI takes them on every change ([`core/tests/cookbook.sh`](../../core/tests/cookbook.sh)), and
 checks that every line of policy and tests shown here is in those files.
 
 More: [masked columns](../reference/language.md#masked-columns), [the other recipes](../cookbook.md).

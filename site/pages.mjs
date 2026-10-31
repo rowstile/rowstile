@@ -319,6 +319,21 @@ function short(summary) {
   return sentences ? sentences[0] : summary.slice(0, 197).replace(/\s+\S*$/, "") + "...";
 }
 
+// the notes the repository's checks read in a page (a promise's `<!-- checked: tests/x.sh "label" -->`, a block's
+// `<!-- not run: why -->`, ...): the rendered page doesn't show them, and its Markdown copy leaves them out too
+// (docs/llms_full.py does the same for llms-full.txt)
+const NOTE_KINDS = "checked|unchecked|answer|tested|not run|features";
+export const NOTE = new RegExp(`<!-- (?:${NOTE_KINDS}):`);
+const NOTE_LINE = new RegExp(`^<!-- (?:${NOTE_KINDS}):[^>]*-->\\n`, "gm");
+const NOTE_AFTER = new RegExp(` ?<!-- (?:${NOTE_KINDS}):[^>]*-->`, "g");
+
+/** A page's Markdown without the notes for the repository's checks: a line that is a note goes, and a note after a
+ *  sentence goes with the space before it. Notes hold no ">" (the Promises rule, tests/unit_test.py).
+ *  @param {string} text @returns {string} */
+export function withoutNotes(text) {
+  return text.replace(NOTE_LINE, "").replace(NOTE_AFTER, "");
+}
+
 /** A page's URL: "/reference", "/stacks/". @param {string} address */
 export function url(address) {
   return "/" + address.replace(/(^|\/)index\.md$/, "$1").replace(/\.md$/, "");

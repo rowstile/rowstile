@@ -78,7 +78,7 @@ A transaction in which nobody signed in gets an error
 too, not an empty result (`act_as(NULL, NULL)` says "nobody" on purpose). <!-- checked: tests/sessions.sh "but nobody signed in is an error, not an empty result"; tests/sessions.sh "act_as(NULL, NULL): nobody, on purpose, no error" -->
 Sessions of the policy's owner
 and superusers are believed without a signature (psql, migrations, tests). <!-- checked: tests/sessions.sh "the owner's session sets authz.user_id and is believed" -->
-`core/tests/sessions.sh` checks all
+[`core/tests/sessions.sh`](../../core/tests/sessions.sh) checks all
 of it, on the stock Postgres image.
 
 **Signing in turns JIT off** until the transaction ends (`act_as`, the logins and `view_as`). The rules' lookups

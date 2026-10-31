@@ -98,11 +98,15 @@ def init(
     where: str = "",
     given: str | None = None,
     app_url: tuple[str, str] | None = None,
+    granted: list[str] | None = None,
+    bypasses: bool | None = None,
 ) -> None:
     """Writes the drafted policy, a first test file, rowstile.toml and the note for coding agents, keeping any
     that exist. where: the .env file that named the database, if one did; given: --db, if it named it; app_url:
     DATABASE_URL and where it is ('' for the environment, else the .env file), read even when --db named the
-    database: it is the one the next command reads."""
+    database: it is the one the next command reads. granted: the roles granted the tables, which the policy's app
+    role was taken from (None: --role named it); bypasses: whether that role skips row-level security (None: there
+    is no such role yet)."""
     out = opts.get("--out", "db")
     written: list[str] = []
     policy_path = os.path.join(out, "policy.authz")
@@ -137,6 +141,13 @@ test "nobody signed in sees a {example}"
         print(f"found   {', '.join(found.found)}, Postgres{via}")
     for note in found.notes:
         print(f"note    {note}")
+    if granted is not None and len(granted) == 1:
+        print(f"note    app role {role}: the one role granted the tables (another: --role)")
+    elif granted:
+        print(
+            f"note    app role {role}: {len(granted)} roles are granted the tables ({', '.join(granted)}):\n"
+            "        name the one your app connects as on the policy's app role line (or init --role)"
+        )
     if cfg.path is None:
         database, why = "env:DATABASE_URL", "a DSN or URL, or env:NAME for an environment variable holding one"
         if given and app_url and app_url[0] != given:
@@ -198,6 +209,19 @@ database = "{database}"     # {why}
     if found.pip and not found.pip_there:
         req = stack.pip_requirement(found.pip, __version__)
         print(f"add     {req} to your Python dependencies (pip install '{req}', or uv add '{req}')")
+    # the app role: made if it isn't there, kept from skipping row-level security if it is
+    if bypasses is None:
+        app_role = f"""The role your app connects as ({role}) must not bypass row-level security:
+       CREATE ROLE {role_sql} LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;"""
+    elif bypasses:
+        app_role = f"""The role your app connects as ({role}) bypasses row-level security: nothing would be filtered.
+       ALTER ROLE {role_sql} NOSUPERUSER NOBYPASSRLS;"""
+    else:
+        app_role = f"The role your app connects as ({role}) is there, and doesn't bypass row-level security."
+    if granted == []:  # app_user, as nothing named another
+        app_role += (
+            "\n     No role is granted the tables yet: if your app's is another, name it on the policy's app role line."
+        )
     setup = ""
     if found.setup:
         where = f"in {found.setup_file}" if found.setup_file else "where the app makes its database client"
@@ -205,14 +229,12 @@ database = "{database}"     # {why}
         setup = f"""
   2. Sign every transaction in, {where}:
 {lines}
-     The role your app connects as ({role}) must not bypass row-level security:
-       CREATE ROLE {role_sql} LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
+     {app_role}
      The app connects as {role}, with a URL of its own: never the one this command uses, the
      tables' owner's, which row-level security doesn't apply to."""
     else:
         setup = f"""
-  2. The role your app connects as ({role}) must not bypass row-level security:
-       CREATE ROLE {role_sql} LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
+  2. {app_role}
      It says who is signed in first in each transaction: SELECT authz.act_as('user', '42')
      (the generated clients' sign_in does it)."""
     print(f"""
