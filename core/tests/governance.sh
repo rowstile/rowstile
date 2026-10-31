@@ -249,6 +249,10 @@ admin "... with what reads Keys" "file 12" "$(fed $POS dependent)"
 POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 admin "run again, it announces nothing new" "0|nothing" \
   "SELECT authz.announce_timed_shares() || '|' || coalesce((SELECT string_agg(object_type, ',') FROM authz.changes WHERE pos > $POS), 'nothing')"
+got=$(PSQL -c "BEGIN" -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at) VALUES ('file', '14', 'viewer', 'user', '6', now())" \
+  -c "SELECT authz.announce_timed_shares()" -c "$(fed $POS share_ended)" -c "ROLLBACK" | tr '\n' '|')
+[ "$got" = "1|file 14|" ] && echo "ok    ... and a share ending at the very moment it runs has ended: announced then, not left for a later call that starts after it" ||
+  { echo "FAIL  a share ending as announce_timed_shares runs: $got"; fails=$((fails + 1)); }
 expect_code "the app role cannot run it" "42501: permission denied for function announce_timed_shares" -c "SELECT authz.announce_timed_shares()"
 PSQL -c "DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id = '6' AND (expires_at IS NOT NULL OR starts_at IS NOT NULL)" >/dev/null
 
@@ -349,6 +353,80 @@ got=$(XSQL -c "SELECT string_agg(object_type || ' ' || array_to_string(object_id
   { echo "FAIL  the feed after a link across types: expected 'folder 3', got '$got'"; fails=$((fails + 1)); }
 dropdb "$X"; rm -f $T/governance_across.authz $T/governance_across.sql
 
+# what reads what through a table's rule alone (item's select: box.view), a lookup whose rows repeat a few docs (a
+# team given three custom roles on them, 1,700 shares on 900 docs), and a link across two types whose row names no
+# folder
+dropdb --if-exists "$X" 2>/dev/null; createdb "$X" || exit 1
+XSQL >/dev/null <<'SQL' || exit 1
+CREATE SCHEMA app;
+CREATE TABLE app.users (id bigint PRIMARY KEY);
+CREATE TABLE app.boxes (id bigint PRIMARY KEY, owner_id bigint);
+CREATE TABLE app.items (id bigint PRIMARY KEY, box_id bigint);
+CREATE TABLE app.teams (id bigint PRIMARY KEY);
+CREATE TABLE app.team_members (team_id bigint, user_id bigint);
+CREATE TABLE app.docs (id bigint PRIMARY KEY);
+CREATE TABLE app.folders (id bigint PRIMARY KEY, owner_id bigint);
+CREATE TABLE app.projects (id bigint PRIMARY KEY, owner_id bigint);
+CREATE TABLE app.folder_projects (folder_id bigint, project_id bigint);
+INSERT INTO app.users VALUES (1), (2);
+INSERT INTO app.boxes VALUES (1, 1), (2, 1);
+INSERT INTO app.items VALUES (10, 1), (11, 1), (20, 2);
+INSERT INTO app.teams VALUES (1);
+INSERT INTO app.team_members VALUES (1, 1), (1, 2);
+INSERT INTO app.docs SELECT g FROM generate_series(1, 900) g;
+INSERT INTO app.folders VALUES (1, 1), (2, NULL);
+INSERT INTO app.projects VALUES (10, NULL);
+SQL
+cat > $T/governance_feed.authz <<'EOF'
+app role app_user
+type user = app.users
+type box = app.boxes
+  owner : user = owner_id
+  can view = owner
+type item = app.items
+  box : box = box_id
+rules app.items
+  select : box.view
+type team = app.teams
+  member : user = app.team_members(team_id -> user_id)
+  can manage_roles = member
+type doc = app.docs
+  roles : team#member
+  can view = roles
+type folder = app.folders
+  owner : user = owner_id
+  in    : project = app.folder_projects(folder_id -> project_id)
+  can view = owner or in.view
+type project = app.projects
+  owner : user = owner_id
+  in    : folder shared by view
+  can view = owner or in.view
+EOF
+python3 compile_policy.py $T/governance_feed.authz > $T/governance_feed.sql &&
+  PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$X" -f $T/governance_feed.sql >/dev/null || exit 1
+POS=$(XSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+XSQL -c "UPDATE app.boxes SET owner_id = 2 WHERE id = 1" >/dev/null
+got=$(XSQL -c "$(fed $POS dependent)")
+[ "$got" = "item 10,11" ] && echo "ok    a box given to someone else: the items in it, whose rule reads box.view (no permission does), are announced" ||
+  { echo "FAIL  the feed after a box a rule reads changes: $got"; fails=$((fails + 1)); }
+XSQL -c "INSERT INTO authz.roles (owner_type, owner_id, object_type, name) VALUES ('team', '1', 'doc', 'a'), ('team', '1', 'doc', 'b'), ('team', '1', 'doc', 'c')" \
+  -c "INSERT INTO authz.role_permissions SELECT id, 'view' FROM authz.roles" \
+  -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation)
+      SELECT 'doc', g::text, 'role:' || r.id, 'team', '1', 'member' FROM authz.roles r, generate_series(1, CASE r.name WHEN 'c' THEN 900 ELSE 400 END) g" >/dev/null
+POS=$(XSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+XSQL -c "DELETE FROM app.team_members WHERE team_id = 1 AND user_id = 2" >/dev/null
+got=$(XSQL -c "$(fed $POS dependent)")
+[ "$got" = "doc *" ] && echo "ok    a lookup that reaches its limit announces every doc ({*}), though the rows it read name 400 of them" ||
+  { echo "FAIL  the feed after a lookup filled by repeats: ${got:0:100}"; fails=$((fails + 1)); }
+XSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('project', '10', 'in', 'folder', '1')" >/dev/null
+POS=$(XSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+XSQL -c "INSERT INTO app.folder_projects VALUES (NULL, 10), (2, 10)" >/dev/null
+got=$(XSQL -c "SELECT coalesce(string_agg(coalesce(x, 'NULL'), ',' ORDER BY x), 'nothing') FROM authz.changes c, unnest(c.object_ids) x WHERE c.pos > $POS AND c.cause = 'inheritance'")
+[ "$got" = 2 ] && [ "$(XSQL -c "SET authz.user_id = 1" -c "SELECT authz.can('folder', 2, 'view')")" = t ] &&
+  echo "ok    two links into a project, one naming no folder: the feed announces folder 2, and no NULL" ||
+  { echo "FAIL  the feed after a link naming no folder: $got"; fails=$((fails + 1)); }
+dropdb "$X"; rm -f $T/governance_feed.authz $T/governance_feed.sql
+
 
 echo "-- emergency access (break glass)"
 check "carol cannot see the prod keys" "f" "SET authz.user_id = 3; SELECT authz.can('file', 12, 'view')"
@@ -415,6 +493,10 @@ got=$(glass "$SHARE ('file', '6', 'viewer', 'user', '3', now() + interval '1 day
   "SELECT count(*) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3' AND starts_at IS NULL")
 [ "$got" = 1 ] && echo "ok    a share of hers on another type's object with the same id is not the folder's: she gets the folder's" ||
   { echo "FAIL  break glass beside a share of another type: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', now() + interval '1 day', now() + interval '3 days')" \
+  "SELECT coalesce(starts_at::text, 'now') || '|' || (expires_at - now()) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_type = 'user' AND subject_id = '3'")
+[ "$got" = "now|3 days" ] && echo "ok    one of hers that starts tomorrow and ends later than the hour: it lets her in now, and still ends when it did" ||
+  { echo "FAIL  break glass over a share starting later and ending later: $got"; fails=$((fails + 1)); }
 expect_code "one day exactly is allowed" ok -c "SET authz.user_id = 3" -c "BEGIN" \
   -c "SELECT authz.break_glass('folder', '6', 'viewer', 'outage', '1 day')" -c "ROLLBACK"
 
@@ -986,6 +1068,13 @@ admin "... and of a shelf whose where is unknown, that it fails it" \
 reapply $T/governance.sql
 PSQL -c "DROP TABLE app.gov_shelves, app.gov_shelf_folders" >/dev/null
 rm -f $T/shelves.authz $T/shelves.sql
+# a file and a folder with the same id, each shared with a team gina is a member of: explain names the file's team
+got=$(PSQL -c "BEGIN" -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (12, 2, NULL, 6, 'twelve')" \
+  -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES ('folder', '12', 'viewer', 'team', '12', 'member'), ('file', '12', 'viewer', 'team', '10', 'member')" \
+  -c "SELECT ltrim(e) FROM authz.explain('file', '12', 'view', '7') e WHERE e LIKE '%shared with team%'" -c "ROLLBACK")
+[ "$got" = "yes  viewer: shared with team 10, and you are member there" ] &&
+  echo "ok    explain names the team a file is shared with, not one a folder with the same id is shared with" ||
+  { echo "FAIL  explain, the team a file is shared with: $got"; fails=$((fails + 1)); }
 
 echo "-- retention"
 POS=$(PSQL -c "SELECT max(pos) FROM authz.changes")
