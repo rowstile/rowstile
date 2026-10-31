@@ -6230,28 +6230,33 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     RETURN NEXT;
   END LOOP;
   -- the sync role (a preview): the engine reads every row as it, by logical replication
-  IF to_regrole('"sync_engine"') IS NULL THEN
-    severity := 'error'; object := 'sync_engine'; problem := 'the sync role does not exist: the engine can''t read the index'; RETURN NEXT;
+  DECLARE
+    v_sync_name text := 'sync_engine';
+    v_sync oid := to_regrole('"sync_engine"');
+  BEGIN
+  IF v_sync IS NULL THEN
+    severity := 'error'; object := v_sync_name; problem := 'the sync role does not exist: the engine can''t read the index'; RETURN NEXT;
   ELSE
-    IF pg_has_role(to_regrole('"sync_engine"'), v_role, 'MEMBER') OR pg_has_role(v_role, to_regrole('"sync_engine"'), 'MEMBER') THEN
-      severity := 'error'; object := 'sync_engine';
+    IF pg_has_role(v_sync, v_role, 'MEMBER') OR pg_has_role(v_role, v_sync, 'MEMBER') THEN
+      severity := 'error'; object := v_sync_name;
       problem := 'the sync role and the app role are one another''s members: the app would read every row through it'; RETURN NEXT;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles ro WHERE ro.oid = to_regrole('"sync_engine"') AND (ro.rolbypassrls OR ro.rolsuper)) THEN
-      severity := 'error'; object := 'sync_engine';
-      problem := 'the sync role lacks BYPASSRLS: the rules apply to the app role, so it reads no row of a table with rules, and an engine''s first snapshot is empty while the changes it decodes hold every row. ALTER ROLE sync_engine BYPASSRLS'; RETURN NEXT;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles ro WHERE ro.oid = v_sync AND (ro.rolbypassrls OR ro.rolsuper)) THEN
+      severity := 'error'; object := v_sync_name;
+      problem := format('the sync role lacks BYPASSRLS: the rules apply to the app role, so it reads no row of a table with rules, and an engine''s first snapshot is empty while the changes it decodes hold every row. ALTER ROLE %I BYPASSRLS', v_sync_name); RETURN NEXT;
     END IF;
     FOR r IN SELECT m.tbl, m.col FROM authz_int.masked_columns m
-             WHERE has_column_privilege(to_regrole('"sync_engine"'), m.tbl, m.col, 'SELECT') LOOP
+             WHERE has_column_privilege(v_sync, m.tbl, m.col, 'SELECT') LOOP
       severity := 'error'; object := r.tbl || '.' || r.col;
-      problem := format('is masked, and the sync role may read it: every client of the engine would. REVOKE SELECT (%I) ON %s FROM sync_engine', r.col, r.tbl); RETURN NEXT;
+      problem := format('is masked, and the sync role may read it: every client of the engine would. REVOKE SELECT (%I) ON %s FROM %I', r.col, r.tbl, v_sync_name); RETURN NEXT;
     END LOOP;
     FOR r IN SELECT c.oid::regclass AS tbl FROM pg_class c
-             WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY['"app"."files"', '"app"."folders"', '"app"."orgs"', '"app"."teams"', '"app"."users"']::text[]) x) AND pg_has_role(to_regrole('"sync_engine"'), c.relowner, 'MEMBER') LOOP
+             WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY['"app"."files"', '"app"."folders"', '"app"."orgs"', '"app"."teams"', '"app"."users"']::text[]) x) AND pg_has_role(v_sync, c.relowner, 'MEMBER') LOOP
       severity := 'error'; object := r.tbl::text;
       problem := 'is owned by the sync role (or a role it belongs to): an owner may turn row-level security off and change the rules. The engine connects as a role that owns nothing'; RETURN NEXT;
     END LOOP;
   END IF;
+  END;
   FOR r IN SELECT p.pubname, m.tbl, m.col FROM authz_int.masked_columns m
            JOIN pg_class c ON c.oid = to_regclass(m.tbl) JOIN pg_namespace n ON n.oid = c.relnamespace
            JOIN pg_publication_tables p ON p.schemaname = n.nspname AND p.tablename = c.relname AND m.col = ANY (p.attnames) LOOP
@@ -6881,23 +6886,27 @@ END $f$;
 CREATE OR REPLACE FUNCTION authz.sync_verify() RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
-  IF EXISTS (WITH s AS MATERIALIZED (SELECT grp, key FROM authz_sync.groups), f AS MATERIALIZED (SELECT 'org#admin:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:org.admin"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."orgs" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'org' UNION SELECT substr(g.grp, strpos(g.grp, ':') + 1) FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) = ANY (ARRAY['org#admin:', 'org#member:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep UNION SELECT 'team#member:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:team.member"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."teams" x UNION SELECT x."team_id"::text FROM "app"."team_members" x UNION SELECT x."parent_id"::text FROM "app"."teams" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'team' UNION SELECT substr(g.grp, strpos(g.grp, ':') + 1) FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) = ANY (ARRAY['team#member:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep UNION SELECT 'org#member:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:org.member"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."orgs" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'org' UNION SELECT substr(g.grp, strpos(g.grp, ':') + 1) FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) = ANY (ARRAY['org#admin:', 'org#member:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep)
-             SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
+  IF EXISTS (
+    WITH s AS MATERIALIZED (SELECT grp, key FROM authz_sync.groups), f AS MATERIALIZED (SELECT 'org#admin:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:org.admin"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."orgs" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'org' UNION SELECT substr(g.grp, strpos(g.grp, ':') + 1) FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) = ANY (ARRAY['org#admin:', 'org#member:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep UNION SELECT 'team#member:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:team.member"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."teams" x UNION SELECT x."team_id"::text FROM "app"."team_members" x UNION SELECT x."parent_id"::text FROM "app"."teams" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'team' UNION SELECT substr(g.grp, strpos(g.grp, ':') + 1) FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) = ANY (ARRAY['team#member:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep UNION SELECT 'org#member:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:org.member"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."orgs" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'org' UNION SELECT substr(g.grp, strpos(g.grp, ':') + 1) FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) = ANY (ARRAY['org#admin:', 'org#member:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep)
+    SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
     RAISE NOTICE 'the sync index differs from a rebuild: %', 'groups';
     RETURN false;
   END IF;
-  IF EXISTS (WITH s AS MATERIALIZED (SELECT principal_type, principal_id, key FROM authz_sync.keys), f AS MATERIALIZED (SELECT 'user'::text, f.o_id, f.o_key FROM authz_int."sync_keys:user"(ARRAY(SELECT x."id"::text FROM "app"."users" x UNION SELECT k.principal_id FROM authz_sync.keys k WHERE k.principal_type = 'user')) f)
-             SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
+  IF EXISTS (
+    WITH s AS MATERIALIZED (SELECT principal_type, principal_id, key FROM authz_sync.keys), f AS MATERIALIZED (SELECT 'user'::text, f.o_id, f.o_key FROM authz_int."sync_keys:user"(ARRAY(SELECT x."id"::text FROM "app"."users" x UNION SELECT k.principal_id FROM authz_sync.keys k WHERE k.principal_type = 'user')) f)
+    SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
     RAISE NOTICE 'the sync index differs from a rebuild: %', 'keys';
     RETURN false;
   END IF;
-  IF EXISTS (WITH s AS MATERIALIZED (SELECT x."id"::text, x.key, false FROM authz_sync."file__readers" x UNION ALL SELECT x.object_id, x.key, true FROM authz_sync.expanded x WHERE x.object_type = 'file'), f AS MATERIALIZED (SELECT f.o_id::text, f.o_key, f.o_dep FROM (SELECT f.o_id, f.o_key, f.o_dep FROM authz_int."sync:file"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."files" x UNION SELECT x."id"::text FROM authz_sync."file__readers" x UNION SELECT x.object_id FROM authz_sync.expanded x WHERE x.object_type = 'file')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f) f)
-             SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
+  IF EXISTS (
+    WITH s AS MATERIALIZED (SELECT x."id"::text, x.key, false FROM authz_sync."file__readers" x UNION ALL SELECT x.object_id, x.key, true FROM authz_sync.expanded x WHERE x.object_type = 'file'), f AS MATERIALIZED (SELECT f.o_id::text, f.o_key, f.o_dep FROM (SELECT f.o_id, f.o_key, f.o_dep FROM authz_int."sync:file"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."files" x UNION SELECT x."id"::text FROM authz_sync."file__readers" x UNION SELECT x.object_id FROM authz_sync.expanded x WHERE x.object_type = 'file')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f) f)
+    SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
     RAISE NOTICE 'the sync index differs from a rebuild: %', 'file''s readers, and what they were worked out from';
     RETURN false;
   END IF;
-  IF EXISTS (WITH s AS MATERIALIZED (SELECT x."id"::text, x.key, false FROM authz_sync."folder__readers" x UNION ALL SELECT x.object_id, x.key, true FROM authz_sync.expanded x WHERE x.object_type = 'folder'), f AS MATERIALIZED (SELECT f.o_id::text, f.o_key, f.o_dep FROM (SELECT f.o_id, f.o_key, f.o_dep FROM authz_int."sync:folder"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."id"::text FROM authz_sync."folder__readers" x UNION SELECT x.object_id FROM authz_sync.expanded x WHERE x.object_type = 'folder')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f) f)
-             SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
+  IF EXISTS (
+    WITH s AS MATERIALIZED (SELECT x."id"::text, x.key, false FROM authz_sync."folder__readers" x UNION ALL SELECT x.object_id, x.key, true FROM authz_sync.expanded x WHERE x.object_type = 'folder'), f AS MATERIALIZED (SELECT f.o_id::text, f.o_key, f.o_dep FROM (SELECT f.o_id, f.o_key, f.o_dep FROM authz_int."sync:folder"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."id"::text FROM authz_sync."folder__readers" x UNION SELECT x.object_id FROM authz_sync.expanded x WHERE x.object_type = 'folder')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f) f)
+    SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
     RAISE NOTICE 'the sync index differs from a rebuild: %', 'folder''s readers, and what they were worked out from';
     RETURN false;
   END IF;

@@ -800,6 +800,23 @@ with tempfile.TemporaryDirectory() as d:
     )
     h = c.request("textDocument/hover", where("sync app.docs : view", len("sync app.docs : ") + 1))
     ok("hover on a sync line's permission shows it", value(h).startswith("```authz\ndoc.view = owner and not"), h)
+    # a sync line naming a table no type maps (it parses, and fails to compile: AZ801), and a file that doesn't parse
+    unmapped, unparsed = small + "sync app.nope : view\n", "sync \ntype (\n"
+    for name, text in (("unmapped.authz", unmapped), ("unparsed.authz", unparsed)):
+        with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        doc = {"uri": uri(os.path.join(d, name)), "languageId": "authz", "version": 1, "text": text}
+        c.notify("textDocument/didOpen", {"textDocument": doc})
+    um, up = uri(os.path.join(d, "unmapped.authz")), uri(os.path.join(d, "unparsed.authz"))
+    spot = pos(unmapped, "sync app.nope : view", len("sync app.nope : "))
+    got = c.request("textDocument/completion", {"textDocument": {"uri": um}, "position": spot})
+    ok("completion after the colon of a sync line naming no type's table: nothing", got == [], got)
+    h = c.request(
+        "textDocument/hover", {"textDocument": {"uri": um}, "position": {**spot, "character": spot["character"] + 1}}
+    )
+    ok("... and hover on its permission: nothing", h is None, h)
+    got = c.request("textDocument/completion", {"textDocument": {"uri": up}, "position": {"line": 0, "character": 5}})
+    ok("completion after sync in a file that doesn't parse: no tables, and no error", got == [], got)
 
     c.notify("textDocument/didSave", {"textDocument": {"uri": u}})
     clean("saving checks the file again", c, u)

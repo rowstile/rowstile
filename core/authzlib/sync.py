@@ -26,6 +26,7 @@ import hashlib
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import assert_never
 
 from .compiler import Core, Name, once, only_on
 from .parse import (
@@ -206,9 +207,7 @@ class SyncMixin(Core):
         if pol.sync_role is not None and not pol.syncs:
             assert pol.sync_role_loc is not None
             fail(pol.sync_role_loc, "a sync role and nothing synced: add a line such as sync app.files : view", "AZ802")
-        if pol.sync_role is None:
-            return
-        assert pol.sync_role_loc is not None
+        assert pol.sync_role is not None and pol.sync_role_loc is not None  # (AZ802 otherwise, above)
         if pol.sync_role == self.role or pol.sync_role.lower() == "public":
             fail(
                 pol.sync_role_loc,
@@ -806,10 +805,10 @@ END $f$;"""
     def sync_functions_sql(self) -> str:
         """Every function of the index: the derivations, the keys, the commit's work, and the admin's."""
         st = self.sync_build()
-        # (each worked out once: a rebuild of a big table takes a while)
+        # (each worked out once: a rebuild of a big table takes a while; each IF's first line the same for every part)
         verify = "\n".join(
-            f"  IF EXISTS (WITH s AS MATERIALIZED ({stored}), f AS MATERIALIZED ({fresh})\n"
-            f"             SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN\n"
+            f"  IF EXISTS (\n    WITH s AS MATERIALIZED ({stored}), f AS MATERIALIZED ({fresh})\n"
+            f"    SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN\n"
             f"    RAISE NOTICE 'the sync index differs from a rebuild: %', {lit(what)};\n    RETURN false;\n  END IF;"
             for what, stored, fresh in self.fresh_sql()
         )
@@ -979,29 +978,35 @@ SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type
         role = self.pol.sync_role
         assert role is not None
         tables = "ARRAY[" + ", ".join(lit(qt(t)) for t in sorted({t.table for t in self.types.values()})) + "]::text[]"
+        # (the role is named once, in the block's variables: its statements read the same whatever its name)
         return f"""  -- the sync role (a preview): the engine reads every row as it, by logical replication
-  IF to_regrole({lit(q(role))}) IS NULL THEN
-    severity := 'error'; object := {lit(role)}; problem := 'the sync role does not exist: the engine can''t read the index'; RETURN NEXT;
+  DECLARE
+    v_sync_name text := {lit(role)};
+    v_sync oid := to_regrole({lit(q(role))});
+  BEGIN
+  IF v_sync IS NULL THEN
+    severity := 'error'; object := v_sync_name; problem := 'the sync role does not exist: the engine can''t read the index'; RETURN NEXT;
   ELSE
-    IF pg_has_role(to_regrole({lit(q(role))}), v_role, 'MEMBER') OR pg_has_role(v_role, to_regrole({lit(q(role))}), 'MEMBER') THEN
-      severity := 'error'; object := {lit(role)};
+    IF pg_has_role(v_sync, v_role, 'MEMBER') OR pg_has_role(v_role, v_sync, 'MEMBER') THEN
+      severity := 'error'; object := v_sync_name;
       problem := 'the sync role and the app role are one another''s members: the app would read every row through it'; RETURN NEXT;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles ro WHERE ro.oid = to_regrole({lit(q(role))}) AND (ro.rolbypassrls OR ro.rolsuper)) THEN
-      severity := 'error'; object := {lit(role)};
-      problem := 'the sync role lacks BYPASSRLS: the rules apply to the app role, so it reads no row of a table with rules, and an engine''s first snapshot is empty while the changes it decodes hold every row. ALTER ROLE {role} BYPASSRLS'; RETURN NEXT;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles ro WHERE ro.oid = v_sync AND (ro.rolbypassrls OR ro.rolsuper)) THEN
+      severity := 'error'; object := v_sync_name;
+      problem := format('the sync role lacks BYPASSRLS: the rules apply to the app role, so it reads no row of a table with rules, and an engine''s first snapshot is empty while the changes it decodes hold every row. ALTER ROLE %I BYPASSRLS', v_sync_name); RETURN NEXT;
     END IF;
     FOR r IN SELECT m.tbl, m.col FROM authz_int.masked_columns m
-             WHERE has_column_privilege(to_regrole({lit(q(role))}), m.tbl, m.col, 'SELECT') LOOP
+             WHERE has_column_privilege(v_sync, m.tbl, m.col, 'SELECT') LOOP
       severity := 'error'; object := r.tbl || '.' || r.col;
-      problem := format('is masked, and the sync role may read it: every client of the engine would. REVOKE SELECT (%I) ON %s FROM {role}', r.col, r.tbl); RETURN NEXT;
+      problem := format('is masked, and the sync role may read it: every client of the engine would. REVOKE SELECT (%I) ON %s FROM %I', r.col, r.tbl, v_sync_name); RETURN NEXT;
     END LOOP;
     FOR r IN SELECT c.oid::regclass AS tbl FROM pg_class c
-             WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest({tables}) x) AND pg_has_role(to_regrole({lit(q(role))}), c.relowner, 'MEMBER') LOOP
+             WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest({tables}) x) AND pg_has_role(v_sync, c.relowner, 'MEMBER') LOOP
       severity := 'error'; object := r.tbl::text;
       problem := 'is owned by the sync role (or a role it belongs to): an owner may turn row-level security off and change the rules. The engine connects as a role that owns nothing'; RETURN NEXT;
     END LOOP;
   END IF;
+  END;
   FOR r IN SELECT p.pubname, m.tbl, m.col FROM authz_int.masked_columns m
            JOIN pg_class c ON c.oid = to_regclass(m.tbl) JOIN pg_namespace n ON n.oid = c.relnamespace
            JOIN pg_publication_tables p ON p.schemaname = n.nspname AND p.tablename = c.relname AND m.col = ANY (p.attnames) LOOP
@@ -1207,7 +1212,8 @@ class Deriver:
                 return self.call(t, name, ids, loc)
             case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                 return self.arrow_rows(t, e, rel, perm, ids, loc)
-        raise AssertionError(f"not an expression: {e!r}")
+            case _:
+                assert_never(e)
 
     def call(self, t: Type, name: str, ids: str, loc: Loc) -> str:
         return (
@@ -1227,9 +1233,9 @@ class Deriver:
             f"JOIN {f}(ARRAY(SELECT DISTINCT y.{u} FROM {links} y)) f ON f.o_id = {links}.{u}"
         )
 
-    def linked(self, t: Type, src: Source, st: str, sr: str | None, ids: str, relation: str) -> str | None:
-        """(id, u) for t's objects in ids and the ids u of the st (#sr) a source links each to; None for a source
-        of custom roles (they give keys only, roles_rows)."""
+    def linked(self, t: Type, src: Source, st: str, sr: str | None, ids: str, relation: str) -> str:
+        """(id, u) for t's objects in ids and the ids u of the st (#sr) a source links each to (a column, a table or
+        shares: custom roles give keys only, share_rows, and aren't followed with a dot, AZ210)."""
         c = self.c
         s = c.T(st)
         if src.kind == "column":
@@ -1247,15 +1253,14 @@ class Deriver:
                 f"SELECT {c.ref(t, 's', src.obj_col)} AS id, {u} AS u FROM {qt(src.table)} s "
                 f"WHERE {c.key_in(t, 's', ids, src.obj_col)} AND {u} IS NOT NULL{where}"
             )
-        if src.kind == "shared":
-            self.st.shared[(t.name, relation)] = None
-            return (
-                f"SELECT g.object_id::{t.pktype} AS id, g.subject_id::{s.pktype} AS u FROM authz.shares g "
-                f"WHERE g.object_type = {lit(t.name)} AND g.object_id IN (SELECT x.id::text FROM ({ids}) x) "
-                f"AND g.relation = {lit(relation)} AND g.subject_type = {lit(st)} AND g.subject_relation = "
-                f"{lit(sr or '')} AND {LIVE}"
-            )
-        return None
+        assert src.kind == "shared"
+        self.st.shared[(t.name, relation)] = None
+        return (
+            f"SELECT g.object_id::{t.pktype} AS id, g.subject_id::{s.pktype} AS u FROM authz.shares g "
+            f"WHERE g.object_type = {lit(t.name)} AND g.object_id IN (SELECT x.id::text FROM ({ids}) x) "
+            f"AND g.relation = {lit(relation)} AND g.subject_type = {lit(st)} AND g.subject_relation = "
+            f"{lit(sr or '')} AND {LIVE}"
+        )
 
     def rel_rows(self, t: Type, r: Relation, ids: str, loc: Loc) -> str:
         """The keys that hold relation r on t's objects in ids: through each source, each of its subjects."""
@@ -1266,12 +1271,10 @@ class Deriver:
                 parts += self.share_rows(t, r, src, ids, loc)
                 continue
             for st, sr in src.subjects:
-                if st not in c.types or sr == "*":
-                    continue
+                assert st in c.types and sr != "*"  # (anyone, link and type:* are only shared: AZ204)
                 if sr is None and not c.is_principal(st):
                     continue  # links to objects: they give something only when followed with a dot
                 links = self.linked(t, src, st, sr, ids, r.name)
-                assert links is not None
                 if sr is None:
                     cte = f"l{self.st.next()}"
                     parts.append(
@@ -1346,8 +1349,6 @@ class Deriver:
                 if (st, None) not in src.subjects:
                     continue
                 links = self.linked(t, src, st, None, ids, r.name)
-                if links is None:
-                    continue
                 if not c.keyed(st, perm):
                     if src.kind == "shared":
                         self.share_edge(t, st, None, r.name)

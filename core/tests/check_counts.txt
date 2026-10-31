@@ -24,7 +24,7 @@ interleavings (read committed, docs) 36
 interleavings (read committed, parts) 21
 invariance of the fixed policies 27
 keep unchanged trees 11
-language server 125
+language server 128
 masks 39
 mcp 75
 migrate vs apply 81
@@ -39,7 +39,7 @@ scenario 95
 signed sessions 74
 small policies 4
 studio 227
-sync index 71
+sync index 95
 tools 42
 unit 676
 upgrade 71
