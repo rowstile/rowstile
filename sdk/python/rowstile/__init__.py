@@ -189,7 +189,7 @@ def _signed_in_already(signed: Principal, who: Principal | None) -> RuntimeError
     """What refuses work for `who` (None: code that acts for no one) in a transaction signed in as someone else. A
     sign-in lasts the database transaction: a second one would make everything after it, in the same transaction,
     the second principal's. Raised before anything is sent for that work; the transaction is left as it was."""
-    whose = "the work of code that acts for no one can't" if who is None else f"{_name(who)}'s work can't"
+    whose = "nobody's work can't" if who is None else f"{_name(who)}'s work can't"
     return RuntimeError(
         f"this transaction is signed in as {_name(signed)} already, and a sign-in lasts the database transaction: "
         f"{whose} run inside it. Run it after, or in a transaction of its own (another connection)"

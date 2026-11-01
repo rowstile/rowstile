@@ -102,7 +102,7 @@ def test_an_atomic_block_signs_in_as_whoever_the_code_acts_for_now() -> None:
             assert who() == "user 1" and projects() == ANN
             assert Note.objects.filter(pk=1).update(body="plan") == 1
     assert not connection.in_atomic_block  # committed
-    assert str(no_one.value) == ALREADY + "the work of code that acts for no one can't" + AFTER
+    assert str(no_one.value) == ALREADY + "nobody's work can't" + AFTER
     assert str(bo.value) == ALREADY + "user 2's work can't" + AFTER
     assert str(nobody.value) == ALREADY + "nobody's work can't" + AFTER
     with rowstile.acting_as(2), transaction.atomic():  # the next transaction is another's

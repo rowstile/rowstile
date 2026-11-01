@@ -129,8 +129,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
     and inside a blocking `transaction`, `actingFor()` is the principal it signed in as.
   - Rust, Elixir and PHP refuse as they did (Rust's types already keep a transaction to one principal; the other
     two refused already). .NET, Java, Kotlin and Elixir named a principal `1` or `service:1` in the words, and now
-    `user 1` and `service 1`; .NET and Java said "the work of code that acts for no one" where the others say
-    "nobody's work".
+    `user 1` and `service 1`; .NET, Java, Python, Ruby and PHP said "the work of code that acts for no one" where
+    the others say "nobody's work", which every SDK now says.
 - The .NET SDK turns on Npgsql's `Include Error Detail` where it builds the app's connections:
   `AddRowstile(o => o.ConnectionString = ...)`, which now builds the `NpgsqlDataSource`, and a context's
   connection string before `UseRowstile()`. A refused write says why without the app setting it. A data source the

@@ -230,7 +230,7 @@ def test_sqlalchemy_one_principal_a_transaction() -> None:
                 conn.commit()
             with rowstile.acting_as(2):  # the next transaction is another's
                 assert projects(conn) == [2, 3]
-        assert str(no_one.value) == ALREADY + "the work of code that acts for no one can't" + AFTER
+        assert str(no_one.value) == ALREADY + "nobody's work can't" + AFTER
         assert str(bo.value) == ALREADY + "user 2's work can't" + AFTER
         assert str(nobody.value) == ALREADY + "nobody's work can't" + AFTER
         with rowstile.acting_as(1), Session(engine) as s, pytest.raises(RuntimeError, match="user 3's work can't"):

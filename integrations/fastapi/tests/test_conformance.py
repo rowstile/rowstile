@@ -636,7 +636,7 @@ async def test_a_transaction_is_one_principals() -> None:
         assert conn.info.transaction_status == psycopg.pq.TransactionStatus.IDLE  # committed
         assert str(bo.value) == ALREADY + "user 2's work can't" + AFTER
         assert str(nobody.value) == ALREADY + "nobody's work can't" + AFTER
-        assert str(no_one.value) == ALREADY + "the work of code that acts for no one can't" + AFTER
+        assert str(no_one.value) == ALREADY + "nobody's work can't" + AFTER
         conn.execute("SELECT 1")  # psycopg begins a transaction here, which no block began
         unknown = r"transaction rowstile\.psycopg\.transaction\(\) didn't begin"
         with pytest.raises(RuntimeError, match=unknown), pgp.transaction(conn, 1):
