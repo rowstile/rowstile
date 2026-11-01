@@ -153,7 +153,7 @@ final class Rowstile
      */
     public static function signedInAlready(Principal $signed, ?Principal $who): LogicException
     {
-        $whose = $who === null ? "the work of code that acts for no one can't" : "{$who->name()}'s work can't";
+        $whose = $who === null ? "nobody's work can't" : "{$who->name()}'s work can't";
         return new LogicException("this transaction is signed in as {$signed->name()} already, and a sign-in lasts the "
             ."database transaction: {$whose} run inside it. Run it after, or in a transaction of its own (another "
             .'connection)');

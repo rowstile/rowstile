@@ -272,7 +272,7 @@ final class SdkTest extends TestCase
         });
         self::assertSame([1, 3, 3], [$seen[0], $seen[1], $seen[4]]);
         self::assertInstanceOf(\LogicException::class, $seen[2]);
-        self::assertSame("this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: the work of code that acts for no one can't run inside it. Run it after, or in a transaction of its own (another connection)", $seen[2]->getMessage());
+        self::assertSame("this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: nobody's work can't run inside it. Run it after, or in a transaction of its own (another connection)", $seen[2]->getMessage());
         self::assertInstanceOf(\LogicException::class, $seen[3]);
         self::assertStringContainsString("user 2's work can't run inside it", $seen[3]->getMessage());
         // a savepoint rolled back over the sign-in undoes it in Postgres: the same principal signs in again, and

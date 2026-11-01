@@ -121,7 +121,7 @@ module Rowstile
     # The error for work another principal's transaction can't run: a sign-in lasts the database transaction, so a
     # second one would make all that follows in it the second principal's.
     def self.signed_in_already(signed, who)
-      whose = who.nil? ? "the work of code that acts for no one" : "#{name_of(who)}'s work"
+      whose = who.nil? ? "nobody's work" : "#{name_of(who)}'s work"
       "this transaction is signed in as #{name_of(signed)} already, and a sign-in lasts the database transaction: " \
         "#{whose} can't run inside it. Run it after, or in a transaction of its own (another connection)"
     end

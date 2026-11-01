@@ -87,9 +87,9 @@ class SdkTest < ActionDispatch::IntegrationTest
       [plain, ann, after.message, Rowstile.acting_as(1) { ids }]
     end
     assert_equal [[1], EXPECTED["1"], EXPECTED["1"]], seen.values_at(0, 1, 3)
-    assert_equal "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: the " \
-                 "work of code that acts for no one can't run inside it. Run it after, or in a transaction of its own " \
-                 "(another connection)", seen[2]
+    assert_equal "this transaction is signed in as user 1 already, and a sign-in lasts the database transaction: " \
+                 "nobody's work can't run inside it. Run it after, or in a transaction of its own (another connection)",
+                 seen[2]
     assert_raises(ActiveRecord::StatementInvalid) { Note.count } # and the next transaction is no one's: refused
   end
 
