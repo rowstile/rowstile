@@ -6,6 +6,7 @@
 //   folders 1 top (ann's, given to eng), 2 inside (in top, ann's), 3 eve's, 4 ops (eve's, given to ops)
 //   files   1 in top, 2 and 3 in inside, 6 in inside (shared with bo too): ann's; 4 in eve's, 5 in ops: eve's
 //   notes   1 on file 2 (bo's), 2 on file 5 (cy's)
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { isChangeMessage, isControlMessage, Shape, ShapeStream, type ExternalParamsRecord, type Message, type Row } from "@electric-sql/client";
 
@@ -17,6 +18,9 @@ export const CACHE = process.env.CONFORMANCE_CACHE ?? "";            // nginx, a
 export const ELECTRIC = process.env.ELECTRIC_URL ?? "";              // Electric itself, which only the app reaches
 export const SECRET = process.env.ELECTRIC_SECRET ?? "";
 export const USERS = ["1", "2", "3", "4", "5"];
+/** The index's mode test.sh set up (SYNC_MODE): copied, keyed (by folder) or after (commit), and its policy's file */
+export const MODE = process.env.SYNC_MODE ?? "copied";
+export const POLICY = process.env.SYNC_POLICY ?? fileURLToPath(new URL("../db/policy.authz", import.meta.url));
 
 /** Runs fn on a connection of its own to url (the owner's, by default), then closes it. */
 export async function owner<R>(fn: (c: pg.Client) => Promise<R>, url = OWNER): Promise<R> {

@@ -2,6 +2,12 @@
 // proxy, held after each change to what authz.list gives them (the oracle), with the ids. test.sh does check 11 (a
 // fresh database: migrate, the policy's tests, the lock file) and 13 (the server refuses the owner's connection), and
 // starts the servers, Electric and the cache these checks call.
+//
+// The checks run whole in each of the index's modes (SYNC_MODE, which test.sh reads): copied in, keyed by folder, and
+// after commit, where a worker beside the app runs authz.sync_work() in a loop. The oracle answers at once, and the
+// shapes follow once the index does: a check waits for the shape's next messages, whatever the mode. Where it needs
+// the index to hold every change made so far before it asks (a snapshot, a state that must not have changed yet),
+// it waits for the worker's next run first (settled()): after commit, that is when the index has them.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +18,9 @@ import type { Server } from "node:http";
 import { app } from "../src/app.js";
 import { pool, sql } from "../src/db.js";
 import { shapes } from "../src/shapes.gen.js";
-import { CACHE, ELECTRIC, Live, SERVER, SERVER_ONE, USERS, as, asUser, direct, idsOf, listed, owner, run, seed } from "./data.js";
+import { syncWorker, type SyncWorker } from "../src/worker.js";
+import { CACHE, ELECTRIC, Live, MODE, OWNER, POLICY, SERVER, SERVER_ONE, USERS, as, asUser, direct, idsOf, listed, owner, run,
+  seed } from "./data.js";
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(HERE, "..", "..", "core", "cli", "rowstile_cli.py");
@@ -20,6 +28,10 @@ const rowstile = (...args: string[]) =>
   execFileSync(process.env.PYTHON ?? "python3", [CLI, ...args], { cwd: HERE, encoding: "utf8", stdio: "pipe" });
 
 const live: Record<string, { file: Live; folder: Live }> = {};
+/** After commit, the worker, run as the policy's owner: the app role can't call authz.sync_work() */
+let worker: SyncWorker | null = null;
+/** After commit, once the worker's next run has ended: the index holds every change committed before; else at once. */
+const settled = async (): Promise<void> => worker?.ran();
 
 /** Every user's shapes hold what authz.list gives them, of the files and of the folders. */
 async function asListed(): Promise<void> {
@@ -36,9 +48,11 @@ beforeAll(async () => {
     const s = app.listen(Number(process.env.CONFORMANCE_APP_PORT), "127.0.0.1", () => resolve(s));
   });
   await seed();
+  if (MODE === "after") worker = syncWorker(OWNER);
   for (const user of USERS) live[user] = { file: new Live(user, "files"), folder: new Live(user, "folders") };
 });
 afterAll(async () => {
+  await worker?.stop();
   for (const l of Object.values(live)) {
     l.file.close();
     l.folder.close();
@@ -46,6 +60,14 @@ afterAll(async () => {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
   await pool.end();
+});
+
+// The index in force is in the mode test.sh set up: keyed by folder, the folders' group keys; after commit, the table
+// of what waits for the worker; copied in, neither
+test(`the index is kept in the mode the suite runs in (${MODE})`, async () => {
+  const [mode] = (await run(`SELECT EXISTS (SELECT 1 FROM authz_sync.keys WHERE key LIKE 'folder#%') AS keyed,
+    to_regclass('authz_sync.pending') IS NOT NULL AS after`)).rows as { keyed: boolean; after: boolean }[];
+  expect(mode).toEqual({ keyed: MODE === "keyed", after: MODE === "after" });
 });
 
 // E1 (and the stack's 1): signed in, each shape holds exactly what authz.list gives the user, from the first snapshot
@@ -134,13 +156,14 @@ test("E6: a share that ends: the row leaves at the next authz.sync_tick(), and n
   // the end passes (the database's clock): authz.list no longer gives it, the index still does until the tick
   await run("SELECT pg_sleep_until($1::timestamptz)", [ends]);
   expect(await listed("3", "file")).toEqual([5]);
+  await settled();                                               // after commit: the worker ran since, and kept it
   // a write after the end, which cy reads: once it has arrived, so has everything committed before it
   await run("UPDATE app.files SET name = 'after the end' WHERE id = 5");
   await live["3"]!.file.until((l) => l.row(5)?.name === "after the end", "the rename");
   expect(live["3"]!.file.ids()).toEqual([4, 5]);                 // the stated window: until the tick
   const [{ ticked }] = (await run("SELECT authz.sync_tick() AS ticked")).rows as { ticked: string }[];
   expect(Number(ticked)).toBeGreaterThanOrEqual(1);
-  await live["3"]!.file.holds([5]);
+  await live["3"]!.file.holds([5]);                              // after commit: the tick notes it, the worker works it in
   await asListed();
 });
 
@@ -163,6 +186,7 @@ test("E7: confidential set: the file leaves those who saw it only through its fo
 test("E8: users at once, in rounds, each get their own; a client's own filter, user id or table is refused", async () => {
   const snapshot = (user: string, query = "") =>
     fetch(`${SERVER}/shapes/files?offset=-1${query}`, { headers: as(user) });
+  await settled();                                               // snapshots, held to the oracle
   for (let round = 0; round < 5; round++) {
     const users = [...USERS, ...USERS, ...USERS];
     const got = await Promise.all(users.map(async (u) => [u, await idsOf(await snapshot(u))] as const));
@@ -227,6 +251,7 @@ test("E9: not signed in: 401, and no shape is made", async () => {
 
 // E10: a shared cache in front of the app keeps a copy per user (the answers vary on the headers that say who)
 test("E10: answers vary on who asks, and a cache never gives one user's shape to another", async () => {
+  await settled();                                               // snapshots, held to the oracle
   const r = await fetch(`${SERVER}/shapes/files?offset=-1`, { headers: as("1") });
   expect(r.headers.get("vary")?.split(", ")).toEqual(expect.arrayContaining(["x-user", "x-api-key"]));
   expect(r.headers.get("cache-control")).toMatch(/public/);     // Electric's: a cache may keep it, as each user's
@@ -291,18 +316,19 @@ test("E12: lint, then rowstile apply and reapply leave the shapes as they are", 
   }
   expect(await errors()).toEqual([]);
   // (unchanged, or applied: the migration was written by the command of its day, whose build may differ)
-  expect(rowstile("apply")).toMatch(/: (unchanged|applied)$/m);
+  expect(rowstile("apply", POLICY)).toMatch(/: (unchanged|applied)$/m);
   expect(rowstile("reapply")).toMatch(/applied again/);
   // a policy whose synced permission is written another way, with a permission more: applied (the index's rows
   // worked out again, and the same), then the policy as it was
-  const policy = readFileSync(join(HERE, "db", "policy.authz"), "utf8");
+  const policy = readFileSync(POLICY, "utf8");
   const changed = policy.replace("  can view = edit or viewer or (folder.view and not {confidential})",
     "  can view = viewer or edit or owner or (folder.view and not {confidential})\n  can rename = edit");
   expect(changed).not.toBe(policy);
   const work = mkdtempSync(join(tmpdir(), "electric-"));
   writeFileSync(join(work, "policy.authz"), changed);
   expect(rowstile("apply", join(work, "policy.authz"))).toMatch(/applied/);
-  expect(rowstile("apply")).toMatch(/applied/);
+  expect(rowstile("apply", POLICY)).toMatch(/applied/);
+  await settled();                                               // after commit: false while changes wait
   const [{ verified }] = (await run("SELECT authz.sync_verify() AS verified")).rows as { verified: boolean }[];
   expect(verified).toBe(true);
   // the shapes go on as they were: a change after the applies arrives, on the same handles, with nothing refetched
@@ -360,7 +386,7 @@ test("E14: a user deleted: their keys go, and their shape empties", async () => 
   try {
     await dee.holds(await listed("4", "file"));
     await run("DELETE FROM app.team_members WHERE user_id = 4; DELETE FROM app.users WHERE id = 4");
-    await dee.holds([]);
+    await dee.holds([]);                                         // (after commit: once the worker has run)
     await live["4"]!.file.holds([]);                            // the proxy's: emptied too, before its next poll is refused
     const keys = (await run("SELECT count(*)::int AS n FROM authz_sync.keys WHERE principal_id = '4'")).rows as { n: number }[];
     expect(keys[0]!.n).toBe(0);
@@ -373,6 +399,7 @@ test("E14: a user deleted: their keys go, and their shape empties", async () => 
 // E15: a session limited by scopes (a key's, a token's) is refused: the index holds what each principal may read,
 // without scopes. A key without scopes signs in as its user; a key that isn't one is 401, in the database's words
 test("E15: a session limited by scopes is refused, 403", async () => {
+  await settled();                                               // a snapshot, held to the oracle
   const key = async (scopes: string) =>
     ((await asUser<{ k: string }>("2", "SELECT authz.create_api_key('sync', $1) AS k", [scopes]))[0]!).k;
   const scoped = await fetch(`${SERVER}/shapes/files?offset=-1`, { headers: { "x-api-key": await key("read") } });
@@ -385,69 +412,55 @@ test("E15: a session limited by scopes is refused, 403", async () => {
     expect.objectContaining({ code: "AZ703", detail: "invalid API key" })]);
 });
 
-/** Applies the policy with its sync lines changed by edit, runs fn, then applies the policy as it was. */
-async function withPolicy(edit: (policy: string) => string, fn: () => Promise<void>): Promise<void> {
-  const policy = readFileSync(join(HERE, "db", "policy.authz"), "utf8");
-  const changed = edit(policy);
-  expect(changed).not.toBe(policy);
-  const work = mkdtempSync(join(tmpdir(), "electric-"));
-  writeFileSync(join(work, "policy.authz"), changed);
-  try {
-    expect(rowstile("apply", join(work, "policy.authz"))).toMatch(/applied/);
-    await fn();
-  } finally {
-    rowstile("apply");
-  }
-  await asListed();
-}
-
-// E16: keyed by folder, a file's readers name its folder's key, which each user holds for every folder they may
+// E16, keyed by folder alone: a file's readers name its folder's key, which each user holds for every folder they may
 // read: a move rewrites no file's readers, only keys, and the shapes follow it as they do the files' readers
-test("E16: keyed by folder, a folder moved out of reach and back: the files below it leave and return", async () => {
+test.runIf(MODE === "keyed")("E16: keyed by folder, a folder moved out of reach and back: the files below it leave and return", async () => {
   const readers = async () => ((await run(
     "SELECT md5(string_agg(id || key || xmin, ',' ORDER BY id, key)) AS m FROM authz_sync.file__readers")).rows as { m: string }[])[0]!.m;
-  await withPolicy((p) => p.replace("sync app.files : view\n", "sync app.files : view by folder\n")
-    .replace("sync app.folders\n", "sync app.folders by folder\n"), async () => {
+  await asListed();
+  const before = await readers();
+  try {
+    await run("UPDATE app.folders SET parent_id = NULL WHERE id = 2");
+    await live["2"]!.file.holds([1, 6]);                         // bo read them through eng; file 6 is shared with him
+    await live["2"]!.folder.holds([1]);
     await asListed();
-    const before = await readers();
-    try {
-      await run("UPDATE app.folders SET parent_id = NULL WHERE id = 2");
-      await live["2"]!.file.holds([1, 6]);                       // bo read them through eng; file 6 is shared with him
-      await live["2"]!.folder.holds([1]);
-      await asListed();
-    } finally {
-      await run("UPDATE app.folders SET parent_id = 1 WHERE id = 2");
-    }
-    await live["2"]!.file.holds([1, 2, 3, 6]);
-    await asListed();
-    expect(await readers()).toBe(before);                        // the moves wrote no file's readers
-  });
+  } finally {
+    await run("UPDATE app.folders SET parent_id = 1 WHERE id = 2");
+  }
+  await live["2"]!.file.holds([1, 2, 3, 6]);
+  await asListed();
+  expect(await readers()).toBe(before);                          // the moves wrote no file's readers
 });
 
-// E17: after commit, a worker keeps the index: a change reaches the shapes once authz.sync_work() has run
-test("E17: after commit, a share arrives once the worker runs, and not before", async () => {
+// E17, after commit alone: the worker keeps the index, so a change reaches the shapes once it has run. Stopped (a
+// deploy, a run that fails), changes wait for it; started again, it works them in
+test.runIf(MODE === "after")("E17: after commit, a share arrives once the worker runs, and not before", async () => {
   const unshare = "SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '3')";
-  await withPolicy((p) => `${p}sync after commit\n`, async () => {
-    try {
-      await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '3')");
-      // a write after it, which cy reads: once it has arrived, so has everything committed before it
-      await run("UPDATE app.files SET name = 'after the share' WHERE id = 5");
-      await live["3"]!.file.until((l) => l.row(5)?.name === "after the share", "the rename");
-      expect(live["3"]!.file.ids()).toEqual([5]);                // the share isn't in the index yet
-      const [{ worked }] = (await run("SELECT authz.sync_work() AS worked")).rows as { worked: string }[];
-      expect(Number(worked)).toBeGreaterThanOrEqual(1);
-      await live["3"]!.file.holds([4, 5]);
-      await asListed();
-    } finally {
-      await run(unshare);
-      await run("SELECT authz.sync_work()");
-    }
-    await live["3"]!.file.holds([5]);
-  });
+  await worker!.stop();
+  try {
+    await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '3')");
+    // a write after it, which cy reads: once it has arrived, so has everything committed before it
+    await run("UPDATE app.files SET name = 'after the share' WHERE id = 5");
+    await live["3"]!.file.until((l) => l.row(5)?.name === "after the share", "the rename");
+    expect(live["3"]!.file.ids()).toEqual([5]);                  // the share isn't in the index yet
+    const [{ behind }] = (await run("SELECT authz.sync_behind() IS NOT NULL AS behind")).rows as { behind: boolean }[];
+    expect(behind).toBe(true);
+  } finally {
+    worker = syncWorker(OWNER);
+  }
+  try {
+    await live["3"]!.file.holds([4, 5]);
+    await asListed();
+  } finally {
+    await run(unshare);
+  }
+  await live["3"]!.file.holds([5]);
+  await asListed();
 });
 
 // the stack's 4: one pooled connection, Ann then Bob: Bob never gets Ann's shape
 test("4: a pooled connection carries no one over", async () => {
+  await settled();                                               // snapshots, held to the oracle
   for (const user of ["1", "3", "", "5", "3", "1"]) {
     const r = await fetch(`${SERVER_ONE}/shapes/files?offset=-1`, { headers: as(user || null) });
     if (user) expect([user, await idsOf(r)]).toEqual([user, await listed(user, "file")]);
