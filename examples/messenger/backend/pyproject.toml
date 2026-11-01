@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A messenger on rowstile: FastAPI, Postgres with rowstile, live updates over a WebSocket"
 requires-python = ">=3.12"
 dependencies = [
-  "fastapi>=0.161.1",
+  "fastapi>=0.162.0",
   "uvicorn[standard]>=0.54.0",
   "psycopg[binary]>=3.3.6",
   "psycopg-pool>=3.2",
