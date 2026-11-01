@@ -282,7 +282,8 @@ MAKE_SYNC_ROLE = (
 def synced(text: str, path: str, seed: int) -> str:
     """The policy, with a sync line for each type the index takes one of: one public permission each, or the
     table's select rule (no permission), in turn by seed, each keyed by a type's inheritance (`by folder`) where it
-    may be and the seed says so; a type of which it takes none (a condition on who asks, one reading other rows) isn't
+    may be and the seed says so, or mirrored (for PowerSync) where it isn't keyed and the seed says so; a type of which it
+    takes none (a condition on who asks, one reading other rows) isn't
     synced. One seed in three keeps the index after commit (the checks run the worker first)."""
     from authzlib import Compiler, PolicyError
 
@@ -304,9 +305,12 @@ def synced(text: str, path: str, seed: int) -> str:
         if not taken:
             continue
         line = f"sync {t.table}{taken[(seed + n) % len(taken)]}"
-        # keyed by a type whose inheritance it reaches: every other seed, the first such type
+        # keyed by a type whose inheritance it reaches: every other seed, the first such type; one not keyed is mirrored
+        # (PowerSync's copy, with each row's readers) one seed in three
         if (seed + n) % 2:
             line = next((f"{line} by {b}" for b in pol.types if takes(f"{line} by {b}")), line)
+        if " by " not in line and (seed + n) % 3 == 0 and takes(f"{line} mirrored"):
+            line += " mirrored"
         lines.append(line)
     if not lines:
         return text
@@ -743,6 +747,15 @@ class Checker:
                     [u, "sync", t.name],
                     f"SELECT coalesce(json_agg(DISTINCT {idsql(t, 'r')}), '[]') FROM {qt(t.table)} r WHERE {where}",
                 )
+                # ... and mirrored, the rows of its mirror a PowerSync stream gives: those whose readers hold a key of theirs
+                if self.pol.syncs[table].mirrored:
+                    emit(
+                        [u, "mirror", t.name],
+                        f"SELECT coalesce(json_agg(DISTINCT {idsql(t, 'm')}), '[]') FROM "
+                        f'authz_sync."{t.name}__mirror" m, json_array_elements_text(m.readers::json) r(key) '
+                        f"WHERE r.key IN (SELECT k.key FROM authz_sync.keys k WHERE k.principal_type = {lit(kind)} "
+                        f"AND k.principal_id = {lit(pid)})",
+                    )
             for key, sql in self.decisions_queries:
                 emit([u, "decisions", *key], sql)
             # a `shared if` on the shares the one whose turn it is tries: the rows on which it holds, for the share as
@@ -1658,6 +1671,12 @@ class Checker:
                     problems.append(
                         f"the sync index: {u} reads {sorted(got - want)} of {table} it may not "
                         f"({line.perm or 'select'}), and not {sorted(want - got)} it may"
+                    )
+                mirrored = set(snap[(u, "mirror", t.name)]) if line.mirrored else want
+                if mirrored != want:
+                    problems.append(
+                        f"the sync index's mirror: {u} reads {sorted(mirrored - want)} of {table} it may not "
+                        f"({line.perm or 'select'}), and not {sorted(want - mirrored)} it may"
                     )
         return problems[:12]
 

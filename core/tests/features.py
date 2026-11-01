@@ -124,6 +124,7 @@ LARAVEL = "integrations/laravel/tests/Feature/"
 ELECTRIC = "integrations/electric/tests/shapes.test.ts"
 ELECTRIC_PROXY = "integrations/electric/tests/proxy.test.ts"
 ZERO = "integrations/zero/tests/zero.test.ts"
+POWERSYNC = "integrations/powersync/tests/powersync.test.ts"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -143,6 +144,8 @@ ORACLES: dict[str, str] = {
     "what Electric serves",
     "integrations/zero": "authz.list as each user (row-level security's answer), after each change, against what "
     "zero-cache syncs",
+    "integrations/powersync": "authz.list as each user (row-level security's answer), after each change, against what "
+    "the PowerSync service syncs",
 }
 
 FEATURES: list[Feature] = [
@@ -406,9 +409,48 @@ FEATURES: list[Feature] = [
         (T(DIFF, "def sync_problems("),),
         grammar=(
             "Sync lines: the sync role, after commit, a table with its permission, keyed by a type, a table alone (its "
-            "select rule)",
+            "select rule), mirrored",
         ),
-        note="a preview: the index in the database; Electric on it is sync.electric, Zero sync.zero, PowerSync's later",
+        note="a preview: the index in the database; Electric on it is sync.electric, Zero sync.zero, PowerSync "
+        "sync.powersync",
+    ),
+    Feature(
+        "sync.powersync",
+        1,
+        "PowerSync's mirrors on the sync index, a preview: with `mirrored` on a sync line, a copy of the table in "
+        "`authz_sync`, every column but the masked ones and each row's readers, for PowerSync's streams",
+        ("err.AZ811",),
+        Doc("docs/reference/sync.md", "PowerSync"),
+        (
+            T("sync.sh", "the mirror has the table's columns but the masked body, then readers"),
+            T("sync.sh", "the app role can't read the mirror"),
+            T("sync.sh", "a mirrored table with a column of its own named readers is refused"),
+            T("children.sh", "a mirrored row made through the partition it is stored in: in the mirror"),
+            T("children.sh", "a row made in the table that inherits: in the mirror of the table above"),
+            T("migrate_test.py", "a synced table mirrored, for PowerSync"),
+            T("policy_errors.py", "a mirrored sync line keyed by a type"),
+            T("unit_test.py", "test_powersync_client"),
+            T("cli.sh", "client powersync from a file: exit 2, it reads the database"),
+            Check(POWERSYNC, "P8: a token the app didn't sign is refused by the service"),
+            Check(POWERSYNC, "P9: not signed in: no token, and no row"),
+            Check(POWERSYNC, "P10: the client is synced no readers, and no masked column"),
+            Check(POWERSYNC, "P15: a session limited by scopes gets no token"),
+            T("sync.sh", "applied: the mirror holds every file, each with its readers, as a JSON array of keys"),
+            T("sync.sh", "a folder moved: the readers of the files below it change in their mirror rows too"),
+            T("sync.sh", "authz.sync_verify() compares the mirror too: it matches"),
+            T("sync.sh", "... and finds a mirror row that isn't its file's any more"),
+        ),
+        (
+            T(DIFF, "the sync index's mirror: "),
+            Check(POWERSYNC, "P1: the first sync of each user's tables is what authz.list gives them"),
+            Check(POWERSYNC, "P2: a share made: the row arrives live; revoked: it leaves"),
+            Check(POWERSYNC, "P6: a share that ends: the row leaves at the next authz.sync_tick(), and not before"),
+            Check(POWERSYNC, "P11: writes through the app arrive; a refused one from a client's queue says why"),
+            Check(POWERSYNC, "P12: lint, then rowstile apply and reapply leave the clients syncing"),
+            Check(POWERSYNC, "P14: a user deleted: their keys go, and their tables empty"),
+        ),
+        note="a preview: rows already on a device stay there; the window is the service's lag, and a tick for time; "
+        "`rowstile client powersync` writes the streams, reading the mirrors' columns from the database",
     ),
     Feature(
         "sync.keyed",

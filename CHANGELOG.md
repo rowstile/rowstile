@@ -45,6 +45,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   and each table's filter, which the app's query endpoint adds to the ZQL it gives zero-cache. Its conformance suite
   runs zero-cache 1.11.0 in each of the index's modes, with Zero's query and mutate endpoints signing each request
   in (`integrations/zero`, [The sync index](docs/reference/sync.md#zero), [Zero](docs/stacks/zero.md)).
+- PowerSync on the sync index, a preview: `mirrored` on a sync line (`sync app.files : view mirrored`) keeps a copy of
+  the table in `authz_sync`, every column but those the policy masks and `readers`, the keys that may read each row,
+  kept as the rows and their readers are written; and `rowstile client powersync` (or `[clients] powersync`) writes
+  the service's streams, which put each row in a bucket for each key that may read it, its columns read from the
+  database. AZ811 refuses a mirrored line keyed by a type, and a table with a column of its own named `readers`. Its
+  conformance suite runs the PowerSync service 1.27.0 in both modes a mirror takes (`integrations/powersync`,
+  [The sync index](docs/reference/sync.md#powersync), [PowerSync](docs/stacks/powersync.md)).
 - Background jobs in Celery's and RQ's workers, for the Python SDK (preview): `rowstile.job(who)` is a `with` block
   too, for a job that acts for the user its argument names (`Principal.parse`). In either form, the database's
   refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).

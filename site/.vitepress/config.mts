@@ -49,6 +49,7 @@ const stacks = [
   { text: "Laravel (preview)", link: "/stacks/laravel" },
   { text: "Electric, sync (preview)", link: "/stacks/electric" },
   { text: "Zero, sync (preview)", link: "/stacks/zero" },
+  { text: "PowerSync, sync (preview)", link: "/stacks/powersync" },
   { text: "Any other stack: SQL", link: "/stacks/sql" },
 ];
 const sdks = [

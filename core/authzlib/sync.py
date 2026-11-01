@@ -250,6 +250,14 @@ class SyncMixin(Core):
                     "AZ801",
                     span=s.table_span,
                 )
+            if s.mirrored and s.by is not None:
+                fail(
+                    s.loc,
+                    f"sync {s.table} ... by {s.by} mirrored: a mirror's readers are the keys each row is read by, and "
+                    f"keyed by {s.by} they would be {s.by}'s keys, a PowerSync bucket for each: mirror the line without by",
+                    "AZ811",
+                    span=s.mirrored_span,
+                )
 
     # --- which keys are groups ------------------------------------------------------------------------
     def group_types(self) -> set[str]:
@@ -446,6 +454,137 @@ class SyncMixin(Core):
     def readers_table(self, t: Type) -> str:
         return f"authz_sync.{q(t.name + '__readers')}"
 
+    # --- PowerSync's mirrors (`mirrored`): the table's rows, but the masked columns, with each row's readers --------
+    def mirrored(self) -> list[tuple[Sync, Type]]:
+        return [(s, self.sync_type(s)) for s in self.pol.syncs.values() if s.mirrored]
+
+    def mirror_table(self, t: Type) -> str:
+        return f"authz_sync.{q(t.name + '__mirror')}"
+
+    def masked_of(self, table: str) -> list[str]:
+        return [c for r in self.rules if r.table == table and r.command == "mask" for c in r.columns]
+
+    def mirror_readers_sql(self, t: Type, row: str) -> str:
+        """A row's readers, as the mirror keeps them: a JSON array of its keys, in order (text, which json_each reads)."""
+        on = " AND ".join(f"r.{q(c)} = {row}.{q(c)}" for c, _ in t.key)
+        return (
+            f"(SELECT coalesce(pg_catalog.json_agg(r.key ORDER BY r.key), '[]')::text FROM {self.readers_table(t)} r "
+            f"WHERE {on})"
+        )
+
+    def mirror_rows_sql(self, t: Type, source: str, row: str) -> str:
+        """The mirror's rows for the rows of source (as row): every column the mirror has, taken by name (so a masked
+        column, which it hasn't, is left), and the readers."""
+        mt = self.mirror_table(t)
+        return (
+            f"SELECT (pg_catalog.jsonb_populate_record(NULL::{mt}, pg_catalog.to_jsonb({row}) || "
+            f"pg_catalog.jsonb_build_object('readers', {self.mirror_readers_sql(t, row)}))).* FROM {source} {row}"
+        )
+
+    def mirror_columns_sql(self, s: Sync, rel: str, mirror: bool = False) -> str:
+        """The columns of rel, as `name type`, but the masked (and, of a mirror, its readers): the table's now are
+        those its mirror should have."""
+        masked = (
+            "ARRAY["
+            + ", ".join(lit(c) for c in [*self.masked_of(s.table), *(["readers"] if mirror else [])])
+            + "]::name[]"
+        )
+        return (
+            "(SELECT pg_catalog.array_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) "
+            f"ORDER BY a.attnum) FROM pg_catalog.pg_attribute a WHERE a.attrelid = {rel} AND a.attnum > 0 "
+            f"AND NOT a.attisdropped AND a.attname <> ALL ({masked}))"
+        )
+
+    def mirror_base_sql(self, s: Sync, t: Type) -> str:
+        """PowerSync's mirror of a table: made from the table's columns when it isn't there or they changed, and filled."""
+        mt = self.mirror_table(t)
+        tbl = qt(s.table)
+        drops = "".join(f"\n    ALTER TABLE {mt} DROP COLUMN {q(c)};" for c in self.masked_of(s.table))
+        pk = ", ".join(q(c) for c, _ in t.key)
+        have = self.mirror_columns_sql(s, f"to_regclass({lit(mt)})", mirror=True)
+        return f"""-- PowerSync's mirror of {s.table} (mirrored): every column of the table but those the policy masks, and readers, a
+-- JSON array of the keys that may read the row, which a stream's buckets are keyed by. Kept across applies; made
+-- again when the table's columns changed
+-- @object table {mt}
+DO $mi$
+DECLARE c name;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = {lit(tbl)}::regclass AND a.attname = 'readers'
+             AND a.attnum > 0 AND NOT a.attisdropped) THEN
+    RAISE EXCEPTION '{s.table} has a column readers, which its mirror keeps each row''s keys in [AZ811]'
+      USING HINT = 'rename the column, or sync the table without mirrored: rowstile help AZ811';
+  END IF;
+  IF to_regclass({lit(mt)}) IS NOT NULL AND {have} IS DISTINCT FROM {self.mirror_columns_sql(s, f"{lit(tbl)}::regclass")} THEN
+    DROP TABLE {mt};
+  END IF;
+  IF to_regclass({lit(mt)}) IS NULL THEN
+    CREATE TABLE {mt} (LIKE {tbl});{drops}
+    -- (any column may be NULL but the key's: one dropped from the table since gives its rows NULL, not an error)
+    FOR c IN SELECT a.attname FROM pg_catalog.pg_attribute a WHERE a.attrelid = {lit(mt)}::regclass AND a.attnum > 0
+               AND NOT a.attisdropped AND a.attnotnull AND a.attname <> ALL (ARRAY[{", ".join(lit(c) for c, _ in t.key)}]::name[]) LOOP
+      EXECUTE pg_catalog.format('ALTER TABLE %s ALTER COLUMN %I DROP NOT NULL', {lit(mt)}, c);
+    END LOOP;
+    ALTER TABLE {mt} ADD COLUMN readers text NOT NULL DEFAULT '[]', ADD PRIMARY KEY ({pk}), REPLICA IDENTITY FULL;
+    INSERT INTO {mt} {self.mirror_rows_sql(t, tbl, "f")};
+  END IF;
+END $mi$;"""
+
+    def mirror_functions_sql(self, s: Sync, t: Type) -> str:
+        """What keeps a mirror: statement triggers on the table (as the rows are written: an update is its old rows'
+        delete and its new rows' insert, which also follows a row an update puts in another partition) and on its
+        readers table (as the index writes them)."""
+        mt = self.mirror_table(t)
+        tbl = qt(s.table)
+        fn = f"authz_int.{q(t.name + '__mirror')}"
+        fn_readers = f"authz_int.{q(t.name + '__mirror_readers')}"
+        on_old = " AND ".join(f"m.{q(c)} = o.{q(c)}" for c, _ in t.key)
+        cols = ", ".join(f"m.{q(c)}" for c, _ in t.key)
+        xcols = ", ".join(f"x.{q(c)}" for c, _ in t.key)
+        row = f"({cols})" if len(t.key) > 1 else cols
+
+        def trig(what: str) -> str:
+            return q(f"authz_{t.name}_mirror_{what}")
+
+        def readers_trig(what: str) -> str:
+            return q(f"{t.name}_mirror_readers_{what}")
+
+        return f"""-- PowerSync's mirror of {s.table}, kept as its rows are written ...
+CREATE FUNCTION {fn}() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF TG_OP = 'TRUNCATE' THEN
+    DELETE FROM {mt};
+    RETURN NULL;
+  END IF;
+  IF TG_OP IN ('UPDATE', 'DELETE') THEN
+    DELETE FROM {mt} m USING old_rows o WHERE {on_old};
+  END IF;
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    INSERT INTO {mt} {self.mirror_rows_sql(t, "new_rows", "n")};
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER {trig("ins")} AFTER INSERT ON {tbl}
+  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+CREATE TRIGGER {trig("upd")} AFTER UPDATE ON {tbl}
+  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+CREATE TRIGGER {trig("del")} AFTER DELETE ON {tbl}
+  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+CREATE TRIGGER {trig("trunc")} AFTER TRUNCATE ON {tbl}
+  FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+-- ... and as the index writes the rows' readers
+CREATE FUNCTION {fn_readers}() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  UPDATE {mt} m SET readers = {self.mirror_readers_sql(t, "m")}
+  WHERE {row} IN (SELECT {xcols} FROM changed_rows x);
+  RETURN NULL;
+END $f$;
+CREATE TRIGGER {readers_trig("ins")} AFTER INSERT ON {self.readers_table(t)}
+  REFERENCING NEW TABLE AS changed_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn_readers}();
+CREATE TRIGGER {readers_trig("del")} AFTER DELETE ON {self.readers_table(t)}
+  REFERENCING OLD TABLE AS changed_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn_readers}();"""
+
     def sync_base_sql(self) -> str:
         """authz_sync and its tables, kept across applies (CREATE ... IF NOT EXISTS): a table this policy no longer
         keeps goes, and so does a readers table whose key columns changed."""
@@ -473,10 +612,15 @@ class SyncMixin(Core):
                 for t in synced
             ]
         )
+        # (a mirror's columns are its table's: its own block below checks them)
+        mirrors = [t.name + "__mirror" for _, t in self.mirrored()]
         rows = ",\n             ".join(
-            f"({lit(ident(n))}, ARRAY[{', '.join(lit(c) for c in cs)}]::name[], "
-            f"ARRAY[{', '.join(lit(ty) for ty in tys)}]::regtype[])"
-            for n, cs, tys in want
+            [
+                f"({lit(ident(n))}, ARRAY[{', '.join(lit(c) for c in cs)}]::name[], "
+                f"ARRAY[{', '.join(lit(ty) for ty in tys)}]::regtype[])"
+                for n, cs, tys in want
+            ]
+            + [f"({lit(ident(n))}, NULL::name[], NULL::regtype[])" for n in mirrors]
         )
         pending = (
             """
@@ -524,16 +668,17 @@ BEGIN
            LEFT JOIN (VALUES {rows}) w(name, cols, types) ON w.name = c.relname
            WHERE c.relnamespace = 'authz_sync'::regnamespace AND c.relkind IN ('r', 'p')
              AND (w.name IS NULL
-                  OR (SELECT array_agg(a.attname ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
-                      WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.cols
-                  OR (SELECT array_agg(a.atttypid::regtype ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
-                      WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.types) LOOP
+                  OR w.cols IS NOT NULL AND (
+                    (SELECT array_agg(a.attname ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
+                     WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.cols
+                    OR (SELECT array_agg(a.atttypid::regtype ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
+                        WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.types)) LOOP
     EXECUTE format('DROP TABLE %s', r.tbl);
   END LOOP;
   -- a table missing (dropped since, or just now): what the index holds is worked out again (sync_refresh)
   IF to_regclass('authz_sync.definitions') IS NOT NULL AND EXISTS (
        SELECT 1 FROM (VALUES {rows}) w(name, cols, types)
-       WHERE to_regclass(pg_catalog.format('authz_sync.%I', w.name)) IS NULL) THEN
+       WHERE w.cols IS NOT NULL AND to_regclass(pg_catalog.format('authz_sync.%I', w.name)) IS NULL) THEN
     DELETE FROM authz_sync.definitions;
   END IF;
 END $sb$;
@@ -554,7 +699,7 @@ ALTER TABLE authz_sync.expanded REPLICA IDENTITY FULL;
 -- what the rows were worked out by: an apply that changes it works them out again (by difference)
 CREATE TABLE IF NOT EXISTS authz_sync.definitions (name text PRIMARY KEY, hash text NOT NULL);
 ALTER TABLE authz_sync.definitions REPLICA IDENTITY FULL;{pending}{inherit}
-{chr(10).join(tables)}
+{chr(10).join(tables)}{"".join(chr(10) + self.mirror_base_sql(s, t) for s, t in self.mirrored())}
 REVOKE ALL ON ALL TABLES IN SCHEMA authz_sync FROM PUBLIC;"""
 
     def sync_capture_sql(self) -> str:
@@ -1156,6 +1301,32 @@ END $f$;"""
             )
         return out
 
+    def mirrors_match_sql(self) -> str:
+        """authz_int.sync_mirrors_match(): each mirror has its table's columns (but the masked) and rows, with the
+        readers the index holds (false says which differs, in a notice); sync_verify's last answer."""
+        checks = "\n".join(
+            f"""  IF {self.mirror_columns_sql(s, f"to_regclass({lit(self.mirror_table(t))})", mirror=True)}
+       IS DISTINCT FROM {self.mirror_columns_sql(s, f"{lit(qt(s.table))}::regclass")} THEN
+    RAISE NOTICE 'the sync index differs from a rebuild: %', {lit(f"{s.table}'s mirror: its columns are not its table's (rowstile reapply makes it again)")};
+    RETURN false;
+  END IF;
+  IF EXISTS (
+    WITH s AS MATERIALIZED (SELECT x::text FROM {self.mirror_table(t)} x),
+         f AS MATERIALIZED (SELECT x::text FROM ({self.mirror_rows_sql(t, qt(s.table), "f")}) x)
+    SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
+    RAISE NOTICE 'the sync index differs from a rebuild: %', {lit(f"{s.table}'s mirror")};
+    RETURN false;
+  END IF;"""
+            for s, t in self.mirrored()
+        )
+        return f"""-- each mirror matches its table's rows, with the readers the index holds
+CREATE FUNCTION authz_int.sync_mirrors_match() RETURNS boolean
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+{checks}
+  RETURN true;
+END $f$;"""
+
     def sync_functions_sql(self) -> str:
         """Every function of the index: the derivations, the keys, the commit's work, and the admin's."""
         st = self.sync_build()
@@ -1165,6 +1336,17 @@ END $f$;"""
             f"    SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN\n"
             f"    RAISE NOTICE 'the sync index differs from a rebuild: %', {lit(what)};\n    RETURN false;\n  END IF;"
             for what, stored, fresh in self.fresh_sql()
+        )
+        # forced (rowstile reapply --force): each mirror written again where it differs from its table's rows and readers
+        mirrors = "".join(
+            f"""
+  IF p_force THEN
+    DELETE FROM {self.mirror_table(t)} m WHERE NOT EXISTS (SELECT 1 FROM ({self.mirror_rows_sql(t, qt(s.table), "f")}) x
+                                                           WHERE x::text = m::text);
+    INSERT INTO {self.mirror_table(t)} SELECT x.* FROM ({self.mirror_rows_sql(t, qt(s.table), "f")}) x
+      WHERE NOT EXISTS (SELECT 1 FROM {self.mirror_table(t)} m WHERE m::text = x::text);
+  END IF;"""
+            for s, t in self.mirrored()
         )
         stale = (
             "  DELETE FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) <> ALL (ARRAY["
@@ -1259,7 +1441,7 @@ BEGIN
 {stale.replace(chr(10), chr(10) + "  ")}
 {marks}
   END IF;
-  PERFORM authz_int.sync_process();
+  PERFORM authz_int.sync_process();{mirrors}
   IF p_hash IS NOT NULL THEN
     INSERT INTO authz_sync.definitions VALUES ('index', p_hash) ON CONFLICT (name) DO UPDATE SET hash = EXCLUDED.hash;
   END IF;
@@ -1290,9 +1472,11 @@ CREATE FUNCTION authz.sync_verify() RETURNS boolean
 LANGUAGE plpgsql STABLE {DEF_CURRENT} AS $f$
 BEGIN
 {behind}{verify}
-  RETURN true;
+  RETURN {"authz_int.sync_mirrors_match()" if self.mirrored() else "true"};
 END $f$;""",
                 work,
+                *(self.mirror_functions_sql(s, t) for s, t in self.mirrored()),
+                *([self.mirrors_match_sql()] if self.mirrored() else []),
                 "SET LOCAL check_function_bodies = on;",
             ]
         )

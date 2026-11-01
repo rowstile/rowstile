@@ -297,6 +297,28 @@ jobs:
       - run: bash integrations/zero/test.sh
         env:
           SYNC_MODE: ${{ matrix.mode }}
+  # PowerSync's conformance suite, a preview: Postgres with logical replication, the PowerSync service on a role of its
+  # own with its bucket storage, the publication powersync (the policy's mirrors and the keys), an Express app that
+  # gives the clients their tokens, the checks on Vitest with PowerSync's own client in Node (integrations/powersync).
+  # It runs whole in both modes a mirror takes, a job each (conformance-powersync (copied), (after))
+  conformance-powersync:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [copied, after]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
+        with:
+          node-version: "24"
+      - run: npm ci --no-audit --no-fund
+      - run: bash integrations/powersync/test.sh
+        env:
+          SYNC_MODE: ${{ matrix.mode }}
   # The .NET SDK's conformance suite (a preview): ASP.NET Core, EF Core on Npgsql, EF Core's migrations, xUnit
   # (integrations/aspnetcore). It fails unless its checks run every line and branch of the SDK (coverlet); the report it
   # prints is kept

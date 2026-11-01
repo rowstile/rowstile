@@ -305,7 +305,7 @@ step grant_views | 79e8f933ff65
 step mask_privileges | f8051dad4a89
 step share_indexes | db4592740040
 step sweep | 1dfed05490f4
-step sync_base | 4dc76d27a537
+step sync_base | f312684d432e
 step sync_refresh | e91842e6fd17
 step tables | 9360c5b984f3
 table authz_gen.policy_lines | dfb73b71db42 shape=dcfedc96

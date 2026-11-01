@@ -10,7 +10,7 @@
 [
   "app" "role" "include" "type" "where" "can" "roles" "from" "shared" "by" "if"
   "rules" "view" "mask" "cascade" "before" "after" "object" "subject"
-  "scope" "caveat" "sync" "commit" "invariants" "never"
+  "scope" "caveat" "sync" "commit" "mirrored" "invariants" "never"
   "test" "given" "as" "cannot" "allowed" "refused" "sees" "with"
 ] @keyword
 

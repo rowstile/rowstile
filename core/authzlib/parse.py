@@ -414,7 +414,8 @@ class Invariant:
 class Sync:
     """`sync app.files : view` (a preview): the readers of each row of a table, kept in authz_sync for sync engines.
     perm: the permission they hold; None for the table's select rule. by: `by folder`, the type whose inheritance
-    its readers are keyed by (folder#view:7 for each file in folder 7), rather than copied from each folder above."""
+    its readers are keyed by (folder#view:7 for each file in folder 7), rather than copied from each folder above.
+    mirrored: `mirrored`, a copy of the table in authz_sync with each row's readers on it, for PowerSync."""
 
     table: str
     perm: str | None
@@ -423,6 +424,8 @@ class Sync:
     table_span: Span | None = field(default=None, compare=False, repr=False)
     by: str | None = None
     by_span: Span | None = field(default=None, compare=False, repr=False)
+    mirrored: bool = False
+    mirrored_span: Span | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass
@@ -1396,7 +1399,7 @@ TOP_FORMS = {
     "app": "write the app role as: app role name",
     "scope": "write scopes as: scope name = select, view, app.files.update, file.edit",
     "caveat": "write caveats as: caveat name = {sql}",
-    "sync": "write sync lines as: sync role name, sync after commit, or sync schema.table [: permission] [by type]",
+    "sync": "write sync lines as: sync role name, sync after commit, or sync schema.table [: permission] [by type] [mirrored]",
     "include": 'write includes as: include "file.authz" (the file\'s name in double quotes)',
 }
 
@@ -1540,7 +1543,7 @@ class Reader:
         self.pol.caveats[name.text] = Caveat(name.text, sql.strip(), loc)
 
     def sync(self, w: Words, loc: Loc) -> None:
-        """sync role name, sync after commit, or sync schema.table [: permission] [by type]"""
+        """sync role name, sync after commit, or sync schema.table [: permission] [by type] [mirrored]"""
         table: Piece | None = None
         probe = w.copy()
         try:
@@ -1565,6 +1568,7 @@ class Reader:
             return
         perm = w.need(w.name()) if w.mark(":") else None
         by = w.need(w.name()) if w.name("by") else None
+        mirrored = w.name("mirrored")
         w.end()
         if table.text in self.pol.syncs:
             fail(loc, f"{table.text} is synced twice: one sync line per table", "AZ109", at=(table.start, table.end))
@@ -1576,6 +1580,8 @@ class Reader:
             loc.span(table.start, table.end),
             by.text if by else None,
             loc.span(by.start, by.end) if by else None,
+            mirrored is not None,
+            loc.span(mirrored.start, mirrored.end) if mirrored else None,
         )
 
     def test_section(self, line: Line) -> None:

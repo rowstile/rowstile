@@ -979,6 +979,98 @@ api=$(KPSQL -c "SELECT string_agg(x, '; ') FROM public.forms_api() x")
   bad "the runtime's other answers, keyed" "$api"
 dropdb --force "$KEYED"
 
+echo "-- mirrored, for PowerSync"
+# the files mirrored, their body masked (so never in the mirror): the mirror holds every other column and the readers,
+# kept as the rows are written and as the index writes their readers
+MIRRORED=$(printf '%s\n' "$SYNCED" | sed -e 's/^sync app.files : view$/sync app.files : view mirrored/' \
+  -e 's/^rules app.files$/rules app.files view app.files_visible/' -e '/^rules app.files view app.files_visible$/a\  mask body : edit')
+apply "$MIRRORED"
+mirrored() {   # the mirror is the files' rows (but the masked body), with the readers the index holds for each, in order
+  check "$1" "SELECT NOT EXISTS (
+    (SELECT id, folder_id, owner_id, name, confidential, readers FROM authz_sync.file__mirror
+     EXCEPT SELECT f.id, f.folder_id, f.owner_id, f.name, f.confidential,
+       (SELECT coalesce(json_agg(r.key ORDER BY r.key), '[]')::text FROM authz_sync.file__readers r WHERE r.id = f.id) FROM app.files f)
+    UNION ALL
+    (SELECT f.id, f.folder_id, f.owner_id, f.name, f.confidential,
+       (SELECT coalesce(json_agg(r.key ORDER BY r.key), '[]')::text FROM authz_sync.file__readers r WHERE r.id = f.id) FROM app.files f
+     EXCEPT SELECT id, folder_id, owner_id, name, confidential, readers FROM authz_sync.file__mirror))"
+}
+check "the mirror has the table's columns but the masked body, then readers" \
+  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,readers}'
+   FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
+mirrored "applied: the mirror holds every file, each with its readers, as a JSON array of keys"
+check "... and the folders, synced without mirrored, have no mirror" "SELECT to_regclass('authz_sync.folder__mirror') IS NULL"
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('file', '13', 'viewer', 'user', '6')"
+check "a share made: the file's mirror row names frank's key" "SELECT readers LIKE '%\"user:6\"%' FROM authz_sync.file__mirror WHERE id = 13"
+PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '13' AND subject_id = '6'"
+check "... revoked: it no longer does" "SELECT readers NOT LIKE '%\"user:6\"%' FROM authz_sync.file__mirror WHERE id = 13"
+PSQL -c "UPDATE app.files SET name = 'Roadmap, renamed', body = 'secret' WHERE id = 11"
+mirrored "a file renamed: its mirror row says the new name, and holds no body"
+PSQL -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (900, 4, 2, 'new')"
+mirrored "a file made: its mirror row, with the readers worked out at commit"
+check "... which name its owner" "SELECT readers LIKE '%\"user:2\"%' FROM authz_sync.file__mirror WHERE id = 900"
+PSQL -c "UPDATE app.files SET id = 901 WHERE id = 900"
+mirrored "its id changed: the mirror row moves with it"
+PSQL -c "DELETE FROM app.files WHERE id = 901"
+mirrored "deleted: its mirror row goes"
+PSQL -c "UPDATE app.folders SET parent_id = 20 WHERE id = 4"
+mirrored "a folder moved: the readers of the files below it change in their mirror rows too"
+PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4"
+check "authz.sync_verify() compares the mirror too: it matches" "SELECT authz.sync_verify()"
+PSQL -c "UPDATE authz_sync.file__mirror SET readers = '[]' WHERE id = 11"
+check "... and finds a mirror row that isn't its file's any more" "SELECT NOT authz.sync_verify()"
+PSQL -c "SET ROLE app_user" -c "SELECT count(*) FROM authz_sync.file__mirror" > "$T/denied" 2>&1
+grep -q "permission denied for schema authz_sync" "$T/denied" && ok "the app role can't read the mirror" || bad "the app role reads the mirror" "$(cat "$T/denied")"
+oid=$(PSQL -c "SELECT 'authz_sync.file__mirror'::regclass::oid")
+out=$(CLI reapply --force 2>&1)
+[ "$(PSQL -c "SELECT 'authz_sync.file__mirror'::regclass::oid")" = "$oid" ] && ok "rowstile reapply keeps the mirror (PowerSync keeps reading it)" || bad "reapply made the mirror again" "$out"
+mirrored "... and works it out again"
+PSQL -c "ALTER TABLE app.files ADD COLUMN size integer NOT NULL DEFAULT 0"
+check "authz.sync_verify() finds a mirror whose columns its table's are no longer" "SELECT NOT authz.sync_verify()"
+out=$(CLI reapply --force 2>&1)
+check "... and reapply makes it again, with the new column" \
+  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,size,readers}'
+   FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
+check "... which holds every file again" "SELECT authz.sync_verify()"
+# rowstile client powersync: the streams, their columns the mirror's, read in the database (from the policy's file,
+# rowstile.toml naming the database; with --db; in rowstile dev's loop); without a database, or one it can't reach, it says so
+P=$T/proj && mkdir -p "$P" && printf '%s\n' "$MIRRORED" > "$P/db.authz"
+toml() { printf 'policy = "db.authz"\n%s[clients]\npowersync = "sync-config.yaml"\n' "$1" > "$P/rowstile.toml"; }
+in_proj() { (cd "$P" && python3 "$OLDPWD/cli/rowstile_cli.py" "$@"); }
+toml "database = \"dbname=$DB\"
+"
+out=$(in_proj client 2>&1)
+grep -q 'SELECT files."id", files."folder_id", files."owner_id", files."name", files."confidential", files."size"$' "$P/sync-config.yaml" &&
+  ! grep -q 'readers"\|body' "$P/sync-config.yaml" && ok "rowstile client writes PowerSync's streams, the columns the mirror's in the database" ||
+  bad "client powersync from rowstile.toml" "$out $(cat "$P/sync-config.yaml" 2>&1 | head -12)"
+out=$(CLI client powersync 2>&1)
+case "$out" in *'FROM authz_sync."file__mirror" files, json_each(files.readers) r'*) ok "... and with --db";; *) bad "client powersync --db" "${out:0:300}";; esac
+rm -f "$P/sync-config.yaml"
+CLI push --development "$P/db.authz" >/dev/null 2>&1   # (rowstile dev pushes to a development database alone)
+out=$(in_proj dev --once --no-studio 2>&1)
+[ -f "$P/sync-config.yaml" ] && ok "... and rowstile dev writes them too" || bad "rowstile dev, the streams" "$out"
+toml "database = \"host=127.0.0.1 port=1 dbname=$DB\"
+"
+out=$(in_proj client 2>&1); rc=$?
+[ $rc -eq 2 ] && case "$out" in *"can't connect"*|*"could not connect"*|*"connect"*) true;; *) false;; esac &&
+  ok "... a database it can't reach: exit 2, saying so" || bad "client powersync, a database it can't reach" "$rc $out"
+toml ""
+out=$(env -u DATABASE_URL bash -c "cd $P && python3 $PWD/cli/rowstile_cli.py client" 2>&1); rc=$?
+[ $rc -eq 2 ] && [ "$out" = "rowstile client powersync reads each mirror's columns from the database: give it one (--db, or database in rowstile.toml), where the policy is applied" ] &&
+  ok "... and none named: exit 2, it reads the database" || bad "client powersync, no database" "$rc $out"
+# (the masked view reads every column: it goes with the column, and applying makes it again)
+PSQL -c "ALTER TABLE app.files DROP COLUMN size CASCADE"
+check "a column dropped from the table since: its writes go on, its mirror rows hold NULL there" \
+  "WITH u AS (UPDATE app.files SET name = 'Roadmap' WHERE id = 11 RETURNING id) SELECT count(*) = 1 FROM u"
+check "... (the mirror's column may hold it, though the table's was NOT NULL)" "SELECT size IS NULL FROM authz_sync.file__mirror WHERE id = 11"
+PSQL -c "ALTER TABLE app.files ADD COLUMN readers text"
+refused "a mirrored table with a column of its own named readers is refused" "$MIRRORED" "app.files has a column readers, which its mirror keeps each row's keys in [AZ811]"
+PSQL -c "ALTER TABLE app.files DROP COLUMN readers"
+apply "$SYNCED"
+check "a policy that no longer mirrors the files: the mirror and its triggers go" \
+  "SELECT to_regclass('authz_sync.file__mirror') IS NULL
+      AND NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'app.files'::regclass AND tgname LIKE 'authz_file_mirror_%')"
+
 echo "-- remove, and a policy without sync"
 apply "$DOCS"
 check "a policy without sync lines: applying it drops the index and its functions" \

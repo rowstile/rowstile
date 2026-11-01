@@ -123,4 +123,28 @@ And the stack's checks that apply: 1 (Z1), 4 (someone the app doesn't know syncs
 whole in each of the index's modes, as Electric's does, a job each on every pull request; every night on 17 and 18,
 and on 16 with the app through PgBouncer (zero-cache's own connection stays direct).
 
+`powersync` (a preview) is the third sync engine's suite, on the sync index's mirrors (`mirrored`): the PowerSync
+service on a role of its own, its bucket storage in a database of its own, the publication `powersync` (the mirrors
+and the keys), the streams `rowstile client powersync` writes, a small Express app that gives the clients their
+tokens and takes their writes, and the checks on Vitest with PowerSync's own client in Node. Every user's files,
+folders and notes stay open, live, and after each step each holds exactly the ids `authz.list` gives that user:
+
+- P1 to P7. As E1 to E7: the first sync, a share made and revoked, a folder moved out and back, a team left, a
+  sub-team moved, a share that ends (at the next `authz.sync_tick()`), `confidential` set.
+- P8. A token another key signed is refused by the service.
+- P9. Not signed in: the app gives no token, and the client gets no row.
+- P10. The client is synced no `readers` and no masked column, and its buckets are the keys its user holds.
+- P11. Writes through the app arrive; a refused one from a client's upload queue is the app's 403, with AZ709.
+- P12. Lint finds the service's role without BYPASSRLS, or a member of the app role; `rowstile apply`, `reapply`
+  and a changed policy keep the mirrors, and the clients go on syncing.
+- P14. A user deleted: their keys go, and their tables empty; the app gives them no token.
+- P15. A session limited by scopes (an API key's) gets no token, and a key that isn't one is 401 (AZ703); a key
+  without scopes syncs its user's rows.
+- P17. After commit: with the worker stopped, a share waits; started again, it arrives.
+
+And the stack's checks that apply: 1 (P1), 3 (P9), 11 (with the streams `rowstile client` writes from the migrated
+database, as committed) and 13. It runs whole in the two modes a mirror takes, `copied` and `after` (a mirrored line
+can't be keyed by folder), a job each on every pull request; every night on 17 and 18, and on 16 with the app through
+PgBouncer (the service's own connection stays direct).
+
 A new stack gets its own folder here, with every check that applies to it.

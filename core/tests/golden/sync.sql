@@ -298,10 +298,11 @@ BEGIN
              ('folder__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[])) w(name, cols, types) ON w.name = c.relname
            WHERE c.relnamespace = 'authz_sync'::regnamespace AND c.relkind IN ('r', 'p')
              AND (w.name IS NULL
-                  OR (SELECT array_agg(a.attname ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
-                      WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.cols
-                  OR (SELECT array_agg(a.atttypid::regtype ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
-                      WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.types) LOOP
+                  OR w.cols IS NOT NULL AND (
+                    (SELECT array_agg(a.attname ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
+                     WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.cols
+                    OR (SELECT array_agg(a.atttypid::regtype ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
+                        WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.types)) LOOP
     EXECUTE format('DROP TABLE %s', r.tbl);
   END LOOP;
   -- a table missing (dropped since, or just now): what the index holds is worked out again (sync_refresh)
@@ -312,7 +313,7 @@ BEGIN
              ('definitions', ARRAY['name', 'hash']::name[], ARRAY['text', 'text']::regtype[]),
              ('file__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[]),
              ('folder__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[])) w(name, cols, types)
-       WHERE to_regclass(pg_catalog.format('authz_sync.%I', w.name)) IS NULL) THEN
+       WHERE w.cols IS NOT NULL AND to_regclass(pg_catalog.format('authz_sync.%I', w.name)) IS NULL) THEN
     DELETE FROM authz_sync.definitions;
   END IF;
 END $sb$;
