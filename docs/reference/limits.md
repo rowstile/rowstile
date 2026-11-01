@@ -89,29 +89,33 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   The engine is trusted: it holds BYPASSRLS and every row, and rowstile can't check what it serves. <!-- unchecked: what an engine serves is the engine's -->
   The index costs writes. Copied in (the default), a move works out again the readers of every row below the moved
   folder and of their files, a share those of what reads its object, a membership change the member's keys alone.
-  Keyed by folder, a move or a share writes the keys of whom it concerns, and a membership change the keys of every
-  folder the member gains or loses. After commit, the writer writes a note, and the worker the rest. On the scale
-  benchmark's dev size (400,000 files in 20,000 folders 20 levels deep, 1,000 users, 100 teams; measured
-  2026-11-01 on a shared machine whose load went from 5 to 37 on 12 cores, Postgres 16, 128 MB of shared buffers,
-  each write and its undoing, after a `VACUUM`): <!-- unchecked: times measured by hand on 2026-11-01 -->
+  Keyed by folder, a move writes what the folders below it inherit, a share on a folder one row of what it gives
+  itself, and a membership change the member's keys, as copied in. After commit, the writer writes a note, and the
+  worker the rest. On the scale benchmark's dev size (400,000 files in 20,000 folders 20 levels deep, 1,000 users,
+  100 teams; measured 2026-11-01, one after the other, on a shared machine whose load went from 10 to 60 on 12
+  cores, Postgres 16, 128 MB of shared buffers, each write and its undoing, after a `VACUUM`; the earlier layout
+  keyed by folder, in which each principal held the key of every folder it may read, measured beside it): <!-- unchecked: times measured by hand on 2026-11-01 -->
 
-  | | copied in | keyed by folder | after commit, copied in: the writer, then the worker |
-  |---|---|---|---|
-  | the index | 12.7 million readers rows for the files, 628,000 for the folders, 12,821 keys (13 a user); 1.4 GB | 1.2 million for the files, 20,000 for the folders, 9.4 million keys (9,091 a user, 40,019 the most) and 1.0 million rows of the groups; 1.5 GB | as copied in |
-  | worked out whole (the first apply) | 404 s | 499 s | 425 s |
-  | a move of a folder with 100 folders and 2,000 files below | 1.4 s, 1.7 s | 1.5 s, 1.6 s | 0.2 s; 4.3 s, 2.6 s |
-  | ... with 950 folders and 19,000 files | 9.5 s, 10.6 s | 5.7 s, 6.1 s | 0.45 s; 24.5 s, 10.9 s |
-  | ... with 9,400 folders and 189,000 files | 150 to 350 s (measured 2026-10-31) | 40 s, 74 s | |
-  | a share on a folder with 19,000 files below, and its revoke | 8.5 s, 8.1 s | 3.4 s, 5.4 s | 0.07 s; 8.3 s, 7.3 s |
-  | a member joining a team, and leaving | 0.08 s, 0.07 s | 0.24 s, 3.3 s | 0.12 s; 0.06 s |
-  | a file made | 0.08 s | 0.09 s | 0.03 s; 0.08 s |
-  | `authz.sync_verify()` | 167 s | 308 s | 171 s |
+  | | copied in | keyed by folder | keyed by folder, the earlier layout | after commit, keyed: the writer; the worker |
+  |---|---|---|---|---|
+  | the index | 12.7 million readers rows for the files, 627,000 for the folders, 12,821 keys (13 a user); 1.4 GB | 1.2 million for the files, 20,000 for the folders, 12,821 keys (13 a user), 92,000 rows of given and 766,000 of inherits; 0.27 GB | 1.2 million for the files, 20,000 for the folders, 10.4 million keys (9,864 a user, 40,021 the most), 1.0 million rows of the groups; 1.6 GB | as keyed |
+  | worked out whole (the first apply) | 387 s | 67 s | 519 s | 66 s |
+  | a move of a folder with 100 folders and 2,000 files below, and back | 2.7 s, 1.8 s | 0.28 s, 0.36 s | 3.0 s, 1.1 s | 0.17 s, 0.14 s; 0.16 s, 0.22 s |
+  | ... with 950 folders and 19,000 files | 18.5 s, 12.2 s | 1.1 s, 1.6 s | 8.5 s, 5.2 s | 0.33 s, 0.40 s; 0.84 s, 1.1 s |
+  | ... with 9,400 folders and 189,000 files | 150 to 350 s (measured 2026-10-31) | 11.6 s, 11.3 s | 40.8 s, 55.2 s | |
+  | a share on a folder with 950 folders below, and its revoke | 8.7 s, 8.5 s | 0.09 s, 0.09 s | 1.5 s, 3.4 s | 0.09 s, 0.06 s; 0.07 s, 0.09 s |
+  | ... with 9,400 folders below | | 0.11 s, 0.09 s | 16.4 s, 32.0 s | |
+  | a member joining a team, and leaving | 0.10 s, 0.08 s | 0.09 s, 0.07 s | 0.19 s, 1.8 s | 0.08 s, 0.05 s; 0.05 s, 0.05 s |
+  | a file made | 0.12 s | 0.06 s | 0.07 s | 0.05 s; 0.06 s |
+  | the engines' filter of the files, as Postgres runs it: a user who reads 211,000, an org admin (all 400,000) | 0.84 s, 1.0 s | 0.90 s, 3.5 s | 0.40 s, 1.3 s | 0.46 s, 2.3 s |
+  | `authz.sync_verify()` | 179 s | 32 s | 266 s | 33 s |
 
-  Keyed by folder trades the files' readers for keys: each user holds one for every folder they may read. It saves
-  where folders hold many files; it costs where many users read each folder, and on each membership change (a
-  member joining a team that reads 900 folders gains 900 keys), and each user's filter in the engine reads all of
-  their keys. Right after the first apply, before autovacuum has run, a write that reads many of the index's rows
-  can take forty times as long: run `VACUUM` on its tables after it. <!-- unchecked: times measured by hand on 2026-10-31 and 2026-11-01 -->
+  Keyed by folder trades the files' readers for two tables the engines' filter joins through: what a folder's key
+  inherits and what each folder gives itself. A principal holds its own and its groups' keys, as copied in, but its
+  filter reaches the key of every folder it may read through them (the user above, 22,000 rows of inherits), and a
+  key every folder gives, as an org's admins through each folder's org, once for each folder above each one: an org
+  admin's filter reads every row of inherits, 766,000. Right after the first apply, before autovacuum has run, a
+  write that reads many of the index's rows can take forty times as long: run `VACUUM` on its tables after it. <!-- unchecked: times measured by hand on 2026-10-31 and 2026-11-01 -->
 - **Identity providers**: `authz.sync_members` takes the member list; there is no SCIM
   endpoint. JWTs are HS256 only (no RS256/JWKS in plpgsql); for asymmetric tokens,
   verify in your backend and sign in from there ([Identity](identity.md)), or use an API key. <!-- checked: tests/identity.sh "alg none" -->
