@@ -21,3 +21,5 @@ FROM composer:2.9@sha256:b09bccd91a78fe8a9ab4b33d707b862e8fe54fec17782e32683ad2a
 # Electric, the sync engine (electric/test.sh, a preview), and nginx, the shared cache it puts in front of the app
 FROM electricsql/electric:1.8.1@sha256:efb6fa43859d67cb8c73439e0c8bc0f7a3daa467500fb06f2a924bcb2070c139 AS electric
 FROM nginx:1.31.8-alpine-slim@sha256:f45171d36c76a8b2f5ef97108a3a8a2294248a6578a0a180edc2d78f7d2edc26 AS nginx
+# zero-cache, the sync engine Zero's clients connect to (zero/test.sh, a preview)
+FROM rocicorp/zero:1.11.0@sha256:893c4a78a1a84f1ab8d7e76263b4bab3c8aee61101b00b365756c47e328935a2 AS zero

@@ -123,6 +123,7 @@ PHOENIX_SDK = "integrations/phoenix/test/sdk_test.exs"
 LARAVEL = "integrations/laravel/tests/Feature/"
 ELECTRIC = "integrations/electric/tests/shapes.test.ts"
 ELECTRIC_PROXY = "integrations/electric/tests/proxy.test.ts"
+ZERO = "integrations/zero/tests/zero.test.ts"
 
 # the suites that hold rowstile to an answer it didn't give, and what that answer is
 ORACLES: dict[str, str] = {
@@ -140,6 +141,8 @@ ORACLES: dict[str, str] = {
     "stress.sh": "a rebuild, after sixteen clients write one tree",
     "integrations/electric": "authz.list as each user (row-level security's answer), after each change, against "
     "what Electric serves",
+    "integrations/zero": "authz.list as each user (row-level security's answer), after each change, against what "
+    "zero-cache syncs",
 }
 
 FEATURES: list[Feature] = [
@@ -405,7 +408,7 @@ FEATURES: list[Feature] = [
             "Sync lines: the sync role, after commit, a table with its permission, keyed by a type, a table alone (its "
             "select rule)",
         ),
-        note="a preview: the index in the database; Electric on it is sync.electric, Zero's and PowerSync's come later",
+        note="a preview: the index in the database; Electric on it is sync.electric, Zero sync.zero, PowerSync's later",
     ),
     Feature(
         "sync.keyed",
@@ -482,6 +485,33 @@ FEATURES: list[Feature] = [
             Check(ELECTRIC, "E14: a user deleted: their keys go, and their shape empties"),
         ),
         note="a preview: rows already on a device stay there; the window is Electric's lag, and a tick for time",
+    ),
+    Feature(
+        "sync.zero",
+        1,
+        "Zero on the sync index, a preview: `rowstile client zero`'s tables, relationships and filters, for the app's "
+        "Zero schema and its query endpoint",
+        (),
+        Doc("docs/reference/sync.md", "Zero"),
+        (
+            T("unit_test.py", "test_zero_client"),
+            T("cli.sh", "client zero: a policy that syncs nothing has only the keys"),
+            Check(ZERO, "Z8: a client's own context is not believed"),
+            Check(ZERO, "Z9: not signed in: needs-auth, and no row"),
+            Check(ZERO, "Z10: what a client holds of the index is its own"),
+            Check(ZERO, "Z13: a masked column is never synced"),
+            Check(ZERO, "Z15: a session limited by scopes is refused"),
+        ),
+        (
+            Check(ZERO, "Z1: the first sync of each user's queries is what authz.list gives them"),
+            Check(ZERO, "Z2: a share made: the row arrives live; revoked: it leaves"),
+            Check(ZERO, "Z6: a share that ends: the row leaves at the next authz.sync_tick(), and not before"),
+            Check(ZERO, "Z11: writes through Zero's mutators arrive in the queries; a refused one says why"),
+            Check(ZERO, "Z12: lint, then rowstile apply and reapply leave the queries as they are"),
+            Check(ZERO, "Z14: a user deleted: their keys go, and their queries empty"),
+        ),
+        note="a preview: rows already on a device stay there; the window is zero-cache's lag, and a tick for time; "
+        "without event triggers (a superuser's), a sync line added or dropped resets zero-cache",
     ),
     Feature(
         "api.feed",

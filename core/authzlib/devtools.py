@@ -390,6 +390,8 @@ class DevMixin(SyncMixin):
             return self._client_csharp(perms, source_name)
         if lang == "electric":
             return self._client_electric(source_name)
+        if lang == "zero":
+            return self._client_zero(source_name)
         if lang in ("ruby", "rbs"):  # the names for the Ruby SDK, and their signatures, which Steep reads
             return _client_ruby(perms, shared, scopes, source_name, lang == "rbs")
         assert lang == "py", f"unknown client language '{lang}'"
@@ -594,6 +596,133 @@ export function authz(db: Queryable) {{
 // principal's type; $1 is its id), the key columns always, and never a column the policy masks.
 export const shapes = {j(self.electric_shapes())} as const;
 export type SyncedTable = keyof typeof shapes;
+"""
+
+    def _client_zero(self, source_name: str) -> str:
+        """For an app on Zero (a preview): the sync index's tables as Zero tables, with the relationships between
+        them; the relationship each synced table needs to its readers; the columns the policy masks; and each synced
+        table's filter, for the app's query endpoint (the ZQL zero-cache runs): the rows whose readers hold a key the
+        signed-in principal holds, as sync_filter_sql says, written with whereExists. Only the policy's names."""
+        st = self.sync_build()
+        lines = [(s, self.sync_type(s)) for s in self.pol.syncs.values()]
+        keyed = [s.table for s, _ in lines if s.by is not None and st.keyed]
+        j: Callable[[object], str] = lambda x: json.dumps(x)
+
+        def column(pgtype: str) -> str:
+            # a key column as Zero types it: its numbers are JavaScript numbers, its booleans booleans, the rest text
+            numbers = ("smallint", "integer", "int", "int2", "int4", "bigint", "int8", "real", "double precision")
+            return "number()" if pgtype in numbers else "boolean()" if pgtype == "boolean" else "string()"
+
+        def var(t: Type) -> str:
+            return re.sub(r"_(\w)", lambda m: m.group(1).upper(), t.name) + "Readers"
+
+        tables = [
+            'const keys = table("rowstile_keys").from("authz_sync.keys")\n'
+            "  .columns({principal_type: string(), principal_id: string(), key: string()})\n"
+            '  .primaryKey("principal_type", "principal_id", "key");'
+        ]
+        if keyed:
+            tables.append(
+                'const inherits = table("rowstile_inherits").from("authz_sync.inherits")\n'
+                '  .columns({key: string(), source: string()}).primaryKey("key", "source");\n'
+                'const given = table("rowstile_given").from("authz_sync.given")\n'
+                '  .columns({source: string(), key: string()}).primaryKey("source", "key");'
+            )
+        rels = []
+        for s, t in lines:
+            cols = ", ".join(f"{c}: {column(ty)}" for c, ty in t.key)
+            pk = ", ".join(j(c) for c, _ in t.key)
+            tables.append(
+                f"const {var(t)} = table({j('rowstile_' + t.name + '_readers')}).from("
+                f'{j("authz_sync." + t.name + "__readers")})\n  .columns({{{cols}, key: string()}}).primaryKey({pk}, "key");'
+            )
+            through = (
+                ',\n    inherits: many({sourceField: ["key"], destField: ["key"], destSchema: inherits})'
+                if s.table in keyed
+                else ""
+            )
+            rels.append(
+                f"  relationships({var(t)}, ({{many}}) => ({{\n"
+                f'    holders: many({{sourceField: ["key"], destField: ["key"], destSchema: keys}}){through},\n  }})),'
+            )
+        if keyed:
+            rels.append(
+                "  relationships(inherits, ({many}) => ({\n"
+                '    given: many({sourceField: ["source"], destField: ["source"], destSchema: given}),\n  })),\n'
+                "  relationships(given, ({many}) => ({\n"
+                '    holders: many({sourceField: ["key"], destField: ["key"], destSchema: keys}),\n  })),'
+            )
+        names = [var(t) for _, t in lines]
+        readers = "\n".join(
+            f"  {j(s.table)}: {{sourceField: [{', '.join(j(c) for c, _ in t.key)}], destField: "
+            f"[{', '.join(j(c) for c, _ in t.key)}], destSchema: {var(t)}}},"
+            for s, t in lines
+        )
+        masked = {
+            s.table: [c for r in self.rules if r.table == s.table and r.command == "mask" for c in r.columns]
+            for s, _ in lines
+        }
+        held = 'k.where("principal_type", by.type).where("principal_id", by.id)'
+        filters = []
+        for s, _ in lines:
+            if s.table in keyed:
+                body = (
+                    'q.whereExists("readers", (r: Sub) => r.where(({or, exists}: Sub) => or(\n'
+                    f'      exists("holders", (k: Sub) => {held}),\n'
+                    '      exists("inherits", (i: Sub) => i.whereExists("given", (g: Sub) =>\n'
+                    f'        g.whereExists("holders", (k: Sub) => {held})))))),'
+                )
+            else:
+                body = f'q.whereExists("readers", (r: Sub) => r.whereExists("holders", (k: Sub) => {held})),'
+            filters.append(f"  {j(s.table)}: <Q extends Zql<Q>>(q: Q, by: SyncedBy): Q =>\n    {body}")
+        principals = " | ".join(j(p.name) for p in self.sync_principals()) or "never"
+        builders = {column(ty) for _, t in lines for _, ty in t.key}
+        imports = ", ".join(
+            [
+                *(["boolean"] if "boolean()" in builders else []),
+                *(["number"] if "number()" in builders else []),
+                *(["relationships"] if lines else []),
+                "string",
+                "table",
+            ]
+        )
+        nl = "\n"
+        return f"""// Generated by rowstile client from {source_name}. Do not edit; re-run after changing the policy.
+// Zero's view of the sync index (a preview), for the app's Zero schema and its query endpoint: the index's tables
+// and their relationships (syncTables, syncRelationships: add them to createSchema), the relationship each synced
+// table needs to its readers (readers: `readers: many(readers["app.files"])` in the table's own relationships),
+// the columns the policy masks (never in the app's Zero tables, nor in the publication), and each table's filter
+// (readable), which the query endpoint adds to the ZQL it returns: the rows whose readers hold a key the signed-in
+// principal holds. The client syncs the rows the filter reads too: only its own keys, and readers of those.
+import {{ {imports} }} from "@rocicorp/zero";
+
+{nl.join(tables)}
+
+export const syncTables = [{", ".join(["keys", *names, *(["inherits", "given"] if keyed else [])])}] as const;
+export const syncRelationships = {"[]" if not rels else "[" + nl + nl.join(rels) + nl + "]"} as const;
+
+/** The relationship a synced table needs to its readers, named `readers` in its own relationships. */
+export const readers = {"{}" if not readers else "{" + nl + readers + nl + "}"} as const;
+
+/** The columns the policy masks: never in the app's Zero table, nor in the publication zero-cache reads. */
+export const masked = {j(masked)} as const;
+
+/** Whom a filter is for: a principal type the policy signs in, and its id (syncPrincipal, from @rowstile/client). */
+export interface SyncedBy {{
+  readonly type: {principals};
+  readonly id: string;
+}}
+
+/** The part of ZQL the filters use: whereExists on the synced table's query, and on its relationships' */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Sub = any;
+interface Zql<Q> {{
+  whereExists(relationship: string, cb: (q: Sub) => Sub): Q;
+}}
+
+/** Each synced table's filter: add it to the ZQL the query endpoint returns for that table. */
+export const readable = {"{}" if not filters else "{" + nl + nl.join(filters) + nl + "}"} as const;
+export type SyncedTable = keyof typeof readable;
 """
 
     def _client_ts_names(self, perms: Perms, shared: Shared, scopes: list[str], source_name: str) -> str:

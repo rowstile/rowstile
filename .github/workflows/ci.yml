@@ -275,6 +275,28 @@ jobs:
             ${{ runner.temp }}/sdk-coverage-electric/report.txt
             ${{ runner.temp }}/sdk-coverage-electric/coverage-final.json
           if-no-files-found: ignore
+  # Zero's conformance suite, a preview: Postgres with logical replication, zero-cache on a role of its own (no
+  # superuser: no event triggers), the app's publication, an Express app with Zero's query and mutate endpoints, the
+  # checks on Vitest with Zero's own client in Node (integrations/zero). It runs whole in each of the sync index's
+  # modes, a job each (conformance-zero (copied), (keyed), (after))
+  conformance-zero:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [copied, keyed, after]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
+        with:
+          node-version: "24"
+      - run: npm ci --no-audit --no-fund
+      - run: bash integrations/zero/test.sh
+        env:
+          SYNC_MODE: ${{ matrix.mode }}
   # The .NET SDK's conformance suite (a preview): ASP.NET Core, EF Core on Npgsql, EF Core's migrations, xUnit
   # (integrations/aspnetcore). It fails unless its checks run every line and branch of the SDK (coverlet); the report it
   # prints is kept

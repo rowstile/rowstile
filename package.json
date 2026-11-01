@@ -14,7 +14,8 @@
     "sdk/typescript/jest",
     "integrations/nextjs",
     "integrations/node",
-    "integrations/electric"
+    "integrations/electric",
+    "integrations/zero"
   ],
   "devDependencies": {
     "typescript": "~6.0.3"

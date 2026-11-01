@@ -1,0 +1,9 @@
+policy   = "db/policy.authz"
+tests    = ["db/tests/*.authz"]
+database = "env:ROWSTILE_OWNER_DSN"
+[clients]
+ts       = "src/authz.gen.ts"
+zero     = "src/zero.gen.ts"
+[migrations]
+tool = "sql"
+dir  = "migrations"

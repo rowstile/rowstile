@@ -1,0 +1,23 @@
+{
+  "name": "rowstile-conformance-zero",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node build/src/server.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@rocicorp/zero": "1.11.0",
+    "@rowstile/client": "*",
+    "@rowstile/pg": "*",
+    "express": "5.3.0",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "vitest": "4.1.12"
+  }
+}
