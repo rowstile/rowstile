@@ -1,7 +1,7 @@
 {
   "name": "rowstile-workspace",
   "private": true,
-  "description": "The TypeScript SDK's packages (sdk/typescript) and their conformance apps (integrations/nextjs, integrations/node, integrations/electric), in one npm workspace so they share one React and one pg",
+  "description": "The TypeScript SDK's packages (sdk/typescript) and their conformance apps (integrations/nextjs, integrations/node, integrations/electric, integrations/zero, integrations/powersync), in one npm workspace so they share one React and one pg",
   "workspaces": [
     "sdk/typescript/client",
     "sdk/typescript/pg",
@@ -21,10 +21,17 @@
   "devDependencies": {
     "typescript": "~6.0.3"
   },
-  "//": "overrides: Prisma pins mysql2 3.15.3 and deepmerge-ts 7.1.5, which npm audit reports (mysql2 before 3.23.1, deepmerge-ts before 8.0.0): the fixed releases instead. Drop each once Prisma's own pin is past it. @electric-sql/client names @rollup/rollup-darwin-arm64 as an optional dependency, at ^4.18.1: a release at least two weeks old instead of the newest",
+  "//": "overrides: Prisma pins mysql2 3.15.3 and deepmerge-ts 7.1.5, which npm audit reports (mysql2 before 3.23.1, deepmerge-ts before 8.0.0): the fixed releases instead. Drop each once Prisma's own pin is past it. @electric-sql/client names @rollup/rollup-darwin-arm64 as an optional dependency, at ^4.18.1: a release at least two weeks old instead of the newest. @rocicorp/zero carries zero-cache's server dependencies, at releases npm audit reports (OpenTelemetry's instrumentations, core and Jaeger propagator; tinypool under oxfmt; uuid under cloudevents): the first fixed release on each one's line instead. Only the Zero suite installs them, and zero-cache runs from its image; drop them once Zero's own ranges reach those",
   "overrides": {
     "mysql2": "^3.23.1",
     "deepmerge-ts": "^8.0.2",
-    "@rollup/rollup-darwin-arm64": "4.64.7"
+    "@rollup/rollup-darwin-arm64": "4.64.7",
+    "@opentelemetry/auto-instrumentations-node": "0.79.0",
+    "@opentelemetry/core": "^2.10.0",
+    "@opentelemetry/propagator-jaeger": "^2.10.0",
+    "tinypool": "^2.1.2",
+    "cloudevents": {
+      "uuid": "^11.1.1"
+    }
   }
 }
