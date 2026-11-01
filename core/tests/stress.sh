@@ -31,7 +31,7 @@ dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null || exit 1
 # the docs app's policy with the sync index (a preview): its readers and keys are kept at each commit too, under lock
 # rows of what each commit's work writes and reads, and must match a rebuild after each level: the files' readers
-# keyed by folder, the folders' copied from each folder above. The role its lines name needs only to be there
+# keyed by folder (what each folder gives and inherits), the folders' copied from each folder above. The role its lines name needs only to be there
 psql -X -q -d postgres -c "DO \$r\$ BEGIN CREATE ROLE authz_sync_engine; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END \$r\$;" >/dev/null
 { cat example/docs.authz; printf '\nsync role authz_sync_engine\nsync app.files : view by folder\nsync app.folders\n'; } > "$W/docs.authz"
 python3 compile_policy.py "$W/docs.authz" > "$W/docs.sql" || exit 1

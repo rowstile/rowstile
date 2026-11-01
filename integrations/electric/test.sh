@@ -33,6 +33,8 @@ LOG=$(mktemp -d)
 servers=()
 cleanup() {
   for p in "${servers[@]}"; do kill "$p" 2>/dev/null; done
+  # (keyed by folder, the run's shapes were the keyed policy's: the committed ones are put back)
+  [ -f "$LOG/shapes.gen.ts" ] && cp "$LOG/shapes.gen.ts" src/shapes.gen.ts
   [ -n "${KEEP:-}" ] && return
   [ "${POOLER:-}" = pgbouncer ] && pooler_stop "$NAME"
   docker rm -f -v "$NAME-electric" "$NAME-nginx" "$NAME" >/dev/null 2>&1
@@ -84,6 +86,11 @@ if [ "$MODE" != copied ]; then
   $PYTHON ../../core/cli/rowstile_cli.py migrate "$POLICY" --dir "$LOG/mode/migrations" --name "sync_$MODE" \
     >"$LOG/mode/migrate.log" 2>&1 || { cat "$LOG/mode/migrate.log"; echo "FAIL  rowstile migrate to the $MODE policy"; exit 1; }
   migrations+=("$LOG"/mode/migrations/*.sql)
+  # keyed by folder, the filters read two more of the index's tables, which the app's own migration publishes
+  if [ "$MODE" = keyed ]; then
+    echo "ALTER PUBLICATION electric_publication_default ADD TABLE authz_sync.inherits, authz_sync.given;" >"$LOG/mode/publication.sql"
+    migrations+=("$LOG/mode/publication.sql")
+  fi
 fi
 export SYNC_MODE=$MODE SYNC_POLICY=$POLICY
 # 11: the migrations in order, each in a transaction, as a runner of plain SQL files does
@@ -113,9 +120,18 @@ for _ in $(seq 90); do [ "$(curl -s "http://localhost:$((PORT + 1))/v1/health")"
 $PYTHON ../../core/cli/rowstile_cli.py client >/dev/null || exit 1
 git diff --quiet -- src/authz.gen.ts src/shapes.gen.ts 2>/dev/null ||
   { echo "FAIL  src/authz.gen.ts or src/shapes.gen.ts is out of date: rowstile client"; rc=1; }
-# ... and the shapes are the same in every mode: the filter is the same one join
-$PYTHON ../../core/cli/rowstile_cli.py client electric "$POLICY" | diff - src/shapes.gen.ts >"$LOG/shapes.diff" ||
-  { cat "$LOG/shapes.diff"; echo "FAIL  the $MODE policy's shapes aren't src/shapes.gen.ts"; rc=1; }
+# ... and the mode's shapes: after commit, the same one join; keyed by folder, the files' and the folders' filters take
+# a second way in, through what a folder's key inherits, so the app writes its shapes again, as one changing its
+# sync lines would (src/shapes.gen.ts for this run; the committed one is put back after)
+$PYTHON ../../core/cli/rowstile_cli.py client electric "$POLICY" >"$LOG/mode-shapes.gen.ts" || exit 1
+if [ "$MODE" = keyed ]; then
+  [ "$(diff src/shapes.gen.ts "$LOG/mode-shapes.gen.ts" | grep -c '^>.*authz_sync.\\"inherits')" = 2 ] ||
+    { diff src/shapes.gen.ts "$LOG/mode-shapes.gen.ts"; echo "FAIL  the keyed policy's shapes: the files' and the folders' take a second way in"; rc=1; }
+  cp src/shapes.gen.ts "$LOG/shapes.gen.ts" && cp "$LOG/mode-shapes.gen.ts" src/shapes.gen.ts
+else
+  diff "$LOG/mode-shapes.gen.ts" src/shapes.gen.ts >"$LOG/shapes.diff" ||
+    { cat "$LOG/shapes.diff"; echo "FAIL  the $MODE policy's shapes aren't src/shapes.gen.ts"; rc=1; }
+fi
 rm -rf build && $BIN/tsc -p . >"$LOG/build.log" 2>&1 || { cat "$LOG/build.log"; echo "FAIL  the app doesn't type-check"; exit 1; }
 PG_POOL_MAX=1 PORT=0 node build/src/server.js >"$LOG/server-one.log" 2>&1 & servers+=($!)
 # 13: the app refuses to start on a connection that skips row-level security (here, the owner's)

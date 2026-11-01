@@ -516,6 +516,15 @@ class Checker:
         text = read(policy_path) if text is None else text
         self.pol = compile_policy.parse_policy(text, policy_path)
         self.sync_ref = SyncReference(self.pol)
+        # the engines' filter of each synced table, by principal type, its id $1 (as rowstile client electric writes it)
+        self.sync_where: dict[str, dict[str, str]] = {}
+        if self.pol.syncs:
+            c = compile_policy.Compiler(compile_policy.parse_policy(text, policy_path))
+            c.compile(policy_path)
+            self.sync_where = {
+                s.table: {p.name: c.sync_filter_sql(c.sync_type(s), p, "$1") for p in c.sync_principals()}
+                for s in c.pol.syncs.values()
+            }
         self.refuse = refusals_of(self.pol)
         self.types, self.rules = self.pol.types, self.pol.rules
         self.ref = Reference(self.pol)
@@ -726,14 +735,13 @@ class Checker:
                 lines.append(f"SET authz_ctx.{k} = {lit(v)};")
             for key, sql in self.ref.data_queries():
                 emit([u, "data", *key], sql)
-            # the sync index: the rows of each synced table whose readers hold a key the principal holds
+            # the sync index: the rows of each synced table the engines' filter gives the principal
             for table in self.pol.syncs:
                 t = self.ref.type_of_table(table)
+                where = self.sync_where[table][kind].replace("$1", lit(pid))
                 emit(
                     [u, "sync", t.name],
-                    f"SELECT coalesce(json_agg(DISTINCT {idsql(t, 'r')}), '[]') FROM authz_sync.{q(t.name + '__readers')} r "
-                    f"WHERE r.key IN (SELECT k.key FROM authz_sync.keys k WHERE k.principal_type = {lit(kind)} "
-                    f"AND k.principal_id = {lit(pid)})",
+                    f"SELECT coalesce(json_agg(DISTINCT {idsql(t, 'r')}), '[]') FROM {qt(t.table)} r WHERE {where}",
                 )
             for key, sql in self.decisions_queries:
                 emit([u, "decisions", *key], sql)

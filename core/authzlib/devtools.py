@@ -9,7 +9,6 @@ from collections.abc import Callable
 from typing import TypeAlias
 
 from .parse import And, Arrow, Cond, Expr, Not, Or, Perm, Ref, Type
-from .sqlutil import lit, q
 from .sync import SyncMixin
 
 # what the clients are made from: {type: [permission]}, {type: {relation: [subject]}}, [scope]
@@ -571,24 +570,17 @@ export function authz(db: Queryable) {{
     def electric_shapes(self) -> dict[str, dict[str, object]]:
         """Electric's shape of each synced table (a preview): its table, its key columns, the columns the policy
         masks, and for each principal type the filter: the rows whose readers hold a key the signed-in principal
-        holds, its id the parameter $1 (the sync index's one join, as Electric's where takes it)."""
+        holds, its id the parameter $1 (the sync index's join, as Electric's where takes it: sync_filter_sql)."""
         out: dict[str, dict[str, object]] = {}
         for s in self.pol.syncs.values():
             t = self.sync_type(s)
             keys = [c for c, _ in t.key]
-            cols = ", ".join(q(c) for c in keys)
-            row = cols if len(keys) == 1 else f"({cols})"
             masked = [c for r in self.rules if r.table == s.table and r.command == "mask" for c in r.columns]
             out[s.table] = {
                 "table": s.table,
                 "keys": keys,
                 "masked": masked,
-                "where": {
-                    p.name: f"{row} IN (SELECT {cols} FROM {self.readers_table(t)} WHERE {q('key')} IN "
-                    f"(SELECT {q('key')} FROM authz_sync.{q('keys')} WHERE {q('principal_type')} = {lit(p.name)} "
-                    f"AND {q('principal_id')} = $1))"
-                    for p in self.sync_principals()
-                },
+                "where": {p.name: self.sync_filter_sql(t, p, "$1") for p in self.sync_principals()},
             }
         return out
 
