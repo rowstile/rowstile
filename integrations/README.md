@@ -77,10 +77,20 @@ folders stay open, live, and after each step each holds exactly the ids `authz.l
 - E13. A masked column is never in a shape, even when the client asks for it (in `columns` or a subset's filter).
 - E14. A user deleted: their keys go, and their shape empties.
 - E15. A session limited by scopes (an API key's), or viewing as someone, is refused (403).
+- E16. Keyed by folder: a folder moved out of reach and back writes no file's readers, and the shapes follow.
+- E17. After commit: with the worker stopped, a share waits; started again, it arrives.
 
 And the stack's checks that apply: 1 (E1), 4 (a pool of one), 5 (E8), 11 (a fresh database migrates with the
 app's SQL migrations, the policy's tests pass, the lock file is current) and 13 (the app refuses to start on the
-owner's connection); 16 as the routes meet it (AZ703, AZ709, a hidden row). Every night it runs on 17 and 18, and
-on 16 with the app through PgBouncer (Electric's own connection stays direct).
+owner's connection); 16 as the routes meet it (AZ703, AZ709, a hidden row).
+
+The suite runs whole in each of the index's modes, which `SYNC_MODE` names: `copied` (the default), `keyed` (`by
+folder` on the files' and the folders' sync lines) and `after` (`sync after commit`). In another mode than the
+default, `test.sh` writes that mode's policy from `db/policy.authz` and the migration `rowstile migrate` writes to
+it from the lock file, and runs it after the app's migrations, as an app changing its sync lines would. After
+commit, a worker beside the app runs `authz.sync_work()` in a loop, and a check that needs the index to hold every
+change so far waits for its next run. E16 runs keyed by folder only, E17 after commit only, and a first check says
+the index in force is in the mode named. Each pull request runs the three modes, a job each; every night they run
+on 17 and 18, and on 16 with the app through PgBouncer (Electric's own connection stays direct).
 
 A new stack gets its own folder here, with every check that applies to it.

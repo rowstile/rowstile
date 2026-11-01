@@ -245,11 +245,17 @@ jobs:
   # Electric's conformance suite, a preview: Postgres with logical replication, Electric in manual publication mode
   # on a role of its own, an Express app whose shape routes are @rowstile/client's electricShape, nginx as a cache in
   # front of it, the checks on Vitest with Electric's own client (integrations/electric). It fails unless its checks
-  # run every line, branch and function of electricShape; the report it prints is kept, with the file's details
+  # run every line, branch and function of electricShape; the report it prints is kept, with the file's details. It runs
+  # whole in each of the sync index's modes, a job each, so each mode's result shows apart (conformance-electric
+  # (copied), (keyed), (after)): copied in, keyed by folder, and after commit with a worker beside the app
   conformance-electric:
     needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [copied, keyed, after]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: {persist-credentials: false}
@@ -258,11 +264,13 @@ jobs:
           node-version: "24"
       - run: npm ci --no-audit --no-fund
       - run: bash integrations/electric/test.sh
-        env: {CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-electric"}
+        env:
+          SYNC_MODE: ${{ matrix.mode }}
+          CONFORMANCE_COVERAGE: "${{ runner.temp }}/sdk-coverage-electric"
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         with:
-          name: sdk-coverage-electric
+          name: sdk-coverage-electric-${{ matrix.mode }}
           path: |
             ${{ runner.temp }}/sdk-coverage-electric/report.txt
             ${{ runner.temp }}/sdk-coverage-electric/coverage-final.json

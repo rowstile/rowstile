@@ -206,7 +206,8 @@ The engine is trusted: it holds BYPASSRLS and every row, and rowstile can't chec
 changes as they happen. Clients ask the app's own server, and it asks Electric. The server asks the database who
 the request is, sets the shape's filter for that principal, and passes Electric's answer on. rowstile writes the
 filters, and the TypeScript SDK has the route that sets them. This is a preview too: `integrations/electric` runs
-it on Electric 1.8.1. The [Electric stack page](../stacks/electric.md) shows the app's side from end to end.
+it on Electric 1.8.1, in each of the index's modes (copied in, keyed by folder, after commit). The
+[Electric stack page](../stacks/electric.md) shows the app's side from end to end.
 
 ### Electric's role and its publication
 
