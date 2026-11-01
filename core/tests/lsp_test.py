@@ -801,7 +801,7 @@ with tempfile.TemporaryDirectory() as d:
     h = c.request("textDocument/hover", where("sync app.docs : view", len("sync app.docs : ") + 1))
     ok("hover on a sync line's permission shows it", value(h).startswith("```authz\ndoc.view = owner and not"), h)
     # a sync line naming a table no type maps (it parses, and fails to compile: AZ801), and a file that doesn't parse
-    unmapped, unparsed = small + "sync app.nope : view\n", "sync \ntype (\n"
+    unmapped, unparsed = small + "sync app.nope : view\n", "sync \nsync app.boxes : view by \ntype (\n"
     for name, text in (("unmapped.authz", unmapped), ("unparsed.authz", unparsed)):
         with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -817,6 +817,9 @@ with tempfile.TemporaryDirectory() as d:
     ok("... and hover on its permission: nothing", h is None, h)
     got = c.request("textDocument/completion", {"textDocument": {"uri": up}, "position": {"line": 0, "character": 5}})
     ok("completion after sync in a file that doesn't parse: no tables, and no error", got == [], got)
+    spot = {"line": 1, "character": len("sync app.boxes : view by ")}
+    got = c.request("textDocument/completion", {"textDocument": {"uri": up}, "position": spot})
+    ok("... nor types after a sync line's by there, and no error", got == [], got)
     # ... and after a sync line's by: the types with a permission that inherits, which its readers may be keyed by
     tree = small.replace(
         "type doc = app.docs where",
