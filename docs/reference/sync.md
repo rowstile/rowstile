@@ -6,7 +6,7 @@ again. The sync index tells it: for each row of a synced table, the keys that ma
 replicates like any other, in the same transaction as the change. <!-- checked: tests/sync.sh "a share made: frank reads file 13"; tests/sync.sh "a transaction rolled back changes nothing in the index" -->
 
 This is a preview. Its lines, tables and functions may change in any release, and it is outside what 1.0 will
-promise. [Electric](#electric) runs on it, behind the app's own server; Zero and PowerSync come later.
+promise. [Electric](#electric) and [Zero](#zero) run on it, behind the app's own server; PowerSync comes later.
 
 ## Declaring it
 
@@ -352,5 +352,103 @@ A user deleted loses their keys, so their shape empties; the route then answers 
   `authz.sync_tick()` too. <!-- checked: integrations/electric/tests/shapes.test.ts "E6: a share that ends: the row leaves at the next authz.sync_tick(), and not before" -->
 - What the index leaves out (caveats, links, scopes) gives nothing through Electric either. <!-- checked: tests/difftest.py "without shares that have a caveat and without links" -->
 - Electric is trusted: it holds BYPASSRLS and every row of what it publishes, and rowstile can't check what it
+  serves. <!-- unchecked: what an engine serves is the engine's, outside the database -->
+  The conformance suite checks it end to end, for the forms it uses.
+
+## Zero
+
+[Zero](https://zero.rocicorp.dev) syncs queries: a client asks for a named query, and zero-cache asks the app's
+query endpoint for its ZQL, runs it on its replica of the database, and keeps the client's copy current as rows
+change. <!-- checked: integrations/zero/tests/zero.test.ts "Z2: a share made: the row arrives live; revoked: it leaves" -->
+The app's endpoint adds the index's filter to each query, for the principal the request signs in as.
+rowstile writes the filters and the index's tables as Zero sees them. This is a preview too: `integrations/zero`
+runs it on zero-cache 1.11.0, in each of the index's modes (copied in, keyed by folder, after commit). The
+[Zero stack page](../stacks/zero.md) shows the app's side from end to end.
+
+### Zero's role and its publication
+
+zero-cache connects as the sync role, and makes its own schemas beside the app's (`zero`, `zero_0`, ...): the role
+may create in the database, and owns no table of the app's. <!-- checked: integrations/zero/tests/zero.test.ts "Z12: lint, then rowstile apply and reapply leave the queries as they are" -->
+It runs without event triggers, which only a superuser may make: then a schema change of a table it replicates
+makes it reset, and a plain `rowstile apply` changes none of them. <!-- checked: integrations/zero/tests/zero.test.ts "Z12: lint, then rowstile apply and reapply leave the queries as they are" -->
+A sync line added or dropped makes or drops a readers table, which is such a change: call Zero's schema change
+hook after it, or let it reset.
+
+The publication is the app's migration, after the policy's, and zero-cache reads it as `ZERO_APP_PUBLICATIONS`:
+
+<!-- not run: it needs the sync role, which the docs app the reference runs on has none of; integrations/zero's migrations do this -->
+```sql
+CREATE ROLE conf_zero LOGIN REPLICATION BYPASSRLS PASSWORD '...';     -- as an administrator
+GRANT USAGE ON SCHEMA app TO conf_zero;
+GRANT SELECT ON app.files, app.folders TO conf_zero;
+GRANT SELECT (id, file_id, author_id) ON app.notes TO conf_zero;      -- every column but the masked body
+CREATE PUBLICATION zero_data FOR TABLE app.files, app.folders, app.notes (id, file_id, author_id),
+  authz_sync.keys, authz_sync.file__readers, authz_sync.folder__readers, authz_sync.note__readers;
+GRANT CREATE ON DATABASE app_db TO conf_zero;                          -- for zero-cache's own schemas
+```
+
+Zero reads each row by its primary key, so a table keeps its default replica identity, and its publication may
+leave a masked column out. <!-- checked: integrations/zero/tests/zero.test.ts "Z13: a masked column is never synced" -->
+Keyed by folder, the filters read `authz_sync.inherits` and `authz_sync.given` too: publish them.
+
+### The index as Zero sees it: `rowstile client zero`
+
+`rowstile client zero` writes a TypeScript module for the app's Zero schema (with `zero = "src/zero.gen.ts"` under
+`[clients]`, `rowstile client` and `rowstile dev` write it): <!-- checked: tests/unit_test.py "test_zero_client" -->
+
+- `syncTables` and `syncRelationships`: the index's tables as Zero tables, and how they join, for `createSchema`;
+- `readers`: the relationship each synced table needs to its readers, `readers: many(readers["app.files"])`;
+- `masked`: the columns the policy masks, which the app's own Zero tables leave out;
+- `readable`: each table's filter, for the query endpoint, the index's join written with `whereExists`.
+
+<!-- not run: TypeScript; integrations/zero/src/queries.ts is this, and its checks run it -->
+```ts
+import { readable, type SyncedBy } from "./zero.gen.js";
+
+export const queries = defineQueries({
+  files: defineQuery(({ ctx }: { ctx: SyncedBy }) => readable["app.files"](zql.file, ctx).orderBy("id", "asc")),
+});
+```
+
+A client syncs the rows its queries read, not only what they return: of the index, its own keys and the readers rows
+they lead to (keyed by folder, the `given` rows on its keys and the `inherits` rows of what they give), never a key
+of another user's. <!-- checked: integrations/zero/tests/zero.test.ts "Z10: what a client holds of the index is its own" -->
+
+### The endpoints
+
+zero-cache calls the app's query and mutate endpoints with the client's token (`Authorization: Bearer`). Each asks
+the database who the request is, as Electric's route does (`syncPrincipal(c)`, from `@rowstile/client`), then:
+
+- answers 401 for nobody, or for a user who isn't there, and a key the database refuses; Zero shows the client
+  `needs-auth`, and it gets no row; <!-- checked: integrations/zero/tests/zero.test.ts "Z9: not signed in: needs-auth, and no row" -->
+- answers 403 for a session limited by scopes (a key's, a token's) or viewing as someone, as
+  `authz.session_limited()` says: the index holds what each principal may read, without scopes; <!-- checked: integrations/zero/tests/zero.test.ts "Z15: a session limited by scopes is refused" -->
+- makes each query's context from the request, never the client's: a client that says it is someone else is sent
+  its token's rows. <!-- checked: integrations/zero/tests/zero.test.ts "Z8: a client's own context is not believed" -->
+  (The client runs its local copy of a query with the context it says, so its views show what of its own rows that
+  other principal would read.)
+
+The mutate endpoint signs each mutation's transaction in as the request's user before the mutator runs (`actAs`,
+or `authz.login_key()`), so the rules decide what it may write. A refused write comes back to its client as an
+error, in the database's words, and changes nothing. <!-- checked: integrations/zero/tests/zero.test.ts "Z11: writes through Zero's mutators arrive in the queries; a refused one says why" -->
+Zero's own update doesn't count the rows it changed, and row-level security makes an update of a row the user may
+not update change none: write the update as SQL on the server (`tx.dbTransaction.query`) and pass its result to the
+SDK's `expect`, which says whether the row was hidden or refused, and why. <!-- checked: integrations/zero/tests/zero.test.ts "Z11: writes through Zero's mutators arrive in the queries; a refused one says why" -->
+Two more needs of Zero's: the mutate endpoint's server schema holds the app's own tables only (Zero checks its tables against what the connection may
+read, and the app role may read nothing of the index's), and the app role writes Zero's record of each client's
+mutations (`zero_0.clients`, `zero_0.mutations`), which Zero's role grants once zero-cache has made them. <!-- checked: integrations/zero/tests/zero.test.ts "Z11: writes through Zero's mutators arrive in the queries; a refused one says why" -->
+
+Applying the policy, applying it again and a changed policy leave the clients connected and their queries following
+changes. <!-- checked: integrations/zero/tests/zero.test.ts "Z12: lint, then rowstile apply and reapply leave the queries as they are" -->
+A user deleted loses their keys, so their queries empty; the endpoints then answer them 401. <!-- checked: integrations/zero/tests/zero.test.ts "Z14: a user deleted: their keys go, and their queries empty" -->
+
+### Its limits
+
+- Rows already on a device stay there while it is offline, and in any copy the client keeps. <!-- unchecked: what a client keeps is the client's, outside the database -->
+  A revoke stops delivery: Zero removes the row from the client's copy when it next syncs. <!-- checked: integrations/zero/tests/zero.test.ts "Z2: a share made: the row arrives live; revoked: it leaves" -->
+- The window after a change is zero-cache's replication lag, and for a share that ends, until the next
+  `authz.sync_tick()` too. <!-- checked: integrations/zero/tests/zero.test.ts "Z6: a share that ends: the row leaves at the next authz.sync_tick(), and not before" -->
+- What the index leaves out (caveats, links, scopes) gives nothing through Zero either. <!-- checked: tests/difftest.py "without shares that have a caveat and without links" -->
+- zero-cache is trusted: it holds BYPASSRLS and every row of what it publishes, and rowstile can't check what it
   serves. <!-- unchecked: what an engine serves is the engine's, outside the database -->
   The conformance suite checks it end to end, for the forms it uses.

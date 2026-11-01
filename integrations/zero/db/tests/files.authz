@@ -1,0 +1,13 @@
+test "a team's members read its folders and their files, but not a confidential one"
+  given ann = {INSERT INTO app.users VALUES (901, 'ann') RETURNING id}
+  given bo = {INSERT INTO app.users VALUES (902, 'bo') RETURNING id}
+  given t = {INSERT INTO app.teams VALUES (901, NULL, 'eng') RETURNING id}
+  given {INSERT INTO app.team_members VALUES ($t, $bo)}
+  given f = {INSERT INTO app.folders VALUES (901, NULL, $ann, 'top') RETURNING id}
+  given {INSERT INTO app.folder_teams VALUES ($f, $t)}
+  given a = {INSERT INTO app.files VALUES (901, $f, $ann, 'a', false) RETURNING id}
+  given c = {INSERT INTO app.files VALUES (902, $f, $ann, 'c', true) RETURNING id}
+  user $bo can view file $a
+  user $bo cannot view file $c
+  user $bo cannot edit file $a
+  user $ann can edit file $c

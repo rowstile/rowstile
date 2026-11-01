@@ -27,6 +27,7 @@ integrations/node/.work/
 integrations/node/coverage/
 integrations/electric/build/
 integrations/electric/coverage/
+integrations/zero/build/
 packaging/npm/out/
 packaging/npm/.cache/
 packaging/out/

@@ -48,6 +48,7 @@ const stacks = [
   { text: "Phoenix, Ecto (preview)", link: "/stacks/phoenix" },
   { text: "Laravel (preview)", link: "/stacks/laravel" },
   { text: "Electric, sync (preview)", link: "/stacks/electric" },
+  { text: "Zero, sync (preview)", link: "/stacks/zero" },
   { text: "Any other stack: SQL", link: "/stacks/sql" },
 ];
 const sdks = [

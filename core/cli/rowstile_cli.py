@@ -52,11 +52,13 @@
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
-    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust|elixir|php|electric] [POLICY.authz]
+    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust|elixir|php|electric|zero] [POLICY.authz]
                                                    typed helpers for app code (go, csharp, ruby, java, rust,
                                                    elixir, php: the policy's names, for those SDKs; rbs: the Ruby names'
                                                    signatures; electric: the synced tables' shapes, for the app's
-                                                   proxy in front of Electric, a preview); with none, writes the
+                                                   proxy in front of Electric; zero: the sync index's tables and
+                                                   each synced table's filter, for a Zero schema and its query
+                                                   endpoint: previews); with none, writes the
                                                    clients rowstile.toml names
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
                                                    a first policy from the database's tables (every schema of
@@ -101,6 +103,7 @@ rowstile.toml:
     java = "src/main/java/com/example/AuthzNames.java"   # the policy's names, for the Java SDK
     rust = "src/authz.rs"                  # the policy's names, for the Rust SDK
     electric = "src/shapes.gen.ts"         # the synced tables' shapes, for a proxy in front of Electric
+    zero = "src/zero.gen.ts"               # the sync index's tables and filters, for a Zero schema
     elixir = "lib/my_app/authz.ex"         # the policy's names, for the Elixir SDK (MyApp.Authz)
     php = "database/authz.php"             # the policy's names, for the PHP SDK
     [migrations]
@@ -532,7 +535,7 @@ class Config:
 
 
 # the languages rowstile client writes: for Ruby, the policy's names and their signatures (RBS)
-CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust", "elixir", "php", "electric")
+CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust", "elixir", "php", "electric", "zero")
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
@@ -548,6 +551,7 @@ SETTINGS: dict[str, dict[str, str]] = {
         "elixir": "text",
         "php": "text",
         "electric": "text",
+        "zero": "text",
     },
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
@@ -1265,7 +1269,7 @@ def main(argv: list[str]) -> None:
         if cmd == "client" and args[1:]:
             if args[0] not in CLIENTS:
                 fail(
-                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php or electric?",
+                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric or zero?",
                     2,
                 )
             _, text, files = policy_arg()
@@ -1463,7 +1467,7 @@ def main(argv: list[str]) -> None:
                 return
             if not args or args[0] not in CLIENTS:
                 fail(
-                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php or electric?",
+                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric or zero?",
                     2,
                 )
             sys.stdout.write(database.client(args[0], text, files, cfg.java_class, cfg.elixir_module))

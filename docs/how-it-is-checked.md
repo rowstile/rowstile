@@ -314,6 +314,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | A sync line keyed by a type's inheritance, a preview: `sync <table> : <permission> by <type>` | 1 | [sync](reference/sync.md) | `sync.sh`, `policy_errors.py`, `integrations/electric` | `difftest.py` |
 | The sync index worked out after commit by a worker, a preview: `sync after commit`, `authz.sync_work`, `authz.sync_behind` | 1 | [sync](reference/sync.md) | `sync.sh`, `policy_errors.py`, `interleave.py`, `integrations/electric` | `difftest.py` |
 | Electric on the sync index, a preview: `rowstile client electric`'s shapes, and `electricShape`, the route in front of Electric | 1 | [sync](reference/sync.md) | `unit_test.py`, `cli.sh`, `integrations/electric` | `integrations/electric` |
+| Zero on the sync index, a preview: `rowstile client zero`'s tables, relationships and filters, for the app's Zero schema and its query endpoint | 1 | [sync](reference/sync.md) | `unit_test.py`, `cli.sh`, `integrations/zero` | `integrations/zero` |
 | The change feed: `authz.changes_since`, `authz.trim_changes`, `authz.announce_timed_shares` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` |  |
 | The audit trail: `authz.audit`, `authz.trim_audit` | 1 | [governance](reference/governance.md) | `governance.sh` | `difftest.py` |
 | Checking the database: `authz.lint`, `authz.check_invariants` | 2 | [governance](reference/governance.md) | `governance.sh`, `adversarial.sh`, `apply.sh` | `around.py` |

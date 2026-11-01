@@ -95,4 +95,32 @@ change so far waits for its next run. E16 runs keyed by folder only, E17 after c
 the index in force is in the mode named. Each pull request runs the three modes, a job each; every night they run
 on 17 and 18, and on 16 with the app through PgBouncer (Electric's own connection stays direct).
 
+`zero` (a preview) is the other sync engine's suite, on the sync index: zero-cache on a role of its own (no
+superuser: Zero runs without event triggers), the app's publication, a small Express app with Zero's query and
+mutate endpoints on the module `rowstile client zero` writes, and the checks on Vitest with Zero's own client in
+Node. Every user's queries of the files, the folders and the notes stay open, live, and after each step each holds
+exactly the ids `authz.list` gives that user. The checks are Electric's, numbered alike, where Zero meets them:
+
+- Z1 to Z7. As E1 to E7: the first sync, a share made and revoked, a folder moved out and back, a team left, a
+  sub-team moved, a share that ends (at the next `authz.sync_tick()`), `confidential` set.
+- Z8. A client that says it is someone else in its own context is sent its token's rows: the query endpoint makes
+  the context from the request.
+- Z9. Not signed in: the endpoint's 401, which Zero shows as `needs-auth`, and no row.
+- Z10. What the client holds of the index is its own: its keys, the readers rows they lead to (keyed by folder, the
+  `given` and `inherits` rows on its way), never another user's key.
+- Z11. Writes through Zero's mutators, in a transaction the mutate endpoint signed in: an allowed one arrives in the
+  queries; a refused one comes back as an error, in the database's words, and changes nothing.
+- Z12. Lint finds Zero's role without BYPASSRLS, a member of the app role, or reading a masked column; `rowstile
+  apply`, `reapply` and a changed policy leave the clients connected and their queries following changes.
+- Z13. The masked body is in neither the publication nor a client; a publication that carries it is in lint.
+- Z14. A user deleted: their keys go, and their queries empty.
+- Z15. A session limited by scopes (an API key's) gets `needs-auth`, and so does a key that isn't one; a key
+  without scopes syncs its user's rows.
+- Z16. Keyed by folder: a folder moved out of reach and back writes no file's readers, and the queries follow.
+- Z17. After commit: with the worker stopped, a share waits; started again, it arrives.
+
+And the stack's checks that apply: 1 (Z1), 4 (someone the app doesn't know syncs nothing), 5 (Z8), 11 and 13. It runs
+whole in each of the index's modes, as Electric's does, a job each on every pull request; every night on 17 and 18,
+and on 16 with the app through PgBouncer (zero-cache's own connection stays direct).
+
 A new stack gets its own folder here, with every check that applies to it.

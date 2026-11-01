@@ -40,6 +40,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A stack page for Electric, a preview: the role an administrator makes, the publication the app's migration
   makes, `rowstile client electric`, the route with `electricShape` and `syncPrincipal`, `Vary` and a cache, and
   what can't be done ([Electric](docs/stacks/electric.md)).
+- Zero on the sync index, a preview: `rowstile client zero` (or `[clients] zero`) writes the index's tables as Zero
+  tables, with their relationships, each synced table's relationship to its readers, the columns the policy masks,
+  and each table's filter, which the app's query endpoint adds to the ZQL it gives zero-cache. Its conformance suite
+  runs zero-cache 1.11.0 in each of the index's modes, with Zero's query and mutate endpoints signing each request
+  in (`integrations/zero`, [The sync index](docs/reference/sync.md#zero), [Zero](docs/stacks/zero.md)).
 - Background jobs in Celery's and RQ's workers, for the Python SDK (preview): `rowstile.job(who)` is a `with` block
   too, for a job that acts for the user its argument names (`Principal.parse`). In either form, the database's
   refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).
