@@ -144,9 +144,9 @@ export async function signedIn(token: Token): Promise<SyncPrincipal> {
 }
 ```
 
-Nobody is 401, and a session limited by scopes or viewing as someone 403, which Zero shows the client as
-`needs-auth`. Otherwise the query endpoint returns each query's ZQL, its context made from the request, never the
-client's:
+A signed-out request is answered 401, and a session limited by scopes or viewing as someone 403, which Zero shows
+the client as `needs-auth`. Otherwise the query endpoint returns each query's ZQL, its context made from the
+request, never the client's:
 
 ```ts
   const result = await handleQueryRequest({
