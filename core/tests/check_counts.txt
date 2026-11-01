@@ -17,29 +17,31 @@ docs 37
 governance 264
 hand answers 366
 identity 91
-interleavings 792
+interleavings 1440
 interleavings (read committed, boxes) 10
 interleavings (read committed, cross) 21
+interleavings (read committed, docs after commit) 36
+interleavings (read committed, docs keyed by folder) 36
 interleavings (read committed, docs) 36
 interleavings (read committed, parts) 21
 invariance of the fixed policies 27
 keep unchanged trees 11
-language server 128
+language server 131
 masks 39
 mcp 75
-migrate vs apply 81
+migrate vs apply 85
 migrations 79
 moves 23
 multi scenario 99
-policy errors 271
+policy errors 277
 principals 130
-reference 24
+reference 25
 review 59
 scenario 95
 signed sessions 82
 small policies 4
 studio 227
-sync index 97
+sync index 155
 tools 42
-unit 677
+unit 678
 upgrade 71

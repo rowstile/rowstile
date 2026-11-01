@@ -128,7 +128,19 @@ def number(message: Message, key: str) -> int:
 THIS = "(this-file)"  # what a test file is called while it is checked
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 ERROR = re.compile(r"^(?:(\S+?) )?line (\d+): (.*)$", re.S)
-TOP_WORDS = ["app role", "type", "rules", "include", "scope", "caveat", "sync role", "sync", "invariants", "test"]
+TOP_WORDS = [
+    "app role",
+    "type",
+    "rules",
+    "include",
+    "scope",
+    "caveat",
+    "sync role",
+    "sync after commit",
+    "sync",
+    "invariants",
+    "test",
+]
 EXPR_WORDS = ["or", "and", "not", "signed_in", "anyone", "nobody"]
 RULE_WORDS = ["select", "insert", "update", "delete", "mask", "after", "before", "cascade", "from"]
 TYPE_WORDS = ["can", "shared", "by", "if", "where", "roles", "from", "principal"]
@@ -714,7 +726,13 @@ class Server:
         if not s[:1].isspace():
             # a line that begins a block: its first word, then the table after `type x =` and `rules`
             synced = re.match(rf"sync\s+({QNAME})\s*:\s*\w*$", before)
-            if synced:  # a sync line's permission: one of its type's
+            if re.match(rf"sync\s+{QNAME}(?:\s*:\s*\w+)?\s+by\s+\w*$", before):
+                # the type a sync line's readers are keyed by: one whose permission inherits (parent.view)
+                if pol:
+                    add(
+                        sorted(n for n, t in pol.types.items() if any(inherits(t, p) for p in t.perms)), C_CLASS, "type"
+                    )
+            elif synced:  # a sync line's permission: one of its type's
                 t = next((x for x in pol.types.values() if x.table == synced.group(1)), None) if pol else None
                 if t:
                     add([p for p, x in t.perms.items() if not x.hidden], C_METHOD, f"{t.name} permission")
@@ -890,6 +908,16 @@ def arrows(node: Expr) -> list[tuple[str, str]]:
         case And(items) | Or(items):
             return [a for x in items for a in arrows(x)]
     return []
+
+
+def inherits(t: Type, perm: str) -> bool:
+    """Whether a permission inherits through a relation to its own type, as written (`parent.view`): what a sync line
+    may be keyed by."""
+    p = t.perms[perm]
+    return any(
+        t.relations.get(rel) is not None and any(st == t.name for st, _ in t.relations[rel].subjects())
+        for rel, _ in arrows(p.expr)
+    )
 
 
 def dedupe(items: list[Completion]) -> list[Completion]:

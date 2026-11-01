@@ -113,7 +113,15 @@
           }
         },
         {
-          "match": "^(sync)\\s+([A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
+          "match": "^(sync\\s+after\\s+commit)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.authz"
+            }
+          }
+        },
+        {
+          "match": "^(sync)\\s+([A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?(?:\\s+(by)\\s+([A-Za-z_][A-Za-z0-9_]*))?",
           "captures": {
             "1": {
               "name": "keyword.declaration.authz"
@@ -126,6 +134,12 @@
             },
             "4": {
               "name": "entity.name.function.permission.authz"
+            },
+            "5": {
+              "name": "keyword.other.authz"
+            },
+            "6": {
+              "name": "entity.name.type.authz"
             }
           }
         },

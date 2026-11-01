@@ -106,8 +106,14 @@ def compiled(name: str, transaction: bool = True) -> str:
 SYNC_LINES = "\nsync role sync_engine\nsync app.files : view\nsync app.folders\n"
 
 
-def compiled_sync() -> str:
-    return Compiler(parse_policy(read(POLICIES["docs"]) + SYNC_LINES, POLICIES["docs"])).compile(POLICIES["docs"])
+def compiled_sync(lines: str = SYNC_LINES) -> str:
+    return Compiler(parse_policy(read(POLICIES["docs"]) + lines, POLICIES["docs"])).compile(POLICIES["docs"])
+
+
+# ... keyed by folder, after commit (a worker keeps it)
+SYNC_KEYED_LINES = (
+    "\nsync role sync_engine\nsync app.files : view by folder\nsync app.folders by folder\nsync after commit\n"
+)
 
 
 def search(pattern: str, text: str, flags: int = 0) -> re.Match[str]:
@@ -476,6 +482,10 @@ class Golden(unittest.TestCase):
         # the docs app's policy with sync lines (a preview): the sync index's tables, functions and steps
         self.check("sync.sql", compiled_sync())
 
+    def test_a_sync_policy_keyed_by_folder_after_commit(self) -> None:
+        # ... its readers keyed by folder, and kept after commit by a worker
+        self.check("sync_keyed.sql", compiled_sync(SYNC_KEYED_LINES))
+
     def test_diff_script(self) -> None:
         c = Compiler(parse_policy(read(POLICIES["multi"]), POLICIES["multi"]))
         self.check("multi.diff.sql", c.compile_diff(POLICIES["multi"], ["1", "2"]))
@@ -522,7 +532,12 @@ class Golden(unittest.TestCase):
         sync = compiled_sync()
         made = set(re.findall(r"(?m)^CREATE (?:OR REPLACE )?FUNCTION authz\.(\w+)\(", sync))
         self.assertEqual(made - {"ctx", "link_hashes", "uid"}, set(GENERATED_FUNCTIONS + SYNC_FUNCTIONS))
-        self.assertIn("'sync_tick', 'sync_verify']) LOOP", sync)
+        self.assertIn("'sync_tick', 'sync_verify', 'sync_work', 'sync_behind']) LOOP", sync)
+        # ... and a policy without sync lines applied where one with them was drops each of them
+        from authzlib.database import SYNC_GONE_SQL
+
+        for name in SYNC_FUNCTIONS:
+            self.assertIn(f"DROP FUNCTION IF EXISTS authz.{name}();", SYNC_GONE_SQL)
 
 
 class SyncIndex(unittest.TestCase):
@@ -544,6 +559,11 @@ class SyncIndex(unittest.TestCase):
             hashed(base), hashed(base.replace("type user = cx.users\n", "type user = cx.users where {id > 0}\n"))
         )
         self.assertEqual(hashed(base), hashed(base.replace("  can judge = ", "  can peek = lead\n  can judge = ")))
+        # ... and so do keying by a type's inheritance, and keeping it after commit
+        self.assertNotEqual(
+            hashed(base), hashed(base.replace("sync cx.folders : edit", "sync cx.folders : edit by folder"))
+        )
+        self.assertNotEqual(hashed(base), hashed(base + "sync after commit\n"))
 
 
 class Compiling(unittest.TestCase):
@@ -7332,8 +7352,14 @@ class Fmt(unittest.TestCase):
         from authzlib.fmt import format
 
         head = "app role app_user\n\ntype user = app.users\n\ntype doc = app.docs\n  owner : user = owner_id\n"
-        src = head + "  can view = owner\nsync   role  sync_engine\nsync app.docs :  view   -- its readers\n"
-        want = head + "  can view = owner\n\nsync role sync_engine\nsync app.docs : view  -- its readers\n"
+        src = (
+            head + "  can view = owner\nsync   role  sync_engine\nsync app.docs :  view   by  doc  -- its readers\n"
+            "sync  after   commit\n"
+        )
+        want = (
+            head + "  can view = owner\n\nsync role sync_engine\nsync app.docs : view by doc  -- its readers\n"
+            "sync after commit\n"
+        )
         self.assertEqual(format(src), want)
         self.assertEqual(format(want), want)
 

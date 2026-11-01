@@ -413,13 +413,16 @@ class Invariant:
 @dataclass
 class Sync:
     """`sync app.files : view` (a preview): the readers of each row of a table, kept in authz_sync for sync engines.
-    perm: the permission they hold; None for the table's select rule."""
+    perm: the permission they hold; None for the table's select rule. by: `by folder`, the type whose inheritance
+    its readers are keyed by (folder#view:7 for each file in folder 7), rather than copied from each folder above."""
 
     table: str
     perm: str | None
     loc: Loc
     perm_span: Span | None = field(default=None, compare=False, repr=False)
     table_span: Span | None = field(default=None, compare=False, repr=False)
+    by: str | None = None
+    by_span: Span | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass
@@ -438,6 +441,7 @@ class Policy:
     sync_role: str | None = None  # `sync role sync_engine`: the sync engine's Postgres role (a preview)
     sync_role_loc: Loc | None = None
     syncs: dict[str, Sync] = field(default_factory=dict)  # table -> its sync line
+    sync_after_commit: Loc | None = None  # `sync after commit`: a worker keeps the index, after the writers commit
 
 
 # ----------------------------------------------------------------------
@@ -1392,7 +1396,7 @@ TOP_FORMS = {
     "app": "write the app role as: app role name",
     "scope": "write scopes as: scope name = select, view, app.files.update, file.edit",
     "caveat": "write caveats as: caveat name = {sql}",
-    "sync": "write sync lines as: sync role name, or sync schema.table [: permission]",
+    "sync": "write sync lines as: sync role name, sync after commit, or sync schema.table [: permission] [by type]",
     "include": 'write includes as: include "file.authz" (the file\'s name in double quotes)',
 }
 
@@ -1536,13 +1540,20 @@ class Reader:
         self.pol.caveats[name.text] = Caveat(name.text, sql.strip(), loc)
 
     def sync(self, w: Words, loc: Loc) -> None:
-        """sync role name, or sync schema.table [: permission]"""
+        """sync role name, sync after commit, or sync schema.table [: permission] [by type]"""
         table: Piece | None = None
         probe = w.copy()
         try:
             qname(probe)
             table = qname(w)
         except Unread:
+            if (after := w.name("after")) is not None:
+                w.need(w.name("commit"))
+                w.end()
+                if self.pol.sync_after_commit is not None:
+                    fail(loc, "sync after commit is said twice", "AZ109", at=(after.start, after.end))
+                self.pol.sync_after_commit = loc
+                return
             w.need(w.name("role"))
         if table is None:
             role = w.need(w.name())
@@ -1553,6 +1564,7 @@ class Reader:
             self.pol.sync_role, self.pol.sync_role_loc = role.text, loc
             return
         perm = w.need(w.name()) if w.mark(":") else None
+        by = w.need(w.name()) if w.name("by") else None
         w.end()
         if table.text in self.pol.syncs:
             fail(loc, f"{table.text} is synced twice: one sync line per table", "AZ109", at=(table.start, table.end))
@@ -1562,6 +1574,8 @@ class Reader:
             loc,
             loc.span(perm.start, perm.end) if perm else None,
             loc.span(table.start, table.end),
+            by.text if by else None,
+            loc.span(by.start, by.end) if by else None,
         )
 
     def test_section(self, line: Line) -> None:

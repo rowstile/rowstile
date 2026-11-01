@@ -904,7 +904,8 @@ CODES = {
     "AZ802": Code(
         "Sync lines and no sync role, or a sync role and nothing synced",
         "The sync index is read by the sync engine's Postgres role, which `sync role` names: sync lines need it, "
-        "and it needs at least one sync line. The role reads every row (it holds BYPASSRLS), so it is the engine's "
+        "and it (and `sync after commit`) needs at least one sync line. The role reads every row (it holds "
+        "BYPASSRLS), so it is the engine's "
         "own: `CREATE ROLE sync_engine LOGIN REPLICATION BYPASSRLS`.",
         "type file = app.files\n  owner : user = owner_id\n  can view = owner\nsync app.files : view\n",
         "type file = app.files\n  owner : user = owner_id\n  can view = owner\nsync role sync_engine\n"
@@ -991,6 +992,23 @@ CODES = {
         "folder_id, name) ON app.files TO sync_engine`. `authz.lint()` reports a grant made since, and a "
         "publication that publishes a masked column.",
         when="apply",
+    ),
+    "AZ810": Code(
+        "A sync line keyed by a type it can't be keyed by",
+        "`sync app.docs : view by folder` keys each doc's readers by its folder: the doc's readers name the folder's "
+        "group key (`folder#view:7`), and each principal holds the key of every folder it may read, so a move rewrites "
+        "no doc's readers. `by` names a type with a permission that inherits (`parent.view`) and that the synced "
+        "permission reaches, through dots or as its own; who holds it must be a union of what gives it, without `and` "
+        "or `not` between parts that depend on who asks. Name such a type, or leave out `by`: the readers are then "
+        "copied from each folder above.",
+        "type folder = app.folders\n  parent : folder = parent_id\n  owner : user = owner_id\n"
+        "  can view = owner or parent.view\n"
+        "type doc = app.docs\n  owner : user = owner_id\n  can view = owner\n"
+        "sync role sync_engine\nsync app.docs : view by folder\n",
+        "type folder = app.folders\n  parent : folder = parent_id\n  owner : user = owner_id\n"
+        "  can view = owner or parent.view\n"
+        "type doc = app.docs\n  folder : folder = folder_id\n  owner : user = owner_id\n  can view = owner or folder.view\n"
+        "sync role sync_engine\nsync app.docs : view by folder\n",
     ),
 }
 

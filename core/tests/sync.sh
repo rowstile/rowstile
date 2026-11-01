@@ -169,6 +169,12 @@ PSQL -c "UPDATE app.teams SET parent_id = NULL WHERE id = 12"   # Platform out o
 PSQL -c "UPDATE app.teams SET parent_id = 11 WHERE id = 12"
 [ "$(reads 7 13)" = t ] && ok "... and moved back under it: they read it again" || bad "a sub-team back"
 same "... and the index holds what authz.list gives, the sub-team moved"
+# gina in Backend herself too, then not: she keeps Backend through Platform, and Engineering through Backend, which
+# what she keeps gives her only once Backend is found given again
+PSQL -c "INSERT INTO app.team_members VALUES (11, 7)" -c "DELETE FROM app.team_members WHERE team_id = 11 AND user_id = 7"
+check "a member who leaves a team she is also in through a sub-team keeps it, and the teams above it" \
+  "SELECT count(*) = 2 FROM authz_sync.keys WHERE principal_id = '7' AND key IN ('team#member:11', 'team#member:10')"
+same "... and the index holds what authz.list gives"
 
 echo "-- row conditions"
 was=$(PSQL -c "SELECT count(*) FROM authz_sync.file__readers WHERE id = 12")
@@ -227,8 +233,13 @@ PSQL -c "SET ROLE app_user" -c "SELECT count(*) FROM authz_sync.keys" > "$T/deni
 grep -q "permission denied for schema authz_sync" "$T/denied" && ok "... and is told so" || bad "the app role reads the index" "$(cat "$T/denied")"
 PSQL -c "SET ROLE app_user" -c "SELECT authz.sync_tick()" > "$T/tick" 2>&1
 PSQL -c "SET ROLE app_user" -c "SELECT authz.sync_verify()" >> "$T/tick" 2>&1
-[ "$(grep -c "permission denied for function sync_" "$T/tick")" = 2 ] &&
-  ok "the app role can't call authz.sync_tick() or authz.sync_verify()" || bad "the app role and the admin's functions" "$(cat "$T/tick")"
+PSQL -c "SET ROLE app_user" -c "SELECT authz.sync_work()" >> "$T/tick" 2>&1
+PSQL -c "SET ROLE app_user" -c "SELECT authz.sync_behind()" >> "$T/tick" 2>&1
+[ "$(grep -c "permission denied for function sync_" "$T/tick")" = 4 ] &&
+  ok "the app role can't call authz.sync_tick(), authz.sync_verify(), authz.sync_work() or authz.sync_behind()" ||
+  bad "the app role and the admin's functions" "$(cat "$T/tick")"
+check "in the same transaction, nothing waits: authz.sync_work() has nothing to do, and authz.sync_behind() is null" \
+  "SELECT authz.sync_work() = 0 AND authz.sync_behind() IS NULL"
 check "the sync role reads the index, and nothing else of rowstile's" \
   "SELECT has_schema_privilege('$ROLE', 'authz_sync', 'USAGE') AND has_table_privilege('$ROLE', 'authz_sync.keys', 'SELECT')
       AND NOT has_schema_privilege('$ROLE', 'authz', 'USAGE') AND NOT has_schema_privilege('$ROLE', 'authz_int', 'USAGE')
@@ -409,6 +420,175 @@ PGAPPNAME=authz_sync_b psql -X -q -d "$DB" -c "INSERT INTO authz.shares (object_
 go; wait
 same "READ COMMITTED: a move and a share on what moves, at once: the index holds what authz.list gives"
 PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" -c "DELETE FROM authz.shares WHERE subject_id = '6'"
+
+echo "-- writers whose work doesn't meet don't wait"
+# a share on Design docs (folder 4) whose commit's work is done (SET CONSTRAINTS ALL IMMEDIATE) and held: what it
+# wrote and read keeps its lock rows until it commits
+share() { echo "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('$1', '$2', 'viewer', 'user', '$3')"; }
+race
+PGAPPNAME=authz_sync_a psql -X -q -d "$DB" > "$T/a" 2>&1 <<SQL &
+BEGIN;
+$(share folder 4 6);
+SET CONSTRAINTS ALL IMMEDIATE;
+$HOLD;
+COMMIT;
+SQL
+held authz_sync_a
+if PGOPTIONS="-c lock_timeout=20s -c client_min_messages=warning" psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" -c "$(share file 15 3)" > "$T/b" 2>&1; then
+  ok "a share on a Globex file doesn't wait for a share on Design docs to commit: their work meets nowhere"
+else
+  bad "a writer whose work meets no other's waited" "$(cat "$T/b")"
+fi
+PGAPPNAME=authz_sync_b psql -X -q -d "$DB" -c "$(share file 11 3)" > "$T/b" 2>&1 &
+blocked authz_sync_b && ok "... one on a file in Design docs waits: its work writes what the other's does"
+go; wait
+same "... and the index holds what authz.list gives, after both"
+PSQL -c "DELETE FROM authz.shares WHERE subject_id IN ('3', '6')"
+# a move holds the folder it moves into as what its work reads: a share on that folder, which doesn't see the move
+# yet (its work would leave the moved folder out), waits for it, then sees it
+race
+PGAPPNAME=authz_sync_a psql -X -q -d "$DB" > "$T/a" 2>&1 <<SQL &
+BEGIN;
+UPDATE app.folders SET parent_id = 20 WHERE id = 4;
+SET CONSTRAINTS ALL IMMEDIATE;
+$HOLD;
+COMMIT;
+SQL
+held authz_sync_a
+PGAPPNAME=authz_sync_b psql -X -q -d "$DB" -c "$(share folder 20 3)" > "$T/b" 2>&1 &
+blocked authz_sync_b && ok "a share on the folder another one moves into waits for the move: the move's work reads it"
+go; wait
+[ "$(reads 3 11)" = t ] && ok "... then its work sees the move: carol reads the file in the moved folder" || bad "the share after the move" "$(reads 3 11)"
+same "... and the index holds what authz.list gives"
+PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" -c "DELETE FROM authz.shares WHERE subject_id = '3'"
+same "... and put back"
+
+echo "-- keyed by folder"
+BY=$(echo "$SYNCED" | sed 's/^sync app.files : view$/sync app.files : view by folder/; s/^sync app.folders$/sync app.folders by folder/')
+[ "$BY" != "$SYNCED" ] || bad "the keyed policy is the same as the other"
+apply "$BY"
+same "keyed by folder, applied: for every user, the index holds what authz.list gives"
+check "keyed by folder: a file's readers are its own keys and its folder's group keys, not the readers of each folder above" \
+  "SELECT array_agg(key ORDER BY key) = '{folder#edit:4,folder#view:4,user:1}' FROM authz_sync.file__readers WHERE id = 11"
+check "... a folder's, its own group key" \
+  "SELECT bool_and(key = 'folder#view:' || id) AND count(*) = (SELECT count(*) FROM app.folders) FROM authz_sync.folder__readers"
+check "... and each user holds the key of every folder they may read" \
+  "SELECT bool_and(ARRAY(SELECT substr(k.key, 13) FROM authz_sync.keys k WHERE k.principal_type = 'user'
+                         AND k.principal_id = u.id::text AND k.key LIKE 'folder#view:%' ORDER BY 1) = public.listed(u.id::text, 'folder', 'view'))
+   FROM app.users u"
+check "authz.sync_verify(): the keyed index matches a rebuild" "SELECT authz.sync_verify()"
+files() { PSQL -c "SELECT md5(string_agg(id || key || xmin, ',' ORDER BY id, key)) FROM authz_sync.file__readers"; }
+readers=$(files)
+before=$(PSQL -c "SELECT string_agg(u.id::text, ',' ORDER BY u.id) FROM app.users u WHERE '11' = ANY (public.sync_reads(u.id::text, 'file'))")
+PSQL -c "UPDATE app.folders SET parent_id = 20 WHERE id = 4"
+after=$(PSQL -c "SELECT string_agg(u.id::text, ',' ORDER BY u.id) FROM app.users u WHERE '11' = ANY (public.sync_reads(u.id::text, 'file'))")
+[ "$before" != "$after" ] && ok "keyed by folder: a folder moved out of reach: the file in it leaves those who read it through Engineering ($before -> $after)" ||
+  bad "a keyed move" "$before -> $after"
+[ "$(files)" = "$readers" ] && ok "... and the move rewrote no file's readers: only the keys of those who gain or lose the folder" ||
+  bad "a keyed move wrote files' readers"
+same "... and the index holds what authz.list gives, after the move"
+PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4"
+[ "$(PSQL -c "SELECT string_agg(u.id::text, ',' ORDER BY u.id) FROM app.users u WHERE '11' = ANY (public.sync_reads(u.id::text, 'file'))")" = "$before" ] &&
+  [ "$(files)" = "$readers" ] && ok "keyed by folder: moved back: they read it again, and no file's readers were written" || bad "keyed: moved back"
+same "... and the index holds what authz.list gives, moved back"
+PSQL -c "$(share folder 6 6)"
+[ "$(reads 6 12)" = t ] && [ "$(files)" = "$readers" ] &&
+  ok "keyed by folder: a share on Keys: frank reads the file in it, through his keys alone" || bad "a keyed share"
+same "... and the index holds what authz.list gives, the folder shared"
+PSQL -c "DELETE FROM authz.shares WHERE subject_id = '6'"
+same "... and revoked"
+PSQL -c "DELETE FROM app.team_members WHERE user_id = 2 AND team_id = 11"
+same "keyed by folder: a team left: the index holds what authz.list gives"
+PSQL -c "INSERT INTO app.team_members VALUES (11, 2)" -c "UPDATE app.teams SET parent_id = NULL WHERE id = 12"
+same "keyed by folder: a sub-team moved out: the index holds what authz.list gives"
+PSQL -c "UPDATE app.teams SET parent_id = 11 WHERE id = 12" -c "UPDATE app.files SET confidential = true WHERE id = 12"
+same "keyed by folder: confidential set: the index holds what authz.list gives"
+PSQL -c "UPDATE app.files SET confidential = false WHERE id = 12" -c "UPDATE app.folders SET inherit = false WHERE id = 3"
+same "keyed by folder: a folder that stops inheriting: the index holds what authz.list gives"
+PSQL -c "UPDATE app.folders SET inherit = true WHERE id = 3" -c "DELETE FROM app.folder_links"
+same "keyed by folder: a link taken away: the index holds what authz.list gives"
+PSQL >/dev/null <<'SQL'
+INSERT INTO app.folder_links VALUES (21, 1);
+INSERT INTO app.folders (id, org_id, parent_id, owner_id, name, inherit) VALUES (30, 1, 4, 2, 'New', true);
+INSERT INTO app.files (id, folder_id, owner_id, name, confidential) VALUES (30, 30, 3, 'new.md', false);
+SQL
+same "keyed by folder: a folder made, with a file in it: the index holds what authz.list gives"
+PSQL -c "DELETE FROM app.files WHERE id = 30" -c "DELETE FROM app.folders WHERE id = 30"
+same "keyed by folder: and deleted"
+check "keyed by folder: after them all, authz.sync_verify() finds the index matches a rebuild" "SELECT authz.sync_verify()"
+apply "$SYNCED"
+same "copied again: the index holds what authz.list gives"
+
+echo "-- after commit"
+AFTER="$SYNCED
+sync after commit"
+apply "$AFTER"
+same "after commit, applied: the index holds what authz.list gives"
+check "after commit: nothing waits" "SELECT authz.sync_behind() IS NULL AND authz.sync_work() = 0"
+PSQL -c "$(share file 13 6)"
+[ "$(reads 6 13)" = f ] && ok "after commit: a share made isn't in the index before the worker runs" || bad "after commit, before the worker"
+check "... authz.sync_behind() says how long it has waited" "SELECT authz.sync_behind() >= interval '0'"
+behind=$(verify)
+case "$behind" in
+  *"the sync index is behind: 1 changes wait for authz.sync_work()"*" f "*) ok "... and authz.sync_verify() says the index is behind, and is false" ;;
+  *) bad "authz.sync_verify() and a lagging index" "$behind" ;;
+esac
+check "authz.sync_work() works the change into the index, and says how many objects it worked on" "SELECT authz.sync_work() = 1"
+[ "$(reads 6 13)" = t ] && ok "... then frank reads file 13" || bad "after commit, after the worker"
+same "... and the index holds what authz.list gives, after the worker"
+check "... and nothing waits" "SELECT authz.sync_behind() IS NULL AND authz.sync_work() = 0 AND authz.sync_verify()"
+readers=$(files)
+PSQL -c "DELETE FROM authz.shares WHERE subject_id = '6'" -c "UPDATE app.folders SET parent_id = 20 WHERE id = 4" \
+     -c "DELETE FROM app.team_members WHERE user_id = 2 AND team_id = 11" -c "UPDATE app.files SET confidential = true WHERE id = 12"
+[ "$(files)" = "$readers" ] && ok "after commit: a revoke, a move, a team left and a row condition write nothing of the index" ||
+  bad "after commit: writers wrote the index"
+PSQL -c "SELECT authz.sync_work()" >/dev/null
+same "... and one run of the worker after them: the index holds what authz.list gives"
+PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" -c "INSERT INTO app.team_members VALUES (11, 2)" \
+     -c "UPDATE app.files SET confidential = false WHERE id = 12" -c "$(share file 13 6)"
+PSQL >/dev/null <<'SQL'
+BEGIN;
+SELECT authz.sync_work();
+ROLLBACK;
+SQL
+[ "$(reads 6 13)" = f ] && ok "after commit: a run rolled back (one that fails, or is stopped) leaves the changes waiting" || bad "a run rolled back"
+PSQL -c "SELECT authz.sync_work()" >/dev/null
+[ "$(reads 6 13)" = t ] && ok "... and the next run works them in" || bad "the run after one rolled back"
+same "... and the index holds what authz.list gives, all put back"
+race
+PGAPPNAME=authz_sync_a psql -X -q -d "$DB" > "$T/a" 2>&1 <<SQL &
+BEGIN;
+SELECT authz.sync_work();
+$HOLD;
+COMMIT;
+SQL
+held authz_sync_a
+if PGOPTIONS="-c lock_timeout=20s -c client_min_messages=warning" psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" -c "$(share file 12 6)" > "$T/b" 2>&1; then
+  ok "after commit: a writer doesn't wait for a worker at work"
+else
+  bad "after commit: a writer waited for the worker" "$(cat "$T/b")"
+fi
+check "... and while one works, another does nothing" "SELECT authz.sync_work() = 0"
+go; wait
+check "... then the next works in what waited" "SELECT authz.sync_work() = 1"
+same "... and the index holds what authz.list gives"
+PSQL -c "DELETE FROM authz.shares WHERE subject_id = '6'"
+PSQL -c "SELECT authz.sync_tick()" >/dev/null
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
+         VALUES ('file', '13', 'viewer', 'user', '6', clock_timestamp() + interval '1 second')"
+PSQL -c "SELECT authz.sync_work()" >/dev/null
+sleep 1.2
+check "after commit: authz.sync_tick() notes the shares whose end passed, for the worker" "SELECT authz.sync_tick() = 1"
+[ "$(reads 6 13)" = t ] && ok "... and until the worker runs, the index still says so" || bad "the tick, before the worker"
+check "... which works them in" "SELECT authz.sync_work() = 1"
+[ "$(reads 6 13)" = f ] && ok "... then frank no longer reads file 13" || bad "the tick, after the worker"
+PSQL -c "DELETE FROM authz.shares WHERE subject_id = '6'"
+apply "$AFTER"
+check "applying works in what waits" "SELECT authz.sync_behind() IS NULL AND authz.sync_verify()"
+same "... and the index holds what authz.list gives"
+apply "$SYNCED"
+check "a policy back in the same transaction: the table of what waits goes" "SELECT to_regclass('authz_sync.pending') IS NULL"
+same "... and the index holds what authz.list gives"
 
 echo "-- the forms the docs app doesn't use"
 # a group whose relation isn't monotone (its readers copied in, not a key), shares and custom roles given to it, a

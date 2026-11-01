@@ -10,7 +10,7 @@
 [
   "app" "role" "include" "type" "where" "can" "roles" "from" "shared" "by" "if"
   "rules" "view" "mask" "cascade" "before" "after" "object" "subject"
-  "scope" "caveat" "sync" "invariants" "never"
+  "scope" "caveat" "sync" "commit" "invariants" "never"
   "test" "given" "as" "cannot" "allowed" "refused" "sees" "with"
 ] @keyword
 
@@ -53,6 +53,7 @@
 (app_role name: (identifier) @constant)
 (sync_role name: (identifier) @constant)
 (sync permission: (identifier) @function)
+(sync by: (identifier) @type)
 (scope name: (scope_name) @label)
 (caveat name: (identifier) @label)
 (given name: (identifier) @variable.special)

@@ -93,11 +93,11 @@ CLOCK = frozenset(
 # the tables of authz_sync that aren't a type's readers
 SYNC_TABLES = ("keys", "groups", "expanded", "definitions")
 LOCK_KEYS = "sync#keys"  # the lock row of groups and keys (no type is named so: a type's name holds no #)
-
-
-def sync_lock(t: str) -> str:
-    """The lock row of a synced type's readers: never a tree's (a commit waits for no tree lock, so no cycle)."""
-    return f"sync:{t}"
+LOCK_WORK = "sync#work"  # after commit: the lock row of the worker, one at a time
+STRIPES = 4096  # the lock rows of the objects and keys a commit works out: each string's hash, modulo this
+# the types whose inheritance a sync line's readers are keyed by (`by folder`), rather than copied in
+By = frozenset[str]
+NO_BY: By = frozenset()
 
 
 def unstable(sql: str) -> tuple[str, str] | None:
@@ -120,11 +120,13 @@ def unstable(sql: str) -> tuple[str, str] | None:
 @dataclass
 class Edge:
     """The objects of dst whose readers read objects of src: sql selects their ids as text, from $ids (src's ids,
-    as src's key type, or text for a composite key and for $text)."""
+    as src's key type, or text for a composite key and for $text). back the other way: the objects of src that
+    dst's objects in $ids (dst's, typed so) read, as text: what a commit that works them out reads, and locks."""
 
     src: str
     dst: str
     sql: str
+    back: str
 
 
 @dataclass
@@ -132,8 +134,8 @@ class SyncState:
     """What sync_build worked out: the functions in the order they are made, and what the commit's work needs."""
 
     functions: list[str] = field(default_factory=list)
-    made: dict[Name, str] = field(default_factory=dict)  # pair -> its function
-    making: list[Name] = field(default_factory=list)  # pairs being made: one asked for again loops (AZ807)
+    made: dict[tuple[Name, By], str] = field(default_factory=dict)  # (pair, what it is keyed by) -> its function
+    making: list[tuple[Name, By]] = field(default_factory=list)  # being made: one asked for again loops (AZ807)
     edges: list[Edge] = field(default_factory=list)
     groups: dict[Name, None] = field(default_factory=dict)  # keyed pairs a derivation gave the key of
     shared: dict[tuple[str, str], None] = field(default_factory=dict)  # (type, relation) shares read
@@ -195,8 +197,14 @@ class SyncMixin(Core):
         return Ref(s.perm)
 
     def sync_check(self) -> None:
-        """The sync lines and the sync role, as written (AZ801, AZ802, AZ803)."""
+        """The sync lines and the sync role, as written (AZ801, AZ802, AZ803, AZ810)."""
         pol = self.pol
+        if pol.sync_after_commit is not None and not pol.syncs:
+            fail(
+                pol.sync_after_commit,
+                "sync after commit and nothing synced: add a line such as sync app.files : view",
+                "AZ802",
+            )
         if pol.syncs and pol.sync_role is None:
             first = next(iter(pol.syncs.values()))
             fail(
@@ -218,6 +226,14 @@ class SyncMixin(Core):
         for s in pol.syncs.values():
             t = self.sync_type(s)
             self.sync_expr(s)
+            if s.by is not None and s.by not in self.types:
+                fail(
+                    s.loc,
+                    f"sync {s.table} ... by {s.by}: there is no type {s.by}. by names the type whose inheritance its "
+                    f"readers are keyed by: by folder",
+                    "AZ810",
+                    span=s.by_span,
+                )
             if any(c == "key" for c, _ in t.key):
                 fail(
                     s.loc,
@@ -360,7 +376,7 @@ class SyncMixin(Core):
         d = Deriver(self, st)
         for s in self.pol.syncs.values():
             t = self.sync_type(s)
-            st.tops[t.name] = d.top(t, self.sync_expr(s), s)
+            st.tops[t.name] = Deriver(self, st, frozenset({s.by}) if s.by else NO_BY, s).top(t, self.sync_expr(s), s)
         # the groups the readers name, and those they name in turn
         done: set[Name] = set()
         while True:
@@ -395,32 +411,6 @@ class SyncMixin(Core):
         out |= {e.src for e in st.edges}
         return sorted(out)
 
-    def sync_reach(self, start: str) -> set[str]:
-        """The types whose readers read start's objects, directly or through others (start among them)."""
-        st = self.sync_build()
-        seen, todo = {start}, [start]
-        while todo:
-            x = todo.pop()
-            for e in st.edges:
-                if e.src == x and e.dst not in seen:
-                    seen.add(e.dst)
-                    todo.append(e.dst)
-        return seen
-
-    def sync_locks(self, start: str) -> list[str]:
-        """The lock rows a change to start's objects takes, in one order: each synced type it reaches, and the keys'
-        (with every synced type that expands, which a change of keys reaches) when it reaches groups, principals or
-        an expanding type."""
-        st = self.sync_build()
-        reach = self.sync_reach(start)
-        keys_types = set(self.sync_group_types()) | {t.name for t in self.sync_principals()} | st.expanding
-        out = {sync_lock(t) for t in reach if t in st.tops}
-        if reach & keys_types:
-            out.add(LOCK_KEYS)
-            for t in st.expanding:
-                out |= {sync_lock(x) for x in self.sync_reach(t) if x in st.tops}
-        return sorted(out)
-
     def sync_hash(self) -> str:
         """What the index is worked out by (line numbers aside): its functions, the keys' (a principal type's where),
         and the closure tables they read: a kept one by its definition's hash, one always rebuilt by its SQL."""
@@ -428,6 +418,7 @@ class SyncMixin(Core):
         trees = dict(zip(self.tree_names, self.tree_sql, strict=True))
         text = "\n".join(
             [
+                "after commit" if self.pol.sync_after_commit is not None else "in the transaction",
                 *st.functions,
                 *(self.keys_fn_sql(t) for t in self.sync_principals()),
                 *(f"{n} {self.tree_keep[n][0] if n in self.tree_keep else trees[n]}" for n in sorted(st.trees)),
@@ -444,18 +435,36 @@ class SyncMixin(Core):
         keeps goes, and so does a readers table whose key columns changed."""
         st = self.sync_build()
         synced = [self.T(n) for n in st.tops]
-        want = [
-            ("keys", ["principal_type", "principal_id", "key"], ["text"] * 3),
-            ("groups", ["grp", "key"], ["text"] * 2),
-            ("expanded", ["object_type", "object_id", "key"], ["text"] * 3),
-            ("definitions", ["name", "hash"], ["text"] * 2),
-        ] + [
-            (t.name + "__readers", [c for c, _ in t.key] + ["key"], [ty for _, ty in t.key] + ["text"]) for t in synced
-        ]
+        want = (
+            [
+                ("keys", ["principal_type", "principal_id", "key"], ["text"] * 3),
+                ("groups", ["grp", "key"], ["text"] * 2),
+                ("expanded", ["object_type", "object_id", "key"], ["text"] * 3),
+                ("definitions", ["name", "hash"], ["text"] * 2),
+            ]
+            + (
+                [("pending", ["id", "at", "type", "ids"], ["bigint", "timestamp with time zone", "text", "text[]"])]
+                if self.pol.sync_after_commit is not None
+                else []
+            )
+            + [
+                (t.name + "__readers", [c for c, _ in t.key] + ["key"], [ty for _, ty in t.key] + ["text"])
+                for t in synced
+            ]
+        )
         rows = ",\n             ".join(
             f"({lit(ident(n))}, ARRAY[{', '.join(lit(c) for c in cs)}]::name[], "
             f"ARRAY[{', '.join(lit(ty) for ty in tys)}]::regtype[])"
             for n, cs, tys in want
+        )
+        pending = (
+            """
+-- after commit: the objects each committed change reached, which authz.sync_work() works into the index
+CREATE TABLE IF NOT EXISTS authz_sync.pending (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  at timestamptz NOT NULL DEFAULT clock_timestamp(), type text NOT NULL, ids text[] NOT NULL);
+ALTER TABLE authz_sync.pending REPLICA IDENTITY FULL;"""
+            if self.pol.sync_after_commit is not None
+            else ""
         )
         tables = []
         for t in synced:
@@ -509,23 +518,55 @@ CREATE INDEX IF NOT EXISTS expanded_by_key ON authz_sync.expanded (key);
 ALTER TABLE authz_sync.expanded REPLICA IDENTITY FULL;
 -- what the rows were worked out by: an apply that changes it works them out again (by difference)
 CREATE TABLE IF NOT EXISTS authz_sync.definitions (name text PRIMARY KEY, hash text NOT NULL);
-ALTER TABLE authz_sync.definitions REPLICA IDENTITY FULL;
+ALTER TABLE authz_sync.definitions REPLICA IDENTITY FULL;{pending}
 {chr(10).join(tables)}
 REVOKE ALL ON ALL TABLES IN SCHEMA authz_sync FROM PUBLIC;"""
 
     def sync_capture_sql(self) -> str:
-        """What a transaction changed, noted by authz_int.changed() (sync_dirty) and worked on at its commit, once:
-        a row of sync_queued queues its deferred constraint trigger (deleted then, so a write after SET CONSTRAINTS
-        ALL IMMEDIATE queues it again)."""
+        """What a transaction changed, noted by authz_int.changed() (sync_dirty). In the same transaction (the
+        default), worked on at its commit, once: a row of sync_queued queues its deferred constraint trigger (deleted
+        then, so a write after SET CONSTRAINTS ALL IMMEDIATE queues it again). After commit (`sync after commit`),
+        noted in authz_sync.pending, which commits with the change and which authz.sync_work() works through."""
         relevant = "ARRAY[" + ", ".join(lit(n) for n in self.sync_relevant()) + "]::text[]"
         st = self.sync_build()
-        locks = sorted({LOCK_KEYS} | {sync_lock(t) for t in st.tops})
-        return f"""-- The sync index: the objects each transaction changed, worked on when it commits
+        after = self.pol.sync_after_commit is not None
+        locks = [LOCK_KEYS] + ([LOCK_WORK] if after else [])
+        head = f"""-- The sync index: the objects each transaction changed, worked on when it commits{" (after commit: by a worker)" if after else ""}
 CREATE UNLOGGED TABLE authz_int.sync_todo (txid bigint NOT NULL, type text NOT NULL, id text NOT NULL,
   round int NOT NULL DEFAULT 0, PRIMARY KEY (txid, type, id));
 CREATE INDEX ON authz_int.sync_todo (txid, type, round);
+-- the groups' rows a commit wrote (made) or took away, which the keys follow
+CREATE UNLOGGED TABLE authz_int.sync_moved (txid bigint NOT NULL, grp text NOT NULL, key text NOT NULL, made boolean NOT NULL);
+CREATE INDEX ON authz_int.sync_moved (txid, made);
+-- the keys a principal may lose, until what is left gives them again (sync_process)
+CREATE UNLOGGED TABLE authz_int.sync_lost (txid bigint NOT NULL, ptype text NOT NULL, pid text NOT NULL, key text NOT NULL,
+  PRIMARY KEY (txid, ptype, pid, key));
+-- ... and those found given again, by the round they were found in
+CREATE UNLOGGED TABLE authz_int.sync_found (txid bigint NOT NULL, ptype text NOT NULL, pid text NOT NULL, key text NOT NULL,
+  round int NOT NULL);
+CREATE INDEX ON authz_int.sync_found (txid, round);
+INSERT INTO authz_int.locks VALUES {", ".join(f"({lit(x)}, 0)" for x in locks)} ON CONFLICT DO NOTHING;"""
+        if after:
+            return f"""{head}
+CREATE FUNCTION authz_int.sync_dirty(p_type text, p_ids text[]) RETURNS void
+LANGUAGE plpgsql {DEF} AS $f$
+BEGIN
+  IF coalesce(cardinality(p_ids), 0) = 0 OR p_type <> ALL ({relevant}) THEN RETURN; END IF;
+  INSERT INTO authz_sync.pending (type, ids)
+  SELECT p_type, ARRAY(SELECT DISTINCT x FROM unnest(p_ids) x WHERE x IS NOT NULL);
+END $f$;"""
+        stripes = (
+            ""
+            if st.expanding
+            else f"""
+-- the lock rows of what a commit works out, by the hash of each object and key: writers whose work meets queue on
+-- them, the others go on (sync_process). Each is updated, to the same row: in REPEATABLE READ, a writer whose
+-- snapshot is older than another's update of it gets a serialization error
+CREATE TABLE authz_int.sync_stripes (stripe int PRIMARY KEY, n bigint NOT NULL);
+INSERT INTO authz_int.sync_stripes SELECT s, 0 FROM generate_series(0, {STRIPES - 1}) s;"""
+        )
+        return f"""{head}{stripes}
 CREATE UNLOGGED TABLE authz_int.sync_queued (txid bigint PRIMARY KEY);
-INSERT INTO authz_int.locks VALUES {", ".join(f"({lit(x)}, 0)" for x in locks)} ON CONFLICT DO NOTHING;
 CREATE FUNCTION authz_int.sync_dirty(p_type text, p_ids text[]) RETURNS void
 LANGUAGE plpgsql {DEF} AS $f$
 BEGIN
@@ -620,7 +661,7 @@ $f$;"""
         u = self.T(g[0])
         return (
             f"SELECT {lit(f'{g[0]}#{g[1]}:')} || f.o_id::text AS grp, f.o_key AS key "
-            f"FROM {st.made[g]}({self.typed(u, ids)}) f WHERE NOT f.o_dep"
+            f"FROM {st.made[(g, NO_BY)]}({self.typed(u, ids)}) f WHERE NOT f.o_dep"
         )
 
     def readers_rows_sql(self, t: Type, ids: str) -> str:
@@ -630,7 +671,7 @@ $f$;"""
     def spread_sql(self) -> str:
         """authz_int.sync_spread(tx, round): what reads the objects a transaction reached in a round (Edge), added as
         the next round, until no round finds any; returns the last. Everything of a type reaches everything of
-        what reads it."""
+        what reads it. Run again from round 0, it adds what a change committed since makes them reach."""
         st = self.sync_build()
         parts = []
         for e in st.edges:
@@ -660,20 +701,92 @@ BEGIN
   LOOP
     {insert}
     GET DIAGNOSTICS n = ROW_COUNT;
-    EXIT WHEN n = 0;
+    EXIT WHEN n = 0 AND NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.round > r);
     r := r + 1;
   END LOOP;
   RETURN r;
 END $f$;"""
 
-    def process_sql(self) -> str:
-        """authz_int.sync_process(): at a transaction's commit, the index made current for what it changed."""
+    def read_sql(self) -> str:
+        """The objects a commit's work reads besides those it works out (each edge back from them): their folders
+        above, what they link to, as type:id."""
         st = self.sync_build()
-        cases = "\n".join(
-            f"             WHEN {lit(n)} THEN ARRAY[{', '.join(lit(x) for x in locks)}]::text[]"
-            for n in self.sync_relevant()
-            if (locks := self.sync_locks(n))
-        )
+        parts = []
+        for e in st.edges:
+            d = self.T(e.dst)
+            text = (
+                f"ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = {lit(e.dst)} "
+                f"AND x.id <> '*')"
+            )
+            sql = e.back.replace("$ids", self.typed(d, text)).replace("$text", text)
+            parts.append(f"SELECT {lit(e.src + ':')} || v.id FROM ({sql}) v(id)")
+        return "\n                        UNION ".join(parts) if parts else "SELECT NULL::text WHERE false"
+
+    def locks_sql(self) -> str:
+        """The locks the commit's work takes before it reads anything, so that two writers whose work meets queue,
+        and the others don't wait for each other."""
+        st = self.sync_build()
+        if self.pol.sync_after_commit is not None:
+            return (
+                "  -- (after commit: one worker at a time, under the lock its caller holds: authz.sync_work, sync_refresh)\n"
+                "  v_round := authz_int.sync_spread(v_tx, 0);"
+            )
+        if st.expanding:
+            # the readers of an `and` / `not` between parts that depend on who asks are principals, worked out from
+            # the keys: every commit's work reads the keys, so one lock covers it
+            return (
+                "  -- one lock row for every commit's work: what an `and` or `not` between parts that depend on who asks\n"
+                "  -- gives is worked out from the keys, which any change may move. In REPEATABLE READ or SERIALIZABLE, a\n"
+                "  -- writer whose snapshot is older than another's index write gets a serialization error\n"
+                f"  UPDATE authz_int.locks SET n = n + 1 WHERE type = {lit(LOCK_KEYS)};\n"
+                "  v_keys_locked := true;\n"
+                "  v_round := authz_int.sync_spread(v_tx, 0);"
+            )
+        return f"""  IF current_setting('transaction_isolation') IN ('repeatable read', 'serializable') THEN
+    -- a snapshot older than another's index write: a serialization error, rather than readers worked out from
+    -- what it can't see
+    PERFORM 1 FROM authz_int.sync_stripes s ORDER BY s.stripe FOR UPDATE;
+    UPDATE authz_int.sync_stripes SET n = n;
+    v_round := authz_int.sync_spread(v_tx, 0);
+  ELSE
+    -- READ COMMITTED: the lock rows of what the work writes (what changed, and what reads it), and, shared, of what
+    -- it reads (the folders above, what they link to), in one order. A writer whose work meets this one's waits for
+    -- it, then sees what it committed; once they are held, what reads the changes is looked for again, and the lock
+    -- rows of anything new are taken too, until there is none
+    v_mode := array_fill(0, ARRAY[{STRIPES}]);
+    LOOP
+      v_round := authz_int.sync_spread(v_tx, 0);
+      IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id = '*') THEN
+        v_w := ARRAY(SELECT generate_series(0, {STRIPES - 1}));
+        v_r := '{{}}';
+      ELSE
+        v_w := ARRAY(SELECT DISTINCT pg_catalog.hashtext(x.type || ':' || x.id) & {STRIPES - 1}
+                     FROM authz_int.sync_todo x WHERE x.txid = v_tx);
+        v_r := ARRAY(SELECT DISTINCT pg_catalog.hashtext(d.k) & {STRIPES - 1} FROM (
+                        {self.read_sql()}) d(k) WHERE d.k IS NOT NULL);
+      END IF;
+      v_n := 0;
+      FOR v_s, v_x IN SELECT z.s, bool_or(z.x) FROM (SELECT unnest(v_w) AS s, true AS x UNION ALL SELECT unnest(v_r), false) z
+                      GROUP BY z.s ORDER BY z.s LOOP
+        CONTINUE WHEN v_mode[v_s + 1] = 2 OR (NOT v_x AND v_mode[v_s + 1] = 1);
+        IF v_x THEN
+          UPDATE authz_int.sync_stripes SET n = n WHERE stripe = v_s;
+          v_mode[v_s + 1] := 2;
+        ELSE
+          PERFORM 1 FROM authz_int.sync_stripes WHERE stripe = v_s FOR SHARE;
+          v_mode[v_s + 1] := 1;
+        END IF;
+        v_n := v_n + 1;
+      END LOOP;
+      EXIT WHEN v_n = 0;
+    END LOOP;
+  END IF;"""
+
+    def process_sql(self) -> str:
+        """authz_int.sync_process(): the index made current for what a transaction changed (at its commit, or the
+        worker's after it)."""
+        st = self.sync_build()
+        expanding = bool(st.expanding)
         groups = []
         for u in self.sync_group_types():
             ut = self.T(u)
@@ -681,34 +794,55 @@ END $f$;"""
             body = []
             for g in pairs:
                 body.append(
-                    f"""    WITH fresh AS MATERIALIZED ({self.group_rows_sql(g, "v_ids")}),
-    gone AS (DELETE FROM authz_sync.groups g WHERE g.grp IN (SELECT {lit(f"{g[0]}#{g[1]}:")} || v FROM unnest(v_ids) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.grp = g.grp AND f.key = g.key) RETURNING g.key),
-    made AS (INSERT INTO authz_sync.groups SELECT f.grp, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING key)
-    SELECT v_members || coalesce(array_agg(DISTINCT z.k), '{{}}') INTO v_members FROM (SELECT key FROM gone UNION SELECT key FROM made) z(k);"""
+                    f"""      WITH fresh AS MATERIALIZED ({self.group_rows_sql(g, "v_part")}),
+      gone AS (DELETE FROM authz_sync.groups g WHERE g.grp IN (SELECT {lit(f"{g[0]}#{g[1]}:")} || v FROM unnest(v_part) v)
+               AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.grp = g.grp AND f.key = g.key) RETURNING g.grp, g.key),
+      made AS (INSERT INTO authz_sync.groups SELECT f.grp, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING grp, key)
+      INSERT INTO authz_int.sync_moved SELECT v_tx, z.grp, z.key, z.made
+      FROM (SELECT grp, key, false AS made FROM gone UNION ALL SELECT grp, key, true FROM made) z
+      WHERE NOT v_all;"""
                 )
             groups.append(
                 f"  -- {u}'s groups\n  v_ids := {self.todo_ids(ut, self.group_all_ids_sql(ut))};\n"
-                f"  IF cardinality(v_ids) > 0 THEN\n" + "\n".join(body) + "\n  END IF;"
+                f"  FOR v_from IN 1 .. coalesce(cardinality(v_ids), 0) BY {BATCH} LOOP\n"
+                f"    v_part := v_ids[v_from : v_from + {BATCH - 1}];\n" + "\n".join(body) + "\n  END LOOP;"
             )
+        principals = self.sync_principals()
+        types = "ARRAY[" + ", ".join(lit(t.name) for t in principals) + "]::text[]"
         keys = []
-        for t in self.sync_principals():
+        for t in principals:
+            pk = q(self.pk(t))
+            where = f" AND coalesce(({on_row(t.where, 'x')}), false)" if t.where else ""
             keys.append(
-                f"""  -- the keys of the principals of {t.name} that changed, or hold a key of a group that did
-  IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = {lit(t.name)} AND x.id = '*') THEN
-    v_ids := ARRAY({self.principal_ids_sql(t)});
-  ELSE
-    v_ids := ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = {lit(t.name)}
-                   UNION SELECT k.principal_id FROM authz_sync.keys k WHERE k.principal_type = {lit(t.name)} AND k.key IN (SELECT unnest(v_members)));
-  END IF;
-  IF cardinality(v_ids) > 0 THEN
-    WITH fresh AS MATERIALIZED (SELECT * FROM {self.keys_fn(t)}(v_ids)),
-    gone AS (DELETE FROM authz_sync.keys k WHERE k.principal_type = {lit(t.name)} AND k.principal_id IN (SELECT unnest(v_ids))
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.o_id = k.principal_id AND f.o_key = k.key) RETURNING k.key),
-    made AS (INSERT INTO authz_sync.keys SELECT {lit(t.name)}, f.o_id, f.o_key FROM fresh f ON CONFLICT DO NOTHING RETURNING key)
-    SELECT v_keys || coalesce(array_agg(DISTINCT z.k), '{{}}') INTO v_keys FROM (SELECT key FROM gone UNION SELECT key FROM made) z(k);
-  END IF;"""
+                f"""    -- the principals of {t.name}: every one worked out whole (applying), or those that changed: one who is
+    -- nobody now (gone, or failing the type's where) holds no key, and one who is somebody now and held none gets theirs
+    IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = {lit(t.name)} AND x.id = '*') THEN
+      v_whole := v_whole || {lit(t.name)}::text;
+      v_ids := ARRAY({self.principal_ids_sql(t)});
+      WITH fresh AS MATERIALIZED (SELECT * FROM {self.keys_fn(t)}(v_ids)),
+      gone AS (DELETE FROM authz_sync.keys k WHERE k.principal_type = {lit(t.name)} AND k.principal_id IN (SELECT unnest(v_ids))
+               AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.o_id = k.principal_id AND f.o_key = k.key) RETURNING k.key),
+      made AS (INSERT INTO authz_sync.keys SELECT {lit(t.name)}, f.o_id, f.o_key FROM fresh f ON CONFLICT DO NOTHING RETURNING key)
+      SELECT v_keys || coalesce(array_agg(DISTINCT z.k), '{{}}') INTO v_keys FROM (SELECT key FROM gone UNION SELECT key FROM made) z(k);
+    ELSE
+      v_ids := ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = {lit(t.name)});
+      IF cardinality(v_ids) > 0 THEN
+        v_now := ARRAY(SELECT x.{pk}::text FROM {qt(t.table)} x WHERE x.{pk} IN (SELECT unnest({self.typed(t, "v_ids")})){where});
+        WITH gone AS (DELETE FROM authz_sync.keys k WHERE k.principal_type = {lit(t.name)} AND k.principal_id = ANY (v_ids)
+                      AND k.principal_id <> ALL (v_now) RETURNING k.key)
+        SELECT v_keys || coalesce(array_agg(DISTINCT z.key), '{{}}') INTO v_keys FROM gone z;
+        v_came := v_came || ARRAY(SELECT {lit(t.name)} || ':' || v FROM unnest(v_now) v WHERE NOT EXISTS (
+          SELECT 1 FROM authz_sync.keys k WHERE k.principal_type = {lit(t.name)} AND k.principal_id = v));
+      END IF;
+    END IF;"""
             )
+        came = "\n".join(
+            f"""    WITH made AS (INSERT INTO authz_sync.keys SELECT {lit(t.name)}, f.o_id, f.o_key FROM {self.keys_fn(t)}(ARRAY(
+                    SELECT substr(c, {len(t.name) + 2}) FROM unnest(v_came) c WHERE left(c, {len(t.name) + 1}) = {lit(t.name + ":")})) f
+                  ON CONFLICT DO NOTHING RETURNING key)
+    SELECT v_keys || coalesce(array_agg(DISTINCT z.key), '{{}}') INTO v_keys FROM made z;"""
+            for t in principals
+        )
         readers = []
         for n in st.tops:
             t = self.T(n)
@@ -736,32 +870,8 @@ END $f$;"""
                                    UNION ALL SELECT 1 FROM made_from) z;
   END LOOP;"""
             )
-        return f"""-- At a transaction's commit, in it: the index made current for the objects it changed and what reads them (the
--- difference written, not every row again). The lock rows of what it reaches first, in one order: a writer with an
--- older snapshot (REPEATABLE READ, SERIALIZABLE) gets a serialization error rather than writing stale readers
-CREATE FUNCTION authz_int.sync_process() RETURNS void
-LANGUAGE plpgsql {DEF_CURRENT} AS $f$
-DECLARE
-  v_tx bigint := txid_current();
-  v_round int;
-  v_lock text; v_locks text[];
-  v_ids text[]; v_part text[]; v_from int;
-  v_members text[] := '{{}}';  -- the keys of the groups' rows that changed
-  v_keys text[] := '{{}}';     -- the keys a principal gained or lost
-  v_n bigint;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx) THEN RETURN; END IF;
-  SELECT array_agg(DISTINCT l ORDER BY l) INTO v_locks
-  FROM (SELECT DISTINCT x.type FROM authz_int.sync_todo x WHERE x.txid = v_tx) d,
-       LATERAL unnest(CASE d.type
-{cases}
-             ELSE '{{}}'::text[] END) l;
-  FOREACH v_lock IN ARRAY coalesce(v_locks, '{{}}') LOOP
-    UPDATE authz_int.locks SET n = n + 1 WHERE type = v_lock;
-  END LOOP;
-  v_round := authz_int.sync_spread(v_tx, 0);
-{chr(10).join(groups)}
-{chr(10).join(keys)}
+        expanded = (
+            """
   -- rows whose readers were worked out from a key someone gained or lost, and what reads them
   IF cardinality(v_keys) > 0 THEN
     INSERT INTO authz_int.sync_todo (txid, type, id, round)
@@ -770,7 +880,116 @@ BEGIN
     IF FOUND THEN
       v_round := authz_int.sync_spread(v_tx, v_round + 1);
     END IF;
-  END IF;
+  END IF;"""
+            if expanding
+            else ""
+        )
+        return f"""-- The index made current for the objects a transaction changed and what reads them (the difference written, not
+-- every row again): at its commit, in it, or after it, by the worker. The groups first, then the keys (a principal
+-- holds the keys of every group whose members hold one of its own, through groups inside groups), then the readers
+-- (JIT off: its statements read a few rows each, through indexes, which a plan made for many would compile for; no
+-- merge joins: its sets of keys, which the planner can't count, are joined by hash, not sorted as text)
+CREATE FUNCTION authz_int.sync_process() RETURNS void
+LANGUAGE plpgsql {DEF_CURRENT} SET jit = off SET enable_mergejoin = off AS $f$
+DECLARE
+  v_tx bigint := txid_current();
+  v_round int;
+  v_mode int[]; v_w int[]; v_r int[]; v_s int; v_x boolean;
+  v_ids text[]; v_part text[]; v_from int; v_now text[];
+  v_keys text[] := '{{}}';     -- the keys a principal gained or lost
+  v_came text[] := '{{}}';     -- the principals who are somebody now, and held no key (type:id)
+  v_whole text[] := '{{}}';    -- the principal types worked out whole
+  v_keys_locked boolean := false;
+  v_all boolean;               -- every principal's keys worked out whole (applying): the groups' changes aren't followed
+  v_n bigint;
+  v_found int;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx) THEN RETURN; END IF;
+{self.locks_sql()}
+  v_all := (SELECT count(DISTINCT x.type) FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id = '*'
+            AND x.type = ANY ({types})) = {len(principals)};
+{chr(10).join(groups)}
+  -- the keys, where the groups' rows or the principals changed: under one lock row, taken last (nothing after it waits
+  -- for another lock)
+  IF EXISTS (SELECT 1 FROM authz_int.sync_moved m WHERE m.txid = v_tx)
+     OR EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = ANY ({types})) THEN
+    IF NOT v_keys_locked THEN
+      UPDATE authz_int.locks SET n = n + 1 WHERE type = {lit(LOCK_KEYS)};
+    END IF;
+{chr(10).join(keys)}
+    -- a group's row gone: the keys above it that its member's holders held may go, unless what is left gives them
+    -- again (each found given is taken back from those that may go, as often as it finds more)
+    IF EXISTS (SELECT 1 FROM authz_int.sync_moved m WHERE m.txid = v_tx AND NOT m.made) THEN
+      WITH RECURSIVE up(src, c) AS (
+        SELECT DISTINCT m.key, m.grp FROM authz_int.sync_moved m WHERE m.txid = v_tx AND NOT m.made
+        UNION
+        SELECT up.src, g.grp FROM up JOIN authz_sync.groups g ON g.key = up.c)
+      -- (the holders of each key, a lookup by the keys' index: OFFSET 0 keeps the planner from reading every key for a
+      -- few; then the sets joined whole)
+      , by_src AS MATERIALIZED (
+        SELECT DISTINCT up.c, k.principal_type AS pt, k.principal_id AS pid FROM up
+        CROSS JOIN LATERAL (SELECT k.principal_type, k.principal_id FROM authz_sync.keys k WHERE k.key = up.src
+                            AND k.principal_type <> ALL (v_whole) OFFSET 0) k),
+      by_c AS MATERIALIZED (
+        SELECT c.c, h.principal_type AS pt, h.principal_id AS pid FROM (SELECT DISTINCT up.c FROM up) c
+        CROSS JOIN LATERAL (SELECT h.principal_type, h.principal_id FROM authz_sync.keys h WHERE h.key = c.c OFFSET 0) h)
+      INSERT INTO authz_int.sync_lost (txid, ptype, pid, key)
+      SELECT v_tx, s.pt, s.pid, s.c FROM by_src s JOIN by_c h ON h.c = s.c AND h.pt = s.pt AND h.pid = s.pid
+      ON CONFLICT DO NOTHING;
+      -- given again: by a member it holds that may not go (the holders of the members of the groups that may go, once
+      -- each); then, round by round, by a member just found given
+      WITH members AS MATERIALIZED (
+        SELECT g.grp, g.key FROM (SELECT DISTINCT l.key FROM authz_int.sync_lost l WHERE l.txid = v_tx) c
+        CROSS JOIN LATERAL (SELECT g.grp, g.key FROM authz_sync.groups g WHERE g.grp = c.key OFFSET 0) g),
+      held AS MATERIALIZED (
+        SELECT m.key, h.principal_type AS pt, h.principal_id AS pid FROM (SELECT DISTINCT key FROM members) m
+        CROSS JOIN LATERAL (SELECT h.principal_type, h.principal_id FROM authz_sync.keys h WHERE h.key = m.key OFFSET 0) h),
+      -- (the groups each holder holds a member of, that may not go; then the candidates they give again)
+      supported AS MATERIALIZED (
+        SELECT DISTINCT g.grp, h.pt, h.pid FROM members g JOIN held h ON h.key = g.key
+        WHERE NOT EXISTS (SELECT 1 FROM authz_int.sync_lost o WHERE o.txid = v_tx AND o.ptype = h.pt AND o.pid = h.pid
+                          AND o.key = h.key)),
+      given AS (SELECT l.ptype, l.pid, l.key FROM authz_int.sync_lost l
+                JOIN supported s ON s.grp = l.key AND s.pt = l.ptype AND s.pid = l.pid WHERE l.txid = v_tx),
+      r AS (DELETE FROM authz_int.sync_lost l USING given z WHERE l.txid = v_tx AND l.ptype = z.ptype AND l.pid = z.pid
+            AND l.key = z.key RETURNING l.ptype, l.pid, l.key)
+      INSERT INTO authz_int.sync_found SELECT v_tx, r.ptype, r.pid, r.key, 1 FROM r;
+      GET DIAGNOSTICS v_n = ROW_COUNT;
+      v_found := 1;
+      WHILE v_n > 0 LOOP
+        WITH r AS (DELETE FROM authz_int.sync_lost l
+                   USING (SELECT DISTINCT f.ptype, f.pid, g.grp FROM authz_int.sync_found f
+                          JOIN authz_sync.groups g ON g.key = f.key WHERE f.txid = v_tx AND f.round = v_found) z
+                   WHERE l.txid = v_tx AND l.ptype = z.ptype AND l.pid = z.pid AND l.key = z.grp
+                   RETURNING l.ptype, l.pid, l.key)
+        INSERT INTO authz_int.sync_found SELECT v_tx, r.ptype, r.pid, r.key, v_found + 1 FROM r;
+        GET DIAGNOSTICS v_n = ROW_COUNT;
+        v_found := v_found + 1;
+      END LOOP;
+      DELETE FROM authz_int.sync_found f WHERE f.txid = v_tx;
+      WITH gone AS (DELETE FROM authz_sync.keys k USING authz_int.sync_lost l WHERE l.txid = v_tx
+                    AND k.principal_type = l.ptype AND k.principal_id = l.pid AND k.key = l.key RETURNING k.key)
+      SELECT v_keys || coalesce(array_agg(DISTINCT z.key), '{{}}') INTO v_keys FROM gone z;
+      DELETE FROM authz_int.sync_lost l WHERE l.txid = v_tx;
+    END IF;
+    -- a group's row made: its member's holders hold the group, and the groups above it
+    IF EXISTS (SELECT 1 FROM authz_int.sync_moved m WHERE m.txid = v_tx AND m.made) THEN
+      WITH RECURSIVE up(src, c) AS (
+        SELECT DISTINCT m.key, m.grp FROM authz_int.sync_moved m WHERE m.txid = v_tx AND m.made
+        UNION
+        SELECT up.src, g.grp FROM up JOIN authz_sync.groups g ON g.key = up.c),
+      made AS (INSERT INTO authz_sync.keys SELECT DISTINCT k.principal_type, k.principal_id, up.c FROM up
+               CROSS JOIN LATERAL (SELECT k.principal_type, k.principal_id FROM authz_sync.keys k WHERE k.key = up.src
+                                   AND k.principal_type <> ALL (v_whole) OFFSET 0) k
+               ON CONFLICT DO NOTHING RETURNING key)
+      SELECT v_keys || coalesce(array_agg(DISTINCT z.key), '{{}}') INTO v_keys FROM made z;
+    END IF;
+    DELETE FROM authz_int.sync_moved m WHERE m.txid = v_tx;
+    -- the principals who are somebody now: their keys, worked out whole
+    IF cardinality(v_came) > 0 THEN
+{came}
+    END IF;
+  END IF;{expanded}
 {chr(10).join(readers)}
   DELETE FROM authz_int.sync_todo x WHERE x.txid = v_tx;
 END $f$;"""
@@ -824,7 +1043,58 @@ END $f$;"""
             + "]::text[]);"
         )
         every = sorted(set(self.sync_group_types()) | {t.name for t in self.sync_principals()} | set(st.tops))
-        marks = "\n".join(f"    PERFORM authz_int.sync_dirty({lit(n)}, ARRAY['*']);" for n in every)
+        marks = (
+            "    INSERT INTO authz_int.sync_todo (txid, type, id) SELECT txid_current(), x, '*' FROM unnest(ARRAY["
+            + ", ".join(lit(n) for n in every)
+            + "]::text[]) x ON CONFLICT DO NOTHING;"
+        )
+        after = self.pol.sync_after_commit is not None
+        # after commit: what waits is taken (the notes committed so far, as the worker's own to work on)
+        take = (
+            "  WITH taken AS (DELETE FROM authz_sync.pending p RETURNING p.type, p.ids)\n"
+            "  INSERT INTO authz_int.sync_todo (txid, type, id) SELECT DISTINCT txid_current(), t.type, x\n"
+            "  FROM taken t, unnest(t.ids) x WHERE x IS NOT NULL ON CONFLICT DO NOTHING;"
+        )
+        if after:
+            refresh_lock = (
+                f"  -- (after the worker working now, if one is: one at a time)\n"
+                f"  PERFORM 1 FROM authz_int.locks l WHERE l.type = {lit(LOCK_WORK)} FOR UPDATE;\n"
+                f"{take}\n"
+            )
+            work = f"""-- After commit (sync after commit): SELECT authz.sync_work() works the changes committed so far into the index, in
+-- its own transaction, and says how many objects changed. Call it in a loop, or schedule it (pg_cron, the app's
+-- jobs): the index is as late as its last run. One works at a time: while another does, it does nothing (0). A run
+-- that fails or is stopped leaves the changes waiting for the next
+CREATE FUNCTION authz.sync_work() RETURNS bigint
+LANGUAGE plpgsql {DEF} AS $f$
+DECLARE n bigint;
+BEGIN
+  PERFORM 1 FROM authz_int.locks l WHERE l.type = {lit(LOCK_WORK)} FOR UPDATE SKIP LOCKED;
+  IF NOT FOUND THEN RETURN 0; END IF;
+{take}
+  GET DIAGNOSTICS n = ROW_COUNT;
+  PERFORM authz_int.sync_process();
+  RETURN n;
+END $f$;
+-- After commit: how long the oldest change the index doesn't hold yet has waited (NULL: it holds every one committed)
+CREATE FUNCTION authz.sync_behind() RETURNS interval
+LANGUAGE sql STABLE {DEF} AS $f$
+  SELECT clock_timestamp() - min(p.at) FROM authz_sync.pending p
+$f$;"""
+            behind = """  IF EXISTS (SELECT 1 FROM authz_sync.pending) THEN
+    RAISE NOTICE 'the sync index is behind: % changes wait for authz.sync_work()', (SELECT count(*) FROM authz_sync.pending);
+    RETURN false;
+  END IF;
+"""
+        else:
+            refresh_lock = ""
+            work = f"""-- In the same transaction (the default), nothing waits: authz.sync_work() has nothing to do (0), and
+-- authz.sync_behind() says the index holds every change committed (NULL). They are for sync after commit
+CREATE FUNCTION authz.sync_work() RETURNS bigint
+LANGUAGE sql {DEF} AS $f$ SELECT 0::bigint $f$;
+CREATE FUNCTION authz.sync_behind() RETURNS interval
+LANGUAGE sql STABLE {DEF} AS $f$ SELECT NULL::interval $f$;"""
+            behind = ""
         return "\n".join(
             [
                 "-- these functions call each other; their bodies are checked when first used\n"
@@ -837,12 +1107,12 @@ END $f$;"""
 CREATE FUNCTION authz_int.sync_refresh(p_hash text, p_force boolean DEFAULT false) RETURNS void
 LANGUAGE plpgsql {DEF_CURRENT} AS $f$
 BEGIN
-  IF p_force OR NOT EXISTS (SELECT 1 FROM authz_sync.definitions d WHERE d.name = 'index' AND d.hash = p_hash) THEN
+{refresh_lock}  IF p_force OR NOT EXISTS (SELECT 1 FROM authz_sync.definitions d WHERE d.name = 'index' AND d.hash = p_hash) THEN
     -- what this policy no longer keeps
 {stale.replace(chr(10), chr(10) + "  ")}
 {marks}
-    PERFORM authz_int.sync_process();
   END IF;
+  PERFORM authz_int.sync_process();
   IF p_hash IS NOT NULL THEN
     INSERT INTO authz_sync.definitions VALUES ('index', p_hash) ON CONFLICT (name) DO UPDATE SET hash = EXCLUDED.hash;
   END IF;
@@ -872,9 +1142,10 @@ END $f$;""",
 CREATE FUNCTION authz.sync_verify() RETURNS boolean
 LANGUAGE plpgsql STABLE {DEF_CURRENT} AS $f$
 BEGIN
-{verify}
+{behind}{verify}
   RETURN true;
 END $f$;""",
+                work,
                 "SET LOCAL check_function_bodies = on;",
             ]
         )
@@ -1024,12 +1295,38 @@ class Deriver:
     reach (fn), returning (o_id, o_key, o_dep) for the ids it is given; o_dep marks a key an expanded row was
     worked out from, not one of its readers."""
 
-    def __init__(self, c: SyncMixin, st: SyncState) -> None:
-        self.c, self.st = c, st
+    def __init__(self, c: SyncMixin, st: SyncState, by: By = NO_BY, line: Sync | None = None) -> None:
+        # by: the types whose inheritance is keyed (`by folder`): a permission of theirs that inherits gives its
+        # group key (folder#view:7), not the readers of each folder above copied in; line: the sync line saying so
+        self.c, self.st, self.by, self.line = c, st, by, line
+        self.keyed_by: set[Name] = set()  # the pairs keyed so, so far
 
     # --- names and empty answers ---
     def name(self, t: Type, name: str) -> str:
-        return f"authz_int.{q(f'sync:{t.name}.{name}')}"
+        what = f"sync:{t.name}.{name}" + (f" by {', '.join(sorted(self.by))}" if self.by else "")
+        return f"authz_int.{q(what)}"
+
+    def keyed(self, st: str, name: str) -> bool:
+        """Whether holding st.name on an object is a key (st#name:10): a group's (keyed), or, keyed by st's
+        inheritance, a permission of st that inherits (whose holders, worked out as a group, are the readers of
+        each object above copied in)."""
+        if self.c.keyed(st, name):
+            self.st.groups[(st, name)] = None
+            return True
+        if st not in self.by or (st, name) not in self.c.recursive:
+            return False
+        if not self.c.monotone(self.c.T(st), name):
+            assert self.line is not None
+            fail(
+                self.line.loc,
+                f"sync {self.line.table} ... by {st}: {st}.{name} inherits, and who holds it joins parts that depend "
+                f"on who asks with and / not, so it can't be a key. Leave out by {st}: its readers are then copied in",
+                "AZ810",
+                span=self.line.by_span,
+            )
+        self.st.groups[(st, name)] = None
+        self.keyed_by.add((st, name))
+        return True
 
     @staticmethod
     def none(t: Type) -> str:
@@ -1045,8 +1342,18 @@ class Deriver:
             c.sync_cond_ok(t.where, t.loc, f"the where of {t.name}, which is synced")
             where = f" AND coalesce(({on_row(t.where, 'x')}), false)"
         rows = self.rows(t, e, "SELECT id FROM o", s.loc)
+        if s.by is not None and not self.keyed_by:
+            fail(
+                s.loc,
+                f"sync {s.table} ... by {s.by}: what its readers hold reaches no permission of {s.by} that inherits "
+                f"(as parent.view does), so there is nothing to key them by. Leave out by {s.by}",
+                "AZ810",
+                span=s.by_span,
+            )
         self.st.functions.append(
-            f"-- {s.table}: the keys that may read each row ({s.loc})\n"
+            f"-- {s.table}: the keys that may read each row ({s.loc})"
+            + (f", keyed by {s.by}'s inheritance" if s.by else "")
+            + "\n"
             f"CREATE FUNCTION {fn}(p_ids {t.pktype}[]) RETURNS TABLE (o_id {t.pktype}, o_key text, o_dep boolean)\n"
             f"LANGUAGE sql STABLE {DEF_CURRENT} AS $f$\n"
             f"  WITH o AS (SELECT {c.key(t, 'x')} AS id FROM {qt(t.table)} x WHERE {c.key_in(t, 'x', 'SELECT unnest(p_ids) AS id')}{where})\n"
@@ -1058,9 +1365,9 @@ class Deriver:
         """The function of t.name (a relation or a permission), made if it isn't yet."""
         c, st = self.c, self.st
         pair = (t.name, name)
-        if pair in st.made:
-            return st.made[pair]
-        if pair in st.making:
+        if (pair, self.by) in st.made:
+            return st.made[(pair, self.by)]
+        if (pair, self.by) in st.making:
             fail(
                 loc,
                 f"{t.name}.{name} is a group in itself, and who holds it joins parts that depend on who asks with "
@@ -1068,7 +1375,7 @@ class Deriver:
                 f"without and / not",
                 "AZ807",
             )
-        st.making.append(pair)
+        st.making.append((pair, self.by))
         fn = self.name(t, name)
         where = ""
         if t.where:
@@ -1092,8 +1399,8 @@ class Deriver:
             perm = t.perms[name]
             body = self.recursive_rows(t, perm.name, key, entry, perm.loc)
             what = f"{t.name}.{name} ({perm.loc}): {perm.src}, inherited"
-        st.making.remove(pair)
-        st.made[pair] = fn
+        st.making.remove((pair, self.by))
+        st.made[(pair, self.by)] = fn
         # (each key once for each object: what inherits, or reads what inherits, reads each one again for every
         # ancestor, and the next level would read those again for each of its own)
         st.functions.append(
@@ -1117,6 +1424,7 @@ class Deriver:
                 t.name,
                 t.name,
                 f"SELECT c.descendant::text FROM authz_int.{q(tree)} c WHERE c.ancestor IN (SELECT unnest($ids))",
+                f"SELECT c.ancestor::text FROM authz_int.{q(tree)} c WHERE c.descendant IN (SELECT unnest($ids))",
             )
             # where it starts, with what a permission of its type that inherits through links this walk follows gives
             # written out in place (start_items): that one's ancestors are among this one's, so one walk covers both,
@@ -1138,6 +1446,8 @@ class Deriver:
                     b,
                     f"SELECT c.did FROM authz_int.{q(tree)} c WHERE c.atype = {lit(a)} AND c.aid IN (SELECT unnest($text)) "
                     f"AND c.dtype = {lit(b)}",
+                    f"SELECT c.aid FROM authz_int.{q(tree)} c WHERE c.dtype = {lit(b)} AND c.did IN (SELECT unnest($text)) "
+                    f"AND c.atype = {lit(a)}",
                 )
         ctes = [
             entry,
@@ -1156,9 +1466,9 @@ class Deriver:
         return f"WITH {', '.join(ctes)}\n  " + (union(outs) if outs else self.none(t))
 
     # --- dependents ---
-    def edge(self, src: str, dst: str, sql: str) -> None:
-        """dst's readers read src's objects through sql (see Edge)."""
-        e = Edge(src, dst, sql)
+    def edge(self, src: str, dst: str, sql: str, back: str) -> None:
+        """dst's readers read src's objects through sql, and back (see Edge)."""
+        e = Edge(src, dst, sql, back)
         if not any(x.src == src and x.dst == dst and x.sql == sql for x in self.st.edges):
             self.st.edges.append(e)
 
@@ -1171,10 +1481,21 @@ class Deriver:
             match += f" AND x.{q(src.type_col)} = {lit(st)}" if src.type_col else ""
         else:
             match = c.of_type(src, "x", st, f"{c.subject_id(src, 'x', st)} IN (SELECT unnest($ids))")
+        their = f"SELECT ({c.subject_id(src, 'x', st)})::text"
         if src.kind == "column":
-            self.edge(st, t.name, f"SELECT {c.key_text(t, 'x')} FROM {qt(t.table)} x WHERE {match}")
+            self.edge(
+                st,
+                t.name,
+                f"SELECT {c.key_text(t, 'x')} FROM {qt(t.table)} x WHERE {match}",
+                f"{their} FROM {qt(t.table)} x WHERE {c.key_in(t, 'x', 'SELECT unnest($ids) AS id')}",
+            )
         else:
-            self.edge(st, t.name, f"SELECT {c.ref_text(t, 'x', src.obj_col)} FROM {qt(src.table)} x WHERE {match}")
+            self.edge(
+                st,
+                t.name,
+                f"SELECT {c.ref_text(t, 'x', src.obj_col)} FROM {qt(src.table)} x WHERE {match}",
+                f"{their} FROM {qt(src.table)} x WHERE {c.key_in(t, 'x', 'SELECT unnest($ids) AS id', src.obj_col)}",
+            )
 
     def share_edge(self, t: Type, st: str, sr: str | None, relation: str | None) -> None:
         """t's readers read st's objects through the shares to them (relation None: custom roles' assignments)."""
@@ -1184,6 +1505,8 @@ class Deriver:
             t.name,
             f"SELECT g.object_id FROM authz.shares g WHERE g.subject_type = {lit(st)} AND g.subject_id IN (SELECT unnest($text)) "
             f"AND g.subject_relation = {lit(sr or '')} AND g.object_type = {lit(t.name)} AND {rel}",
+            f"SELECT g.subject_id FROM authz.shares g WHERE g.object_type = {lit(t.name)} AND g.object_id IN (SELECT unnest($text)) "
+            f"AND {rel} AND g.subject_type = {lit(st)} AND g.subject_relation = {lit(sr or '')}",
         )
 
     # --- expressions ---
@@ -1212,6 +1535,12 @@ class Deriver:
             case Ref(name):
                 if name in t.relations:
                     return self.rel_rows(t, t.relations[name], ids, loc)
+                if t.name in self.by and self.keyed(t.name, name):
+                    # keyed by its own inheritance: its holders are the object's group (folder#view:7)
+                    return (
+                        f"SELECT {c.key(t, 'r')} AS id, {lit(f'{t.name}#{name}:')} || {c.key_text(t, 'r')} AS key, "
+                        f"false AS d FROM {qt(t.table)} r WHERE {c.key_in(t, 'r', ids)}"
+                    )
                 return self.call(t, name, ids, loc)
             case Arrow(rel, perm) | ArrowOn(rel, perm, _):
                 return self.arrow_rows(t, e, rel, perm, ids, loc)
@@ -1227,7 +1556,7 @@ class Deriver:
     def held(self, st: str, name: str, links: str, u: str, loc: Loc) -> str:
         """The keys of whoever holds st.name on the objects in column u of the links l (id, u): its group key, or
         its holders' keys copied in."""
-        if self.c.keyed(st, name):
+        if self.keyed(st, name):
             self.st.groups[(st, name)] = None
             return f"SELECT {links}.id, {lit(f'{st}#{name}:')} || ({links}.{u})::text AS key, false AS d FROM {links}"
         f = self.fn(self.c.T(st), name, loc)
@@ -1287,7 +1616,7 @@ class Deriver:
                         )
                     )
                     continue
-                if not c.keyed(st, sr):
+                if not self.keyed(st, sr):
                     self.link_edge(t, src, st, sr)
                 cte = f"l{self.st.next()}"
                 parts.append(wrap(f"WITH {cte} AS MATERIALIZED ({links})\n  {self.held(st, sr, cte, 'u', loc)}"))
@@ -1334,7 +1663,7 @@ class Deriver:
                     f"SELECT g.object_id::{t.pktype} AS id, g.subject_id::{s.pktype} AS u {head} "
                     f"AND g.subject_type = {lit(st)} AND g.subject_relation = {lit(sr)}"
                 )
-                if not c.keyed(st, sr):
+                if not self.keyed(st, sr):
                     self.share_edge(t, st, sr, None if src.kind == "roles" else r.name)
                 cte = f"l{self.st.next()}"
                 out.append(wrap(f"WITH {cte} AS MATERIALIZED ({links})\n  {self.held(st, sr, cte, 'u', loc)}"))
@@ -1352,7 +1681,7 @@ class Deriver:
                 if (st, None) not in src.subjects:
                     continue
                 links = self.linked(t, src, st, None, ids, r.name)
-                if not c.keyed(st, perm):
+                if not self.keyed(st, perm):
                     if src.kind == "shared":
                         self.share_edge(t, st, None, r.name)
                     else:

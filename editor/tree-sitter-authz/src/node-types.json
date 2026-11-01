@@ -1034,6 +1034,10 @@
           "named": true
         },
         {
+          "type": "sync_after_commit",
+          "named": true
+        },
+        {
           "type": "sync_role",
           "named": true
         },
@@ -1122,6 +1126,16 @@
     "type": "sync",
     "named": true,
     "fields": {
+      "by": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
       "permission": {
         "multiple": false,
         "required": false,
@@ -1143,6 +1157,11 @@
         ]
       }
     }
+  },
+  {
+    "type": "sync_after_commit",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "sync_role",
@@ -1437,6 +1456,10 @@
     "type": "comment",
     "named": true,
     "extra": true
+  },
+  {
+    "type": "commit",
+    "named": false
   },
   {
     "type": "delete",

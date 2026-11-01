@@ -1,5 +1,6 @@
 #!/bin/bash
-# stress.sh: 16 clients writing a folder tree at once (create, move, link, unlink, delete, at random places)
+# stress.sh: 16 clients writing a folder tree at once (create, move, link, unlink, delete, at random places, and
+# beside them shares on folders made and taken back, files made and members joining and leaving teams)
 # for SECONDS seconds at each isolation level, retrying 40001/40P01 as an app would; afterwards the
 # inheritance tables must match a rebuild (authz.verify()), and so must the sync index (authz.sync_verify(), a preview:
 # the docs app is applied with sync lines). Moves that would make a loop, and deletes of
@@ -29,9 +30,10 @@ trap cleanup EXIT
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f example/app_schema.sql >/dev/null || exit 1
 # the docs app's policy with the sync index (a preview): its readers and keys are kept at each commit too, under lock
-# rows of their own, and must match a rebuild after each level; the role its lines name needs only to be there
+# rows of what each commit's work writes and reads, and must match a rebuild after each level: the files' readers
+# keyed by folder, the folders' copied from each folder above. The role its lines name needs only to be there
 psql -X -q -d postgres -c "DO \$r\$ BEGIN CREATE ROLE authz_sync_engine; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END \$r\$;" >/dev/null
-{ cat example/docs.authz; printf '\nsync role authz_sync_engine\nsync app.files : view\nsync app.folders\n'; } > "$W/docs.authz"
+{ cat example/docs.authz; printf '\nsync role authz_sync_engine\nsync app.files : view by folder\nsync app.folders\n'; } > "$W/docs.authz"
 python3 compile_policy.py "$W/docs.authz" > "$W/docs.sql" || exit 1
 PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "$W/docs.sql" >/dev/null || exit 1
 psql -X -q -v ON_ERROR_STOP=1 -d "$DB" >/dev/null <<'SQL' || exit 1
@@ -123,6 +125,28 @@ cat > "$W/delete.sql" <<'EOF'
 \set m random(101, 2099)
 SELECT stress.try(format('DELETE FROM app.folders WHERE id = %s', :m));
 EOF
+# writes beside the tree's, which take no tree lock: the sync index's work of each queues only where it meets another's
+cat > "$W/share.sql" <<'EOF'
+\set f random(100, 2099)
+\set u random(1, 7)
+SELECT stress.try(format('INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES (%L, %L, %L, %L, %L)', 'folder', :f, 'viewer', 'user', :u));
+EOF
+cat > "$W/unshare.sql" <<'EOF'
+\set f random(100, 2099)
+DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = ':f';
+EOF
+# (files only in the example's folders, which no write deletes: a folder that holds a file can't be deleted)
+cat > "$W/file.sql" <<'EOF'
+\set f random(1, 6)
+SELECT stress.try(format('INSERT INTO app.files (folder_id, owner_id, name) VALUES (%s, 2, %L)', :f, 'new'));
+EOF
+cat > "$W/team.sql" <<'EOF'
+\set t random(10, 12)
+\set u random(3, 7)
+\set join random(0, 1)
+SELECT stress.try(CASE WHEN :join = 1 THEN format('INSERT INTO app.team_members VALUES (%s, %s)', :t, :u)
+                       ELSE format('DELETE FROM app.team_members WHERE team_id = %s AND user_id = %s', :t, :u) END);
+EOF
 cat > "$W/pair.sql" <<'EOF'
 -- two writes in one transaction, so locks are taken across statements (the deadlock case)
 \set m random(101, 2099)
@@ -143,7 +167,8 @@ for level in "read committed" "repeatable read" "serializable"; do
     CREATE TABLE stress.links AS SELECT folder_id, parent_id FROM app.folder_links" >/dev/null || exit 1
   PGOPTIONS="-c default_transaction_isolation=${level// /\\ } -c statement_timeout=600s" pgbench -n -d "$DB" -c 16 -j 4 \
     -T "$SECONDS_EACH" --max-tries=50 -l --log-prefix="$W/tx" -f "$W/create.sql@4" -f "$W/move.sql@2" -f "$W/link.sql@1" \
-    -f "$W/unlink.sql@1" -f "$W/delete.sql@1" -f "$W/pair.sql@1" > "$W/out" 2>&1
+    -f "$W/unlink.sql@1" -f "$W/delete.sql@1" -f "$W/pair.sql@1" -f "$W/share.sql@2" -f "$W/unshare.sql@1" \
+    -f "$W/file.sql@2" -f "$W/team.sql@1" > "$W/out" 2>&1
   tps=$(sed -n 's/^tps = \([0-9.]*\) .*/\1/p' "$W/out")
   retried=$(sed -n 's/^number of transactions retried: \([0-9]*\).*/\1/p' "$W/out")
   failed=$(sed -n 's/^number of failed transactions: \([0-9]*\).*/\1/p' "$W/out")

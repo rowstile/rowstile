@@ -43,6 +43,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "sync_after_commit"
+        },
+        {
+          "type": "SYMBOL",
           "name": "sync"
         },
         {
@@ -387,6 +391,23 @@
         }
       ]
     },
+    "sync_after_commit": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "sync"
+        },
+        {
+          "type": "STRING",
+          "value": "after"
+        },
+        {
+          "type": "STRING",
+          "value": "commit"
+        }
+      ]
+    },
     "sync": {
       "type": "SEQ",
       "members": [
@@ -415,6 +436,31 @@
                 {
                   "type": "FIELD",
                   "name": "permission",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "by"
+                },
+                {
+                  "type": "FIELD",
+                  "name": "by",
                   "content": {
                     "type": "SYMBOL",
                     "name": "identifier"

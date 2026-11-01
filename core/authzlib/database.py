@@ -567,7 +567,8 @@ def rebuild_trees(db: Db) -> None:
 
 
 # A policy without sync lines applied where one with them was: the sync index and its functions go (the compiled
-# policy of one without sync is the same as before the index was: it doesn't drop them itself)
+# policy of one without sync is the same as before the index was: it doesn't drop them itself). Each of
+# base.SYNC_FUNCTIONS is dropped (tests/unit_test.py checks)
 SYNC_GONE_SQL = """DO $sg$ BEGIN
   IF to_regnamespace('authz_sync') IS NOT NULL THEN
     DROP SCHEMA authz_sync CASCADE;
@@ -575,7 +576,9 @@ SYNC_GONE_SQL = """DO $sg$ BEGIN
   END IF;
 END $sg$;
 DROP FUNCTION IF EXISTS authz.sync_tick();
-DROP FUNCTION IF EXISTS authz.sync_verify();"""
+DROP FUNCTION IF EXISTS authz.sync_verify();
+DROP FUNCTION IF EXISTS authz.sync_work();
+DROP FUNCTION IF EXISTS authz.sync_behind();"""
 
 
 def development(db: Db) -> bool:
