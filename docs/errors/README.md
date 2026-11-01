@@ -114,5 +114,6 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ808](AZ808.md): The sync role isn't one of its own
 - [AZ809](AZ809.md): The sync role may read a masked column
 - [AZ810](AZ810.md): A sync line keyed by a type it can't be keyed by
+- [AZ811](AZ811.md): A mirrored sync line that can't be mirrored
 
 These pages are written from `core/authzlib/errors.py`; edit it, then `python3 core/tests/unit_test.py --update`.

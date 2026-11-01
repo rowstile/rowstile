@@ -771,7 +771,7 @@ test
       object: (value))))
 
 ================================================================================
-Sync lines: the sync role, after commit, a table with its permission, keyed by a type, a table alone (its select rule)
+Sync lines: the sync role, after commit, a table with its permission, keyed by a type, a table alone (its select rule), mirrored
 ================================================================================
 
 sync role sync_engine
@@ -780,6 +780,7 @@ sync app.files : view
 sync app.docs : view by folder
 sync app.folders
 sync app.boxes by box
+sync app.notes : view mirrored
 type t = app.t
   sync : user = owner_id
 
@@ -809,6 +810,11 @@ type t = app.t
       schema: (identifier)
       name: (identifier))
     by: (identifier))
+  (sync
+    table: (table_name
+      schema: (identifier)
+      name: (identifier))
+    permission: (identifier))
   (type
     name: (identifier)
     table: (table_name

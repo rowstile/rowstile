@@ -100,7 +100,8 @@ run client elixir; case "$out" in *"defmodule Authz do"*"  defmodule File do"*"d
 run client php; case "$out" in "<?php"*"namespace Authz;"*"enum FilePermission: string implements Permission"*) ok "client php: the policy's names, an enum for each type";; *) bad "client php" "${out:0:200}";; esac
 run client electric; case "$out" in *"export const shapes = {}"*"export type SyncedTable"*) ok "client electric: a policy that syncs nothing has no shapes";; *) bad "client electric" "${out:0:200}";; esac
 run client zero; case "$out" in *"export const syncTables = [keys] as const;"*"export const readable = {"*"} as const;"*) ok "client zero: a policy that syncs nothing has only the keys";; *) bad "client zero" "${out:0:200}";; esac
-run client rb; [ "$rc $out" = "2 rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric or zero?" ] && ok "client with an unknown language: exit 2" || bad "client rb" "$rc $out"
+run client powersync; case "$out" in *"streams:"*"  {}"*) ok "client powersync, on the database: a policy that mirrors nothing has no streams";; *) bad "client powersync" "${out:0:200}";; esac
+run client rb; [ "$rc $out" = "2 rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?" ] && ok "client with an unknown language: exit 2" || bad "client rb" "$rc $out"
 
 echo "-- reapply and remove"
 run reapply; [ $rc -eq 0 ] && ok "reapply" || bad "reapply" "$out"
@@ -201,7 +202,8 @@ run studio --port 70000; [ $rc -eq 2 ] && [ "$out" = "--port needs a port, a who
   ok "a port above 65535 is refused" || bad "studio --port 70000" "$rc ${out: -200}"
 run dev --once --studio-port 99999 "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "--studio-port needs a port, a whole number from 1 to 65535, not '99999'" ] &&
   ok "... and one for Studio beside dev" || bad "dev --studio-port 99999" "$rc ${out: -200}"
-run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric or zero?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
+run client rb "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?" ] && ok "client in a language it doesn't write is refused" || bad "client rb" "$rc $out"
+run client powersync "$T/main.authz"; [ $rc -eq 2 ] && [ "$out" = "rowstile client powersync reads each mirror's columns from the database: give it one (--db, or database in rowstile.toml), where the policy is applied" ] && ok "client powersync from a file: exit 2, it reads the database" || bad "client powersync from a file" "$rc $out"
 run client py; fromdb=$out
 run client py "$T/main.authz"; [ $rc -eq 0 ] && [ -n "$out" ] && [ "$out" = "$fromdb" ] && ok "client py from the file alone is the one the applied policy gives" || bad "client py from a file" "$rc ${out:0:120}"
 which='which policy file? (or name it in rowstile.toml: policy = "db/policy.authz")'

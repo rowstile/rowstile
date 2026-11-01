@@ -282,7 +282,7 @@ echo "-- the sync index (a preview): what is written through a partition, or a t
 DB3=${DB}_sync
 dropdb --if-exists "$DB3" 2>/dev/null; createdb "$DB3" && schema "$DB3" || exit 1
 psql -X -q -d postgres -c "DO \$r\$ BEGIN CREATE ROLE authz_sync_engine; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END \$r\$;" >/dev/null
-{ cat tests/children.authz; printf '\nsync role authz_sync_engine\nsync ch.notes : view\nsync ch.docs : edit\nsync ch.topics : view\n'; } > "$T/synced.authz"
+{ cat tests/children.authz; printf '\nsync role authz_sync_engine\nsync ch.notes : view mirrored\nsync ch.docs : edit mirrored\nsync ch.topics : view\n'; } > "$T/synced.authz"
 python3 cli/rowstile_cli.py --db "dbname=$DB3" apply "$T/synced.authz" --force >/dev/null 2>&1 || bad "the policy with sync lines applies"
 # whether user $1 reads $2 $3 through the index (as the tables' owner)
 synced() { D=$DB3 PSQL -c "SELECT EXISTS (SELECT 1 FROM authz_sync.${2}__readers r WHERE r.id = $3 AND r.key IN
@@ -295,6 +295,18 @@ same "a row of the table that inherits, its owner changed there: its readers fol
 same "a topic frozen through a partition of the table its inheritance condition reads: its readers follow" \
   "$(synced 1 topic 2)|$(D=$DB3 PSQL -c "INSERT INTO ch.frozen_hold (topic_id) VALUES (2)" && synced 1 topic 2)" "t|f"
 same "... and the index matches a rebuild" "$(D=$DB3 PSQL -c "SELECT authz.sync_verify()")" t
+# PowerSync's mirrors (mirrored) of a partitioned table and of one another inherits: kept through each of them
+mirrored() { D=$DB3 PSQL -c "SELECT coalesce(string_agg(id::text, ',' ORDER BY id), '') FROM authz_sync.${1}__mirror WHERE id IN ($2)"; }
+D=$DB3 PSQL -c "INSERT INTO ch.notes_high (id, owner_id) VALUES (150, 2)" >/dev/null
+same "a mirrored row made through the partition it is stored in: in the mirror" "$(mirrored note 150)" 150
+D=$DB3 PSQL -c "UPDATE ch.notes SET id = 50 WHERE id = 150" >/dev/null
+same "... an update that puts it in another partition: the mirror follows" "$(mirrored note 50,150)" 50
+D=$DB3 PSQL -c "INSERT INTO ch.docs_old (id, owner_id, title) VALUES (30, 2, 'old')" >/dev/null
+same "a row made in the table that inherits: in the mirror of the table above" "$(mirrored doc 30)" 30
+same "... and the mirrors match a rebuild" "$(D=$DB3 PSQL -c "SELECT authz.sync_verify()")" t
+D=$DB3 PSQL -c "TRUNCATE ch.notes CASCADE" >/dev/null
+same "the partitioned table emptied: so is its mirror" "$(D=$DB3 PSQL -c "SELECT count(*) FROM authz_sync.note__mirror")" 0
+same "... which still matches a rebuild" "$(D=$DB3 PSQL -c "SELECT authz.sync_verify()")" t
 dropdb --force --if-exists "$DB3" 2>/dev/null
 
 echo "-- removed"

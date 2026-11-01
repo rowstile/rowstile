@@ -472,6 +472,18 @@
               "type": "BLANK"
             }
           ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "mirrored"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         }
       ]
     },

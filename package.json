@@ -15,7 +15,8 @@
     "integrations/nextjs",
     "integrations/node",
     "integrations/electric",
-    "integrations/zero"
+    "integrations/zero",
+    "integrations/powersync"
   ],
   "devDependencies": {
     "typescript": "~6.0.3"

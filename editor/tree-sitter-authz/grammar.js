@@ -69,7 +69,8 @@ module.exports = grammar({
     caveat: ($) => seq("caveat", field("name", $.identifier), "=", $.sql),
 
     // the sync index (a preview): the sync engine's Postgres role, a worker keeping it after commit, and each table
-    // synced with the permission its readers hold (none: the table's select rule), keyed by a type's inheritance
+    // synced with the permission its readers hold (none: the table's select rule), keyed by a type's inheritance, and
+    // mirrored for PowerSync
     sync_role: ($) => seq("sync", "role", field("name", $.identifier)),
     sync_after_commit: ($) => seq("sync", "after", "commit"),
     sync: ($) =>
@@ -78,6 +79,7 @@ module.exports = grammar({
         field("table", $.table_name),
         optional(seq(":", field("permission", $.identifier))),
         optional(seq("by", field("by", $.identifier))),
+        optional("mirrored"),
       ),
 
     // ---- types -----------------------------------------------------------------------------------

@@ -176,7 +176,7 @@ jobs:
         with:
           name: full-16-${{ matrix.part }}
           path: /tmp/rowstile-ci-16.log
-  # The SDKs' conformance suites (.NET's among them, and Electric's and Zero's, in each of the sync index's modes) on 17 and 18 (ci.yml runs them on 16), and on 16 with the app through PgBouncer in
+  # The SDKs' conformance suites (.NET's among them, and Electric's, Zero's and PowerSync's, in each of the sync index's modes) on 17 and 18 (ci.yml runs them on 16), and on 16 with the app through PgBouncer in
   # transaction mode (integrations/pooler.sh; Electric's and zero-cache's own connections stay direct), side by side. On 17 the TypeScript ones (Next.js, Node, Electric, Zero) run on the
   # lowest Node the packages' engines state (sdk/typescript/*/package.json), the others on the Node CI uses. The Python
   # ones (FastAPI's, Django's) also on 16 with the oldest versions of FastAPI, SQLAlchemy, psycopg, asyncpg and Django
@@ -229,6 +229,12 @@ jobs:
         env: {SYNC_MODE: keyed}
       - if: ${{ !matrix.resolution }}
         run: bash integrations/zero/test.sh
+        env: {SYNC_MODE: after}
+      - if: ${{ !matrix.resolution }}
+        run: bash integrations/powersync/test.sh
+        env: {SYNC_MODE: copied}
+      - if: ${{ !matrix.resolution }}
+        run: bash integrations/powersync/test.sh
         env: {SYNC_MODE: after}
       - if: ${{ !matrix.resolution }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e   # v7.0.0

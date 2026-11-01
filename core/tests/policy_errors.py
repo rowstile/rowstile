@@ -1093,7 +1093,7 @@ COMPILE = [
     (
         "a sync line's by without its type",
         "sync role a\nsync alt.docs : share by\n",
-        "write sync lines as: sync role name, sync after commit, or sync schema.table [: permission] [by type]",
+        "write sync lines as: sync role name, sync after commit, or sync schema.table [: permission] [by type] [mirrored]",
         11,
         "AZ101",
     ),
@@ -1131,6 +1131,20 @@ COMPILE = [
         "doc.view inherits, and who holds it joins parts that depend on who asks with and / not",
         12,
         "AZ810",
+    ),
+    (
+        "a mirrored sync line keyed by a type",
+        "  can view = owner or parent.view\nsync role eng\nsync alt.docs : view by doc mirrored\n",
+        "a mirror's readers are the keys each row is read by, and keyed by doc they would be doc's keys",
+        12,
+        "AZ811",
+    ),
+    (
+        "a sync line with a word after mirrored",
+        "sync role eng\nsync alt.docs : share mirrored twice\n",
+        "sync schema.table [: permission] [by type] [mirrored]",
+        11,
+        "AZ101",
     ),
     (
         "a synced permission reading the clock",

@@ -213,6 +213,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   that key inherits, and what each folder gives itself. `by` names a type with a permission that inherits
   (`parent.view`), which the synced permission reaches; another is refused (AZ810). <!-- checked: tests/sync.sh "keyed by folder: a file's readers are its own keys and its folder's keys, not the readers of each folder above"; tests/policy_errors.py "a sync line keyed by a type whose inheritance it doesn't reach" -->
   `sync after commit` has a worker keep the index after each change commits, so writers don't wait for it. <!-- checked: tests/sync.sh "after commit: a share made isn't in the index before the worker runs" -->
+  `sync app.files : view mirrored` keeps a copy of the table for PowerSync, every column but the masked ones and
+  each row's readers; with `by`, it is refused (AZ811). <!-- checked: tests/sync.sh "applied: the mirror holds every file, each with its readers, as a JSON array of keys"; tests/policy_errors.py "a mirrored sync line keyed by a type" -->
 - **Tests**: the unnamed `test` section checks the data already in the database, with lines
   `user|<principal type> X can|cannot PERM TYPE ID` (or `anyone ...`). A named test,
   `test "..."`, brings its own: `given name = {SQL ... RETURNING id}` rows (as whoever applies

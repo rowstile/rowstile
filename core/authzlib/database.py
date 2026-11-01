@@ -1069,17 +1069,37 @@ def client(
     files: Mapping[str, object] | str | None = None,
     java_class: str = "AuthzNames",
     elixir_module: str = "Authz",
+    mirror_columns: Mapping[str, list[str]] | None = None,
 ) -> str:
     """The client in a language the command takes, py, ts, go, csharp (the names, for the .NET SDK), ruby, rbs,
     java (the names alone, as the class `java_class`: com.example.AuthzNames), rust (the names, for the Rust SDK)
     or elixir (the names, as the module `elixir_module`: MyApp.Authz); or ts-sdk, the names alone (rowstile.toml's
-    ts, for an app on the TypeScript SDK)."""
+    ts, for an app on the TypeScript SDK); powersync, the streams, with each mirror's columns (MIRROR_COLUMNS)."""
 
     def make(c: Compiler) -> str:
         c.compile("the policy", transaction=False)
-        return c.client(lang, "the policy", java_class, elixir_module)
+        return c.client(lang, "the policy", java_class, elixir_module, mirror_columns)
 
     return compiled(policy, files, make)
+
+
+# Each PowerSync mirror's columns, as the database has them (the mirror is made from its table's): the stream lists
+# them, but readers
+MIRROR_COLUMNS = """SELECT c.relname::text AS relname, a.attname::text AS attname FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped AND a.attname <> 'readers'
+WHERE c.relnamespace = to_regnamespace('authz_sync') AND right(c.relname, 8) = '__mirror' ORDER BY c.relname, a.attnum"""
+
+
+def mirror_columns(db: Db, policy: str, files: Mapping[str, object] | str | None = None) -> dict[str, list[str]]:
+    """Each mirrored table of the policy -> its mirror's columns in the database (but readers)."""
+    from . import Compiler, parse_policy
+
+    pol = parse_policy(policy, None, files=files_map(files))
+    c = Compiler(pol)
+    by_mirror: dict[str, list[str]] = {}
+    for r in db.rows(MIRROR_COLUMNS):
+        by_mirror.setdefault(text(r, "relname"), []).append(text(r, "attname"))
+    return {s.table: by_mirror.get(c.sync_type(s).name + "__mirror", []) for s in pol.syncs.values() if s.mirrored}
 
 
 def test_files(tests: Mapping[str, str] | None) -> Files:

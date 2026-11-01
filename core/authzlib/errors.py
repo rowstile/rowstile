@@ -1010,6 +1010,22 @@ CODES = {
         "type doc = app.docs\n  folder : folder = folder_id\n  owner : user = owner_id\n  can view = owner or folder.view\n"
         "sync role sync_engine\nsync app.docs : view by folder\n",
     ),
+    "AZ811": Code(
+        "A mirrored sync line that can't be mirrored",
+        "`sync app.docs : view mirrored` keeps a copy of the table in `authz_sync` for PowerSync, whose streams key "
+        "their buckets by a value on the row: each row with every column but the masked ones, and `readers`, a JSON "
+        "array of the keys that may read it. Keyed by a type (`by folder`), those keys would be the folders', a "
+        "bucket for each folder a user may read, past PowerSync's limit: mirror a line that isn't keyed. Applying "
+        "also refuses a table with a column of its own named `readers`, which the mirror keeps the keys in: rename it.",
+        "type folder = app.folders\n  parent : folder = parent_id\n  owner : user = owner_id\n"
+        "  can view = owner or parent.view\n"
+        "type doc = app.docs\n  folder : folder = folder_id\n  can view = folder.view\n"
+        "sync role sync_engine\nsync app.docs : view by folder mirrored\n",
+        "type folder = app.folders\n  parent : folder = parent_id\n  owner : user = owner_id\n"
+        "  can view = owner or parent.view\n"
+        "type doc = app.docs\n  folder : folder = folder_id\n  can view = folder.view\n"
+        "sync role sync_engine\nsync app.docs : view mirrored\n",
+    ),
 }
 
 

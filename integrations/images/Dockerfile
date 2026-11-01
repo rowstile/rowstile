@@ -23,3 +23,5 @@ FROM electricsql/electric:1.8.1@sha256:efb6fa43859d67cb8c73439e0c8bc0f7a3daa4675
 FROM nginx:1.31.8-alpine-slim@sha256:f45171d36c76a8b2f5ef97108a3a8a2294248a6578a0a180edc2d78f7d2edc26 AS nginx
 # zero-cache, the sync engine Zero's clients connect to (zero/test.sh, a preview)
 FROM rocicorp/zero:1.11.0@sha256:893c4a78a1a84f1ab8d7e76263b4bab3c8aee61101b00b365756c47e328935a2 AS zero
+# the PowerSync service, which PowerSync's clients sync from (powersync/test.sh, a preview)
+FROM journeyapps/powersync-service:1.27.0@sha256:15b8e4dbbab17ba45d3abfef29df29b21489266e55ff9aa95bbfd56d9548c00f AS powersync

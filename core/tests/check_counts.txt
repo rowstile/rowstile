@@ -4,8 +4,8 @@
 adversarial 112
 apply 162
 capitals 105
-children 105
-cli 169
+children 111
+cli 171
 concurrency 35
 confidence 64
 cookbook 102
@@ -29,19 +29,19 @@ keep unchanged trees 11
 language server 131
 masks 39
 mcp 75
-migrate vs apply 85
+migrate vs apply 87
 migrations 79
 moves 23
 multi scenario 99
-policy errors 277
+policy errors 279
 principals 130
-reference 28
+reference 31
 review 59
 scenario 95
 signed sessions 82
 small policies 4
 studio 227
-sync index 181
+sync index 209
 tools 42
-unit 679
+unit 680
 upgrade 71

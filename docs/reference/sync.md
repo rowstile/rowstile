@@ -6,7 +6,7 @@ again. The sync index tells it: for each row of a synced table, the keys that ma
 replicates like any other, in the same transaction as the change. <!-- checked: tests/sync.sh "a share made: frank reads file 13"; tests/sync.sh "a transaction rolled back changes nothing in the index" -->
 
 This is a preview. Its lines, tables and functions may change in any release, and it is outside what 1.0 will
-promise. [Electric](#electric) and [Zero](#zero) run on it, behind the app's own server; PowerSync comes later.
+promise. [Electric](#electric), [Zero](#zero) and [PowerSync](#powersync) run on it, with the app's own server.
 
 ## Declaring it
 
@@ -35,6 +35,9 @@ sync after commit                 -- a worker keeps the index after each change 
   So does `sync after commit`. <!-- checked: tests/policy_errors.py "sync after commit and nothing synced" -->
 - `by folder`, on a sync line, keys its readers by a type's inheritance ([Keyed by folder](#keyed-by-folder)).
 - `sync after commit`, once in the policy, has a worker keep the index ([After commit](#after-commit)).
+- `mirrored`, on a sync line, keeps a copy of the table for PowerSync, each row with its readers
+  ([PowerSync](#powersync)). <!-- checked: tests/sync.sh "applied: the mirror holds every file, each with its readers, as a JSON array of keys" -->
+  With `by`, it is refused (AZ811). <!-- checked: tests/policy_errors.py "a mirrored sync line keyed by a type" -->
 
 ## Its tables
 
@@ -52,6 +55,7 @@ Every table there has `REPLICA IDENTITY FULL`, which Electric asks for. <!-- che
 | `pending` | where the policy says `sync after commit`: the objects each committed change reached, which the worker hasn't worked in yet |
 | `inherits` | keyed by folder: `key`, `source`: for each folder's key, the folders whose own keys it takes (itself, and each one above it that it inherits from) |
 | `given` | keyed by folder: `source`, `key`: the keys each folder gives itself, before what it inherits |
+| `<type>__mirror` | mirrored: the table's rows, every column but those the policy masks, and `readers`, a JSON array of the keys that may read the row |
 
 A key is one of these:
 
@@ -450,5 +454,102 @@ A user deleted loses their keys, so their queries empty; the endpoints then answ
   `authz.sync_tick()` too. <!-- checked: integrations/zero/tests/zero.test.ts "Z6: a share that ends: the row leaves at the next authz.sync_tick(), and not before" -->
 - What the index leaves out (caveats, links, scopes) gives nothing through Zero either. <!-- checked: tests/difftest.py "without shares that have a caveat and without links" -->
 - zero-cache is trusted: it holds BYPASSRLS and every row of what it publishes, and rowstile can't check what it
+  serves. <!-- unchecked: what an engine serves is the engine's, outside the database -->
+  The conformance suite checks it end to end, for the forms it uses.
+
+## PowerSync
+
+[PowerSync](https://www.powersync.com) syncs streams: a stream's query, run on the PowerSync service's replica, puts
+each row it gives in a bucket keyed by a value on the row, and each client gets the buckets its parameters name. A
+bucket's key can't come through a join to another table, so the rows carry their readers: `mirrored` keeps a copy of
+the table in `authz_sync`, and a stream puts each of its rows in the bucket of each key that may read it. <!-- unchecked: PowerSync's own rule, from its docs (a bucket's key is a value on the row the stream syncs) -->
+
+### The mirror
+
+<!-- not run: tests/sync.sh applies this line to the docs app, in its section "mirrored, for PowerSync" -->
+```authz
+sync app.files : view mirrored
+```
+
+`authz_sync.file__mirror` holds every row of the table, every column but those the policy masks, and `readers`: a
+JSON array of the keys that may read the row, in order. <!-- checked: tests/sync.sh "the mirror has the table's columns but the masked body, then readers"; tests/sync.sh "applied: the mirror holds every file, each with its readers, as a JSON array of keys" -->
+It is kept as the table's rows are written (through a partition, or a table that inherits, too) and as the index
+writes their readers. <!-- checked: tests/sync.sh "a file made: its mirror row, with the readers worked out at commit"; tests/sync.sh "a folder moved: the readers of the files below it change in their mirror rows too"; tests/children.sh "a mirrored row made through the partition it is stored in: in the mirror"; tests/children.sh "a row made in the table that inherits: in the mirror of the table above" -->
+For every principal, the rows of the mirror whose readers hold one of its keys are those the index gives it. <!-- checked: tests/difftest.py "the sync index's mirror: " -->
+Applying keeps the mirror; it is made again when the table's columns change, which `authz.sync_verify()` reports
+until then, and `rowstile reapply --force` writes it again where it differs. <!-- checked: tests/sync.sh "rowstile reapply keeps the mirror (PowerSync keeps reading it)"; tests/sync.sh "authz.sync_verify() finds a mirror whose columns its table's are no longer"; tests/sync.sh "... and reapply makes it again, with the new column" -->
+Until then the table's writes go on: a column added isn't in the mirror yet, and one dropped is NULL there. <!-- checked: tests/sync.sh "a column dropped from the table since: its writes go on, its mirror rows hold NULL there" -->
+`authz.sync_verify()` compares it with the table's rows too. <!-- checked: tests/sync.sh "authz.sync_verify() compares the mirror too: it matches"; tests/sync.sh "... and finds a mirror row that isn't its file's any more" -->
+The app role can't read it, as the rest of the index. <!-- checked: tests/sync.sh "the app role can't read the mirror" -->
+
+A table with a column of its own named `readers` is refused (AZ811), and so is a mirrored line keyed by a type: its
+readers would be the type's keys, a bucket for each object a user may read, past PowerSync's limit of buckets. <!-- checked: tests/sync.sh "a mirrored table with a column of its own named readers is refused"; tests/policy_errors.py "a mirrored sync line keyed by a type" -->
+
+
+### PowerSync's role and its publication
+
+The service connects as the sync role, which reads the mirrors (the policy grants it the index) and nothing of the
+app's tables. Its bucket storage is a database of its own, which that role owns. Both are made by whoever runs the
+database: a role that may make roles can give REPLICATION and BYPASSRLS only when it holds them. <!-- unchecked: Postgres's own rule for CREATEROLE, from version 16 -->
+The publication must be named `powersync`; it holds the mirrors and the keys:
+
+<!-- not run: it needs the sync role and the mirrors, which the docs app the reference runs on has none of; integrations/powersync's migrations do this -->
+```sql
+CREATE ROLE conf_ps LOGIN REPLICATION BYPASSRLS PASSWORD '...';    -- as an administrator
+CREATE DATABASE conf_ps_storage OWNER conf_ps;                     -- the service's bucket storage
+CREATE PUBLICATION powersync FOR TABLE authz_sync.file__mirror, authz_sync.folder__mirror, authz_sync.note__mirror,
+  authz_sync.keys;
+```
+
+### The streams: `rowstile client powersync`
+
+`rowstile client powersync` writes the service's sync config: a stream for each mirrored table, which puts each of its
+rows in the bucket of each key that may read it, for the principal the token names. Its columns are the mirror's,
+read from the database (with `powersync = "powersync/sync-config.yaml"` under `[clients]`, `rowstile client` reads
+them in the database `rowstile.toml` names); without a database it says so, and exits 2. <!-- checked: tests/unit_test.py "test_powersync_client"; tests/cli.sh "client powersync from a file: exit 2, it reads the database" -->
+
+<!-- not run: YAML for PowerSync's service, written by rowstile client powersync; integrations/powersync's checks run it -->
+```yaml
+config:
+  edition: 3
+streams:
+  files:
+    auto_subscribe: true
+    query: |
+      SELECT files."id", files."folder_id", files."owner_id", files."name", files."confidential"
+      FROM authz_sync."file__mirror" files, json_each(files.readers) r
+      WHERE r.value IN (SELECT key FROM authz_sync.keys
+                        WHERE principal_type = ifnull(auth.parameter('principal_type'), 'user')
+                          AND principal_id = auth.user_id())
+```
+
+A principal gets a bucket for each key it holds (its own, its type's, `anyone`, its groups'), never one for each row. <!-- checked: integrations/powersync/tests/powersync.test.ts "P10: the client is synced no readers, and no masked column" -->
+A stream never selects `readers`, which would tell a client who else reads the row, and a masked column isn't in the
+mirror: a client is synced neither. <!-- checked: integrations/powersync/tests/powersync.test.ts "P10: the client is synced no readers, and no masked column" -->
+
+### The token
+
+The service checks each client's token itself (HS256 here, or a JWKS): its `sub` is the principal's id and
+`principal_type` its type (`user` if it says none). The app gives the token, after asking the database who the
+request is, as Electric's route does (`syncPrincipal(c)`, from `@rowstile/client`):
+
+- nobody, or a user who isn't there, gets no token (401), and so syncs nothing; <!-- checked: integrations/powersync/tests/powersync.test.ts "P9: not signed in: no token, and no row" -->
+- a session limited by scopes (a key's, a token's) or viewing as someone gets none either (403): the index holds what
+  each principal may read, without scopes; <!-- checked: integrations/powersync/tests/powersync.test.ts "P15: a session limited by scopes gets no token" -->
+- a token another key signed is refused by the service. <!-- checked: integrations/powersync/tests/powersync.test.ts "P8: a token the app didn't sign is refused by the service" -->
+
+The clients' writes go back through the app's own routes, signed in as the request's user: a refused one is the
+app's 403, in the database's words. <!-- checked: integrations/powersync/tests/powersync.test.ts "P11: writes through the app arrive; a refused one from a client's queue says why" -->
+Applying the policy, applying it again and a changed policy keep the mirrors, and the clients go on syncing. <!-- checked: integrations/powersync/tests/powersync.test.ts "P12: lint, then rowstile apply and reapply leave the clients syncing" -->
+
+### Its limits
+
+- Rows already on a device stay there while it is offline, and in any copy the client keeps. <!-- unchecked: what a client keeps is the client's, outside the database -->
+  A revoke stops delivery: the row leaves the client once it is in none of its buckets. <!-- checked: integrations/powersync/tests/powersync.test.ts "P2: a share made: the row arrives live; revoked: it leaves" -->
+- The window after a change is the service's replication lag, and for a share that ends, until the next
+  `authz.sync_tick()` too. <!-- checked: integrations/powersync/tests/powersync.test.ts "P6: a share that ends: the row leaves at the next authz.sync_tick(), and not before" -->
+- A mirrored line can't be keyed by a type (AZ811), so a move rewrites the readers of what is below it, in the mirror
+  too. <!-- checked: tests/policy_errors.py "a mirrored sync line keyed by a type"; tests/sync.sh "a folder moved: the readers of the files below it change in their mirror rows too" -->
+- The service is trusted: it holds BYPASSRLS and every row of what it publishes, and rowstile can't check what it
   serves. <!-- unchecked: what an engine serves is the engine's, outside the database -->
   The conformance suite checks it end to end, for the forms it uses.

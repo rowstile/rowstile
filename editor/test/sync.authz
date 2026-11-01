@@ -27,3 +27,9 @@ sync app.docs : view by folder
 --              ^^^^ entity.name.function.permission.authz
 --                   ^^ keyword.other.authz
 --                      ^^^^^^ entity.name.type.authz
+sync app.notes : view mirrored
+-- <---- keyword.declaration.authz
+--   ^^^^^^^^^ entity.name.tag.table.authz
+--             ^ punctuation.separator.authz
+--               ^^^^ entity.name.function.permission.authz
+--                    ^^^^^^^^ keyword.other.authz

@@ -52,13 +52,14 @@
                                                    object and permission (for review data: commit it, and a
                                                    pull request that changes access changes it); --check: exit 1
                                                    if it is out of date
-    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust|elixir|php|electric|zero] [POLICY.authz]
+    rowstile client  [py|ts|go|csharp|ruby|rbs|java|rust|elixir|php|electric|zero|powersync] [POLICY.authz]
                                                    typed helpers for app code (go, csharp, ruby, java, rust,
                                                    elixir, php: the policy's names, for those SDKs; rbs: the Ruby names'
                                                    signatures; electric: the synced tables' shapes, for the app's
                                                    proxy in front of Electric; zero: the sync index's tables and
                                                    each synced table's filter, for a Zero schema and its query
-                                                   endpoint: previews); with none, writes the
+                                                   endpoint; powersync: the streams of the mirrored tables, their
+                                                   columns read from the database: previews); with none, writes the
                                                    clients rowstile.toml names
     rowstile init    [--schema app,...] [--users app.users] [--role app_user] [--out db]
                                                    a first policy from the database's tables (every schema of
@@ -104,6 +105,7 @@ rowstile.toml:
     rust = "src/authz.rs"                  # the policy's names, for the Rust SDK
     electric = "src/shapes.gen.ts"         # the synced tables' shapes, for a proxy in front of Electric
     zero = "src/zero.gen.ts"               # the sync index's tables and filters, for a Zero schema
+    powersync = "powersync/sync-config.yaml"   # PowerSync's streams of the mirrored tables (reads the database)
     elixir = "lib/my_app/authz.ex"         # the policy's names, for the Elixir SDK (MyApp.Authz)
     php = "database/authz.php"             # the policy's names, for the PHP SDK
     [migrations]
@@ -534,8 +536,12 @@ class Config:
         return ENV.files(["DATABASE_URL"] if os.environ.get("DATABASE_URL") else PG_NAMES)
 
 
+POWERSYNC_NEEDS_DB = (
+    "rowstile client powersync reads each mirror's columns from the database: give it one (--db, or database in "
+    "rowstile.toml), where the policy is applied"
+)
 # the languages rowstile client writes: for Ruby, the policy's names and their signatures (RBS)
-CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust", "elixir", "php", "electric", "zero")
+CLIENTS = ("py", "ts", "go", "csharp", "ruby", "rbs", "java", "rust", "elixir", "php", "electric", "zero", "powersync")
 # what rowstile.toml may hold: {setting: its type in words}, top-level and per [table]
 SETTINGS: dict[str, dict[str, str]] = {
     "": {"policy": "text", "tests": "a list of patterns", "database": "text"},
@@ -552,6 +558,7 @@ SETTINGS: dict[str, dict[str, str]] = {
         "php": "text",
         "electric": "text",
         "zero": "text",
+        "powersync": "text",
     },
     "migrations": {"tool": "text", "dir": "text", "lock": "text", "write_after": "a number"},
     "review": {"snapshot": "text"},
@@ -700,11 +707,36 @@ class Unreadable(Exception):
     """A file that is missing or can't be read: 'path: why'."""
 
 
-def write_clients(cfg: Config, text: str, files: dict[str, str]) -> list[str]:
+def mirror_columns_at(dsn: str | None, text: str, files: dict[str, str]) -> Callable[[], dict[str, list[str]]] | None:
+    """Each PowerSync mirror's columns, read from the database at dsn when asked (None: no database to read them in)."""
+    if dsn is None:
+        return None
+
+    def read() -> dict[str, list[str]]:
+        try:
+            conn = pgwire.connect(**pgwire.parse_dsn(dsn), on_notice=print_notice)
+        except (ValueError, OSError, pgwire.PgError, pgwire.ProtocolError) as e:
+            fail(cant_connect(e, dsn), 2)
+        try:
+            return transaction(conn, lambda db: database.mirror_columns(db, text, files), keep=False)
+        finally:
+            conn.close()
+
+    return read
+
+
+def write_clients(
+    cfg: Config, text: str, files: dict[str, str], columns: Callable[[], dict[str, list[str]]] | None = None
+) -> list[str]:
     """Writes the clients rowstile.toml names; returns the files that changed. Every client is made before any
-    file is opened: a mistake in the policy, or a language rowstile doesn't know, leaves the files as they were."""
+    file is opened: a mistake in the policy, or a language rowstile doesn't know, leaves the files as they were.
+    columns: each PowerSync mirror's columns, read from the database (powersync's streams need it)."""
+    if "powersync" in cfg.clients and columns is None:
+        fail(POWERSYNC_NEEDS_DB, 2)
     made = {
-        path: database.client(lang, text, files, cfg.java_class, cfg.elixir_module)
+        path: database.client(
+            lang, text, files, cfg.java_class, cfg.elixir_module, columns() if lang == "powersync" and columns else None
+        )
         for lang, path in cfg.clients.items()
     }
     written: list[str] = []
@@ -885,7 +917,8 @@ class Dev:
             if state != "unchanged":
                 self.lint = set(warnings)
             passed = self.tests(conn)
-            for path in write_clients(self.cfg, text, files):
+            columns = lambda: transaction(conn, lambda db: database.mirror_columns(db, text, files), keep=False)
+            for path in write_clients(self.cfg, text, files, columns):
                 self.say("ok", f"wrote {relative(path)}")
             return passed
         except Unreadable as e:
@@ -1269,9 +1302,11 @@ def main(argv: list[str]) -> None:
         if cmd == "client" and args[1:]:
             if args[0] not in CLIENTS:
                 fail(
-                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric or zero?",
+                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?",
                     2,
                 )
+            if args[0] == "powersync":
+                fail(POWERSYNC_NEEDS_DB, 2)
             _, text, files = policy_arg()
             sys.stdout.write(database.client(args[0], text, files, cfg.java_class, cfg.elixir_module))
             return
@@ -1304,7 +1339,9 @@ def main(argv: list[str]) -> None:
             )
         if cmd == "client" and not args and cfg.clients and cfg.policy and dsn is None:
             _, text, files = policy_arg()
-            write_clients(cfg, text, files)
+            # (PowerSync's streams list each mirror's columns: read in the database rowstile.toml names)
+            at = (cfg.database or os.environ.get("DATABASE_URL") or None) if "powersync" in cfg.clients else None
+            write_clients(cfg, text, files, mirror_columns_at(at, text, files))
             for path in cfg.clients.values():
                 print(f"wrote {relative(path)}")
             return
@@ -1460,17 +1497,30 @@ def main(argv: list[str]) -> None:
             sys.stdout.write(database.graph(text, files))
         elif cmd == "client":
             text, files = transaction(conn, database.applied, keep=False)
+
+            def columns() -> dict[str, list[str]]:
+                return transaction(conn, lambda db: database.mirror_columns(db, text, files), keep=False)
+
             if not args and cfg.clients:
-                write_clients(cfg, text, files)
+                write_clients(cfg, text, files, columns)
                 for path in cfg.clients.values():
                     print(f"wrote {relative(path)}")
                 return
             if not args or args[0] not in CLIENTS:
                 fail(
-                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric or zero?",
+                    "rowstile client: which language, py, ts, go, csharp, ruby, rbs, java, rust, elixir, php, electric, zero or powersync?",
                     2,
                 )
-            sys.stdout.write(database.client(args[0], text, files, cfg.java_class, cfg.elixir_module))
+            sys.stdout.write(
+                database.client(
+                    args[0],
+                    text,
+                    files,
+                    cfg.java_class,
+                    cfg.elixir_module,
+                    columns() if args[0] == "powersync" else None,
+                )
+            )
         elif cmd == "why":
             if not opts.get("--as"):
                 fail("rowstile why --as user:42 TYPE ID PERM", 2)

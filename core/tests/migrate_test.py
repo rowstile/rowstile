@@ -390,6 +390,12 @@ CASES += [
         SYNCED,
         edit(SYNCED, ("sync app.files : view\n", "sync app.files : view by folder\n")),
     ),
+    (
+        "a synced table mirrored, for PowerSync",
+        "docs",
+        SYNCED,
+        edit(SYNCED, ("sync app.files : view\n", "sync app.files : view mirrored\n")),
+    ),
     ("the sync index kept after commit", "docs", SYNCED, SYNCED + "sync after commit\n"),
 ]
 # functions made with another search path than the migration's (the schemas on it changed since: one made, one
