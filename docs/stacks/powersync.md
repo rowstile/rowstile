@@ -108,8 +108,9 @@ export async function signedIn(headers: Headers): Promise<SyncPrincipal> {
 }
 ```
 
-Nobody gets no token (401), nor does a session limited by scopes or viewing as someone (403): the index holds what
-each principal may read, without scopes. The token names the principal: `sub` its id, `principal_type` its type.
+A signed-out request gets no token (401), and neither does a session limited by scopes or viewing as someone (403):
+the index holds what each principal may read, without scopes. The token names the principal: `sub` its id,
+`principal_type` its type.
 
 ```ts
     const who = await signedIn(headersOf(req));
