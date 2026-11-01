@@ -15,6 +15,13 @@ object copies that object's readers in (or gives its group key), a condition on 
 and `and` or `not` between parts that depend on who asks expands them to principal keys (`expanded` keeps what
 each such row was worked out from, to work it out again when someone gains or loses one of those keys).
 
+Keyed by a type's inheritance (`sync app.files : view by folder`), the readers name an object's key for a
+permission that inherits (`folder#view:7`), which no principal holds: `inherits(key, source)` says whose own keys it
+takes (7 itself, and each folder above it that it inherits from, as the closure table has them) and `given(source,
+key)` what each of those gives itself, before inheritance. The engines' filter joins through them (sync_filter_sql),
+so a principal holds its groups' keys only, a move rewrites inherits (as its closure rows changed), and a share on
+a folder one row of given.
+
 Every trigger that may change access calls authz_int.changed(); with sync it also notes the objects in
 authz_int.sync_dirty, and a deferred constraint trigger works their readers out again at commit, with what reads
 them, in the same transaction, writing the difference.
@@ -90,8 +97,6 @@ CLOCK = frozenset(
         "localtimestamp",
     }
 )
-# the tables of authz_sync that aren't a type's readers
-SYNC_TABLES = ("keys", "groups", "expanded", "definitions")
 LOCK_KEYS = "sync#keys"  # the lock row of groups and keys (no type is named so: a type's name holds no #)
 LOCK_WORK = "sync#work"  # after commit: the lock row of the worker, one at a time
 STRIPES = 4096  # the lock rows of the objects and keys a commit works out: each string's hash, modulo this
@@ -138,6 +143,9 @@ class SyncState:
     making: list[tuple[Name, By]] = field(default_factory=list)  # being made: one asked for again loops (AZ807)
     edges: list[Edge] = field(default_factory=list)
     groups: dict[Name, None] = field(default_factory=dict)  # keyed pairs a derivation gave the key of
+    keyed: dict[Name, None] = field(default_factory=dict)  # pairs keyed by their inheritance (by folder)
+    inherits: dict[Name, str] = field(default_factory=dict)  # such a pair -> its function: whose own keys each inherits
+    given: dict[Name, str] = field(default_factory=dict)  # a pair whose own keys are a source -> its function
     shared: dict[tuple[str, str], None] = field(default_factory=dict)  # (type, relation) shares read
     links: dict[tuple[str, str], None] = field(default_factory=dict)  # (type, relation) with link subjects read
     trees: dict[str, None] = field(default_factory=dict)  # closure tables read
@@ -377,6 +385,9 @@ class SyncMixin(Core):
         for s in self.pol.syncs.values():
             t = self.sync_type(s)
             st.tops[t.name] = Deriver(self, st, frozenset({s.by}) if s.by else NO_BY, s).top(t, self.sync_expr(s), s)
+        # keyed by inheritance: whose own keys each object inherits, and what each gives itself
+        for pair in list(st.keyed):
+            d.inheritance(pair)
         # the groups the readers name, and those they name in turn
         done: set[Name] = set()
         while True:
@@ -404,11 +415,16 @@ class SyncMixin(Core):
         st = self.sync_build()
         return sorted({g[0] for g in st.groups})
 
+    def sync_inherit_types(self) -> list[str]:
+        """The types keyed by their inheritance, or whose own keys such a type inherits (given, inherits)."""
+        st = self.sync_build()
+        return sorted({p[0] for p in st.given} | {p[0] for p in st.inherits})
+
     def sync_relevant(self) -> list[str]:
         """The types whose changes may change the index: synced, groups, principals, and what they read."""
         st = self.sync_build()
         out = set(st.tops) | set(self.sync_group_types()) | {t.name for t in self.sync_principals()}
-        out |= {e.src for e in st.edges}
+        out |= set(self.sync_inherit_types()) | {e.src for e in st.edges}
         return sorted(out)
 
     def sync_hash(self) -> str:
@@ -447,6 +463,11 @@ class SyncMixin(Core):
                 if self.pol.sync_after_commit is not None
                 else []
             )
+            + (
+                [("inherits", ["key", "source"], ["text"] * 2), ("given", ["source", "key"], ["text"] * 2)]
+                if st.keyed
+                else []
+            )
             + [
                 (t.name + "__readers", [c for c, _ in t.key] + ["key"], [ty for _, ty in t.key] + ["text"])
                 for t in synced
@@ -464,6 +485,20 @@ CREATE TABLE IF NOT EXISTS authz_sync.pending (id bigint GENERATED ALWAYS AS IDE
   at timestamptz NOT NULL DEFAULT clock_timestamp(), type text NOT NULL, ids text[] NOT NULL);
 ALTER TABLE authz_sync.pending REPLICA IDENTITY FULL;"""
             if self.pol.sync_after_commit is not None
+            else ""
+        )
+        inherit = (
+            """
+-- keyed by inheritance (by folder): for each key of a permission that inherits (folder#view:7), the objects whose own
+-- keys it takes (7 itself, and each one above it it inherits from: folder#view:3) ...
+CREATE TABLE IF NOT EXISTS authz_sync.inherits (key text NOT NULL, source text NOT NULL, PRIMARY KEY (key, source));
+CREATE INDEX IF NOT EXISTS inherits_by_source ON authz_sync.inherits (source);
+ALTER TABLE authz_sync.inherits REPLICA IDENTITY FULL;
+-- ... and the keys each of those gives itself, before what it inherits (folder#view:3: user:5, team#member:4)
+CREATE TABLE IF NOT EXISTS authz_sync.given (source text NOT NULL, key text NOT NULL, PRIMARY KEY (source, key));
+CREATE INDEX IF NOT EXISTS given_by_key ON authz_sync.given (key);
+ALTER TABLE authz_sync.given REPLICA IDENTITY FULL;"""
+            if st.keyed
             else ""
         )
         tables = []
@@ -518,7 +553,7 @@ CREATE INDEX IF NOT EXISTS expanded_by_key ON authz_sync.expanded (key);
 ALTER TABLE authz_sync.expanded REPLICA IDENTITY FULL;
 -- what the rows were worked out by: an apply that changes it works them out again (by difference)
 CREATE TABLE IF NOT EXISTS authz_sync.definitions (name text PRIMARY KEY, hash text NOT NULL);
-ALTER TABLE authz_sync.definitions REPLICA IDENTITY FULL;{pending}
+ALTER TABLE authz_sync.definitions REPLICA IDENTITY FULL;{pending}{inherit}
 {chr(10).join(tables)}
 REVOKE ALL ON ALL TABLES IN SCHEMA authz_sync FROM PUBLIC;"""
 
@@ -667,6 +702,90 @@ $f$;"""
     def readers_rows_sql(self, t: Type, ids: str) -> str:
         st = self.sync_build()
         return f"SELECT f.o_id, f.o_key, f.o_dep FROM {st.tops[t.name]}({self.typed(t, ids)}) f"
+
+    def inherit_ids_sql(self, u: Type) -> str:
+        """Every id of u whose given or inherits rows may be held (text): its rows, those its link tables and shares
+        name (a share gives keys before its object has a row), and those the index holds now."""
+        st = self.sync_build()
+        parts = [f"SELECT {self.key_text(u, 'x')} FROM {qt(u.table)} x"]
+        for r in u.relations.values():
+            for src in r.sources:
+                if src.kind == "table":
+                    parts.append(f"SELECT {self.ref_text(u, 'x', src.obj_col)} FROM {qt(src.table)} x")
+        parts.append(f"SELECT g.object_id FROM authz.shares g WHERE g.object_type = {lit(u.name)}")
+        heads = ", ".join(lit(f"{p[0]}#{p[1]}:") for p in dict.fromkeys([*st.given, *st.inherits]) if p[0] == u.name)
+        for table, col in (("given", "source"), ("inherits", "key")):
+            parts.append(
+                f"SELECT substr(x.{col}, strpos(x.{col}, ':') + 1) FROM authz_sync.{table} x "
+                f"WHERE left(x.{col}, strpos(x.{col}, ':')) = ANY (ARRAY[{heads}]::text[])"
+            )
+        return " UNION ".join(dict.fromkeys(parts))
+
+    def given_rows_sql(self, p: Name, ids: str) -> str:
+        """(source, key) of what the objects of p's type in ids (text[]) give themselves of p."""
+        st = self.sync_build()
+        return (
+            f"SELECT {lit(f'{p[0]}#{p[1]}:')} || f.o_id::text AS source, f.o_key AS key "
+            f"FROM {st.given[p]}({self.typed(self.T(p[0]), ids)}) f"
+        )
+
+    def inherits_rows_sql(self, p: Name, ids: str) -> str:
+        """(key, source) of whose own keys the objects of p's type in ids (text[]) inherit p from."""
+        st = self.sync_build()
+        return (
+            f"SELECT {lit(f'{p[0]}#{p[1]}:')} || f.o_id::text AS key, f.o_source AS source "
+            f"FROM {st.inherits[p]}({self.typed(self.T(p[0]), ids)}) f"
+        )
+
+    def inherit_sql(self) -> str:
+        """sync_process's part for what is keyed by inheritance: for the objects a transaction reached, what each gives
+        itself (given) and whose own keys each inherits (inherits), by difference. Neither reads the keys."""
+        st = self.sync_build()
+        out = []
+        for n in self.sync_inherit_types():
+            u = self.T(n)
+            body = []
+            for table, cols, pairs, rows in (
+                ("given", ("source", "key"), st.given, self.given_rows_sql),
+                ("inherits", ("key", "source"), st.inherits, self.inherits_rows_sql),
+            ):
+                a, b = cols
+                for p in pairs:
+                    if p[0] != n:
+                        continue
+                    body.append(
+                        f"""    WITH fresh AS MATERIALIZED ({rows(p, "v_part")}),
+    gone AS (DELETE FROM authz_sync.{table} x WHERE x.{a} IN (SELECT {lit(f"{p[0]}#{p[1]}:")} || v FROM unnest(v_part) v)
+             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.{a} = x.{a} AND f.{b} = x.{b}) RETURNING 1),
+    made AS (INSERT INTO authz_sync.{table} SELECT f.{a}, f.{b} FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
+    SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;"""
+                    )
+            out.append(
+                f"  -- {n}: what each gives itself, and whose own keys each inherits (keyed by inheritance)\n"
+                f"  v_ids := {self.todo_ids(u, self.inherit_ids_sql(u))};\n"
+                f"  FOR v_from IN 1 .. coalesce(cardinality(v_ids), 0) BY {BATCH} LOOP\n"
+                f"    v_part := v_ids[v_from : v_from + {BATCH - 1}];\n" + "\n".join(body) + "\n  END LOOP;"
+            )
+        return "\n".join(out)
+
+    def sync_filter_sql(self, t: Type, principal: Type, pid: str) -> str:
+        """The engines' filter of a synced type's rows for a principal (pid: SQL of its id, as text): those whose readers
+        hold a key it holds, or, keyed by inheritance, a key that inherits from an object that gives it one."""
+        st = self.sync_build()
+        cols = ", ".join(q(c) for c, _ in t.key)
+        row = cols if len(t.key) == 1 else f"({cols})"
+        held = (
+            f"(SELECT {q('key')} FROM authz_sync.{q('keys')} WHERE {q('principal_type')} = {lit(principal.name)} "
+            f"AND {q('principal_id')} = {pid})"
+        )
+        line = {self.sync_type(s).name: s for s in self.pol.syncs.values()}[t.name]
+        inherited = (
+            f" OR {q('key')} IN (SELECT {q('key')} FROM authz_sync.{q('inherits')} WHERE {q('source')} IN "
+            f"(SELECT {q('source')} FROM authz_sync.{q('given')} WHERE {q('key')} IN {held}))"
+            if line.by is not None and st.keyed
+            else ""
+        )
+        return f"{row} IN (SELECT {cols} FROM {self.readers_table(t)} WHERE {q('key')} IN {held}{inherited})"
 
     def spread_sql(self) -> str:
         """authz_int.sync_spread(tx, round): what reads the objects a transaction reached in a round (Edge), added as
@@ -908,7 +1027,7 @@ BEGIN
 {self.locks_sql()}
   v_all := (SELECT count(DISTINCT x.type) FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id = '*'
             AND x.type = ANY ({types})) = {len(principals)};
-{chr(10).join(groups)}
+{chr(10).join(groups)}{chr(10) + self.inherit_sql() if st.keyed else ""}
   -- the keys, where the groups' rows or the principals changed: under one lock row, taken last (nothing after it waits
   -- for another lock)
   IF EXISTS (SELECT 1 FROM authz_int.sync_moved m WHERE m.txid = v_tx)
@@ -1008,6 +1127,22 @@ END $f$;"""
             for t in self.sync_principals()
         )
         out.append(("keys", "SELECT principal_type, principal_id, key FROM authz_sync.keys", fresh_keys))
+        if st.keyed:
+            ids_of = {n: f"ARRAY({self.inherit_ids_sql(self.T(n))})" for n in self.sync_inherit_types()}
+            out.append(
+                (
+                    "what each object gives itself",
+                    "SELECT source, key FROM authz_sync.given",
+                    " UNION ".join(self.given_rows_sql(p, ids_of[p[0]]) for p in st.given),
+                )
+            )
+            out.append(
+                (
+                    "whose own keys each object inherits",
+                    "SELECT key, source FROM authz_sync.inherits",
+                    " UNION ".join(self.inherits_rows_sql(p, ids_of[p[0]]) for p in st.inherits),
+                )
+            )
         for n in st.tops:
             t = self.T(n)
             every = f"ARRAY({self.readers_ids_sql(t)})"
@@ -1042,7 +1177,19 @@ END $f$;"""
             + ", ".join(lit(n) for n in st.tops)
             + "]::text[]);"
         )
-        every = sorted(set(self.sync_group_types()) | {t.name for t in self.sync_principals()} | set(st.tops))
+        if st.keyed:
+            for table, col, pairs in (("given", "source", st.given), ("inherits", "key", st.inherits)):
+                heads = ", ".join(lit(f"{p[0]}#{p[1]}:") for p in pairs)
+                stale += (
+                    f"\n  DELETE FROM authz_sync.{table} x WHERE left(x.{col}, strpos(x.{col}, ':')) <> ALL "
+                    f"(ARRAY[{heads}]::text[]);"
+                )
+        every = sorted(
+            set(self.sync_group_types())
+            | {t.name for t in self.sync_principals()}
+            | set(st.tops)
+            | set(self.sync_inherit_types())
+        )
         marks = (
             "    INSERT INTO authz_int.sync_todo (txid, type, id) SELECT txid_current(), x, '*' FROM unnest(ARRAY["
             + ", ".join(lit(n) for n in every)
@@ -1297,9 +1444,19 @@ class Deriver:
 
     def __init__(self, c: SyncMixin, st: SyncState, by: By = NO_BY, line: Sync | None = None) -> None:
         # by: the types whose inheritance is keyed (`by folder`): a permission of theirs that inherits gives its
-        # group key (folder#view:7), not the readers of each folder above copied in; line: the sync line saying so
+        # key (folder#view:7), not the readers of each folder above copied in; line: the sync line saying so
         self.c, self.st, self.by, self.line = c, st, by, line
-        self.keyed_by: set[Name] = set()  # the pairs keyed so, so far
+        self.keyed_by: set[Name] = set()  # the pairs keyed so, so far (or reached under an and / not: copied there)
+        self.owner: Deriver | None = None  # under an and / not that expands: the line's deriver, whose by this copies
+
+    def copied(self) -> Deriver:
+        """The deriver of the parts of an `and` / `not` between parts that depend on who asks: their readers are
+        expanded from the keys, which hold no key of inheritance, so what inherits is copied in there."""
+        if not self.by:
+            return self
+        d = Deriver(self.c, self.st, NO_BY, self.line)
+        d.owner = self
+        return d
 
     # --- names and empty answers ---
     def name(self, t: Type, name: str) -> str:
@@ -1308,12 +1465,13 @@ class Deriver:
 
     def keyed(self, st: str, name: str) -> bool:
         """Whether holding st.name on an object is a key (st#name:10): a group's (keyed), or, keyed by st's
-        inheritance, a permission of st that inherits (whose holders, worked out as a group, are the readers of
-        each object above copied in)."""
+        inheritance, a permission of st that inherits (whose holders inherits and given say: inheritance). Under an
+        `and` / `not` that expands (owner set), such a permission is copied in, and only noted as reached."""
         if self.c.keyed(st, name):
             self.st.groups[(st, name)] = None
             return True
-        if st not in self.by or (st, name) not in self.c.recursive:
+        line = self.owner or self
+        if st not in line.by or (st, name) not in self.c.recursive:
             return False
         if not self.c.monotone(self.c.T(st), name):
             assert self.line is not None
@@ -1324,8 +1482,10 @@ class Deriver:
                 "AZ810",
                 span=self.line.by_span,
             )
-        self.st.groups[(st, name)] = None
-        self.keyed_by.add((st, name))
+        line.keyed_by.add((st, name))
+        if self.owner is not None:
+            return False
+        self.st.keyed[(st, name)] = None
         return True
 
     @staticmethod
@@ -1465,6 +1625,67 @@ class Deriver:
             outs.append(f"SELECT a.id, b.key, b.d FROM anc a JOIN b{i} b ON a.atype = {lit(tn)} AND a.aid = b.id::text")
         return f"WITH {', '.join(ctes)}\n  " + (union(outs) if outs else self.none(t))
 
+    def inheritance(self, pair: Name) -> None:
+        """A permission keyed by its inheritance (folder#view:7): the function of whose own keys each object takes
+        (inherits: each one above it in its closure table, itself among them, by the permission of the recursion
+        that starts there), and of each such source, what it gives itself (given: its starting items, those of a
+        permission one walk covers written out in place, as recursive_rows reads them; what names another such
+        permission is copied in, so that the engines' filter needs no deeper join)."""
+        c, st = self.c, self.st
+        t = c.T(pair[0])
+        perm = t.perms[pair[1]]
+        key = c.recursive[pair]
+        members = c.scc_members[key]
+        edges = c.scc_edges(key)
+        where = ""
+        if t.where:
+            c.sync_cond_ok(t.where, t.loc, f"the where of {t.name}")
+            where = f" WHERE {c.where_holds(t, 'x.id')}"
+        entry = f"WITH o AS (SELECT DISTINCT x.id FROM unnest(p_ids) x(id){where})"
+        sources: list[tuple[Name, list[Expr]]]
+        if len(members) == 1:
+            tree = c.trees[(t.name, edges)]
+            sources = [(pair, c.start_items(t, perm, edges))]
+            body = (
+                f"SELECT c.descendant AS id, {lit(f'{t.name}#{pair[1]}:')} || c.ancestor::text AS source "
+                f"FROM authz_int.{q(tree)} c WHERE c.descendant IN (SELECT id FROM o)"
+            )
+        else:
+            tree = c.trees[key]
+            sources = [((tn, pn), c.base_items(c.T(tn), c.T(tn).perms[pn])) for tn, pn in members]
+            sources = [(p, items) for p, items in sources if items]
+            body = union(
+                [
+                    f"SELECT c.did::{t.pktype} AS id, {lit(f'{tn}#{pn}:')} || c.aid AS source FROM authz_int.{q(tree)} c "
+                    f"WHERE c.dtype = {lit(t.name)} AND c.did IN (SELECT id::text FROM o) AND c.atype = {lit(tn)}"
+                    for (tn, pn), _ in sources
+                ]
+            )
+        st.trees[tree] = None
+        fn = f"authz_int.{q(f'sync_inherits:{t.name}.{pair[1]}')}"
+        st.inherits[pair] = fn
+        st.functions.append(
+            f"-- {t.name}.{pair[1]} ({perm.loc}): {perm.src}, keyed by its inheritance: whose own keys each object takes\n"
+            f"CREATE FUNCTION {fn}(p_ids {t.pktype}[]) RETURNS TABLE (o_id {t.pktype}, o_source text)\n"
+            f"LANGUAGE sql STABLE {DEF_CURRENT} AS $f$\n"
+            f"  {entry}\n  SELECT DISTINCT r.id, r.source FROM ({body}) r\n$f$;"
+        )
+        for p, items in sources:
+            if p in st.given:
+                continue
+            mt = c.T(p[0])
+            mp = mt.perms[p[1]]
+            rows = self.rows(mt, Or(items) if len(items) > 1 else items[0], "SELECT id FROM o", mp.loc)
+            gfn = f"authz_int.{q(f'sync_given:{mt.name}.{p[1]}')}"
+            st.given[p] = gfn
+            st.functions.append(
+                f"-- {mt.name}.{p[1]} ({mp.loc}): what each object gives itself, before what it inherits, as keys\n"
+                f"CREATE FUNCTION {gfn}(p_ids {mt.pktype}[]) RETURNS TABLE (o_id {mt.pktype}, o_key text)\n"
+                f"LANGUAGE sql STABLE {DEF_CURRENT} AS $f$\n"
+                f"  SELECT DISTINCT r.id, r.key FROM (\n  WITH o AS (SELECT DISTINCT x.id FROM unnest(p_ids) x(id))\n"
+                f"  {rows}) r WHERE NOT r.d\n$f$;"
+            )
+
     # --- dependents ---
     def edge(self, src: str, dst: str, sql: str, back: str) -> None:
         """dst's readers read src's objects through sql, and back (see Edge)."""
@@ -1536,7 +1757,7 @@ class Deriver:
                 if name in t.relations:
                     return self.rel_rows(t, t.relations[name], ids, loc)
                 if t.name in self.by and self.keyed(t.name, name):
-                    # keyed by its own inheritance: its holders are the object's group (folder#view:7)
+                    # keyed by its own inheritance: the object's key (folder#view:7), which inherits and given resolve
                     return (
                         f"SELECT {c.key(t, 'r')} AS id, {lit(f'{t.name}#{name}:')} || {c.key_text(t, 'r')} AS key, "
                         f"false AS d FROM {qt(t.table)} r WHERE {c.key_in(t, 'r', ids)}"
@@ -1557,7 +1778,6 @@ class Deriver:
         """The keys of whoever holds st.name on the objects in column u of the links l (id, u): its group key, or
         its holders' keys copied in."""
         if self.keyed(st, name):
-            self.st.groups[(st, name)] = None
             return f"SELECT {links}.id, {lit(f'{st}#{name}:')} || ({links}.{u})::text AS key, false AS d FROM {links}"
         f = self.fn(self.c.T(st), name, loc)
         return (
@@ -1721,16 +1941,18 @@ class Deriver:
             return self.rows(t, pos[0], rows, loc)
         if not pos:
             pos = [Cond(KEYWORDS["anyone"])]
+        # (expanded from the keys: what inherits is copied in here, keyed by it or not)
+        d = self.copied()
         n = self.st.next()
         i = f"i{n}"
         ps = [f"p{n}_{k}" for k in range(len(pos))]
         ns = [f"n{n}_{k}" for k in range(len(neg))]
         ctes = [f"{i} AS MATERIALIZED ({rows})"]
         ctes += [
-            f"{p} AS MATERIALIZED ({self.rows(t, x, f'SELECT id FROM {i}', loc)})" for p, x in zip(ps, pos, strict=True)
+            f"{p} AS MATERIALIZED ({d.rows(t, x, f'SELECT id FROM {i}', loc)})" for p, x in zip(ps, pos, strict=True)
         ]
         ctes += [
-            f"{m} AS MATERIALIZED ({self.rows(t, x, f'SELECT id FROM {i}', loc)})" for m, x in zip(ns, neg, strict=True)
+            f"{m} AS MATERIALIZED ({d.rows(t, x, f'SELECT id FROM {i}', loc)})" for m, x in zip(ns, neg, strict=True)
         ]
 
         def has(part: str, on: str, anyone: bool = False) -> str:

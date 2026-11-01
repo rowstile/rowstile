@@ -66,10 +66,10 @@ afterAll(async () => {
   await pool.end();
 });
 
-// The index in force is in the mode test.sh set up: keyed by folder, the folders' group keys; after commit, the table
-// of what waits for the worker; copied in, neither
+// The index in force is in the mode test.sh set up: keyed by folder, the files' readers name their folders' keys;
+// after commit, the table of what waits for the worker; copied in, neither
 test(`the index is kept in the mode the suite runs in (${MODE})`, async () => {
-  const [mode] = (await run(`SELECT EXISTS (SELECT 1 FROM authz_sync.keys WHERE key LIKE 'folder#%') AS keyed,
+  const [mode] = (await run(`SELECT EXISTS (SELECT 1 FROM authz_sync.file__readers WHERE key LIKE 'folder#%') AS keyed,
     to_regclass('authz_sync.pending') IS NOT NULL AS after`)).rows as { keyed: boolean; after: boolean }[];
   expect(mode).toEqual({ keyed: MODE === "keyed", after: MODE === "after" });
 });
@@ -424,11 +424,13 @@ test("E15: a session limited by scopes is refused, 403", async () => {
     expect.objectContaining({ code: "AZ703", detail: "invalid API key" })]);
 });
 
-// E16, keyed by folder alone: a file's readers name its folder's key, which each user holds for every folder they may
-// read: a move rewrites no file's readers, only keys, and the shapes follow it as they do the files' readers
+// E16, keyed by folder alone: a file's readers name its folder's key, which no user holds: the index says whose own
+// keys it inherits and what each folder gives itself, and the filter joins through them. A move rewrites no file's
+// readers and no key, only what the folders below inherit, and the shapes follow it as they do the files' readers
 test.runIf(MODE === "keyed")("E16: keyed by folder, a folder moved out of reach and back: the files below it leave and return", async () => {
-  const readers = async () => ((await run(
-    "SELECT md5(string_agg(id || key || xmin, ',' ORDER BY id, key)) AS m FROM authz_sync.file__readers")).rows as { m: string }[])[0]!.m;
+  const md5 = async (sql: string) => ((await run(`SELECT md5(string_agg(x, ',' ORDER BY x)) AS m FROM (${sql}) z(x)`)).rows as { m: string }[])[0]!.m;
+  const readers = () => md5("SELECT id || key || xmin FROM authz_sync.file__readers UNION ALL SELECT principal_id || key || xmin FROM authz_sync.keys");
+  expect(await md5("SELECT key FROM authz_sync.keys WHERE key LIKE 'folder#%'")).toBeNull();   // no user holds a folder's key
   await asListed();
   const before = await readers();
   try {
@@ -441,7 +443,7 @@ test.runIf(MODE === "keyed")("E16: keyed by folder, a folder moved out of reach 
   }
   await live["2"]!.file.holds([1, 2, 3, 6]);
   await asListed();
-  expect(await readers()).toBe(before);                          // the moves wrote no file's readers
+  expect(await readers()).toBe(before);                          // the moves wrote no file's readers, and no key
 });
 
 // E17, after commit alone: the worker keeps the index, so a change reaches the shapes once it has run. Stopped (a

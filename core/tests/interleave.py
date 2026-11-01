@@ -29,8 +29,9 @@ transactions at once:
     condition reads the tree's own table: a box or a shelf created, the two moved (a loop through both), a box
     sealed (a write to the tree's own table that changes what the condition says of other rows), and a box's id
     changed (10 pairs);
-  - docs_by and docs_after: the docs world with its sync index keyed by folder (a move writes keys, and no file's
-    readers), and kept after commit by a worker, which runs after each schedule (36 pairs each).
+  - docs_by and docs_after: the docs world with its sync index keyed by folder (a move writes what the folders below
+    inherit, and no file's readers nor keys), and kept after commit by a worker, which runs after each schedule (36
+    pairs each).
 
 The orders: the scheduler sends one step at a time and waits until every session is either done with its statement
 or waiting for a lock, which a third connection tells by `pg_blocking_pids`. A waiting session can't be sent its
@@ -545,8 +546,8 @@ BOXES = World(
     op=boxes_op,
 )
 
-# the docs app with its index keyed by folder (a move writes keys, not readers), and kept after commit by a worker,
-# which runs after each schedule before the index is compared with a rebuild
+# the docs app with its index keyed by folder (a move writes what is inherited, not readers), and kept after commit by
+# a worker, which runs after each schedule before the index is compared with a rebuild
 DOCS_BY = replace(
     DOCS,
     name="docs_by",

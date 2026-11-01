@@ -50,6 +50,8 @@ Every table there has `REPLICA IDENTITY FULL`, which Electric asks for. <!-- che
 | `expanded` | `object_type`, `object_id`, `key`: what a row's readers were worked out from, where they are principals |
 | `definitions` | what the index was worked out by, so that applying knows whether to work it out again |
 | `pending` | where the policy says `sync after commit`: the objects each committed change reached, which the worker hasn't worked in yet |
+| `inherits` | keyed by folder: `key`, `source`: for each folder's key, the folders whose own keys it takes (itself, and each one above it that it inherits from) |
+| `given` | keyed by folder: `source`, `key`: the keys each folder gives itself, before what it inherits |
 
 A key is one of these:
 
@@ -57,7 +59,8 @@ A key is one of these:
 - every signed-in principal of a type: `user:*`;
 - `anyone`;
 - a group: the holders of a relation or permission of a group's object, `team#member:10` or `org#admin:1`;
-- keyed by folder, the holders of a permission that inherits, on one object: `folder#view:7`.
+- keyed by folder, the holders of a permission that inherits, on one object: `folder#view:7`. No principal holds
+  it: `inherits` and `given` say who does ([Keyed by folder](#keyed-by-folder)).
 
 A principal holds its own key, its type's `user:*`, `anyone`, and the keys of the groups it is in, through groups
 inside groups. <!-- checked: tests/sync.sh "an org admin holds the org's group key, and a team's member its team's and the teams it sits in"; tests/sync.sh "a new user holds keys: their own, every user's, anyone's, and their team's" -->
@@ -74,6 +77,9 @@ WHERE id IN (SELECT r.id FROM authz_sync.file__readers r
              WHERE r.key IN (SELECT k.key FROM authz_sync.keys k
                              WHERE k.principal_type = 'user' AND k.principal_id = '42'))
 ```
+
+Keyed by folder, the filter has a second way in: a reader that inherits from a folder that gives the principal one
+of its keys ([Keyed by folder](#keyed-by-folder)).
 
 For every principal with a row, those are the rows `authz.list` gives it, without what comes only through a caveat
 or a link (below). <!-- checked: tests/sync.sh "applied: for every user, the index holds what authz.list gives (files, and folders by their select rule)"; tests/difftest.py "the sync index: " -->
@@ -99,35 +105,59 @@ Copied in, a file's readers are those of each folder above it: a move rewrites t
 moved folder, and a share on a folder those of every file below it. With `by folder`, the readers of what inherits
 are keys of their own instead:
 
-- a file's readers are its own keys and its folder's group keys (`folder#view:7`, and `folder#edit:7` where it reads
-  edit), and a folder's, its own (`folder#view:7`); <!-- checked: tests/sync.sh "keyed by folder: a file's readers are its own keys and its folder's group keys, not the readers of each folder above"; tests/sync.sh "... a folder's, its own group key" -->
-- each principal holds the key of every folder it may read, worked out from the readers of each folder above, as
-  the groups' are. <!-- checked: tests/sync.sh "... and each user holds the key of every folder they may read" -->
+- a file's readers are its own keys and its folder's keys (`folder#view:7`, and `folder#edit:7` where it reads
+  edit), and a folder's, its own (`folder#view:7`); <!-- checked: tests/sync.sh "keyed by folder: a file's readers are its own keys and its folder's keys, not the readers of each folder above"; tests/sync.sh "... a folder's, its own key" -->
+- `inherits` says whose own keys a folder's key takes: the folder itself, and each folder above it that it inherits
+  from, as the policy's inheritance reaches them (where it stops, `{inherit}`, it stops); <!-- checked: tests/sync.sh "... Design docs' view inherits the own keys of Design docs, Engineering and Company: the folders above it"; tests/sync.sh "... Secrets doesn't inherit: its view takes its own keys only" -->
+- `given` says what each folder gives itself, before what it inherits: its owner, the org's admins, a team or a
+  user it is shared with; <!-- checked: tests/sync.sh "... and Engineering gives view itself to its owner, the org's admins, and the team that may edit it" -->
+- each principal holds only its own keys and its groups', as copied in. <!-- checked: tests/sync.sh "... and no principal holds a folder's key: each holds its own and its groups', as copied in" -->
 
-So a move rewrites no file's readers: the keys of those who gain or lose the moved folders change. A share on a
-folder changes the keys of whom it shares with. <!-- checked: tests/sync.sh "... and the move rewrote no file's readers: only the keys of those who gain or lose the folder"; tests/sync.sh "keyed by folder: a share on Keys: frank reads the file in it, through his keys alone" -->
-The engines' filter is the same one join. What it costs: each principal's keys grow with the folders it may read
+So a move rewrites no file's readers, no key and nothing a folder gives: only what the folders below it inherit,
+the rows their closure changed. <!-- checked: tests/sync.sh "... and the move rewrote no file's readers"; tests/sync.sh "... nor any key, group or folder's own keys: only what the folders below inherit" -->
+A share on a folder is one row of `given`, whatever is below it. A member joining or leaving a team changes their
+keys, as copied in. <!-- checked: tests/sync.sh "... nor any key, group or inheritance: one row of what Keys gives itself"; tests/sync.sh "... and it wrote the team's members and bob's keys alone: no readers, nor what folders give or inherit" -->
+
+The engines' filter takes a second way in, two more nested subqueries, which Electric follows as it does the first:
+
+<!-- not run: it reads the index keyed by folder, which the docs app the reference runs on doesn't keep; tests/sync.sh asks it of every user -->
+```sql
+SELECT id FROM app.files
+WHERE id IN (SELECT r.id FROM authz_sync.file__readers r
+             WHERE r.key IN (SELECT k.key FROM authz_sync.keys k
+                             WHERE k.principal_type = 'user' AND k.principal_id = '42')
+                OR r.key IN (SELECT i.key FROM authz_sync.inherits i
+                             WHERE i.source IN (SELECT g.source FROM authz_sync.given g
+                                                WHERE g.key IN (SELECT k.key FROM authz_sync.keys k
+                                                                WHERE k.principal_type = 'user' AND k.principal_id = '42'))))
+```
+
+`rowstile client electric` writes it for a line keyed by folder. <!-- checked: tests/sync.sh "keyed by folder: the engines' filter, as rowstile client electric writes it, gives every user what authz.list gives" -->
+What it costs: a principal's filter reaches the key of every folder it may read through these tables, and a key that
+every folder gives (the org's admins, through each folder's org) once for each folder above each one
 ([Limits](limits.md)).
 
 `by` names a type with a permission that inherits (`parent.view`, a recursion through several types too), which the
 synced permission reaches, through dots or as its own. Who holds it must be a union of what gives it: a recursion
 that joins parts that depend on who asks with `and` or `not` gives no key.
 Compiling refuses a line keyed by a type it can't be keyed by (AZ810). <!-- checked: tests/policy_errors.py "a sync line keyed by a type there isn't"; tests/policy_errors.py "a sync line keyed by a type whose inheritance it doesn't reach"; tests/policy_errors.py "a sync line keyed by an inheritance worked out with and / not" -->
-A permission of that type that doesn't inherit is copied in, as without `by`. <!-- checked: tests/difftest.py "the sync index: " -->
+A permission of that type that doesn't inherit is copied in, as without `by`, and so is one between parts that
+depend on who asks, joined with `and` or `not` (a deny): those readers are worked out from the keys. <!-- checked: tests/difftest.py "the sync index: " -->
+A policy keyed by folder before this layout (each principal held the key of every folder it may read) is worked out
+again when applied: its tables are kept. <!-- checked: tests/sync.sh "an index the earlier layout made (every folder's key among each principal's keys): applying works it out again, no folder's key or group left"; tests/sync.sh "... and kept its tables, the engines' shapes on them: inherits and given are made beside them" -->
 
 ## Up to date
 
 - In the same transaction as the change: each trigger that may change access notes what it changed, and at commit
   the readers of those objects, and of what reads them, are worked out again. <!-- checked: tests/sync.sh "a share made: frank reads file 13"; tests/sync.sh "a folder moved out of reach: the file in it leaves those who read it through Engineering"; tests/sync.sh "a team left: bob no longer reads file 13, reached through Backend; file 12, shared with him too, stays"; tests/sync.sh "a sub-team moved out: its members leave what the team above it was given"; tests/sync.sh "confidential set: the file leaves those who read it only through its folder"; tests/sync.sh "a transaction rolled back changes nothing in the index" -->
   What is written is the difference: a move rewrites the readers of what is below the moved folder (keyed by folder:
-  the keys of those who gain or lose it), a membership change the member's keys.
+  what the folders below inherit), a membership change the member's keys.
 - Two writers whose work meets queue, and the others don't wait for each other. At commit, before it reads
   anything, the work takes lock rows: of the objects it works out (what changed, and what reads it), and, shared, of
   those it reads (the folders above, what they link to); a lock row stands for every object and key whose name
   hashes to it, out of 4,096. A writer whose work writes what another's writes or reads waits for it to commit,
   then sees what it committed. <!-- checked: tests/sync.sh "a share on a Globex file doesn't wait for a share on Design docs to commit: their work meets nowhere"; tests/sync.sh "... one on a file in Design docs waits: its work writes what the other's does"; tests/sync.sh "a share on the folder another one moves into waits for the move: the move's work reads it"; tests/sync.sh "... then its work sees the move: carol reads the file in the moved folder" -->
-  The keys are kept under one lock row, taken last, by the work that changes them: a membership change, a share
-  to someone on a folder keyed by folder. <!-- checked: tests/interleave.py "the sync index doesn't match a rebuild" -->
+  The keys are kept under one lock row, taken last, by the work that changes them: a membership change. <!-- checked: tests/interleave.py "the sync index doesn't match a rebuild" -->
   A policy whose synced permissions join parts that depend on who asks with `and` or `not` (a deny) works its
   readers out from the keys: there every commit's work queues on that one lock row. <!-- checked: tests/sync.sh "the other forms, applied" -->
 - In REPEATABLE READ or SERIALIZABLE, a writer takes every lock row, and one whose snapshot is older than another's
@@ -229,7 +259,7 @@ CREATE PUBLICATION electric_publication_default FOR TABLE app.files, app.folders
 ```
 
 The publication holds the synced tables and the index's tables their filters read: `keys`, and each synced table's
-readers. Electric adds nothing to it in this mode: a table added later is synced from the next shape that asks
+readers; keyed by folder, `inherits` and `given` too. Electric adds nothing to it in this mode: a table added later is synced from the next shape that asks
 for it.
 
 A table with a masked column can't be in it whole: Electric asks for `REPLICA IDENTITY FULL`, and Postgres then
@@ -257,7 +287,8 @@ export const shapes = {
 } as const;
 ```
 
-`where` holds the index's one join for each type that signs in, `$1` the principal's id. Electric follows the
+`where` holds the index's join for each type that signs in, `$1` the principal's id (keyed by folder, with its
+second way in: change a line's `by` and write the shapes again). Electric follows the
 nested `IN (SELECT ...)`: a key gained or lost, a reader added or taken away, moves rows in or out of each shape
 that reads it, with no write to the rows. <!-- checked: integrations/electric/tests/shapes.test.ts "E2: a share made: the row arrives live; revoked: it leaves"; integrations/electric/tests/shapes.test.ts "E4: a team left" -->
 

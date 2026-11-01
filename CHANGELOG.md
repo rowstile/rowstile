@@ -21,8 +21,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   that start or end, and `authz.sync_verify()` compares the index with a rebuild. AZ801 to AZ809 are its mistakes
   ([The sync index](docs/reference/sync.md)).
 - The sync index, a preview, keyed by folder: `sync app.files : view by folder` names in each file's readers its
-  folder's key (`folder#view:7`), which each user holds for every folder they may read, so a move or a share on a
-  folder rewrites no file's readers (AZ810 where a line can't be keyed so). `sync after commit` has a worker,
+  folder's key (`folder#view:7`), and the index says whose own keys it inherits (`authz_sync.inherits`) and what
+  each folder gives itself (`authz_sync.given`), which the engines' filter joins through: a move rewrites no file's
+  readers and no key, only what the folders below inherit, and a share on a folder is one row, whatever is below it;
+  each user holds their own and their groups' keys, as copied in (AZ810 where a line can't be keyed so). `sync after commit` has a worker,
   `authz.sync_work()`, keep the index after each change commits, so writers don't wait for it;
   `authz.sync_behind()` says how late it is. In the same transaction, writers whose work on the index meets
   nowhere no longer wait for each other ([The sync index](docs/reference/sync.md#keyed-by-folder)).

@@ -1802,6 +1802,28 @@ class ClientNames(unittest.TestCase):
             },
         )
         self.assertIn("export type SyncedTable = keyof typeof shapes;", made)
+        # keyed by folder: a second way in, through what a folder's key inherits and what each folder gives itself;
+        # a line that isn't keyed keeps the one join
+        keyed = (
+            "app role app_user\nsync role sync_engine\ntype user = app.users\n"
+            "type folder = app.folders\n  parent : folder = parent_id\n  owner : user = owner_id\n"
+            "  can view = owner or parent.view\n"
+            "type file = app.files\n  folder : folder = folder_id\n  can view = folder.view\n"
+            "sync app.files : view by folder\nsync app.folders : view\n"
+        )
+        where = json.loads(
+            search(r"export const shapes = (\{.*\}) as const;\n", database.client("electric", keyed), re.S).group(1)
+        )
+        self.assertEqual(
+            where["app.files"]["where"]["user"],
+            '"id" IN (SELECT "id" FROM authz_sync."file__readers" WHERE "key" IN (SELECT "key" FROM authz_sync."keys" '
+            'WHERE "principal_type" = \'user\' AND "principal_id" = $1) OR "key" IN (SELECT "key" FROM '
+            'authz_sync."inherits" WHERE "source" IN (SELECT "source" FROM authz_sync."given" WHERE "key" IN '
+            '(SELECT "key" FROM authz_sync."keys" WHERE "principal_type" = \'user\' AND "principal_id" = $1))))',
+        )
+        self.assertEqual(
+            where["app.folders"]["where"]["user"], '"id" ' + join.format(cols='"id"', t="folder", p="user")
+        )
         # a policy that syncs nothing has no shapes
         self.assertIn("export const shapes = {} as const;", database.client("electric", self.CASES))
 

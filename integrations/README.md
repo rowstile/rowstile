@@ -87,7 +87,9 @@ owner's connection); 16 as the routes meet it (AZ703, AZ709, a hidden row).
 The suite runs whole in each of the index's modes, which `SYNC_MODE` names: `copied` (the default), `keyed` (`by
 folder` on the files' and the folders' sync lines) and `after` (`sync after commit`). In another mode than the
 default, `test.sh` writes that mode's policy from `db/policy.authz` and the migration `rowstile migrate` writes to
-it from the lock file, and runs it after the app's migrations, as an app changing its sync lines would. After
+it from the lock file, and runs it after the app's migrations, as an app changing its sync lines would. Keyed by
+folder, the files' and the folders' filters take a second way in, through two more of the index's tables: the run
+writes the app's shapes again (`src/shapes.gen.ts`, put back after) and adds those tables to the publication. After
 commit, a worker beside the app runs `authz.sync_work()` in a loop, and a check that needs the index to hold every
 change so far waits for its next run. E16 runs keyed by folder only, E17 after commit only, and a first check says
 the index in force is in the mode named. Each pull request runs the three modes, a job each; every night they run

@@ -681,7 +681,9 @@ def intact(db: Db, sql: str, compiler: Compiler) -> bool:
     # the sync index's tables, where the policy keeps one (a preview): apply makes them again if one is gone
     if compiler.pol.syncs and not all(
         there(db, f"authz_sync.{q(n)}")
-        for n in ["keys", "groups", "expanded", "definitions"] + [t + "__readers" for t in compiler.sync_build().tops]
+        for n in ["keys", "groups", "expanded", "definitions"]
+        + (["inherits", "given"] if compiler.sync_build().keyed else [])
+        + [t + "__readers" for t in compiler.sync_build().tops]
     ):
         return False
     # each rule on a whole row is a policy named authz_<command> (output.compile)

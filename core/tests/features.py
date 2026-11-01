@@ -416,7 +416,15 @@ FEATURES: list[Feature] = [
         (
             T("sync.sh", "keyed by folder, applied: for every user, the index holds what authz.list gives"),
             T("sync.sh", "... and the move rewrote no file's readers"),
-            T("sync.sh", "keyed by folder: a share on Keys: frank reads the file in it, through his keys alone"),
+            T(
+                "sync.sh",
+                "keyed by folder: a share on Keys: frank reads the file in it, and no file's readers were written",
+            ),
+            T(
+                "sync.sh",
+                "keyed by folder: the engines' filter, as rowstile client electric writes it, gives every user",
+            ),
+            T("sync.sh", "an index the earlier layout made (every folder's key among each principal's keys)"),
             T("policy_errors.py", "a sync line keyed by a type whose inheritance it doesn't reach"),
             T("policy_errors.py", "a sync line keyed by an inheritance worked out with and / not"),
             Check(ELECTRIC, "E16: keyed by folder, a folder moved out of reach and back"),
