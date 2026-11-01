@@ -48,7 +48,11 @@ beforeAll(async () => {
     const s = app.listen(Number(process.env.CONFORMANCE_APP_PORT), "127.0.0.1", () => resolve(s));
   });
   await seed();
+  // after commit, the shapes open once the worker has worked the world in: Electric 1.8.1 can drop a shape opened
+  // while its filter's tables are written (its subquery's materializer meets a row twice, "Key ... already exists"),
+  // and the client then gets must-refetch and syncs the shape again
   if (MODE === "after") worker = syncWorker(OWNER);
+  await settled();
   for (const user of USERS) live[user] = { file: new Live(user, "files"), folder: new Live(user, "folders") };
 });
 afterAll(async () => {
@@ -299,7 +303,9 @@ test("E12: lint, then rowstile apply and reapply leave the shapes as they are", 
   const errors = async () => ((await run("SELECT object || ': ' || problem AS p FROM authz.lint() WHERE severity = 'error'"))
     .rows as { p: string }[]).map((r) => r.p);
   expect(await errors()).toEqual([]);
+  // the shapes as E12 starts: their handles, and how many controls each was sent so far
   const handles = Object.fromEntries(USERS.map((u) => [u, live[u]!.file.stream.shapeHandle]));
+  const sent = Object.fromEntries(USERS.map((u) => [u, live[u]!.file.controls.length]));
   // as whoever runs the database: what the app's owner can't do to a role
   const admin = (sql: string) => owner((c) => c.query(sql), process.env.ROWSTILE_ADMIN_DSN ?? "");
   for (const [broken, mended, says] of [
@@ -332,12 +338,18 @@ test("E12: lint, then rowstile apply and reapply leave the shapes as they are", 
   const [{ verified }] = (await run("SELECT authz.sync_verify() AS verified")).rows as { verified: boolean }[];
   expect(verified).toBe(true);
   // the shapes go on as they were: a change after the applies arrives, on the same handles, with nothing refetched
-  await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '1')");
-  await live["1"]!.file.holds([1, 2, 3, 4, 6]);
-  await asListed();
-  expect(Object.fromEntries(USERS.map((u) => [u, live[u]!.file.stream.shapeHandle]))).toEqual(handles);
-  for (const u of USERS) expect([u, live[u]!.file.controls.filter((c) => c === "must-refetch")]).toEqual([u, []]);
-  await run("SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '1')");
+  const unshare = "SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '1')";
+  try {
+    await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '1')");
+    await live["1"]!.file.holds([1, 2, 3, 4, 6]);
+    await asListed();
+    expect(Object.fromEntries(USERS.map((u) => [u, live[u]!.file.stream.shapeHandle]))).toEqual(handles);
+    for (const u of USERS) {
+      expect([u, live[u]!.file.controls.slice(sent[u]).filter((c) => c === "must-refetch")]).toEqual([u, []]);
+    }
+  } finally {
+    await run(unshare);
+  }
   await live["1"]!.file.holds([1, 2, 3, 6]);
 });
 
