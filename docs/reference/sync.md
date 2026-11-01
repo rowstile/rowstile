@@ -17,6 +17,14 @@ sync app.files : view        -- each file's readers hold view on it
 sync app.folders             -- no permission: the table's select rule
 ```
 
+Two words change the way the index is worked out, not what it says:
+
+<!-- not run: tests/sync.sh applies these lines to the docs app, in its sections "keyed by folder" and "after commit" -->
+```authz
+sync app.files : view by folder   -- a file's readers name its folder's key, which its readers hold
+sync after commit                 -- a worker keeps the index after each change commits
+```
+
 - `sync role` names the role the engine connects as. Make it for the engine: `CREATE ROLE sync_engine LOGIN
   REPLICATION BYPASSRLS`. It can't be the app role or PUBLIC (AZ803). <!-- checked: tests/policy_errors.py "the app role as the sync role"; tests/policy_errors.py "PUBLIC as the sync role" -->
   Applying refuses a role that isn't there, one that is a member of the app role or has it as a member, and one
@@ -24,6 +32,9 @@ sync app.folders             -- no permission: the table's select rule
 - `sync schema.table : permission` names a type's table, one line each, and the permission its readers hold. With
   no permission, they hold the table's select rule, which the table must have (AZ801). <!-- checked: tests/policy_errors.py "a sync line naming no permission, for a table without a select rule"; tests/policy_errors.py "a sync line naming a permission its type hasn't" -->
 - Sync lines need a sync role, and a sync role needs a sync line (AZ802). <!-- checked: tests/policy_errors.py "sync lines and no sync role"; tests/policy_errors.py "a sync role and nothing synced" -->
+  So does `sync after commit`. <!-- checked: tests/policy_errors.py "sync after commit and nothing synced" -->
+- `by folder`, on a sync line, keys its readers by a type's inheritance ([Keyed by folder](#keyed-by-folder)).
+- `sync after commit`, once in the policy, has a worker keep the index ([After commit](#after-commit)).
 
 ## Its tables
 
@@ -38,13 +49,15 @@ Every table there has `REPLICA IDENTITY FULL`, which Electric asks for. <!-- che
 | `groups` | `grp`, `key`: the keys that make up a group's key |
 | `expanded` | `object_type`, `object_id`, `key`: what a row's readers were worked out from, where they are principals |
 | `definitions` | what the index was worked out by, so that applying knows whether to work it out again |
+| `pending` | where the policy says `sync after commit`: the objects each committed change reached, which the worker hasn't worked in yet |
 
 A key is one of these:
 
 - a principal: `user:42`, `service:7`;
 - every signed-in principal of a type: `user:*`;
 - `anyone`;
-- a group: the holders of a relation or permission of a group's object, `team#member:10` or `org#admin:1`.
+- a group: the holders of a relation or permission of a group's object, `team#member:10` or `org#admin:1`;
+- keyed by folder, the holders of a permission that inherits, on one object: `folder#view:7`.
 
 A principal holds its own key, its type's `user:*`, `anyone`, and the keys of the groups it is in, through groups
 inside groups. <!-- checked: tests/sync.sh "an org admin holds the org's group key, and a team's member its team's and the teams it sits in"; tests/sync.sh "a new user holds keys: their own, every user's, anyone's, and their team's" -->
@@ -80,15 +93,45 @@ From the permission's expression, as the compiler reads it:
   the readers are the principals that hold a key of every part and of no denied one. <!-- checked: tests/difftest.py "the sync index: " -->
   Where nothing is denied, the keys stay as they are.
 
+### Keyed by folder
+
+Copied in, a file's readers are those of each folder above it: a move rewrites the readers of every file below the
+moved folder, and a share on a folder those of every file below it. With `by folder`, the readers of what inherits
+are keys of their own instead:
+
+- a file's readers are its own keys and its folder's group keys (`folder#view:7`, and `folder#edit:7` where it reads
+  edit), and a folder's, its own (`folder#view:7`); <!-- checked: tests/sync.sh "keyed by folder: a file's readers are its own keys and its folder's group keys, not the readers of each folder above"; tests/sync.sh "... a folder's, its own group key" -->
+- each principal holds the key of every folder it may read, worked out from the readers of each folder above, as
+  the groups' are. <!-- checked: tests/sync.sh "... and each user holds the key of every folder they may read" -->
+
+So a move rewrites no file's readers: the keys of those who gain or lose the moved folders change. A share on a
+folder changes the keys of whom it shares with. <!-- checked: tests/sync.sh "... and the move rewrote no file's readers: only the keys of those who gain or lose the folder"; tests/sync.sh "keyed by folder: a share on Keys: frank reads the file in it, through his keys alone" -->
+The engines' filter is the same one join. What it costs: each principal's keys grow with the folders it may read
+([Limits](limits.md)).
+
+`by` names a type with a permission that inherits (`parent.view`, a recursion through several types too), which the
+synced permission reaches, through dots or as its own. Who holds it must be a union of what gives it: a recursion
+that joins parts that depend on who asks with `and` or `not` gives no key.
+Compiling refuses a line keyed by a type it can't be keyed by (AZ810). <!-- checked: tests/policy_errors.py "a sync line keyed by a type there isn't"; tests/policy_errors.py "a sync line keyed by a type whose inheritance it doesn't reach"; tests/policy_errors.py "a sync line keyed by an inheritance worked out with and / not" -->
+A permission of that type that doesn't inherit is copied in, as without `by`. <!-- checked: tests/difftest.py "the sync index: " -->
+
 ## Up to date
 
 - In the same transaction as the change: each trigger that may change access notes what it changed, and at commit
   the readers of those objects, and of what reads them, are worked out again. <!-- checked: tests/sync.sh "a share made: frank reads file 13"; tests/sync.sh "a folder moved out of reach: the file in it leaves those who read it through Engineering"; tests/sync.sh "a team left: bob no longer reads file 13, reached through Backend; file 12, shared with him too, stays"; tests/sync.sh "a sub-team moved out: its members leave what the team above it was given"; tests/sync.sh "confidential set: the file leaves those who read it only through its folder"; tests/sync.sh "a transaction rolled back changes nothing in the index" -->
-  What is written is the difference: a move rewrites the readers of what is below the moved folder, a membership
-  change the member's keys.
-- Two writers at once queue on a lock row of each synced type their change reaches. In REPEATABLE READ or
-  SERIALIZABLE, a writer whose snapshot is older than another's index write gets a serialization error (40001),
-  to retry. <!-- checked: tests/sync.sh "REPEATABLE READ: a writer with a snapshot older than another's index write gets a serialization error" -->
+  What is written is the difference: a move rewrites the readers of what is below the moved folder (keyed by folder:
+  the keys of those who gain or lose it), a membership change the member's keys.
+- Two writers whose work meets queue, and the others don't wait for each other. At commit, before it reads
+  anything, the work takes lock rows: of the objects it works out (what changed, and what reads it), and, shared, of
+  those it reads (the folders above, what they link to); a lock row stands for every object and key whose name
+  hashes to it, out of 4,096. A writer whose work writes what another's writes or reads waits for it to commit,
+  then sees what it committed. <!-- checked: tests/sync.sh "a share on a Globex file doesn't wait for a share on Design docs to commit: their work meets nowhere"; tests/sync.sh "... one on a file in Design docs waits: its work writes what the other's does"; tests/sync.sh "a share on the folder another one moves into waits for the move: the move's work reads it"; tests/sync.sh "... then its work sees the move: carol reads the file in the moved folder" -->
+  The keys are kept under one lock row, taken last, by the work that changes them: a membership change, a share
+  to someone on a folder keyed by folder. <!-- checked: tests/interleave.py "the sync index doesn't match a rebuild" -->
+  A policy whose synced permissions join parts that depend on who asks with `and` or `not` (a deny) works its
+  readers out from the keys: there every commit's work queues on that one lock row. <!-- checked: tests/sync.sh "the other forms, applied" -->
+- In REPEATABLE READ or SERIALIZABLE, a writer takes every lock row, and one whose snapshot is older than another's
+  index write gets a serialization error (40001), to retry. <!-- checked: tests/sync.sh "REPEATABLE READ: a writer with a snapshot older than another's index write gets a serialization error" -->
 - Shares that start or end later change who reads their objects with no write. `authz.sync_tick()` works out
   again the readers of the shares whose start or end passed since it last ran, and says how many shares. Schedule
   it ([Operations](../operations.md)); until it runs, the index says what it said before. <!-- checked: tests/sync.sh "a second later, before the tick: the index still says so (its stated window)"; tests/sync.sh "authz.sync_tick() works out again the readers of the shares that ended or began since it last ran, and says how many"; tests/sync.sh "after the tick: file 13 is gone, file 12 is there" -->
@@ -99,7 +142,32 @@ From the permission's expression, as the compiler reads it:
 - What is written in replica mode isn't followed, as for the closure tables ([How it works](guarantees.md)).
   `authz.sync_verify()` compares the index with a rebuild, and `rowstile reapply --force` works it out again. <!-- checked: tests/sync.sh "authz.sync_verify() finds the index stale after a write it didn't follow"; tests/sync.sh "rowstile reapply, forced, works it out again" -->
 
-`authz.sync_tick()` and `authz.sync_verify()` are for administrators: the app role can't call them. <!-- checked: tests/sync.sh "the app role can't call authz.sync_tick() or authz.sync_verify()" -->
+`authz.sync_tick()`, `authz.sync_verify()`, `authz.sync_work()` and `authz.sync_behind()` are for administrators:
+the app role can't call them. <!-- checked: tests/sync.sh "the app role can't call authz.sync_tick(), authz.sync_verify(), authz.sync_work() or authz.sync_behind()" -->
+
+### After commit
+
+With `sync after commit`, a writer's transaction notes what its change reached, in `authz_sync.pending`, which
+commits with it, and writes nothing of the index; a worker works the notes into the index after, in a transaction of
+its own. Writers don't wait for
+the index, nor for each other on it, and a big move costs its writer what it costs without the index. <!-- checked: tests/sync.sh "after commit: a revoke, a move, a team left and a row condition write nothing of the index"; tests/sync.sh "after commit: a writer doesn't wait for a worker at work" -->
+The index is late instead:
+
+- `SELECT authz.sync_work()` works in every change committed when it starts, and says how many objects it worked
+  on. Call it in a loop, or schedule it (pg_cron, the app's jobs), as often as the engines' clients should hear of
+  a change: the index is as late as its last run, plus how long the run takes. <!-- checked: tests/sync.sh "authz.sync_work() works the change into the index, and says how many objects it worked on"; tests/sync.sh "after commit: a share made isn't in the index before the worker runs" -->
+- One works at a time: while another is at work, a call does nothing and says 0. <!-- checked: tests/sync.sh "... and while one works, another does nothing" -->
+- A run that fails, is stopped, or whose server stops, leaves the changes where they were: the next run works them
+  in. Nothing is lost while no worker runs, and applying works in what waits. <!-- checked: tests/sync.sh "after commit: a run rolled back (one that fails, or is stopped) leaves the changes waiting"; tests/sync.sh "... and the next run works them in"; tests/sync.sh "applying works in what waits" -->
+- `authz.sync_behind()` says how long the oldest change the index doesn't hold yet has waited, and is NULL when it
+  holds every one committed. <!-- checked: tests/sync.sh "... authz.sync_behind() says how long it has waited"; tests/sync.sh "... and nothing waits" -->
+- `authz.sync_verify()` is false while changes wait, and says how many in a notice. <!-- checked: tests/sync.sh "... and authz.sync_verify() says the index is behind, and is false" -->
+- Shares that end are noted by `authz.sync_tick()`, for the worker. <!-- checked: tests/sync.sh "after commit: authz.sync_tick() notes the shares whose end passed, for the worker" -->
+
+The engines see the index as the worker leaves it: a revoke reaches them after the next run, and then after their
+own replication lag. Until then a client keeps getting what it may no longer read. <!-- checked: integrations/electric/tests/shapes.test.ts "E17: after commit, a share arrives once the worker runs, and not before" -->
+In the same transaction (the default), `authz.sync_work()` has nothing to do and says 0, and
+`authz.sync_behind()` is NULL. <!-- checked: tests/sync.sh "in the same transaction, nothing waits: authz.sync_work() has nothing to do, and authz.sync_behind() is null" -->
 
 ## What it leaves out
 

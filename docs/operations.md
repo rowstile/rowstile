@@ -161,6 +161,16 @@ synced table): until autovacuum has, a write that reads many of their rows is sl
 SELECT authz.sync_tick();                       -- every minute, say: the shares whose start or end passed since
 ```
 
+With `sync after commit`, a worker keeps the index: run `authz.sync_work()` in a loop, or schedule it as often as
+a change should reach the engines' clients, and watch `authz.sync_behind()`, how long the oldest change it hasn't
+worked in has waited ([After commit](reference/sync.md#after-commit)).
+
+<!-- not run: it needs a policy kept after commit, which the docs app the reference runs on doesn't have; tests/sync.sh calls it -->
+```sql
+SELECT authz.sync_work();                       -- every second, say: what committed since its last run
+SELECT authz.sync_behind();                     -- NULL: the index holds every change committed
+```
+
 ## What to watch
 
 | | how |

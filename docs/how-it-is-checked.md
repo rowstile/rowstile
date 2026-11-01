@@ -310,7 +310,9 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | Group sync from an identity provider: `authz.sync_members` | 1 | [app-code](reference/app-code.md) | `identity.sh` | `difftest.py` |
 | Requests for access and breaking the glass: `authz.request_access`, `authz.decide_request`, `authz.cancel_request`, `authz.pending_requests`, `authz.break_glass` | 1 | [governance](reference/governance.md) | `governance.sh`, `concurrency.sh` | `difftest.py`, hand answers |
 | Access reviews: `authz.start_review`, `authz.review_items`, `authz.review_decide`, `authz.close_review` | 1 | [governance](reference/governance.md) | `governance.sh`, `principals.sh` | `difftest.py` |
-| The sync index, a preview: `sync role`, `sync <table> : <permission>`, `authz.sync_tick`, `authz.sync_verify` | 1 | [sync](reference/sync.md) | `sync.sh`, `policy_errors.py` | `difftest.py` |
+| The sync index, a preview: `sync role`, `sync <table> : <permission>`, `authz.sync_tick`, `authz.sync_verify` | 1 | [sync](reference/sync.md) | `sync.sh`, `policy_errors.py`, `interleave.py`, `stress.sh` | `difftest.py` |
+| A sync line keyed by a type's inheritance, a preview: `sync <table> : <permission> by <type>` | 1 | [sync](reference/sync.md) | `sync.sh`, `policy_errors.py`, `integrations/electric` | `difftest.py` |
+| The sync index worked out after commit by a worker, a preview: `sync after commit`, `authz.sync_work`, `authz.sync_behind` | 1 | [sync](reference/sync.md) | `sync.sh`, `policy_errors.py`, `interleave.py`, `integrations/electric` | `difftest.py` |
 | Electric on the sync index, a preview: `rowstile client electric`'s shapes, and `electricShape`, the route in front of Electric | 1 | [sync](reference/sync.md) | `unit_test.py`, `cli.sh`, `integrations/electric` | `integrations/electric` |
 | The change feed: `authz.changes_since`, `authz.trim_changes`, `authz.announce_timed_shares` | 2 | [governance](reference/governance.md) | `governance.sh`, `integrations/nextjs` |  |
 | The audit trail: `authz.audit`, `authz.trim_audit` | 1 | [governance](reference/governance.md) | `governance.sh` | `difftest.py` |

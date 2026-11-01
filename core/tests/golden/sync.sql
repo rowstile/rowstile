@@ -117,7 +117,7 @@ DO $g$
 DECLARE f record; kept text := '';
 BEGIN
   FOR f IN SELECT p.oid, p.ctid, p.oid::regprocedure AS name FROM pg_proc p WHERE p.pronamespace = to_regnamespace('authz')
-           AND p.proname = ANY (ARRAY['act_as', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'announce_timed_shares', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'session_limited', 'list_links', 'revoke_link', 'sync_tick', 'sync_verify']) LOOP
+           AND p.proname = ANY (ARRAY['act_as', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'announce_timed_shares', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'session_limited', 'list_links', 'revoke_link', 'sync_tick', 'sync_verify', 'sync_work', 'sync_behind']) LOOP
     BEGIN
       EXECUTE format('DROP FUNCTION %s', f.name);
     EXCEPTION WHEN dependent_objects_still_exist THEN
@@ -891,8 +891,23 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 CREATE UNLOGGED TABLE authz_int.sync_todo (txid bigint NOT NULL, type text NOT NULL, id text NOT NULL,
   round int NOT NULL DEFAULT 0, PRIMARY KEY (txid, type, id));
 CREATE INDEX ON authz_int.sync_todo (txid, type, round);
+-- the groups' rows a commit wrote (made) or took away, which the keys follow
+CREATE UNLOGGED TABLE authz_int.sync_moved (txid bigint NOT NULL, grp text NOT NULL, key text NOT NULL, made boolean NOT NULL);
+CREATE INDEX ON authz_int.sync_moved (txid, made);
+-- the keys a principal may lose, until what is left gives them again (sync_process)
+CREATE UNLOGGED TABLE authz_int.sync_lost (txid bigint NOT NULL, ptype text NOT NULL, pid text NOT NULL, key text NOT NULL,
+  PRIMARY KEY (txid, ptype, pid, key));
+-- ... and those found given again, by the round they were found in
+CREATE UNLOGGED TABLE authz_int.sync_found (txid bigint NOT NULL, ptype text NOT NULL, pid text NOT NULL, key text NOT NULL,
+  round int NOT NULL);
+CREATE INDEX ON authz_int.sync_found (txid, round);
+INSERT INTO authz_int.locks VALUES ('sync#keys', 0) ON CONFLICT DO NOTHING;
+-- the lock rows of what a commit works out, by the hash of each object and key: writers whose work meets queue on
+-- them, the others go on (sync_process). Each is updated, to the same row: in REPEATABLE READ, a writer whose
+-- snapshot is older than another's update of it gets a serialization error
+CREATE TABLE authz_int.sync_stripes (stripe int PRIMARY KEY, n bigint NOT NULL);
+INSERT INTO authz_int.sync_stripes SELECT s, 0 FROM generate_series(0, 4095) s;
 CREATE UNLOGGED TABLE authz_int.sync_queued (txid bigint PRIMARY KEY);
-INSERT INTO authz_int.locks VALUES ('sync#keys', 0), ('sync:file', 0), ('sync:folder', 0) ON CONFLICT DO NOTHING;
 CREATE FUNCTION authz_int.sync_dirty(p_type text, p_ids text[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
@@ -6728,83 +6743,208 @@ BEGIN
       UNION ALL SELECT 'folder'::text, '*'::text WHERE EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.type = 'folder' AND x.round = r AND x.id = '*')) d WHERE d.i IS NOT NULL
     ON CONFLICT DO NOTHING;
     GET DIAGNOSTICS n = ROW_COUNT;
-    EXIT WHEN n = 0;
+    EXIT WHEN n = 0 AND NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = p_tx AND x.round > r);
     r := r + 1;
   END LOOP;
   RETURN r;
 END $f$;
--- At a transaction's commit, in it: the index made current for the objects it changed and what reads them (the
--- difference written, not every row again). The lock rows of what it reaches first, in one order: a writer with an
--- older snapshot (REPEATABLE READ, SERIALIZABLE) gets a serialization error rather than writing stale readers
+-- The index made current for the objects a transaction changed and what reads them (the difference written, not
+-- every row again): at its commit, in it, or after it, by the worker. The groups first, then the keys (a principal
+-- holds the keys of every group whose members hold one of its own, through groups inside groups), then the readers
+-- (JIT off: its statements read a few rows each, through indexes, which a plan made for many would compile for; no
+-- merge joins: its sets of keys, which the planner can't count, are joined by hash, not sorted as text)
 CREATE FUNCTION authz_int.sync_process() RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT SET jit = off SET enable_mergejoin = off AS $f$
 DECLARE
   v_tx bigint := txid_current();
   v_round int;
-  v_lock text; v_locks text[];
-  v_ids text[]; v_part text[]; v_from int;
-  v_members text[] := '{}';  -- the keys of the groups' rows that changed
+  v_mode int[]; v_w int[]; v_r int[]; v_s int; v_x boolean;
+  v_ids text[]; v_part text[]; v_from int; v_now text[];
   v_keys text[] := '{}';     -- the keys a principal gained or lost
+  v_came text[] := '{}';     -- the principals who are somebody now, and held no key (type:id)
+  v_whole text[] := '{}';    -- the principal types worked out whole
+  v_keys_locked boolean := false;
+  v_all boolean;               -- every principal's keys worked out whole (applying): the groups' changes aren't followed
   v_n bigint;
+  v_found int;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx) THEN RETURN; END IF;
-  SELECT array_agg(DISTINCT l ORDER BY l) INTO v_locks
-  FROM (SELECT DISTINCT x.type FROM authz_int.sync_todo x WHERE x.txid = v_tx) d,
-       LATERAL unnest(CASE d.type
-             WHEN 'file' THEN ARRAY['sync:file']::text[]
-             WHEN 'folder' THEN ARRAY['sync:file', 'sync:folder']::text[]
-             WHEN 'org' THEN ARRAY['sync#keys']::text[]
-             WHEN 'team' THEN ARRAY['sync#keys']::text[]
-             WHEN 'user' THEN ARRAY['sync#keys']::text[]
-             ELSE '{}'::text[] END) l;
-  FOREACH v_lock IN ARRAY coalesce(v_locks, '{}') LOOP
-    UPDATE authz_int.locks SET n = n + 1 WHERE type = v_lock;
-  END LOOP;
-  v_round := authz_int.sync_spread(v_tx, 0);
+  IF current_setting('transaction_isolation') IN ('repeatable read', 'serializable') THEN
+    -- a snapshot older than another's index write: a serialization error, rather than readers worked out from
+    -- what it can't see
+    PERFORM 1 FROM authz_int.sync_stripes s ORDER BY s.stripe FOR UPDATE;
+    UPDATE authz_int.sync_stripes SET n = n;
+    v_round := authz_int.sync_spread(v_tx, 0);
+  ELSE
+    -- READ COMMITTED: the lock rows of what the work writes (what changed, and what reads it), and, shared, of what
+    -- it reads (the folders above, what they link to), in one order. A writer whose work meets this one's waits for
+    -- it, then sees what it committed; once they are held, what reads the changes is looked for again, and the lock
+    -- rows of anything new are taken too, until there is none
+    v_mode := array_fill(0, ARRAY[4096]);
+    LOOP
+      v_round := authz_int.sync_spread(v_tx, 0);
+      IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id = '*') THEN
+        v_w := ARRAY(SELECT generate_series(0, 4095));
+        v_r := '{}';
+      ELSE
+        v_w := ARRAY(SELECT DISTINCT pg_catalog.hashtext(x.type || ':' || x.id) & 4095
+                     FROM authz_int.sync_todo x WHERE x.txid = v_tx);
+        v_r := ARRAY(SELECT DISTINCT pg_catalog.hashtext(d.k) & 4095 FROM (
+                        SELECT 'folder:' || v.id FROM (SELECT (x."folder_id")::text FROM "app"."files" x WHERE x."id" IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'file' AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) AS id)) v(id)
+                        UNION SELECT 'folder:' || v.id FROM (SELECT c.ancestor::text FROM authz_int."folder__parent__tree" c WHERE c.descendant IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'folder' AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)
+                        UNION SELECT 'folder:' || v.id FROM (SELECT c.ancestor::text FROM authz_int."folder__linked_into_parent__tree" c WHERE c.descendant IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'folder' AND x.id <> '*')) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))))) v(id)) d(k) WHERE d.k IS NOT NULL);
+      END IF;
+      v_n := 0;
+      FOR v_s, v_x IN SELECT z.s, bool_or(z.x) FROM (SELECT unnest(v_w) AS s, true AS x UNION ALL SELECT unnest(v_r), false) z
+                      GROUP BY z.s ORDER BY z.s LOOP
+        CONTINUE WHEN v_mode[v_s + 1] = 2 OR (NOT v_x AND v_mode[v_s + 1] = 1);
+        IF v_x THEN
+          UPDATE authz_int.sync_stripes SET n = n WHERE stripe = v_s;
+          v_mode[v_s + 1] := 2;
+        ELSE
+          PERFORM 1 FROM authz_int.sync_stripes WHERE stripe = v_s FOR SHARE;
+          v_mode[v_s + 1] := 1;
+        END IF;
+        v_n := v_n + 1;
+      END LOOP;
+      EXIT WHEN v_n = 0;
+    END LOOP;
+  END IF;
+  v_all := (SELECT count(DISTINCT x.type) FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.id = '*'
+            AND x.type = ANY (ARRAY['user']::text[])) = 1;
   -- org's groups
   v_ids := CASE WHEN EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'org' AND x.id = '*') THEN ARRAY(SELECT x."id"::text FROM "app"."orgs" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT x."org_id"::text FROM "app"."org_members" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'org' UNION SELECT substr(g.grp, strpos(g.grp, ':') + 1) FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) = ANY (ARRAY['org#admin:', 'org#member:']::text[])) ELSE ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'org') END;
-  IF cardinality(v_ids) > 0 THEN
-    WITH fresh AS MATERIALIZED (SELECT 'org#admin:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:org.admin"(ARRAY(SELECT v::bigint FROM unnest(v_ids) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep),
-    gone AS (DELETE FROM authz_sync.groups g WHERE g.grp IN (SELECT 'org#admin:' || v FROM unnest(v_ids) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.grp = g.grp AND f.key = g.key) RETURNING g.key),
-    made AS (INSERT INTO authz_sync.groups SELECT f.grp, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING key)
-    SELECT v_members || coalesce(array_agg(DISTINCT z.k), '{}') INTO v_members FROM (SELECT key FROM gone UNION SELECT key FROM made) z(k);
-    WITH fresh AS MATERIALIZED (SELECT 'org#member:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:org.member"(ARRAY(SELECT v::bigint FROM unnest(v_ids) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep),
-    gone AS (DELETE FROM authz_sync.groups g WHERE g.grp IN (SELECT 'org#member:' || v FROM unnest(v_ids) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.grp = g.grp AND f.key = g.key) RETURNING g.key),
-    made AS (INSERT INTO authz_sync.groups SELECT f.grp, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING key)
-    SELECT v_members || coalesce(array_agg(DISTINCT z.k), '{}') INTO v_members FROM (SELECT key FROM gone UNION SELECT key FROM made) z(k);
-  END IF;
+  FOR v_from IN 1 .. coalesce(cardinality(v_ids), 0) BY 10000 LOOP
+    v_part := v_ids[v_from : v_from + 9999];
+      WITH fresh AS MATERIALIZED (SELECT 'org#admin:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:org.admin"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep),
+      gone AS (DELETE FROM authz_sync.groups g WHERE g.grp IN (SELECT 'org#admin:' || v FROM unnest(v_part) v)
+               AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.grp = g.grp AND f.key = g.key) RETURNING g.grp, g.key),
+      made AS (INSERT INTO authz_sync.groups SELECT f.grp, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING grp, key)
+      INSERT INTO authz_int.sync_moved SELECT v_tx, z.grp, z.key, z.made
+      FROM (SELECT grp, key, false AS made FROM gone UNION ALL SELECT grp, key, true FROM made) z
+      WHERE NOT v_all;
+      WITH fresh AS MATERIALIZED (SELECT 'org#member:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:org.member"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep),
+      gone AS (DELETE FROM authz_sync.groups g WHERE g.grp IN (SELECT 'org#member:' || v FROM unnest(v_part) v)
+               AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.grp = g.grp AND f.key = g.key) RETURNING g.grp, g.key),
+      made AS (INSERT INTO authz_sync.groups SELECT f.grp, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING grp, key)
+      INSERT INTO authz_int.sync_moved SELECT v_tx, z.grp, z.key, z.made
+      FROM (SELECT grp, key, false AS made FROM gone UNION ALL SELECT grp, key, true FROM made) z
+      WHERE NOT v_all;
+  END LOOP;
   -- team's groups
   v_ids := CASE WHEN EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'team' AND x.id = '*') THEN ARRAY(SELECT x."id"::text FROM "app"."teams" x UNION SELECT x."team_id"::text FROM "app"."team_members" x UNION SELECT x."parent_id"::text FROM "app"."teams" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'team' UNION SELECT substr(g.grp, strpos(g.grp, ':') + 1) FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) = ANY (ARRAY['team#member:']::text[])) ELSE ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'team') END;
-  IF cardinality(v_ids) > 0 THEN
-    WITH fresh AS MATERIALIZED (SELECT 'team#member:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:team.member"(ARRAY(SELECT v::bigint FROM unnest(v_ids) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep),
-    gone AS (DELETE FROM authz_sync.groups g WHERE g.grp IN (SELECT 'team#member:' || v FROM unnest(v_ids) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.grp = g.grp AND f.key = g.key) RETURNING g.key),
-    made AS (INSERT INTO authz_sync.groups SELECT f.grp, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING key)
-    SELECT v_members || coalesce(array_agg(DISTINCT z.k), '{}') INTO v_members FROM (SELECT key FROM gone UNION SELECT key FROM made) z(k);
-  END IF;
-  -- the keys of the principals of user that changed, or hold a key of a group that did
-  IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'user' AND x.id = '*') THEN
-    v_ids := ARRAY(SELECT x."id"::text FROM "app"."users" x UNION SELECT k.principal_id FROM authz_sync.keys k WHERE k.principal_type = 'user');
-  ELSE
-    v_ids := ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'user'
-                   UNION SELECT k.principal_id FROM authz_sync.keys k WHERE k.principal_type = 'user' AND k.key IN (SELECT unnest(v_members)));
-  END IF;
-  IF cardinality(v_ids) > 0 THEN
-    WITH fresh AS MATERIALIZED (SELECT * FROM authz_int."sync_keys:user"(v_ids)),
-    gone AS (DELETE FROM authz_sync.keys k WHERE k.principal_type = 'user' AND k.principal_id IN (SELECT unnest(v_ids))
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.o_id = k.principal_id AND f.o_key = k.key) RETURNING k.key),
-    made AS (INSERT INTO authz_sync.keys SELECT 'user', f.o_id, f.o_key FROM fresh f ON CONFLICT DO NOTHING RETURNING key)
-    SELECT v_keys || coalesce(array_agg(DISTINCT z.k), '{}') INTO v_keys FROM (SELECT key FROM gone UNION SELECT key FROM made) z(k);
-  END IF;
-  -- rows whose readers were worked out from a key someone gained or lost, and what reads them
-  IF cardinality(v_keys) > 0 THEN
-    INSERT INTO authz_int.sync_todo (txid, type, id, round)
-    SELECT DISTINCT v_tx, x.object_type, x.object_id, v_round + 1 FROM authz_sync.expanded x WHERE x.key IN (SELECT unnest(v_keys))
-    ON CONFLICT DO NOTHING;
-    IF FOUND THEN
-      v_round := authz_int.sync_spread(v_tx, v_round + 1);
+  FOR v_from IN 1 .. coalesce(cardinality(v_ids), 0) BY 10000 LOOP
+    v_part := v_ids[v_from : v_from + 9999];
+      WITH fresh AS MATERIALIZED (SELECT 'team#member:' || f.o_id::text AS grp, f.o_key AS key FROM authz_int."sync:team.member"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f WHERE NOT f.o_dep),
+      gone AS (DELETE FROM authz_sync.groups g WHERE g.grp IN (SELECT 'team#member:' || v FROM unnest(v_part) v)
+               AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.grp = g.grp AND f.key = g.key) RETURNING g.grp, g.key),
+      made AS (INSERT INTO authz_sync.groups SELECT f.grp, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING grp, key)
+      INSERT INTO authz_int.sync_moved SELECT v_tx, z.grp, z.key, z.made
+      FROM (SELECT grp, key, false AS made FROM gone UNION ALL SELECT grp, key, true FROM made) z
+      WHERE NOT v_all;
+  END LOOP;
+  -- the keys, where the groups' rows or the principals changed: under one lock row, taken last (nothing after it waits
+  -- for another lock)
+  IF EXISTS (SELECT 1 FROM authz_int.sync_moved m WHERE m.txid = v_tx)
+     OR EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = ANY (ARRAY['user']::text[])) THEN
+    IF NOT v_keys_locked THEN
+      UPDATE authz_int.locks SET n = n + 1 WHERE type = 'sync#keys';
+    END IF;
+    -- the principals of user: every one worked out whole (applying), or those that changed: one who is
+    -- nobody now (gone, or failing the type's where) holds no key, and one who is somebody now and held none gets theirs
+    IF EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'user' AND x.id = '*') THEN
+      v_whole := v_whole || 'user'::text;
+      v_ids := ARRAY(SELECT x."id"::text FROM "app"."users" x UNION SELECT k.principal_id FROM authz_sync.keys k WHERE k.principal_type = 'user');
+      WITH fresh AS MATERIALIZED (SELECT * FROM authz_int."sync_keys:user"(v_ids)),
+      gone AS (DELETE FROM authz_sync.keys k WHERE k.principal_type = 'user' AND k.principal_id IN (SELECT unnest(v_ids))
+               AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.o_id = k.principal_id AND f.o_key = k.key) RETURNING k.key),
+      made AS (INSERT INTO authz_sync.keys SELECT 'user', f.o_id, f.o_key FROM fresh f ON CONFLICT DO NOTHING RETURNING key)
+      SELECT v_keys || coalesce(array_agg(DISTINCT z.k), '{}') INTO v_keys FROM (SELECT key FROM gone UNION SELECT key FROM made) z(k);
+    ELSE
+      v_ids := ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'user');
+      IF cardinality(v_ids) > 0 THEN
+        v_now := ARRAY(SELECT x."id"::text FROM "app"."users" x WHERE x."id" IN (SELECT unnest(ARRAY(SELECT v::bigint FROM unnest(v_ids) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint')))));
+        WITH gone AS (DELETE FROM authz_sync.keys k WHERE k.principal_type = 'user' AND k.principal_id = ANY (v_ids)
+                      AND k.principal_id <> ALL (v_now) RETURNING k.key)
+        SELECT v_keys || coalesce(array_agg(DISTINCT z.key), '{}') INTO v_keys FROM gone z;
+        v_came := v_came || ARRAY(SELECT 'user' || ':' || v FROM unnest(v_now) v WHERE NOT EXISTS (
+          SELECT 1 FROM authz_sync.keys k WHERE k.principal_type = 'user' AND k.principal_id = v));
+      END IF;
+    END IF;
+    -- a group's row gone: the keys above it that its member's holders held may go, unless what is left gives them
+    -- again (each found given is taken back from those that may go, as often as it finds more)
+    IF EXISTS (SELECT 1 FROM authz_int.sync_moved m WHERE m.txid = v_tx AND NOT m.made) THEN
+      WITH RECURSIVE up(src, c) AS (
+        SELECT DISTINCT m.key, m.grp FROM authz_int.sync_moved m WHERE m.txid = v_tx AND NOT m.made
+        UNION
+        SELECT up.src, g.grp FROM up JOIN authz_sync.groups g ON g.key = up.c)
+      -- (the holders of each key, a lookup by the keys' index: OFFSET 0 keeps the planner from reading every key for a
+      -- few; then the sets joined whole)
+      , by_src AS MATERIALIZED (
+        SELECT DISTINCT up.c, k.principal_type AS pt, k.principal_id AS pid FROM up
+        CROSS JOIN LATERAL (SELECT k.principal_type, k.principal_id FROM authz_sync.keys k WHERE k.key = up.src
+                            AND k.principal_type <> ALL (v_whole) OFFSET 0) k),
+      by_c AS MATERIALIZED (
+        SELECT c.c, h.principal_type AS pt, h.principal_id AS pid FROM (SELECT DISTINCT up.c FROM up) c
+        CROSS JOIN LATERAL (SELECT h.principal_type, h.principal_id FROM authz_sync.keys h WHERE h.key = c.c OFFSET 0) h)
+      INSERT INTO authz_int.sync_lost (txid, ptype, pid, key)
+      SELECT v_tx, s.pt, s.pid, s.c FROM by_src s JOIN by_c h ON h.c = s.c AND h.pt = s.pt AND h.pid = s.pid
+      ON CONFLICT DO NOTHING;
+      -- given again: by a member it holds that may not go (the holders of the members of the groups that may go, once
+      -- each); then, round by round, by a member just found given
+      WITH members AS MATERIALIZED (
+        SELECT g.grp, g.key FROM (SELECT DISTINCT l.key FROM authz_int.sync_lost l WHERE l.txid = v_tx) c
+        CROSS JOIN LATERAL (SELECT g.grp, g.key FROM authz_sync.groups g WHERE g.grp = c.key OFFSET 0) g),
+      held AS MATERIALIZED (
+        SELECT m.key, h.principal_type AS pt, h.principal_id AS pid FROM (SELECT DISTINCT key FROM members) m
+        CROSS JOIN LATERAL (SELECT h.principal_type, h.principal_id FROM authz_sync.keys h WHERE h.key = m.key OFFSET 0) h),
+      -- (the groups each holder holds a member of, that may not go; then the candidates they give again)
+      supported AS MATERIALIZED (
+        SELECT DISTINCT g.grp, h.pt, h.pid FROM members g JOIN held h ON h.key = g.key
+        WHERE NOT EXISTS (SELECT 1 FROM authz_int.sync_lost o WHERE o.txid = v_tx AND o.ptype = h.pt AND o.pid = h.pid
+                          AND o.key = h.key)),
+      given AS (SELECT l.ptype, l.pid, l.key FROM authz_int.sync_lost l
+                JOIN supported s ON s.grp = l.key AND s.pt = l.ptype AND s.pid = l.pid WHERE l.txid = v_tx),
+      r AS (DELETE FROM authz_int.sync_lost l USING given z WHERE l.txid = v_tx AND l.ptype = z.ptype AND l.pid = z.pid
+            AND l.key = z.key RETURNING l.ptype, l.pid, l.key)
+      INSERT INTO authz_int.sync_found SELECT v_tx, r.ptype, r.pid, r.key, 1 FROM r;
+      GET DIAGNOSTICS v_n = ROW_COUNT;
+      v_found := 1;
+      WHILE v_n > 0 LOOP
+        WITH r AS (DELETE FROM authz_int.sync_lost l
+                   USING (SELECT DISTINCT f.ptype, f.pid, g.grp FROM authz_int.sync_found f
+                          JOIN authz_sync.groups g ON g.key = f.key WHERE f.txid = v_tx AND f.round = v_found) z
+                   WHERE l.txid = v_tx AND l.ptype = z.ptype AND l.pid = z.pid AND l.key = z.grp
+                   RETURNING l.ptype, l.pid, l.key)
+        INSERT INTO authz_int.sync_found SELECT v_tx, r.ptype, r.pid, r.key, v_found + 1 FROM r;
+        GET DIAGNOSTICS v_n = ROW_COUNT;
+        v_found := v_found + 1;
+      END LOOP;
+      DELETE FROM authz_int.sync_found f WHERE f.txid = v_tx;
+      WITH gone AS (DELETE FROM authz_sync.keys k USING authz_int.sync_lost l WHERE l.txid = v_tx
+                    AND k.principal_type = l.ptype AND k.principal_id = l.pid AND k.key = l.key RETURNING k.key)
+      SELECT v_keys || coalesce(array_agg(DISTINCT z.key), '{}') INTO v_keys FROM gone z;
+      DELETE FROM authz_int.sync_lost l WHERE l.txid = v_tx;
+    END IF;
+    -- a group's row made: its member's holders hold the group, and the groups above it
+    IF EXISTS (SELECT 1 FROM authz_int.sync_moved m WHERE m.txid = v_tx AND m.made) THEN
+      WITH RECURSIVE up(src, c) AS (
+        SELECT DISTINCT m.key, m.grp FROM authz_int.sync_moved m WHERE m.txid = v_tx AND m.made
+        UNION
+        SELECT up.src, g.grp FROM up JOIN authz_sync.groups g ON g.key = up.c),
+      made AS (INSERT INTO authz_sync.keys SELECT DISTINCT k.principal_type, k.principal_id, up.c FROM up
+               CROSS JOIN LATERAL (SELECT k.principal_type, k.principal_id FROM authz_sync.keys k WHERE k.key = up.src
+                                   AND k.principal_type <> ALL (v_whole) OFFSET 0) k
+               ON CONFLICT DO NOTHING RETURNING key)
+      SELECT v_keys || coalesce(array_agg(DISTINCT z.key), '{}') INTO v_keys FROM made z;
+    END IF;
+    DELETE FROM authz_int.sync_moved m WHERE m.txid = v_tx;
+    -- the principals who are somebody now: their keys, worked out whole
+    IF cardinality(v_came) > 0 THEN
+    WITH made AS (INSERT INTO authz_sync.keys SELECT 'user', f.o_id, f.o_key FROM authz_int."sync_keys:user"(ARRAY(
+                    SELECT substr(c, 6) FROM unnest(v_came) c WHERE left(c, 5) = 'user:')) f
+                  ON CONFLICT DO NOTHING RETURNING key)
+    SELECT v_keys || coalesce(array_agg(DISTINCT z.key), '{}') INTO v_keys FROM made z;
     END IF;
   END IF;
   -- file's readers
@@ -6860,13 +7000,9 @@ BEGIN
   DELETE FROM authz_sync.groups g WHERE left(g.grp, strpos(g.grp, ':')) <> ALL (ARRAY['org#admin:', 'team#member:', 'org#member:']::text[]);
     DELETE FROM authz_sync.keys k WHERE k.principal_type <> ALL (ARRAY['user']::text[]);
     DELETE FROM authz_sync.expanded x WHERE x.object_type <> ALL (ARRAY['file', 'folder']::text[]);
-    PERFORM authz_int.sync_dirty('file', ARRAY['*']);
-    PERFORM authz_int.sync_dirty('folder', ARRAY['*']);
-    PERFORM authz_int.sync_dirty('org', ARRAY['*']);
-    PERFORM authz_int.sync_dirty('team', ARRAY['*']);
-    PERFORM authz_int.sync_dirty('user', ARRAY['*']);
-    PERFORM authz_int.sync_process();
+    INSERT INTO authz_int.sync_todo (txid, type, id) SELECT txid_current(), x, '*' FROM unnest(ARRAY['file', 'folder', 'org', 'team', 'user']::text[]) x ON CONFLICT DO NOTHING;
   END IF;
+  PERFORM authz_int.sync_process();
   IF p_hash IS NOT NULL THEN
     INSERT INTO authz_sync.definitions VALUES ('index', p_hash) ON CONFLICT (name) DO UPDATE SET hash = EXCLUDED.hash;
   END IF;
@@ -6922,6 +7058,12 @@ BEGIN
   END IF;
   RETURN true;
 END $f$;
+-- In the same transaction (the default), nothing waits: authz.sync_work() has nothing to do (0), and
+-- authz.sync_behind() says the index holds every change committed (NULL). They are for sync after commit
+CREATE OR REPLACE FUNCTION authz.sync_work() RETURNS bigint
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$ SELECT 0::bigint $f$;
+CREATE OR REPLACE FUNCTION authz.sync_behind() RETURNS interval
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$ SELECT NULL::interval $f$;
 SET LOCAL check_function_bodies = on;
 
 -- where each rule, relation and invariant is written, for messages (Core.line_sql)
@@ -6997,7 +7139,7 @@ BEGIN
   END LOOP;
 END $ch$;
 
-SELECT authz_int.sync_refresh('d3105e5e65198e7f2cd70ee559772f6f');
+SELECT authz_int.sync_refresh('4b2012304b07de25c58371671a13da92');
 DO $sw$
 DECLARE n bigint; m bigint;
 BEGIN

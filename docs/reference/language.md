@@ -208,6 +208,11 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   alone: those its select rule lets read it), for engines such as Electric to replicate ([The sync index](sync.md)). <!-- checked: tests/sync.sh "applied: for every user, the index holds what authz.list gives (files, and folders by their select rule)" -->
   What a synced permission reads can't depend on the clock, on who asks, or on other rows than its own: that is
   refused (AZ804, AZ805, AZ806). <!-- checked: tests/policy_errors.py "a synced permission reading the clock"; tests/policy_errors.py "a synced permission reading who asks"; tests/policy_errors.py "a synced permission reading other rows" -->
+  `sync app.files : view by folder` keys each file's readers by its folder, rather than copying in the readers of
+  each folder above: the file's readers name the folder's key (`folder#view:7`), and each principal holds the key
+  of every folder it may read. `by` names a type with a permission that inherits (`parent.view`), which the synced
+  permission reaches; another is refused (AZ810). <!-- checked: tests/sync.sh "keyed by folder: a file's readers are its own keys and its folder's group keys, not the readers of each folder above"; tests/policy_errors.py "a sync line keyed by a type whose inheritance it doesn't reach" -->
+  `sync after commit` has a worker keep the index after each change commits, so writers don't wait for it. <!-- checked: tests/sync.sh "after commit: a share made isn't in the index before the worker runs" -->
 - **Tests**: the unnamed `test` section checks the data already in the database, with lines
   `user|<principal type> X can|cannot PERM TYPE ID` (or `anyone ...`). A named test,
   `test "..."`, brings its own: `given name = {SQL ... RETURNING id}` rows (as whoever applies

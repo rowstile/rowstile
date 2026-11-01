@@ -20,6 +20,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   the same transaction as each change, for engines such as Electric to replicate. `authz.sync_tick()` follows shares
   that start or end, and `authz.sync_verify()` compares the index with a rebuild. AZ801 to AZ809 are its mistakes
   ([The sync index](docs/reference/sync.md)).
+- The sync index, a preview, keyed by folder: `sync app.files : view by folder` names in each file's readers its
+  folder's key (`folder#view:7`), which each user holds for every folder they may read, so a move or a share on a
+  folder rewrites no file's readers (AZ810 where a line can't be keyed so). `sync after commit` has a worker,
+  `authz.sync_work()`, keep the index after each change commits, so writers don't wait for it;
+  `authz.sync_behind()` says how late it is. In the same transaction, writers whose work on the index meets
+  nowhere no longer wait for each other ([The sync index](docs/reference/sync.md#keyed-by-folder)).
 - Electric on the sync index, a preview: `rowstile client electric` (or `[clients] electric`) writes each synced
   table's shape (its filter for the signed-in principal, its key columns, the columns the policy masks), and
   `electricShape()` in `@rowstile/client` is the route in front of Electric that sets it, whatever the client sends:

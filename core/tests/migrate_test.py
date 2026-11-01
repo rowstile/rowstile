@@ -384,6 +384,13 @@ CASES += [
         SYNCED,
         edit(SYNCED, ("sync app.files : view\n", "sync app.files : edit\n")),
     ),
+    (
+        "a synced table keyed by folder",
+        "docs",
+        SYNCED,
+        edit(SYNCED, ("sync app.files : view\n", "sync app.files : view by folder\n")),
+    ),
+    ("the sync index kept after commit", "docs", SYNCED, SYNCED + "sync after commit\n"),
 ]
 # functions made with another search path than the migration's (the schemas on it changed since: one made, one
 # dropped); a migration changes only some functions, and the others must take the path the migration runs with

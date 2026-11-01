@@ -25,7 +25,7 @@ module.exports = grammar({
     source_file: ($) => repeat($._top),
 
     _top: ($) =>
-      choice($.app_role, $.include, $.type, $.rules, $.scope, $.caveat, $.sync_role, $.sync, $.invariants, $.test),
+      choice($.app_role, $.include, $.type, $.rules, $.scope, $.caveat, $.sync_role, $.sync_after_commit, $.sync, $.invariants, $.test),
 
     comment: (_) => token(seq("--", /.*/)),
 
@@ -68,10 +68,17 @@ module.exports = grammar({
 
     caveat: ($) => seq("caveat", field("name", $.identifier), "=", $.sql),
 
-    // the sync index (a preview): the sync engine's Postgres role, and each table synced with the permission its
-    // readers hold (none: the table's select rule)
+    // the sync index (a preview): the sync engine's Postgres role, a worker keeping it after commit, and each table
+    // synced with the permission its readers hold (none: the table's select rule), keyed by a type's inheritance
     sync_role: ($) => seq("sync", "role", field("name", $.identifier)),
-    sync: ($) => seq("sync", field("table", $.table_name), optional(seq(":", field("permission", $.identifier)))),
+    sync_after_commit: ($) => seq("sync", "after", "commit"),
+    sync: ($) =>
+      seq(
+        "sync",
+        field("table", $.table_name),
+        optional(seq(":", field("permission", $.identifier))),
+        optional(seq("by", field("by", $.identifier))),
+      ),
 
     // ---- types -----------------------------------------------------------------------------------
     type: ($) =>

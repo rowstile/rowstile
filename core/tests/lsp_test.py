@@ -817,6 +817,25 @@ with tempfile.TemporaryDirectory() as d:
     ok("... and hover on its permission: nothing", h is None, h)
     got = c.request("textDocument/completion", {"textDocument": {"uri": up}, "position": {"line": 0, "character": 5}})
     ok("completion after sync in a file that doesn't parse: no tables, and no error", got == [], got)
+    # ... and after a sync line's by: the types with a permission that inherits, which its readers may be keyed by
+    tree = small.replace(
+        "type doc = app.docs where",
+        "type box = app.boxes\n  parent : box = parent_id\n"
+        "  owner : user = owner_id\n  can view = owner or parent.view\ntype doc = app.docs where",
+    )
+    keyed = tree + "sync app.boxes : view by box\n"
+    with open(os.path.join(d, "keyed.authz"), "w", encoding="utf-8") as fh:
+        fh.write(keyed)
+    km = uri(os.path.join(d, "keyed.authz"))
+    c.notify("textDocument/didOpen", {"textDocument": {"uri": km, "languageId": "authz", "version": 1, "text": keyed}})
+    spot = pos(keyed, "sync app.boxes : view by ", len("sync app.boxes : view by "))
+    got = c.request("textDocument/completion", {"textDocument": {"uri": km}, "position": spot})
+    ok(
+        "completion after a sync line's by offers the types with a permission that inherits",
+        [i["label"] for i in got or []] == ["box"],
+        got,
+    )
+    ok("completion at a line's start offers sync after commit", "sync after commit" in labels("sync role", 0))
 
     c.notify("textDocument/didSave", {"textDocument": {"uri": u}})
     clean("saving checks the file again", c, u)

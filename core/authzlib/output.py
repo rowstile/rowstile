@@ -1205,7 +1205,7 @@ END $kv$;"""
             for p in t.perms.values():
                 self.ensure_view(t, p)
         # the sync index (a preview): what the sync lines say is checked, and its functions worked out
-        syncing = bool(self.pol.syncs or self.pol.sync_role)
+        syncing = bool(self.pol.syncs or self.pol.sync_role or self.pol.sync_after_commit)
         if syncing:
             self.sync_check()
             self.sync_build()

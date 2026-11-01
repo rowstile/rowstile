@@ -281,30 +281,41 @@ MAKE_SYNC_ROLE = (
 
 def synced(text: str, path: str, seed: int) -> str:
     """The policy, with a sync line for each type the index takes one of: one public permission each, or the
-    table's select rule (no permission), in turn by seed; a type of which it takes none (a condition on who asks,
-    one reading other rows) isn't synced."""
+    table's select rule (no permission), in turn by seed, each keyed by a type's inheritance (`by folder`) where it
+    may be and the seed says so; a type of which it takes none (a condition on who asks, one reading other rows) isn't
+    synced. One seed in three keeps the index after commit (the checks run the worker first)."""
     from authzlib import Compiler, PolicyError
 
     pol = compile_policy.parse_policy(text, path)
     lines: list[str] = []
+
+    def takes(line: str) -> bool:
+        try:
+            Compiler(compile_policy.parse_policy(f"{text}\nsync role {SYNC_ROLE}\n{line}\n", path)).compile(path)
+            return True
+        except PolicyError:
+            return False
+
     for n, t in enumerate(pol.types.values()):
         ways = [f" : {p}" for p, x in t.perms.items() if not x.hidden]
         if any(r.table == t.table and r.command == "select" and not r.columns for r in pol.rules):
             ways.append("")
-        taken = []
-        for way in ways:
-            try:
-                Compiler(
-                    compile_policy.parse_policy(f"{text}\nsync role {SYNC_ROLE}\nsync {t.table}{way}\n", path)
-                ).compile(path)
-                taken.append(way)
-            except PolicyError:
-                continue
-        if taken:
-            lines.append(f"sync {t.table}{taken[(seed + n) % len(taken)]}")
+        taken = [way for way in ways if takes(f"sync {t.table}{way}")]
+        if not taken:
+            continue
+        line = f"sync {t.table}{taken[(seed + n) % len(taken)]}"
+        # keyed by a type whose inheritance it reaches: every other seed, the first such type
+        if (seed + n) % 2:
+            line = next((f"{line} by {b}" for b in pol.types if takes(f"{line} by {b}")), line)
+        lines.append(line)
     if not lines:
         return text
-    return f"{text.rstrip(chr(10))}\n\n-- the sync index (difftest)\nsync role {SYNC_ROLE}\n" + "\n".join(lines) + "\n"
+    after = "sync after commit\n" if seed % 3 == 2 else ""
+    return (
+        f"{text.rstrip(chr(10))}\n\n-- the sync index (difftest)\nsync role {SYNC_ROLE}\n{after}"
+        + "\n".join(lines)
+        + "\n"
+    )
 
 
 class Reference(evaluate.Reference):
@@ -1645,6 +1656,9 @@ class Checker:
     def check(self) -> list[str]:
         self._nocontext = self._nocontext_all = None
         start = self.feed_position()
+        if self.pol.sync_after_commit is not None:
+            # after commit: the index is as late as the worker's last run, which the checks hold to the reference
+            self.db.rows("SELECT authz.sync_work()")
         snap = self.snapshot()
         problems: list[str] = []
         if snap[("verify",)] is not True:

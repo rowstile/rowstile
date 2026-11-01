@@ -385,6 +385,67 @@ test("E15: a session limited by scopes is refused, 403", async () => {
     expect.objectContaining({ code: "AZ703", detail: "invalid API key" })]);
 });
 
+/** Applies the policy with its sync lines changed by edit, runs fn, then applies the policy as it was. */
+async function withPolicy(edit: (policy: string) => string, fn: () => Promise<void>): Promise<void> {
+  const policy = readFileSync(join(HERE, "db", "policy.authz"), "utf8");
+  const changed = edit(policy);
+  expect(changed).not.toBe(policy);
+  const work = mkdtempSync(join(tmpdir(), "electric-"));
+  writeFileSync(join(work, "policy.authz"), changed);
+  try {
+    expect(rowstile("apply", join(work, "policy.authz"))).toMatch(/applied/);
+    await fn();
+  } finally {
+    rowstile("apply");
+  }
+  await asListed();
+}
+
+// E16: keyed by folder, a file's readers name its folder's key, which each user holds for every folder they may
+// read: a move rewrites no file's readers, only keys, and the shapes follow it as they do the files' readers
+test("E16: keyed by folder, a folder moved out of reach and back: the files below it leave and return", async () => {
+  const readers = async () => ((await run(
+    "SELECT md5(string_agg(id || key || xmin, ',' ORDER BY id, key)) AS m FROM authz_sync.file__readers")).rows as { m: string }[])[0]!.m;
+  await withPolicy((p) => p.replace("sync app.files : view\n", "sync app.files : view by folder\n")
+    .replace("sync app.folders\n", "sync app.folders by folder\n"), async () => {
+    await asListed();
+    const before = await readers();
+    try {
+      await run("UPDATE app.folders SET parent_id = NULL WHERE id = 2");
+      await live["2"]!.file.holds([1, 6]);                       // bo read them through eng; file 6 is shared with him
+      await live["2"]!.folder.holds([1]);
+      await asListed();
+    } finally {
+      await run("UPDATE app.folders SET parent_id = 1 WHERE id = 2");
+    }
+    await live["2"]!.file.holds([1, 2, 3, 6]);
+    await asListed();
+    expect(await readers()).toBe(before);                        // the moves wrote no file's readers
+  });
+});
+
+// E17: after commit, a worker keeps the index: a change reaches the shapes once authz.sync_work() has run
+test("E17: after commit, a share arrives once the worker runs, and not before", async () => {
+  const unshare = "SELECT authz.act_as('user', '5'); SELECT authz.unshare('file', '4', 'viewer', 'user', '3')";
+  await withPolicy((p) => `${p}sync after commit\n`, async () => {
+    try {
+      await run("SELECT authz.act_as('user', '5'); SELECT authz.share('file', '4', 'viewer', 'user', '3')");
+      // a write after it, which cy reads: once it has arrived, so has everything committed before it
+      await run("UPDATE app.files SET name = 'after the share' WHERE id = 5");
+      await live["3"]!.file.until((l) => l.row(5)?.name === "after the share", "the rename");
+      expect(live["3"]!.file.ids()).toEqual([5]);                // the share isn't in the index yet
+      const [{ worked }] = (await run("SELECT authz.sync_work() AS worked")).rows as { worked: string }[];
+      expect(Number(worked)).toBeGreaterThanOrEqual(1);
+      await live["3"]!.file.holds([4, 5]);
+      await asListed();
+    } finally {
+      await run(unshare);
+      await run("SELECT authz.sync_work()");
+    }
+    await live["3"]!.file.holds([5]);
+  });
+});
+
 // the stack's 4: one pooled connection, Ann then Bob: Bob never gets Ann's shape
 test("4: a pooled connection carries no one over", async () => {
   for (const user of ["1", "3", "", "5", "3", "1"]) {

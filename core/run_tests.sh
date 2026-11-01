@@ -383,6 +383,18 @@ python3 tests/interleave.py --levels "read committed" --worlds boxes --db authz_
 record "${PIPESTATUS[0]}" "interleavings (read committed, boxes)"
 }
 unit policy 10 interleavings_boxes
+interleavings_docs_by() {
+step "every order of two tree writes, in READ COMMITTED (docs, its sync index keyed by folder)"
+python3 tests/interleave.py --levels "read committed" --worlds docs_by --db authz_interleave_rc | quiet_ok
+record "${PIPESTATUS[0]}" "interleavings (read committed, docs keyed by folder)"
+}
+unit policy 45 interleavings_docs_by
+interleavings_docs_after() {
+step "every order of two tree writes, in READ COMMITTED (docs, its sync index kept after commit)"
+python3 tests/interleave.py --levels "read committed" --worlds docs_after --db authz_interleave_rc | quiet_ok
+record "${PIPESTATUS[0]}" "interleavings (read committed, docs after commit)"
+}
+unit policy 45 interleavings_docs_after
 fi
 
 moves() {

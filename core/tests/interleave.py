@@ -11,7 +11,7 @@ one that changes a tree, or that the tree's rows decide, and is written so that 
 what lies above what the other writes. Every pair of a world's kinds (a kind with itself included) runs in every
 order of its six steps the server allows, with each session at each of the levels asked for (the nine pairs of
 the three by default: one session in READ COMMITTED beside one in SERIALIZABLE too, which SERIALIZABLE's own
-checks can't see). Four worlds, each in a database of its own, so that every way a tree is kept is written by two
+checks can't see). Six worlds, each in a database of its own, so that every way a tree is kept is written by two
 transactions at once:
   - docs: the docs app (core/example/), a tree of one type on plain tables: a folder created, moved, linked into
     another, unlinked, deleted, its id changed, and a folder shared and unshared, which `authz.share` and the
@@ -28,7 +28,9 @@ transactions at once:
   - boxes: a tree of two types through their own columns alone (boxes on shelves, shelves in boxes), whose
     condition reads the tree's own table: a box or a shelf created, the two moved (a loop through both), a box
     sealed (a write to the tree's own table that changes what the condition says of other rows), and a box's id
-    changed (10 pairs).
+    changed (10 pairs);
+  - docs_by and docs_after: the docs world with its sync index keyed by folder (a move writes keys, and no file's
+    readers), and kept after commit by a worker, which runs after each schedule (36 pairs each).
 
 The orders: the scheduler sends one step at a time and waits until every session is either done with its statement
 or waiting for a lock, which a third connection tells by `pg_blocking_pids`. A waiting session can't be sent its
@@ -65,7 +67,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -543,7 +545,23 @@ BOXES = World(
     op=boxes_op,
 )
 
-WORLDS = {w.name: w for w in (DOCS, CROSS, PARTS, BOXES)}
+# the docs app with its index keyed by folder (a move writes keys, not readers), and kept after commit by a worker,
+# which runs after each schedule before the index is compared with a rebuild
+DOCS_BY = replace(
+    DOCS,
+    name="docs_by",
+    policy=(
+        "docs.authz",
+        core_file("example/docs.authz")
+        + SYNC_LINES.replace("sync app.files : view\n", "sync app.files : view by folder\n").replace(
+            "sync app.folders\n", "sync app.folders by folder\n"
+        ),
+    ),
+)
+DOCS_AFTER = replace(
+    DOCS, name="docs_after", policy=("docs.authz", core_file("example/docs.authz") + SYNC_LINES + "sync after commit\n")
+)
+WORLDS = {w.name: w for w in (DOCS, CROSS, PARTS, BOXES, DOCS_BY, DOCS_AFTER)}
 
 
 class Outcome(NamedTuple):
@@ -779,7 +797,9 @@ class Scheduler:
         if self.owner.query("SELECT authz.verify()") != [(True,)]:
             run.problems.append("the inheritance tables don't match a rebuild")
             self.owner.script(self.rebuild)
-        if SYNC_LINES in self.world.policy[1] and self.owner.query("SELECT authz.sync_verify()") != [(True,)]:
+        if "\nsync after commit\n" in self.world.policy[1]:
+            self.owner.query("SELECT authz.sync_work()")
+        if "\nsync role " in self.world.policy[1] and self.owner.query("SELECT authz.sync_verify()") != [(True,)]:
             run.problems.append("the sync index doesn't match a rebuild")
             self.owner.script("SELECT authz_int.sync_refresh(NULL, true)")
         loops = str(self.owner.query(self.world.loops)[0][0])
@@ -942,7 +962,7 @@ def main() -> None:
     ap.add_argument(
         "--levels", default=",".join(LEVELS), help="comma-separated isolation levels: each session at each of them"
     )
-    ap.add_argument("--worlds", default=",".join(WORLDS), help="comma-separated worlds (default: all four)")
+    ap.add_argument("--worlds", default=",".join(WORLDS), help="comma-separated worlds (default: all six)")
     ap.add_argument("--pairs", default="", help="comma-separated pairs, as create-move (default: every one)")
     args = ap.parse_args()
     chosen = [x.strip() for x in args.levels.split(",") if x.strip()]

@@ -87,17 +87,31 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   Conditions on who asks or the clock, conditions that read other rows, caveats, links, scopes and masked columns
   can't go through: compiling refuses the first three, the others give nothing through it. <!-- checked: tests/policy_errors.py "a synced permission reading who asks"; tests/policy_errors.py "a synced permission reading the clock"; tests/policy_errors.py "a synced permission reading other rows"; tests/difftest.py "without shares that have a caveat and without links"; tests/sync.sh "a sync role that may read a masked column is refused" -->
   The engine is trusted: it holds BYPASSRLS and every row, and rowstile can't check what it serves. <!-- unchecked: what an engine serves is the engine's -->
-  The index costs writes in the writer's transaction: a move works out again the readers of every row below the
-  moved folder and of their files, a share those of what reads its object, a membership change the member's keys
-  alone. On the scale benchmark's dev size (400,000 files in 20,000 folders 20 levels deep, 1,000 users, 100
-  teams; measured 2026-10-31 on a shared machine, Postgres 16), the index held 13.1 million readers rows for the
-  files (33 a file: mostly the owner of each folder above it) and 647,000 for the folders, 2.2 GB; working it out
-  whole took four and a half minutes. A move of a folder with 100 folders and 2,000 files below it took 3 to 7 s
-  (0.2 to 1.3 s without the index), one with 950 folders and 19,000 files 13 to 26 s (0.4 to 0.9 s), one with 9,400
-  folders and 189,000 files 150 to 350 s (2 s), writing 700,000 rows of the index; a share on a folder with 19,000
-  files below it 10 to 13 s; a member joining or leaving a team 0.3 to 1.3 s; a file made 0.4 s. Those were
-  measured once the index's tables had been vacuumed: right after the first apply, before autovacuum has run, a
-  write that reads many of their rows can take forty times as long, so run `VACUUM` on them after it. <!-- unchecked: times measured by hand on 2026-10-31 -->
+  The index costs writes. Copied in (the default), a move works out again the readers of every row below the moved
+  folder and of their files, a share those of what reads its object, a membership change the member's keys alone.
+  Keyed by folder, a move or a share writes the keys of whom it concerns, and a membership change the keys of every
+  folder the member gains or loses. After commit, the writer writes a note, and the worker the rest. On the scale
+  benchmark's dev size (400,000 files in 20,000 folders 20 levels deep, 1,000 users, 100 teams; measured
+  2026-11-01 on a shared machine whose load went from 5 to 37 on 12 cores, Postgres 16, 128 MB of shared buffers,
+  each write and its undoing, after a `VACUUM`): <!-- unchecked: times measured by hand on 2026-11-01 -->
+
+  | | copied in | keyed by folder | after commit, copied in: the writer, then the worker |
+  |---|---|---|---|
+  | the index | 12.7 million readers rows for the files, 628,000 for the folders, 12,821 keys (13 a user); 1.4 GB | 1.2 million for the files, 20,000 for the folders, 9.4 million keys (9,091 a user, 40,019 the most) and 1.0 million rows of the groups; 1.5 GB | as copied in |
+  | worked out whole (the first apply) | 404 s | 499 s | 425 s |
+  | a move of a folder with 100 folders and 2,000 files below | 1.4 s, 1.7 s | 1.5 s, 1.6 s | 0.2 s; 4.3 s, 2.6 s |
+  | ... with 950 folders and 19,000 files | 9.5 s, 10.6 s | 5.7 s, 6.1 s | 0.45 s; 24.5 s, 10.9 s |
+  | ... with 9,400 folders and 189,000 files | 150 to 350 s (measured 2026-10-31) | 40 s, 74 s | |
+  | a share on a folder with 19,000 files below, and its revoke | 8.5 s, 8.1 s | 3.4 s, 5.4 s | 0.07 s; 8.3 s, 7.3 s |
+  | a member joining a team, and leaving | 0.08 s, 0.07 s | 0.24 s, 3.3 s | 0.12 s; 0.06 s |
+  | a file made | 0.08 s | 0.09 s | 0.03 s; 0.08 s |
+  | `authz.sync_verify()` | 167 s | 308 s | 171 s |
+
+  Keyed by folder trades the files' readers for keys: each user holds one for every folder they may read. It saves
+  where folders hold many files; it costs where many users read each folder, and on each membership change (a
+  member joining a team that reads 900 folders gains 900 keys), and each user's filter in the engine reads all of
+  their keys. Right after the first apply, before autovacuum has run, a write that reads many of the index's rows
+  can take forty times as long: run `VACUUM` on its tables after it. <!-- unchecked: times measured by hand on 2026-10-31 and 2026-11-01 -->
 - **Identity providers**: `authz.sync_members` takes the member list; there is no SCIM
   endpoint. JWTs are HS256 only (no RS256/JWKS in plpgsql); for asymmetric tokens,
   verify in your backend and sign in from there ([Identity](identity.md)), or use an API key. <!-- checked: tests/identity.sh "alg none" -->
