@@ -289,12 +289,18 @@ out=$(timeout 20 python3 cli/rowstile_cli.py --db "dbname=$DB" sql --as user:5 "
 PSQL -c "DROP TABLE app.cli_inbox"
 # an authz.* function the database doesn't have: the server's words when this command applied the policy in force
 # (a name rowstile doesn't make, arguments no function takes), and what to do when another version applied it
-nosuch=$'\nHINT: No function matches the given name and argument types. You might need to add explicit type casts.'
+# (the server's words differ by version: PostgreSQL 19 gives a DETAIL where 16 to 18 give a HINT; psql asks for them)
+server_says() {
+  psql -X -q -d "$DB" -c "$1" 2>&1 | sed -e '/^LINE [0-9]*:/d' -e '/^ *\^$/d' -e 's/^ERROR:  //' -e 's/^DETAIL:  /DETAIL: /' -e 's/^HINT:  /HINT: /'
+}
+cann=$(server_says "SELECT authz.cann('folder', 1, 'view')")
+case "$cann" in "function authz.cann(unknown, integer, unknown) does not exist"*) ;; *) bad "psql's words for authz.cann" "$cann" ;; esac
 run sql --as user:5 "SELECT authz.cann('folder', 1, 'view')"
-[ "$rc $out" = "1 function authz.cann(unknown, integer, unknown) does not exist$nosuch" ] &&
+[ "$rc $out" = "1 $cann" ] &&
   ok "sql calling a function rowstile doesn't make: the server's words, not that no policy is applied" || bad "sql, a name rowstile doesn't make" "$rc $out"
+can1=$(server_says "SELECT authz.can('folder')")
 run sql --as user:5 "SELECT authz.can('folder')"
-[ "$rc $out" = "1 function authz.can(unknown) does not exist$nosuch" ] &&
+[ "$rc $out" = "1 $can1" ] && [ "${can1%%$'\n'*}" = "function authz.can(unknown) does not exist" ] &&
   ok "... and one it makes, with arguments it doesn't take: the server's words too" || bad "sql, arguments no function takes" "$rc $out"
 build=$(python3 -c "import authzlib; print(authzlib.BUILD)")
 run explain-rule --as user:1 app.files update 11; was="$rc $out"
@@ -304,7 +310,7 @@ run explain-rule --as user:3 app.files update 11
 HINT: rowstile reapply (a database that takes migrations: rowstile migrate, then deploy the migration)" ] &&
   ok "a function an older rowstile didn't make: which version applied the policy, and rowstile reapply (AZ626)" || bad "a function an older version didn't make" "$rc $out"
 run sql --as user:5 "SELECT authz.cann('folder', 1, 'view')"
-[ "$rc $out" = "1 function authz.cann(unknown, integer, unknown) does not exist$nosuch" ] &&
+[ "$rc $out" = "1 $cann" ] &&
   ok "... a name rowstile doesn't make, called there: still the server's words" || bad "sql, a name rowstile doesn't make, older policy" "$rc $out"
 PSQL -c "UPDATE authz.policy_versions SET version = '99.0.0' WHERE id = (SELECT max(id) FROM authz.policy_versions)"
 run explain-rule --as user:3 app.files update 11
