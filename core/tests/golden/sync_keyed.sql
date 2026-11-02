@@ -297,6 +297,7 @@ BEGIN
              ('pending', ARRAY['id', 'at', 'type', 'ids']::name[], ARRAY['bigint', 'timestamp with time zone', 'text', 'text[]']::regtype[]),
              ('inherits', ARRAY['key', 'source']::name[], ARRAY['text', 'text']::regtype[]),
              ('given', ARRAY['source', 'key']::name[], ARRAY['text', 'text']::regtype[]),
+             ('given_own', ARRAY['source', 'key']::name[], ARRAY['text', 'text']::regtype[]),
              ('file__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[]),
              ('folder__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[])) w(name, cols, types) ON w.name = c.relname
            WHERE c.relnamespace = 'authz_sync'::regnamespace AND c.relkind IN ('r', 'p')
@@ -317,6 +318,7 @@ BEGIN
              ('pending', ARRAY['id', 'at', 'type', 'ids']::name[], ARRAY['bigint', 'timestamp with time zone', 'text', 'text[]']::regtype[]),
              ('inherits', ARRAY['key', 'source']::name[], ARRAY['text', 'text']::regtype[]),
              ('given', ARRAY['source', 'key']::name[], ARRAY['text', 'text']::regtype[]),
+             ('given_own', ARRAY['source', 'key']::name[], ARRAY['text', 'text']::regtype[]),
              ('file__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[]),
              ('folder__readers', ARRAY['id', 'key']::name[], ARRAY['bigint', 'text']::regtype[])) w(name, cols, types)
        WHERE w.cols IS NOT NULL AND to_regclass(pg_catalog.format('authz_sync.%I', w.name)) IS NULL) THEN
@@ -353,6 +355,10 @@ ALTER TABLE authz_sync.inherits REPLICA IDENTITY FULL;
 CREATE TABLE IF NOT EXISTS authz_sync.given (source text NOT NULL, key text NOT NULL, PRIMARY KEY (source, key));
 CREATE INDEX IF NOT EXISTS given_by_key ON authz_sync.given (key);
 ALTER TABLE authz_sync.given REPLICA IDENTITY FULL;
+-- (given leaves out a key that a source above gives too, which reaches whatever this one reaches: given_own holds
+-- every key each source gives itself, which given is worked out from; the engines read given, never given_own)
+CREATE TABLE IF NOT EXISTS authz_sync.given_own (source text NOT NULL, key text NOT NULL, PRIMARY KEY (source, key));
+ALTER TABLE authz_sync.given_own REPLICA IDENTITY FULL;
 CREATE TABLE IF NOT EXISTS authz_sync."file__readers" ("id" bigint NOT NULL, key text NOT NULL, PRIMARY KEY ("id", key));
 CREATE INDEX IF NOT EXISTS "file__readers_key" ON authz_sync."file__readers" (key);
 ALTER TABLE authz_sync."file__readers" REPLICA IDENTITY FULL;
@@ -6771,6 +6777,9 @@ DECLARE
   v_all boolean;               -- every principal's keys worked out whole (applying): the groups' changes aren't followed
   v_n bigint;
   v_found int;
+  v_gs text[] := '{}'; v_gk text[] := '{}';  -- the given_own rows changed (source, key)
+  v_ik text[] := '{}';                       -- the keys whose inherits changed
+  v_ca text[]; v_cb text[]; v_dd text[];
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx) THEN RETURN; END IF;
   -- (after commit: one worker at a time, under the lock its caller holds: authz.sync_work, sync_refresh)
@@ -6809,28 +6818,57 @@ BEGIN
       WHERE NOT v_all;
   END LOOP;
   -- folder: what each gives itself, and whose own keys each inherits (keyed by inheritance)
-  v_ids := CASE WHEN EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'folder' AND x.id = '*') THEN ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[])) ELSE ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'folder') END;
+  v_ids := CASE WHEN EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'folder' AND x.id = '*') THEN ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[])) ELSE ARRAY(SELECT x.id FROM authz_int.sync_todo x WHERE x.txid = v_tx AND x.type = 'folder') END;
   FOR v_from IN 1 .. coalesce(cardinality(v_ids), 0) BY 10000 LOOP
     v_part := v_ids[v_from : v_from + 9999];
     WITH fresh AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
-    gone AS (DELETE FROM authz_sync.given x WHERE x.source IN (SELECT 'folder#edit:' || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.source = x.source AND f.key = x.key) RETURNING 1),
-    made AS (INSERT INTO authz_sync.given SELECT f.source, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
-    SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
+    gone AS (DELETE FROM authz_sync.given_own x WHERE x.source IN (SELECT 'folder#edit:' || v FROM unnest(v_part) v)
+             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.source = x.source AND f.key = x.key) RETURNING x.source AS a, x.key AS b),
+    made AS (INSERT INTO authz_sync.given_own SELECT f.source, f.key FROM fresh f ON CONFLICT DO NOTHING
+             RETURNING given_own.source AS a, given_own.key AS b)
+    SELECT count(*), coalesce(array_agg(c.a), '{}'), coalesce(array_agg(c.b), '{}') INTO v_n, v_ca, v_cb
+    FROM (SELECT * FROM gone UNION ALL SELECT * FROM made) c;
+    v_gs := v_gs || v_ca; v_gk := v_gk || v_cb;
     WITH fresh AS MATERIALIZED (SELECT 'folder#view:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.view"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
-    gone AS (DELETE FROM authz_sync.given x WHERE x.source IN (SELECT 'folder#view:' || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.source = x.source AND f.key = x.key) RETURNING 1),
-    made AS (INSERT INTO authz_sync.given SELECT f.source, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
-    SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
+    gone AS (DELETE FROM authz_sync.given_own x WHERE x.source IN (SELECT 'folder#view:' || v FROM unnest(v_part) v)
+             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.source = x.source AND f.key = x.key) RETURNING x.source AS a, x.key AS b),
+    made AS (INSERT INTO authz_sync.given_own SELECT f.source, f.key FROM fresh f ON CONFLICT DO NOTHING
+             RETURNING given_own.source AS a, given_own.key AS b)
+    SELECT count(*), coalesce(array_agg(c.a), '{}'), coalesce(array_agg(c.b), '{}') INTO v_n, v_ca, v_cb
+    FROM (SELECT * FROM gone UNION ALL SELECT * FROM made) c;
+    v_gs := v_gs || v_ca; v_gk := v_gk || v_cb;
     WITH fresh AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
     gone AS (DELETE FROM authz_sync.inherits x WHERE x.key IN (SELECT 'folder#edit:' || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.key = x.key AND f.source = x.source) RETURNING 1),
-    made AS (INSERT INTO authz_sync.inherits SELECT f.key, f.source FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
-    SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
+             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.key = x.key AND f.source = x.source) RETURNING x.key AS a, x.source AS b),
+    made AS (INSERT INTO authz_sync.inherits SELECT f.key, f.source FROM fresh f ON CONFLICT DO NOTHING
+             RETURNING inherits.key AS a, inherits.source AS b)
+    SELECT count(*), coalesce(array_agg(c.a), '{}'), coalesce(array_agg(c.b), '{}') INTO v_n, v_ca, v_cb
+    FROM (SELECT * FROM gone UNION ALL SELECT * FROM made) c;
+    v_ik := v_ik || v_ca;
     WITH fresh AS MATERIALIZED (SELECT 'folder#view:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.view"(ARRAY(SELECT v::bigint FROM unnest(v_part) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f),
     gone AS (DELETE FROM authz_sync.inherits x WHERE x.key IN (SELECT 'folder#view:' || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.key = x.key AND f.source = x.source) RETURNING 1),
-    made AS (INSERT INTO authz_sync.inherits SELECT f.key, f.source FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
+             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.key = x.key AND f.source = x.source) RETURNING x.key AS a, x.source AS b),
+    made AS (INSERT INTO authz_sync.inherits SELECT f.key, f.source FROM fresh f ON CONFLICT DO NOTHING
+             RETURNING inherits.key AS a, inherits.source AS b)
+    SELECT count(*), coalesce(array_agg(c.a), '{}'), coalesce(array_agg(c.b), '{}') INTO v_n, v_ca, v_cb
+    FROM (SELECT * FROM gone UNION ALL SELECT * FROM made) c;
+    v_ik := v_ik || v_ca;
+  END LOOP;
+  -- given: what each source gives itself, but for what a source above it gives too
+  v_dd := ARRAY(SELECT DISTINCT z.s FROM (
+    SELECT unnest(v_gs) AS s UNION ALL SELECT unnest(v_ik)
+    UNION ALL SELECT i.key FROM unnest(v_gs, v_gk) c(s, k) JOIN authz_sync.inherits i ON i.source = c.s AND i.key <> c.s
+      JOIN authz_sync.given_own o ON o.source = i.key AND o.key = c.k) z);
+  FOR v_from IN 1 .. coalesce(cardinality(v_dd), 0) BY 10000 LOOP
+    v_part := v_dd[v_from : v_from + 9999];
+    WITH fresh AS MATERIALIZED (
+      SELECT o.source, o.key FROM authz_sync.given_own o WHERE o.source = ANY (v_part)
+      AND NOT EXISTS (SELECT 1 FROM authz_sync.inherits i JOIN authz_sync.given_own a ON a.source = i.source AND a.key = o.key
+                      WHERE i.key = o.source AND i.source <> o.source
+                      AND NOT EXISTS (SELECT 1 FROM authz_sync.inherits m WHERE m.key = i.source AND m.source = o.source))),
+    gone AS (DELETE FROM authz_sync.given x WHERE x.source = ANY (v_part)
+             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.source = x.source AND f.key = x.key) RETURNING 1),
+    made AS (INSERT INTO authz_sync.given SELECT f.source, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
     SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
   END LOOP;
   -- the keys, where the groups' rows or the principals changed: under one lock row, taken last (nothing after it waits
@@ -6996,6 +7034,7 @@ BEGIN
     DELETE FROM authz_sync.keys k WHERE k.principal_type <> ALL (ARRAY['user']::text[]);
     DELETE FROM authz_sync.expanded x WHERE x.object_type <> ALL (ARRAY['file', 'folder']::text[]);
     DELETE FROM authz_sync.given x WHERE left(x.source, strpos(x.source, ':')) <> ALL (ARRAY['folder#edit:', 'folder#view:']::text[]);
+    DELETE FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) <> ALL (ARRAY['folder#edit:', 'folder#view:']::text[]);
     DELETE FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) <> ALL (ARRAY['folder#edit:', 'folder#view:']::text[]);
     INSERT INTO authz_int.sync_todo (txid, type, id) SELECT txid_current(), x, '*' FROM unnest(ARRAY['file', 'folder', 'org', 'team', 'user']::text[]) x ON CONFLICT DO NOTHING;
   END IF;
@@ -7046,15 +7085,22 @@ BEGIN
     RETURN false;
   END IF;
   IF EXISTS (
-    WITH s AS MATERIALIZED (SELECT source, key FROM authz_sync.given), f AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f UNION SELECT 'folder#view:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.view"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f)
+    WITH s AS MATERIALIZED (SELECT source, key FROM authz_sync.given_own), f AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f UNION SELECT 'folder#view:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.view"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f)
     SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
     RAISE NOTICE 'the sync index differs from a rebuild: %', 'what each object gives itself';
     RETURN false;
   END IF;
   IF EXISTS (
-    WITH s AS MATERIALIZED (SELECT key, source FROM authz_sync.inherits), f AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f UNION SELECT 'folder#view:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.view"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f)
+    WITH s AS MATERIALIZED (SELECT key, source FROM authz_sync.inherits), f AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f UNION SELECT 'folder#view:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.view"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f)
     SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
     RAISE NOTICE 'the sync index differs from a rebuild: %', 'whose own keys each object inherits';
+    RETURN false;
+  END IF;
+  IF EXISTS (
+    WITH s AS MATERIALIZED (SELECT source, key FROM authz_sync.given), f AS MATERIALIZED (SELECT * FROM (WITH o AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f UNION SELECT 'folder#view:' || f.o_id::text AS source, f.o_key AS key FROM authz_int."sync_given:folder.view"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f), i AS MATERIALIZED (SELECT 'folder#edit:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.edit"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f UNION SELECT 'folder#view:' || f.o_id::text AS key, f.o_source AS source FROM authz_int."sync_inherits:folder.view"(ARRAY(SELECT v::bigint FROM unnest(ARRAY(SELECT x."id"::text FROM "app"."folders" x UNION SELECT x."folder_id"::text FROM "app"."folder_links" x UNION SELECT x."folder_id"::text FROM "app"."folder_team_access" x UNION SELECT g.object_id FROM authz.shares g WHERE g.object_type = 'folder' UNION SELECT substr(x.source, strpos(x.source, ':') + 1) FROM authz_sync.given_own x WHERE left(x.source, strpos(x.source, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]) UNION SELECT substr(x.key, strpos(x.key, ':') + 1) FROM authz_sync.inherits x WHERE left(x.key, strpos(x.key, ':')) = ANY (ARRAY['folder#edit:', 'folder#view:']::text[]))) v WHERE pg_catalog.pg_input_is_valid(v, 'bigint'))) f)
+    SELECT o.source, o.key FROM o WHERE NOT EXISTS (SELECT 1 FROM i JOIN o a ON a.source = i.source AND a.key = o.key WHERE i.key = o.source AND i.source <> o.source AND NOT EXISTS (SELECT 1 FROM i m WHERE m.key = i.source AND m.source = o.source))) z)
+    SELECT 1 FROM ((TABLE s EXCEPT TABLE f) UNION ALL (TABLE f EXCEPT TABLE s)) d) THEN
+    RAISE NOTICE 'the sync index differs from a rebuild: %', 'what each object gives itself, but for what one above it gives too';
     RETURN false;
   END IF;
   IF EXISTS (

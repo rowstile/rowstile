@@ -1,0 +1,42 @@
+# The sync index keyed by folder, two layouts side by side on one runner: D (main) and Dd (this branch: given leaves
+# out what a folder above gives too). The bench's dev data, each layout measured twice, in turn. A measurement only:
+# this branch is not for main
+name: sync bench
+on:
+  push:
+    branches: [sync-keyed-dd]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {ref: main, path: base, persist-credentials: false}
+      - name: Postgres 16
+        run: |
+          docker build -q -t rowstile:16 --build-arg PG_MAJOR=16 -f core/Dockerfile . >/dev/null
+          docker run -d --name pg -e POSTGRES_HOST_AUTH_METHOD=trust -v "$PWD:/src" rowstile:16
+          for i in $(seq 60); do docker exec pg pg_isready -q -h /var/run/postgresql && break; sleep 1; done
+          docker exec -e PGHOST=/var/run/postgresql -e PGUSER=postgres -w /src/core pg bash tests/make_owner.sh
+          nproc; free -g
+      - name: The bench's dev data
+        run: |
+          docker exec -e PGHOST=/var/run/postgresql -e PGUSER=authz_owner -w /src/core pg bash bench/sync/setup.sh
+      - name: D and Dd, keyed by folder, twice each in turn
+        run: |
+          mkdir -p out
+          for round in 1 2; do
+            for layout in D Dd; do
+              dir=/src/core; [ "$layout" = D ] && dir=/src/base/core
+              docker exec -e PGHOST=/var/run/postgresql -e PGUSER=authz_owner -w "$dir" pg \
+                bash /src/core/bench/sync/measure.sh keyed big | tee "out/$layout-$round.txt"
+            done
+          done
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with: {name: sync-bench, path: out}

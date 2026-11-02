@@ -603,7 +603,11 @@ CREATE TRIGGER {readers_trig("del")} AFTER DELETE ON {self.readers_table(t)}
                 else []
             )
             + (
-                [("inherits", ["key", "source"], ["text"] * 2), ("given", ["source", "key"], ["text"] * 2)]
+                [
+                    ("inherits", ["key", "source"], ["text"] * 2),
+                    ("given", ["source", "key"], ["text"] * 2),
+                    ("given_own", ["source", "key"], ["text"] * 2),
+                ]
                 if st.keyed
                 else []
             )
@@ -641,7 +645,11 @@ ALTER TABLE authz_sync.inherits REPLICA IDENTITY FULL;
 -- ... and the keys each of those gives itself, before what it inherits (folder#view:3: user:5, team#member:4)
 CREATE TABLE IF NOT EXISTS authz_sync.given (source text NOT NULL, key text NOT NULL, PRIMARY KEY (source, key));
 CREATE INDEX IF NOT EXISTS given_by_key ON authz_sync.given (key);
-ALTER TABLE authz_sync.given REPLICA IDENTITY FULL;"""
+ALTER TABLE authz_sync.given REPLICA IDENTITY FULL;
+-- (given leaves out a key that a source above gives too, which reaches whatever this one reaches: given_own holds
+-- every key each source gives itself, which given is worked out from; the engines read given, never given_own)
+CREATE TABLE IF NOT EXISTS authz_sync.given_own (source text NOT NULL, key text NOT NULL, PRIMARY KEY (source, key));
+ALTER TABLE authz_sync.given_own REPLICA IDENTITY FULL;"""
             if st.keyed
             else ""
         )
@@ -859,7 +867,7 @@ $f$;"""
                     parts.append(f"SELECT {self.ref_text(u, 'x', src.obj_col)} FROM {qt(src.table)} x")
         parts.append(f"SELECT g.object_id FROM authz.shares g WHERE g.object_type = {lit(u.name)}")
         heads = ", ".join(lit(f"{p[0]}#{p[1]}:") for p in dict.fromkeys([*st.given, *st.inherits]) if p[0] == u.name)
-        for table, col in (("given", "source"), ("inherits", "key")):
+        for table, col in (("given_own", "source"), ("inherits", "key")):
             parts.append(
                 f"SELECT substr(x.{col}, strpos(x.{col}, ':') + 1) FROM authz_sync.{table} x "
                 f"WHERE left(x.{col}, strpos(x.{col}, ':')) = ANY (ARRAY[{heads}]::text[])"
@@ -891,19 +899,28 @@ $f$;"""
             u = self.T(n)
             body = []
             for table, cols, pairs, rows in (
-                ("given", ("source", "key"), st.given, self.given_rows_sql),
+                ("given_own", ("source", "key"), st.given, self.given_rows_sql),
                 ("inherits", ("key", "source"), st.inherits, self.inherits_rows_sql),
             ):
                 a, b = cols
                 for p in pairs:
                     if p[0] != n:
                         continue
+                    # what changed is noted, for given: of given_own its rows, of inherits the keys whose rows did
+                    note = (
+                        "v_gs := v_gs || v_ca; v_gk := v_gk || v_cb;"
+                        if table == "given_own"
+                        else "v_ik := v_ik || v_ca;"
+                    )
                     body.append(
                         f"""    WITH fresh AS MATERIALIZED ({rows(p, "v_part")}),
     gone AS (DELETE FROM authz_sync.{table} x WHERE x.{a} IN (SELECT {lit(f"{p[0]}#{p[1]}:")} || v FROM unnest(v_part) v)
-             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.{a} = x.{a} AND f.{b} = x.{b}) RETURNING 1),
-    made AS (INSERT INTO authz_sync.{table} SELECT f.{a}, f.{b} FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
-    SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;"""
+             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.{a} = x.{a} AND f.{b} = x.{b}) RETURNING x.{a} AS a, x.{b} AS b),
+    made AS (INSERT INTO authz_sync.{table} SELECT f.{a}, f.{b} FROM fresh f ON CONFLICT DO NOTHING
+             RETURNING {table}.{a} AS a, {table}.{b} AS b)
+    SELECT count(*), coalesce(array_agg(c.a), '{{}}'), coalesce(array_agg(c.b), '{{}}') INTO v_n, v_ca, v_cb
+    FROM (SELECT * FROM gone UNION ALL SELECT * FROM made) c;
+    {note}"""
                     )
             out.append(
                 f"  -- {n}: what each gives itself, and whose own keys each inherits (keyed by inheritance)\n"
@@ -911,7 +928,31 @@ $f$;"""
                 f"  FOR v_from IN 1 .. coalesce(cardinality(v_ids), 0) BY {BATCH} LOOP\n"
                 f"    v_part := v_ids[v_from : v_from + {BATCH - 1}];\n" + "\n".join(body) + "\n  END LOOP;"
             )
+        out.append(self.given_sql())
         return "\n".join(out)
+
+    def given_sql(self) -> str:
+        """given, for the sources the change reached: each source whose own keys changed; each source whose inherits
+        changed (it moved); and below a source whose own key changed, each one that gives the same key itself. Of
+        what a source gives itself (given_own), given keeps a key unless a source strictly above it (one it inherits
+        from that doesn't inherit from it in turn) gives it too: that one reaches every key this one reaches."""
+        return f"""  -- given: what each source gives itself, but for what a source above it gives too
+  v_dd := ARRAY(SELECT DISTINCT z.s FROM (
+    SELECT unnest(v_gs) AS s UNION ALL SELECT unnest(v_ik)
+    UNION ALL SELECT i.key FROM unnest(v_gs, v_gk) c(s, k) JOIN authz_sync.inherits i ON i.source = c.s AND i.key <> c.s
+      JOIN authz_sync.given_own o ON o.source = i.key AND o.key = c.k) z);
+  FOR v_from IN 1 .. coalesce(cardinality(v_dd), 0) BY {BATCH} LOOP
+    v_part := v_dd[v_from : v_from + {BATCH - 1}];
+    WITH fresh AS MATERIALIZED (
+      SELECT o.source, o.key FROM authz_sync.given_own o WHERE o.source = ANY (v_part)
+      AND NOT EXISTS (SELECT 1 FROM authz_sync.inherits i JOIN authz_sync.given_own a ON a.source = i.source AND a.key = o.key
+                      WHERE i.key = o.source AND i.source <> o.source
+                      AND NOT EXISTS (SELECT 1 FROM authz_sync.inherits m WHERE m.key = i.source AND m.source = o.source))),
+    gone AS (DELETE FROM authz_sync.given x WHERE x.source = ANY (v_part)
+             AND NOT EXISTS (SELECT 1 FROM fresh f WHERE f.source = x.source AND f.key = x.key) RETURNING 1),
+    made AS (INSERT INTO authz_sync.given SELECT f.source, f.key FROM fresh f ON CONFLICT DO NOTHING RETURNING 1)
+    SELECT count(*) INTO v_n FROM (SELECT 1 FROM gone UNION ALL SELECT 1 FROM made) z;
+  END LOOP;"""
 
     def sync_filter_sql(self, t: Type, principal: Type, pid: str) -> str:
         """The engines' filter of a synced type's rows for a principal (pid: SQL of its id, as text): those whose readers
@@ -1148,6 +1189,13 @@ END $f$;"""
             if expanding
             else ""
         )
+        keyed_vars = (
+            "\n  v_gs text[] := '{}'; v_gk text[] := '{}';  -- the given_own rows changed (source, key)"
+            "\n  v_ik text[] := '{}';                       -- the keys whose inherits changed"
+            "\n  v_ca text[]; v_cb text[]; v_dd text[];"
+            if st.keyed
+            else ""
+        )
         return f"""-- The index made current for the objects a transaction changed and what reads them (the difference written, not
 -- every row again): at its commit, in it, or after it, by the worker. The groups first, then the keys (a principal
 -- holds the keys of every group whose members hold one of its own, through groups inside groups), then the readers
@@ -1166,7 +1214,7 @@ DECLARE
   v_keys_locked boolean := false;
   v_all boolean;               -- every principal's keys worked out whole (applying): the groups' changes aren't followed
   v_n bigint;
-  v_found int;
+  v_found int;{keyed_vars}
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM authz_int.sync_todo x WHERE x.txid = v_tx) THEN RETURN; END IF;
 {self.locks_sql()}
@@ -1274,18 +1322,18 @@ END $f$;"""
         out.append(("keys", "SELECT principal_type, principal_id, key FROM authz_sync.keys", fresh_keys))
         if st.keyed:
             ids_of = {n: f"ARRAY({self.inherit_ids_sql(self.T(n))})" for n in self.sync_inherit_types()}
+            own = " UNION ".join(self.given_rows_sql(p, ids_of[p[0]]) for p in st.given)
+            inherits = " UNION ".join(self.inherits_rows_sql(p, ids_of[p[0]]) for p in st.inherits)
+            out.append(("what each object gives itself", "SELECT source, key FROM authz_sync.given_own", own))
+            out.append(("whose own keys each object inherits", "SELECT key, source FROM authz_sync.inherits", inherits))
             out.append(
                 (
-                    "what each object gives itself",
+                    "what each object gives itself, but for what one above it gives too",
                     "SELECT source, key FROM authz_sync.given",
-                    " UNION ".join(self.given_rows_sql(p, ids_of[p[0]]) for p in st.given),
-                )
-            )
-            out.append(
-                (
-                    "whose own keys each object inherits",
-                    "SELECT key, source FROM authz_sync.inherits",
-                    " UNION ".join(self.inherits_rows_sql(p, ids_of[p[0]]) for p in st.inherits),
+                    f"SELECT * FROM (WITH o AS MATERIALIZED ({own}), i AS MATERIALIZED ({inherits})\n"
+                    "    SELECT o.source, o.key FROM o WHERE NOT EXISTS (SELECT 1 FROM i JOIN o a ON a.source = i.source "
+                    "AND a.key = o.key WHERE i.key = o.source AND i.source <> o.source "
+                    "AND NOT EXISTS (SELECT 1 FROM i m WHERE m.key = i.source AND m.source = o.source))) z",
                 )
             )
         for n in st.tops:
@@ -1360,7 +1408,11 @@ END $f$;"""
             + "]::text[]);"
         )
         if st.keyed:
-            for table, col, pairs in (("given", "source", st.given), ("inherits", "key", st.inherits)):
+            for table, col, pairs in (
+                ("given", "source", st.given),
+                ("given_own", "source", st.given),
+                ("inherits", "key", st.inherits),
+            ):
                 heads = ", ".join(lit(f"{p[0]}#{p[1]}:") for p in pairs)
                 stale += (
                     f"\n  DELETE FROM authz_sync.{table} x WHERE left(x.{col}, strpos(x.{col}, ':')) <> ALL "
