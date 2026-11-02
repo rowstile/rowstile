@@ -996,8 +996,8 @@ CODES = {
     "AZ810": Code(
         "A sync line keyed by a type it can't be keyed by",
         "`sync app.docs : view by folder` keys each doc's readers by its folder: the doc's readers name the folder's "
-        "group key (`folder#view:7`), and each principal holds the key of every folder it may read, so a move rewrites "
-        "no doc's readers. `by` names a type with a permission that inherits (`parent.view`) and that the synced "
+        "key (`folder#view:7`), and the index says whose own keys that key inherits and what each folder gives "
+        "itself, so a move rewrites no doc's readers. `by` names a type with a permission that inherits (`parent.view`) and that the synced "
         "permission reaches, through dots or as its own; who holds it must be a union of what gives it, without `and` "
         "or `not` between parts that depend on who asks. Name such a type, or leave out `by`: the readers are then "
         "copied from each folder above.",

@@ -15,7 +15,9 @@ stack passes ([`integrations/laravel/test.sh`](../../integrations/laravel/test.s
 ## Install
 
 ```sh
-composer require rowstile/rowstile   # the SDK: not on Packagist yet (a preview); a path repository meanwhile
+git clone https://github.com/rowstile/rowstile ../rowstile   # the SDK, from the repository (not on Packagist yet)
+composer config repositories.rowstile path ../rowstile/sdk/php
+composer require "rowstile/rowstile:*@dev"
 pip install --pre rowstile           # the command (or npm install rowstile@next, or its Docker image)
 rowstile init                        # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```

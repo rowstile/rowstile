@@ -186,7 +186,7 @@ On Neon it needs no settings. In front of your own Postgres it needs a WebSocket
 ([Next.js](nextjs.md#the-neon-serverless-driver-and-the-edge-runtime-preview) shows them). On an edge runtime, a
 pool can't outlive the request that opened it: make one in each request, and end it once the response is sent.
 `pg` is an optional peer of `@rowstile/pg`: an app on Neon's driver alone doesn't run it, and needs only its
-types (`npm install --save-dev @types/pg`), which `@rowstile/pg`'s own name.
+types (`npm install --save-dev @types/pg`), which `@rowstile/pg`'s own types refer to.
 
 ## Background jobs: BullMQ (preview)
 

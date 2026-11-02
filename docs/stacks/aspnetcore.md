@@ -15,6 +15,8 @@ every supported stack passes ([`integrations/aspnetcore/test.sh`](../../integrat
 ## Install
 
 ```sh
+git clone https://github.com/rowstile/rowstile && dotnet pack rowstile/sdk/dotnet/Rowstile.slnx -o rowstile-feed
+dotnet nuget add source "$PWD/rowstile-feed" --name rowstile   # the SDK, packed from the repository (not on NuGet yet)
 dotnet add package Rowstile.EntityFrameworkCore --prerelease
 dotnet add package Rowstile.AspNetCore --prerelease
 pip install --pre rowstile      # the command; or npm install --save-dev rowstile@next, or its Docker image

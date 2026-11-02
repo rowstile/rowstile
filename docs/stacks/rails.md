@@ -15,7 +15,7 @@ stack passes ([`integrations/rails/test.sh`](../../integrations/rails/test.sh)).
 ## Install
 
 ```sh
-bundle add rowstile --version ">= 0.1.0.pre"   # the gem: the SDK (while only pre-releases are published)
+bundle add rowstile --git https://github.com/rowstile/rowstile --glob "sdk/ruby/*.gemspec"   # the gem: the SDK, from the repository (not on RubyGems yet)
 pip install --pre rowstile                     # the command (or npm install rowstile@next, or its Docker image)
 rowstile init                                  # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
