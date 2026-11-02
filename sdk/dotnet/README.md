@@ -14,7 +14,11 @@ functions the policy made, and translates their answers. .NET 10, PostgreSQL thr
 | `Rowstile.EntityFrameworkCore` | `UseRowstile()` on a context's options: every transaction and every command outside one signs in (a transaction is one principal's: inside one, work for someone else throws `InvalidOperationException` before anything is sent), and an update or delete SaveChanges sends that matches no row is asked about (403, 404, or 409 when the row changed since it was read); `Database.Ids(permission)` to filter a query, `PermsOfAsync`, `CanAsync`, `ExpectAsync` for `ExecuteUpdate` and `ExecuteDelete` |
 | `Rowstile.AspNetCore` | `AddRowstile(o => o.User = ...)` and `UseRowstile()`: the data source, from `o.ConnectionString`, with `Include Error Detail` on; each request acts for its user, and the database's answers become problem bodies with the statuses the other SDKs send; the start-up check |
 
+Not on NuGet yet: pack it from the repository, then add it from that folder.
+
 ```sh
+git clone https://github.com/rowstile/rowstile && dotnet pack rowstile/sdk/dotnet/Rowstile.slnx -o rowstile-feed
+dotnet nuget add source "$PWD/rowstile-feed" --name rowstile
 dotnet add package Rowstile.EntityFrameworkCore --prerelease
 dotnet add package Rowstile.AspNetCore --prerelease
 ```

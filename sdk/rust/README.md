@@ -9,7 +9,7 @@ for, the database filters what it reads and refuses what it may not write, and t
 it calls the `authz.*` functions the policy made, and reads their answers.
 
 ```sh
-cargo add rowstile --features sqlx,axum
+cargo add rowstile --git https://github.com/rowstile/rowstile --features sqlx,axum   # not on crates.io yet
 ```
 
 ```rust

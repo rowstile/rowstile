@@ -14,7 +14,7 @@ The package is not the `rowstile` command (`rowstile init`, `migrate`, `test`, `
 
 ```elixir
 # mix.exs
-{:rowstile, "~> 0.1.0-dev"}
+{:rowstile, github: "rowstile/rowstile", sparse: "sdk/elixir"}   # from the repository: not on Hex yet
 ```
 
 ```elixir

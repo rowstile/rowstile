@@ -95,8 +95,9 @@ adds the SDK's packages to `package.json` (for Python, names the one to add) and
   first migration, in about fifteen minutes.
 - [rowstile and the alternatives](docs/comparison.md): authorization services, policy engines, rules in the
   ORM, row-level security by hand; and [how rowstile is checked](docs/how-it-is-checked.md).
-- [Your stack](docs/stacks/README.md): FastAPI, Next.js, other Node and Python apps, and the SQL any other
-  language sends.
+- [Your stack](docs/stacks/README.md): FastAPI, Next.js, other Node and Python apps; previews for Django, Go,
+  ASP.NET Core, Rails, Spring Boot, Ktor, Axum, Phoenix, Laravel and the sync engines (Electric, Zero,
+  PowerSync); and the SQL any other language sends.
 - [Cookbook](docs/cookbook.md), [troubleshooting](docs/troubleshooting.md), [running
   rowstile](docs/operations.md), [managed Postgres](docs/managed-postgres.md) (Neon, Supabase), [files in
   S3-compatible storage](docs/signed-urls.md), [error codes](docs/errors/README.md).
@@ -114,7 +115,7 @@ adds the SDK's packages to `package.json` (for Python, names the one to add) and
 | folder | what |
 |---|---|
 | [`core/`](core/README.md) | the compiler and the `rowstile` command, their tests and the benchmarks |
-| [`sdk/`](sdk/) | the SDKs: [Python](sdk/python/README.md) (FastAPI, SQLAlchemy, psycopg, asyncpg) and [TypeScript](sdk/typescript/README.md) (Next.js, Prisma, Drizzle, pg, postgres.js, React), and [.NET](sdk/dotnet/README.md) (ASP.NET Core, EF Core; a preview) |
+| [`sdk/`](sdk/) | the SDKs: [Python](sdk/python/README.md) (FastAPI, Django, SQLAlchemy, psycopg, asyncpg) and [TypeScript](sdk/typescript/README.md) (Next.js, Prisma, Drizzle, pg, postgres.js, React); previews for [Go](sdk/go/README.md), [.NET](sdk/dotnet/README.md), [Ruby](sdk/ruby/README.md), [Java and Kotlin](sdk/java/README.md), [Rust](sdk/rust/README.md), [Elixir](sdk/elixir/README.md) and [PHP](sdk/php/README.md) |
 | [`integrations/`](integrations/README.md) | each SDK's conformance suite: a small app and the checks it must pass |
 | [`examples/`](examples/README.md) | complete apps built on rowstile: a file manager and a messenger |
 | [`editor/`](editor/README.md) | the VS Code and Zed extensions, a Tree-sitter grammar (Helix, Neovim); other editors start `rowstile lsp` |

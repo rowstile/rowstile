@@ -61,6 +61,7 @@ rules app.folders
 - [Reviewing a change](docs/reference/review.md): what `rowstile review` says on a pull request
 - [How it works](docs/reference/guarantees.md): what it compiles to, what it guarantees, security
 - [Speed and limits](docs/reference/limits.md): measured speed, and what it doesn't do
+- [The sync index](docs/reference/sync.md): who may read each row, for sync engines (Electric, Zero, PowerSync; a preview)
 - [Installing](docs/installing.md): npm, pip or the image; alphas, betas and release candidates; from the repository
 - [rowstile and the alternatives](docs/comparison.md): authorization services, policy engines, rules in the ORM, row-level security by hand; when each is the better choice
 - [How rowstile is checked](docs/how-it-is-checked.md): what tests it, and what has not been done (no outside audit)
@@ -81,6 +82,17 @@ rules app.folders
 - [Node: pg, postgres.js, Drizzle](docs/stacks/node.md): any Node app
 - [Python: SQLAlchemy, SQLModel, psycopg, asyncpg](docs/stacks/python.md): any Python app
 - [Django](docs/stacks/django.md): the Python SDK with Django (a preview)
+- [Go: pgx, sqlc, net/http, goose](docs/stacks/go.md): the Go SDK (a preview)
+- [ASP.NET Core and EF Core](docs/stacks/aspnetcore.md): the .NET SDK (a preview)
+- [Rails and Active Record](docs/stacks/rails.md): the Ruby SDK (a preview)
+- [Spring Boot, JPA, Flyway](docs/stacks/spring.md): the Java SDK (a preview)
+- [Kotlin: Ktor, Exposed, Flyway](docs/stacks/ktor.md): the Java SDK's Kotlin module (a preview)
+- [Rust: Axum, sqlx, tokio-postgres](docs/stacks/axum.md): the Rust SDK (a preview)
+- [Phoenix: Ecto, Postgrex, Oban](docs/stacks/phoenix.md): the Elixir SDK (a preview)
+- [Laravel and Eloquent](docs/stacks/laravel.md): the PHP SDK (a preview)
+- [Electric](docs/stacks/electric.md): a sync engine, on the sync index (a preview)
+- [Zero](docs/stacks/zero.md): a sync engine, on the sync index (a preview)
+- [PowerSync](docs/stacks/powersync.md): a sync engine, on the sync index's mirrors (a preview)
 - [Any other stack](docs/stacks/sql.md): the SQL an app sends
 - [Python SDK](sdk/python/README.md): `pip install --pre rowstile` (pre-releases so far), its modules
 - [TypeScript SDK](sdk/typescript/README.md): the `@rowstile/*` packages

@@ -264,8 +264,8 @@ themselves, and [your stack](stacks/README.md) has an SDK that does it for you.
 ## 8. Ship it: migrations
 
 `rowstile dev` applies straight to your development database. Production takes the policy as
-migrations, written for the tool your app already uses (`alembic`, `prisma`, `drizzle`, `sql`, `goose`,
-`dbmate`, `flyway` or `django`). Name it in `rowstile.toml`, then write the first one:
+migrations, written for the tool your app already uses (`alembic`, `prisma`, `drizzle`, `django`, `efcore`,
+`rails`, `ecto`, `laravel`, `sqlx`, `sql`, `goose`, `dbmate` or `flyway`). Name it in `rowstile.toml`, then write the first one:
 
 ```sh
 printf '[migrations]\ntool = "sql"\ndir = "migrations"\n' >> rowstile.toml

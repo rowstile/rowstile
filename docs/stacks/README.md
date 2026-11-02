@@ -11,13 +11,13 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 | Python: SQLAlchemy (sync), SQLModel, psycopg, asyncpg; Celery and RQ workers (preview) | [python.md](python.md) | `pip install --pre rowstile` |
 | Go: pgx, sqlc, net/http, goose (preview) | [go.md](go.md) | `go get github.com/rowstile/rowstile/sdk/go` |
 | Django (a preview) | [django.md](django.md) | `pip install --pre "rowstile[django]"` |
-| ASP.NET Core, EF Core, Npgsql (a preview) | [aspnetcore.md](aspnetcore.md) | `Rowstile.EntityFrameworkCore`, `Rowstile.AspNetCore` |
-| Rails, Active Record, Active Job (preview) | [rails.md](rails.md) | `bundle add rowstile` |
-| Spring Boot, JPA, JdbcClient, Flyway (preview) | [spring.md](spring.md) | `dev.rowstile:rowstile-spring-boot-starter` |
-| Kotlin: Ktor, Exposed, coroutines, Flyway (preview) | [ktor.md](ktor.md) | `dev.rowstile:rowstile-kotlin` |
-| Rust: Axum, sqlx, tokio-postgres (preview) | [axum.md](axum.md) | `cargo add rowstile` (from the repository) |
-| Phoenix, Ecto, Postgrex, Oban (preview) | [phoenix.md](phoenix.md) | `:rowstile` in `mix.exs` |
-| Laravel, Eloquent, queued jobs; PHP on PDO (preview) | [laravel.md](laravel.md) | `composer require rowstile/rowstile` |
+| ASP.NET Core, EF Core, Npgsql (a preview) | [aspnetcore.md](aspnetcore.md) | `Rowstile.EntityFrameworkCore`, `Rowstile.AspNetCore`, from the repository |
+| Rails, Active Record, Active Job (preview) | [rails.md](rails.md) | the `rowstile` gem, from the repository |
+| Spring Boot, JPA, JdbcClient, Flyway (preview) | [spring.md](spring.md) | `dev.rowstile:rowstile-spring-boot-starter`, from the repository |
+| Kotlin: Ktor, Exposed, coroutines, Flyway (preview) | [ktor.md](ktor.md) | `dev.rowstile:rowstile-kotlin`, from the repository |
+| Rust: Axum, sqlx, tokio-postgres (preview) | [axum.md](axum.md) | the `rowstile` crate, from the repository |
+| Phoenix, Ecto, Postgrex, Oban (preview) | [phoenix.md](phoenix.md) | `:rowstile` in `mix.exs`, from the repository |
+| Laravel, Eloquent, queued jobs; PHP on PDO (preview) | [laravel.md](laravel.md) | `rowstile/rowstile`, from the repository |
 | Electric, the sync engine, behind a Node app (preview) | [electric.md](electric.md) | `@rowstile/client` |
 | Zero, the sync engine, with a Node app's endpoints (preview) | [zero.md](zero.md) | `@rowstile/client` |
 | PowerSync, the sync engine, on the policy's mirrors (preview) | [powersync.md](powersync.md) | `@rowstile/client` |

@@ -92,7 +92,7 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   typed errors and problem details, and gives Axum an extractor for each request's transaction
   (`docs/stacks/axum.md`). `rowstile migrate` writes sqlx migrations (`tool = "sqlx"`), and `rowstile client rust`
   the policy's names. It may change in any release.
-- An Elixir SDK, a preview: the `rowstile` Hex package signs Ecto and Postgrex transactions in, answers refusals
+- An Elixir SDK, a preview: the `rowstile` package signs Ecto and Postgrex transactions in, answers refusals
   403 and hidden rows 404 (a Plug, and a Phoenix fallback), refuses to start on a connection that skips row-level
   security, signs Oban jobs in for the user who asked, and copies the test database for each test partition
   (`docs/stacks/phoenix.md`). `rowstile migrate` writes Ecto migrations (`tool = "ecto"`), and `rowstile client
@@ -152,6 +152,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- The pages of the SDKs that aren't on a registry yet install them from the repository: the Rails, ASP.NET Core,
+  Laravel and Phoenix pages, and the .NET, Rust and Elixir SDKs' own, named packages RubyGems, NuGet, Packagist,
+  Hex and crates.io don't have. The README and `llms.txt` list every stack page, and the guide every migration tool.
 - The Next.js page: `init` comes after the migrations that make the tables and the app role, not in the install
   lines; the owner's URL is `DATABASE_URL`, the variable `init` writes in `rowstile.toml` and Prisma reads (the
   page used another, so following it gave two); and `prisma migrate resolve --applied` is for the migrations after

@@ -1,7 +1,7 @@
 # Conformance suites
 
-One list of checks, run by a small app per stack (`integrations/<stack>/`, each with its own `test.sh`: `fastapi`,
-`nextjs`, and `aspnetcore`, the .NET SDK's, a preview, which runs every check but 15), in CI
+One list of checks, run by a small app per stack (`integrations/<stack>/`, each with its own `test.sh`; the suites
+are listed below), in CI
 on PostgreSQL 16 for each push, and on 17 and 18 every night (`PG_MAJOR=17` or `18` runs a suite on another
 version). Every night they also run on 16 with the app connecting through PgBouncer in transaction mode
 (`POOLER=pgbouncer`, `pooler.sh`; the owner and the change feed stay direct). The tests are numbered after
@@ -42,16 +42,15 @@ the Node.js runtime and on the edge (`edge/`, an app of its own), behind Neon's 
 BullMQ queue on Redis: a preview.
 
 The suites: `fastapi` (the Python SDK: FastAPI, SQLAlchemy, Alembic), `nextjs` (the TypeScript SDK: Next.js,
-Prisma, pg, postgres.js, Drizzle, React, Vitest), `node` (a preview: a plain Express server on pg, Drizzle and
-postgres.js, Drizzle Kit's migrations, its tests on Jest; `authzRoutes()` is `@rowstile/next`'s) and `go` (the Go
-SDK, a preview: `net/http`, pgx, sqlc, goose) and `django` (the Python SDK's Django module, a preview: Django's
-ORM on psycopg 3, Django's migrations, pytest-django) and `rails` (the Ruby SDK, a preview: Rails 8, Active
-Record, Puma, Minitest) and `spring` (the Java SDK, a preview: Spring Boot, Spring Security, JPA and
-JdbcClient over HikariCP, Flyway, JUnit), `ktor` (the Java SDK's Kotlin module, a preview: Ktor, Exposed over
-HikariCP, Flyway, JUnit; the Java SDK's names, used from Kotlin)
-`axum` (the Rust SDK, a preview: Axum on sqlx, sqlx's migrations,
-tokio-postgres, cargo test), `phoenix` (the Elixir SDK, a preview: Phoenix on Bandit, Ecto on Postgrex, Ecto's
-migrations, Oban, ExUnit) and `laravel` (the PHP SDK, a preview: Laravel 13, Eloquent on pdo_pgsql, the queue's
+Prisma, pg, postgres.js, Drizzle, React, Vitest), and, each a preview: `node` (a plain Express server on pg, Drizzle
+and postgres.js, Drizzle Kit's migrations, its tests on Jest; `authzRoutes()` is `@rowstile/next`'s), `go` (the Go
+SDK: `net/http`, pgx, sqlc, goose), `django` (the Python SDK's Django module: Django's ORM on psycopg 3, Django's
+migrations, pytest-django), `aspnetcore` (the .NET SDK: ASP.NET Core minimal APIs, EF Core on Npgsql, EF Core's
+migrations, xUnit), `rails` (the Ruby SDK: Rails 8, Active Record, Puma, Minitest), `spring` (the Java SDK: Spring
+Boot, Spring Security, JPA and JdbcClient over HikariCP, Flyway, JUnit), `ktor` (the Java SDK's Kotlin module: Ktor,
+Exposed over HikariCP, Flyway, JUnit; the Java SDK's names, used from Kotlin), `axum` (the Rust SDK: Axum on sqlx,
+sqlx's migrations, tokio-postgres, cargo test), `phoenix` (the Elixir SDK: Phoenix on Bandit, Ecto on Postgrex,
+Ecto's migrations, Oban, ExUnit) and `laravel` (the PHP SDK: Laravel 13, Eloquent on pdo_pgsql, the queue's
 database worker, PHPUnit with paratest, PHPStan). Check 15 is Next.js's alone.
 
 `electric` (a preview) is the sync engine's suite, on the sync index: Electric behind a small Express app, whose

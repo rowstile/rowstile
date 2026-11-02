@@ -13,7 +13,8 @@ checks every supported stack passes ([`integrations/phoenix/test.sh`](../../inte
 
 ## Install
 
-Add the `:rowstile` package to the deps in `mix.exs` (a preview, on Hex once it is published), then:
+Add the SDK to the deps in `mix.exs`, from the repository while it isn't on Hex: `{:rowstile, github:
+"rowstile/rowstile", sparse: "sdk/elixir"}`. Then:
 
 ```sh
 mix deps.get
