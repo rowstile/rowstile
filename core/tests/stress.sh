@@ -158,6 +158,7 @@ SELECT stress.try(format('INSERT INTO app.folders (org_id, parent_id, owner_id, 
 COMMIT;
 EOF
 
+all_created=0; all_moved=0; all_linked=0; all_deleted=0   # what the writes did, over the levels
 for level in "read committed" "repeatable read" "serializable"; do
   # (PGOPTIONS splits on spaces: "read committed" needs its space escaped)
   rm -f "$W"/tx*
@@ -195,11 +196,15 @@ for level in "read committed" "repeatable read" "serializable"; do
       (SELECT count(*) FROM stress.folders b WHERE NOT EXISTS (SELECT FROM app.folders f WHERE f.id = b.id))" 2>&1)
   read -r created moved linked unlinked deleted <<< "$done_"
   said="$created created, $moved moved, $linked links made, $unlinked links gone, $deleted deleted"
-  if [ "${created:-0}" -gt 0 ] && [ "${moved:-0}" -gt 0 ] && [ "${linked:-0}" -gt 0 ] && [ "${deleted:-0}" -gt 0 ] 2>/dev/null; then
+  # (each level must change the tree; each kind of write, in one level or another: under serializable a few writes a
+  # second go through, and a short run may leave one kind out by chance)
+  if [ $((${created:-0} + ${moved:-0} + ${linked:-0} + ${deleted:-0})) -gt 0 ] 2>/dev/null; then
     echo "ok    $level: the writes changed the tree ($said)"
   else
-    echo "FAIL  $level: a kind of write changed nothing ($(echo "$said" | head -c 300))"; fails=$((fails + 1))
+    echo "FAIL  $level: the writes changed nothing ($(echo "$said" | head -c 300))"; fails=$((fails + 1))
   fi
+  all_created=$((all_created + ${created:-0})); all_moved=$((all_moved + ${moved:-0}))
+  all_linked=$((all_linked + ${linked:-0})); all_deleted=$((all_deleted + ${deleted:-0}))
   if [ "$(psql -X -At -d "$DB" -c "SELECT authz.verify()")" = t ]; then
     echo "ok    $level: the inheritance tables match a rebuild"
   else
@@ -227,5 +232,12 @@ for level in "read committed" "repeatable read" "serializable"; do
     fi
   fi
 done
+
+said="$all_created created, $all_moved moved, $all_linked links made, $all_deleted deleted"
+if [ "$all_created" -gt 0 ] && [ "$all_moved" -gt 0 ] && [ "$all_linked" -gt 0 ] && [ "$all_deleted" -gt 0 ]; then
+  echo "ok    each kind of write changed the tree, over the three levels ($said)"
+else
+  echo "FAIL  a kind of write changed nothing at any level ($said)"; fails=$((fails + 1))
+fi
 
 if [ $fails -eq 0 ]; then echo "stress: all passed"; else echo "stress: $fails failed"; exit 1; fi
