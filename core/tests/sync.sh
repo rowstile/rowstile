@@ -891,11 +891,13 @@ sync k.pages : view by page
 sync k.notes : view by space
 EOF
 said=$(python3 cli/rowstile_cli.py --db "dbname=$KEYED" apply "$T/keyed.authz" 2>&1) || { bad "apply the keyed forms" "$said"; exit 1; }
-python3 -c "import sys; sys.path.insert(0, '.'); from authzlib import Compiler, parse_policy
-c = Compiler(parse_policy(open('$T/keyed.authz').read(), 'keyed.authz')); c.compile('keyed.authz')
+# the engines' filter of each synced table (rowstile client electric's), for a user u, and what each user lists
+kfilters() {
+  python3 -c "import sys; sys.path.insert(0, '.'); from authzlib import Compiler, parse_policy
+c = Compiler(parse_policy(open('$1').read(), 'keyed.authz')); c.compile('keyed.authz')
 shapes = c.electric_shapes()
 for s in c.pol.syncs.values(): print(c.sync_type(s).name + '|' + s.table + '|' + shapes[s.table]['where']['user'].replace('\$1', 'u.id::text'))" > "$T/filters"
-KPSQL >/dev/null <<'SQL' || exit 1
+  KPSQL >/dev/null <<'SQL' || exit 1
 CREATE FUNCTION public.klisted(p_user text, p_type text) RETURNS text[] LANGUAGE plpgsql AS $$
 DECLARE v text[];
 BEGIN
@@ -906,13 +908,16 @@ BEGIN
   RETURN v;
 END $$;
 SQL
+}
+kfilters "$T/keyed.authz"
+KUSERS=k.users
 # $1 = label, $2 = the change: then each user's rows through the filter must be what authz.list gives
 kchange() {
   KPSQL -c "$2" >/dev/null || { bad "$1" "the change failed"; return; }
   local diff="" ty tbl where
   while IFS='|' read -r ty tbl where; do
     diff+=$(KPSQL -c "SELECT string_agg('$ty, user ' || u.id || ': ' || ARRAY(SELECT x.id::text FROM $tbl x WHERE $where ORDER BY 1)::text
-                        || ' through the filter, ' || public.klisted(u.id::text, '$ty')::text || ' listed', '; ') FROM k.users u
+                        || ' through the filter, ' || public.klisted(u.id::text, '$ty')::text || ' listed', '; ') FROM $KUSERS u
                       WHERE ARRAY(SELECT x.id::text FROM $tbl x WHERE $where ORDER BY 1) IS DISTINCT FROM public.klisted(u.id::text, '$ty')")
   done < "$T/filters"
   [ -z "$diff" ] && ok "$1: the index holds what authz.list gives" || bad "$1" "$diff"
@@ -981,7 +986,7 @@ dropdb --force "$KEYED"
 
 echo "-- keyed by inheritance, through a link table a TRUNCATE empties"
 # a box inherits from the folders it sits in, a folder from the boxes it sits in, by link tables; only the boxes are
-# keyed, and nothing but the tree joins the two types. A TRUNCATE of the folders' links names the folders alone: what
+# synced, keyed, and nothing but the tree joins the two types. A TRUNCATE of the folders' links names the folders alone: what
 # the boxes inherit changed too (the tree, rebuilt, says so)
 createdb "$KEYED" || exit 1
 KPSQL >/dev/null <<'SQL' || exit 1
@@ -1007,7 +1012,6 @@ type folder = k2.folders
   owner : user = owner_id
   in    : box = k2.folder_in(folder_id -> box_id)
   can view = owner or in.view
-  can edit = owner
 
 type box = k2.boxes
   owner : user = owner_id
@@ -1015,23 +1019,40 @@ type box = k2.boxes
   can view = owner or in.view
 
 sync role $ROLE
-sync k2.folders : edit
 sync k2.boxes : view by box
 EOF
 said=$(python3 cli/rowstile_cli.py --db "dbname=$KEYED" apply "$T/linked.authz" 2>&1) || { bad "apply the linked forms" "$said"; exit 1; }
+kfilters "$T/linked.authz"
+KUSERS=k2.users
 check_k "box 20 inherits from folder 1 and box 10, through both link tables" \
   "SELECT array_agg(source ORDER BY source) = '{box#view:10,box#view:20,folder#view:1}' FROM authz_sync.inherits WHERE key = 'box#view:20'"
 # (row by row first, as an app writes: the index follows each, through the tree)
-k2() { KPSQL -c "$2" >/dev/null && check_k "$1: the index matches a rebuild" "SELECT authz.sync_verify()"; }
-k2 "folder 2 put in box 20" "INSERT INTO k2.folder_in VALUES (2, 20)"
-k2 "box 20 moved from folder 1 to folder 2" "UPDATE k2.box_in SET folder_id = 2 WHERE box_id = 20"
-k2 "... and back" "UPDATE k2.box_in SET folder_id = 1 WHERE box_id = 20"
-k2 "folder 2 taken out of box 20" "DELETE FROM k2.folder_in WHERE folder_id = 2"
-k2 "a user added, and a box given to them" "INSERT INTO k2.users VALUES (4); UPDATE k2.boxes SET owner_id = 4 WHERE id = 20"
-k2 "... and the user deleted" "UPDATE k2.boxes SET owner_id = NULL WHERE id = 20; DELETE FROM k2.users WHERE id = 4"
-KPSQL -c "TRUNCATE k2.folder_in" >/dev/null
-check_k "the folders' links emptied by a TRUNCATE: box 20 no longer inherits from box 10, and the index matches a rebuild" \
+kchange "folder 2 put in box 20" "INSERT INTO k2.folder_in VALUES (2, 20)"
+kchange "box 20 moved from folder 1 to folder 2" "UPDATE k2.box_in SET folder_id = 2 WHERE box_id = 20"
+kchange "... and back" "UPDATE k2.box_in SET folder_id = 1 WHERE box_id = 20"
+kchange "folder 2 taken out of box 20" "DELETE FROM k2.folder_in WHERE folder_id = 2"
+kchange "a user added, and a box given to them" "INSERT INTO k2.users VALUES (4); UPDATE k2.boxes SET owner_id = 4 WHERE id = 20"
+kchange "... and the user deleted" "UPDATE k2.boxes SET owner_id = NULL WHERE id = 20; DELETE FROM k2.users WHERE id = 4"
+kchange "the folders' links emptied by a TRUNCATE" "TRUNCATE k2.folder_in"
+check_k "... box 20 no longer inherits from box 10, and the index matches a rebuild" \
   "SELECT authz.sync_verify() AND NOT EXISTS (SELECT 1 FROM authz_sync.inherits WHERE key = 'box#view:20' AND source = 'box#view:10')"
+KPSQL >/dev/null <<'SQL' || exit 1
+-- the boxes and folders where authz.can, as each user, doesn't answer as authz.list does
+CREATE FUNCTION public.kcan_differs() RETURNS SETOF text LANGUAGE plpgsql AS $$
+DECLARE u text; t text; o text; listed text[];
+BEGIN
+  FOR u IN SELECT id::text FROM k2.users LOOP
+    FOR t, o IN SELECT 'box', id::text FROM k2.boxes UNION ALL SELECT 'folder', id::text FROM k2.folders LOOP
+      listed := public.klisted(u, t);
+      PERFORM set_config('authz.user_id', u, true);
+      IF authz.can(t, o, 'view') IS DISTINCT FROM (o = ANY (listed)) THEN RETURN NEXT format('%s %s, user %s', t, o, u); END IF;
+    END LOOP;
+  END LOOP;
+  PERFORM set_config('authz.user_id', '', true);
+END $$;
+SQL
+check_k "... and authz.can answers as authz.list does, for every user, box and folder, with no invariant broken" \
+  "SELECT NOT EXISTS (SELECT 1 FROM public.kcan_differs()) AND NOT EXISTS (SELECT 1 FROM authz.check_invariants())"
 dropdb --force "$KEYED"
 
 echo "-- mirrored, for PowerSync"
