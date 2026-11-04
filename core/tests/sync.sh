@@ -1049,10 +1049,22 @@ BEGIN
       IF authz.can(t, o, 'view') IS DISTINCT FROM (o = ANY (listed)) THEN RETURN NEXT format('%s %s, user %s', t, o, u); END IF;
     END LOOP;
   END LOOP;
+  -- what isn't an id is no object: false; a permission or a type the policy hasn't is the caller's mistake (AZ707)
+  FOREACH t IN ARRAY ARRAY['box', 'folder', 'user', 'crate'] LOOP
+    IF t <> 'crate' AND authz.can(t, 'x', 'view') THEN RETURN NEXT format('%s x: not an id, yet allowed', t); END IF;
+    BEGIN
+      PERFORM authz.can(t, '1', 'edit');
+      RETURN NEXT format('%s.edit: allowed to ask', t);
+    EXCEPTION WHEN raise_exception THEN
+      IF SQLERRM NOT LIKE (CASE WHEN t = 'crate' THEN 'no type crate %' ELSE 'no permission %.edit %' END) THEN
+        RETURN NEXT format('%s.edit: %s', t, SQLERRM);
+      END IF;
+    END;
+  END LOOP;
   PERFORM set_config('authz.user_id', '', true);
 END $$;
 SQL
-check_k "... and authz.can answers as authz.list does, as each user, for every box, folder and user, with no invariant broken" \
+check_k "... and authz.can answers as authz.list does, as each user, for every box, folder and user (an id that is not one: false; a permission or a type the policy has not: AZ707), with no invariant broken" \
   "SELECT NOT EXISTS (SELECT 1 FROM public.kcan_differs()) AND NOT EXISTS (SELECT 1 FROM authz.check_invariants())"
 dropdb --force "$KEYED"
 
