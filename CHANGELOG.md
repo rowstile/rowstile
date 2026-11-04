@@ -9,6 +9,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+The sync index, its engines (Electric, Zero, PowerSync) and the new SDKs and stacks are previews: they may
+change in any release, and the SDKs not on a registry yet install from the repository.
+
 ### Added
 
 - `rowstile dev`'s access lines name, under a permission someone gains, the rules that read it (`read by the
@@ -27,19 +30,19 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   each user holds their own and their groups' keys, as copied in (AZ810 where a line can't be keyed so). `sync after commit` has a worker,
   `authz.sync_work()`, keep the index after each change commits, so writers don't wait for it;
   `authz.sync_behind()` says how late it is. In the same transaction, writers whose work on the index meets
-  nowhere no longer wait for each other ([The sync index](docs/reference/sync.md#keyed-by-folder)).
+  nowhere don't wait for each other ([The sync index](docs/reference/sync.md#keyed-by-folder)).
 - Electric on the sync index, a preview: `rowstile client electric` (or `[clients] electric`) writes each synced
   table's shape (its filter for the signed-in principal, its key columns, the columns the policy masks), and
   `electricShape()` in `@rowstile/client` is the route in front of Electric that sets it, whatever the client sends:
   401 for nobody, 403 for a session limited by scopes, `Vary` on who asks. Its conformance suite runs Electric
   (`integrations/electric`, [The sync index](docs/reference/sync.md#electric)).
-- `authz.session_limited()` says whether the signed-in session is limited, by a key's or a token's scopes or by
-  viewing as someone, believing the settings only when they are signed, as the rest of rowstile does. The app role
-  may call it; `syncPrincipal()` in `@rowstile/client` now asks it instead of reading the scopes setting. A
-  migration brings it ([Identity](docs/reference/identity.md)).
 - A stack page for Electric, a preview: the role an administrator makes, the publication the app's migration
   makes, `rowstile client electric`, the route with `electricShape` and `syncPrincipal`, `Vary` and a cache, and
   what can't be done ([Electric](docs/stacks/electric.md)).
+- `authz.session_limited()` says whether the signed-in session is limited, by a key's or a token's scopes or by
+  viewing as someone, believing the settings only when they are signed, as the rest of rowstile does. The app role
+  may call it; `syncPrincipal()` in `@rowstile/client` asks it. A migration
+  brings it ([Identity](docs/reference/identity.md)).
 - Zero on the sync index, a preview: `rowstile client zero` (or `[clients] zero`) writes the index's tables as Zero
   tables, with their relationships, each synced table's relationship to its readers, the columns the policy masks,
   and each table's filter, which the app's query endpoint adds to the ZQL it gives zero-cache. Its conformance suite
@@ -52,29 +55,29 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   database. AZ811 refuses a mirrored line keyed by a type, and a table with a column of its own named `readers`. Its
   conformance suite runs the PowerSync service 1.27.0 in both modes a mirror takes (`integrations/powersync`,
   [The sync index](docs/reference/sync.md#powersync), [PowerSync](docs/stacks/powersync.md)).
+- `authz.announce_timed_shares()` tells the change feed of the shares that ended (`expires_at`) or began
+  (`starts_at`) since it last ran, and of what reads their objects. Run it on a schedule, as `authz.trim_changes()`
+  is run ([Operations](docs/operations.md)): no write marks the moment a share ends, so until it runs a reader of
+  the feed doesn't hear of it.
 - Background jobs in Celery's and RQ's workers, for the Python SDK (preview): `rowstile.job(who)` is a `with` block
   too, for a job that acts for the user its argument names (`Principal.parse`). In either form, the database's
   refusals inside it are raised as `Refused` and `NotFound` (the decorator let the driver's error through before).
   The two keep what they say in their arguments, so pickle and Celery's results give them back whole. The FastAPI
   conformance suite runs them in both workers, on Redis.
-- Preview: the TypeScript SDK on Neon's serverless driver (`@neondatabase/serverless`): `@rowstile/pg` takes its
-  `Pool`, over WebSockets, on Node.js and on Next.js's edge runtime, where `checkAtStart` now throws, saying why,
-  instead of reaching for `process.exit`. A BullMQ worker and Next's `after()` sign in as `job()` or the request
-  say. The Next.js suite checks each, through Neon's `wsproxy` and a real Redis.
-- A Go SDK, as a preview (`github.com/rowstile/rowstile/sdk/go`, on pgx): transactions signed in, refusals as
-  `Refused` and `NotFound`, `net/http` answers, a test database per package; `rowstile client go` writes the
-  policy's names for it. Its conformance suite runs a `net/http` app with sqlc's queries and goose's migrations.
-- `@rowstile/jest`, a preview: `@rowstile/vitest`'s matchers, `asUser` and a test database per worker, for Jest 30.
-  And a conformance suite for a plain Node server, also a preview: Express 5 on pg, Drizzle and postgres.js, with
-  Drizzle Kit's migrations and its tests on Jest (`integrations/node`, the Node page).
 - Django, as a preview (it may change in any release): `rowstile[django]` signs every transaction on Django's
   connections in as the request's user (`"rowstile.django"` in `INSTALLED_APPS`, and its middleware), answers
   refusals with 403 and hidden rows with 404, and gives pytest-django a copy of the test database per worker.
   `rowstile migrate` writes Django migrations (`tool = "django"`). [Django](docs/stacks/django.md).
-- `authz.announce_timed_shares()` tells the change feed of the shares that ended (`expires_at`) or began
-  (`starts_at`) since it last ran, and of what reads their objects. Run it on a schedule, as `authz.trim_changes()`
-  is run ([Operations](docs/operations.md)): no write marks the moment a share ends, so until it runs a reader of
-  the feed doesn't hear of it.
+- Preview: the TypeScript SDK on Neon's serverless driver (`@neondatabase/serverless`): `@rowstile/pg` takes its
+  `Pool`, over WebSockets, on Node.js and on Next.js's edge runtime, where `checkAtStart` now throws, saying why,
+  instead of reaching for `process.exit`. A BullMQ worker and Next's `after()` sign in as `job()` or the request
+  say. The Next.js suite checks each, through Neon's `wsproxy` and a real Redis.
+- `@rowstile/jest`, a preview: `@rowstile/vitest`'s matchers, `asUser` and a test database per worker, for Jest 30.
+  And a conformance suite for a plain Node server, also a preview: Express 5 on pg, Drizzle and postgres.js, with
+  Drizzle Kit's migrations and its tests on Jest (`integrations/node`, the Node page).
+- A Go SDK, as a preview (`github.com/rowstile/rowstile/sdk/go`, on pgx): transactions signed in, refusals as
+  `Refused` and `NotFound`, `net/http` answers, a test database per package; `rowstile client go` writes the
+  policy's names for it. Its conformance suite runs a `net/http` app with sqlc's queries and goose's migrations.
 - A .NET SDK, as a preview (it may change in any release): `Rowstile`, `Rowstile.EntityFrameworkCore` and
   `Rowstile.AspNetCore` sign each transaction in as the request's user and answer refusals as the other SDKs do,
   `rowstile migrate` writes EF Core migrations (`tool = "efcore"`), and `rowstile client csharp` the policy's names.
@@ -182,6 +185,14 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   relations was, a file's renaming too.
   Writes that reach other objects take a little longer: on the docs app, a member leaving a team or a share on a
   folder about half a millisecond more; at most a thousand objects of a type are looked up ([Limits](docs/reference/limits.md)).
+
+### Upgrading
+
+- Work for another principal, or for no one, inside a transaction an SDK signed in already now raises (see
+  Changed): run it after that transaction, or in a transaction of its own on another connection.
+- An app that reads the change feed, with shares that end or begin at a time (`expires_at`, `starts_at`): schedule
+  `authz.announce_timed_shares()`, as `authz.trim_changes()` is, or the feed doesn't hear of those shares
+  ([Operations](docs/operations.md)).
 
 ## 0.1.0-beta.2 (2026-10-29)
 
