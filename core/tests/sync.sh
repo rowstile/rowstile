@@ -1037,12 +1037,13 @@ kchange "the folders' links emptied by a TRUNCATE" "TRUNCATE k2.folder_in"
 check_k "... box 20 no longer inherits from box 10, and the index matches a rebuild" \
   "SELECT authz.sync_verify() AND NOT EXISTS (SELECT 1 FROM authz_sync.inherits WHERE key = 'box#view:20' AND source = 'box#view:10')"
 KPSQL >/dev/null <<'SQL' || exit 1
--- the boxes and folders where authz.can, as each user, doesn't answer as authz.list does
+-- the users, boxes and folders where authz.can, as each user, doesn't answer as authz.list does
 CREATE FUNCTION public.kcan_differs() RETURNS SETOF text LANGUAGE plpgsql AS $$
 DECLARE u text; t text; o text; listed text[];
 BEGIN
   FOR u IN SELECT id::text FROM k2.users LOOP
-    FOR t, o IN SELECT 'box', id::text FROM k2.boxes UNION ALL SELECT 'folder', id::text FROM k2.folders LOOP
+    FOR t, o IN SELECT 'box', id::text FROM k2.boxes UNION ALL SELECT 'folder', id::text FROM k2.folders
+                UNION ALL SELECT 'user', id::text FROM k2.users LOOP
       listed := public.klisted(u, t);
       PERFORM set_config('authz.user_id', u, true);
       IF authz.can(t, o, 'view') IS DISTINCT FROM (o = ANY (listed)) THEN RETURN NEXT format('%s %s, user %s', t, o, u); END IF;
@@ -1051,7 +1052,7 @@ BEGIN
   PERFORM set_config('authz.user_id', '', true);
 END $$;
 SQL
-check_k "... and authz.can answers as authz.list does, for every user, box and folder, with no invariant broken" \
+check_k "... and authz.can answers as authz.list does, as each user, for every box, folder and user, with no invariant broken" \
   "SELECT NOT EXISTS (SELECT 1 FROM public.kcan_differs()) AND NOT EXISTS (SELECT 1 FROM authz.check_invariants())"
 dropdb --force "$KEYED"
 
