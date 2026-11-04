@@ -933,9 +933,6 @@ kchange "... and shown again" "UPDATE k.spaces SET hidden = false WHERE id = 2"
 kchange "a user muted from a note" "INSERT INTO k.mutes VALUES (2, 3)"
 kchange "a note moved to another space" "UPDATE k.notes SET space_id = 1 WHERE id = 1"
 kchange "a page's owner changed" "UPDATE k.pages SET owner_id = 3 WHERE id = 20"
-kchange "the pages emptied by a TRUNCATE: the spaces below them no longer inherit from them" "TRUNCATE k.pages"
-check_k "... and the keyed index matches a rebuild" "SELECT authz.sync_verify()"
-kchange "... and filled again" "INSERT INTO k.pages VALUES (10, 1, 4), (20, 2, 3), (30, 3, 5)"
 check_k "authz.sync_verify(): the keyed index matches a rebuild" "SELECT authz.sync_verify()"
 # the runtime's other answers about the same forms, as for the forms above
 KPSQL >/dev/null <<'SQL' || exit 1
@@ -1024,6 +1021,14 @@ EOF
 said=$(python3 cli/rowstile_cli.py --db "dbname=$KEYED" apply "$T/linked.authz" 2>&1) || { bad "apply the linked forms" "$said"; exit 1; }
 check_k "box 20 inherits from folder 1 and box 10, through both link tables" \
   "SELECT array_agg(source ORDER BY source) = '{box#view:10,box#view:20,folder#view:1}' FROM authz_sync.inherits WHERE key = 'box#view:20'"
+# (row by row first, as an app writes: the index follows each, through the tree)
+k2() { KPSQL -c "$2" >/dev/null && check_k "$1: the index matches a rebuild" "SELECT authz.sync_verify()"; }
+k2 "folder 2 put in box 20" "INSERT INTO k2.folder_in VALUES (2, 20)"
+k2 "box 20 moved from folder 1 to folder 2" "UPDATE k2.box_in SET folder_id = 2 WHERE box_id = 20"
+k2 "... and back" "UPDATE k2.box_in SET folder_id = 1 WHERE box_id = 20"
+k2 "folder 2 taken out of box 20" "DELETE FROM k2.folder_in WHERE folder_id = 2"
+k2 "a user added, and a box given to them" "INSERT INTO k2.users VALUES (4); UPDATE k2.boxes SET owner_id = 4 WHERE id = 20"
+k2 "... and the user deleted" "UPDATE k2.boxes SET owner_id = NULL WHERE id = 20; DELETE FROM k2.users WHERE id = 4"
 KPSQL -c "TRUNCATE k2.folder_in" >/dev/null
 check_k "the folders' links emptied by a TRUNCATE: box 20 no longer inherits from box 10, and the index matches a rebuild" \
   "SELECT authz.sync_verify() AND NOT EXISTS (SELECT 1 FROM authz_sync.inherits WHERE key = 'box#view:20' AND source = 'box#view:10')"
