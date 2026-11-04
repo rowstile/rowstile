@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', '9bf514bc866b5abd1bb5609916931dd1', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[], 'domain_email_org_setting__domain_email_org_settings__tree')) n(name, hash, oids, rel)
+           JOIN (VALUES ('domain_email_org_setting__domain_email_org_settings__tree', 'f9d20e9c8c5ccf5b8b4cddcf98c9dc38', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[], 'domain_email_org_setting__domain_email_org_settings__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -550,7 +550,7 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('domain_email_org_setting__domain_email_org_settings__tree', '9bf514bc866b5abd1bb5609916931dd1', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[]);
+  ('domain_email_org_setting__domain_email_org_settings__tree', 'f9d20e9c8c5ccf5b8b4cddcf98c9dc38', ARRAY[to_regclass('"lp"."domains"')::oid, to_regclass('"lp"."emails"')::oid, to_regclass('"lp"."orgs"')::oid, to_regclass('"lp"."settings"')::oid]::oid[]);
 
 -- The subject key of a share (as the policy writes it: user, team#member, user:*, anyone, link)
 CREATE FUNCTION authz_int.subject_key(p_type text, p_id text, p_relation text) RETURNS text
@@ -1171,9 +1171,17 @@ BEGIN
     INSERT INTO authz_int."domain_email_org_setting__domain_email_org_settings__tree" SELECT * FROM authz_int."domain_email_org_setting__domain_email_org_settings__t_4c2a3980"(a_t, a_i);
   END LOOP;
 END $f$;
+-- (what every type of the tree inherits may have changed: the table's own TRUNCATE trigger names only its own type)
 CREATE FUNCTION authz_int."domain_email_org_setting__domain_email_org_settings__t_578c4568"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-BEGIN PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_1002258f"(); RETURN NULL; END $f$;
+BEGIN
+  PERFORM authz_int."domain_email_org_setting__domain_email_org_settings__t_1002258f"();
+  PERFORM authz_int.changed('domain', ARRAY['*'], 'inheritance');
+  PERFORM authz_int.changed('email', ARRAY['*'], 'inheritance');
+  PERFORM authz_int.changed('org', ARRAY['*'], 'inheritance');
+  PERFORM authz_int.changed('setting', ARRAY['*'], 'inheritance');
+  RETURN NULL;
+END $f$;
 
 -- what a rebuild would give against what is stored, 10000 nodes at a time; then nothing stored for a node
 -- that is gone

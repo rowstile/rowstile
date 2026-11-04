@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'a03d7137306c5c469c7eeb752c233ecb', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree'), ('folder_project__backer_parent__tree', '62e062aff05e87fea46f9609402dd7fc', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
+           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'a2a58ec18ac7e1860b08a62b6f7d4cb2', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree'), ('folder_project__backer_parent__tree', 'c2f9201bb38601723af1e15b8b7d2015', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -651,9 +651,9 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder_project__host_inside_parent__tree2', 'a03d7137306c5c469c7eeb752c233ecb', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
+  ('folder_project__host_inside_parent__tree2', 'a2a58ec18ac7e1860b08a62b6f7d4cb2', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
   ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[]),
-  ('folder_project__backer_parent__tree', '62e062aff05e87fea46f9609402dd7fc', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]);
+  ('folder_project__backer_parent__tree', 'c2f9201bb38601723af1e15b8b7d2015', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]);
 
 -- The subject key of a share (as the policy writes it: user, team#member, user:*, anyone, link)
 CREATE FUNCTION authz_int.subject_key(p_type text, p_id text, p_relation text) RETURNS text
@@ -1302,9 +1302,15 @@ BEGIN
   DELETE FROM authz_int."folder_project__host_inside_parent__tree_cond_cache";
   INSERT INTO authz_int."folder_project__host_inside_parent__tree_cond_cache" SELECT t, id, v FROM authz_int."folder_project__host_inside_parent__tree_conds";
 END $f$;
+-- (what every type of the tree inherits may have changed: the table's own TRUNCATE trigger names only its own type)
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_truncate"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-BEGIN PERFORM authz_int."folder_project__host_inside_parent__tree_rebuild"(); RETURN NULL; END $f$;
+BEGIN
+  PERFORM authz_int."folder_project__host_inside_parent__tree_rebuild"();
+  PERFORM authz_int.changed('folder', ARRAY['*'], 'inheritance');
+  PERFORM authz_int.changed('project', ARRAY['*'], 'inheritance');
+  RETURN NULL;
+END $f$;
 
 -- what a rebuild would give against what is stored, 10000 nodes at a time; then nothing stored for a node
 -- that is gone
@@ -1645,9 +1651,15 @@ BEGIN
     INSERT INTO authz_int."folder_project__host_inside_parent__tree2" SELECT * FROM authz_int."folder_project__host_inside_parent__tree2_compute"(a_t, a_i);
   END LOOP;
 END $f$;
+-- (what every type of the tree inherits may have changed: the table's own TRUNCATE trigger names only its own type)
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_truncate"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-BEGIN PERFORM authz_int."folder_project__host_inside_parent__tree2_rebuild"(); RETURN NULL; END $f$;
+BEGIN
+  PERFORM authz_int."folder_project__host_inside_parent__tree2_rebuild"();
+  PERFORM authz_int.changed('folder', ARRAY['*'], 'inheritance');
+  PERFORM authz_int.changed('project', ARRAY['*'], 'inheritance');
+  RETURN NULL;
+END $f$;
 
 -- what a rebuild would give against what is stored, 10000 nodes at a time; then nothing stored for a node
 -- that is gone
@@ -2115,9 +2127,15 @@ BEGIN
     INSERT INTO authz_int."folder_project__backer_parent__tree" SELECT * FROM authz_int."folder_project__backer_parent__tree_compute"(a_t, a_i);
   END LOOP;
 END $f$;
+-- (what every type of the tree inherits may have changed: the table's own TRUNCATE trigger names only its own type)
 CREATE FUNCTION authz_int."folder_project__backer_parent__tree_on_truncate"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-BEGIN PERFORM authz_int."folder_project__backer_parent__tree_rebuild"(); RETURN NULL; END $f$;
+BEGIN
+  PERFORM authz_int."folder_project__backer_parent__tree_rebuild"();
+  PERFORM authz_int.changed('folder', ARRAY['*'], 'inheritance');
+  PERFORM authz_int.changed('project', ARRAY['*'], 'inheritance');
+  RETURN NULL;
+END $f$;
 
 -- what a rebuild would give against what is stored, 10000 nodes at a time; then nothing stored for a node
 -- that is gone
@@ -2364,9 +2382,15 @@ BEGIN
   DELETE FROM authz_int."region_site__over__tree_cond_cache";
   INSERT INTO authz_int."region_site__over__tree_cond_cache" SELECT t, id, v FROM authz_int."region_site__over__tree_conds";
 END $f$;
+-- (what every type of the tree inherits may have changed: the table's own TRUNCATE trigger names only its own type)
 CREATE FUNCTION authz_int."region_site__over__tree_on_truncate"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-BEGIN PERFORM authz_int."region_site__over__tree_rebuild"(); RETURN NULL; END $f$;
+BEGIN
+  PERFORM authz_int."region_site__over__tree_rebuild"();
+  PERFORM authz_int.changed('region', ARRAY['*'], 'inheritance');
+  PERFORM authz_int.changed('site', ARRAY['*'], 'inheritance');
+  RETURN NULL;
+END $f$;
 
 -- what a rebuild would give against what is stored, 10000 nodes at a time; then nothing stored for a node
 -- that is gone

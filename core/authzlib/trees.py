@@ -984,9 +984,14 @@ BEGIN
     INSERT INTO {f("")} SELECT * FROM {f("_compute")}(a_t, a_i);
   END LOOP;{cache_rebuild}
 END $f$;
+-- (what every type of the tree inherits may have changed: the table's own TRUNCATE trigger names only its own type)
 CREATE FUNCTION {f("_on_truncate")}() RETURNS trigger
 LANGUAGE plpgsql {DEFINER} AS $f$
-BEGIN PERFORM {f("_rebuild")}(); RETURN NULL; END $f$;
+BEGIN
+  PERFORM {f("_rebuild")}();
+  {(chr(10) + "  ").join(f"PERFORM authz_int.changed({lit(m)}, ARRAY['*'], 'inheritance');" for m in members)}
+  RETURN NULL;
+END $f$;
 
 -- what a rebuild would give against what is stored, {BATCH} nodes at a time; then nothing stored for a node
 -- that is gone
