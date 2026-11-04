@@ -1037,11 +1037,29 @@ kchange "the folders' links emptied by a TRUNCATE" "TRUNCATE k2.folder_in"
 check_k "... box 20 no longer inherits from box 10, and the index matches a rebuild" \
   "SELECT authz.sync_verify() AND NOT EXISTS (SELECT 1 FROM authz_sync.inherits WHERE key = 'box#view:20' AND source = 'box#view:10')"
 KPSQL >/dev/null <<'SQL' || exit 1
--- the users, boxes and folders where authz.can, as each user, doesn't answer as authz.list does
+-- the users, boxes and folders where authz.can, as each user, doesn't answer as authz.list does, and the lists that
+-- read a page at a time aren't the whole list
 CREATE FUNCTION public.kcan_differs() RETURNS SETOF text LANGUAGE plpgsql AS $$
-DECLARE u text; t text; o text; listed text[];
+DECLARE u text; t text; o text; listed text[]; page text[]; pages text[]; after text;
 BEGIN
   FOR u IN SELECT id::text FROM k2.users LOOP
+    FOREACH t IN ARRAY ARRAY['box', 'folder', 'user'] LOOP
+      listed := public.klisted(u, t);
+      PERFORM set_config('authz.user_id', u, true);
+      pages := '{}'; after := NULL;
+      LOOP
+        SELECT coalesce(array_agg(x), '{}') INTO page FROM authz.list(t, 'view', after, 1) x;
+        EXIT WHEN cardinality(page) = 0;
+        pages := pages || page; after := page[1];
+      END LOOP;
+      IF (SELECT coalesce(array_agg(x ORDER BY x), '{}') FROM unnest(pages) x) IS DISTINCT FROM listed THEN
+        RETURN NEXT format('%s, user %s: %s a page at a time, %s listed', t, u, pages, listed);
+      END IF;
+      -- (and after 0, below every id: the same)
+      IF (SELECT coalesce(array_agg(x ORDER BY x), '{}') FROM authz.list(t, 'view', '0') x) IS DISTINCT FROM listed THEN
+        RETURN NEXT format('%s, user %s: after 0, not %s', t, u, listed);
+      END IF;
+    END LOOP;
     FOR t, o IN SELECT 'box', id::text FROM k2.boxes UNION ALL SELECT 'folder', id::text FROM k2.folders
                 UNION ALL SELECT 'user', id::text FROM k2.users LOOP
       listed := public.klisted(u, t);
@@ -1064,7 +1082,7 @@ BEGIN
   PERFORM set_config('authz.user_id', '', true);
 END $$;
 SQL
-check_k "... and authz.can answers as authz.list does, as each user, for every box, folder and user (an id that is not one: false; a permission or a type the policy has not: AZ707), with no invariant broken" \
+check_k "... and authz.can answers as authz.list does, as each user, for every box, folder and user (an id that is not one: false; a permission or a type the policy has not: AZ707), a page at a time too, with no invariant broken" \
   "SELECT NOT EXISTS (SELECT 1 FROM public.kcan_differs()) AND NOT EXISTS (SELECT 1 FROM authz.check_invariants())"
 dropdb --force "$KEYED"
 
