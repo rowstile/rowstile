@@ -102,7 +102,7 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('user__manager__tree', '9dca59dfcab03fd043d2d150189e5205', ARRAY[to_regclass('"cx"."users"')::oid]::oid[], 'user__manager__tree'), ('folder_project__folder_parent__tree', 'fb91e60a448afea0ad0d652434d05867', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__folder_parent__tree'), ('folder__parent__tree', '34349abe809796fda58fc8662be8ce55', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree')) n(name, hash, oids, rel)
+           JOIN (VALUES ('user__manager__tree', '9dca59dfcab03fd043d2d150189e5205', ARRAY[to_regclass('"cx"."users"')::oid]::oid[], 'user__manager__tree'), ('folder_project__folder_parent__tree', '5fa21bd61e5ff19c5359554e473c7e57', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[], 'folder_project__folder_parent__tree'), ('folder__parent__tree', '34349abe809796fda58fc8662be8ce55', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[], 'folder__parent__tree')) n(name, hash, oids, rel)
              ON n.name = t.name AND n.hash = t.hash AND n.oids = t.oids
            WHERE to_regclass(format('authz_int.%I', n.rel)) IS NOT NULL LOOP
     EXECUTE format('ALTER TABLE authz_int.%I SET SCHEMA authz_keep', r.rel);
@@ -826,7 +826,7 @@ CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oi
 
 INSERT INTO authz_int.trees VALUES
   ('user__manager__tree', '9dca59dfcab03fd043d2d150189e5205', ARRAY[to_regclass('"cx"."users"')::oid]::oid[]),
-  ('folder_project__folder_parent__tree', 'fb91e60a448afea0ad0d652434d05867', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
+  ('folder_project__folder_parent__tree', '5fa21bd61e5ff19c5359554e473c7e57', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[]),
   ('folder__parent__tree', '34349abe809796fda58fc8662be8ce55', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[]);
 
 -- The subject key of a share (as the policy writes it: user, team#member, user:*, anyone, link)
@@ -1684,9 +1684,15 @@ BEGIN
     INSERT INTO authz_int."folder_project__folder_parent__tree" SELECT * FROM authz_int."folder_project__folder_parent__tree_compute"(a_t, a_i);
   END LOOP;
 END $f$;
+-- (what every type of the tree inherits may have changed: the table's own TRUNCATE trigger names only its own type)
 CREATE FUNCTION authz_int."folder_project__folder_parent__tree_on_truncate"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-BEGIN PERFORM authz_int."folder_project__folder_parent__tree_rebuild"(); RETURN NULL; END $f$;
+BEGIN
+  PERFORM authz_int."folder_project__folder_parent__tree_rebuild"();
+  PERFORM authz_int.changed('folder', ARRAY['*'], 'inheritance');
+  PERFORM authz_int.changed('project', ARRAY['*'], 'inheritance');
+  RETURN NULL;
+END $f$;
 
 -- what a rebuild would give against what is stored, 10000 nodes at a time; then nothing stored for a node
 -- that is gone

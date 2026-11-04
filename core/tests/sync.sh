@@ -933,6 +933,9 @@ kchange "... and shown again" "UPDATE k.spaces SET hidden = false WHERE id = 2"
 kchange "a user muted from a note" "INSERT INTO k.mutes VALUES (2, 3)"
 kchange "a note moved to another space" "UPDATE k.notes SET space_id = 1 WHERE id = 1"
 kchange "a page's owner changed" "UPDATE k.pages SET owner_id = 3 WHERE id = 20"
+kchange "the pages emptied by a TRUNCATE: the spaces below them no longer inherit from them" "TRUNCATE k.pages"
+check_k "... and the keyed index matches a rebuild" "SELECT authz.sync_verify()"
+kchange "... and filled again" "INSERT INTO k.pages VALUES (10, 1, 4), (20, 2, 3), (30, 3, 5)"
 check_k "authz.sync_verify(): the keyed index matches a rebuild" "SELECT authz.sync_verify()"
 # the runtime's other answers about the same forms, as for the forms above
 KPSQL >/dev/null <<'SQL' || exit 1
@@ -977,6 +980,53 @@ SQL
 api=$(KPSQL -c "SELECT string_agg(x, '; ') FROM public.forms_api() x")
 [ -z "$api" ] && ok "... and authz.list two at a time, authz.can, authz.perms, authz.who and authz.explain answer as authz.list does, keyed by inheritance" ||
   bad "the runtime's other answers, keyed" "$api"
+dropdb --force "$KEYED"
+
+echo "-- keyed by inheritance, through a link table a TRUNCATE empties"
+# a box inherits from the folders it sits in, a folder from the boxes it sits in, by link tables; only the boxes are
+# keyed, and nothing but the tree joins the two types. A TRUNCATE of the folders' links names the folders alone: what
+# the boxes inherit changed too (the tree, rebuilt, says so)
+createdb "$KEYED" || exit 1
+KPSQL >/dev/null <<'SQL' || exit 1
+CREATE SCHEMA k2;
+CREATE TABLE k2.users (id bigint PRIMARY KEY);
+CREATE TABLE k2.folders (id bigint PRIMARY KEY, owner_id bigint REFERENCES k2.users);
+CREATE TABLE k2.boxes (id bigint PRIMARY KEY, owner_id bigint REFERENCES k2.users);
+CREATE TABLE k2.folder_in (folder_id bigint NOT NULL, box_id bigint NOT NULL);
+CREATE TABLE k2.box_in (box_id bigint NOT NULL, folder_id bigint NOT NULL);
+INSERT INTO k2.users SELECT generate_series(1, 3);
+INSERT INTO k2.folders VALUES (1, 1), (2, 2);
+INSERT INTO k2.boxes VALUES (10, 3), (20, NULL);
+INSERT INTO k2.folder_in VALUES (1, 10);
+INSERT INTO k2.box_in VALUES (20, 1);
+SQL
+cat > "$T/linked.authz" <<EOF
+app role app_user
+
+type user = k2.users
+  can view = nobody
+
+type folder = k2.folders
+  owner : user = owner_id
+  in    : box = k2.folder_in(folder_id -> box_id)
+  can view = owner or in.view
+  can edit = owner
+
+type box = k2.boxes
+  owner : user = owner_id
+  in    : folder = k2.box_in(box_id -> folder_id)
+  can view = owner or in.view
+
+sync role $ROLE
+sync k2.folders : edit
+sync k2.boxes : view by box
+EOF
+said=$(python3 cli/rowstile_cli.py --db "dbname=$KEYED" apply "$T/linked.authz" 2>&1) || { bad "apply the linked forms" "$said"; exit 1; }
+check_k "box 20 inherits from folder 1 and box 10, through both link tables" \
+  "SELECT array_agg(source ORDER BY source) = '{box#view:10,box#view:20,folder#view:1}' FROM authz_sync.inherits WHERE key = 'box#view:20'"
+KPSQL -c "TRUNCATE k2.folder_in" >/dev/null
+check_k "the folders' links emptied by a TRUNCATE: box 20 no longer inherits from box 10, and the index matches a rebuild" \
+  "SELECT authz.sync_verify() AND NOT EXISTS (SELECT 1 FROM authz_sync.inherits WHERE key = 'box#view:20' AND source = 'box#view:10')"
 dropdb --force "$KEYED"
 
 echo "-- mirrored, for PowerSync"

@@ -41,7 +41,7 @@ scenario 95
 signed sessions 82
 small policies 4
 studio 227
-sync index 209
+sync index 214
 tools 42
 unit 680
 upgrade 71
