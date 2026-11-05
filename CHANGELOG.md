@@ -382,6 +382,13 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The lines that show how to use the review for CI (the reference's workflow, the action's and the GitLab
   template's comments) name the newest release, `v0.1.0-beta.3`. On `main` between releases they named its `-dev`
   version, which has no tag to use.
+- `rowstile plans` no longer says an index is missing on each partition of a partitioned table it reads (or on each
+  table that inherits from it): those scans are the read itself.
+- `rowstile bench` times updates of rows the person may update. Before, it picked among the table's first rows
+  whoever was signed in, and most of the updates it timed matched no row.
+- `rowstile indexes` says that Prisma's and Drizzle's line takes the fields that map the columns, where a model names
+  them otherwise, and, for goose and dbmate, that dropping an index a failed build left goes in a migration of its
+  own outside a transaction, as the index's line does.
 
 ### Upgrading
 

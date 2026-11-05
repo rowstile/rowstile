@@ -7,7 +7,7 @@ capitals 105
 children 162
 cli 189
 concurrency 38
-confidence 64
+confidence 66
 cookbook 103
 cuts half way 28
 cuts half way, every statement 31
@@ -43,5 +43,5 @@ small policies 4
 studio 238
 sync index 256
 tools 42
-unit 724
+unit 726
 upgrade 71

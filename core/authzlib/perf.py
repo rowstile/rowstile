@@ -11,7 +11,8 @@ Plans. Each governed table read as someone (EXPLAIN ANALYZE, as the app role), w
 scan of a large table other than the one read, and subplans run once per row.
 
 Bench. The app's read paths (each governed table, authz.list per permission), checks (authz.can) and write
-paths (an update of a visible row, undone), as several people, on the database's own data: p50 and p95.
+paths (an update of a row the person may update, undone), as several people, on the database's own data: p50 and
+p95.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeAlias, TypedDict
 
-from .connection import Db, Value, text
+from .connection import Db, Row, Value, text
 from .parse import Loc, Type, cols
 from .sqlutil import OWN_SCHEMAS, ident, lit, q, qt
 
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 
 BIG = 10_000  # rows: a full scan of a table this size is worth a warning
 SLOW_MS = 100  # a read slower than this on the data there is worth a warning
+SAMPLE = 200  # rows: bench checks objects among the first of each type's table, and updates the first one may
 
 # a lookup the policy makes: (table, columns, why, the policy line, the columns that serve it alone too: a (type, id)
 # pair's ids where they are two columns, its type where its id is one, as authz.lint() counts them)
@@ -197,10 +199,17 @@ def advice(table: str, columns: Sequence[str], tool: str | None, partitioned: bo
     and dbmate run each migration unless it says otherwise."""
     name = index_name(table, columns)
     fields = ", ".join(columns)
+    # (Prisma and Drizzle take their own field names, which a model may map to the columns: ownerId for owner_id)
     if tool == "prisma":
-        return f"@@index([{fields}]) on the model for {table} (prisma/schema.prisma)"
+        return (
+            f"@@index([{fields}]) on the model for {table} (prisma/schema.prisma; the fields that map those columns, "
+            "where the model names them otherwise)"
+        )
     if tool == "drizzle":
-        return f"index({lit(name)}).on({', '.join('t.' + x for x in columns)}) in the table for {table}"
+        return (
+            f"index({lit(name)}).on({', '.join('t.' + x for x in columns)}) in the table for {table} (the fields "
+            "that map those columns, where the table names them otherwise)"
+        )
     if tool == "alembic":
         return (
             f"Index({lit(name)}, {', '.join(lit(x) for x in columns)}) in {table}'s model "
@@ -219,9 +228,11 @@ def describe_missing(missing: list[Missing], tool: str | None) -> str:
     lines = []
     for table, columns, why, line, partitioned, unfinished in missing:
         lines.append(f"{table} has no index on ({', '.join(columns)}): {why} ({line})")
+        # (no index is dropped concurrently inside a transaction either)
+        alone = f" in a migration of its own that starts with {NO_TRANSACTION[tool]}" if tool in NO_TRANSACTION else ""
         lines += [
             f"  first, drop what a CREATE INDEX CONCURRENTLY that failed left unfinished: "
-            f"DROP INDEX {'' if partitioned else 'CONCURRENTLY '}{name};"
+            f"DROP INDEX {'' if partitioned else 'CONCURRENTLY '}{name};{'' if partitioned else alone}"
             for name in unfinished
         ]
         lines.append(f"  add: {advice(table, columns, tool, partitioned)}")
@@ -249,8 +260,22 @@ def _num(plan: dict[str, Value], key: str, default: float) -> float:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else default
 
 
-def walk(plan: dict[str, Value], out: list[str], governed: str) -> None:
-    """Warnings from one plan node (EXPLAIN's JSON) and those under it."""
+def under(db: Db, table: str) -> frozenset[str]:
+    """The table and those under it, as EXPLAIN names them (schema.name): its partitions and the tables that inherit
+    from it, as deep as they go, which a read of it scans each under its own name."""
+    rows = db.rows(
+        "WITH RECURSIVE u(oid) AS (SELECT to_regclass($1)::oid UNION "
+        "SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN u ON i.inhparent = u.oid) "
+        "SELECT n.nspname::text || '.' || c.relname::text AS t FROM u JOIN pg_catalog.pg_class c ON c.oid = u.oid "
+        "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace",
+        [qt(table)],
+    )
+    return frozenset({table, *(text(r, "t") for r in rows)})
+
+
+def walk(plan: dict[str, Value], out: list[str], governed: frozenset[str]) -> None:
+    """Warnings from one plan node (EXPLAIN's JSON) and those under it. governed: the table read and those under it,
+    whose own scans are the read itself."""
     node = _str(plan, "Node Type") or ""
     rel = _str(plan, "Relation Name")
     schema = _str(plan, "Schema")
@@ -260,7 +285,7 @@ def walk(plan: dict[str, Value], out: list[str], governed: str) -> None:
     # that reads everything and keeps little)
     read = (_num(plan, "Actual Rows", 0) + _num(plan, "Rows Removed by Filter", 0)) * loops
     # (rowstile's own tables, read whole for someone who reaches most rows, are no index the app can add)
-    if node == "Seq Scan" and table and table != governed and read >= BIG and schema not in OWN_SCHEMAS:
+    if node == "Seq Scan" and table and table not in governed and read >= BIG and schema not in OWN_SCHEMAS:
         out.append(f"reads all of {table} ({int(read)} rows): an index missing?")
     subplan = _str(plan, "Subplan Name")
     if subplan and _num(plan, "Actual Loops", 0) >= 1000:
@@ -282,6 +307,7 @@ def plans(db: Db, c: Compiler, who: tuple[str, str] | None = None) -> Plans:
     ptype, pid = who or sample_principal(db, c)
     out: list[TablePlan] = []
     for table in sorted({r.table for r in c.pol.rules if r.command == "select"}):
+        governed = under(db, table)
         db.rows("SELECT authz.act_as($1, $2)", [ptype, pid])
         try:
             with savepoint(db, "authz_plan"):
@@ -298,7 +324,7 @@ def plans(db: Db, c: Compiler, who: tuple[str, str] | None = None) -> Plans:
                 plan = top.get("Plan")
                 plan = plan if isinstance(plan, dict) else {}
                 warnings: list[str] = []
-                walk(plan, warnings, table)
+                walk(plan, warnings, governed)
                 ms = round(_num(top, "Execution Time", 0.0), 2)
                 if ms > SLOW_MS:
                     warnings.insert(0, f"took {ms} ms")
@@ -327,7 +353,8 @@ def pct(values: list[float], p: float) -> float | None:
 
 def bench(db: Db, c: Compiler, people: int = 10, rounds: int = 20, seed: int = 0) -> Bench:
     """p50 and p95 (ms) of the app's paths as several people in the data: reads of each governed table, authz.list
-    per permission, authz.can on objects, and updates of visible rows (undone). Runs in the caller's transaction."""
+    per permission, authz.can on objects, and updates of rows each may update (undone). Runs in the caller's
+    transaction."""
     from .database import Undo, app_role, may_take, savepoint
 
     rng = random.Random(seed)
@@ -345,14 +372,18 @@ def bench(db: Db, c: Compiler, people: int = 10, rounds: int = 20, seed: int = 0
     timings: dict[str, list[float]] = {}
     failed: dict[str, str] = {}  # what the database said the first time a path failed
 
-    def timed(label: str, sql: str, args: Sequence[Value] = (), as_app: bool = False) -> None:
-        took = 0.0
+    def undone(
+        label: str, sql: str, args: Sequence[Value] = (), as_app: bool = False
+    ) -> tuple[list[Row], float] | None:
+        """Runs sql in a savepoint, undone after (as the app role if as_app): its rows and how long it took; None
+        when it failed, what the database said kept for label's path."""
+        took, rows = 0.0, list[Row]()
         try:
             with savepoint(db, "authz_bench"):
                 if as_app and role:
                     db.rows(f"SET LOCAL ROLE {q(role)}")
                 start = time.perf_counter()  # the statement alone: one round trip, and the server's work
-                db.rows(sql, list(args))
+                rows = db.rows(sql, list(args))
                 took = (time.perf_counter() - start) * 1000
                 raise Undo
         except Undo:
@@ -360,8 +391,13 @@ def bench(db: Db, c: Compiler, people: int = 10, rounds: int = 20, seed: int = 0
         except db.errors as e:
             failed.setdefault(label, str(getattr(e, "message", e)))
             timings.setdefault(label, [])  # said, not left out
-            return
-        timings.setdefault(label, []).append(took)
+            return None
+        return rows, took
+
+    def timed(label: str, sql: str, args: Sequence[Value] = (), as_app: bool = False) -> None:
+        ran = undone(label, sql, args, as_app)
+        if ran:
+            timings.setdefault(label, []).append(ran[1])
 
     for _ in range(5):
         timed("", "SELECT 1")
@@ -371,9 +407,29 @@ def bench(db: Db, c: Compiler, people: int = 10, rounds: int = 20, seed: int = 0
     updates = sorted({r.table for r in c.pol.rules if r.command == "update"})
     perms = [(t, p) for t in c.types.values() for p in c.public_perms(t)]
     ids = {
-        t.name: [text(r, "id") for r in db.rows(f"SELECT ({c.key(t, 'r')})::text AS id FROM {qt(t.table)} r LIMIT 200")]
+        t.name: [
+            text(r, "id") for r in db.rows(f"SELECT ({c.key(t, 'r')})::text AS id FROM {qt(t.table)} r LIMIT {SAMPLE}")
+        ]
         for t in c.types.values()
     }
+    mine: dict[tuple[str | None, str | None, str], list[str]] = {}
+
+    def updatable(person: tuple[str | None, str | None], table: str, t: Type, col: str) -> list[str]:
+        """Up to SAMPLE rows of table that the person signed in may update: of the rows they see, those the update
+        rule lets through, found by writing them back unchanged as the app role (undone). A row they may not update
+        would time a lookup that updates nothing."""
+        key = (*person, table)
+        if key not in mine:
+            seen = f"SELECT {c.key(t, 's')} AS id FROM {qt(table)} s LIMIT {SAMPLE}"
+            ran = undone(
+                f"update {table}",
+                f"UPDATE {qt(table)} r SET {q(col)} = r.{q(col)} WHERE {c.key_in(t, 'r', seen)} "
+                f"RETURNING ({c.key(t, 'r')})::text AS id",
+                as_app=True,
+            )
+            mine[key] = [text(x, "id") for x in ran[0]] if ran else []
+        return mine[key]
+
     for _ in range(rounds):
         ptype, pid = rng.choice(users)
         db.rows("SELECT authz.act_as($1, $2)", [ptype, pid])
@@ -386,11 +442,10 @@ def bench(db: Db, c: Compiler, people: int = 10, rounds: int = 20, seed: int = 0
         for table in updates:
             t = c.governing(table)
             col = plain_column(db, c, t)
-            if ids[t.name] and col:
-                oid = rng.choice(ids[t.name])
+            if col and (theirs := updatable((ptype, pid), table, t, col)):
                 timed(
                     f"update {table}",
-                    f"UPDATE {qt(table)} r SET {q(col)} = r.{q(col)} WHERE {c.key_is(t, 'r', lit(oid))}",
+                    f"UPDATE {qt(table)} r SET {q(col)} = r.{q(col)} WHERE {c.key_is(t, 'r', lit(rng.choice(theirs)))}",
                     as_app=True,
                 )
     return {
