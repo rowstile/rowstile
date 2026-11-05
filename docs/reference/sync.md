@@ -171,6 +171,9 @@ again when applied: its tables are kept. <!-- checked: tests/sync.sh "an index t
   readers out from the keys: there every commit's work queues on that one lock row. <!-- checked: tests/sync.sh "the other forms: a write on a memo waits for one on a note at work, though their work meets nowhere" -->
 - In REPEATABLE READ or SERIALIZABLE, a writer takes every lock row, and one whose snapshot is older than another's
   index write gets a serialization error (40001), to retry. <!-- checked: tests/sync.sh "REPEATABLE READ: a writer with a snapshot older than another's index write gets a serialization error" -->
+  What it costs: each such commit that reaches the index writes every lock row again (4,096 row versions, and
+  about a megabyte of WAL), and those writers queue on one another. An app that writes synced tables often does
+  better to write them in READ COMMITTED.
 - Shares that start or end later change who reads their objects with no write. `authz.sync_tick()` works out
   again the readers of the shares whose start or end passed since their objects' readers were last worked out, and
   says how many shares. Schedule it ([Operations](../operations.md)); until it runs, the index says what it said
