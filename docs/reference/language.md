@@ -74,6 +74,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   `(id uuid)`, or several columns for a composite key: `type folder = app.folders (org_id, id)`.
   The type is the column's own: a 32-bit key, as Prisma's `Int` or a `serial` makes, is `(id int)`.
   `rowstile init` writes it, and applying says so when it is missing (AZ602). <!-- answer: keys -->
+  After a key changes type, applying refuses while shares name ids the new type can't read (AZ627: delete them, then apply again). <!-- checked: tests/apply.sh "applying after a key's type changed is refused while shares name ids it can't read" -->
   A relation points at such an object with its columns in square brackets:
   `parent : folder = [org_id, parent_id]`, `app.folder_teams([org_id, folder_id] -> user_id)`,
   `(parent_type, [org_id, parent_id])`. <!-- answer: keys-composite --> The user type's key is one column.

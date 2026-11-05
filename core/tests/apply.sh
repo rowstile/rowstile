@@ -956,8 +956,14 @@ out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags_text.authz" 
           ('tag', '012', 'viewer', 'user', '04'), ('tag', '0013', 'viewer', 'user', '3'), ('tag', '013', 'viewer', 'user', '03')" >/dev/null &&
   out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" remove --yes 2>&1) &&
   K -c "ALTER TABLE app.tags ALTER COLUMN id TYPE bigint USING id::bigint" \
-    -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('tag', '12', 'viewer', 'user', '4')" >/dev/null ||
+    -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('tag', '12', 'viewer', 'user', '4'), ('tag', 'gone', 'viewer', 'user', '3')" >/dev/null ||
   bad "a policy over tags" "$out"
+# a share on a row gone before, whose id no bigint reads ('gone'), stops the shares being indexed by the new key
+out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags.authz" 2>&1)
+case "$out" in *"line 5: 1 shares of tag name ids a bigint can't read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]"*)
+  ok "applying after a key's type changed is refused while shares name ids it can't read, and says where to read what to do";;
+  *) bad "shares whose ids the new key can't read" "$out";; esac
+K -c "DELETE FROM authz.shares WHERE object_type = 'tag' AND NOT pg_input_is_valid(object_id, 'bigint')" >/dev/null
 before=$(tagged)
 out=$(python3 cli/rowstile_cli.py --db "dbname=$KDB" apply "$T/tags.authz" 2>&1)
 [ "$before" = "0013>3 012>4 013>3 12>4" ] && [ "$out" = "$T/tags.authz: applied" ] && [ "$(tagged)" = "12>4 13>3" ] &&

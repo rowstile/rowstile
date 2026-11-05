@@ -1410,6 +1410,22 @@ END $kv$;"""
             f"  END IF;"
             for tbl, pk, pkt, loc in self.pk_checks
         )
+        # shares whose object id the type's key can't read (a row gone before the key's type changed: text to
+        # bigint, say): the sweep would drop them, but an index Postgres builds reads the rows its own transaction
+        # deleted too, so the share indexes below can't be made while they are there
+        share_id_checks = "\n".join(
+            f"  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = {lit(t.name)}\n"
+            f"    AND NOT pg_catalog.pg_input_is_valid(g.object_id, {lit(t.pktype)});\n"
+            f"  IF v_n > 0 THEN\n"
+            f"    missing := missing || {NEXT} || {lit(f'{t.loc}: ')} || v_n || "
+            + lit(
+                f" shares of {t.name} name ids a {t.pktype} can't read (their rows are gone): delete them first, "
+                f"as rowstile help AZ627 says [AZ627]"
+            )
+            + ";\n  END IF;"
+            for t in self.types.values()
+            if t.pktype != "text"
+        )
         rule_tables = ", ".join(f"{lit(qt(tb))}::regclass" for tb in by_table)
         # each `cascade from` names one foreign key that deletes or changes its table's rows: applying refuses one
         # that names none, or several (AZ625), and the warning below leaves out those it names
@@ -1650,7 +1666,7 @@ END $w$;"""
             (
                 "changed",
                 "tables",
-                f"DO $chk$\nDECLARE missing text := ''; v_oid oid; v_type text; v_n int;\nBEGIN\n{checks}\n{pk_checks}\n{cascade_checks + chr(10) if cascade_checks else ''}"
+                f"DO $chk$\nDECLARE missing text := ''; v_oid oid; v_type text; v_n int;\nBEGIN\n{checks}\n{pk_checks}\n{share_id_checks + chr(10) if share_id_checks else ''}{cascade_checks + chr(10) if cascade_checks else ''}"
                 f"  IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;\nEND $chk$;",
             ),
             ("full", "uid_type", uid_check),

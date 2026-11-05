@@ -819,6 +819,15 @@ CODES = {
         "takes, is said in Postgres's own words instead.",
         when="command",
     ),
+    "AZ627": Code(
+        "Shares whose ids the key can't read",
+        "A share keeps its object's id as text. When a type's key changes type (text to bigint, say), a share on a "
+        "row deleted before can name an id the new type can't read, such as `abc` for a bigint. Applying makes an "
+        "index of each type's shares by its key, which can't hold that id. Such a share gives nothing, since no row "
+        "has that id. Delete those shares, then apply again; for a type `doc` whose key is now a bigint: "
+        "`DELETE FROM authz.shares WHERE object_type = 'doc' AND NOT pg_input_is_valid(object_id, 'bigint')`.",
+        when="apply",
+    ),
     "AZ701": Code(
         "Nobody signed in",
         "A query needed to know who is asking, and nobody signed in in this transaction. Every transaction starts "

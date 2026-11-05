@@ -267,6 +267,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A share with `anyone` is stored with the id `*`, whatever id `authz.share` was given: sharing with `''` and with
   `'*'` makes one share, `authz.unshare` with either id removes it, and `authz.who` counts one made with `''`.
   Applying gives the shares with anyone stored before the id `*`, two of one share kept once.
+- Applying after a type's key changed type (text to bigint, say) is refused while shares of rows gone before name
+  ids the new key can't read, with the line of the type and how many (AZ627, whose page gives the statement that
+  deletes them). It failed with `invalid input syntax for type bigint`, and nothing said which shares or what to
+  do.
 
 ### Upgrading
 
