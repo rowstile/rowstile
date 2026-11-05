@@ -112,7 +112,12 @@ request gets no secrets, not on `pull_request_target`.
   [Speed and limits](reference/limits.md)). <!-- checked: tests/devx.sh "a rule condition that reads a governed table runs with the policy's rights, as a function"; tests/apply.sh "a condition in a permission sees every membership in its table's rules too" -->
 - **Scopes limit what a token does, not what it can find out about its own user.** A scoped session
   (an API key or a JWT with scopes) is held to its scopes by the rules and by `authz.can`, `authz.list` and
-  the other `authz.*` functions. <!-- checked: tests/identity.sh "files key: sees no folders (not in its scope)"; tests/identity.sh "read-only key: may view file 11, not edit it" -->
+  the other `authz.*` functions that say what it may do. <!-- checked: tests/identity.sh "files key: sees no folders (not in its scope)"; tests/identity.sh "read-only key: may view file 11, not edit it" -->
+  `authz.explain`, asked of its own user, says why the user holds a permission or not. On an object the session
+  may see, its first line is the session's answer (`no   user 1 does not hold edit on file 11`, for a key whose
+  scope is `read`), and the lines below walk the permission's parts with the user's full rights (`yes  folder.edit`),
+  without naming the scope as the reason. So a scoped key learns, on the objects it may see, what its user holds
+  beyond its scopes. <!-- checked: tests/identity.sh "a read-only key's explain of edit: no for the key, then the parts its user holds" -->
 - **Request context** (`authz.ctx(...)`, `authz_ctx.*` settings) is whatever the app sets: a policy that
   trusts it trusts the backend.
 - **The sync index tells the sync engine who may read what** (a preview, [The sync index](reference/sync.md)): its
