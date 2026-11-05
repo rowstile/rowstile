@@ -72,6 +72,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   commit. Three writers could: two waiting for a third, then each reaching what the other held once it committed.
   A lock row the work needs below one it holds is now taken only if nobody holds it; else the work lets go of them
   all and takes them again in order.
+- The sync index, a preview: applying refuses a superuser as the sync role saying so (AZ808), not that it is a
+  member of the role applying the policy; `authz.lint()` reports a sync role made a superuser since once, not as
+  a member of the app role that owns every governed table. Lint still reports another role's privileges on
+  `authz_sync` while the sync role is gone (renamed or dropped since).
 - A condition that calls a function by its three-part name (`mydb.app.f(id)`), or a function named `filter`,
   `within`, `over` or `is`, is read as calling the app's code, as one written `app.f(id)` is: it runs with the
   policy's rights wherever it is checked, the change feed watches every column of its row, and the sync index

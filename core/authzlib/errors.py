@@ -1057,7 +1057,8 @@ CODES = {
         "The sync role isn't one of its own",
         "Applying needs the sync role to be there, and a role of its own: not a member of the app role nor the app "
         "role a member of it (the app would read every row through it), and not the role that applies the policy "
-        "or a member of it (an owner may turn the rules off). Make one for the engine: `CREATE ROLE sync_engine LOGIN "
+        "or a member of it (an owner may turn the rules off), nor a superuser, which may do the same (managed setups "
+        "often give the engine one). Make one for the engine: `CREATE ROLE sync_engine LOGIN "
         "REPLICATION BYPASSRLS`, then apply again. `authz.lint()` reports a membership granted since.",
         when="apply",
     ),
