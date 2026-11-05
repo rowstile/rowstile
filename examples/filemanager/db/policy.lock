@@ -72,7 +72,7 @@
 > rules fm.group_members: delete : manage or person
 > rules fm.group_members: cascade from fm.users
 
-always | e3ee557efcf3
+always | db58e3f296b5
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
@@ -460,11 +460,11 @@ policy "authz_update" ON "fm"."files" | eaf92e3c52f3
 policy "authz_update" ON "fm"."folders" | 612136534aa8
 policy "authz_update" ON "fm"."group_members" | 2c41bea0b7cc
 policy "authz_update" ON "fm"."groups" | e39495bdf6d4
-rls "fm"."file_versions" | fff5af26c945
-rls "fm"."files" | 1223f29d9096
-rls "fm"."folders" | 59812d027bdf
-rls "fm"."group_members" | 66b0ddcfe314
-rls "fm"."groups" | 406eec0a030a
+rls "fm"."file_versions" | 8d913b43ed26
+rls "fm"."files" | b21a6d308bdc
+rls "fm"."folders" | cf55befc68cf
+rls "fm"."group_members" | ee33dea70fbf
+rls "fm"."groups" | 81615f18f2ef
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | 2175b4f10f33

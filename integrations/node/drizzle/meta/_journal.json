@@ -99,6 +99,13 @@
       "when": 1793904722961,
       "tag": "0013_authz_break_glass_over_a_share",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793907237024,
+      "tag": "0014_authz_partitions_rls_each_migration",
+      "breakpoints": true
     }
   ]
 }

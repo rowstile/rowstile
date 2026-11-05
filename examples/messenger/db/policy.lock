@@ -95,7 +95,7 @@
 > rules ms.blocks: cascade from ms.users (blocker_id)
 > rules ms.blocks: cascade from ms.users (blocked_id)
 
-always | de9d7b595a4f
+always | ee0a915645a3
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
@@ -491,13 +491,13 @@ policy "authz_update" ON "ms"."chats" | 5ac988143c44
 policy "authz_update" ON "ms"."members" | a08966ae2cfd
 policy "authz_update" ON "ms"."messages" | 0f141eb74afe
 policy "authz_update" ON "ms"."users" | 64773c576c61
-rls "ms"."blocks" | bc005ebf8ba4
-rls "ms"."bots" | af1dcb8f6ea6
-rls "ms"."chat_bots" | 4397e8536035
-rls "ms"."chats" | 73f266a881e9
-rls "ms"."members" | a9981c2ae94b
-rls "ms"."messages" | d9a7cf4ac532
-rls "ms"."users" | 79ad975def28
+rls "ms"."blocks" | 34e85cdc0b29
+rls "ms"."bots" | 231a619d0d49
+rls "ms"."chat_bots" | 457652798c7c
+rls "ms"."chats" | aff726710fe5
+rls "ms"."members" | ac6eee4375a5
+rls "ms"."messages" | 7b8d99e9a3d7
+rls "ms"."users" | fd7a61bc9375
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | 2175b4f10f33

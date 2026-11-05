@@ -148,7 +148,7 @@
 > invariants: never comment: view and not ticket.view
 > invariants: never user: view and not self and not workspace.member and not workspace.connected
 
-always | 08910061c2cc
+always | e376041d4c05
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 4c6232c124b7 shape=77f3e79f
@@ -683,16 +683,16 @@ policy "authz_update" ON "hd"."teams" | cfc0f61f4daa
 policy "authz_update" ON "hd"."tickets" | eb6db80d119e
 policy "authz_update" ON "hd"."users" | bf602ca843c2
 policy "authz_update" ON "hd"."workspaces" | 015177429080
-rls "hd"."comments" | 54be7a490d6b
-rls "hd"."customer_orgs" | 8318a6142e4e
-rls "hd"."integrations" | 5ece11c7ce81
-rls "hd"."support_access" | 2c9fee910dfb
-rls "hd"."team_leads" | 15069a4a14f9
-rls "hd"."team_members" | 483a80f2d391
-rls "hd"."teams" | 302925281476
-rls "hd"."tickets" | d9d9c0e4cfd1
-rls "hd"."users" | 03f17b603586
-rls "hd"."workspaces" | 7fcac66cd5fc
+rls "hd"."comments" | f1fe87c2968d
+rls "hd"."customer_orgs" | 62aed49a3470
+rls "hd"."integrations" | b5541e001a2e
+rls "hd"."support_access" | 5b658bee028a
+rls "hd"."team_leads" | 7f02c0ca4486
+rls "hd"."team_members" | a662938b175f
+rls "hd"."teams" | 96c8fad4c8bd
+rls "hd"."tickets" | ab1e41cc0e0b
+rls "hd"."users" | a4789d0a69af
+rls "hd"."workspaces" | 9bb0c1581746
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
 step base | 2175b4f10f33
