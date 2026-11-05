@@ -105,15 +105,73 @@ expect "... and one from another connection too" "28000: who is signed in was ch
   -c "SELECT count(*) FROM app.files"
 got=$(psql -X -q -At -U "$APP" -d "$DB" -v VERBOSITY=sqlstate 2>&1 <<'SQL' | tail -n 1
 BEGIN;
-SELECT authz.act_as('user', '3');
 SAVEPOINT s;
 SELECT authz.act_as('user', '1');
 ROLLBACK TO SAVEPOINT s;
+SELECT authz.act_as('user', '3');
 SELECT count(*) FROM app.files;
 COMMIT;
 SQL
 )
-[ "$got" = "$carol" ] && ok "a sign-in rolled back with a savepoint gives back the one before it" || bad "savepoint" "$got"
+[ "$got" = "$carol" ] && ok "a sign-in rolled back with a savepoint gives back the one before it (nobody: so carol may sign in)" ||
+  bad "savepoint" "$got"
+
+echo "-- a transaction is one principal's"
+alice=$(as -c "$(ACT "'user', '1'")" -c "SELECT count(*) FROM app.files")
+ALICE_KEY=$(PSQL -c "SET authz.user_id = 1" -c "SELECT authz.create_api_key('sessions test, alice')" | tail -n 1)
+CAROL_KEY=$(PSQL -c "SET authz.user_id = 3" -c "SELECT authz.create_api_key('sessions test, carol', 'read')" | tail -n 1)
+PSQL -c "INSERT INTO authz.settings VALUES ('jwt_secret', 's3cret-for-sessions')" >/dev/null
+jwt() { python3 - "$1" <<'PY'
+import base64, hashlib, hmac, json, sys, time
+b = lambda d: base64.urlsafe_b64encode(json.dumps(d, separators=(",", ":")).encode()).rstrip(b"=").decode()
+msg = b({"alg": "HS256", "typ": "JWT"}) + "." + b({"sub": sys.argv[1], "exp": int(time.time()) + 300})
+sig = hmac.new(b"s3cret-for-sessions", msg.encode(), hashlib.sha256).digest()
+print(msg + "." + base64.urlsafe_b64encode(sig).rstrip(b"=").decode())
+PY
+}
+expect "act_as in a transaction signed in as carol, for alice: refused" \
+  "28000: this transaction is signed in as user 3 already, so it can't sign in as user 1" \
+  -c "$(ACT "'user', '3'")" -c "$(ACT "'user', '1'")"
+got=$(psql -X -q -At -U "$APP" -d "$DB" -1 -c "$(ACT "'user', '3'")" -c "$(ACT "'user', '1'")" 2>&1)
+case "$got" in *"HINT:  a transaction is one principal's: sign in in a transaction of its own (rowstile help AZ716)"*)
+  ok "... with its code, AZ716";; *) bad "the one-principal refusal's code" "$got";; esac
+expect "... and for nobody: refused too" "28000: this transaction is signed in as user 3 already, so it can't sign in as nobody" \
+  -c "$(ACT "'user', '3'")" -c "$(ACT "NULL, NULL")"
+expect "login_key in a transaction signed in as carol, with alice's key: refused" \
+  "28000: this transaction is signed in as user 3 already, so it can't sign in as user 1" \
+  -c "$(ACT "'user', '3'")" -c "SELECT authz.login_key('$ALICE_KEY')"
+expect "login_jwt in a transaction signed in as carol, with alice's token: refused" \
+  "28000: this transaction is signed in as user 3 already, so it can't sign in as user 1" \
+  -c "$(ACT "'user', '3'")" -c "SELECT authz.login_jwt('$(jwt 1)')"
+expect "act_as after a key's sign-in limited by scopes, even as its user: refused (it would end the scopes)" \
+  "28000: this transaction is limited by scopes (read), so it can't sign in again" \
+  -c "SELECT authz.login_key('$CAROL_KEY') IS NOT NULL" -c "$(ACT "'user', '3'")"
+expect "act_as while viewing as someone, even as the one viewed: refused (it would end view-as)" \
+  "28000: this transaction views as user 3, so it can't sign in again" \
+  -c "$(ACT "'user', '5'")" -c "DO \$\$ BEGIN PERFORM authz.view_as('3', 'ticket 7'); END \$\$" -c "$(ACT "'user', '3'")"
+got=$(as -c "$(ACT "'user', '3'")" -c "SAVEPOINT s" -c "$(ACT "'user', '1'")" -c "ROLLBACK TO SAVEPOINT s" \
+  -c "SELECT count(*) || '|' || authz.uid() FROM app.files")
+[ "$got" = "$carol|3" ] && ok "refused at a savepoint, the transaction goes on as carol" || bad "refused at a savepoint" "$got"
+expect "the same principal again: no error" "$carol" -c "$(ACT "'user', '3'")" -c "$(ACT "'user', '03'")" \
+  -c "SELECT count(*) FROM app.files"
+expect "nobody, then carol: a sign-in, no error" "$carol" -c "$(ACT "NULL, NULL")" -c "$(ACT "'user', '3'")" \
+  -c "SELECT count(*) FROM app.files"
+expect "nobody, then a key's sign-in: no error" "$carol" -c "$(ACT "NULL, NULL")" \
+  -c "SELECT authz.login_key('$CAROL_KEY') IS NOT NULL" -c "SELECT count(*) FROM app.files"
+expect "nobody, then a token's sign-in: no error" "$alice" -c "$(ACT "NULL, NULL")" \
+  -c "SELECT authz.login_jwt('$(jwt 1)') IS NOT NULL" -c "SELECT count(*) FROM app.files"
+expect "carol, then her own read-only key: no error, and read-only" "UPDATE 0" -c "$(ACT "'user', '3'")" \
+  -c "SELECT authz.login_key('$CAROL_KEY') IS NOT NULL" -c "\\set QUIET off" -c "UPDATE app.files SET name = name WHERE id = 11"
+expect "sign_out, then alice: a test's transaction acting for one, then another" "$alice|1" -c "$(ACT "'user', '3'")" \
+  -c "SELECT authz.sign_out()" -c "$(ACT "'user', '1'")" -c "SELECT count(*) || '|' || authz.uid() FROM app.files"
+expect "... and signed out, nobody is signed in" "0|true" -c "$(ACT "'user', '3'")" -c "SELECT authz.sign_out()" \
+  -c "SELECT count(*) || '|' || (authz.uid() IS NULL) FROM app.files WHERE id = 12"
+expect "... which ends view-as and scopes too: alice may sign in after" "$alice" -c "SELECT authz.login_key('$CAROL_KEY') IS NOT NULL" \
+  -c "SELECT authz.sign_out()" -c "$(ACT "'user', '1'")" -c "SELECT count(*) FROM app.files"
+got=$(PSQL -1 -c "SET ROLE app_user" -c "SELECT authz.act_as('user', '3')" -c "SELECT authz.act_as('user', '1')" \
+  -c "SELECT count(*) FROM app.files" 2>&1 | tail -n 1)
+[ "$got" = "$alice" ] && ok "the owner's session signs in one, then another: not held to it (it says who is signed in by hand)" ||
+  bad "the owner signs in twice" "$got"
 
 echo "-- keys and scopes"
 key=$(PSQL -c "SET authz.user_id = 3" -c "SELECT authz.create_api_key('sessions test', 'read')" | tail -n 1)
@@ -142,7 +200,6 @@ got=$(PSQL -c "SET authz.user_id = 3" -c "SET authz.scopes = 'read'" -c "SELECT 
 [ "$got" = t ] && ok "session_limited: the owner's session sets the scopes and is believed" || bad "session_limited as the owner" "$got"
 
 echo "-- rowstile's own functions switch users and sign again"
-alice=$(as -c "$(ACT "'user', '1'")" -c "SELECT count(*) FROM app.files")
 expect "who checks each person, and alice is still signed in afterwards" "$alice" -c "$(ACT "'user', '1'")" \
   -c "SELECT count(*) > 0 FROM authz.who('file', '11', 'view')" -c "SELECT count(*) FROM app.files"
 expect "explain for carol, then alice again" "$alice" -c "$(ACT "'user', '1'")" \

@@ -1,5 +1,9 @@
 # Using it from app code
 
+The database holds each transaction to one principal, whatever signs it in: `authz.act_as` and the logins refuse
+to sign in a transaction signed in as someone else already (AZ716, [Identity](identity.md)). <!-- checked: tests/sessions.sh "act_as in a transaction signed in as carol, for alice: refused"; tests/sessions.sh "login_key in a transaction signed in as carol, with alice's key: refused" -->
+The SDKs below refuse it earlier, in their own words, before anything is sent.
+
 Python apps use [the Python SDK](../../sdk/python/README.md): `Rowstile(app, engine, user=...)` for FastAPI, `install(engine)` for
 SQLAlchemy, and transactions for psycopg and asyncpg sign each transaction in, turn refusals into 403 and
 hidden rows into 404, and check the app's connection at start-up. A transaction is one principal's: inside one

@@ -117,7 +117,7 @@ DO $g$
 DECLARE f record; kept text := '';
 BEGIN
   FOR f IN SELECT p.oid, p.ctid, p.oid::regprocedure AS name FROM pg_proc p WHERE p.pronamespace = to_regnamespace('authz')
-           AND p.proname = ANY (ARRAY['act_as', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'announce_timed_shares', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'session_limited', 'list_links', 'revoke_link']) LOOP
+           AND p.proname = ANY (ARRAY['act_as', 'sign_out', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'announce_timed_shares', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'session_limited', 'list_links', 'revoke_link']) LOOP
     BEGIN
       EXECUTE format('DROP FUNCTION %s', f.name);
     EXCEPTION WHEN dependent_objects_still_exist THEN
@@ -523,6 +523,69 @@ BEGIN
   RAISE EXCEPTION 'nobody signed in in this transaction' USING ERRCODE = 'invalid_authorization_specification',
     HINT = 'start each transaction with SELECT authz.act_as(''user'', ''42''), or authz.act_as(NULL, NULL) for nobody '
            '(or authz.login_key() / authz.login_jwt()) (rowstile help AZ701)';
+END $f$;
+-- A transaction is one principal's: act_as and the logins refuse to sign in someone else (nobody included) once
+-- someone is signed in, and to sign in again at all once the transaction views as someone or is limited by scopes
+-- (that would end what limits it). Signing in from nobody to someone, and as the same principal again, are fine.
+-- Only a sign-in made in this transaction counts (its signature): the policy's owner and superusers say who is
+-- signed in by hand, and aren't held to it. rowstile's own functions that ask as others and put back the caller
+-- (who, explain, who_among, the invariants) switch without it.
+CREATE FUNCTION authz_int.one_principal(p_type text, p_id text) RETURNS void
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE k authz_int.session_key; v_id text := coalesce(current_setting('authz.user_id', true), '');
+        v_type text := coalesce(current_setting('authz.principal_type', true), '');
+BEGIN
+  IF pg_has_role(session_user, (SELECT nspowner FROM pg_namespace WHERE nspname = 'authz_int'), 'MEMBER') THEN
+    RETURN;
+  END IF;
+  SELECT * INTO k FROM authz_int.session_key;
+  -- (compared through their hashes, as session_ok() does)
+  IF pg_catalog.sha256(pg_catalog.convert_to(coalesce(current_setting('authz.session', true), ''), 'UTF8'))
+     <> pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to(pg_catalog.concat_ws(pg_catalog.chr(31), coalesce(pg_catalog.current_setting('authz.user_id', true), ''), coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), coalesce(pg_catalog.current_setting('authz.scopes', true), ''), coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), pg_catalog.pg_backend_pid()::text, (EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text), 'UTF8'))), 'hex'), 'UTF8')) THEN
+    RETURN;  -- nobody signed in in this transaction yet
+  END IF;
+  IF coalesce(current_setting('authz.acting_user', true), '') <> '' THEN
+    RAISE EXCEPTION 'this transaction views as user %, so it can''t sign in again', v_id
+      USING ERRCODE = 'invalid_authorization_specification',
+      HINT = 'a transaction is one principal''s: sign in in a transaction of its own (rowstile help AZ716)';
+  END IF;
+  IF v_id <> '' AND (v_id, v_type) IS DISTINCT FROM (coalesce(p_id, ''), coalesce(p_type, '')) THEN
+    RAISE EXCEPTION 'this transaction is signed in as % already, so it can''t sign in as %',
+      CASE WHEN v_type = '' THEN 'user ' || v_id ELSE v_type || ' ' || v_id END,
+      CASE WHEN coalesce(p_id, '') = '' THEN 'nobody' WHEN coalesce(p_type, '') = '' THEN 'user ' || p_id
+           ELSE p_type || ' ' || p_id END
+      USING ERRCODE = 'invalid_authorization_specification',
+      HINT = 'a transaction is one principal''s: sign in in a transaction of its own (rowstile help AZ716)';
+  END IF;
+  IF coalesce(current_setting('authz.scopes', true), '') <> '' THEN
+    RAISE EXCEPTION 'this transaction is limited by scopes (%), so it can''t sign in again',
+      current_setting('authz.scopes', true) USING ERRCODE = 'invalid_authorization_specification',
+      HINT = 'a transaction is one principal''s: sign in in a transaction of its own (rowstile help AZ716)';
+  END IF;
+END $f$;
+-- act_as's work: with p_check, held to one principal a transaction (authz.act_as); without, for rowstile's own
+-- functions that sign others in as they ask and put back the caller (who_among)
+CREATE FUNCTION authz_int.act_as(p_type text, p_id text, p_check boolean) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_id text; v_type text;
+BEGIN
+  IF p_id IS NOT NULL AND coalesce(p_type, 'user') <> 'user'
+     AND NOT EXISTS (SELECT 1 FROM authz_int.types WHERE name = p_type AND principal) THEN
+    RAISE EXCEPTION '% is not a type that signs in', p_type USING
+      HINT = 'principal types are marked "principal" in the policy: type service = app.services principal (rowstile help AZ707)';
+  END IF;
+  -- stored as every other id is ('05' is 5), so the audit and created_by name the user as shares do
+  v_id := coalesce(authz_int.canon(coalesce(p_type, 'user'), p_id), '');
+  v_type := CASE WHEN p_id IS NULL OR coalesce(p_type, 'user') = 'user' THEN '' ELSE p_type END;
+  IF p_check THEN
+    PERFORM authz_int.one_principal(v_type, v_id);
+  END IF;
+  PERFORM set_config('authz.user_id', v_id, true);
+  PERFORM set_config('authz.principal_type', v_type, true);
+  PERFORM set_config('authz.scopes', '', true);
+  PERFORM set_config('authz.acting_user', '', true);
+  PERFORM authz_int.sign();
+  PERFORM authz_int.jit_off();
 END $f$;
 
 -- an id as it is stored and compared: '(1, 42)' -> '(1,42)', '007' -> '7' (invalid ids as they are)
@@ -4527,25 +4590,31 @@ BEGIN
 END $f$;
 
 -- Which of these people (or principals of another type) hold a permission: who to tell about a change.
--- It signs each one in with authz.act_as(), as the caller: so only a backend trusted to sign anyone in can
--- use it, as it could ask authz.can for each one itself. Not in a session limited by scopes or view-as. SELECT * FROM authz.who_among('chat', '7', 'read', ARRAY['1', '2'])
--- (it reads those settings as they are, not through authz_int.scopes_active(), which the app role may not call: the
--- guard only keeps its last act_as, which ends scopes and view-as, from widening the session)
+-- It signs each one in as act_as does, then the caller again: so only a backend trusted to sign anyone in can
+-- use it (the app role), as it could ask authz.can for each one itself. Not in a session limited by scopes or view-as. SELECT * FROM authz.who_among('chat', '7', 'read', ARRAY['1', '2'])
+-- (it reads those settings as they are: the guard only keeps its last sign-in, which ends scopes and view-as, from
+-- widening the session. Its sign-ins aren't held to one principal a transaction, as authz.act_as's are: it puts
+-- back the caller)
 CREATE OR REPLACE FUNCTION authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text DEFAULT 'user')
-RETURNS SETOF text LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, pg_temp AS $f$
+RETURNS SETOF text LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_me text := nullif(current_setting('authz.user_id', true), '');
         v_pt text := coalesce(nullif(current_setting('authz.principal_type', true), ''), 'user');
         v_u text;
 BEGIN
+  -- (it runs as the owner: the caller's own right to sign people in is asked for)
+  IF NOT has_function_privilege(authz_int.caller_role(), 'authz.act_as(text, text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'permission denied for function act_as: authz.who_among() signs people in, which % may not',
+      authz_int.caller_role() USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+  END IF;
   IF coalesce(current_setting('authz.scopes', true), '') <> '' OR coalesce(current_setting('authz.acting_user', true), '') <> '' THEN
     RAISE EXCEPTION 'authz.who_among() signs people in, which a session limited by scopes or view-as may not'
       USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ704';
   END IF;
   FOREACH v_u IN ARRAY coalesce(p_users, '{}') LOOP
-    PERFORM authz.act_as(p_principal_type, v_u);
+    PERFORM authz_int.act_as(p_principal_type, v_u, false);
     IF authz.can(p_type, p_id, p_perm) THEN RETURN NEXT v_u; END IF;
   END LOOP;
-  PERFORM authz.act_as(v_pt, v_me);
+  PERFORM authz_int.act_as(v_pt, v_me, false);
 END $f$;
 CREATE OR REPLACE FUNCTION authz.who_among(p_type text, p_id bigint, p_perm text, p_users text[], p_principal_type text DEFAULT 'user') RETURNS SETOF text LANGUAGE sql VOLATILE AS
   $$ SELECT * FROM authz.who_among(p_type, p_id::text, p_perm, p_users, p_principal_type) $$;
@@ -5628,18 +5697,19 @@ END $f$;
 CREATE OR REPLACE FUNCTION authz.act_as(p_type text, p_id text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-  IF p_id IS NOT NULL AND coalesce(p_type, 'user') <> 'user'
-     AND NOT EXISTS (SELECT 1 FROM authz_int.types WHERE name = p_type AND principal) THEN
-    RAISE EXCEPTION '% is not a type that signs in', p_type USING
-      HINT = 'principal types are marked "principal" in the policy: type service = app.services principal (rowstile help AZ707)';
-  END IF;
-  -- stored as every other id is ('05' is 5), so the audit and created_by name the user as shares do
-  PERFORM set_config('authz.user_id', coalesce(authz_int.canon(coalesce(p_type, 'user'), p_id), ''), true);
-  PERFORM set_config('authz.principal_type', CASE WHEN p_id IS NULL OR coalesce(p_type, 'user') = 'user' THEN '' ELSE p_type END, true);
+  PERFORM authz_int.act_as(p_type, p_id, true);
+END $f$;
+-- Sign this transaction out: nobody is signed in in it now, and it may sign in again, as anyone. For a test's
+-- transaction, which acts for one person, then another, and is rolled back at the end (the SDKs' test modes do
+-- it): outside tests a transaction is one principal's, and work for someone else begins a transaction of its own.
+CREATE OR REPLACE FUNCTION authz.sign_out() RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  PERFORM set_config('authz.user_id', '', true);
+  PERFORM set_config('authz.principal_type', '', true);
   PERFORM set_config('authz.scopes', '', true);
   PERFORM set_config('authz.acting_user', '', true);
   PERFORM authz_int.sign();
-  PERFORM authz_int.jit_off();
 END $f$;
 
 -- Sign in with an API key for this transaction: SELECT authz.login_key('ak_...'). Returns who:
@@ -5652,6 +5722,7 @@ BEGIN
   IF k.id IS NULL OR k.revoked_at IS NOT NULL OR (k.expires_at IS NOT NULL AND k.expires_at <= now()) THEN
     RAISE EXCEPTION 'invalid API key' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703';
   END IF;
+  PERFORM authz_int.one_principal(CASE WHEN k.principal_type = 'user' THEN '' ELSE k.principal_type END, k.user_id);
   PERFORM set_config('authz.user_id', k.user_id, true);
   PERFORM set_config('authz.principal_type', CASE WHEN k.principal_type = 'user' THEN '' ELSE k.principal_type END, true);
   PERFORM set_config('authz.scopes', k.scopes, true);
@@ -5736,8 +5807,11 @@ BEGIN
   IF coalesce(v_type, 'user') <> 'user' AND NOT EXISTS (SELECT 1 FROM authz_int.types WHERE name = v_type AND principal) THEN
     RAISE EXCEPTION 'the token names a type that does not sign in' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703';
   END IF;
-  PERFORM set_config('authz.user_id', coalesce(authz_int.canon(coalesce(v_type, 'user'), v_user), ''), true);
-  PERFORM set_config('authz.principal_type', CASE WHEN coalesce(v_type, 'user') = 'user' THEN '' ELSE v_type END, true);
+  v_user := coalesce(authz_int.canon(coalesce(v_type, 'user'), v_user), '');
+  v_type := CASE WHEN coalesce(v_type, 'user') = 'user' THEN '' ELSE v_type END;
+  PERFORM authz_int.one_principal(v_type, v_user);
+  PERFORM set_config('authz.user_id', v_user, true);
+  PERFORM set_config('authz.principal_type', v_type, true);
   PERFORM set_config('authz.acting_user', '', true);
   IF v_claims ? 'scope' THEN
     v_scopes := ARRAY(SELECT x FROM unnest(string_to_array(v_claims->>'scope', ' ')) x
@@ -6226,7 +6300,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, '"app_user"'::regrole))
     AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = '"app_user"'::regrole
              AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"alt.docs:column owner_id:items"', '"alt.docs:column owner_id:why"', '"alt.docs:column up after:items"', '"alt.docs:column up after:why"', '"alt.docs:delete:items"', '"alt.docs:delete:why"', '"alt.docs:insert:items"', '"alt.docs:insert:refuse"', '"alt.docs:insert:why"', '"alt.docs:rules:explain"', '"alt.docs:update:items"', '"alt.docs:update:refuse"', '"alt.docs:update:why"']::text[]))
-    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.session_limited()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.create_role(text, bigint, text, text, text[])', 'authz.roles_of(text, bigint)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, bigint, timestamptz)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)', 'authz.share(text, text, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, bigint, text)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, bigint, text)']::regprocedure[])) LOOP
+    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.sign_out()', 'authz.connection_check()', 'authz.session_limited()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.create_role(text, bigint, text, text, text[])', 'authz.roles_of(text, bigint)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, bigint, timestamptz)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)', 'authz.share(text, text, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, bigint, text)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, bigint, text)']::regprocedure[])) LOOP
     severity := 'error'; object := r.object;
     problem := format('%s holds %s on it, which the policy doesn''t give (a default privilege of the owner, or a grant made since the last apply): the next apply takes it back, or %s', r.who, r.privilege, r.stmt);
     RETURN NEXT;
@@ -6678,7 +6752,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
     AND NOT (p.pronamespace = 'authz_int'::regnamespace AND a.grantee IN (0, '"app_user"'::regrole))
     AND NOT (p.pronamespace = 'authz_gen'::regnamespace AND a.grantee = '"app_user"'::regrole
              AND '"' || replace(p.proname, '"', '""') || '"' = ANY (ARRAY['"alt.docs:column owner_id:items"', '"alt.docs:column owner_id:why"', '"alt.docs:column up after:items"', '"alt.docs:column up after:why"', '"alt.docs:delete:items"', '"alt.docs:delete:why"', '"alt.docs:insert:items"', '"alt.docs:insert:refuse"', '"alt.docs:insert:why"', '"alt.docs:rules:explain"', '"alt.docs:update:items"', '"alt.docs:update:refuse"', '"alt.docs:update:why"']::text[]))
-    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.connection_check()', 'authz.session_limited()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.create_role(text, bigint, text, text, text[])', 'authz.roles_of(text, bigint)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, bigint, timestamptz)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)', 'authz.share(text, text, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, bigint, text)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, bigint, text)']::regprocedure[])) LOOP
+    AND NOT (p.pronamespace = 'authz'::regnamespace AND a.grantee = '"app_user"'::regrole AND p.oid = ANY (ARRAY['authz.uid()', 'authz.principal()', 'authz.ctx(text)', 'authz.link_hashes()', 'authz.act_as(text, text)', 'authz.sign_out()', 'authz.connection_check()', 'authz.session_limited()', 'authz.can(text, text, text)', 'authz.list(text, text, text, integer)', 'authz.perms(text, text)', 'authz.perms_of(text, text[])', 'authz.share(text, text, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, text, text)', 'authz.create_link(text, text, text, timestamptz)', 'authz.list_links(text, text)', 'authz.revoke_link(text, text, text)', 'authz.create_role(text, text, text, text, text[])', 'authz.set_role_permissions(bigint, text[])', 'authz.delete_role(bigint)', 'authz.roles_of(text, text)', 'authz.who(text, text, text)', 'authz.explain(text, text, text, text)', 'authz.list_shares(text, text)', 'authz.explain_rule(text, text, text, jsonb)', 'authz.who_among(text, text, text, text[], text)', 'authz.create_api_key(text, text, timestamptz, text, text)', 'authz.list_api_keys(text, text)', 'authz.revoke_api_key(bigint)', 'authz.login_key(text)', 'authz.login_jwt(text)', 'authz.view_as(text, text)', 'authz.request_access(text, text, text, text, interval)', 'authz.pending_requests()', 'authz.decide_request(bigint, boolean, text)', 'authz.cancel_request(bigint)', 'authz.break_glass(text, text, text, text, interval)', 'authz.start_review(text, text, timestamptz)', 'authz.review_items(bigint)', 'authz.review_decide(bigint, integer, boolean)', 'authz.close_review(bigint, boolean)', 'authz.who(text, bigint, text)', 'authz.explain(text, bigint, text, text)', 'authz.list_shares(text, bigint)', 'authz.list_links(text, bigint)', 'authz.revoke_link(text, bigint, text)', 'authz.create_link(text, bigint, text, timestamptz)', 'authz.create_role(text, bigint, text, text, text[])', 'authz.roles_of(text, bigint)', 'authz.request_access(text, bigint, text, text, interval)', 'authz.break_glass(text, bigint, text, text, interval)', 'authz.start_review(text, bigint, timestamptz)', 'authz.can(text, bigint, text)', 'authz.who_among(text, bigint, text, text[], text)', 'authz.perms(text, bigint)', 'authz.share(text, text, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, text, text, text, bigint, text)', 'authz.share(text, bigint, text, text, text, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, text, text)', 'authz.share(text, bigint, text, text, bigint, text, timestamptz, timestamptz, text, jsonb)', 'authz.unshare(text, bigint, text, text, bigint, text)']::regprocedure[])) LOOP
     EXECUTE g.stmt;
     v_taken := v_taken + 1;
   END LOOP;
@@ -6708,6 +6782,7 @@ GRANT EXECUTE ON FUNCTION
   authz.ctx(text),
   authz.link_hashes(),
   authz.act_as(text, text),
+  authz.sign_out(),
   authz.connection_check(),
   authz.session_limited(),
   authz.can(text, text, text),

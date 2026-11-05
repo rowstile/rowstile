@@ -181,6 +181,69 @@ BEGIN
   RAISE EXCEPTION 'nobody signed in in this transaction' USING ERRCODE = 'invalid_authorization_specification',
     HINT = 'start each transaction with SELECT authz.act_as(''user'', ''42''), or authz.act_as(NULL, NULL) for nobody '
            '(or authz.login_key() / authz.login_jwt()) (rowstile help AZ701)';
+END $f$;
+-- A transaction is one principal's: act_as and the logins refuse to sign in someone else (nobody included) once
+-- someone is signed in, and to sign in again at all once the transaction views as someone or is limited by scopes
+-- (that would end what limits it). Signing in from nobody to someone, and as the same principal again, are fine.
+-- Only a sign-in made in this transaction counts (its signature): the policy's owner and superusers say who is
+-- signed in by hand, and aren't held to it. rowstile's own functions that ask as others and put back the caller
+-- (who, explain, who_among, the invariants) switch without it.
+CREATE FUNCTION authz_int.one_principal(p_type text, p_id text) RETURNS void
+LANGUAGE plpgsql STABLE {DEF} AS $f$
+DECLARE k authz_int.session_key; v_id text := coalesce(current_setting('authz.user_id', true), '');
+        v_type text := coalesce(current_setting('authz.principal_type', true), '');
+BEGIN
+  IF pg_has_role(session_user, (SELECT nspowner FROM pg_namespace WHERE nspname = 'authz_int'), 'MEMBER') THEN
+    RETURN;
+  END IF;
+  SELECT * INTO k FROM authz_int.session_key;
+  -- (compared through their hashes, as session_ok() does)
+  IF pg_catalog.sha256(pg_catalog.convert_to(coalesce(current_setting('authz.session', true), ''), 'UTF8'))
+     <> pg_catalog.sha256(pg_catalog.convert_to({SESSION_SIG}, 'UTF8')) THEN
+    RETURN;  -- nobody signed in in this transaction yet
+  END IF;
+  IF coalesce(current_setting('authz.acting_user', true), '') <> '' THEN
+    RAISE EXCEPTION 'this transaction views as user %, so it can''t sign in again', v_id
+      USING ERRCODE = 'invalid_authorization_specification',
+      HINT = 'a transaction is one principal''s: sign in in a transaction of its own (rowstile help AZ716)';
+  END IF;
+  IF v_id <> '' AND (v_id, v_type) IS DISTINCT FROM (coalesce(p_id, ''), coalesce(p_type, '')) THEN
+    RAISE EXCEPTION 'this transaction is signed in as % already, so it can''t sign in as %',
+      CASE WHEN v_type = '' THEN 'user ' || v_id ELSE v_type || ' ' || v_id END,
+      CASE WHEN coalesce(p_id, '') = '' THEN 'nobody' WHEN coalesce(p_type, '') = '' THEN 'user ' || p_id
+           ELSE p_type || ' ' || p_id END
+      USING ERRCODE = 'invalid_authorization_specification',
+      HINT = 'a transaction is one principal''s: sign in in a transaction of its own (rowstile help AZ716)';
+  END IF;
+  IF coalesce(current_setting('authz.scopes', true), '') <> '' THEN
+    RAISE EXCEPTION 'this transaction is limited by scopes (%), so it can''t sign in again',
+      current_setting('authz.scopes', true) USING ERRCODE = 'invalid_authorization_specification',
+      HINT = 'a transaction is one principal''s: sign in in a transaction of its own (rowstile help AZ716)';
+  END IF;
+END $f$;
+-- act_as's work: with p_check, held to one principal a transaction (authz.act_as); without, for rowstile's own
+-- functions that sign others in as they ask and put back the caller (who_among)
+CREATE FUNCTION authz_int.act_as(p_type text, p_id text, p_check boolean) RETURNS void
+LANGUAGE plpgsql {DEF} AS $f$
+DECLARE v_id text; v_type text;
+BEGIN
+  IF p_id IS NOT NULL AND coalesce(p_type, 'user') <> 'user'
+     AND NOT EXISTS (SELECT 1 FROM authz_int.types WHERE name = p_type AND principal) THEN
+    RAISE EXCEPTION '% is not a type that signs in', p_type USING
+      HINT = 'principal types are marked "principal" in the policy: type service = app.services principal (rowstile help AZ707)';
+  END IF;
+  -- stored as every other id is ('05' is 5), so the audit and created_by name the user as shares do
+  v_id := coalesce(authz_int.canon(coalesce(p_type, 'user'), p_id), '');
+  v_type := CASE WHEN p_id IS NULL OR coalesce(p_type, 'user') = 'user' THEN '' ELSE p_type END;
+  IF p_check THEN
+    PERFORM authz_int.one_principal(v_type, v_id);
+  END IF;
+  PERFORM set_config('authz.user_id', v_id, true);
+  PERFORM set_config('authz.principal_type', v_type, true);
+  PERFORM set_config('authz.scopes', '', true);
+  PERFORM set_config('authz.acting_user', '', true);
+  PERFORM authz_int.sign();
+  PERFORM authz_int.jit_off();
 END $f$;"""
 
     def scope_rows(self) -> list[tuple[str, str, str | None, str]]:
@@ -411,18 +474,19 @@ END $f$;
 CREATE FUNCTION authz.act_as(p_type text, p_id text) RETURNS void
 LANGUAGE plpgsql {DEF} AS $f$
 BEGIN
-  IF p_id IS NOT NULL AND coalesce(p_type, 'user') <> 'user'
-     AND NOT EXISTS (SELECT 1 FROM authz_int.types WHERE name = p_type AND principal) THEN
-    RAISE EXCEPTION '% is not a type that signs in', p_type USING
-      HINT = 'principal types are marked "principal" in the policy: type service = app.services principal (rowstile help AZ707)';
-  END IF;
-  -- stored as every other id is ('05' is 5), so the audit and created_by name the user as shares do
-  PERFORM set_config('authz.user_id', coalesce(authz_int.canon(coalesce(p_type, 'user'), p_id), ''), true);
-  PERFORM set_config('authz.principal_type', CASE WHEN p_id IS NULL OR coalesce(p_type, 'user') = 'user' THEN '' ELSE p_type END, true);
+  PERFORM authz_int.act_as(p_type, p_id, true);
+END $f$;
+-- Sign this transaction out: nobody is signed in in it now, and it may sign in again, as anyone. For a test's
+-- transaction, which acts for one person, then another, and is rolled back at the end (the SDKs' test modes do
+-- it): outside tests a transaction is one principal's, and work for someone else begins a transaction of its own.
+CREATE FUNCTION authz.sign_out() RETURNS void
+LANGUAGE plpgsql {DEF} AS $f$
+BEGIN
+  PERFORM set_config('authz.user_id', '', true);
+  PERFORM set_config('authz.principal_type', '', true);
   PERFORM set_config('authz.scopes', '', true);
   PERFORM set_config('authz.acting_user', '', true);
   PERFORM authz_int.sign();
-  PERFORM authz_int.jit_off();
 END $f$;
 
 -- Sign in with an API key for this transaction: SELECT authz.login_key('ak_...'). Returns who:
@@ -435,6 +499,7 @@ BEGIN
   IF k.id IS NULL OR k.revoked_at IS NOT NULL OR (k.expires_at IS NOT NULL AND k.expires_at <= now()) THEN
     RAISE EXCEPTION 'invalid API key' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703';
   END IF;
+  PERFORM authz_int.one_principal(CASE WHEN k.principal_type = 'user' THEN '' ELSE k.principal_type END, k.user_id);
   PERFORM set_config('authz.user_id', k.user_id, true);
   PERFORM set_config('authz.principal_type', CASE WHEN k.principal_type = 'user' THEN '' ELSE k.principal_type END, true);
   PERFORM set_config('authz.scopes', k.scopes, true);
@@ -519,8 +584,11 @@ BEGIN
   IF coalesce(v_type, 'user') <> 'user' AND NOT EXISTS (SELECT 1 FROM authz_int.types WHERE name = v_type AND principal) THEN
     RAISE EXCEPTION 'the token names a type that does not sign in' USING ERRCODE = 'invalid_authorization_specification', HINT = 'rowstile help AZ703';
   END IF;
-  PERFORM set_config('authz.user_id', coalesce(authz_int.canon(coalesce(v_type, 'user'), v_user), ''), true);
-  PERFORM set_config('authz.principal_type', CASE WHEN coalesce(v_type, 'user') = 'user' THEN '' ELSE v_type END, true);
+  v_user := coalesce(authz_int.canon(coalesce(v_type, 'user'), v_user), '');
+  v_type := CASE WHEN coalesce(v_type, 'user') = 'user' THEN '' ELSE v_type END;
+  PERFORM authz_int.one_principal(v_type, v_user);
+  PERFORM set_config('authz.user_id', v_user, true);
+  PERFORM set_config('authz.principal_type', v_type, true);
   PERFORM set_config('authz.acting_user', '', true);
   IF v_claims ? 'scope' THEN
     v_scopes := ARRAY(SELECT x FROM unnest(string_to_array(v_claims->>'scope', ' ')) x

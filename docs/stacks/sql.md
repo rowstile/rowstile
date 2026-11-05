@@ -42,6 +42,10 @@ SELECT authz.act_as(NULL, NULL)
 A transaction that forgets gets an error, not an empty page: SQLSTATE `28000`, with a hint naming
 `authz.act_as`. That is a bug in the app, not the user's doing.
 
+A transaction is one principal's. Once someone is signed in, signing it in as anyone else, nobody included, is
+an error too (`28000`, AZ716): begin a transaction for each. The first sign-in after `authz.act_as(NULL, NULL)` is
+fine, and so is the same principal again.
+
 ## Answer refusals
 
 Every error the app meets from rowstile names its code in the HINT, `rowstile help AZ709`: branch on the code, and

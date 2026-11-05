@@ -9,6 +9,21 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+### Added
+
+- `authz.sign_out()`: nobody is signed in in the transaction afterwards, and it may sign in again, as anyone. It
+  is for a test's transaction that acts for one person, then another, and is rolled back at the end; the SDKs'
+  test modes call it ([Identity](docs/reference/identity.md)).
+
+### Changed
+
+- The database holds a transaction to one principal: `authz.act_as`, `authz.login_key` and `authz.login_jwt`
+  refuse to sign in a transaction signed in as someone else already (nobody included), or one that views as
+  someone or is limited by scopes, which a new sign-in would end (AZ716). A first sign-in after
+  `act_as(NULL, NULL)` is still fine, and so is the same principal again. `view_as`, and `who`, `explain`,
+  `who_among` and the invariants, which ask as others and put back the caller, aren't held to it, nor are the
+  sessions of the policy's owner and superusers.
+
 ### Fixed
 
 - `rowstile lsp` sends, when it reads the table and column names, the password in `rowstile.toml`'s database
@@ -51,6 +66,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 - A type, a relation or a permission whose name starts or ends with `_` is refused (AZ107), with the line it is
   on: rename it.
+- Code that signs one transaction in as two principals now gets AZ716: begin a transaction for each. A test that
+  acts for several people in one transaction calls `authz.sign_out()` between them, as the SDKs' test modes do.
+  The next apply (or migration) makes the change.
 
 ## 0.1.0-beta.3 (2026-11-05)
 

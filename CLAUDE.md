@@ -307,8 +307,10 @@ For one suite, start a container and run it inside:
   believed only with the HMAC in `authz.session` (`authz_int.session_ok()`, PL/pgSQL for its cached plans), except in
   the owner's and superusers' sessions, so the suites and psql may still `SET authz.user_id`. Anything that reads
   the settings goes through `uid()`, `__me`, `actor()` or `scopes_active()`; anything that switches them calls
-  `authz_int.sign()` after each switch and after restoring (or `act_as` when it runs as the caller, like
-  `who_among`). Trust follows `session_user`, never `current_user`: inside a SECURITY DEFINER function the
+  `authz_int.sign()` after each switch and after restoring (or `authz_int.act_as(type, id, false)`, like
+  `who_among`). A transaction is one principal's: `authz.act_as` and the logins refuse another once someone is
+  signed in (`authz_int.one_principal`, AZ716; `authz.sign_out()` for tests), so rowstile's own switches never go
+  through them. Trust follows `session_user`, never `current_user`: inside a SECURITY DEFINER function the
   current user is the owner. `tests/sessions.sh` attacks it.
 - Apply keeps inheritance tables whose definition (hashed, line numbers aside) and tables (by oid) are unchanged
   (`keep_sql` / `swap_in_kept`): anything that changes what a tree holds must be in its generated SQL,

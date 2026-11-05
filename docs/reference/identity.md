@@ -71,7 +71,7 @@ Applying the policy deletes the keys of principals whose rows went while nothing
 who is signed in, the scopes, the backend and the transaction, with a key the app role can't read. <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/sessions.sh "and so is the signing"; tests/sessions.sh "view_as signs who it shows" -->
 The
 settings are believed only with it, so nothing but rowstile's own functions (`act_as`, the logins, `view_as`,
-and `who`, `explain` and the like for the length of their call) can change who is signed in, widen a key's
+`sign_out`, and `who`, `explain` and the like for the length of their call) can change who is signed in, widen a key's
 scopes, or leave view-as, on any Postgres: setting `authz.user_id` is an error, and so is
 a signature from another transaction or connection. <!-- checked: tests/sessions.sh "and so is a user set directly"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
 A transaction in which nobody signed in gets an error
@@ -80,6 +80,20 @@ Sessions of the policy's owner
 and superusers are believed without a signature (psql, migrations, tests). <!-- checked: tests/sessions.sh "the owner's session sets authz.user_id and is believed" -->
 [`core/tests/sessions.sh`](../../core/tests/sessions.sh) checks all
 of it, on the stock Postgres image.
+
+**A transaction is one principal's**. Once someone is signed in, `act_as`, `login_key` and `login_jwt` refuse to
+sign the transaction in as anyone else, nobody included (AZ716). <!-- checked: tests/sessions.sh "act_as in a transaction signed in as carol, for alice: refused"; tests/sessions.sh "and for nobody: refused too"; tests/sessions.sh "login_key in a transaction signed in as carol, with alice's key: refused"; tests/sessions.sh "login_jwt in a transaction signed in as carol, with alice's token: refused"; tests/sessions.sh "with its code, AZ716" -->
+While the transaction views as someone or is limited by scopes, they refuse to sign it in again at all, even as
+the same principal: that would end what limits it. <!-- checked: tests/sessions.sh "act_as after a key's sign-in limited by scopes, even as its user: refused"; tests/sessions.sh "act_as while viewing as someone, even as the one viewed: refused" -->
+A first sign-in after `act_as(NULL, NULL)` is fine, and so is the same principal again (a key of theirs too,
+whose scopes then limit the transaction). A refusal caught at a savepoint leaves the transaction as it was. <!-- checked: tests/sessions.sh "nobody, then carol: a sign-in, no error"; tests/sessions.sh "nobody, then a key's sign-in: no error"; tests/sessions.sh "nobody, then a token's sign-in: no error"; tests/sessions.sh "the same principal again: no error"; tests/sessions.sh "carol, then her own read-only key: no error, and read-only"; tests/sessions.sh "refused at a savepoint, the transaction goes on as carol" -->
+`view_as` isn't held to it (it is read-only, with a reason on record), nor are rowstile's own functions that ask
+as others and put back the caller (`who`, `explain`, `who_among`, the invariants). <!-- checked: tests/sessions.sh "view_as signs who it shows"; tests/sessions.sh "who_among asks each one in turn"; tests/sessions.sh "and leaves carol signed in"; tests/sessions.sh "explain for carol, then alice again" -->
+A test's transaction that acts for one person, then another (rolled back at the end), calls `authz.sign_out()`
+between them: nobody is signed in then, as after `act_as(NULL, NULL)`, and the next sign-in may be anyone. The
+SDKs' test modes do it. <!-- checked: tests/sessions.sh "sign_out, then alice: a test's transaction acting for one, then another"; tests/sessions.sh "and signed out, nobody is signed in"; tests/sessions.sh "which ends view-as and scopes too" -->
+Sessions of the policy's owner and superusers, which may say who is signed in by hand, aren't held to it. <!-- checked: tests/sessions.sh "the owner's session signs in one, then another" -->
+The SDKs refuse such a sign-in earlier, in their own words, before anything is sent ([App code](app-code.md)).
 
 **Is the session limited?** `authz.session_limited()` is true while the transaction is limited, by a key's or a
 token's scopes or by viewing as someone, and false for a plain sign-in, a key without scopes and nobody. <!-- checked: tests/sessions.sh "session_limited: a plain sign-in isn't limited"; tests/sessions.sh "session_limited: nobody signed in isn't either"; tests/sessions.sh "session_limited: a key without scopes isn't"; tests/sessions.sh "session_limited: a key with scopes is"; tests/sessions.sh "session_limited: viewing as someone is" -->

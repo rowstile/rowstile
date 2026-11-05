@@ -111,6 +111,9 @@ module Rowstile
       @rowstile_for = who if apps
       who ||= NOBODY # (the code acts for no one in a test's transaction a sign-in is in: nobody, from here on)
       unless @rowstile_signed == who
+        # (a test's transaction acts for one, then another: the database holds a transaction to one principal, AZ716,
+        # so each sign-in there signs the one before out first)
+        internal_execute("SELECT authz.sign_out()", "rowstile", [], materialize_transactions: false) if @rowstile_tests
         internal_execute("SELECT authz.act_as($1, $2)", "rowstile", Rowstile.act_as_args(who),
                          materialize_transactions: false)
         @rowstile_signed = who

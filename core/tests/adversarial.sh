@@ -62,10 +62,11 @@ case "$got" in *prod-keys*|*salaries*|*Secrets*|*Keys*) echo "FAIL  a cheap leak
 expect "table statistics of governed tables are hidden" "0" \
   -c "SELECT count(*) FROM pg_stats WHERE schemaname = 'app' AND tablename IN ('files', 'folders')"
 expect "row_security = off is refused, not obeyed" "42501: query would be affected by row-level security policy for table \"files\"" -c "SET row_security = off" -c "SELECT count(*) FROM app.files"
-expect "a prepared statement follows the signed-in user" "$erin" \
+# (signed in as nobody first: a transaction signed in as someone is theirs, AZ716)
+AS='' expect "a prepared statement follows the signed-in user" "$erin" \
   -c "PREPARE q AS SELECT count(*) FROM app.files" -c "EXECUTE q" -c "EXECUTE q" -c "EXECUTE q" -c "EXECUTE q" -c "EXECUTE q" \
   -c "EXECUTE q" -c "$(sign 5)" -c "EXECUTE q"
-expect "...and signed out, nothing" "0" -c "PREPARE q AS SELECT count(*) FROM app.files" -c "EXECUTE q" -c "$(sign '')" \
+expect "...and signed out, nothing" "0" -c "PREPARE q AS SELECT count(*) FROM app.files" -c "EXECUTE q" -c "SELECT authz.sign_out()" \
   -c "EXECUTE q"
 got=$(error_of "$(psql -X -q -At -U "$ATTACKER" -d "$DB" -v VERBOSITY=verbose -c "BEGIN" -c "$(sign 5)" -c "COMMIT" -c "SELECT count(*) FROM app.files" 2>&1)")
 [ "$got" = "28000: nobody signed in in this transaction" ] && echo "ok    a transaction's sign-in ends with it: after it, nobody is signed in (an error, not rows)" ||
@@ -73,7 +74,7 @@ got=$(error_of "$(psql -X -q -At -U "$ATTACKER" -d "$DB" -v VERBOSITY=verbose -c
 
 echo "-- choosing another user"
 expect "setting authz.user_id after signing in is refused" "28000: who is signed in was changed after signing in" -c "SET LOCAL authz.user_id = 1" -c "SELECT count(*) FROM app.files"
-expect "...and so is setting it instead of signing in" "28000: authz.user_id was set directly, so it is not believed" -c "$(sign '')" -c "SELECT set_config('authz.session', '', true)" \
+AS='' expect "...and so is setting it instead of signing in" "28000: authz.user_id was set directly, so it is not believed" -c "SELECT set_config('authz.session', '', true)" \
   -c "SET LOCAL authz.user_id = 1" -c "SELECT count(*) FROM app.files"
 expect "sharing as a user chosen by a setting" "28000: who is signed in was changed after signing in" -c "SET LOCAL authz.user_id = 5" \
   -c "SELECT authz.share('folder', 5, 'viewer', 'user', 3)"

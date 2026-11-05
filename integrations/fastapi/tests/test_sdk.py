@@ -333,11 +333,15 @@ def test_why_stale_is_asked_in_the_flushs_own_transaction() -> None:
             # a note ann adds in the transaction, which cy (a member of the project) sees and may not edit: only
             # this transaction sees it yet
             with pytest.raises(StaleDataError) as e, Session(engine) as s, s.begin():
+                # a test's transaction acting for one, then another: signed out between (outside tests, a
+                # transaction is one principal's)
+                s.execute(text("SELECT authz.sign_out()"))
                 s.execute(text("SELECT authz.act_as('user', '1')"))
                 note = Note(project_id=1, author_id=1, body="ann's")
                 s.add(note)
                 s.flush()
                 made = note.id
+                s.execute(text("SELECT authz.sign_out()"))
                 s.execute(text("SELECT authz.act_as('user', '3')"))
                 note.body = "x"
             verdict = authz_sa.why_stale_sync(e.value)

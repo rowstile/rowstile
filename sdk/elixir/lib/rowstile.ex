@@ -118,7 +118,8 @@ defmodule Rowstile do
   `RuntimeError`, raised before `fun` runs or anything is sent, the outer transaction left as it was. So is a
   `transact` inside a transaction `transact` didn't begin (a `Repo.transaction`, a Postgrex transaction's
   connection), whose sign-in can't be known. A transaction of its own (another process, or a Postgrex transaction
-  on another connection) signs in as usual.
+  on another connection) signs in as usual. In Ecto's SQL sandbox, each `transact` signs in as its own principal
+  in the test's transaction (`authz.sign_out()` first: the database holds a transaction to one principal).
   """
   @spec transact(db(), (-> {:ok, v} | {:error, e}) | (db() -> {:ok, v} | {:error, e}), keyword()) ::
           {:ok, v} | {:error, e | error()}
@@ -163,7 +164,7 @@ defmodule Rowstile do
   defp run(tx, who, fun) do
     # inside a transaction transact signed in as who already (transact refused anyone else): as it is
     outer = Process.get({:rowstile_signed, tx})
-    _ = if !outer, do: sign_in(tx, who)
+    _ = if !outer, do: sign_in(tx, who, sandbox?(tx))
     Process.put({:rowstile_signed, tx}, who)
 
     result =
@@ -212,9 +213,17 @@ defmodule Rowstile do
     end
   end
 
-  defp sign_in(tx, %Principal{id: nil}), do: query!(tx, "SELECT authz.act_as(NULL, NULL)", [])
+  # in Ecto's SQL sandbox, a test's transaction holds each transact's: it acts for one, then another, and the
+  # database holds a transaction to one principal (AZ716), so the one before is signed out first
+  defp sign_in(tx, who, true) do
+    _ = query!(tx, "SELECT authz.sign_out()", [])
+    sign_in(tx, who, false)
+  end
 
-  defp sign_in(tx, %Principal{type: type, id: id}),
+  defp sign_in(tx, %Principal{id: nil}, false),
+    do: query!(tx, "SELECT authz.act_as(NULL, NULL)", [])
+
+  defp sign_in(tx, %Principal{type: type, id: id}, false),
     do: query!(tx, "SELECT authz.act_as($1, $2)", [type, id])
 
   # a transaction open on db that transact may not know of: a repo's (Ecto's sandbox hides its own), or the one a
@@ -226,6 +235,8 @@ defmodule Rowstile do
       true -> false
     end
   end
+
+  defp sandbox?(db), do: repo?(db) and db.config()[:pool] == Ecto.Adapters.SQL.Sandbox
 
   defp rollback(tx, reason) do
     if repo?(tx), do: tx.rollback(reason), else: Postgrex.rollback(tx, reason)
