@@ -262,7 +262,8 @@ FEATURES: list[Feature] = [
         ("api.create_role", "api.set_role_permissions", "api.delete_role", "api.roles_of"),
         Doc(APP, "custom roles"),
         (
-            T("multi_scenario.sql", "erin adds edit to reviewer: dave can now edit"),
+            T("multi_scenario.sql", "adds edit to reviewer: dave can now edit"),
+            T("multi_scenario.sql", "she cannot add archive, which owners hold"),
             T("multi_scenario.sql", "erin deletes the role: its assignments go with it"),
             T("multi_scenario.sql", "alice is no Acme admin: she cannot define roles for Acme"),
         ),

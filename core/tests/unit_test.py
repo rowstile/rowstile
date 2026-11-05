@@ -14218,6 +14218,7 @@ class Guards(unittest.TestCase):
             "the policy does not allow sharing %.% with %",
             "the policy does not allow sharing %.% with a user",
             "there is no % %",
+            "you cannot give role % on % %: you do not hold %",
             "you cannot manage role %",
             "you cannot share % %",
             "you cannot share % % (needs %)",

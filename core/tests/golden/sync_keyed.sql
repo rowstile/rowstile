@@ -4462,7 +4462,8 @@ BEGIN
   END IF;
   IF p_relation LIKE 'role:%' THEN
     -- a custom role: its type must match, the subject must be allowed, and you must hold all it grants
-    SELECT * INTO v_role FROM authz.roles WHERE 'role:' || id = p_relation;
+    -- (FOR SHARE: a change to its permissions waits for this share, or this share for it, and weighs what it gives)
+    SELECT * INTO v_role FROM authz.roles WHERE 'role:' || id = p_relation FOR SHARE;
     IF v_role.id IS NULL OR v_role.object_type <> p_type THEN
       RAISE EXCEPTION 'no role % for %', p_relation, p_type USING HINT = 'rowstile help AZ706';
     END IF;
@@ -4687,7 +4688,7 @@ CREATE OR REPLACE FUNCTION authz.create_role(p_owner_type text, p_owner_id bigin
   $$ SELECT authz.create_role(p_owner_type, p_owner_id::text, p_object_type, p_name, p_permissions) $$;
 CREATE OR REPLACE FUNCTION authz.set_role_permissions(p_role bigint, p_permissions text[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE v authz.roles; v_bad text;
+DECLARE v authz.roles; v_bad text; v_obj text; v_need text;
 BEGIN
   PERFORM authz_int.check_writable();
   PERFORM authz_int.users_only('authz.set_role_permissions');
@@ -4698,6 +4699,29 @@ BEGIN
   SELECT string_agg(p, ', ') INTO v_bad FROM unnest(p_permissions) p
   WHERE NOT EXISTS (SELECT 1 FROM authz_int.role_grantable g WHERE g.object_type = v.object_type AND g.permission = p);
   IF v_bad IS NOT NULL THEN RAISE EXCEPTION 'custom roles on % cannot grant %', v.object_type, v_bad USING HINT = 'rowstile help AZ706'; END IF;
+  -- each permission added must be one the caller holds on each object the role is given on (by a share not expired:
+  -- an expired one gives again only through authz.share, which weighs it), as authz.share asks of whoever gives it
+  -- there; removing one needs nothing more. Locked first: a share of it meanwhile waits, then weighs what it gives
+  -- now. An object the caller can't see is not named (as authz.explain doesn't)
+  PERFORM 1 FROM authz.roles WHERE id = p_role FOR UPDATE;
+  SELECT o.id, o.need INTO v_obj, v_need
+  FROM (SELECT g.id, (SELECT string_agg(p, ', ' ORDER BY p) FROM unnest(p_permissions) p
+                      WHERE p NOT IN (SELECT r.permission FROM authz.role_permissions r WHERE r.role_id = p_role)
+                        AND NOT authz.can(v.object_type, g.id, p)) AS need
+        FROM (SELECT DISTINCT s.object_id AS id FROM authz.shares s
+              WHERE s.object_type = v.object_type AND s.relation = 'role:' || p_role
+                AND (s.expires_at IS NULL OR s.expires_at > now())) g) o
+  WHERE o.need IS NOT NULL
+  ORDER BY (authz_int.may_inspect(v.object_type, o.id) OR authz_int.visible(v.object_type, o.id)) DESC, o.id LIMIT 1;
+  IF v_need IS NOT NULL THEN
+    IF authz_int.may_inspect(v.object_type, v_obj) OR authz_int.visible(v.object_type, v_obj) THEN
+      RAISE EXCEPTION 'you cannot give role % on % %: you do not hold %', v.name, v.object_type, v_obj, v_need
+        USING ERRCODE = 'insufficient_privilege',
+              DETAIL = authz_int.share_why(v.object_type, v_obj, string_to_array(v_need, ', ')), HINT = 'rowstile help AZ705';
+    END IF;
+    RAISE EXCEPTION 'you cannot give role % on a % you cannot see: you do not hold %', v.name, v.object_type, v_need
+      USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+  END IF;
   DELETE FROM authz.role_permissions WHERE role_id = p_role;
   INSERT INTO authz.role_permissions SELECT p_role, p FROM unnest(p_permissions) p ON CONFLICT DO NOTHING;
 END $f$;

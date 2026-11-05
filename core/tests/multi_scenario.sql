@@ -364,10 +364,69 @@ SELECT test.as(5);
 SELECT test.ok('erin may, but a role cannot be given what roles may not grant',
   test.error(format($$SELECT authz.set_role_permissions(%s, ARRAY['view', 'share'])$$, current_setting('test.reviewer')))
     = 'P0001: custom roles on folder cannot grant share');
-SELECT test.ok('erin adds edit to reviewer: dave can now edit',
+-- a permission a role gives more is one its manager holds on each object it is given on, as sharing it there asks
+SELECT test.ok('erin cannot add edit to reviewer: it is given on folder 1, where she does not hold edit',
+  test.error(format($$SELECT authz.set_role_permissions(%s, ARRAY['view', 'edit'])$$, current_setting('test.reviewer')))
+    = '42501: you cannot give role reviewer on folder 1: you do not hold edit');
+SELECT test.as(4);
+SELECT test.ok('... and dave still cannot edit', NOT authz.can('folder', 3, 'edit'));
+SELECT test.as(5);
+SELECT test.ok('erin changes writer, given to nobody, as she likes: it gives nothing yet',
+  test.try(format($$SELECT authz.set_role_permissions(%s, ARRAY['view', 'edit', 'archive'])$$, current_setting('test.writer'))) = 'ok');
+SELECT test.ok('... and it gives them', (SELECT permissions FROM authz.roles_of('org', '1') WHERE name = 'writer')
+  = ARRAY['archive', 'edit', 'view']);
+RESET ROLE;
+UPDATE mt.org_members SET role = 'admin' WHERE org_id = 1
+  AND user_id IN ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002');
+SET ROLE app_user;
+SELECT test.as(1);
+SELECT test.ok('alice (an Acme admin now, and owner of folder 1) adds edit to reviewer: dave can now edit',
   test.try(format($$SELECT authz.set_role_permissions(%s, ARRAY['view', 'edit'])$$, current_setting('test.reviewer'))) = 'ok');
 SELECT test.as(4);
 SELECT test.ok('... and he can', authz.can('folder', 3, 'edit'));
+SELECT test.as(1);
+SELECT authz.share('folder', '2', 'role:' || current_setting('test.reviewer'), 'user', '00000000-0000-4000-8000-000000000004');
+SELECT test.ok('reviewer is given on folder 2 too, which alice doesn''t own: she cannot add archive, which owners hold',
+  test.error(format($$SELECT authz.set_role_permissions(%s, ARRAY['view', 'edit', 'archive'])$$, current_setting('test.reviewer')))
+    = '42501: you cannot give role reviewer on folder 2: you do not hold archive');
+SELECT test.ok('... with the code authz.share gives',
+  test.hint(format($$SELECT authz.set_role_permissions(%s, ARRAY['archive'])$$, current_setting('test.reviewer')))
+    = '42501: rowstile help AZ705');
+SELECT test.ok('... and the role is as it was',
+  (SELECT permissions FROM authz.roles_of('org', '1') WHERE name = 'reviewer') = ARRAY['edit', 'view']);
+RESET ROLE;
+UPDATE authz.shares SET expires_at = now() - interval '1 minute'
+WHERE object_type = 'folder' AND object_id = '2' AND relation = 'role:' || current_setting('test.reviewer');
+SET ROLE app_user;
+SELECT test.ok('once its share on folder 2 has expired, she may add archive',
+  test.try(format($$SELECT authz.set_role_permissions(%s, ARRAY['view', 'edit', 'archive'])$$, current_setting('test.reviewer'))) = 'ok');
+SELECT test.ok('... and the role is not given there again without archive: sharing it asks for it',
+  test.error(format($$SELECT authz.share('folder', '2', 'role:%s', 'user', '00000000-0000-4000-8000-000000000004')$$,
+                    current_setting('test.reviewer')))
+    = '42501: you cannot give role reviewer on folder 2: you do not hold archive');
+SELECT authz.set_role_permissions(current_setting('test.reviewer')::bigint, ARRAY['view', 'edit']);
+SELECT authz.share('folder', '2', 'editor', 'user', '00000000-0000-4000-8000-000000000002');
+SELECT test.as(2);
+SELECT test.ok('bob (an Acme admin now, and an editor of folder 2) gives himself there a role that gives nothing',
+  test.try($$SELECT authz.share('folder', '2', 'role:' || authz.create_role('org', '1', 'folder', 'empty', ARRAY[]::text[]),
+                                'user', '00000000-0000-4000-8000-000000000002')$$) = 'ok');
+SELECT set_config('test.empty', (SELECT id::text FROM authz.roles_of('org', '1') WHERE name = 'empty'), false);
+SELECT test.ok('... but cannot make it give archive, which he doesn''t hold',
+  test.error(format($$SELECT authz.set_role_permissions(%s, ARRAY['archive'])$$, current_setting('test.empty')))
+    = '42501: you cannot give role empty on folder 2: you do not hold archive');
+SELECT test.ok('... and he still doesn''t', NOT authz.can('folder', 2, 'archive'));
+SELECT authz.delete_role(current_setting('test.empty')::bigint);
+SELECT test.as(1);
+SELECT authz.unshare('folder', '2', 'editor', 'user', '00000000-0000-4000-8000-000000000002');
+RESET ROLE;
+UPDATE mt.org_members SET role = 'member' WHERE org_id = 1
+  AND user_id IN ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002');
+SET ROLE app_user;
+SELECT test.as(5);
+SELECT test.ok('erin takes edit out of reviewer: removing a permission needs only manage_roles',
+  test.try(format($$SELECT authz.set_role_permissions(%s, ARRAY['view'])$$, current_setting('test.reviewer'))) = 'ok');
+SELECT test.as(4);
+SELECT test.ok('... and dave cannot edit any more', NOT authz.can('folder', 3, 'edit') AND authz.can('folder', 3, 'view'));
 SELECT test.as(5);
 SELECT test.ok('erin deletes the role: its assignments go with it',
   test.try(format($$SELECT authz.delete_role(%s)$$, current_setting('test.reviewer'))) = 'ok');
@@ -416,6 +475,21 @@ SELECT test.as(1);
 SELECT authz.unshare('folder', '1', 'editor', 'user', '00000000-0000-4000-8000-000000000002');
 SELECT test.as(5);
 SELECT authz.delete_role(current_setting('test.archivist')::bigint);
+-- a role given on an object its manager can't see: refused without naming the object (as authz.explain doesn't)
+SELECT set_config('test.docrole', authz.create_role('org', '1', 'doc', 'docwriter', ARRAY[]::text[])::text, false);
+RESET ROLE;
+INSERT INTO mt.doc_orgs VALUES ('10000000-0000-4000-8000-000000000003', 1);
+INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id)
+VALUES ('doc', '10000000-0000-4000-8000-000000000003', 'role:' || current_setting('test.docrole'), 'user',
+        '00000000-0000-4000-8000-000000000004');
+SET ROLE app_user;
+SELECT test.ok('erin cannot make docwriter give edit on doc 03, which she cannot see: the doc is not named',
+  test.error(format($$SELECT authz.set_role_permissions(%s, ARRAY['edit'])$$, current_setting('test.docrole')))
+    = '42501: you cannot give role docwriter on a doc you cannot see: you do not hold edit');
+SELECT authz.delete_role(current_setting('test.docrole')::bigint);
+RESET ROLE;
+DELETE FROM mt.doc_orgs;
+SET ROLE app_user;
 
 -- ---------------------------------------------------------------------
 -- Writes through RLS on documents
