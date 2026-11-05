@@ -114,6 +114,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   later or holds only while a caveat does, instead of replacing it with one that held from now, without the caveat,
   until that share's end. The emergency access ends when its time does; a share that lets the caller in now is left
   as it is.
+- Each migration `rowstile migrate` writes turns row-level security on for the partitions of each table with
+  rules, and the tables that inherit from one, as each apply does: a partition made or attached since is read
+  and written through its table from then on, also when the migration doesn't change that table's rules.
 
 ### Upgrading
 

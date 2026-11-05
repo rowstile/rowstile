@@ -5163,8 +5163,8 @@ rules app.files
         self.assertEqual(self.watched("  update : view\n  update after : folder.edit\n", "")["risk"], [])
 
     def test_deploy_names_the_tables_found_as_it_runs(self) -> None:
-        # a trigger on each table an inheritance condition reads, row-level security on the partitions: the DO
-        # blocks find those tables in the database, and say what they lock
+        # a trigger on each table an inheritance condition reads: the DO block finds those tables in the database,
+        # and says what it locks
         from authzlib import migrate
 
         policy = (
@@ -5178,23 +5178,18 @@ rules app.files
         [m] = r["deploy"]["migrations"]
         self.assertEqual(
             m["found_locks"],
-            [
-                {"what": "the tables the inheritance conditions read (line 6)", "mode": "SHARE ROW EXCLUSIVE"},
-                {
-                    "what": "the partitions and child tables of the tables it turns row-level security on for",
-                    "mode": "ACCESS EXCLUSIVE",
-                },
-            ],
+            [{"what": "the tables the inheritance conditions read (line 6)", "mode": "SHARE ROW EXCLUSIVE"}],
         )
         self.assertIn(
             '1 migration. Locks `"app"."folders"`, `"app"."users"` while it runs. It also locks the tables '
-            "the inheritance conditions read (line 6), and the partitions and child tables of the tables it turns "
-            "row-level security on for. ",
+            "the inheritance conditions read (line 6). ",
             self.review.summary(r)["Deploy"],
         )
         md = self.review.markdown(r)
         self.assertIn("  - the tables the inheritance conditions read (line 6): SHARE ROW EXCLUSIVE\n", md)
         self.assertIn("- every migration also gives rowstile's triggers to the partitions and child tables", md)
+        # (row-level security on the partitions made since, as every migration does: said once, not as a lock found)
+        self.assertIn("and turns row-level security on for those of a table with rules: ACCESS EXCLUSIVE on each", md)
 
     def test_the_comment_shows_why_it_is_no_refactor(self) -> None:
         # a narrowing: Risk flags nothing, so the example is all the comment has to show what changed

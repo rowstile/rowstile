@@ -162,9 +162,10 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   above: a statement on one of them, the owner's too, keeps inheritance, shares and the audit
   current, and a rule on a column is checked on the rows stored there. <!-- checked: tests/children.sh "the partitions have their table's statement triggers (Postgres gave them the row triggers)"; tests/children.sh "... user 1 sees the posts in the ones moved under theirs and linked in"; tests/children.sh "the tables' owner moving them out again, through the partition and the table that inherits" -->
   A partition made after apply has its table's rules and row triggers from the start, for what is
-  read and written through the table; read directly, it is open until the next apply if the app
-  role was given it, and a statement on it runs none of the table's statement triggers until then.
-  A table that inherits, made after apply, has neither until the next apply. `authz.lint()` reports
+  read and written through the table; read directly, it is open until the next apply or migration if
+  the app role was given it, and a statement on it runs none of the table's statement triggers until
+  then. <!-- checked: tests/children.sh "and the partition is closed: the app role reads it through its table"; tests/children.sh "a migration closes a partition made since, where the rules of its table didn't change"; tests/migrate_test.py "a partition attached to a table with rules, the rules of another table changed" -->
+  A table that inherits, made after apply, has neither until the next apply or migration. `authz.lint()` reports
   both, and `rowstile apply` then applies (it does not answer `unchanged`). Truncating a partition
   skips the triggers (emptying one partition is not emptying the table), and `authz.lint()` reports
   an app role that may do it. <!-- checked: tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips its triggers" -->

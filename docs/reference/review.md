@@ -62,7 +62,8 @@ says what a change does, in plain words, for the pull request:
   app tables they lock and in which mode, the inheritance tables they rebuild or build beside; with
   `--db`, how long they took on the review data. <!-- checked: tests/review.sh "Deploy: two migrations, the tree built beside, applied on the review data" -->
   Deploy also names, in words and with the mode it locks them in, the tables a migration finds only as it runs:
-  those an inheritance condition reads, and the partitions and child tables of the tables it governs. <!-- checked: tests/unit_test.py "test_deploy_names_the_tables_found_as_it_runs"; tests/unit_test.py "test_what_changes_through_it" -->
+  those an inheritance condition reads, and the partitions and child tables made since the last migration, which
+  every migration gives rowstile's triggers and, under a table with rules, row-level security. <!-- checked: tests/unit_test.py "test_deploy_names_the_tables_found_as_it_runs"; tests/unit_test.py "test_what_changes_through_it" -->
   A lock file behind the policy is called out. With no lock
   file on either side, the project applies its policy (`rowstile apply`) and keeps no migrations: Deploy says so. <!-- checked: tests/unit_test.py "test_no_lock_file_is_no_migration"; tests/review.sh "a project without migrations: the policy applied whole on the review data, its tests run there, all undone" -->
 

@@ -1459,7 +1459,8 @@ def markdown(r: Review, title: str = "rowstile: what this pull request changes")
                 out.append(f"  - rebuilds `{x}`, its tables locked meanwhile")
         out.append(
             "- every migration also gives rowstile's triggers to the partitions and child tables made since the last "
-            "one: SHARE ROW EXCLUSIVE on each"
+            "one: SHARE ROW EXCLUSIVE on each; and turns row-level security on for those of a table with rules: "
+            "ACCESS EXCLUSIVE on each"
         )
         out.append("- rolling back: change the policy back and write the next migration")
         out += ["", "</details>"]

@@ -3215,19 +3215,6 @@ CREATE VIEW authz_int."folder__never__1" AS
     AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM authz_int."folder__org__member") x WHERE x.id = r."id");
 
 ALTER TABLE "app"."folders" ENABLE ROW LEVEL SECURITY;
--- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
--- so they are read and written through it only (read directly, they would skip its rules and triggers)
--- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
-DO $rls$
-DECLARE c regclass;
-BEGIN
-  FOR c IN WITH RECURSIVE d(oid) AS (
-             SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"app"."folders"'::regclass
-             UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN d ON i.inhparent = d.oid)
-           SELECT d.oid::regclass FROM d JOIN pg_catalog.pg_class k ON k.oid = d.oid WHERE NOT k.relrowsecurity LOOP
-    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', c);
-  END LOOP;
-END $rls$;
 
 -- app.folders: no row has the id, or the user may select it (what the rules' explanations answer for)
 CREATE FUNCTION authz_int."app.folders:seen"(p_id bigint) RETURNS boolean
@@ -3436,19 +3423,6 @@ CREATE POLICY "authz_delete" ON "app"."folders" FOR DELETE TO "app_user"
 COMMENT ON POLICY "authz_delete" ON "app"."folders" IS 'rowstile';
 
 ALTER TABLE "app"."files" ENABLE ROW LEVEL SECURITY;
--- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
--- so they are read and written through it only (read directly, they would skip its rules and triggers)
--- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
-DO $rls$
-DECLARE c regclass;
-BEGIN
-  FOR c IN WITH RECURSIVE d(oid) AS (
-             SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"app"."files"'::regclass
-             UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN d ON i.inhparent = d.oid)
-           SELECT d.oid::regclass FROM d JOIN pg_catalog.pg_class k ON k.oid = d.oid WHERE NOT k.relrowsecurity LOOP
-    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', c);
-  END LOOP;
-END $rls$;
 
 -- app.files: no row has the id, or the user may select it (what the rules' explanations answer for)
 CREATE FUNCTION authz_int."app.files:seen"(p_id bigint) RETURNS boolean
@@ -6740,6 +6714,22 @@ BEGIN
     RAISE WARNING '% has no rules any more, and row-level security is still on, so the app role sees none of its rows. If that is not what you want: ALTER TABLE % DISABLE ROW LEVEL SECURITY', t.tbl, t.tbl;
   END LOOP;
 END $l$;
+
+-- The partitions of each table with rules and the tables that inherit from one: row-level security on, with
+-- no policies of their own, so they are read and written through it only (read directly, they would skip its rules
+-- and triggers). Every apply and every migration: one made or attached since is closed too (it alone is locked,
+-- as CHILD_TRIGGERS locks only one that lacks the triggers)
+DO $rls$
+DECLARE c regclass;
+BEGIN
+  FOR c IN WITH RECURSIVE d(oid) AS (
+             SELECT i.inhrelid FROM pg_catalog.pg_inherits i
+             WHERE i.inhparent = ANY (SELECT to_regclass(x)::oid FROM unnest(ARRAY['"app"."files"', '"app"."folders"']::text[]) x)
+             UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN d ON i.inhparent = d.oid)
+           SELECT d.oid::regclass FROM d JOIN pg_catalog.pg_class k ON k.oid = d.oid WHERE NOT k.relrowsecurity LOOP
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', c);
+  END LOOP;
+END $rls$;
 
 -- The partitions of a table rowstile watches and the tables that inherit from it: the triggers made above, on
 -- each, for the rows stored there and the statements on it

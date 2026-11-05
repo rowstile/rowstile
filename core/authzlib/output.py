@@ -1244,10 +1244,7 @@ END $kv$;"""
             t = self.governing(table)
             alias = q(table.split(".")[1])
             cmds = {r.command: r for r in rules if not r.columns}
-            policies.append(
-                f"ALTER TABLE {qt(table)} ENABLE ROW LEVEL SECURITY;\n"
-                + DESCENDANTS_RLS.replace("{table}", lit(qt(table)))
-            )
+            policies.append(f"ALTER TABLE {qt(table)} ENABLE ROW LEVEL SECURITY;")
             policies.append(self.seen_sql(t, table, alias))
             # refused writes raise with the rule and why (refusals.py); an allowed write never calls these
             explaining, refuse = self.refusal_sql(t, table, alias, rules)
@@ -1636,6 +1633,15 @@ END $w$;"""
             ("full", "kept_functions", kept_functions),
             ("full", "kept_views", self.kept_views_sql()),
             ("full", "lost_rules", LOST_RULES),
+            # each migration as each apply: a partition made or attached since is closed (not only where the rules
+            # of its table changed)
+            (
+                "always",
+                "descendants_rls",
+                DESCENDANTS_RLS.replace("{tables}", ", ".join(lit(qt(t)) for t in sorted(by_table)))
+                if by_table
+                else "",
+            ),
             # after every trigger is made
             ("always", "children", CHILD_TRIGGERS),
             # the sync index worked out again where what it is worked out by changed
@@ -1888,14 +1894,16 @@ DROP TABLE authz_uncanonical;
 
 """
 
-DESCENDANTS_RLS = """-- its partitions and the tables that inherit from it: row-level security on, with no policies of their own,
--- so they are read and written through it only (read directly, they would skip its rules and triggers)
--- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables it turns row-level security on for
+DESCENDANTS_RLS = """-- The partitions of each table with rules and the tables that inherit from one: row-level security on, with
+-- no policies of their own, so they are read and written through it only (read directly, they would skip its rules
+-- and triggers). Every apply and every migration: one made or attached since is closed too (it alone is locked,
+-- as CHILD_TRIGGERS locks only one that lacks the triggers)
 DO $rls$
 DECLARE c regclass;
 BEGIN
   FOR c IN WITH RECURSIVE d(oid) AS (
-             SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = {table}::regclass
+             SELECT i.inhrelid FROM pg_catalog.pg_inherits i
+             WHERE i.inhparent = ANY (SELECT to_regclass(x)::oid FROM unnest(ARRAY[{tables}]::text[]) x)
              UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN d ON i.inhparent = d.oid)
            SELECT d.oid::regclass FROM d JOIN pg_catalog.pg_class k ON k.oid = d.oid WHERE NOT k.relrowsecurity LOOP
     EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', c);
