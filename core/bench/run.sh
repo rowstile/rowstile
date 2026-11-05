@@ -8,13 +8,14 @@
 #   4. one big move (a top folder) during steady writes: how long it takes, and how long others wait
 # Settings (environment, all set by scale.sh, which holds the sizes): FILES FOLDERS LEVELS USERS TEAMS DURATION
 # GATE_DURATION READ_RATE OUT
-# Exits 1 when a gate fails, when authz.verify() doesn't say true after the writes, or when a listing fails.
+# Exits 1 when a gate fails, when a read or a write of any step failed, was aborted or timed out, when the big move
+# failed, when authz.verify() doesn't say true after the writes, or when a listing fails.
 set -u
 cd "$(dirname "$0")/.."
 for v in FILES FOLDERS LEVELS USERS TEAMS DURATION GATE_DURATION READ_RATE OUT; do
   [ -n "${!v:-}" ] || { echo "run.sh: $v is not set: start the benchmark with core/bench/scale.sh" >&2; exit 2; }
 done
-DB=authz_bench
+DB=${BENCH_DB:-authz_bench}   # (another name: beside other databases on a server)
 W=bench/workload
 LOGS=${LOGS:-/tmp/bench_logs}   # the per-transaction logs (a test sets another place)
 PSQL() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
@@ -75,6 +76,10 @@ failed() { sed -n 's/^number of failed transactions: \([0-9]*\).*/\1/p' "$1" | h
 TIMEOUT="canceling statement due to statement timeout"
 timedout() { grep "aborted in command" "$1" | grep -c "$TIMEOUT"; }
 aborted() { grep "aborted in command" "$1" | grep -vc "$TIMEOUT"; }
+# a run's failed transactions and the clients it stopped, said, and counted as the run going wrong
+went() { echo "$(failed "$1") failed, $(aborted "$1") clients aborted, $(timedout "$1") timed out"; }
+stopped() { local f; f=$(failed "$1"); echo $(( ${f:-0} + $(aborted "$1") + $(timedout "$1") )); }
+judge() { [ "$(stopped "$1")" = 0 ] || wrong=1; }
 # share of connected clients waiting on a lock, sampled every half second while pgbench runs
 lockwait() {
   local n=0 sum=0
@@ -89,7 +94,8 @@ lockwait() {
 
 say "== 1. Reads through RLS, alone ($READ_RATE/s arriving steadily, 16 clients, $DURATION s)"
 "${PGB[@]}" -c 16 -j 4 -T "$DURATION" --rate "$READ_RATE" "${READS[@]}" -l --log-prefix="$LOGS/reads" > "$LOGS/reads.out" 2>&1
-say "$(tps "$LOGS/reads.out") transactions/s done"
+say "$(tps "$LOGS/reads.out") transactions/s done, $(went "$LOGS/reads.out")"
+judge "$LOGS/reads.out"
 python3 bench/latency.py "$LOGS/reads" "${READ_NAMES[@]}" | tee -a "$OUT"
 say
 
@@ -100,6 +106,7 @@ for c in 1 10 50; do
   pid=$!; wait_pct=$(lockwait $pid); wait $pid
   read -r p50 p95 < <(python3 bench/latency.py "$LOGS/w$c" create move link | awk '$1 == "all" {print $4, $5}')
   say "$(printf '%-9s%10.1f%8s%9s%11s%11s%11s%11s' "$c" "$(tps "$LOGS/w$c.out")" "$(failed "$LOGS/w$c.out")" "$(aborted "$LOGS/w$c.out")" "$(timedout "$LOGS/w$c.out")" "$p50" "$p95" "$wait_pct")"
+  judge "$LOGS/w$c.out"
 done
 say "per kind of write, 50 clients:"
 python3 bench/latency.py "$LOGS/w50" create move link | tee -a "$OUT"
@@ -111,13 +118,14 @@ wpid=$!
 "${PGB[@]}" -c 16 -j 4 -T "$GATE_DURATION" --rate "$READ_RATE" "${READS[@]}" -l --log-prefix="$LOGS/gr" > "$LOGS/gr.out" 2>&1 &
 rpid=$!
 wait $wpid; wait $rpid
-say "writes: $(tps "$LOGS/gw.out")/s done, $(failed "$LOGS/gw.out") failed, $(aborted "$LOGS/gw.out") clients aborted, $(timedout "$LOGS/gw.out") timed out"
+say "writes: $(tps "$LOGS/gw.out")/s done, $(went "$LOGS/gw.out")"
 python3 bench/latency.py "$LOGS/gw" create move link | tee -a "$OUT"
-say "reads: $(tps "$LOGS/gr.out")/s done"
+say "reads: $(tps "$LOGS/gr.out")/s done, $(went "$LOGS/gr.out")"
+judge "$LOGS/gr.out"
 python3 bench/latency.py "$LOGS/gr" "${READ_NAMES[@]}" | tee -a "$OUT"
 wp95=$(python3 bench/latency.py "$LOGS/gw" create move link | awk '$1 == "all" {print $NF}')
 rp95=$(python3 bench/latency.py "$LOGS/gr" "${READ_NAMES[@]}" | awk '$1 == "all" {print $NF}')
-bad=$(( $(failed "$LOGS/gw.out") + $(aborted "$LOGS/gw.out") + $(timedout "$LOGS/gw.out") ))
+bad=$(stopped "$LOGS/gw.out")
 verdict() { python3 -c "print('pass' if $1 else 'FAIL')"; }
 gate() {
   local v; v=$(verdict "$2")
@@ -139,10 +147,20 @@ below=$(PSQL -c "SELECT count(*) - 1 FROM authz_int.\"folder__linked_into_parent
 "${PGB[@]}" -c 20 -j 4 -T "$GATE_DURATION" --rate 20 "${WRITES[@]}" -l --log-prefix="$LOGS/bw" > "$LOGS/bw.out" 2>&1 &
 wpid=$!
 sleep $((GATE_DURATION / 3))
-t=$(now); PSQL -c "UPDATE app.folders SET parent_id = $TO WHERE id = $BIG" >/dev/null; took=$(since "$t")
+t=$(now); moved=0
+# (no folder to move, or none to move it into: the UPDATE is no statement, and fails)
+PSQL -c "UPDATE app.folders SET parent_id = ${TO:-} WHERE id = ${BIG:-}" >/dev/null 2>"$LOGS/move.err" && moved=1
+took=$(since "$t")
 wait $wpid
-say "the big move: folder $BIG with $below folders below it, into folder $TO: $took s"
-say "writes meanwhile: $(tps "$LOGS/bw.out")/s done, $(failed "$LOGS/bw.out") failed, $(aborted "$LOGS/bw.out") clients aborted, $(timedout "$LOGS/bw.out") timed out"
+if [ $moved = 1 ]; then
+  say "the big move: folder $BIG with $below folders below it, into folder $TO: $took s"
+else
+  # said without its time, which regress.py would judge
+  say "the big move failed: folder ${BIG:-(none)} into folder ${TO:-(none)}:"; tee -a "$OUT" < "$LOGS/move.err"
+  wrong=1
+fi
+say "writes meanwhile: $(tps "$LOGS/bw.out")/s done, $(went "$LOGS/bw.out")"
+judge "$LOGS/bw.out"
 python3 bench/latency.py "$LOGS/bw" create move link | tee -a "$OUT"
 t=$(now); ok=$(PSQL -c "SELECT authz.verify()")
 say "authz.verify() after all the writes: ${ok:-no answer} ($(since "$t") s)"

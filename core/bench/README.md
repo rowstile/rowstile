@@ -33,17 +33,20 @@ the time a transaction waited to start, which is what a caller arriving at that 
 longer than four measuring periods is cut off and counted as "timed out", so slow writes can't stretch a run; a
 client pgbench stops on any other error (a write the rules refuse, say) is counted apart, as "aborted": a broken
 write path, not a slow one. The server and pgbench share the machine's CPUs, and other containers may be running:
-compare runs with each other, not with production. A run exits 1 when a gate fails, when `authz.verify()` doesn't
-say true after its writes, or when a listing fails.
+compare runs with each other, not with production. A run exits 1 when a gate fails, when a read or a write of any
+step failed, was aborted or timed out, when the big move failed, when `authz.verify()` doesn't say true after its
+writes, or when a listing fails.
 
 `regress.sh` runs a small version (10k folders, short steps) and fails when any p95 of steps 1 and 3 (step 3's
 writes and reads each have their own, and an "all" row each), or the big move, got more than twice as slow as in
 the machine's baseline (and by more than 2 ms, or half a second for the big move), or when the run went wrong: a
-write failed, was aborted or timed out, `authz.verify()` didn't say true after the writes, or a listing failed. The
+read or a write failed, was aborted or timed out, the big move failed, `authz.verify()` didn't say true after the
+writes, or a listing failed. The
 gate's speed limits (reads and writes p95) are shown, not judged (`SPEED_GATES=0`): they are for the gate's size on
 a machine of its own, which `scale.sh` judges. Its reads arrive at 25 a second per CPU, at most the gate's 400
 (`READ_RATE`): on a 2-CPU CI machine 400 reads/s keep both CPUs busy, and the p95 measures the wait for one (126 ms
-there). A script that ran fewer than 50 times isn't judged. A run that is slower runs once more, and only a second
+there). A script that ran fewer than 50 times isn't judged, but one the baseline judged that ran fewer than 25
+times fails: it stopped part way. A run that is slower runs once more, and only a second
 slower run counts: a busy machine is slow for a while, a slower commit is slow both times. A run that went wrong
 fails at once. A baseline belongs to the machine that recorded it, so none is committed: the first run on a machine
 records one (`core/bench/baseline.txt`, which git ignores), and `regress.sh --record` records it again after an
