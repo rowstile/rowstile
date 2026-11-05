@@ -367,6 +367,19 @@ with tempfile.TemporaryDirectory() as d:
         d2 and d2[0]["range"]["start"]["line"] == 2 and "vew" in d2[0]["message"],
         d2,
     )
+    # a test file with a mistake from its first open (a test half typed): its other lines still answer
+    typing = good + 'test "typing"\n  user 1 cannot vew file 1\n'
+    half = Editor(c, os.path.join(d, "typing.test.authz"), typing)
+    h = half.ask("textDocument/hover", typing, "cannot view file", len("cannot v"))
+    dfn = half.ask("textDocument/definition", typing, "cannot view file", len("cannot v"))
+    ok(
+        "a test file with a mistake: hover and definition on its other lines, from the policy",
+        value(h).startswith("```authz\nfile.view = ")
+        and dfn
+        and dfn["range"]["start"]["line"] == pos(policy, "can view  = edit or viewer", 0, 1)["line"],
+        [h, dfn],
+    )
+    c.notify("textDocument/didClose", {"textDocument": {"uri": half.u}})
 
     # the policy changes while its test file is open: the test file is checked again, untouched
     def policy_now(text: str, version: int) -> dict[str, Answer]:
@@ -761,6 +774,15 @@ with tempfile.TemporaryDirectory() as d:
         [s["range"]["end"]["character"] for s in syms] == [len('test "first"'), len('test "second \U0001f600"') + 1],
         syms,
     )
+    opened(on_disk, org_text)
+    syms = c.request("textDocument/documentSymbol", {"textDocument": {"uri": on_disk}})
+    ok(
+        "an included file's outline is its own types, on its lines, not the policy's",
+        [(s["name"], s["range"]["start"]["line"], [k["name"] for k in s["children"]]) for s in syms or []]
+        == [("org", 0, ["member", "see"])],
+        syms,
+    )
+    c.notify("textDocument/didClose", {"textDocument": {"uri": on_disk}})
 
     def references(u: str, text: str, needle: str, offset: int) -> list[tuple[str, int, int, int]]:
         refs = c.request("textDocument/references", {"textDocument": {"uri": u}, "position": pos(text, needle, offset)})
@@ -977,6 +999,17 @@ with tempfile.TemporaryDirectory() as d:
         == [rng(end["line"], end["character"] - 4, end["line"], end["character"] + 1)],
         refs,
     )
+    # -- inside a condition's string is no comment: the names after it are found
+    dashed = small.replace("not banned\n", "not banned\n  can read = {note <> '--draft'} and view\n")
+    now(dashed)
+    refs = c.request("textDocument/references", {"textDocument": {"uri": u}, "position": pos(dashed, "can view", 5)})
+    after = pos(dashed, "and view", len("and "))
+    ok(
+        "references: a name after -- inside a condition's string is found",
+        rng(after["line"], after["character"], after["line"], after["character"] + 4)
+        in [r["range"] for r in refs or []],
+        refs,
+    )
     now(small)
 
     tests = os.path.join(d, "t.authz")
@@ -1056,6 +1089,22 @@ with tempfile.TemporaryDirectory() as d:
         "inside `shared if { }`: what the share being made has, then the functions",
         got == ["object_id", "subject_type", "subject_id", "subject_relation", *FUNCTIONS],
         got,
+    )
+    # a condition over several lines: its { on a line before, as the parser reads it
+    split = policy.replace(
+        "  editor      : user, team#member shared\n",
+        "  editor      : user, team#member shared if {subject_type = 'user'\n    and \n    and subject_id <> '1'} \n",
+    )
+    inside, past = e.offered(split, "    and \n", len("    and ")), e.offered(split, "<> '1'} ", len("<> '1'} "))
+    ok(
+        "on a later line of a condition: what the share being made has, then the functions",
+        inside == ["object_id", "subject_type", "subject_id", "subject_relation", *FUNCTIONS],
+        inside,
+    )
+    ok(
+        "... and past its } on its last line: the type's names again",
+        "object_id" not in past and {"or", "owner"} <= set(past),
+        past,
     )
 
     h = e.ask("textDocument/hover", policy, "can view  = edit or viewer", len("can v"), nth=1)
@@ -1258,6 +1307,28 @@ with tempfile.TemporaryDirectory() as d:
         c.p.kill()
         code = None
     ok("the end of its input ends the server, without `exit`", code == 0, code)
+
+# shutdown, then exit: as the protocol says, a request after shutdown is refused, and exit says how it came
+with tempfile.TemporaryDirectory() as d:
+    nowhere = {"textDocument": {"uri": uri(os.path.join(d, "a.authz"))}, "position": {"line": 0, "character": 0}}
+    c = Client(d)
+    c.request("initialize", {"capabilities": {}})
+    down = c.request("shutdown", None)
+    doc = {"uri": nowhere["textDocument"]["uri"], "languageId": "authz", "version": 1, "text": "type (\n"}
+    c.notify("textDocument/didOpen", {"textDocument": doc})
+    got = c.request("textDocument/hover", nowhere)
+    c.notify("exit", None)
+    code = c.p.wait(timeout=10)
+    ok(
+        "a request after shutdown: refused (InvalidRequest), a notification dropped; exit after it: status 0",
+        down is None and isinstance(got, dict) and got.get("code") == -32600 and c.notes == [] and code == 0,
+        [down, got, c.notes, code],
+    )
+    c = Client(d)
+    c.request("initialize", {"capabilities": {}})
+    c.notify("exit", None)
+    code = c.p.wait(timeout=10)
+    ok("exit with no shutdown before it: status 1", code == 1, code)
 
 
 def made_database() -> str | None:
