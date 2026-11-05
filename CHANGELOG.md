@@ -183,6 +183,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile prove`, `rowstile review` and `rowstile why` read `{user = 'alice'}`, `{current_date is null}` and
   conditions on SQL's other such words as the database does: the role, the session or the clock, not a column of
   the row (`{this.user = 'alice'}` and `{"user" = 'alice'}` still name one).
+- `rowstile review`'s listed small worlds keep the rows of a type whose `where` reads a relation's column
+  (`where {owner_id is not null}`): they read it from the row's link, where before no such row was ever kept and
+  the type was never tried.
 
 ### Upgrading
 

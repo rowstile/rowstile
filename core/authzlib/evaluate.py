@@ -116,6 +116,22 @@ def linked_column(src: Source) -> str | None:
     return src.column if src.subjects[0][1] is None else None
 
 
+def rows_with_links(t: Type, data: Data) -> dict[str, dict[str, Scalar]]:
+    """Each row of t's column values for simple conditions, a column a relation reads being its link's id (so a
+    smaller world, with a link taken away, has the column NULL)."""
+    rows = {i: dict(v) for i, v in data.columns.get(t.name, {}).items()}
+    for r in t.relations.values():
+        for i, src in enumerate(r.sources):
+            col = linked_column(src)
+            if col is None:
+                continue
+            for row in rows.values():
+                row[col] = None
+            for o, s in data.pairs.get((t.name, r.name, i, src.subjects[0][0], ""), []):
+                rows.setdefault(o, {})[col] = s
+    return rows
+
+
 def role_owner_type(t: Type) -> str | None:
     """The type of the roles' owner, `roles : ... from rel`: what rel links to (None without `from`)."""
     r = t.relations.get(t.roles_from) if t.roles_from else None
@@ -320,17 +336,7 @@ class Reference:
         if self._rows_of is not self.data:
             self._rows_of, self._rows = self.data, {}
         if t.name not in self._rows:
-            rows = {i: dict(v) for i, v in self.data.columns.get(t.name, {}).items()}
-            for r in t.relations.values():
-                for i, src in enumerate(r.sources):
-                    col = linked_column(src)
-                    if col is None:
-                        continue
-                    for row in rows.values():
-                        row[col] = None
-                    for o, s in self.data.pairs.get((t.name, r.name, i, src.subjects[0][0], ""), []):
-                        rows.setdefault(o, {})[col] = s
-            self._rows[t.name] = rows
+            self._rows[t.name] = rows_with_links(t, self.data)
         return self._rows[t.name]
 
     def role_holders(self, state: State, t: Type, perm: str) -> set[str]:
@@ -1271,7 +1277,9 @@ class Listing:
                         linked.setdefault((t.name, col), r.name)
         self.linked = linked
         self.alike = alike_in(self.pols)
-        for tname, cond in found.conds:
+        # (and a type's where on such a column: which of its rows are kept is the links' to say)
+        wheres = {(t.name, t.where) for t in self.types.values() if t.where and t.name in found.types}
+        for tname, cond in found.conds | wheres:
             node = facts(cond, self.alike)
             if node is not None:
                 found.relations.update((tname, linked[(tname, c)]) for c in columns_of(node) if (tname, c) in linked)
@@ -1526,13 +1534,6 @@ class Listed(World):
             ids = self.ids(t.name)
             out.ids[t.name] = ids
             out.columns[t.name] = {i: dict(self.classes[(t.name, i)].columns) for i in ids}
-            where = facts(t.where, self.listing.alike) if t.where else None
-            if t.where and where is not None and not uses_uid(where):
-                out.valid[t.name] = [i for i in ids if truth(where, out.columns[t.name][i], None) is True]
-            else:
-                out.valid[t.name] = [
-                    i for i in ids if not t.where or squeeze_sql(t.where) in self.classes[(t.name, i)].holds
-                ]
             for r in t.relations.values():
                 for k, src in enumerate(r.sources):
                     for st, sr in src.subjects:
@@ -1552,6 +1553,15 @@ class Listed(World):
                 for p in perms:
                     for st, sr in subjects:
                         out.rolepairs[(t.name, p, st, sr or "")] = []
+            # the rows the where keeps, read from the columns with the links laid over them (a relation's column)
+            where = facts(t.where, self.listing.alike) if t.where else None
+            if t.where and where is not None and not uses_uid(where):
+                rows = rows_with_links(t, out)
+                out.valid[t.name] = [i for i in ids if truth(where, rows.get(i, {}), None) is True]
+            else:
+                out.valid[t.name] = [
+                    i for i in ids if not t.where or squeeze_sql(t.where) in self.classes[(t.name, i)].holds
+                ]
         for tname, cond in self.listing.conditions(pol):
             if cond in KEYWORDS.values():
                 out.cond[(tname, cond)] = []
