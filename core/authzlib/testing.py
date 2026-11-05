@@ -11,7 +11,7 @@ import re
 
 from .compiler import Core
 from .parse import AsStep, CheckStep, Loc, PolicyError, Scenario, Step, fail, parse_policy
-from .sqlutil import lit
+from .sqlutil import DOLLAR_OPEN, lit, sql_code
 from .statements import WORD, split
 
 FN = "pg_temp.authz_policy_tests"
@@ -20,6 +20,22 @@ NAME = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*")  # a test's id that is a name: $a
 WRITES = ("insert", "update", "delete", "merge")
 COVERAGE = "authz:coverage"  # the test name of coverage rows (tests_function_sql(coverage=True))
 SQL_NL = "E'\\n'"  # a newline in SQL (Python 3.11 allows no backslash inside an f-string's braces)
+
+
+def variables(sql: str) -> list[re.Match[str]]:
+    """Each $name a test's statement writes: in its code, and in a dollar quote's body (a DO block's, which is code
+    too); not in a 'string', a "quoted name" or a comment, where it is text."""
+    out: list[re.Match[str]] = []
+    at = 0
+    for code, text in sql_code(sql):
+        if code:
+            out += VAR.finditer(sql, at, at + len(text))
+        elif tag := DOLLAR_OPEN.match(text):  # between its tags
+            t = tag.group(0)
+            end = len(text) - len(t) if len(text) >= 2 * len(t) and text.endswith(t) else len(text)
+            out += VAR.finditer(sql, at + len(t), at + end)
+        at += len(text)
+    return out
 
 
 class TestMixin(Core):
@@ -58,7 +74,7 @@ class TestMixin(Core):
 
     def check_scenarios(self) -> None:
         def known(text: str | None, loc: Loc, bound: set[str]) -> None:
-            for m in VAR.finditer(text or ""):
+            for m in variables(text or ""):
                 if m.group(1) not in bound:
                     fail(
                         loc,
@@ -222,7 +238,7 @@ LANGUAGE plpgsql AS {tag}{body}{tag};
         sql = sql or ""
         parts: list[str] = []
         last = 0
-        for m in VAR.finditer(sql):
+        for m in variables(sql):
             parts += [lit(sql[last : m.start()]), f"quote_nullable({names[m.group(1)]})"]
             last = m.end()
         parts.append(lit(sql[last:]))

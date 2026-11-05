@@ -7433,6 +7433,26 @@ class TestFiles(unittest.TestCase):
                 c.add_test_files({"t.authz": f'test "a"\n  {line}\n'})
                 self.assertIn(value, c.tests_function_sql())
 
+    def test_a_name_in_a_string_or_a_comment_is_text(self) -> None:
+        # $smith in a string, a quoted name or a comment is what is written there; in a dollar quote's body (a DO
+        # block's), it is the name
+        self.assertEqual(
+            Compiler.statement_sql("VALUES ($ann, 'Ann $smith', \"$x\") -- $c\n/* $d */", {"ann": "v_ann"}),
+            "'VALUES (' || quote_nullable(v_ann) || ', ''Ann $smith'', \"$x\") -- $c\n/* $d */'",
+        )
+        self.assertEqual(
+            Compiler.statement_sql("DO $$BEGIN PERFORM $ann; END$$", {"ann": "v_ann"}),
+            "'DO $$BEGIN PERFORM ' || quote_nullable(v_ann) || '; END$$'",
+        )
+        c = Compiler(parse_policy(self.POLICY, "p.authz"))
+        c.add_test_files(
+            {
+                "t.authz": "test \"a\"\n  given d = {INSERT INTO app.docs (name) VALUES ('$smith') RETURNING id}\n"
+                "  user 1 can view doc $d\n"
+            }
+        )
+        c.check_scenarios()
+
     def test_a_dollar_quote_is_no_name(self) -> None:
         # (the parser refuses a dollar quote's tag in a test's braces, AZ110: this asks the function itself)
         self.assertEqual(
