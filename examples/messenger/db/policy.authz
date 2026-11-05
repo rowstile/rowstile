@@ -108,10 +108,10 @@ rules ms.messages
   update                                             : edit or remove
   update body after                                  : (edit and {not deleted}) or {deleted and body = ''}
   update deleted                                     : remove
-  update deleted after                               : {deleted}  -- no undelete
-  update edited_at                                   : edit       -- marked edited only while it may be edited
+  update deleted after                               : {deleted and body = ''}  -- the text goes with it; no undelete
+  update edited_at                                   : edit                     -- marked edited only while it may be edited
   update chat_id, seq, sender_id, bot_id, created_at : nobody
-  delete                                             : nobody     -- messages are deleted for everyone, not removed
+  delete                                             : nobody                   -- messages are deleted for everyone, not removed
   -- a group deleted by its owner takes its messages, which no rule removes; a deleted account's or bot's
   -- messages stay, from nobody
   cascade from ms.chats

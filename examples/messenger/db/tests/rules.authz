@@ -130,6 +130,11 @@ test "you edit your own messages for 15 minutes and delete them; admins delete a
   as user $bo allowed {UPDATE ms.messages SET deleted = true, body = '' WHERE (chat_id, seq) = (SELECT chat_id, seq FROM ms.messages WHERE body = 'stale')}
   as user $ann refused {UPDATE ms.messages SET deleted = false WHERE chat_id = $g AND deleted}
   as user $ann refused {DELETE FROM ms.messages WHERE chat_id = $g}
+  -- deleted for everyone: the row stays, the text goes
+  given {INSERT INTO ms.messages (chat_id, sender_id, body) VALUES ($g, $bo, 'secret')}
+  as user $ann refused {UPDATE ms.messages SET deleted = true WHERE chat_id = $g AND body = 'secret'}
+  as user $bo refused {UPDATE ms.messages SET deleted = true WHERE chat_id = $g AND body = 'secret'}
+  as user $bo sees 1 {SELECT FROM ms.messages WHERE chat_id = $g AND NOT deleted AND body = 'secret'}
 
 test "invite links: an admin makes one for a group, and whoever holds it joins"
   given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}

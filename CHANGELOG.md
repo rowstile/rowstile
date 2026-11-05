@@ -638,8 +638,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   they ran as the superuser. Its database is published on 127.0.0.1 only. A database compose made before has no
   `fm_owner`: start it afresh (`docker compose down -v`).
 - The messenger example's rules: a direct chat stays its two people, whoever left. Its creator who had left it, or
-  the one who stayed, could put someone else in it, and its creator could start one between two others. Its
-  schema is one migration, as the file manager's is.
+  the one who stayed, could put someone else in it, and its creator could start one between two others. A
+  message deleted for everyone loses its text, whoever writes it: the policy refused only a text kept when the
+  text changed. Its schema is one migration, as the file manager's is.
 
 ### Upgrading
 

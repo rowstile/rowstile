@@ -49,7 +49,7 @@ set that database up, so mark it as a development database once first: `rowstile
 | A direct chat stays two people: the same two, whoever left | `add_members = manage or (creator and member and {kind = 'direct'} and {not exists (select 1 from ms.direct_pairs ...)})`: its creator puts themselves in first (`chat.setup and person`), then the other; the database writes the two down as the second joins (`ms.direct_pairs`), and nobody comes in after them. A rule checks each row against the table as the statement found it, so for a statement that adds several at once, the schema counts too (`ms.pair_direct`, [the schema](db/migrations/0001_schema.sql)) |
 | Nobody demotes or removes the owner, nor makes another; the owner doesn't leave (they delete the group) | `update role : chat.manage and {role <> 'owner'}`, `update role after : {role <> 'owner'}`, `delete : (person or chat.manage) and {role <> 'owner'}`; and one owner a chat in the schema, whoever writes (`members_one_owner`) |
 | Edit your own messages for 15 minutes | `can edit = sender and {not deleted and created_at > now() - interval '15 minutes'}`, and `update edited_at : edit`: only an edit marks a message edited |
-| Delete for everyone: yours, or anyone's if you're an admin; no undelete | `can remove = sender or chat.manage`, `update deleted after : {deleted}` |
+| Delete for everyone: yours, or anyone's if you're an admin; the text goes with it; no undelete | `can remove = sender or chat.manage`, `update deleted after : {deleted and body = ''}` |
 | Invite links anyone can use for a week | `invitee : link shared by invite`, `can join = (invitee and {kind = 'group'}) or manage`; the backend calls `authz.create_link` with an end a week away (`MS_INVITE_DAYS`), and `authz.list_links` and `authz.revoke_link` so admins see the links and turn one off. Admins may join without a link, so the link's address also names its chat (`/join/<token>?chat=7`): an admin who opens it is shown the group |
 | Bots post as themselves, only where an admin added them | `type bot = ms.bots principal where {active}`, `bot : bot = ms.chat_bots(...)`, `from_bot` in the insert rule |
 | Only a bot's owner makes its keys | `can manage_keys = owner` on the bot type; the backend calls `authz.create_api_key(..., 'bot', id)` |
@@ -57,7 +57,7 @@ set that database up, so mark it as a development database once first: `rowstile
 
 Each row of this table is checked in [`db/tests/rules.authz`](db/tests/rules.authz): each test makes the people
 and chats it needs, checks who may do what (as the app, through row-level security), and rolls back. `rowstile
-test` runs them: 80 checks, in about a second.
+test` runs them: 83 checks, in about a second.
 
 ## What the backend doesn't have to do
 
@@ -101,7 +101,7 @@ test` runs them: 80 checks, in about a second.
   (`has_blocked`, followed with `person.has_blocked`), the policy reads it with its own rights.
 - **The plain `update` rule holds before and after the change.** "Deleted for everyone" made the message
   fail `remove` if `remove` required "not deleted yet". So `remove` doesn't; `update deleted after :
-  {deleted}` forbids undeleting.
+  {deleted and body = ''}` forbids undeleting, and keeping the text.
 
 ## Layout
 
