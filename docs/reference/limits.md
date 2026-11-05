@@ -127,8 +127,8 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   while it runs, other tree writes to that type wait. If a link leads from inside the
   moved part back to the folder's old or new ancestors, everything below is recomputed
   instead, which is several times slower.
-- **Privileges**: what the policy reads (relations, and `{conditions}` in permissions and rules) it reads with
-  the privileges of whoever applied it, wherever it is checked. A condition on the row's own columns is
+- **Privileges**: what the policy reads (relations, and `{conditions}` in permissions, rules and caveats) it
+  reads with the privileges of whoever applied it, wherever it is checked. A condition on the row's own columns is
   written into the rules as it is; one that may read other rows (a subquery, a function other than a built-in
   that reads nothing, however its name is written, or an operator Postgres doesn't have for its own types) is
   called as a function per row the rules check, which costs more on large reads than the same test written as

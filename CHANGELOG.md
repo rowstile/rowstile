@@ -39,6 +39,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   kept what the writer worked out (a reader whose share had ended, or none for one that had begun) until something
   else changed that object. The index keeps each object's next share start or end in `authz_sync.due`; applying
   works the index out once again to fill it.
+- A caveat that calls a function or an operator of the app's runs with the policy's rights wherever its share
+  is checked, as a condition does: a select on the table and its masked view say what `authz.can` and
+  `authz.list` say.
 
 ### Upgrading
 

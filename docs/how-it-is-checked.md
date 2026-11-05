@@ -350,7 +350,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | Masked columns: `mask`, the view | 1 | [language](reference/language.md) | `masks.sh`, `multi_scenario.sql`, `apply.sh` | `difftest.py`, `genpolicy.py`, hand answers |
 | Foreign keys whose action is meant: `cascade from`, and the warning of the others | 2 | [language](reference/language.md) | `apply.sh`, `policy_errors.py`, `unit_test.py` |  |
 | Scopes: what a key or a token may do | 1 | [identity](reference/identity.md) | `identity.sh`, `sessions.sh` | `difftest.py`, `genpolicy.py` |
-| Caveats: conditions a share carries | 1 | [language](reference/language.md) | `multi_scenario.sql` | `difftest.py`, `genpolicy.py`, hand answers |
+| Caveats: conditions a share carries | 1 | [language](reference/language.md) | `multi_scenario.sql`, `apply.sh` | `difftest.py`, `genpolicy.py`, hand answers |
 | Invariants: `never` | 2 | [language](reference/language.md) | `governance.sh`, `principals.sh`, `unit_test.py` | `genpolicy.py`, hand answers |
 | The policy's tests: checks, named tests, `given`, `as`, `with scope` | 2 | [language](reference/language.md) | `devx.sh`, `unit_test.py`, `cookbook.sh` | hand answers |
 | The Python SDK: signing in, refusals as answers, jobs | 2 | [app-code](reference/app-code.md) | `integrations/fastapi` |  |

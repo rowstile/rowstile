@@ -819,6 +819,25 @@ out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/two_links.authz" 
 case "$out" in *"$T/two_links.authz: applied") true;; *) false;; esac && [ "$(seen)" = "10,12" ] &&
   ok "one condition that calls a function, on two link tables: applied, and each table's rows read as they are" ||
   bad "one condition on two link tables" "select $(seen): $out"
+# ... and a caveat that calls one, by name or as an operator: a view reads the shares, and their caveats with
+# them. User 2's share of project 10 counts while project 12 has members, their share of 11 while it has none:
+# the app role sees none of 12's, the policy sees one
+printf '%s\n' "app role app_user" "caveat has = {app.\"Member\"((arg('p'))::bigint)}" \
+  "caveat lacks = {not =!= (arg('p'))::bigint}" "type user = app.users" "type project = app.projects" \
+  "  owner : user = owner_id" "  viewer : user shared" "  can share = owner" "  can view = owner or viewer" \
+  "type membership = app.memberships" "rules app.projects" "  select : view" \
+  "rules app.memberships" "  select : {user_id = authz.uid()}" > "$T/caveats.authz"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/caveats.authz" 2>&1)
+quiet -d "$CDB" -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, caveat, caveat_args)
+  VALUES ('project', '10', 'viewer', 'user', '2', 'has', '{\"p\": 12}'),
+         ('project', '11', 'viewer', 'user', '2', 'lacks', '{\"p\": 12}')" >/dev/null || exit 1
+listed=$(psql -X -q -At -d "$CDB" -c "SET ROLE app_user" -c "SET authz.user_id = 2" \
+  -c "SELECT coalesce(string_agg(x, ',' ORDER BY x), '') || ' ' ||
+             (SELECT string_agg(authz.can('project', y::text, 'view')::text, ',' ORDER BY y) FROM unnest('{10,11}'::int[]) y)
+      FROM authz.list('project', 'view') x" | tail -n 1)
+[ "$(seen)" = 10 ] && [ "$listed" = "10 true,false" ] &&
+  ok "a function a caveat calls runs with the policy's rights where a view reads the share: SELECT says what authz.list and authz.can say" ||
+  bad "a caveat's call's rights" "select $(seen), list and can $listed: $out"
 dropdb "$CDB"
 # a write rule that follows a relation kept in shares or a link table: the app role may not read authz.shares
 fresh "$CDB"
