@@ -30,11 +30,14 @@ type chat = ms.chats
   can manage = admin and {kind = 'group'}                -- the title, the members, bots, invite links
   can invite = manage
   can join   = (invitee and {kind = 'group'}) or manage  -- (admins may make links, so they hold what links give)
-  -- a chat just created, before anyone is in it: its creator sees it and adds themselves
+  -- a chat just created, before anyone is in it: its creator sees it and puts themselves in. A direct chat is
+  -- its first two people (ms.direct_pairs, written as the second joins): once they were in it, nobody comes in
   can setup = creator and {not exists (select 1 from ms.members m where m.chat_id = this.id)}
-  -- adding people: admins of a group; the one who starts a direct chat adds the other person
-  can add_members = manage or setup
-                 or (creator and {kind = 'direct'} and {(select count(*) from ms.members m where m.chat_id = this.id) < 2})
+          and {not exists (select 1 from ms.direct_pairs p where p.chat_id = this.id)}
+  -- adding people: admins of a group; the one who starts a direct chat, in it, adds the other person
+  can add_members = manage
+                 or (creator and member and {kind = 'direct'}
+                and {not exists (select 1 from ms.direct_pairs p where p.chat_id = this.id)})
 
 -- a membership row: a person in a chat. Its key is (chat_id, user_id)
 type membership = ms.members (chat_id, user_id uuid)
@@ -82,12 +85,11 @@ rules ms.chats
   cascade from ms.users
 
 rules ms.members
-  -- added by someone who may (not as an admin unless they are one; as the owner only when the chat is set
-  -- up), never someone who blocked you;
-  -- or yourself, with an invite link
-  insert                                         : (chat.add_members and ({role = 'member'} or chat.setup
-                                                or (chat.manage and {role <> 'owner'}))
+  -- added by someone who may (not as an admin unless they are one), never someone who blocked you;
+  -- or yourself: into a chat you just made (as its owner, for a group), or with an invite link
+  insert                                         : (chat.add_members and ({role = 'member'} or (chat.manage and {role <> 'owner'}))
                                                and not person.has_blocked)
+                                                or (chat.setup and person)
                                                 or (chat.join and person and {role = 'member'})
   select                                         : chat.read
   update                                         : chat.manage or person

@@ -132,6 +132,13 @@ def test_one_direct_chat_for_two_people() -> None:
     for t in asking:
         t.join()
     assert len(got) == 2 and got[0] == got[1], got
+    # one of the two left: that chat takes nobody in again, and the two may start another
+    chat = direct(ann, ben)
+    assert ben.delete(f"/api/chats/{chat}/members/{ben.me['id']}").status_code == 204
+    r = ann.post(f"/api/chats/{chat}/members", json={"user_id": cat.me["id"]})
+    assert r.status_code == 403 and r.json()["why"], r.text
+    again = direct(ben, ann)
+    assert again != chat and say(ann, again, "hello again").status_code == 201
 
 
 def test_blocking() -> None:
@@ -230,36 +237,25 @@ def test_several_rows_at_once_keep_the_counts() -> None:
     from app import db
 
     ann, ben, cat = person("Ann"), person("Ben"), person("Cat")
-    three = "INSERT INTO ms.members (chat_id, user_id) VALUES (%s, %s), (%s, %s), (%s, %s)"
     with db.as_user(ann.me["id"]) as tx:
         d = tx.one("INSERT INTO ms.chats (kind, created_by) VALUES ('direct', %s) RETURNING id", (ann.me["id"],))["id"]
+        tx.run("INSERT INTO ms.members (chat_id, user_id) VALUES (%s, %s)", (d, ann.me["id"]))
     with (
         pytest.raises(psycopg.errors.CheckViolation, match="a direct chat is two people"),
         db.as_user(ann.me["id"]) as tx,
     ):
-        tx.run(three, (d, ann.me["id"], d, ben.me["id"], d, cat.me["id"]))
-    # ... nor after one of the two left
+        tx.run(
+            "INSERT INTO ms.members (chat_id, user_id) VALUES (%s, %s), (%s, %s)", (d, ben.me["id"], d, cat.me["id"])
+        )
+    # ... nor after one of the two left: the policy refuses it (db/tests/rules.authz), and the schema whoever writes
     chat = direct(ann, ben)
     assert ben.delete(f"/api/chats/{chat}/members/{ben.me['id']}").status_code == 204
-    with (
-        pytest.raises(psycopg.errors.CheckViolation, match="a direct chat is two people"),
-        db.as_user(ann.me["id"]) as tx,
-    ):
-        tx.run(
-            "INSERT INTO ms.members (chat_id, user_id) VALUES (%s, %s), (%s, %s)",
-            (chat, ben.me["id"], chat, cat.me["id"]),
-        )
-    # one owner, also when the group is set up by one statement
-    with db.as_user(ann.me["id"]) as tx:
-        g = tx.one(
-            "INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Two owners', %s) RETURNING id",
-            (ann.me["id"],),
-        )["id"]
-    with pytest.raises(psycopg.errors.UniqueViolation, match="members_one_owner"), db.as_user(ann.me["id"]) as tx:
-        tx.run(
-            "INSERT INTO ms.members (chat_id, user_id, role) VALUES (%s, %s, 'owner'), (%s, %s, 'owner')",
-            (g, ann.me["id"], g, ben.me["id"]),
-        )
+    with pytest.raises(psycopg.errors.CheckViolation, match="a direct chat is the two people who started it"):
+        admin("INSERT INTO ms.members (chat_id, user_id) VALUES (%s, %s)", (chat, cat.me["id"]))
+    # one owner a chat, whoever writes
+    g = group(ann, ben, title="Two owners")
+    with pytest.raises(psycopg.errors.UniqueViolation, match="members_one_owner"):
+        admin("UPDATE ms.members SET role = 'owner' WHERE chat_id = %s AND user_id = %s", (g, ben.me["id"]))
 
 
 def test_lint_has_nothing_new_to_say() -> None:

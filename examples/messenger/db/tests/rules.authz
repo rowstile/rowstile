@@ -79,6 +79,21 @@ test "a direct chat stays two people"
   as user $ann allowed {INSERT INTO ms.members (chat_id, user_id) VALUES ($d, $ann)}
   as user $ann allowed {INSERT INTO ms.members (chat_id, user_id) VALUES ($d, $bo)}
   as user $ann refused {INSERT INTO ms.members (chat_id, user_id) VALUES ($d, $cy)}
+  -- the same two, whoever left: nobody comes in after them, by its creator or by the one who stayed
+  as user $bo allowed {DELETE FROM ms.members WHERE chat_id = $d AND user_id = $bo}
+  as user $ann refused {INSERT INTO ms.members (chat_id, user_id) VALUES ($d, $cy)}
+  as user $ann refused {INSERT INTO ms.members (chat_id, user_id) VALUES ($d, $bo)}
+  given e = {INSERT INTO ms.chats (kind, created_by) VALUES ('direct', $ann) RETURNING id}
+  given {INSERT INTO ms.members (chat_id, user_id) VALUES ($e, $ann), ($e, $bo)}
+  as user $ann allowed {DELETE FROM ms.members WHERE chat_id = $e AND user_id = $ann}
+  as user $ann refused {INSERT INTO ms.members (chat_id, user_id) VALUES ($e, $cy)}
+  as user $bo refused {INSERT INTO ms.members (chat_id, user_id) VALUES ($e, $cy)}
+  -- nor once both left: its creator doesn't set it up again
+  as user $bo allowed {DELETE FROM ms.members WHERE chat_id = $e AND user_id = $bo}
+  as user $ann refused {INSERT INTO ms.members (chat_id, user_id) VALUES ($e, $ann)}
+  -- and its creator starts it with themselves: not a direct chat of two others
+  given f = {INSERT INTO ms.chats (kind, created_by) VALUES ('direct', $ann) RETURNING id}
+  as user $ann refused {INSERT INTO ms.members (chat_id, user_id) VALUES ($f, $bo)}
 
 test "nobody demotes the owner, nor makes another"
   given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}

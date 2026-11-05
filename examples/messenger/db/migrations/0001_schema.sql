@@ -66,28 +66,34 @@ BEGIN
   RETURN (SELECT m.joined_seq FROM ms.members m WHERE m.chat_id = p_chat AND m.user_id = authz.uid());
 END $$;
 
--- one direct chat for two people: the two of each direct chat, in order. Written by the database when the second
--- joins, and not the app role's to read or write: it could otherwise take a pair's place
+-- a direct chat is its first two people: the two of each, in order, written by the database when the second
+-- joins. One chat for two people (pair UNIQUE): once one of them left, its pair is NULL, and they may start
+-- another. The row stays: nobody comes into that chat again (the policy reads it too). Not the app role's to read
+-- or write: it could otherwise take a pair's place
 CREATE TABLE ms.direct_pairs (
-  pair    uuid[] PRIMARY KEY CHECK (array_length(pair, 1) = 2),
-  chat_id bigint NOT NULL UNIQUE REFERENCES ms.chats ON DELETE CASCADE);
+  chat_id bigint PRIMARY KEY REFERENCES ms.chats ON DELETE CASCADE,
+  pair    uuid[] UNIQUE CHECK (array_length(pair, 1) = 2));
 
--- a direct chat is two people: a third is refused here, after the statement, which sees all of its rows (the
--- policy counts too, but row by row). Two transactions adding one each both see two, and both write the pair:
--- chat_id UNIQUE refuses the second. (SECURITY DEFINER: it writes whoever adds the member)
+-- a third is refused here, after the statement, which sees all of its rows (the policy counts too, but row by
+-- row). Two transactions adding one each both see two, and both write the pair: chat_id refuses the second.
+-- (SECURITY DEFINER: it writes whoever adds the member)
 CREATE FUNCTION ms.pair_direct() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_pair uuid[];
 BEGIN
   IF (SELECT c.kind FROM ms.chats c WHERE c.id = NEW.chat_id) = 'direct' THEN
+    -- the chat had its two: only they were added (two members added by one statement both see their pair here)
+    IF EXISTS (SELECT 1 FROM ms.direct_pairs p WHERE p.chat_id = NEW.chat_id
+               AND (p.pair IS NULL OR NOT NEW.user_id = ANY (p.pair))) THEN
+      RAISE EXCEPTION 'a direct chat is the two people who started it' USING ERRCODE = 'check_violation';
+    END IF;
     SELECT array_agg(m.user_id ORDER BY m.user_id) INTO v_pair FROM ms.members m WHERE m.chat_id = NEW.chat_id;
     IF array_length(v_pair, 1) > 2 THEN
       RAISE EXCEPTION 'a direct chat is two people' USING ERRCODE = 'check_violation';
     END IF;
-    -- once for the chat: two members added by one statement both see the two of them here
     IF array_length(v_pair, 1) = 2 AND NOT EXISTS (SELECT 1 FROM ms.direct_pairs p WHERE p.chat_id = NEW.chat_id) THEN
       -- a second chat for the same two is refused here (23505): the API then answers with the first
-      INSERT INTO ms.direct_pairs (pair, chat_id) VALUES (v_pair, NEW.chat_id);
+      INSERT INTO ms.direct_pairs (chat_id, pair) VALUES (NEW.chat_id, v_pair);
     END IF;
   END IF;
   RETURN NULL;
@@ -98,7 +104,7 @@ CREATE TRIGGER pair_direct AFTER INSERT ON ms.members FOR EACH ROW EXECUTE FUNCT
 CREATE FUNCTION ms.unpair_direct() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-  DELETE FROM ms.direct_pairs p WHERE p.chat_id = OLD.chat_id;
+  UPDATE ms.direct_pairs p SET pair = NULL WHERE p.chat_id = OLD.chat_id AND p.pair IS NOT NULL;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER unpair_direct AFTER DELETE ON ms.members FOR EACH ROW EXECUTE FUNCTION ms.unpair_direct();
