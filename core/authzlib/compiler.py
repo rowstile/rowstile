@@ -65,9 +65,6 @@ from .sqlutil import (
 UID = "(SELECT authz.uid())"
 UIDT = "(SELECT authz.uid()::text)"
 LINKS = "(SELECT authz.link_hashes())::text[]"
-# what a function over every type does with a type the policy doesn't have (Core.dispatch_type)
-NO_SUCH_TYPE = "RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';"
-
 # a type's relation or permission: (type name, its name)
 Name: TypeAlias = "tuple[str, str]"
 # an inheritance link of a recursive permission: (child type, relation, condition or None, parent type)
@@ -216,8 +213,9 @@ def once(items: Sequence[Expr]) -> list[Expr]:
 
 # A view named in a query is written out in full each time, and so is each view it names: what Postgres plans
 # for one read grows with every permission named more than once on the way (Core.expansions counts them).
-VIEW_BODY = re.compile(r'CREATE VIEW authz_int\.("(?:[^"]|"")+"|\w+) AS\n(.*?);(?=\nCREATE VIEW authz_gen|\Z)', re.S)
-VIEW_NAME = re.compile(r'authz_(?:int|gen)\.("(?:[^"]|"")+"|\w+)')
+# (each entry of view_sql is one statement, and every view is in authz_int)
+VIEW_BODY = re.compile(r'CREATE VIEW authz_int\.("(?:[^"]|"")+"|\w+) AS\n(.*?);\Z', re.S)
+VIEW_NAME = re.compile(r'authz_int\.("(?:[^"]|"")+"|\w+)')
 # as docs/reference/limits.md says: the policies here write out at most a dozen views for a read, and at around a
 # hundred, planning alone takes a tenth of a second and more
 MANY_EXPANSIONS = 50
@@ -1336,10 +1334,10 @@ class Core:
         types = ["text", *self.id_types()]
         return [(o, s) for o in types for s in types if (o, s) != ("text", "text")]
 
-    def dispatch_type(self, per_type: Callable[[Type], str], invalid: str, missing_type: str = NO_SUCH_TYPE) -> str:
-        """CASE over types, with p_id checked and converted to the type's key in v_<pktype>. invalid: the statement
-        that runs for an id that isn't one of the type's (`RETURN false;`, or `EXIT <label>;` to leave a block
-        and put back what the function changed)."""
+    def dispatch_type(self, per_type: Callable[[Type], str], invalid: str) -> str:
+        """CASE over types, with p_id checked and converted to the type's key in v_<pktype>; a type the policy
+        doesn't have raises. invalid: the statement that runs for an id that isn't one of the type's (`RETURN false;`,
+        or `EXIT <label>;` to leave a block and put back what the function changed)."""
         branches = []
         for t in self.types.values():
             body = per_type(t)
@@ -1348,11 +1346,9 @@ class Core:
                 f"      IF NOT pg_catalog.pg_input_is_valid(p_id, {lit(t.keytype)}) THEN {invalid} END IF;\n"
                 f"      v_{t.pktype} := p_id::{t.keytype}{'::text' if t.composite else ''};\n{body}"
             )
-        return (
-            ("  CASE p_type\n" + "\n".join(branches) + f"\n    ELSE\n      {missing_type}\n  END CASE;")
-            if branches
-            else f"  {missing_type}"
-        )
+        # (a policy has a type, the user: AZ202)
+        no_type = "RAISE EXCEPTION 'no type % in the policy', p_type USING HINT = 'rowstile help AZ707';"
+        return "  CASE p_type\n" + "\n".join(branches) + f"\n    ELSE\n      {no_type}\n  END CASE;"
 
     # --- keys: one column, or several (a composite key, whose ids are its canonical row text) ----
     @staticmethod
