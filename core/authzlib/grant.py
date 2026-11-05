@@ -29,6 +29,7 @@ LINKED = 3  # how many current parents or groups of an object it follows
 TRIES = 40  # how many candidate changes (or combinations) it tries
 SHOWN = 5
 SHARERS = 20  # how many of those who may share an object a `shared if` is judged as, each signed in in turn
+COUNTED = 1000  # how many objects of a type it counts a permission on, for someone, before and after a change
 
 
 def settles(where: str) -> dict[str, Scalar] | None:
@@ -107,6 +108,17 @@ def taken(items: Sequence[tuple[str, str, int, int]], first: str) -> list[str]:
         + (f"{n} other {tn}{'s' if n != 1 else ''}" if n else "it")
         + f" from {k} {'person' if k == 1 else 'people'}"
         for (tn, n, k), ps in groups.items()
+    ]
+
+
+def uncounted(items: Sequence[tuple[str, str, int]], first: str) -> list[str]:
+    """(type, permission, the count) in words, the permissions of a type together, the one asked about (first)
+    before the others: "view, edit on folders, past 1000"."""
+    groups: dict[tuple[str, int], list[str]] = {}
+    for tn, pn, n in items:
+        groups.setdefault((tn, n), []).append(pn)
+    return [
+        f"{', '.join(sorted(ps, key=lambda p: (p != first, p)))} on {tn}s, past {n}" for (tn, n), ps in groups.items()
     ]
 
 
@@ -232,6 +244,9 @@ class Way:
     # what other people lose, the permission asked about on this object first: (type, permission, on how many other
     # objects (0: this one), from how many people)
     takes: list[tuple[str, str, int, int]] = field(default_factory=list)
+    # what it didn't count, someone holding the permission on COUNTED objects of the type or more, before or after:
+    # (type, permission, COUNTED)
+    uncounted: list[tuple[str, str, int]] = field(default_factory=list)
     error: str | None = None
 
     @property
@@ -581,12 +596,13 @@ class Grants:
 
     def held(self, who: Person, kinds: Sequence[Part], t: Type, oid: str) -> Held:
         """What someone holds now: on how many objects of each type each permission of kinds (as authz.list counts
-        them), and every permission on t oid, held and listed (in one query, signed in as them)."""
+        them, up to COUNTED: a list stops there), and every permission on t oid, held and listed (in one query, signed
+        in as them)."""
         from .database import text_array
 
         self.sign_in(who)
         rows = self.db.rows(
-            "SELECT k.t, k.p, (SELECT count(*) FROM authz.list(k.t, k.p)) AS n, '' AS here "
+            f"SELECT k.t, k.p, (SELECT count(*) FROM authz.list(k.t, k.p, NULL, {int(COUNTED)})) AS n, '' AS here "
             "FROM unnest($1::text[], $2::text[]) k(t, p) "
             "UNION ALL SELECT $3, p.perm, 0, 'held' FROM authz_int.perms p WHERE p.type = $3 "
             "AND authz_int.can($3, $4, p.perm) "
@@ -667,10 +683,16 @@ class Grants:
 
         was, now = held.pop(me)
         way.also = sorted(now.perms - was.perms - {perm})
+        # a count that reached COUNTED, before or after, is no number to take another from: not counted, and said
+        past = {k for k in kinds if max(was.objects[k], now.objects[k]) >= COUNTED}
         # what it gives on other objects: what is held now on how many, but this one (asked about, or said as "on
         # it"), which authz.list counts where the person may select it
-        more = {(tn, pn): now.objects[(tn, pn)] - was.objects[(tn, pn)] - on(tn, pn, was, now) for tn, pn in kinds}
-        way.more_objects = max(0, more.pop((t.name, perm)))
+        more = {
+            (tn, pn): now.objects[(tn, pn)] - was.objects[(tn, pn)] - on(tn, pn, was, now)
+            for tn, pn in kinds
+            if (tn, pn) not in past
+        }
+        way.more_objects = max(0, more.pop((t.name, perm), 0))
         # (this object's type first, then the policy's order)
         way.elsewhere = sorted(((tn, pn, n) for (tn, pn), n in more.items() if n > 0), key=lambda x: x[0] != t.name)
         # what the others lose: on it (who loses the permission asked about is authz.who's answer, for everyone),
@@ -683,6 +705,9 @@ class Grants:
         for tn, pn in kinds:
             lost = []
             for before, after in held.values():
+                if max(before.objects[(tn, pn)], after.objects[(tn, pn)]) >= COUNTED:
+                    past.add((tn, pn))
+                    continue
                 # (what it gives or takes on the object asked about is said as on it)
                 n = before.objects[(tn, pn)] - after.objects[(tn, pn)] + on(tn, pn, before, after)
                 if n > 0:
@@ -690,6 +715,9 @@ class Grants:
             if lost:
                 there.append((tn, pn, max(lost), len(lost)))
         way.takes = [(t.name, p, 0, n) for p, n in here.items() if n] + sorted(there, key=lambda x: x[0] != t.name)
+        way.uncounted = sorted(
+            ((tn, pn, COUNTED) for tn, pn in kinds if (tn, pn) in past), key=lambda x: x[0] != t.name
+        )
 
 
 def permission_of(c: Compiler, type_name: str, perm: str) -> Type:
@@ -755,7 +783,7 @@ def how_to_grant(
         [w for w in candidates if w.grants],
         key=lambda w: (
             len(w.changes),
-            len(w.also) + len(w.elsewhere) + sum(k for *_, k in w.takes),
+            len(w.also) + len(w.elsewhere) + len(w.uncounted) + sum(k for *_, k in w.takes),
             w.more_people + w.more_objects + sum(n for _, _, n in w.elsewhere),
             sum(ch.cost for ch in w.changes),
         ),
@@ -794,6 +822,7 @@ def describe(answer: Answer, who: str, type_name: str, oid: str, perm: str) -> s
                 f"  {w.text}"
                 + (f" (also gives {', and '.join(also)})" if also else "")
                 + (f" (takes {', and '.join(takes)})" if takes else "")
+                + (f" (not counted: {', and '.join(uncounted(w.uncounted, perm))})" if w.uncounted else "")
                 + f"  [{', '.join(lines)}]"
             )
     elif answer.stops:

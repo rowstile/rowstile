@@ -575,6 +575,27 @@ def main() -> None:
         (jit_seen, jit_after),
     )
 
+    # how many objects someone holds a permission on is counted up to COUNTED (here 4): a count that reaches it,
+    # before or after, is said as not counted, for them or for whom a change takes from
+    counted_conn = pgwire.connect(**pgwire.parse_dsn(f"dbname={db}"))
+    with mock.patch.object(grant, "COUNTED", 4):
+        capped = rowstile_cli.transaction(
+            counted_conn, lambda d: database.why(d, "user", "3", "folder", "3", "share"), keep=False
+        )
+    counted_conn.close()
+    said = grant.describe(capped, "user:3", "folder", "3", "share")
+    admin = next((x for x in said.splitlines() if x.startswith("  set role = 'admin' on user 3's row")), "")
+    check(
+        "what someone holds on more objects than it counts: said as not counted, not as a number; the rest counted",
+        admin.endswith(
+            "(not counted: share, edit, view on folders, past 4, and impersonate on users, past 4, and share, edit, "
+            "view on files, past 4)  [line 32]"
+        )
+        and " more " not in admin
+        and "share, edit on 1 more file for user:3" in said,
+        said[-600:],
+    )
+
     print("-- Studio, read-only")
     dsn = f"dbname={db}"
     ro = studio.Studio(dsn, policy, writable=False, port=0, read_policy=rowstile_cli.read_policy)
@@ -1022,6 +1043,16 @@ def main() -> None:
             "... each with all it gives: the editor's share on the folder gives edit on the file inside too",
             w["ways"][0]["text"] == "share editor on folder 3 with user 3"
             and w["ways"][0].get("elsewhere") == [{"type": "file", "perm": "edit", "n": 1}],
+            w,
+        )
+        with mock.patch.object(grant, "COUNTED", 4):
+            status, w = c.call("/api/why?as=user:3&type=folder&id=3&perm=share")
+        admin = [x for x in w.get("ways", []) if x["text"].startswith("set role = 'admin'")]
+        check(
+            "... and what it didn't count, as the command says it",
+            status == 200
+            and [(x["more_objects"], x["elsewhere"]) for x in admin] == [(0, [])]
+            and {"type": "folder", "perm": "share", "past": 4} in admin[0]["uncounted"],
             w,
         )
         body = {"type": "folder", "id": "3", "relation": "editor", "subject_type": "user", "subject_id": "3"}

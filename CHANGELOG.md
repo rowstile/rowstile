@@ -391,7 +391,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   own outside a transaction, as the index's line does.
 - `rowstile why` and Studio judge a `shared if` as the first 20 of those who may share the object, and say so when
   there are more. Before, they signed in as each of them in turn, for each share they looked at, which took seconds
-  on an object a thousand people may share.
+  on an object a thousand people may share. They also count up to 1,000 objects of a type that someone holds a
+  permission on, before and after a change: past that, the permission is said as not counted ("not counted: view
+  on folders, past 1000"), not as a number.
 
 ### Upgrading
 

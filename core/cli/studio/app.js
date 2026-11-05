@@ -16,7 +16,7 @@
 // table's order, masked those a rule masks; each total counted up to counted, one more being more than that
 /** @typedef {{table: string, type: string, columns: string[], masked: string[], rows: Row[], offset: number, limit: number, more: boolean, total: number, visible_total: number, counted: number}} Rows */
 // takes' entry with n 0 is who loses it on this object
-/** @typedef {{text: string, grants: boolean, more_objects: number, more_people: number, also: string[], elsewhere: {type: string, perm: string, n: number}[], takes: {type: string, perm: string, n: number, people: number}[], lines: string[], kinds: string[]}} Way */
+/** @typedef {{text: string, grants: boolean, more_objects: number, more_people: number, also: string[], elsewhere: {type: string, perm: string, n: number}[], takes: {type: string, perm: string, n: number, people: number}[], uncounted: {type: string, perm: string, past: number}[], lines: string[], kinds: string[]}} Way */
 /** @typedef {{text: string, error: string, lines: string[], kinds: string[]}} Untried */
 /** @typedef {{holds: boolean, explain: string[], needs: string, tried: boolean, stops: string[], notes: string[], ways: Way[], untried: Untried[]}} Why */
 /** @typedef {{check: string, named: string}} Test */
@@ -269,12 +269,13 @@ async function why(as, type, id, perm, out) {
     if (a.ways.length) {
       parts.push(el("p", {}, a.tried ? "Would be granted by (each tried, then undone):" : "Might be granted by (not tried: Studio is read-only here):"));
       parts.push(el("ul", { class: "ways" }, a.ways.map((w) => el("li", {}, w.text, " ", el("code", { class: "muted" }, w.lines.join(", ")),
-        (w.also.length || w.more_objects || w.elsewhere.length || w.more_people || w.takes.length) ? el("div", { class: "also" },
+        (w.also.length || w.more_objects || w.elsewhere.length || w.more_people || w.takes.length || w.uncounted.length) ? el("div", { class: "also" },
           [w.also.length ? `also gives ${w.also.join(", ")} on it` : "",
            w.more_objects ? `also gives ${perm} on ${w.more_objects} more ${type}${w.more_objects === 1 ? "" : "s"} to them` : "",
            ...w.elsewhere.map((e) => `also gives ${e.perm} on ${e.n} more ${e.type}${e.n === 1 ? "" : "s"} to them`),
            w.more_people ? `and to ${w.more_people} more ${w.more_people === 1 ? "person" : "people"} on this ${type}` : "",
-           ...w.takes.map((e) => `takes ${e.perm} on ${e.n ? `${e.n} other ${e.type}${e.n === 1 ? "" : "s"}` : "it"} from ${e.people} ${e.people === 1 ? "person" : "people"}`)].filter(Boolean).join(", ")) : null))));
+           ...w.takes.map((e) => `takes ${e.perm} on ${e.n ? `${e.n} other ${e.type}${e.n === 1 ? "" : "s"}` : "it"} from ${e.people} ${e.people === 1 ? "person" : "people"}`),
+           ...w.uncounted.map((e) => `not counted: ${e.perm} on ${e.type}s, past ${e.past}`)].filter(Boolean).join(", ")) : null))));
     } else if (a.stops.length) {
       // the person or the object isn't there, or the type's where leaves it out: nothing was tried
       for (const s of a.stops) parts.push(el("p", {}, s));
