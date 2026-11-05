@@ -34,12 +34,19 @@
   `authz.announce_timed_shares()` announces the shares that ended or began since it last ran (the cause
   `share_ended` or `share_started`), with what reads their objects. Schedule it ([Operations](../operations.md));
   until it runs, a reader doesn't hear of them. <!-- checked: tests/governance.sh "which the feed doesn't hear of by itself"; tests/governance.sh "authz.announce_timed_shares() announces the shares that ended or began since it last ran, and says how many"; tests/governance.sh "the one that ended"; tests/governance.sh "with what reads Keys"; tests/governance.sh "run again, it announces nothing new" -->
+  The feed's order is by transaction, then by position: `authz.changes_since(pos)` gives the entries after the one
+  at `pos` in that order. An entry gets its position when it is written, but other sessions see it when its
+  transaction ends. So the feed gives an entry only once every transaction older than its own has ended, in any
+  database of the server: a reader that goes on from the last entry it read never moves past one still to
+  come. <!-- checked: tests/governance.sh "while a transaction is open, the feed gives the entries of older ones, not those of later ones"; tests/governance.sh "and once it ends, a reader going on from the last entry it read hears of it" -->
+  The newest entries show up a little late, and a long transaction holds them back until it ends (keep
+  transactions short, as vacuum also asks: `idle_in_transaction_session_timeout` helps).
   `authz.trim_changes()`
   removes old entries; a reader behind them gets an error from `changes_since` (AZ712) and
   reads everything again. <!-- checked: tests/governance.sh "the feed keeps 7 days by default: older entries are trimmed"; tests/governance.sh "a reader behind the trimmed part is told to read everything again" -->
-  A reader that starts, or starts again, first notes where the feed is,
-  `SELECT greatest((SELECT max(pos) FROM authz.changes), (SELECT value::bigint FROM authz.settings WHERE key =
-  'changes_trimmed_to'), 0)`, then reads everything, then follows from that position.
+  So does a reader that asks from a position no entry has. <!-- checked: tests/governance.sh "a position no entry has is refused: the reader reads everything again" -->
+  A reader that starts, or starts again, first notes where the feed is, `SELECT authz.changes_position()`, then
+  reads everything, then follows from that position. <!-- checked: tests/governance.sh "where the feed is: its last entry"; tests/governance.sh "everything trimmed: where the feed is, is where the trim ended, and a reader there goes on" -->
 - **Requests and approvals**: people ask, those who may share the relation decide;
   approval makes a share that ends after the requested time. <!-- checked: tests/governance.sh "erin (who may share Secrets) sees it to decide"; tests/governance.sh "the share ends after the requested week" -->
   Requesters can't

@@ -141,7 +141,10 @@ SELECT authz.trim_audit(interval '2 years');    -- how long is your compliance d
 ```
 
 A change feed reader that falls behind the trimmed part gets an error from `authz.changes_since()` and
-must read everything again, then follow from where the feed was when it started ([Governance](reference/governance.md)).
+must read everything again, then follow from where the feed was when it started (`authz.changes_position()`,
+[Governance](reference/governance.md)). The feed gives an entry once every transaction older than its own has
+ended, in any database of the server: a transaction left open (idle in transaction, a long batch) holds the
+feed back until it ends. `idle_in_transaction_session_timeout` bounds the first kind.
 
 Shares that end or begin with time (an expiry, a break glass, an approved request for a week) are announced by
 a schedule too, if something reads the change feed: run it as often as that reader should hear of them. Until
