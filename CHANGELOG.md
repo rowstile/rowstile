@@ -250,6 +250,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   no permissions). A permission made of conditions on the row, such as the deny the docs teach (`can hidden =
   {hidden} or parent.hidden`), is held by everyone on the rows it marks, and these answers named those rows.
   A table without a select rule answers as before.
+- `rowstile diff` waits for an apply, push or remove running at once, as they wait for each other, instead of the
+  two meeting in the middle and one stopping with "deadlock detected". The docs now say that it holds the app's
+  tables locked while it runs: run it on a copy or a staging database, not on production at its busiest.
 
 ### Upgrading
 

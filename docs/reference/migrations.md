@@ -10,7 +10,7 @@ enough. <!-- checked: tests/apply.sh "rowstile apply, on a database with no exte
     rowstile migrate                          # the next migration, and db/policy.lock (no database needed)
     rowstile migrate --check                  # in CI: exit 1 if the policy has a change no migration has
     rowstile push                             # a development database, with the same migration
-    rowstile diff                             # who gains and loses what; changes nothing
+    rowstile diff                             # who gains and loses what; changes nothing, locks the app's tables as it runs
     rowstile test                             # the tests and invariants
 
 | tool | what `rowstile migrate` writes |

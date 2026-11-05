@@ -564,6 +564,16 @@ go; wait
 [ "$both" = 2 ] && [ "$(cat "$T/a1.rc")$(cat "$T/a2.rc")" = "00" ] && [ "$(cat "$T/a1.out")" = "$T/main.authz: applied" ] &&
   [ "$(cat "$T/a2.out")" = "$T/main.authz: applied" ] &&
   ok "two applies at once: each waits for the lock apply takes, then goes through" || bad "two applies" "waiting: $both; $(cat "$T/a1.out" "$T/a2.out")"
+# diff takes that lock too: it makes the new policy in a transaction it undoes, where it and an apply would meet in
+# the middle
+race
+PGAPPNAME=authz_cli_holder psql -X -q -d "$DB" -c "SELECT pg_advisory_lock(1919905638, 0)" -c "$HOLD" >/dev/null 2>&1 &
+held authz_cli_holder
+( CLI diff "$T/main.authz" > "$T/d1.out" 2>&1; echo $? > "$T/d1.rc" ) &
+waits_on rowstile advisory && waited=yes || waited=no
+go; wait
+[ "$waited" = yes ] && [ "$(cat "$T/d1.rc")" = 0 ] && [ "$(cat "$T/d1.out")" = "$T/main.authz: 0 changes (nobody gains or loses anything)" ] &&
+  ok "diff waits for the lock apply takes, then answers" || bad "diff and the lock" "waited: $waited; $(cat "$T/d1.out")"
 CLI remove --yes >/dev/null 2>&1
 
 echo "-- connecting"
