@@ -20,7 +20,7 @@ so under the box).
 | `core.mjs` | the engine: compile (Pyodide), run and ask (PGlite); the same in the page and in `test.mjs` |
 | `compiler.worker.mjs` | the compiler in a worker, so Python starts beside Postgres and typing never waits |
 | `playground.mjs`, `index.html` | the page |
-| `build.mjs` | writes `dist/`: the page, and `bundle.json` with the compiler and the examples, read from the repository (the getting-started guide's own schema, policy and test; the docs example; the cookbook) |
+| `build.mjs` | writes `dist/`: the page, `bundle.json` with the compiler and the examples, read from the repository (the getting-started guide's own schema, policy and test; the docs example; the cookbook), and Pyodide and PGlite, copied from `node_modules` |
 | `test.mjs` | the engine headless, in Node: every example compiles, applies and passes its tests; asking as someone; mistakes; each run starts from nothing; the SQL is the command's (it runs `core/compile_policy.py`: `PYTHON=...` if `python3` isn't the one) |
 | `browser_test.mjs` | the page in headless Chrome or Edge, over the DevTools protocol; also how long loading takes |
 
@@ -31,7 +31,10 @@ node build.mjs && node browser_test.mjs  # the page (SCREENSHOT=page.png to see 
 npx serve dist                         # or any static host
 ```
 
-Pyodide and PGlite load from jsDelivr, at the versions `package.json` pins (`test.mjs` checks the page asks for
-the same ones), and mermaid (the graph) at the one `playground.mjs` names. Once they are cached, `browser_test.mjs` asks that the
+Pyodide and PGlite come with the page: `build.mjs` copies them from `node_modules` into `dist/`, at the versions
+`package.json` pins (`npm ci` checks them against `package-lock.json`'s hashes, and the build refuses a
+`node_modules` with other versions). The page loads one file from another site: mermaid (the graph), from jsDelivr,
+checked against its hash (Studio's file and hash: `unit_test.py` holds them to one). Its Content-Security-Policy
+lets scripts run from the site itself and that file alone. Once they are cached, `browser_test.mjs` asks that the
 page load within 5 s in headless Chrome (CI's runners, which are slower, within 10 s); the first time also
-downloads about 12 MB.
+downloads about 12 MB, compressed.

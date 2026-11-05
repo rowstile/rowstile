@@ -103,6 +103,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The VS Code extension (0.1.5) works in Restricted Mode: `.authz` files are highlighted there, and the language
   server starts once the folder is trusted (it runs the program `rowstile.command` names). The extension was
   turned off there, its highlighting too.
+- The playground serves Pyodide and PGlite from its own site, at the versions its `package.json` pins, instead of
+  loading them from jsDelivr. Mermaid still comes from jsDelivr, checked against its hash as Studio checks it, and
+  the page's Content-Security-Policy lets scripts run from the site and that file alone.
 
 ### Removed
 

@@ -511,8 +511,8 @@ jobs:
           node-version: "24"
       # the blog's checks first (a post's file, the feed), on made-up posts: the build has them only once there is a post;
       # then what a tag is built from (a release's, the site's), on made-up tags and in a repository made for it; then
-      # the links (pages.mjs) on made-up pages and menus
-      - run: cd site && npm ci --no-audit --no-fund && node blog_test.mjs && node source_test.mjs && node pages_test.mjs && node build.mjs
+      # the links (pages.mjs) on made-up pages and menus; the playground's packages too, which its build copies
+      - run: (cd playground && npm ci --no-audit --no-fund) && cd site && npm ci --no-audit --no-fund && node blog_test.mjs && node source_test.mjs && node pages_test.mjs && node build.mjs
   # The JavaScript is typed (JSDoc) and checked strictly by TypeScript, each part with its own dependencies' types
   javascript:
     needs: unit

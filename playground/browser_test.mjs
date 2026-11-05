@@ -45,7 +45,8 @@ if (!existsSync(join(DIST, "bundle.json"))) {
 
 // dist/, served as a static host would
 /** @type {Record<string, string>} */
-const TYPES = { ".html": "text/html", ".mjs": "text/javascript", ".json": "application/json" };
+const TYPES = { ".html": "text/html", ".mjs": "text/javascript", ".js": "text/javascript", ".json": "application/json",
+  ".wasm": "application/wasm", ".zip": "application/zip", ".data": "application/octet-stream" };
 const server = createServer(async (req, res) => {
   try {
     let path = new URL(req.url ?? "/", "http://x").pathname;
@@ -54,7 +55,10 @@ const server = createServer(async (req, res) => {
       path = path.slice("/no-bundle".length);
     }
     const body = await readFile(join(DIST, decodeURIComponent(path).replace(/^\/$/, "/index.html")));
-    res.writeHead(200, { "content-type": TYPES[extname(path)] ?? "text/html" }).end(body);
+    // Pyodide and PGlite kept for ten minutes, as GitHub Pages serves the site: a load after the first compiles
+    // their WebAssembly from the browser's cache, as it did from the CDN's files
+    const kept = /^\/(pyodide|pglite)\//.test(path) ? { "cache-control": "max-age=600" } : {};
+    res.writeHead(200, { "content-type": TYPES[extname(path)] ?? "text/html", ...kept }).end(body);
   } catch {
     res.writeHead(404).end();
   }
@@ -199,6 +203,16 @@ try {
   await js("document.querySelector('[data-pane=graph]').click()");
   const drawn = await until("document.querySelector('#pane-graph svg') !== null", 30000);
   check("the graph is drawn (mermaid)", drawn === true, await js("document.getElementById('pane-graph').textContent.slice(0, 200)"));
+  // the page's Content-Security-Policy: Mermaid's file runs (it is named there), a script from another address doesn't
+  const refused = await js(`new Promise((done) => {
+    document.addEventListener('securitypolicyviolation', (e) => done(e.effectiveDirective + ' ' + e.blockedURI), { once: true });
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/pyodide@314.0.7/pyodide.js';
+    s.onload = () => done('it ran');
+    document.head.append(s);
+  })`);
+  check("a script from another address is refused (the page's Content-Security-Policy)",
+    refused === "script-src-elem https://cdn.jsdelivr.net/npm/pyodide@314.0.7/pyodide.js", refused);
 
   // a link that carries the policy
   await js(`(() => { const p = document.getElementById('policy'); p.value += '\\n-- from the link\\n';
