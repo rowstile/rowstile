@@ -26,10 +26,11 @@ IF_PARTITIONED = "@if partitioned"
 # inherits: written there directly, rows would leave inheritance, shares, API keys and the audit behind. So each
 # table that inherits is given the row triggers rowstile made on the tables above it, and each partition and
 # table that inherits their statement triggers (but those for TRUNCATE alone that empty out the whole table's
-# share of something, as the audit's and the sync mirror's do: emptying one partition is not emptying the table.
-# Those marked right for a TRUNCATE below, below_too, are given too: they forget what names the rows that are gone,
-# or rebuild a tree). This lists the ones missing, each with the statement that makes it; applying runs them
-# (CHILD_TRIGGERS), lint reports them (a table made since).
+# share of something, as the audit's does: emptying one partition is not emptying the table. Those marked right for
+# a TRUNCATE below, below_too, are given too: they forget what names the rows that are gone, or rebuild a tree; and
+# a sync mirror's, whose function, `<type>__mirror`, empties of the mirror what was stored there). This lists the
+# ones missing, each with the statement that makes it; applying runs them (CHILD_TRIGGERS), lint reports them (a
+# table made since).
 CHILD_TRIGGERS_FN = f"""-- The triggers above that a table under their table lacks, and the statement that makes each
 CREATE FUNCTION authz_int.child_triggers() RETURNS TABLE (child regclass, name name, stmt text)
 LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
@@ -43,12 +44,12 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
   FROM below b
   JOIN pg_class u ON u.oid = b.oid
   JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal
+  JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
    AND CASE WHEN g.tgtype & 1 = 1 THEN NOT u.relispartition         -- a row trigger: Postgres copies it to partitions
             ELSE u.relkind IN ('r', 'p')                            -- a statement trigger: not for TRUNCATE alone,
-                 AND (g.tgtype & 28 <> 0                              -- unless it is right there too (below_too)
+                 AND (g.tgtype & 28 <> 0 OR f.proname LIKE '%\\_\\_mirror'  -- but a mirror's,
                       OR EXISTS (SELECT 1 FROM pg_description x WHERE x.objoid = g.oid AND x.classoid = 'pg_trigger'::regclass
-                                 AND x.description = '{TRUNCATE_BELOW_MARK}')) END
-  JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
+                                 AND x.description = '{TRUNCATE_BELOW_MARK}')) END  -- and one right there too (below_too)
   CROSS JOIN LATERAL (SELECT pg_get_triggerdef(g.oid) AS def) d
   CROSS JOIN LATERAL (SELECT format('%I.%I', n.nspname, k.relname) AS name
                       FROM pg_class k JOIN pg_namespace n ON n.oid = k.relnamespace WHERE k.oid = b.top) p

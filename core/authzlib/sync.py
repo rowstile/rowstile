@@ -584,6 +584,7 @@ END $mi$;"""
         fn = f"authz_int.{q(t.name + '__mirror')}"
         fn_readers = f"authz_int.{q(t.name + '__mirror_readers')}"
         on_old = " AND ".join(f"m.{q(c)} = o.{q(c)}" for c, _ in t.key)
+        on_x = " AND ".join(f"x.{q(c)} = m.{q(c)}" for c, _ in t.key)
         cols = ", ".join(f"m.{q(c)}" for c, _ in t.key)
         xcols = ", ".join(f"x.{q(c)}" for c, _ in t.key)
         row = f"({cols})" if len(t.key) > 1 else cols
@@ -598,8 +599,14 @@ END $mi$;"""
 CREATE FUNCTION {fn}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-  IF TG_OP = 'TRUNCATE' THEN
+  IF TG_OP = 'TRUNCATE' AND TG_RELID = {lit(tbl)}::regclass THEN
     DELETE FROM {mt};
+    RETURN NULL;
+  ELSIF TG_OP = 'TRUNCATE' THEN
+    -- a partition emptied, or a table that inherits (this trigger is on each of them too, CHILD_TRIGGERS): the rows
+    -- stored there leave the mirror, and the type's readers are worked out again
+    DELETE FROM {mt} m WHERE NOT EXISTS (SELECT 1 FROM {tbl} x WHERE {on_x});
+    PERFORM authz_int.sync_dirty({lit(t.name)}, ARRAY['*']);
     RETURN NULL;
   END IF;
   IF TG_OP IN ('UPDATE', 'DELETE') THEN
