@@ -1,7 +1,7 @@
 // Electric's shapes of the tickets and comments, live. The route stands in front of Electric: it asks the
 // database who the request is, and hands Electric the shape the policy gives them (the sync index's rows for
-// them), whatever the client sent. Nobody gets 401; a session viewing as someone gets 403, as the index holds what
-// each person may read, not what a limited session may (README.md, "Live").
+// them), whatever the client sent. A request with no one signed in gets 401; a session viewing as someone gets
+// 403, as the index holds what each person may read, not what a limited session may (README.md, "Live").
 import { actingAs, electricShape, syncPrincipal } from "@rowstile/client";
 import { sql } from "@/db.ts";
 import { session } from "@/session.ts";

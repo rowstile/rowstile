@@ -586,7 +586,8 @@ jobs:
       - run: bash examples/messenger/test.sh
 
   # The helpdesk (several companies' support desks on one database; Next.js, Prisma, the TypeScript SDK) against the
-  # rowstile image built from the same commit: migrated from empty, its policy's tests, prove, lint, public surface.
+  # rowstile image built from the same commit: migrated from empty, its policy's tests, prove, lint, public surface,
+  # then the app built and its API and live tests (Electric) over HTTP.
   helpdesk:
     needs: unit
     runs-on: ubuntu-latest
