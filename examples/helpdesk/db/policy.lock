@@ -203,7 +203,7 @@ function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 5
 function authz.start_review(p_type text, p_id uuid, p_closes_at timestamptz) | ec7375d1508c shape=e7e50df0
 function authz.sync_behind() | 23649e3eda3d shape=38ef998f
 function authz.sync_members(p_type text, p_id text, p_relation text, p_members text[], OUT added int, OUT removed int) | bc7971c29804 shape=c0ea90e1
-function authz.sync_tick() | 291323c4e7cc shape=725c5eaf
+function authz.sync_tick() | 9912151f0174 shape=725c5eaf
 function authz.sync_verify() | 13d59c6478aa shape=c1725dfa
 function authz.sync_work() | 89ce52581ab7 shape=fad1cdef
 function authz.trim_audit(p_keep interval) | 506854f7888f shape=59da80c2
@@ -634,8 +634,8 @@ function authz_int.sign() | 26fda3872285 shape=de0f1c18
 function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b078e77 shape=13054e65
 function authz_int.sync_commit() | 2a3840a9a87b shape=88d2f2c3
 function authz_int.sync_dirty(p_type text, p_ids text[]) | 35332187fe3e shape=420df95d
-function authz_int.sync_process() | 3b21d02c3986 shape=bbf006cf
-function authz_int.sync_refresh(p_hash text, p_force boolean) | 2c41cae3cae9 shape=5328af1d
+function authz_int.sync_process() | 36c5849f0dfd shape=bbf006cf
+function authz_int.sync_refresh(p_hash text, p_force boolean) | 7e6482b18426 shape=5328af1d
 function authz_int.sync_spread(p_tx bigint, p_round int) | 0f0b7412195a shape=53f27788
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
 function authz_int.visible(p_type text, p_id text) | 1697178faeca shape=e14964bd
@@ -698,8 +698,8 @@ step grant_views | e49b68302498
 step mask_privileges | 26af74835f67
 step share_indexes | d5864430446d
 step sweep | 720e0c5ae09f
-step sync_base | db56d795f460
-step sync_refresh | 1971c39cef56
+step sync_base | bcfc868f7650
+step sync_refresh | bf17e8404d6c
 step tables | ef6cba4514a6
 table authz_gen.policy_lines | 7e497c6e8386 shape=dcfedc96
 table authz_int."team__parent__tree" | ed6220be97e0 shape=ed6220be tree=team__parent__tree
