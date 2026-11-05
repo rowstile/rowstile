@@ -9372,6 +9372,18 @@ class Confidence(unittest.TestCase):
         said = r["meaning"]["equivalent"] or ""
         self.assertTrue(said.endswith("only the first 4,096 combinations of their values"), said)
 
+    def test_the_evaluator_reads_a_policy_as_parsed_not_as_compiled(self) -> None:
+        # the compiler makes arrows to some of a relation's types only (parse.ArrowOn), and hidden permissions, on
+        # its own copy of the types: the evaluator reads what the policy says, and refuses such an arrow
+        pol = parse_policy(
+            self.HEAD + "type folder = app.folders\n  parent : folder = parent_id\n  can view = parent.view\n", "p"
+        )
+        evaluate.Reference(pol)
+        view = pol.types["folder"].perms["view"]
+        pol.types["folder"].perms["view"] = dataclasses.replace(view, expr=parse.ArrowOn("parent", "view", ("folder",)))
+        with self.assertRaisesRegex(ValueError, "reads a policy as parsed"):
+            evaluate.Reference(pol)
+
     def test_the_evaluator_refuses_data_it_cannot_read(self) -> None:
         from authzlib import evaluate
 
