@@ -243,7 +243,7 @@ def django_db_setup() -> WorkerDatabase:
 
 `ROWSTILE_TESTS_URL` is the owner's URL to the migrated test database. `@pytest.mark.django_db` works as usual
 (each test in a transaction rolled back after), and so do the SDK's fixtures: `as_user`, `assert_refused`,
-`assert_not_found` ([Python apps](python.md)). Inside the test's transaction, what the app runs goes as it would
+`assert_not_found` ([the Python SDK's README](../../sdk/python/README.md)). Inside the test's transaction, what the app runs goes as it would
 without it: each statement signs in as whoever the code acts for then, so a test may act for one user, then for
 another, by requests or with `rowstile.acting_as`. An atomic block the app begins there is one principal's, as a
 transaction is outside tests: another's statement inside it raises the `RuntimeError`, and once the block ends, the
