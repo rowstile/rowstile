@@ -1012,7 +1012,8 @@ class World:
         """The world, as lines a reviewer can read: the rows of each type (with types, of those alone), the columns
         the simple conditions read, the rows each type's where keeps, those each other condition holds for, every
         link and every custom role given."""
-        shown_types = [t for t in pol.types.values() if types is None or t.name in types]
+        # (a type a smaller world has no row of, said by its absence)
+        shown_types = [t for t in pol.types.values() if (types is None or t.name in types) and data.ids[t.name]]
         lines = [f"{t.name}: {', '.join(data.ids[t.name])}" for t in shown_types]
         # the columns simple conditions read (not NULL; a relation's column is its link, below)
         linked = {
@@ -1088,17 +1089,48 @@ def kept_rows(pol: Policy, alike: frozenset[str] = frozenset()) -> Callable[[Dat
     return whole
 
 
-def smallest(data: Data, still: Callable[[Data], bool], whole: Callable[[Data], Data] | None = None) -> Data:
-    """The data with every link, role and condition row taken away, and every column value made NULL, that
-    `still` doesn't need; whole (kept_rows) makes each smaller data whole again before `still` is asked."""
-    return smallest_of([data], lambda ds: still(ds[0]), [whole] if whole else [])[0]
+def smallest(
+    data: Data,
+    still: Callable[[Data], bool],
+    whole: Callable[[Data], Data] | None = None,
+    keep: Collection[tuple[str, str]] = (),
+) -> Data:
+    """The data with every link, role and condition row taken away, every column value made NULL, and every row
+    (but those of keep, (type, id)) taken away, that `still` doesn't need; whole (kept_rows) makes each smaller data
+    whole again before `still` is asked."""
+    return smallest_of([data], lambda ds: still(ds[0]), [whole] if whole else [], keep)[0]
+
+
+def without_row(data: Data, tname: str, i: str) -> Data:
+    """The data with a row of a type taken away, and every link, role and condition row that names it (a link's
+    subject, a role's holder: the rows of their type, but `*`)."""
+
+    def names(t: str, x: str, of: str, sr: str, y: str) -> bool:
+        return (t == tname and x == i) or (of == tname and sr != "*" and y == i)
+
+    columns = data.columns
+    if tname in columns:
+        columns = {**columns, tname: {k: v for k, v in columns[tname].items() if k != i}}
+    return dataclasses.replace(
+        data,
+        ids={**data.ids, tname: [x for x in data.ids.get(tname, []) if x != i]},
+        valid={**data.valid, tname: [x for x in data.valid.get(tname, []) if x != i]},
+        pairs={k: [p for p in v if not names(k[0], p[0], k[3], k[4], p[1])] for k, v in data.pairs.items()},
+        rolepairs={k: [r for r in v if not names(k[0], r[0], k[2], k[3], r[1])] for k, v in data.rolepairs.items()},
+        cond={k: [x for x in v if not (k[0] == tname and x == i)] for k, v in data.cond.items()},
+        columns=columns,
+    )
 
 
 def smallest_of(
-    datas: list[Data], still: Callable[[list[Data]], bool], whole: Sequence[Callable[[Data], Data]] = ()
+    datas: list[Data],
+    still: Callable[[list[Data]], bool],
+    whole: Sequence[Callable[[Data], Data]] = (),
+    keep: Collection[tuple[str, str]] = (),
 ) -> list[Data]:
     """smallest() for one world as several policies read it (each its data, made whole by its whole): a link, a
-    role, a condition's row or a column's value is taken from all of them at once."""
+    role, a condition's row, a column's value or a row (but those of keep, (type, id)) is taken from all of them at
+    once."""
 
     def made(ds: list[Data]) -> list[Data]:
         return [f(d) for f, d in zip(whole, ds, strict=True)] if whole else ds
@@ -1146,7 +1178,12 @@ def smallest_of(
             trial = nulled(cell)
             if still(trial):
                 datas, d = trial, True
-        changed = a or b or c or d
+        e = False
+        for row in sorted({(t, i) for x in datas for t, ids in x.ids.items() for i in ids} - set(keep)):
+            trial = made([without_row(x, *row) for x in datas])
+            if still(trial):
+                datas, e = trial, True
+        changed = a or b or c or d or e
     return datas
 
 
@@ -1936,8 +1973,10 @@ def first_difference(
                     now = ask(ref_a.evaluate(ds[0], user, links, names_a), ref_b.evaluate(ds[1], user, links, names_b))
                     return now is not None and (o in now[0], o in now[1]) == answer
 
-                # the world made as small as it still tells them apart in, for this user on this object
-                small_a, small_b = smallest_of([da, db], still, whole)
+                # the world made as small as it still tells them apart in, for this user on this object (whose row
+                # stays: one who asks is there)
+                asker = [principal_of(user, pol_b.types)] if user else []
+                small_a, small_b = smallest_of([da, db], still, whole, asker)
                 return (
                     {
                         "what": what,

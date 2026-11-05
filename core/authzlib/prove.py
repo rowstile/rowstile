@@ -9,7 +9,7 @@ person who can sign in and as nobody. At each size, worlds drawn row by row take
 hold at once is rare in a draw (one world in nine for two coin tosses of three values, per row), and found in a
 corner in a few worlds. Then the worlds a draw rarely makes (evaluate.rare_worlds): dense ones, where a link table
 holds half its links or nearly all (a long `and` of links), and, for a policy that reads 2 links deep or more, chains
-one link longer than it reads. A world where someone holds it is a counterexample, shrunk link by link
+one link longer than it reads. A world where someone holds it is a counterexample, shrunk link by link and row by row
 to the smallest that still breaks the invariant, and printed as a reviewer can read it. The same engine checks
 that a refactor changed nothing in rowstile review.
 """
@@ -50,10 +50,11 @@ def broken(ref: Reference, inv: Invariant, data: Data) -> tuple[str, str] | None
     return None
 
 
-def shrink(ref: Reference, inv: Invariant, data: Data) -> Data:
-    """The world with every link, share and condition taken away that the counterexample doesn't need (a row its
-    type's where keeps keeps what the where needs)."""
-    return smallest(data, lambda d: broken(ref, inv, d) is not None, kept_rows(ref.pol, alike_in([ref.pol])))
+def shrink(ref: Reference, inv: Invariant, data: Data, who: str) -> Data:
+    """The world with every link, share, condition and row taken away that the counterexample doesn't need (a row
+    its type's where keeps keeps what the where needs), but the row of who was found to hold it ('nobody': none)."""
+    keep = [principal_of(who, ref.types)] if who != "nobody" else []
+    return smallest(data, lambda d: broken(ref, inv, d) is not None, kept_rows(ref.pol, alike_in([ref.pol])), keep)
 
 
 def prove(pol: Policy, worlds: int = WORLDS, seed: int = 0, max_size: int = MAX_SIZE) -> list[Proof]:
@@ -80,9 +81,10 @@ def prove(pol: Policy, worlds: int = WORLDS, seed: int = 0, max_size: int = MAX_
         data = w.data(pol)
         for k in list(left):
             inv = pol.invariants[k]
-            if not broken(ref, inv, data):
+            first = broken(ref, inv, data)
+            if first is None:
                 continue
-            small = shrink(ref, inv, data)
+            small = shrink(ref, inv, data, first[0])
             found = broken(ref, inv, small)
             assert found is not None  # shrink keeps the world broken
             who, obj = found

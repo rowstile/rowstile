@@ -288,6 +288,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `,` of a path, as GitHub reads them. Deploy names a quoted table with a space in its name whole, and counts an
   app schema whose name starts with `authz` as the app's. The comment's table escapes a `|` in every cell, an
   invariant's own text too, and a counterexample doubles a quote in a text, as SQL writes it.
+- The world `rowstile review` and `rowstile prove` show a difference or a counterexample in leaves out the rows
+  that play no part, as it does links and values: one found among 2 users and 4 folders shows the user and the
+  folder it is about, not all six.
 
 ### Upgrading
 
