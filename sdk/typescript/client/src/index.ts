@@ -58,14 +58,16 @@ export function idShown(id: Id): string {
 
 // --- who a transaction acts for ----------------------------------------------------------------------------
 /** A user (type "user"), another principal type the policy declares (a service, a bot), or nobody (id null:
- *  only what `anyone` may see). */
+ *  only what `anyone` may see). Nobody has one spelling: principal() makes one without an id (null, undefined or
+ *  ""), whatever its type, NOBODY, as the database signs it in. */
 export interface Principal {
   readonly type: string;
   readonly id: string | null;
 }
 /** 42, "42", ["service", 3], a Principal, or null / undefined (nobody). A plain id is a user's, whatever it holds:
  *  "service:3" is the user whose id that is (ids often come from outside: a username, an identity provider's
- *  subject), never service 3. Another principal type is named: ["service", 3]. */
+ *  subject), never service 3. Another principal type is named: ["service", 3]. Without an id (null, undefined or
+ *  ""), whatever the type, it is NOBODY. */
 export type Who = Principal | string | number | bigint | readonly [string, string | number | bigint | null] | null | undefined;
 
 export const NOBODY: Principal = Object.freeze({ type: "user", id: null });
@@ -74,13 +76,18 @@ export function principal(who: Who): Principal {
   if (who === null || who === undefined) return NOBODY;
   if (Array.isArray(who)) {
     const [type, id] = who as readonly [string, string | number | bigint | null];
-    return Object.freeze({ type: String(type), id: id === null || id === undefined ? null : String(id) });
+    return made(String(type), id);
   }
   if (typeof who === "object") {
     const p = who as Principal;
-    return Object.freeze({ type: p.type ?? "user", id: p.id === null || p.id === undefined ? null : String(p.id) });
+    return made(p.type ?? "user", p.id);
   }
-  return Object.freeze({ type: "user", id: String(who) });
+  return made("user", who);
+}
+
+/** A principal of this type and id, or NOBODY without an id (null, undefined or ""). */
+function made(type: string, id: string | number | bigint | null | undefined): Principal {
+  return id === null || id === undefined || id === "" ? NOBODY : Object.freeze({ type, id: String(id) });
 }
 
 /** What describe() wrote, read back: "service:3" is service 3, "42" and "user:42" user 42, "nobody" nobody.
@@ -89,8 +96,8 @@ export function principal(who: Who): Principal {
 export function parsePrincipal(text: string): Principal {
   if (text === "nobody") return NOBODY;
   const colon = text.indexOf(":");
-  if (colon > 0 && !text.startsWith("(")) return Object.freeze({ type: text.slice(0, colon), id: text.slice(colon + 1) });
-  return Object.freeze({ type: "user", id: text });
+  if (colon > 0 && !text.startsWith("(")) return made(text.slice(0, colon), text.slice(colon + 1));
+  return made("user", text);
 }
 
 /** "42", "service:3" or "nobody". A user whose id holds ":" or is "nobody" is "user:<id>" ("user:a:b"), so that
@@ -175,7 +182,8 @@ export function transactionScope<T>(): {
 }
 
 function same(a: Principal, b: Principal): boolean {
-  return a.type === b.type && a.id === b.id;
+  const x = principal(a), y = principal(b);              // (a Principal made by hand: nobody has one spelling)
+  return x.type === y.type && x.id === y.id;
 }
 
 /** What work for `who` inside a transaction signed in as `signed` throws, before anything is sent for it. A sign-in
@@ -187,7 +195,7 @@ export function signedInAlready(signed: Principal, who: Principal): Error {
 
 /** "user 42", "service 3" or "nobody", as the database's own words name a principal. */
 function named(p: Principal): string {
-  return p.id === null ? "nobody" : `${p.type} ${p.id}`;
+  return !p.id ? "nobody" : `${p.type} ${p.id}`;
 }
 
 /** Who the request is, when nothing set it with actingAs: e.g. async () => (await auth())?.user.id */
@@ -314,6 +322,7 @@ interface DbError {
   schema?: string;
   table?: string;
   constraint?: string;
+  routine?: string;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
@@ -330,21 +339,17 @@ export function dbError(e: unknown): DbError | null {
       message: str(o.originalMessage) ?? str(o.message) ?? "",
       detail: str(o.detail), hint: str(o.hint),
       schema: str(o.schema) ?? str(o.schema_name), table: str(o.table) ?? str(o.table_name),
-      constraint: str(o.constraint) ?? str(o.constraint_name),
+      constraint: str(o.constraint) ?? str(o.constraint_name), routine: str(o.routine),
     };
   }
   return null;
 }
 
 /** rowstile's code for a database error (AZ709; `rowstile help AZ709` says what it means): from its HINT, where
- *  the runtime puts it, or its message. Undefined for an error rowstile didn't raise. */
+ *  the runtime puts it, and never its message, which may hold the request's own input (Postgres's own words quote a
+ *  value it couldn't read). Undefined for an error rowstile didn't raise. */
 export function errorCode(e: unknown): string | undefined {
-  const err = dbError(e);
-  for (const text of [err?.hint, err?.message]) {
-    const m = /rowstile help (AZ\d{3})/.exec(text ?? "");
-    if (m) return m[1];
-  }
-  return undefined;
+  return /rowstile help (AZ\d{3})/.exec(dbError(e)?.hint ?? "")?.[1];
 }
 
 export function sqlstate(e: unknown): string | undefined {
@@ -354,9 +359,11 @@ export function sqlstate(e: unknown): string | undefined {
 // Postgres's own words, not rowstile's: a check of a row no rule's own refusal covers. Postgres names the table
 // without its schema, and sets no field for it
 const RLS_GENERIC = /^(new|target) row violates row-level security policy (\(USING expression\) )?for table "([^"]+)"/;
+// the function in Postgres that raises those refusals (the error's routine): what tells one in another language
+const ROW_CHECK = "ExecWithCheckOptions";
 const UNSEEN = "this user may not see the row as written (the select rule). An insert that reads it back (RETURNING), " +
   "an upsert, and an update with a WHERE need to see it.";
-const OURS = /may not (insert|update|delete) this row (?:into|of) (\S+?)(?: to these values)?$/;
+const OURS = /^permission denied: .* may not (insert|update|delete) this row (?:into|of) (\S+?)(?: to these values)?$/;
 /** The table in a column rule's refusal, "changing locked of app.notes 7 needs: folder.manage" (always an
  *  update); undefined for any other message. Read with indexOf: a pattern here would backtrack on a long one. */
 function columnRuleTable(message: string): string | undefined {
@@ -393,7 +400,10 @@ export function refusal(e: unknown, schemaOf?: (table: string) => string | undef
   }
   const ours = OURS.exec(err.message);
   const code = errorCode(e);
-  if (!ours && !err.constraint?.startsWith("authz_") && code === undefined) return null;
+  if (!ours && !err.constraint?.startsWith("authz_") && code === undefined) {
+    // Postgres's own refusal in another language (the server's lc_messages): which table and rule, its words alone say
+    return err.routine === ROW_CHECK ? new Refused(err.message, undefined, undefined, [], { cause: e }) : null;
+  }
   // sign in first (AZ714) is a 42501 too, but no refusal: a 401
   if (code !== undefined && CALL_PROBLEMS.has(code)) return null;
   // the error's own fields say which table and command; a driver that drops them (Prisma's adapters) leaves
@@ -405,11 +415,10 @@ export function refusal(e: unknown, schemaOf?: (table: string) => string | undef
 }
 
 /** Whether e is the not-signed-in error (rowstile help AZ701): a query that needs to know who is asking, and nobody
- *  signed in. A login refused (AZ703) and settings changed by hand (AZ702) share its SQLSTATE, 28000, but are no
- *  such thing. */
+ *  signed in. Its SQLSTATE, 28000, is shared by a login refused (AZ703), settings changed by hand (AZ702) and
+ *  Postgres's own refusals to connect (a role that isn't there, pg_hba.conf), which carry no code: none of them is. */
 export function notSignedIn(e: unknown): boolean {
-  const code = errorCode(e);
-  return sqlstate(e) === "28000" && (code === undefined || code === "AZ701");
+  return sqlstate(e) === "28000" && errorCode(e) === "AZ701";
 }
 
 /** e as rowstile's error: Refused, NotFound or NotSignedIn as they are, a database refusal as Refused, the

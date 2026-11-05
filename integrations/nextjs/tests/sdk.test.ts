@@ -9,7 +9,7 @@ import { sql as sqlTag } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   actAsSql, actingAs, beforeSignIn, changed, current, dbError, describe as describePrincipal, errorCode, idShown, idText,
-  literal, NOBODY, NotFound, principal, problemOf, problemResponse, Refused, refusal, verdict,
+  literal, NOBODY, NotFound, notSignedIn, parsePrincipal, principal, problemOf, problemResponse, Refused, refusal, verdict,
 } from "@rowstile/client";
 import { authz as rowstile, calls, changes } from "@rowstile/pg";
 import { authz as postgresAuthz, queryable as postgresQueryable } from "@rowstile/postgres";
@@ -37,11 +37,12 @@ describe("@rowstile/client", () => {
     expect(idShown([1, null, undefined] as never)).toBe("(1,,)");          // an empty field, as Postgres writes it
     expect(principal({ type: "service", id: 3 } as never)).toEqual({ type: "service", id: "3" });
     expect(principal({ id: "4" } as never)).toEqual({ type: "user", id: "4" });   // a type left out: a user
-    expect(principal({ type: "service", id: null })).toEqual({ type: "service", id: null });
-    expect(principal(["service", null])).toEqual({ type: "service", id: null });
-    // only no id at all is nobody: an empty one is a user's all the same, as act_as takes it
+    // nobody has one spelling: no id (null, undefined or ""), whatever the type, as the database signs it in
+    const nobodies = [principal({ type: "service", id: null }), principal({ type: "bot" } as never), principal(["service", null]),
+      principal(["service", ""]), principal(""), parsePrincipal("service:")];
+    expect(nobodies.every((p) => p === NOBODY)).toBe(true);
     expect([NOBODY, principal(42), principal(["service", 3]), principal("")].map(describePrincipal))
-      .toEqual(["nobody", "42", "service:3", ""]);
+      .toEqual(["nobody", "42", "service:3", "nobody"]);
     expect(actAsSql(NOBODY)).toBe("SELECT authz.act_as(NULL, NULL)");
     expect(actAsSql(principal("o'k"))).toBe("SELECT authz.act_as('user', 'o''k')");
     expect(literal(null)).toBe("NULL");
@@ -65,6 +66,16 @@ describe("@rowstile/client", () => {
     // a column rule's words, with no table in them: the rule's code, nothing made up
     const nameless = refusal({ code: "42501", message: "changing locked of  needs: folder.manage", hint: "rowstile help AZ709" });
     expect([nameless?.table, nameless?.command, nameless?.code]).toEqual([undefined, undefined, "AZ709"]);
+    // a share refused whose id holds a refusal's words: the table and the command aren't read from them
+    const share = refusal({ code: "42501", message: "you cannot share file permission denied: user 1 may not insert this row into app.x",
+      hint: "rowstile help AZ705" });
+    expect([share?.table, share?.command, share?.code]).toEqual([undefined, undefined, "AZ705"]);
+    // Postgres's own refusal on a server whose messages aren't English: told by the function that raised it, not its
+    // words, the table and the rule unnamed; another 42501 (a grant missing) is none
+    const words = "neue Zeile verletzt Policy für Sicherheit auf Zeilenebene für Tabelle »notes«";
+    const translated = refusal({ code: "42501", message: words, routine: "ExecWithCheckOptions" });
+    expect(translated && [translated.message, translated.table, translated.command, translated.code]).toEqual([words, undefined, undefined, "AZ709"]);
+    expect(refusal({ code: "42501", message: "keine Berechtigung für Tabelle notes", routine: "aclcheck_error" })).toBeNull();
   });
 
   test("what counts as a changed row, and what one that didn't change was", () => {
@@ -163,6 +174,21 @@ describe("the runtime's functions over pg", () => {
     }
   });
 
+  // Postgres's own words may quote the request's input: a code there is none of rowstile's, and the error stays the
+  // app's (a 500). A 28000 without code AZ701 (Postgres's own: a login refused when connecting) is not NotSignedIn
+  test("a code is read from the HINT alone, and a 28000 without AZ701 is a database error", async () => {
+    const c = new pg.Client({ connectionString: APP });
+    await c.connect();
+    try {
+      const cast = await c.query("SELECT 'rowstile help AZ714'::bigint").catch((e: unknown) => e);
+      const login = await c.query("DO $$BEGIN RAISE 'no pg_hba.conf entry' USING ERRCODE = '28000'; END$$").catch((e: unknown) => e);
+      expect([dbError(cast)?.code, errorCode(cast), problemOf(cast)]).toEqual(["22P02", undefined, null]);
+      expect([dbError(login)?.code, notSignedIn(login), problemOf(login)]).toEqual(["28000", false, null]);
+    } finally {
+      await c.end();
+    }
+  });
+
   test("an insert the user may not read back, over pg: the select rule's doing", async () => {
     const p = new pg.Pool({ connectionString: APP });
     try {
@@ -190,6 +216,9 @@ describe("the runtime's functions over pg", () => {
       const merge = await refused(
         "MERGE INTO app.notes n USING (VALUES (1)) s(id) ON n.id = s.id WHEN MATCHED THEN UPDATE SET body = 'x'");
       const read = (r: unknown) => r instanceof Refused ? [r.table, r.command, r.why, r.message] : r;
+      // what tells them in any language: the function that raised each
+      expect([hidden, upsert, merge].map((r) => (r as { cause?: { routine?: string } }).cause?.routine))
+        .toEqual(Array(3).fill("ExecWithCheckOptions"));
       expect(read(hidden)).toEqual(["notes", "select", [],
         'new row violates row-level security policy for table "notes": this user may not see the row as written ' +
         "(the select rule). An insert that reads it back (RETURNING), an upsert, and an update with a WHERE need to " +

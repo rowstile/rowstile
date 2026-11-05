@@ -88,7 +88,8 @@ describe("route handlers and server actions", () => {
     await db.note.update({ where: { id }, data: { body: "renamed" } });
     return id;
   };
-  const notSignedIn = Object.assign(new Error("nobody signed in in this transaction"), { code: "28000" });
+  const notSignedIn = Object.assign(new Error("nobody signed in in this transaction"),
+    { code: "28000", hint: "start each transaction with SELECT authz.act_as('user', '42') (rowstile help AZ701)" });
 
   test("route: a refusal is 403 with the reason, a hidden row 404; other errors are thrown", async () => {
     const PATCH = route(async (req: Request) => Response.json({ id: await rename(Number(new URL(req.url).searchParams.get("id"))) }));
