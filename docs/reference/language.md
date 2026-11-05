@@ -261,8 +261,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
 
 ## Permissions the runtime asks for
 
-Permission names are yours to choose, but five are asked for by name. The compiler refuses one declared
-where nothing would ask for it (AZ307). <!-- checked: tests/policy_errors.py "impersonate on a type other than user"; tests/policy_errors.py "manage_keys on a type that doesn't sign in"; tests/policy_errors.py "break_glass with nothing to give"; tests/policy_errors.py "manage_roles with no roles to make" -->
+Permission names are yours to choose, but six are asked for by name. The compiler refuses one of the first
+five declared where nothing would ask for it (AZ307). <!-- checked: tests/policy_errors.py "impersonate on a type other than user"; tests/policy_errors.py "manage_keys on a type that doesn't sign in"; tests/policy_errors.py "break_glass with nothing to give"; tests/policy_errors.py "manage_roles with no roles to make" -->
 
 | permission | on | lets its holders |
 |---|---|---|
@@ -271,6 +271,7 @@ where nothing would ask for it (AZ307). <!-- checked: tests/policy_errors.py "im
 | `impersonate` | the user type | view the app as that user with `authz.view_as`: read-only, audited; a user, not a service (AZ715) <!-- checked: tests/principals.sh "authz.view_as is for users: a service is told so"; tests/identity.sh "and cannot change anything"; tests/identity.sh "the audit trail has the reason"; tests/identity.sh "carol cannot view as erin" --> |
 | `manage_keys` | a type that signs in | make and revoke its API keys (`authz.create_api_key(..., 'service', '7')`) <!-- checked: tests/principals.sh "its owner makes service 7 a key"; tests/principals.sh "someone else may not"; tests/principals.sh "the owner revoked it" --> |
 | `manage_roles` | the type that owns custom roles (`roles : user from org`) | create, change and delete those roles (a permission added held on each object the role is given on); a user, not a service (AZ715) <!-- checked: tests/principals.sh "authz.create_role is for users: a service is told so"; tests/multi_scenario.sql "alice is no Acme admin: she cannot define roles for Acme"; tests/multi_scenario.sql "adds edit to reviewer: dave can now edit"; tests/multi_scenario.sql "erin deletes the role: its assignments go with it" --> <!-- answer: runtime-manage-roles --> |
+| `view` | the type that owns custom roles | list those roles with `authz.roles_of`, as holders of `manage_roles` may: each one's name and what it gives (the choices of a share dialog); a user, not a service (AZ715) <!-- checked: tests/difftest.py "roles_of: the owner's roles, to whoever manages it or may view it"; tests/principals.sh "authz.roles_of is for users: a service is told so" --> |
 
 ## Masked columns
 

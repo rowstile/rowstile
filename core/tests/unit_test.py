@@ -2188,7 +2188,7 @@ class ClientNames(unittest.TestCase):
             r"export type PrismaAuthz = [^{]*\{(.*?)\n\};", read("../sdk/typescript/prisma/src/index.ts"), re.S
         )
         text = read("../docs/reference/app-code.md")
-        sentence = text[text.index("The SDK's calls") :].split(". Its `share`")[0]
+        sentence = text[text.index("The TypeScript SDK's calls") :].split(". Its `share`")[0]
         listed = re.findall(r"`(\w+)`", sentence[sentence.index(") are ") :])
         self.assertEqual(
             sorted(listed), sorted(calls | {"expect"} | set(re.findall(r"^  (\w+)<", prisma.group(1), re.M)))
@@ -2202,8 +2202,7 @@ class ClientNames(unittest.TestCase):
         reference = "".join(
             read(f"../docs/reference/{p}") for p in sorted(os.listdir(os.path.join(ROOT, "..", "docs", "reference")))
         )
-        # authz.link_hashes is what the rules read (the links the transaction presents), not a call for apps
-        missing = {s.split("(")[0] for s in c.api_signatures()} - {"authz.link_hashes"}
+        missing = {s.split("(")[0] for s in c.api_signatures()}
         self.assertEqual(sorted(n for n in missing if f"{n}(" not in reference), [])
 
 
