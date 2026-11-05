@@ -5,11 +5,12 @@ on the app's folder (exit 1 and a list of places otherwise):
     python3 examples/messenger/check_public_surface.py
     python3 examples/helpdesk/check_public_surface.py
 
-Public: the rowstile command, and the authz.* functions the reference documents (docs/reference/). Not public:
-the schemas authz_gen and authz_int; rowstile's tables (authz.shares, authz.audit, ...), which only its functions
-read or write; a search_path naming a schema of rowstile's; and setting authz.user_id, authz.principal_type,
-authz.scopes, authz.acting_user or authz.session, which only authz.act_as() and the logins do (the generated
-client calls them).
+Public: the rowstile command, the authz.* functions the reference documents (docs/reference/), the generated
+clients and the SDKs (the helpdesk is built on the TypeScript SDK's packages). Not public: the schemas authz_gen
+and authz_int; rowstile's tables (authz.shares, authz.audit, ...), which only its functions read or write; a
+search_path naming a schema of rowstile's; and setting authz.user_id, authz.principal_type, authz.scopes,
+authz.acting_user or authz.session, which only authz.act_as() and the logins do (the generated clients and the
+SDKs call them).
 
 Every text file is read, whatever its name, comments too (a name in a comment is cheap to reword), and names
 are matched as Postgres reads them: in any case, quoted or not, with spaces around the dot. What rowstile
