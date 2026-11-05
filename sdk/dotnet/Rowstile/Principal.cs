@@ -5,12 +5,19 @@ namespace Rowstile;
 
 /// <summary>
 /// Who a transaction acts for: a user (type <c>user</c>), another principal type the policy declares (a service, a
-/// bot), or nobody (<see cref="Id"/> null: only what <c>anyone</c> may see).
+/// bot), or nobody (<see cref="Id"/> null: only what <c>anyone</c> may see). Nobody has one spelling: a principal made
+/// without an id (null or empty), whatever its type, is <see cref="Nobody"/>, as the database signs it in.
 /// </summary>
 /// <param name="Type">The principal type: <c>user</c>, or another the policy declares (<c>service</c>).</param>
-/// <param name="Id">Its id, as text; null for nobody.</param>
+/// <param name="Id">Its id, as text; null (or empty) for nobody.</param>
 public sealed record Principal(string Type, string? Id)
 {
+    /// <summary>The principal type: <c>user</c>, or another the policy declares; <c>user</c> for nobody.</summary>
+    public string Type { get; init; } = string.IsNullOrEmpty(Id) ? "user" : Type;
+
+    /// <summary>Its id, as text; null for nobody.</summary>
+    public string? Id { get; init; } = string.IsNullOrEmpty(Id) ? null : Id;
+
     /// <summary>Nobody: only what <c>anyone</c> may see.</summary>
     public static Principal Nobody { get; } = new("user", null);
 

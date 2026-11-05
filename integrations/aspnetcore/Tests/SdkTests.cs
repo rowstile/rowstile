@@ -84,22 +84,26 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         string? schema = null,
         string? table = null,
         string? constraint = null,
-        string? detail = null
-    ) => new(message, "ERROR", "ERROR", sqlState, detail: detail, hint: hint, schemaName: schema, tableName: table, constraintName: constraint);
+        string? detail = null,
+        string? routine = null
+    ) => new(message, "ERROR", "ERROR", sqlState, detail: detail, hint: hint, schemaName: schema, tableName: table, constraintName: constraint, routine: routine);
 
     [Fact]
     public void The_code_is_what_rowstile_help_names()
     {
-        // in the HINT, where the runtime puts it, or else in the message; an applying error's [AZ612] is no answer
+        // in the HINT, where the runtime puts it, and never the message: Postgres's own words quote the request's input;
+        // an applying error's [AZ612] is no answer
         Assert.Equal("AZ612", Errors.Code(Raised("P0001", "no", hint: "rowstile help AZ612")));
-        Assert.Equal("AZ612", Errors.Code(Raised("P0001", "no: rowstile help AZ612")));
+        Assert.Null(Errors.Code(Raised("22P02", "invalid input syntax for type bigint: \"rowstile help AZ714\"")));
+        Assert.Null(Errors.ProblemOf(Raised("22P02", "invalid input syntax for type bigint: \"rowstile help AZ714\"")));
         Assert.Null(Errors.Code(Raised("P0001", "a check said no [AZ612]")));
         Assert.Null(Errors.Code(new InvalidOperationException("not the database's")));
         Assert.Null(Errors.SqlState(new InvalidOperationException("not the database's")));
         Assert.Equal("42501", Errors.SqlState(new InvalidOperationException("around it", Raised("42501", "inside"))));
-        // not signed in: SQLSTATE 28000 and AZ701 (or no code); a login refused and settings changed by hand share it
+        // not signed in: SQLSTATE 28000 and AZ701; a login refused, settings changed by hand and Postgres's own refusal
+        // to connect (no code: a role that isn't there, pg_hba.conf) share the SQLSTATE
         Assert.True(Errors.IsNotSignedIn(Raised("28000", "who?", hint: "rowstile help AZ701")));
-        Assert.True(Errors.IsNotSignedIn(Raised("28000", "who?")));
+        Assert.False(Errors.IsNotSignedIn(Raised("28000", "role \"nobody_here\" does not exist")));
         Assert.False(Errors.IsNotSignedIn(Raised("28000", "invalid API key", hint: "rowstile help AZ703")));
         Assert.False(Errors.IsNotSignedIn(Raised("42501", "no", hint: "rowstile help AZ701")));
     }
@@ -110,6 +114,12 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         Assert.Null(Errors.Refusal(new InvalidOperationException("not the database's")));
         Assert.Null(Errors.Refusal(Raised("23505", "duplicate key")));
         Assert.Null(Errors.Refusal(Raised("42501", "permission denied for table x"))); // the app role was never granted it
+        // Postgres's own refusal on a server whose messages aren't English: told by the function that raised it, not its
+        // words, the table and the rule unnamed
+        const string words = "neue Zeile verletzt Policy für Sicherheit auf Zeilenebene für Tabelle »notes«";
+        var translated = Errors.Refusal(Raised("42501", words, routine: "ExecWithCheckOptions"))!;
+        Assert.Equal((words, (string?)null, (string?)null, "AZ709"), (translated.Message, translated.Table, translated.Command, translated.Code));
+        Assert.Null(Errors.Refusal(Raised("42501", "keine Berechtigung für Tabelle x", routine: "aclcheck_error")));
         Assert.Null(Errors.Refusal(Raised("42501", "sign in first", hint: "rowstile help AZ714"))); // a 401, no refusal
         var share = Errors.Refusal(Raised("42501", "you cannot share project 1", hint: "rowstile help AZ705"))!;
         Assert.Equal(("AZ705", (string?)null, (string?)null, 0), (share.Code, share.Table, share.Command, share.Why.Count));
@@ -144,6 +154,11 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
     {
         Assert.Equal(((string?)null, (string?)null), RowstileNpgsql.ActAsArgs());
         Assert.Equal(("service", "3"), RowstileNpgsql.ActAsArgs(new Principal("service", "3")));
+        // nobody has one spelling: no id (null or empty), whatever the type
+        foreach (var nobody in new[] { new Principal("service", null), new Principal("bot", ""), Principal.User(""), Principal.Parse("service:") })
+        {
+            Assert.Equal((Principal.Nobody, "nobody"), (nobody, nobody.ToString()));
+        }
         using (Acting.As(Principal.User(1)))
         {
             Assert.Equal(("user", "1"), RowstileNpgsql.ActAsArgs());
@@ -213,6 +228,7 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
             var merge = Errors.Refusal(e)!;
             Assert.Equal(("notes", (string?)null), (merge.Table, merge.Command));
             Assert.Contains("MERGE matched a row", merge.Message, StringComparison.Ordinal);
+            Assert.Equal("ExecWithCheckOptions", e.Routine); // what tells it in any language
         }
         // a 42501 that isn't a policy's (a table the app role was never granted) isn't one
         await using (var tx = await conn.BeginSignedInAsync(Principal.User(1)))
@@ -449,6 +465,15 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         using (Acting.As(new Principal("service", "1")))
         {
             Assert.Equal(2, await ctx.Projects.CountAsync());
+        }
+        // nobody has one spelling: nobody's work runs in a transaction begun for a principal without an id
+        using (Acting.As(new Principal("service", null)))
+        {
+            await using var nobodys = await ctx.Database.BeginTransactionAsync();
+            using (Acting.As(Principal.Nobody))
+            {
+                Assert.Equal(1, await ctx.Projects.CountAsync());
+            }
         }
         // a transaction the app brought (UseTransaction) is the app's to sign in: the SDK doesn't check it
         await using var conn = new NpgsqlConnection(db.App);
