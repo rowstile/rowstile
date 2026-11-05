@@ -626,6 +626,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile review --db`: Risk's example of a permission that allows more is someone Access shows gaining it on
   the review data, when it shows one. Before, it came from the review's small worlds alone, and could name a user
   who held the permission already.
+- `rowstile why` and Studio say "more" and "other" only of objects of the type asked about: a change that also
+  gives edit on a note's one project says "edit on 1 project", not "on 1 more project".
 
 ### Upgrading
 

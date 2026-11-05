@@ -84,28 +84,30 @@ def holding(t: Type, columns: Cols, oid: str) -> list[tuple[str, str]]:
     return [(c, f"{key}.{q(k)}") for c, (k, _) in zip(columns, t.key, strict=True)]
 
 
-def more_of(items: Sequence[tuple[str, str, int]], first: str) -> list[str]:
+def more_of(items: Sequence[tuple[str, str, int]], first: str, here: str) -> list[str]:
     """(type, permission, n) in words, the permissions gained on as many objects of a type together, the one asked
-    about (first) before the others: "view, edit on 3 more folders"."""
+    about (first) before the others: "view, edit on 3 more folders" (more than the one asked about, of type here),
+    "view on 2 files" (of another type: none of them is that one)."""
     groups: dict[tuple[str, int], list[str]] = {}
     for tn, pn, n in items:
         groups.setdefault((tn, n), []).append(pn)
     return [
-        f"{', '.join(sorted(ps, key=lambda p: (p != first, p)))} on {n} more {tn}{'s' if n != 1 else ''}"
+        f"{', '.join(sorted(ps, key=lambda p: (p != first, p)))} on {n} {'more ' if tn == here else ''}"
+        f"{tn}{'s' if n != 1 else ''}"
         for (tn, n), ps in groups.items()
     ]
 
 
-def taken(items: Sequence[tuple[str, str, int, int]], first: str) -> list[str]:
+def taken(items: Sequence[tuple[str, str, int, int]], first: str, here: str) -> list[str]:
     """(type, permission, objects, people) in words, the permissions people lose together, the one asked about
     (first) before the others: "share, edit on it from 1 person", "view on 2 other docs from 3 people" (0 objects:
-    on the object asked about)."""
+    on the object asked about; other than it, of type here), "view on 1 folder from 1 person" (another type)."""
     groups: dict[tuple[str, int, int], list[str]] = {}
     for tn, pn, n, k in items:
         groups.setdefault((tn, n, k), []).append(pn)
     return [
         f"{', '.join(sorted(ps, key=lambda p: (p != first, p)))} on "
-        + (f"{n} other {tn}{'s' if n != 1 else ''}" if n else "it")
+        + (f"{n} {'other ' if tn == here else ''}{tn}{'s' if n != 1 else ''}" if n else "it")
         + f" from {k} {'person' if k == 1 else 'people'}"
         for (tn, n, k), ps in groups.items()
     ]
@@ -811,13 +813,15 @@ def describe(answer: Answer, who: str, type_name: str, oid: str, perm: str) -> s
             also = []
             if w.also:
                 also.append(f"{', '.join(w.also)} on it")
-            more = more_of(([(type_name, perm, w.more_objects)] if w.more_objects else []) + w.elsewhere, perm)
+            more = more_of(
+                ([(type_name, perm, w.more_objects)] if w.more_objects else []) + w.elsewhere, perm, type_name
+            )
             if more:
                 also.append(f"{', and '.join(more)} for {who}")
             if w.more_people:
                 also.append(f"{perm} on it to {w.more_people} more {'people' if w.more_people != 1 else 'person'}")
             lines = sorted({str(ch.loc) for ch in w.changes})
-            takes = taken(w.takes, perm)
+            takes = taken(w.takes, perm, type_name)
             out.append(
                 f"  {w.text}"
                 + (f" (also gives {', and '.join(also)})" if also else "")

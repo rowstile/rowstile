@@ -272,9 +272,9 @@ async function why(as, type, id, perm, out) {
         (w.also.length || w.more_objects || w.elsewhere.length || w.more_people || w.takes.length || w.uncounted.length) ? el("div", { class: "also" },
           [w.also.length ? `also gives ${w.also.join(", ")} on it` : "",
            w.more_objects ? `also gives ${perm} on ${w.more_objects} more ${type}${w.more_objects === 1 ? "" : "s"} to them` : "",
-           ...w.elsewhere.map((e) => `also gives ${e.perm} on ${e.n} more ${e.type}${e.n === 1 ? "" : "s"} to them`),
+           ...w.elsewhere.map((e) => `also gives ${e.perm} on ${e.n} ${e.type === type ? "more " : ""}${e.type}${e.n === 1 ? "" : "s"} to them`),
            w.more_people ? `and to ${w.more_people} more ${w.more_people === 1 ? "person" : "people"} on this ${type}` : "",
-           ...w.takes.map((e) => `takes ${e.perm} on ${e.n ? `${e.n} other ${e.type}${e.n === 1 ? "" : "s"}` : "it"} from ${e.people} ${e.people === 1 ? "person" : "people"}`),
+           ...w.takes.map((e) => `takes ${e.perm} on ${e.n ? `${e.n} ${e.type === type ? "other " : ""}${e.type}${e.n === 1 ? "" : "s"}` : "it"} from ${e.people} ${e.people === 1 ? "person" : "people"}`),
            ...w.uncounted.map((e) => `not counted: ${e.perm} on ${e.type}s, past ${e.past}`)].filter(Boolean).join(", ")) : null))));
     } else if (a.stops.length) {
       // the person or the object isn't there, or the type's where leaves it out: nothing was tried

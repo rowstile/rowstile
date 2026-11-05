@@ -493,14 +493,19 @@ def main() -> None:
     check(
         "the way that gives the least comes first: a viewer (and the file in the folder), before an editor",
         asked
-        and asked[0] == "share viewer on folder 2 with user 6 (also gives view on 1 more file for user:6)  [line 43]"
+        and asked[0] == "share viewer on folder 2 with user 6 (also gives view on 1 file for user:6)  [line 43]"
         and any(w.startswith("share editor on folder 2 with user 6 (also gives edit on it") for w in asked),
+        out,
+    )
+    check(
+        "objects of another type than the one asked about are counted, not said as more or other than it",
+        not any(" more file" in w or " other file" in w for w in asked),
         out,
     )
     check(
         "... with all it gives: an editor's share higher up gives edit on the folders and the files below too",
         "share editor on folder 1 with user 6 (also gives edit on it, and view, edit on 3 more folders, and view, "
-        "edit on 3 more files for user:6)  [line 45]" in asked,
+        "edit on 3 files for user:6)  [line 45]" in asked,
         out,
     )
     asked, out = granted_by("--as", "user:3", "folder", "3", "share")
@@ -525,8 +530,8 @@ def main() -> None:
     check(
         "... with all it gives: every folder and file of the org, and its members to impersonate",
         "set role = 'admin' on user 3's row of app.org_members for org 1 (also gives edit on it, and share, edit on "
-        "5 more folders, and view on 2 more folders, and impersonate on 4 more users, and share, edit on 5 more files, "
-        "and view on 3 more files for user:3)  [line 32]" in ways_of_share,
+        "5 more folders, and view on 2 more folders, and impersonate on 4 users, and share, edit on 5 files, "
+        "and view on 3 files for user:3)  [line 32]" in ways_of_share,
         said_of_share,
     )
     asked, out = granted_by("--as", "user:2", "folder", "5", "edit")
@@ -592,7 +597,7 @@ def main() -> None:
             "view on files, past 4)  [line 32]"
         )
         and " more " not in admin
-        and "share, edit on 1 more file for user:3" in said,
+        and "share, edit on 1 file for user:3" in said,
         said[-600:],
     )
 
@@ -2498,7 +2503,7 @@ def corners(db: str) -> None:
         "belonging to it; lead: share on the project, which ann, its lead, loses)",
         ways[3:]
         == [
-            "add user 2 to cn.group_members for grp 3 (also gives belong on 1 more grp for user:2)  [line 9]",
+            "add user 2 to cn.group_members for grp 3 (also gives belong on 1 grp for user:2)  [line 9]",
             "set lead_id of project (1,5) to 2 (also gives share on it) (takes share on it from 1 person)  [line 32]",
         ],
         said,
@@ -2570,8 +2575,8 @@ def corners(db: str) -> None:
     check(
         "a column naming a group a where narrows: what it takes from others is from the group's people only",
         rc == 0
-        and "set org_id of desk 1 to 2 (also gives sit on it, and rest, use on 2 more chairs for user:2) (takes keep, "
-        "sit on it from 1 person, and rest, use on 2 other chairs from 1 person)  [line 73]"
+        and "set org_id of desk 1 to 2 (also gives sit on it, and rest, use on 2 chairs for user:2) (takes keep, "
+        "sit on it from 1 person, and rest, use on 2 chairs from 1 person)  [line 73]"
         in ways,
         said,
     )
@@ -2579,9 +2584,9 @@ def corners(db: str) -> None:
     check(
         "what a way takes from others on other objects: the type asked about first, then the policy's order",
         rc == 0
-        and "set org_id of desk 1 to 2 (also gives use on it, and rest, use on 1 more chair, and keep, sit on 1 more desk "
+        and "set org_id of desk 1 to 2 (also gives use on it, and rest, use on 1 more chair, and keep, sit on 1 desk "
         "for user:2) (takes rest, use on it from 1 person, and rest, use on 1 other chair from 1 person, and keep, sit "
-        "on 1 other desk from 1 person)  [line 73]"
+        "on 1 desk from 1 person)  [line 73]"
         in ways,
         said,
     )
@@ -2665,7 +2670,7 @@ def corners(db: str) -> None:
         == [
             "share viewer on doc 7 with user 3  [line 17]",
             *(
-                f"add user 3 to cn.group_members for grp {g} (also gives belong on {n} more grp{'s' * (n > 1)} for "
+                f"add user 3 to cn.group_members for grp {g} (also gives belong on {n} grp{'s' * (n > 1)} for "
                 "user:3)  [line 9]"
                 for g, n in ((4, 1), (5, 2), (6, 3))
             ),

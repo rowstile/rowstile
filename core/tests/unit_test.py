@@ -14369,11 +14369,12 @@ class Why(unittest.TestCase):
         from authzlib import grant
 
         self.assertEqual(
-            grant.taken([("doc", "view", 0, 1), ("doc", "edit", 1, 2), ("folder", "view", 2, 3)], "view"),
-            ["view on it from 1 person", "edit on 1 other doc from 2 people", "view on 2 other folders from 3 people"],
+            grant.taken([("doc", "view", 0, 1), ("doc", "edit", 1, 2), ("folder", "view", 2, 3)], "view", "doc"),
+            ["view on it from 1 person", "edit on 1 other doc from 2 people", "view on 2 folders from 3 people"],
         )
-        self.assertEqual(grant.more_of([("doc", "view", 1), ("doc", "edit", 2)], "view"),
-                         ["view on 1 more doc", "edit on 2 more docs"])  # fmt: skip
+        # (more and other than the object asked about, a doc: a folder is none of those)
+        self.assertEqual(grant.more_of([("doc", "view", 1), ("doc", "edit", 2), ("folder", "view", 1)], "view", "doc"),
+                         ["view on 1 more doc", "edit on 2 more docs", "view on 1 folder"])  # fmt: skip
 
     def test_what_isnt_a_permission_is_refused_before_the_database_is_asked(self) -> None:
         """A type the policy doesn't have, a permission it doesn't, a relation, or a permission the compiler made (a
