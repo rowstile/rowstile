@@ -65,6 +65,34 @@ another workspace in a few worlds: rows the keys forbid, but a policy that would
 Each row of this table is checked in [`db/tests/rules.authz`](db/tests/rules.authz) (`rowstile test`), and the
 app's routes again in [`tests/api.test.ts`](tests/api.test.ts), over HTTP, as the demo's people.
 
+## Live
+
+The inbox and the ticket page update as tickets and comments arrive, change or leave, through
+[Electric](https://electric-sql.com) (a preview in rowstile, [`docs/stacks/electric.md`](../../docs/stacks/electric.md)).
+Electric reads Postgres by logical replication, where row-level security doesn't run, so the policy's sync lines
+keep an index of who may read each ticket and comment:
+
+```authz
+sync role hd_electric
+sync hd.tickets : view
+sync hd.comments : view
+```
+
+The app's route [`app/api/shapes/[table]/route.ts`](app/api/shapes/[table]/route.ts) stands in front of Electric:
+it asks the database who the request is, and hands Electric that person's shape, whatever the browser sent.
+Nobody gets a 401; an admin viewing the app as someone gets a 403 (the index holds what each person may read,
+not what a limited session may). When a share ends or a ticket is handed on, Electric sends a move-out rather
+than a delete, which its own client doesn't apply: [`src/live.ts`](src/live.ts) does. Electric's role and its
+publication are in [`db/electric.sql`](db/electric.sql) and the migration `electric_publication`.
+
+[`tests/live.test.ts`](tests/live.test.ts) follows the shapes as the demo's people: a ticket someone is copied in
+on arrives, and leaves when the share does; an internal note reaches those who work the ticket and never the
+customer; a ticket arrives for the vendor's staff when they break the glass.
+
+What it costs: every agent of a workspace sees its tickets, so each ticket's readers are one key a person (51 for
+a workspace of 50 agents), and inserting a ticket keeps them (about 19 ms a ticket there, on a development
+machine).
+
 ## Two things Postgres asks
 
 - **An update its author could no longer see is refused.** An `UPDATE` with a `WHERE` reads the row, so Postgres

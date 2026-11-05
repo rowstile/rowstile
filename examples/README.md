@@ -11,4 +11,4 @@ its tests in Docker, and CI runs them on every change.
   blocking, bots with their own API keys, live updates. FastAPI, React.
 - [`helpdesk/`](helpdesk/): several companies' support desks on one database. Workspaces kept apart by the
   policy itself, teams inside teams, custom roles, internal notes, the vendor's staff by break glass, an email
-  intake with a scoped key. Next.js, Prisma, the TypeScript SDK.
+  intake with a scoped key, live updates through Electric. Next.js, Prisma, the TypeScript SDK.
