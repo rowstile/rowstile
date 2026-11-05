@@ -530,6 +530,23 @@ async fn a_long_name_is_shortened_by_a_hash() {
 }
 
 #[test]
+fn under_nextest_a_worker_is_a_slot() {
+    let _check = Check("12: ... under cargo-nextest, a worker is the binary's and nextest's slot");
+    if std::env::var("NEXTEST_TEST_GLOBAL_SLOT").is_ok() {
+        // (as nextest would run it: this test alone, in a process of its own)
+        println!("worker={}", rowstile::testing::worker());
+        return;
+    }
+    let alone = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["under_nextest_a_worker_is_a_slot", "--exact", "--nocapture", "--test-threads=1"])
+        .env("NEXTEST_TEST_GLOBAL_SLOT", "3")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&alone.stdout);
+    assert!(said.contains(&format!("worker={}_s3\n", rowstile::testing::worker())), "{said}");
+}
+
+#[test]
 fn the_test_helpers_say_what_was_expected() {
     let _check = Check("the test helpers: a refusal by the rule expected, NotFound, and what each says otherwise");
     let refusal = || {
