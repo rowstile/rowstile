@@ -905,6 +905,23 @@ QUOTING = (
 )
 
 
+def _folded(name: str) -> str:
+    return name.lower().replace("_", "").replace("-", "")
+
+
+def _one_off(a: str, b: str) -> bool:
+    """Whether a and b are alike but for a letter: one changed, added or dropped, or two side by side swapped."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    i = 0
+    while i < min(len(a), len(b)) and a[i] == b[i]:
+        i += 1
+    swapped = a[i + 1 : i + 2] + a[i : i + 1] + a[i + 2 :]
+    return a[i + 1 :] == b[i + 1 :] or a[i:] == b[i + 1 :] or a[i + 1 :] == b[i:] or swapped == b[i:]
+
+
 def _keywords(text: str) -> list[tuple[str, str]]:
     """The settings of a keyword string, read as libpq reads one: key=value, spaces around = allowed; a value in
     single quotes may hold spaces; a backslash takes the character after it as it is (\\' and \\\\, in quotes or
@@ -956,7 +973,7 @@ def parse_dsn(text: str | None, environ: Mapping[str, str] | None = None) -> Con
     whatever is left out. Each of libpq's settings is honoured as libpq honours it, left alone where that changes
     nothing checked, or refused (ValueError, naming it); so are several hosts, and a setting libpq doesn't have, in
     a keyword string. A URL's other options (an ORM's own: ?schema=, ?pgbouncer=) are left to whoever they are
-    for. Three things differ from libpq (the module's docstring): the password file, connect_timeout's default, and
+    for, but for one a letter away from a setting of libpq's: a typo, refused. Three things differ from libpq (the module's docstring): the password file, connect_timeout's default, and
     client certificates. environ: the variables read (the process's environment where None)."""
     env = os.environ if environ is None else environ
     out: dict[str, str] = {}
@@ -966,10 +983,18 @@ def parse_dsn(text: str | None, environ: Mapping[str, str] | None = None) -> Con
             k, v = "sslmode", "require" if v.startswith("1") else "prefer"
         if k in LIBPQ:
             out[k] = v
-        elif strict and after == "password":  # the rest of a password with a space in it, likely
-            raise ValueError(f"can't read the connection string after its password (not repeated here): {QUOTING}")
-        elif strict:
-            raise ValueError(f"unknown connection setting '{k}' (use host, port, user, password, dbname, sslmode)")
+            return
+        # a URL's other parameters are an ORM's own (?schema=, ?pgbouncer=), left to it; but not one a letter away
+        # from a setting of libpq's: a typo (?sslmod=require), which libpq refuses as it refuses any it doesn't have
+        near = None if strict else next((name for name in LIBPQ if _one_off(_folded(k), _folded(name))), None)
+        if not strict and near is None:
+            return
+        if after == "password":  # the rest of a password with a space in it (in a URL, an &), likely
+            how = QUOTING if strict else "an & in the password must be written %26"
+            raise ValueError(f"can't read the connection string after its password (not repeated here): {how}")
+        if near:
+            raise ValueError(f'invalid URI query parameter: "{k}": did you mean {near}?')
+        raise ValueError(f"unknown connection setting '{k}' (use host, port, user, password, dbname, sslmode)")
 
     def one(hosts: str) -> str:
         if "," in hosts:
@@ -1015,6 +1040,7 @@ def parse_dsn(text: str | None, environ: Mapping[str, str] | None = None) -> Con
                 out[k] = urllib.parse.unquote(v) if isinstance(v, str) else str(v)
         # the query as libpq reads it: key=value&..., each decoded %XX and nothing else (a + stays a +: a web
         # form's space isn't libpq's)
+        after = ""  # the parameter before
         for part in u.query.split("&"):
             if not part:
                 continue
@@ -1027,7 +1053,8 @@ def parse_dsn(text: str | None, environ: Mapping[str, str] | None = None) -> Con
                         " say sslmode= instead (disable, prefer, require, verify-full)"
                     )
                 k, v = "sslmode", "require"
-            setting(k, v, strict=False)
+            setting(k, v, strict=False, after=after)
+            after = k
         text = ""
     after = ""  # the setting before
     for k, v in _keywords(text or ""):

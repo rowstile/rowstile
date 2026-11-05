@@ -364,6 +364,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   it, or with digits before it connected to the user's name as a host (`postgresql://u:2024#x@h/db`). A message
   about the connection string no longer repeats a piece of a password that wasn't quoted or escaped: a word after
   the password that looked like a setting (`password=my secret=x`), or what came before a `/` in a URL's password.
+- A URL's parameter a letter away from a libpq setting (`?sslmod=require`, `?chanel_binding=require`) is refused,
+  as a typo, naming the setting meant. Before, it was left alone as an ORM's own, and the command connected
+  without what it asked for. An ORM's parameters (`?schema=`, `?pgbouncer=`) are still left alone.
 
 ### Upgrading
 
