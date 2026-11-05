@@ -55,7 +55,8 @@
 - **Re-applying replaces the old version**, keeps shares, removes access for roles the
   policy no longer names, and warns about foreign keys that delete or change a governed
   table's rows and tables that lost their rules. <!-- checked: tests/apply.sh "a changed text is applied"; tests/apply.sh "shares and the trees stay consistent"; tests/apply.sh "takes the old one's access away"; tests/apply.sh "deletes a governed table's rows by cascade"; tests/apply.sh "(ON DELETE SET NULL)"; tests/apply.sh "warns of a table that lost its rules" -->
-  Inheritance tables whose definition didn't change are kept, not rebuilt:
+  Inheritance tables whose definition and tables (with the partitions and the tables under them) didn't
+  change are kept, not rebuilt:
   a new permission or rule applies in about 0.1 s with 50k folders. <!-- checked: tests/keep.sh "a new permission keeps every inheritance table" --> <!-- unchecked: the time was measured by hand; no benchmark measures it again -->
 
 ## Security

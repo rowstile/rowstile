@@ -93,6 +93,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   up once the transactions before them end. `authz.changes_position()` says where the feed is, for a reader that
   starts; a position no entry has gets AZ712, as one trimmed does. `authz.trim_changes()` removes the oldest
   entries in that order.
+- `rowstile apply` computes an inheritance table again, instead of keeping it, when its table or link table has
+  other tables under it than at the last apply: a partition attached, detached, made or dropped, or a table that
+  inherits made or dropped. The rows such a change brings or takes away, which no trigger saw, are then in the
+  table, and an apply of the same policy no longer answers `unchanged` after a partition is detached.
 
 ### Upgrading
 

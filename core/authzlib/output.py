@@ -1671,12 +1671,31 @@ END $an$;"""
 
     @staticmethod
     def oids_sql(tables: list[str]) -> str:
-        return (
+        """The tables a tree reads, by oid, then every table under them (partitions, tables that inherit): rows
+        reach a tree's table with no trigger seeing them when a partition is attached or detached, or written
+        straight into one made since the last apply, so a tree whose tables have other tables under them now is
+        not kept."""
+        named = (
             "ARRAY["
             + ", ".join(
                 f"to_regclass({lit(qt(tb) if '.' in tb and not tb.startswith('authz.') else tb)})::oid" for tb in tables
             )
             + "]::oid[]"
+        )
+        return (
+            f"{named} || ARRAY(WITH RECURSIVE below(oid) AS (\n"
+            f"    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY ({named})\n"
+            "    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)\n"
+            "  SELECT b.oid FROM below b ORDER BY b.oid)"
+        )
+
+    def trees_changed_sql(self) -> str:
+        """A row for each inheritance table whose tables, or the tables under them, are not those of the last apply
+        (authz_int.trees): applying again computes it again (keep_sql does not keep it)."""
+        rows = ", ".join(f"({lit(n)}, {self.oids_sql(tables)})" for n, (_, tables) in self.tree_keep.items())
+        return (
+            f"SELECT 1 FROM (VALUES {rows or '(NULL::text, NULL::oid[])'}) n(name, oids) "
+            "LEFT JOIN authz_int.trees t ON t.name = n.name WHERE n.name IS NOT NULL AND t.oids IS DISTINCT FROM n.oids"
         )
 
     def keep_sql(self) -> str:

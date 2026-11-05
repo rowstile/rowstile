@@ -227,6 +227,31 @@ as 1 -c "SELECT authz.share('topic', 1, 'viewer', 'user', 3)" >/dev/null
 PSQL -c "TRUNCATE ch.topics_top"
 same "... and emptying the partition keeps the shares of the rows stored in the others" "$(shares topic 1)" 1
 
+echo "-- a tree's table whose partitions changed between applies: the tree is computed again, not kept"
+# rows that reach a tree's table with no trigger to see them: a table that holds rows attached as a partition, rows
+# written straight into a partition made since (it has none of the table's statement triggers until the next
+# apply), a partition detached. The next apply, of the same policy, has to take them in: the notes' tree reads
+# only its own table, so apply would keep it (tests/keep.sh)
+same "the notes' tree is one apply keeps" "$(PSQL -c "SELECT count(*) FROM authz_int.trees WHERE name LIKE 'note\_\_%'")" 1
+notes() { as "$1" -c "SELECT coalesce(string_agg(id::text, ' ' ORDER BY id), '') FROM ch.notes WHERE id >= 2000"; }
+PSQL -c "CREATE TABLE ch.notes_attached (LIKE ch.notes)" -c "INSERT INTO ch.notes_attached VALUES (2001, 3, 1, 'under top'), (2002, 3, 2001, 'below it')" \
+     -c "ALTER TABLE ch.notes ATTACH PARTITION ch.notes_attached FOR VALUES FROM (2000) TO (3000)" >/dev/null
+# (user 1 sees 2001 by its own parent column: what its rows give is read from the table, not from the tree)
+same "a table with rows attached as a partition: the tree doesn't know them yet" "$(PSQL -c "SELECT authz.verify()")|$(notes 1)" "f|2001"
+run apply; is applied && ok "... apply applies" || bad "apply after a partition was attached" "$out"
+same "... and computes the tree again: user 1 sees the notes under theirs" "$(PSQL -c "SELECT authz.verify()")|$(notes 1)" "t|2001 2002"
+PSQL -c "CREATE TABLE ch.notes_new PARTITION OF ch.notes FOR VALUES FROM (3000) TO (4000)" \
+     -c "INSERT INTO ch.notes_new VALUES (3001, 3, 2002, 'written straight into it'), (3002, 3, 3001, 'below it')" >/dev/null
+same "rows written straight into a partition made since: the tree doesn't know them yet" "$(PSQL -c "SELECT authz.verify()")|$(notes 1)" "f|2001 2002 3001"
+run apply; is applied && ok "... apply applies" || bad "apply after a partition was made and written" "$out"
+same "... and computes the tree again" "$(PSQL -c "SELECT authz.verify()")|$(notes 1)" "t|2001 2002 3001 3002"
+PSQL -c "ALTER TABLE ch.notes DETACH PARTITION ch.notes_attached" >/dev/null
+same "a partition detached: the tree still holds its rows, so user 1 still sees the notes that were under them" "$(PSQL -c "SELECT authz.verify()")|$(notes 1)" "f|3001 3002"
+run apply; is applied && ok "... apply is not 'unchanged' once a partition was detached: it applies" || bad "apply after a partition was detached" "$out"
+same "... and computes the tree again" "$(PSQL -c "SELECT authz.verify()")|$(notes 1)" "t|"
+run apply; is unchanged && ok "... and then answers unchanged" || bad "apply once more after the partitions changed" "$out"
+PSQL -c "DROP TABLE ch.notes_attached" >/dev/null
+
 echo "-- migrations: a rule on a column changes, where a table that inherits has its trigger"
 cp tests/children.authz "$T/db/policy.authz"
 run migrate; case "$out" in *"the whole policy"*"wrote db/migrations/"*) ok "migrate: the whole policy first";; *) bad "migrate" "$out";; esac
