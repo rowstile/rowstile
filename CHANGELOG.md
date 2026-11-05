@@ -143,6 +143,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `$x`, where `'$x'` was read as the name `$x`; and `a$b` is that text, where it was refused as naming `$b`. An id
   without quotes that starts with `$` and is no name (`$x$`) is refused with its line (AZ106), where compiling the
   tests failed with a Python error.
+- A `$name` in a string or a comment of a test's SQL is text: `given {INSERT ... VALUES (9001, 'Ann $smith')}`
+  was refused ("$smith is not named yet", AZ501), or had the name's value put inside the string.
 
 ### Upgrading
 
