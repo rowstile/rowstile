@@ -78,6 +78,13 @@
       "when": 1793902005022,
       "tag": "0010_authz_explain_for_another_user",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793902568839,
+      "tag": "0011_authz_role_permissions_held",
+      "breakpoints": true
     }
   ]
 }
