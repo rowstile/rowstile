@@ -35,7 +35,7 @@ import pgwire
 from authzlib import Compiler, database
 from authzlib.connection import Value as Json
 from authzlib.parse import Type
-from authzlib.sqlutil import POLICY_MARKS, lit, qt
+from authzlib.sqlutil import lit, qt
 from authzlib.sqlutil import q as quoted
 
 if TYPE_CHECKING:
@@ -189,14 +189,10 @@ class Studio:
 
     @staticmethod
     def app_role(db: Db) -> str:
-        rows = db.rows(
-            "SELECT DISTINCT r.rolname AS r FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_description d "
-            f"ON d.objoid = p.oid AND d.classoid = 'pg_catalog.pg_policy'::regclass AND d.description IN {POLICY_MARKS} "
-            "CROSS JOIN unnest(p.polroles) ro JOIN pg_catalog.pg_roles r ON r.oid = ro"
-        )
-        if not rows:
+        role = database.app_role(db)
+        if role is None:
             raise Problem("no policy with rules is applied, so there is no app role to look through", 409)
-        return str(rows[0]["r"])
+        return role
 
     # --- what the page asks ----------------------------------------------------------------------------
     def overview(self, q: Query) -> Message:

@@ -712,7 +712,7 @@ def main() -> None:
             "CREATE POLICY audit_read ON app.users FOR SELECT TO a_confidence_audit USING (true); "
             "COMMENT ON POLICY audit_read ON app.users IS 'the auditors read every user'"
         )
-        return perf.app_role(d)
+        return database.app_role(d)
 
     check(
         "the app role is the one rowstile's policies are for, not that of a policy the app wrote itself",
