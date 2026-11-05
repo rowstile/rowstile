@@ -271,10 +271,19 @@ END $k$;"""
         self.tree_keep[name] = (hashlib.sha256(text.encode()).hexdigest()[:32], sorted(set(tables)))
 
     def tree_name(self, types: list[str], edges: Edges) -> str:
+        """A closure table's name: its types and links, then `tree`, or `tree2` and on where that is taken. What is
+        made beside it takes the name and a suffix (`_links`, `__next`), and the view of an arrow to a name the policy
+        declares is `<type>__<link>__<name>`: a word that is such a name, or begins one before a `_`, is skipped."""
         rels = sorted({rel for _, rel, _, _ in edges})
-        stem = f"{'_'.join(sorted(types))}__{'_'.join(rels)}__tree"
-        n = sum(1 for v in self.trees.values() if v.startswith(stem))
-        return stem + (str(n + 1) if n else "")
+        stem = f"{'_'.join(sorted(types))}__{'_'.join(rels)}__"
+        declared = {x for t in self.types.values() for x in (*t.relations, *t.perms)}
+        taken = set(self.trees.values())
+        word = lambda n: "tree" + (str(n) if n > 1 else "")
+        n = 1
+        while stem + word(n) in taken or any(x == word(n) or x.startswith(word(n) + "_") for x in declared):
+            n += 1
+        self.view_is(stem + word(n), ("tree", *types, *rels))
+        return stem + word(n)
 
     # --- one type ---------------------------------------------------------
     def ensure_tree(self, t: Type, edges: Edges) -> str:

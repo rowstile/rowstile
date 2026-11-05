@@ -285,7 +285,8 @@ class Core:
         self.types, self.rules, self.tests = pol.types, pol.rules, pol.tests
         # each function made when first asked for, by name -> what it is made from (first_time)
         self.made_from: dict[str, str] = {}
-        self.view_of: dict[str, ViewOf] = {}  # each view begun or made, by name -> what it holds (begin_view)
+        # each view begun or made, and each closure table, by name -> what it holds (begin_view, tree_name)
+        self.view_of: dict[str, ViewOf] = {}
         self.making: set[str] = set()  # views begun and not yet added: one asked for again depends on itself
         self.made_views: set[str] = set()  # and those added
         self.view_sql: list[str] = []  # CREATE VIEW / FUNCTION statements, dependency order
@@ -1218,7 +1219,8 @@ class Core:
     def view_is(self, name: str, of: ViewOf) -> None:
         """A view's name stands for one thing, what it holds (of): asked for by another, the view would silently be
         the first one's, and whoever read it would get the other's ids. The names a policy declares neither hold
-        '__' nor start or end with '_' (AZ107), so the names joined from them are each one's own."""
+        '__' nor start or end with '_' (AZ107), so the names joined from them are each one's own; a closure table,
+        named here too, takes a name no view's can be (TreeMixin.tree_name)."""
         made = self.view_of.setdefault(name, of)
         assert made == of, f"the view {name} would stand for two things: {made} and {of}"
 
