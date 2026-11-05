@@ -276,9 +276,11 @@ FEATURES: list[Feature] = [
         "api.identity",
         1,
         "Signing in: `authz.act_as`, `authz.login_key`, `authz.login_jwt`, `authz.view_as`, `authz.principal`, "
-        "`authz.connection_check`, `authz.session_limited`; signed sessions",
+        "`authz.connection_check`, `authz.session_limited`, `authz.sign_out`; signed sessions, one principal a "
+        "transaction",
         (
             "api.act_as",
+            "api.sign_out",
             "api.uid",
             "api.principal",
             "api.login_key",
@@ -292,10 +294,14 @@ FEATURES: list[Feature] = [
             "err.AZ703",
             "err.AZ704",
             "err.AZ714",
+            "err.AZ716",
         ),
         Doc(IDENT, "Every sign-in is signed"),
         (
             T("sessions.sh", "changing authz.user_id after signing in is an error"),
+            T("sessions.sh", "act_as in a transaction signed in as carol, for alice: refused"),
+            T("sessions.sh", "login_key in a transaction signed in as carol, with alice's key: refused"),
+            T("sessions.sh", "sign_out, then alice: a test's transaction acting for one, then another"),
             T("sessions.sh", "a signature from an earlier transaction is refused in the next one"),
             T("sessions.sh", "that says it is the policy's owner, whose sessions are believed unsigned"),
             T("identity.sh", "a valid token signs in as bob, with its scope"),

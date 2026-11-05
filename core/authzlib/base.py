@@ -160,6 +160,7 @@ SYNC_FUNCTIONS = ("sync_tick", "sync_verify", "sync_work", "sync_behind")
 # Functions each apply recreates (dropped first, whatever their old signature).
 GENERATED_FUNCTIONS = (
     "act_as",
+    "sign_out",
     "can",
     "list",
     "perms",

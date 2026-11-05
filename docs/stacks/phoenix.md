@@ -214,5 +214,7 @@ copy = Rowstile.Testing.database_per_partition(System.fetch_env!("ROWSTILE_TESTS
 
 The copy needs nobody connected to the original. Ecto's SQL sandbox works too (`pool:
 Ecto.Adapters.SQL.Sandbox`): a `transact` inside a test's sandbox runs in the test's transaction, and is rolled back with it.
+Each `transact` there signs in as its own principal, so a test may act for one user, then another (the SDK signs
+the one before out first, `authz.sign_out()`: the database holds a transaction to one principal).
 `Rowstile.Testing.assert_refused(result, "update")` and `assert_not_found(result)` fail the test unless the result
 is one.

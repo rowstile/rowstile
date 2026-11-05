@@ -83,6 +83,9 @@ KeyType: TypeAlias = "Literal['bigint', 'integer', 'uuid'] | None"
 _Execute: TypeAlias = "Callable[[str, Any, bool, dict[str, Any]], Any]"
 
 _ACT_AS = "SELECT authz.act_as(%s, %s)"
+# a test case's transaction acts for one, then another: the database holds a transaction to one principal (AZ716), so
+# each sign-in there signs the one before out first
+_SIGN_OUT = "SELECT authz.sign_out()"
 _EXPLAIN = _explain_rule_sql("%(t)s", "%(c)s", "%(k)s")
 # on the driver's connection: who its open transaction signed in as, and whether the sign-in is surely still there (a
 # ROLLBACK TO SAVEPOINT made before it undoes it in Postgres: the same principal then signs in again)
@@ -169,6 +172,7 @@ def _in_a_test(
     wanted = who or (NOBODY if signed is not None else None)
     if wanted is not None and signed != (wanted, True) and not _AROUND.match(sql):  # (not for Django's own)
         with db.wrap_database_errors:
+            raw.execute(_SIGN_OUT)
             raw.execute(_ACT_AS, act_as_args(wanted))
         signed = (wanted, True)
     return signed

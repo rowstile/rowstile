@@ -315,7 +315,8 @@ out=$(as 4 "SELECT count(*) FROM authz.who_among('file', 11, 'view', ARRAY['1'])
 PSQL -c "DROP ROLE IF EXISTS authz_devx_other" -c "CREATE ROLE authz_devx_other" -c "GRANT USAGE ON SCHEMA authz TO authz_devx_other" \
      -c "GRANT EXECUTE ON FUNCTION authz.who_among(text, text, text, text[], text) TO authz_devx_other" >/dev/null
 out=$(PSQL -c "SET ROLE authz_devx_other" -c "SELECT authz.who_among('file', '11', 'view', ARRAY['1'])" 2>&1)
-case "$out" in "ERROR:  permission denied for function act_as"*) ok "a role that may not sign people in may not use it";; *) bad "who_among needs SET" "$out";; esac
+case "$out" in "ERROR:  permission denied for function act_as: authz.who_among() signs people in, which authz_devx_other may not"*)
+  ok "a role that may not sign people in may not use it";; *) bad "who_among needs SET" "$out";; esac
 
 echo "-- applying, and what it warns about"
 { cat example/docs.authz; printf '%s\n' 'rules app.teams' '  select : {exists (select 1 from app.files f where f.owner_id = authz.uid())}'; } > "$T/trap.authz"

@@ -805,7 +805,8 @@ CODES = {
         "The signed-in person asked an `authz.*` function for something the policy doesn't let them do: share or "
         "unshare this object, share it with this subject (the relation's `shared if`), give a role, manage roles or "
         "keys, see who has access, the shares or the links, turn a link off, decide a request or a review, break "
-        "the glass. The message says what; `authz.explain(type, id, perm)` says why, and a refused share or unshare "
+        "the glass. A role that may not call `authz.act_as` gets it from `authz.who_among`, which signs people in. "
+        "The message says what; `authz.explain(type, id, perm)` says why, and a refused share or unshare "
         "says it in its DETAIL (the SDKs' `why`). SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this "
         "code).",
         when="runtime",
@@ -893,6 +894,20 @@ CODES = {
         "the permission the call asks for. A service may share and unshare, and a user holding "
         "`manage_keys` on it makes its keys (`authz.create_api_key('deploy', '', NULL, 'service', '7')`). "
         "SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this code).",
+        when="runtime",
+    ),
+    "AZ716": Code(
+        "Signed in as someone else already",
+        "A transaction is one principal's. `authz.act_as()`, `authz.login_key()` and `authz.login_jwt()` refuse to "
+        "sign in a transaction that is signed in as someone else already (nobody counts as someone else, once "
+        "someone is signed in), or that views as someone or is limited by scopes (a key's, a token's), which a new "
+        "sign-in would end. The first sign-in after `authz.act_as(NULL, NULL)` is fine, and so is the same principal "
+        "again. The usual cause is code that signs in a transaction it didn't begin: a transaction of one request "
+        "reused for another person, a job's work joined to a request's. Begin a transaction of its own for each "
+        "principal. A test's transaction that acts for one person, then another (rolled back at the end), calls "
+        "`authz.sign_out()` first, as the SDKs' test modes do. The policy's owner and superusers say who is signed "
+        "in by hand, and aren't held to it. SQLSTATE 28000. It is a bug in the app: the SDKs leave it an error, "
+        "a 500.",
         when="runtime",
     ),
     "AZ801": Code(

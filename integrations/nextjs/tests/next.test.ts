@@ -178,6 +178,7 @@ describe("route handlers and server actions", () => {
       }), refused("this session is read-only (viewing as someone else, or a read-only token)", "AZ704")],
       // a call that is for users, made by a service (rowstile help AZ715): a refusal too
       service: ["1", () => rowstile(one).transaction(async (c) => {
+        await c.query("SELECT authz.sign_out()");             // signed in as ann: out first, as a test may
         await c.query("SELECT authz.act_as('service', '1')");
         return c.query("SELECT authz.create_api_key('mine')");
       }), refused("authz.create_api_key for oneself is for users, not services (service 1 is signed in)", "AZ715")],

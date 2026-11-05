@@ -85,6 +85,7 @@ SELECT p.oid::regprocedure::text, gw.who, a.privilege_type,
             "authz.ctx(text)",
             "authz.link_hashes()",
             "authz.act_as(text, text)",
+            "authz.sign_out()",
             "authz.connection_check()",
             "authz.session_limited()",
         ] + [
