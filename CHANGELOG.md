@@ -580,6 +580,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   log or problems behind: every server writes to one log, `rowstile`.
 - On Windows, the VS Code extension (0.1.5) quotes a word of `rowstile.command` that holds `&`, `|`, `<`, `>`, `^`,
   `(` or `)`, as it did one with a space: `cmd.exe` read them (a folder `R&D`, say).
+- Zed, Neovim and Helix read a test whose name holds a quote, as Studio writes some
+  (`test "user 1 can view file "a""`), to the last quote on the line, as the parser does. Before, they marked the
+  name as an error, and the test went missing from the outline.
 
 ### Upgrading
 

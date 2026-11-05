@@ -391,7 +391,7 @@ def reading_ts(tree: Tree) -> Shape:
                 if name is None:
                     unnamed += steps
                 else:
-                    tests.append((tree.text(name).strip().strip('"'), steps))
+                    tests.append((tree.text(name).strip()[1:-1], steps))  # (one quote each side: it may hold more)
     out["tests"] = ([(None, unnamed)] if unnamed else []) + tests
     return out
 

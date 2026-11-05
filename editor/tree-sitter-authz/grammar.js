@@ -192,7 +192,11 @@ module.exports = grammar({
     never: ($) => seq("never", field("type", $.identifier), ":", field("expression", $._expression)),
 
     // ---- tests: `test` (checks), or `test "name"` (given, as, checks) ---------------------------
-    test: ($) => seq("test", optional(field("name", $.string)), repeat(choice($.check, $.given, $.as))),
+    test: ($) =>
+      seq("test", optional(field("name", alias($._test_name, $.string))), repeat(choice($.check, $.given, $.as))),
+    // as parse.py reads it: to the last quote on the line, which may hold quotes (Studio writes `test "... file a"b"`);
+    // a -- outside the quotes that pair up starts the line's comment
+    _test_name: (_) => /"[^"\n]*"(([^"\n-]|-[^"\n-])*-?("[^"\n]*"|"))*/,
     check: ($) =>
       seq(
         $._who,

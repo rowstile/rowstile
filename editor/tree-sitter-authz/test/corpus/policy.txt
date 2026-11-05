@@ -826,3 +826,46 @@ type t = app.t
         type: (identifier))
       (column
         (identifier)))))
+
+================================================================================
+Test names that hold quotes: the name runs to the last quote on the line, a comment after it aside
+================================================================================
+
+test "say "hi""
+  user 1 can view file 1
+
+test "user 1 can view file a"b"    -- as Studio writes it
+  user 1 can view file 1
+
+test "a -- b" -- say "x"
+  user 1 can view file 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (test
+    name: (string)
+    (check
+      principal: (identifier)
+      who: (value)
+      permission: (identifier)
+      type: (identifier)
+      object: (value)))
+  (test
+    name: (string)
+    (comment)
+    (check
+      principal: (identifier)
+      who: (value)
+      permission: (identifier)
+      type: (identifier)
+      object: (value)))
+  (test
+    name: (string)
+    (comment)
+    (check
+      principal: (identifier)
+      who: (value)
+      permission: (identifier)
+      type: (identifier)
+      object: (value))))
