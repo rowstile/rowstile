@@ -2,7 +2,9 @@
 // made-up posts (well-formed XML, the fields a reader needs, newest first); and the comparison pages, listed
 // from their folder.   node site/blog_test.mjs
 import { feed, forFeed, postBody } from "./blog.mjs";
-import { DESCRIPTIONS, PAGES, compareSidebar, describe, readPost } from "./pages.mjs";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { DESCRIPTIONS, PAGES, REPO, compareSidebar, describe, readPost } from "./pages.mjs";
 
 let failed = 0;
 /** @param {string} label @param {unknown} ok @param {unknown} [detail] */
@@ -123,9 +125,13 @@ check("... named for what it is compared with", beside.every((b) => b.text && !b
 for (const f of compared.slice(0, 1)) {
   const said = DESCRIPTIONS[PAGES[f]];
   delete DESCRIPTIONS[PAGES[f]];
-  const made = refused(() => describe(PAGES[f], "")) || describe(PAGES[f], "");
-  check("... one without a sentence of its own is described by its first paragraph",
-    made.length > 40 && made.length <= 200 && !/[`*\[\]]/.test(made) && made !== said, made);
+  const why = refused(() => describe(PAGES[f], ""));
+  const made = why ? "" : describe(PAGES[f], "");
+  // the page's first paragraph, as plain text: what describe() keeps of it is its first sentences, or its start
+  const first = readFileSync(join(REPO, f), "utf8").split(/\n{2,}/)[1].replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[`*_]/g, "").replace(/\s+/g, " ").trim();
+  check("... one without a sentence of its own is described by its first paragraph", !why && made.length > 40 &&
+    made.length <= 200 && !/[`*\[\]]/.test(made) && made !== said && first.startsWith(made.replace(/\.\.\.$/, "")), why || made);
   if (said) DESCRIPTIONS[PAGES[f]] = said;
 }
 
