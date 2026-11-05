@@ -1453,9 +1453,9 @@ OUTSIDE_AFTER_INCLUDE = ": a block ends at an include line, and an included file
 
 class Reader:
     """Reads a policy's lines: one at the left margin starts a block (type, rules, test, invariants) or is one on
-    its own (app role, scope, caveat); the indented lines below belong to the block, up to an include line or the
-    end of their file. A mistake ends its line, not
-    the reading: the lines after it are read too, each mistake kept, and read() raises the first."""
+    its own (app role, scope, caveat, sync); the indented lines below belong to the block, up to an include line or
+    the end of their file. A mistake ends its line, not the reading: the lines after it are read too, each mistake
+    kept, and read() raises the first."""
 
     def __init__(self) -> None:
         self.pol = Policy()
@@ -1969,16 +1969,10 @@ def parse_roles_line(t: Type, s: str, loc: Loc) -> None:
     t.roles_from, t.roles = owner, (subjects, [], loc)
 
 
-def names_roles(node: Expr, under_not: bool = False) -> list[bool]:
-    """For each `roles` in an expression: whether a `not` is above it."""
-    match node:
-        case Ref(name=name) if name == ROLES:
-            return [under_not]
-        case Not(item=item):
-            return names_roles(item, True)
-        case Or(items=items) | And(items=items):
-            return [x for item in items for x in names_roles(item, under_not)]
-    return []
+def names_roles(node: Expr) -> list[bool]:
+    """For each `roles` in an expression: whether a `not` is above it, one or more (`not not roles` is refused as
+    `not roles` is: a role only gives, AZ210)."""
+    return [nots > 0 for x, nots in leaves(node) if isinstance(x, Ref) and x.name == ROLES]
 
 
 def granted_by_roles(t: Type) -> list[str]:

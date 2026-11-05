@@ -11,8 +11,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   - `authzlib/` — compiler, standard library only; `__version__` in `__init__.py` is the version the command
     and the packages carry (`packaging/version.py X.Y.Z` sets it everywhere; `unit_test.py` checks they
     agree). `Compiler` (`assembled.py`; `authzlib.Compiler`, imported when first asked for) is a stack of mixins:
-    - `parse.py` — parser (types, relations, perms, rules, scopes, caveats, invariants, tests, includes;
-      includes come from a `files` map when given, never from disk)
+    - `parse.py` — parser (app role, types, relations, perms, rules, scopes, caveats, sync, invariants, tests,
+      includes; includes come from a `files` map when given, never from disk)
     - `compiler.py` (Core) — validation, recursion/SCC analysis, per-relation/permission views
     - `trees.py` — closure tables for inheritance + their triggers
     - `output.py` — assembles the final SQL (`compile()`), RLS policies, `can/list/perms`, sharing API, masked views
