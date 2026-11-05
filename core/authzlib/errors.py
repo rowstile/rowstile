@@ -329,6 +329,17 @@ CODES = {
         "type folder = app.folders\n  org   : org = org_id\n  owner : user = owner_id\n  can view = owner or roles\n"
         "  roles : user from org\n",
     ),
+    "AZ212": Code(
+        "A subject shared two ways",
+        "A relation is shared with each subject one way: one permission shares it (`shared by ...`) and one "
+        "condition, if any, decides whom (`shared if {...}`). Two `shared` lines of one relation that name a subject "
+        "with another permission or another condition would say two things. Name the subject on one line, the one "
+        "whose permission and condition are meant.",
+        "type folder = app.folders\n  owner  : user = owner_id\n  viewer : user  shared by edit\n"
+        "  viewer : user, user:*  shared\n  can edit  = owner\n  can share = owner\n  can view  = owner or viewer\n",
+        "type folder = app.folders\n  owner  : user = owner_id\n  viewer : user  shared by edit\n"
+        "  viewer : user:*  shared\n  can edit  = owner\n  can share = owner\n  can view  = owner or viewer\n",
+    ),
     "AZ301": Code(
         "Following a relation that can't be followed",
         "`relation.name` follows a relation to the objects it links to and asks for their relation or "

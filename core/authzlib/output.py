@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from .base import BASE_SQL, GENERATED_FUNCTIONS, SYNC_FUNCTIONS
-from .compiler import rule_name
+from .compiler import rule_name, subject_key
 from .governance import GovernanceMixin, trigger_if_partitioned
 from .hardening import LintMixin, path_writers_sql
 from .identity import SESSION_OK, IdentityMixin
@@ -39,14 +39,6 @@ DEFINER_FROM_CURRENT = "SECURITY DEFINER SET search_path FROM CURRENT"
 PT = "pg_catalog.current_setting('authz.principal_type', true)"  # the signed-in principal's type ('': a user)
 # a link's id, from its share g: the start of its token's hash (enough to name it among an object's links)
 LINK_ID = "left(g.subject_id, 16)"
-
-
-def subject_key(st: str, sr: str | None) -> str:
-    if sr == "*":
-        return f"{st}:*"
-    if st in ("anyone", "link"):
-        return st
-    return f"{st}#{sr}" if sr else st
 
 
 def denied(item: Expr) -> str:

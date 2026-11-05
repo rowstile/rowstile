@@ -116,6 +116,16 @@ DEPENDS_ON_ITSELF = (
 )
 
 
+def subject_key(st: str, sr: str | None) -> str:
+    """A subject as the policy writes it, and the catalog of shared relations keys it: user, team#member, user:*,
+    anyone, link."""
+    if sr == "*":
+        return f"{st}:*"
+    if st in ("anyone", "link"):
+        return st
+    return f"{st}#{sr}" if sr else st
+
+
 def not_users(t: Type, r: Relation) -> str:
     """What AZ301 says of a relation to objects used where users are asked for."""
     return (
@@ -675,8 +685,22 @@ class Core:
                 self.columns.append((t.table, c, t.loc))
                 self.pk_checks.append((t.table, c, ty, t.loc))
             for r in t.relations.values():
+                # each subject the relation is shared with: the permission that shares it, its condition, where
+                shared_with: dict[str, tuple[str, str | None, Loc]] = {}
                 for src in r.sources:
                     for (st, sr), at in zip(src.subjects, subject_spans(src), strict=True):
+                        if src.kind == "shared":
+                            # a subject named again is shared as before: by the same permission, on the same condition
+                            key, how = subject_key(st, sr), (src.shared_by or "share", src.shared_if)
+                            by, cond, first = shared_with.setdefault(key, (*how, src.loc))
+                            if (by, cond) != how:
+                                fail(
+                                    src.loc,
+                                    f"{t.name}.{r.name} is shared with {key} on {first} too, by another permission "
+                                    f"or on another condition: name it on one line",
+                                    "AZ212",
+                                    span=at,
+                                )
                         if st in ("anyone", "link"):
                             continue
                         if st not in self.types:

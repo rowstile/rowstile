@@ -260,6 +260,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   again when the change feed was trimmed meanwhile of the entries of a transaction still open when the first one
   ran. Before, it could miss what that transaction changed. `authz.trim_changes()` records the transaction its trim
   ended at (`changes_trimmed_txid` in `authz.settings`).
+- A relation whose two `shared` lines name the same subject with another `shared by` permission or another `shared
+  if` condition is refused when compiling, with its line (AZ212). Such a policy failed to apply with `duplicate key
+  value violates unique constraint "shared_relations_pkey"` when the permissions differed, and otherwise kept only
+  the first line's `shared if`.
 
 ### Upgrading
 
