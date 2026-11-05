@@ -482,12 +482,10 @@ class SyncMixin(Core):
         )
 
     def mirror_columns_sql(self, s: Sync, rel: str, mirror: bool = False) -> str:
-        """The columns of rel, as `name type`, but the masked (and, of a mirror, its readers): the table's now are
-        those its mirror should have."""
+        """The columns of rel, as `name type`: of the table, but the masked, those its mirror should have; of a mirror,
+        every one but its readers (so a masked column a mirror holds, from before the mask, makes the two differ)."""
         masked = (
-            "ARRAY["
-            + ", ".join(lit(c) for c in [*self.masked_of(s.table), *(["readers"] if mirror else [])])
-            + "]::name[]"
+            "ARRAY[" + ", ".join(lit(c) for c in (["readers"] if mirror else self.masked_of(s.table))) + "]::name[]"
         )
         return (
             "(SELECT pg_catalog.array_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) "
@@ -1574,12 +1572,24 @@ SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type
     def sync_lint_sql(self) -> str:
         """authz.lint()'s findings about the sync role: it must exist, not be the app role's member or member of it,
         bypass row-level security (or the engine's first snapshot is empty), read no masked column, not own a
-        governed table, and no publication may publish a masked column."""
+        governed table, and no publication may publish a masked column, nor a mirror hold one."""
         if not self.pol.syncs:
             return ""
         role = self.pol.sync_role
         assert role is not None
         tables = "ARRAY[" + ", ".join(lit(qt(t)) for t in sorted({t.table for t in self.types.values()})) + "]::text[]"
+        # a masked column in a mirror (put there since: applying makes a mirror without them) reaches the engine
+        mirrors = "".join(
+            f"""
+  FOR r IN SELECT a.attrelid::regclass::text || '.' || a.attname AS col FROM pg_attribute a
+           WHERE a.attrelid = to_regclass({lit(self.mirror_table(t))}) AND a.attnum > 0 AND NOT a.attisdropped
+             AND a.attname = ANY (ARRAY[{", ".join(lit(c) for c in self.masked_of(s.table))}]::name[]) LOOP
+    severity := 'error'; object := r.col;
+    problem := {lit(f"is masked, and the mirror of {s.table} holds it: the engine reads it, and every client of it. rowstile reapply makes the mirror again without it")}; RETURN NEXT;
+  END LOOP;"""
+            for s, t in self.mirrored()
+            if self.masked_of(s.table)
+        )
         # (the role is named once, in the block's variables: its statements read the same whatever its name)
         return f"""  -- the sync role (a preview): the engine reads every row as it, by logical replication
   DECLARE
@@ -1617,7 +1627,7 @@ SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type
     problem := format('is masked, and the publication %s publishes it: an engine that reads the publication reads it. %s', r.pubname,
       CASE WHEN r.whole THEN 'The table''s replica identity is FULL (Electric asks for it), so a column list must hold every column: keep the column in a table of its own, which isn''t published'
            ELSE 'Give the publication a column list without it' END); RETURN NEXT;
-  END LOOP;
+  END LOOP;{mirrors}
 """
 
 

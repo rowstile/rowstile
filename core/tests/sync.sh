@@ -1177,6 +1177,30 @@ check "... (the mirror's column may hold it, though the table's was NOT NULL)" "
 PSQL -c "ALTER TABLE app.files ADD COLUMN readers text"
 refused "a mirrored table with a column of its own named readers is refused" "$MIRRORED" "app.files has a column readers, which its mirror keeps each row's keys in [AZ811]"
 PSQL -c "ALTER TABLE app.files DROP COLUMN readers"
+# the mask and the mirror in either order: a mask taken off gives the mirror the column back, one added since takes it
+# away (the mirror made again), and a masked column put in a mirror by hand is found
+apply "$(printf '%s\n' "$MIRRORED" | sed -e '/^  mask body : edit$/d')"
+check "a mask taken off a mirrored table: the mirror is made again, with the body" \
+  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,body,readers}'
+   FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
+apply "$MIRRORED"
+check "a mask added to a mirrored table since: the mirror is made again, without the masked body" \
+  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,readers}'
+   FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
+mirrored "... and holds every file, each with its readers"
+check "... which authz.sync_verify() finds so" "SELECT authz.sync_verify()"
+out=$(CLI client powersync 2>&1)
+case "$out" in *'files."confidential"'*) case "$out" in *body*) false;; *) true;; esac;; *) false;; esac &&
+  ok "... and rowstile client powersync's streams read no body" || bad "client powersync after a mask added" "${out:0:400}"
+PSQL -c "ALTER TABLE authz_sync.file__mirror ADD COLUMN body text"
+check "a masked column put in a mirror since: authz.sync_verify() finds the mirror's columns are not its table's" \
+  "SELECT NOT authz.sync_verify()"
+[ "$(lint 'authz_sync.file__mirror.body' "is masked, and the mirror of app.files holds it")" = t ] &&
+  ok "... and lint finds it" || bad "lint: a masked column in a mirror" "$(PSQL -c "SELECT object, problem FROM authz.lint() WHERE severity = 'error'")"
+out=$(CLI reapply --force 2>&1)
+check "... and reapply makes the mirror again, without it" \
+  "SELECT array_agg(a.attname ORDER BY a.attnum) = '{id,folder_id,owner_id,name,confidential,readers}'
+   FROM pg_attribute a WHERE a.attrelid = 'authz_sync.file__mirror'::regclass AND a.attnum > 0 AND NOT a.attisdropped"
 apply "$SYNCED"
 check "a policy that no longer mirrors the files: the mirror and its triggers go" \
   "SELECT to_regclass('authz_sync.file__mirror') IS NULL
