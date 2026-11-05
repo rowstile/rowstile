@@ -519,7 +519,7 @@ def invites(chat_id: int, user: DictRow = Depends(auth.current_user)) -> list[Di
         names = {
             str(u["id"]): u["name"]
             for u in tx.rows(
-                "SELECT id, name FROM ms.users WHERE id::text = ANY (%s)", ([x["created_by"] for x in links],)
+                "SELECT id, name FROM ms.users WHERE id = ANY (%s::uuid[])", ([x["created_by"] for x in links],)
             )
         }
         return [
@@ -707,4 +707,7 @@ if WEB.is_dir():
 
     @app.get("/{path:path}", include_in_schema=False)
     def web(path: str) -> FileResponse:
+        """The web app, at any of its addresses (/join/<token>); a path under /api/ the API doesn't have is not one."""
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(404, "not found")
         return FileResponse(WEB / "index.html")

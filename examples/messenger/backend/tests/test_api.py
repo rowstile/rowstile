@@ -429,6 +429,18 @@ def test_numbers_out_of_range_are_the_requests_fault() -> None:
     assert (r.status_code, r.json()) == (400, {"detail": "bigint out of range"})
 
 
+def test_an_api_path_the_api_has_not_is_not_found() -> None:
+    """The web app answers its own addresses (/join/<token>), never one under /api/: a JSON 404, not a page."""
+    from app.main import WEB
+
+    if not WEB.is_dir():
+        pytest.skip("the web app isn't built (npm run build, in frontend/)")
+    ann = person("Ann")
+    r = ann.get("/api/no-such-thing")
+    assert (r.status_code, r.json()) == (404, {"detail": "not found"}), r.text
+    assert ann.get("/join/a-token").headers["content-type"].startswith("text/html")
+
+
 def test_message_pages() -> None:
     ann, ben = person("Ann"), person("Ben")
     chat = direct(ann, ben)
