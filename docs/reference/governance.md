@@ -99,13 +99,13 @@ makes reads through the rules slow. Each finding has a severity. These are error
 - A permissive policy on a table with rules that rowstile didn't make: Postgres joins permissive policies with
   OR, so it lets through what the rules don't. (A restrictive one is a note.) <!-- checked: tests/governance.sh "lint finds it: an error, with the policy's name, why it widens the rules and how to drop it"; tests/governance.sh "a restrictive one is a note" -->
 - TRUNCATE on a type's table or a membership table, which skips row-level security. <!-- checked: tests/governance.sh "error app.files"; tests/governance.sh "error app.team_members" -->
-- A partition of a table with rules (or a table inheriting from one) that the app role may use directly, or
-  TRUNCATE. <!-- checked: tests/children.sh "lint says the app role may use it directly"; tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips row-level security and the audit" -->
+- A partition of a table with rules (or a table inheriting from one) that the app role may use directly (a
+  privilege on one of its columns is enough), or TRUNCATE. <!-- checked: tests/children.sh "lint says the app role may use it directly"; tests/children.sh "with the privilege on one column alone"; tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips row-level security and the audit" -->
 - A partition or a table inheriting from a type's table made since the last apply: it lacks the table's row and
   statement triggers until the next one. <!-- checked: tests/adversarial.sh "lint reports a table made after apply that inherits from a governed one"; tests/children.sh "lint names each, and the triggers it lacks"; tests/children.sh "lint names a partition made since of a table without rules, and the statement triggers it lacks" -->
 - A view over a governed table that runs with its owner's rights (without `security_invoker`), which the app role
-  may read. <!-- checked: tests/governance.sh "error app.all_files"; tests/capitals.sh "a view of Folder that skips its rules" -->
-- A membership table the app role may write, without rules. <!-- checked: tests/governance.sh "of the link table, that the app role may change it (an insert is enough)" -->
+  may read, even one column of. <!-- checked: tests/governance.sh "error app.all_files"; tests/governance.sh "and a view of a governed table, one column of which the app role may read"; tests/capitals.sh "a view of Folder that skips its rules" -->
+- A membership table the app role may write, without rules (a privilege on one of its columns is enough). <!-- checked: tests/governance.sh "of the link table, that the app role may change it (an insert is enough)"; tests/governance.sh "and an update of one column is enough too" -->
 - A masked column the app role may read from the table. <!-- checked: tests/masks.sh "lint reports a column readable through a role membership"; tests/masks.sh "lint reports: GRANT SELECT (body) ON mt.docs TO PUBLIC" -->
 - A privilege on rowstile's own schemas (`authz`, `authz_gen`, `authz_int`) or what is in them that the policy
   doesn't give. Applying takes it back. <!-- checked: tests/adversarial.sh "lint reports a grant on rowstile's objects made after apply"; tests/adversarial.sh "and the next apply takes it back" -->
@@ -143,7 +143,8 @@ where memberships have an `id` too): the row's is `this.id`. <!-- checked: tests
 
 `authz.connection_check()` is the same idea for the app itself, which may call it: what is wrong with
 the connection it runs on (a superuser, BYPASSRLS, the policy's owner or a member of it, the owner of a table
-with rules, `FORCE ROW LEVEL SECURITY` or not, a table with rules whose row-level security is off). <!-- checked: tests/sessions.sh "the owner's connection: an error"; tests/sessions.sh "that says it is the policy's owner, whose sessions are believed unsigned"; tests/sessions.sh "a login in the app role that owns a table with rules: an error, FORCE ROW LEVEL SECURITY or not"; tests/sessions.sh "a login in the app role with BYPASSRLS: an error, and the only one"; tests/sessions.sh "row-level security off on a table with rules: an error"; tests/sessions.sh "the app's role: nothing to report" -->
+with rules or a member of it, `FORCE ROW LEVEL SECURITY` or not, a table with rules whose row-level security is
+off). A member of an owner counts whether it inherits the owner's rights or not: it may `SET ROLE` to it. <!-- checked: tests/sessions.sh "the owner's connection: an error"; tests/sessions.sh "that says it is the policy's owner, whose sessions are believed unsigned"; tests/sessions.sh "a login in the app role that owns a table with rules: an error, FORCE ROW LEVEL SECURITY or not"; tests/sessions.sh "and one that is a member of the owner without its rights, who may SET ROLE to it"; tests/sessions.sh "a login in the app role with BYPASSRLS: an error, and the only one"; tests/sessions.sh "row-level security off on a table with rules: an error"; tests/sessions.sh "the app's role: nothing to report" -->
 A login that is neither the app role nor a member of it can't call it at all
 (`permission denied for schema authz`): the rules apply to the app role only. <!-- checked: tests/sessions.sh "a login outside the app role can't call connection_check() at all" -->
 A login that is a superuser or

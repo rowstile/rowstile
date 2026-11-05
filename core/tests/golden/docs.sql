@@ -6500,7 +6500,7 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
       severity := 'error'; object := r.tbl::text;
       problem := format('row-level security is off, so the policy''s rules don''t apply to it: %s reads and writes every row it has privileges on. Apply the policy again (it turns it on), or ALTER TABLE %s ENABLE ROW LEVEL SECURITY', 'app_user', r.tbl);
       RETURN NEXT;
-    ELSIF NOT r.relrowsecurity AND has_table_privilege(v_role, r.tbl, 'SELECT') THEN
+    ELSIF NOT r.relrowsecurity AND has_any_column_privilege(v_role, r.tbl, 'SELECT') THEN
       severity := 'info'; object := r.tbl::text;
       problem := format('%s may read every row (the policy has no rules for this table): fine for a directory, otherwise add rules', 'app_user');
       RETURN NEXT;
@@ -6570,8 +6570,9 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     END IF;
     -- (on a table without rules, statements on it run the triggers of the table above as their own: the next loop
     -- finds one made since that lacks them)
-    IF r.governed AND NOT r.relrowsecurity AND (has_table_privilege(v_role, r.part, 'INSERT') OR has_table_privilege(v_role, r.part, 'UPDATE')
-                                 OR has_table_privilege(v_role, r.part, 'DELETE') OR has_table_privilege(v_role, r.part, 'SELECT')) THEN
+    -- (one column's privilege is enough: no DELETE has columns)
+    IF r.governed AND NOT r.relrowsecurity AND (has_any_column_privilege(v_role, r.part, 'INSERT') OR has_any_column_privilege(v_role, r.part, 'UPDATE')
+                                 OR has_table_privilege(v_role, r.part, 'DELETE') OR has_any_column_privilege(v_role, r.part, 'SELECT')) THEN
       severity := 'error'; object := r.part::text;
       problem := format('is a partition of %s (or inherits from it), and %s may use it directly, without %s''s rules or the triggers that keep inheritance and the audit current: apply the policy again (it turns row-level security on for it), or ALTER TABLE %s ENABLE ROW LEVEL SECURITY', r.tbl, 'app_user', r.tbl, r.part);
       RETURN NEXT;
@@ -6596,7 +6597,7 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
   FOR r IN SELECT i.indexrelid::regclass AS idx, i.indrelid::regclass AS tbl
            FROM pg_index i WHERE i.indisunique AND NOT i.indisprimary
              AND i.indrelid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY['"app"."files"', '"app"."folders"']::text[]) x)
-             AND has_table_privilege(v_role, i.indrelid, 'INSERT') LOOP
+             AND has_any_column_privilege(v_role, i.indrelid, 'INSERT') LOOP
     severity := 'info'; object := r.idx::text;
     problem := format('a unique index on %s: inserting a duplicate fails even when the existing row is hidden, which tells the user it exists', r.tbl);
     RETURN NEXT;
@@ -6632,7 +6633,7 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
       problem := format('%s may TRUNCATE it, which empties memberships without row-level security: REVOKE TRUNCATE ON %s FROM %s', 'app_user', r.tbl, 'app_user');
       RETURN NEXT;
     END IF;
-    IF (has_table_privilege(v_role, r.tbl, 'INSERT') OR has_table_privilege(v_role, r.tbl, 'UPDATE')
+    IF (has_any_column_privilege(v_role, r.tbl, 'INSERT') OR has_any_column_privilege(v_role, r.tbl, 'UPDATE')
         OR has_table_privilege(v_role, r.tbl, 'DELETE'))
        AND NOT (SELECT relrowsecurity FROM pg_class WHERE oid = r.tbl) THEN
       severity := 'error'; object := r.tbl::text;
@@ -6701,7 +6702,7 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
              AND coalesce(ds.description, '') NOT IN ('rowstile masked view')
              AND NOT coalesce(v.reloptions @> ARRAY['security_invoker=true'], false)
              AND NOT coalesce(v.reloptions @> ARRAY['security_invoker=on'], false)
-             AND has_table_privilege(v_role, v.oid, 'SELECT') LOOP
+             AND has_any_column_privilege(v_role, v.oid, 'SELECT') LOOP
     severity := 'error'; object := r.view::text;
     problem := format('%s may read this view of %s, and views run with their owner''s rights, so row-level security does not apply: ALTER VIEW %s SET (security_invoker = on)', 'app_user', r.tbl, r.view);
     RETURN NEXT;
@@ -6764,12 +6765,13 @@ BEGIN
     problem := format('%s is the policy''s owner, or a member of it: who is signed in is believed without a signature, and it may turn row-level security off. Log in as an app role of its own', v_me::regrole);
     RETURN NEXT;
   END IF;
-  -- a table's owner (or a role with its rights) skips row-level security, and may turn it off: FORCE or not
+  -- a table's owner skips row-level security, and may turn it off: FORCE or not. A member of it, its rights
+  -- inherited or not (it may SET ROLE), as well
   FOR r IN SELECT c.oid::regclass AS tbl FROM pg_class c
            WHERE c.oid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY['"app"."files"', '"app"."folders"']::text[]) x)
-             AND pg_has_role(v_me, c.relowner, 'USAGE') LOOP
+             AND pg_has_role(v_me, c.relowner, 'MEMBER') LOOP
     severity := 'error';
-    problem := format('%s owns %s (or has its owner''s rights): an owner skips row-level security, and may turn it off', v_me::regrole, r.tbl);
+    problem := format('%s owns %s, or is a member of its owner: an owner skips row-level security, and may turn it off', v_me::regrole, r.tbl);
     RETURN NEXT;
   END LOOP;
   -- a table with rules whose row-level security is off: the rules don't apply

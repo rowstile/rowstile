@@ -247,10 +247,13 @@ PSQL -c "CREATE TABLE ch.notes_top PARTITION OF ch.notes FOR VALUES FROM (1000) 
      -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ch.notes_top TO app_user" -c "INSERT INTO ch.notes VALUES (1001, 3, NULL, 'carol''s')"
 directly="SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.notes_top' AND problem LIKE '%may use it directly%'"
 same "lint says the app role may use it directly" "$(PSQL -c "$directly")" 1
-# ... with any one of those privileges (reading too: its table has rules)
-for p in SELECT INSERT UPDATE DELETE; do
+# ... with any one of those privileges (reading too: its table has rules), or that of one column
+for p in SELECT INSERT UPDATE DELETE "SELECT (id)" "INSERT (id)" "UPDATE (owner_id)"; do
   PSQL -c "REVOKE ALL ON ch.notes_top FROM app_user" -c "GRANT $p ON ch.notes_top TO app_user" >/dev/null
-  same "... with $p alone on it too" "$(PSQL -c "$directly")" 1
+  case $p in
+    *"("*) same "... with the privilege on one column alone, $p, too" "$(PSQL -c "$directly")" 1;;
+    *) same "... with $p alone on it too" "$(PSQL -c "$directly")" 1;;
+  esac
 done
 PSQL -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ch.notes_top TO app_user" >/dev/null
 # its rows are written through the table from the day it is made (a job that makes next month's partition

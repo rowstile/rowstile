@@ -123,6 +123,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   shares, API keys and pending access requests of the rows it empties, and rebuilds the inheritance trees they
   are in. Before, it ran none of those triggers: the shares stayed until the next apply, a row made later with one
   of the ids got them, and a tree kept rows under a parent that was gone.
+- `authz.lint()` counts a privilege on one column as it counts one on the table: it reports a membership table
+  without rules that the app role may insert into or update one column of, a partition it may use that way, a
+  view that runs with its owner's rights of which it may read one column, and the notes that go with them.
+  `authz.connection_check()` reports a login that is a member of a table's owner without inheriting its rights:
+  it may `SET ROLE` to the owner.
 
 ### Upgrading
 
