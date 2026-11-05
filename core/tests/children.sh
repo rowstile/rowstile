@@ -47,10 +47,10 @@ same "the inheritance tables are right" "$(PSQL -c "SELECT authz.verify()")" t
 same "the partitioned tables have the trigger that forgets a row gone to another partition, the others don't" \
   "$(PSQL -c "SELECT string_agg(tgrelid::regclass::text, ' ' ORDER BY tgrelid::regclass::text) FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid WHERE tgname LIKE 'authz\_%\_forget\_moved' AND NOT c.relispartition")" "ch.notes ch.tasks ch.topics"
 rowtriggers=$(triggers ch.docs_old)
-# (and of the ones for TRUNCATE alone, those that forget what names the rows emptied: not the audit's, for which
-# emptying the table that inherits is not emptying the table)
+# (and of the ones for TRUNCATE alone, those that forget what names the rows emptied, and the audit's, which says
+# once what a TRUNCATE emptied)
 same "the table that inherits has its table's row and statement triggers" "$rowtriggers" \
-  "authz_doc_col_audit_del authz_doc_col_audit_ins authz_doc_col_audit_row authz_doc_col_audit_upd authz_doc_forget_del authz_doc_forget_id authz_doc_forget_trunc authz_doc_forget_trunc_first authz_update owner_id"
+  "authz_doc_col_audit_del authz_doc_col_audit_ins authz_doc_col_audit_row authz_doc_col_audit_trunc authz_doc_col_audit_trunc_first authz_doc_col_audit_upd authz_doc_forget_del authz_doc_forget_id authz_doc_forget_trunc authz_doc_forget_trunc_first authz_update owner_id"
 
 echo "-- a table that inherits: its rows, read and written through the table above"
 as 1 -c "SELECT authz.share('doc', 1, 'editor', 'user', 2)" -c "SELECT authz.share('doc', 11, 'editor', 'user', 2)" >/dev/null
@@ -81,7 +81,7 @@ echo "-- a table that inherits, made after the policy was applied"
 PSQL -c "CREATE TABLE ch.docs_older () INHERITS (ch.docs)" -c "CREATE TABLE ch.docs_oldest () INHERITS (ch.docs_old)" \
      -c "INSERT INTO ch.docs_older VALUES (21, 1, 'ancient')"
 same "lint names each, and the triggers it lacks" \
-  "$(PSQL -c "SELECT string_agg(object || ': ' || split_part(problem, ',', 1), '; ' ORDER BY object) FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'inherits from %, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, and its statement triggers for statements on it only, so a rule on a column is not checked on the rows stored here, their shares stay when their key changes, and a statement on this table doesn''t keep inheritance, shares and the audit current (missing here: authz_doc_col_audit_del, authz_doc_col_audit_ins, authz_doc_col_audit_row, authz_doc_col_audit_upd, authz_doc_forget_del, authz_doc_forget_id, authz_doc_forget_trunc, authz_doc_forget_trunc_first, authz_update owner_id). Apply the policy again (it makes them)'")" \
+  "$(PSQL -c "SELECT string_agg(object || ': ' || split_part(problem, ',', 1), '; ' ORDER BY object) FROM authz.lint() WHERE severity = 'error' AND problem LIKE 'inherits from %, and was made since the policy was last applied: Postgres runs a table''s row triggers for its own rows only, and its statement triggers for statements on it only, so a rule on a column is not checked on the rows stored here, their shares stay when their key changes, and a statement on this table doesn''t keep inheritance, shares and the audit current (missing here: authz_doc_col_audit_del, authz_doc_col_audit_ins, authz_doc_col_audit_row, authz_doc_col_audit_trunc, authz_doc_col_audit_trunc_first, authz_doc_col_audit_upd, authz_doc_forget_del, authz_doc_forget_id, authz_doc_forget_trunc, authz_doc_forget_trunc_first, authz_update owner_id). Apply the policy again (it makes them)'")" \
   "ch.docs_older: inherits from ch.docs; ch.docs_oldest: inherits from ch.docs_old"
 run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "apply after a table was made" "$out"
 same "... and lint has nothing more to say of them" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object LIKE 'ch.docs_old%'")" 0
@@ -106,7 +106,7 @@ PSQL -c "CREATE TABLE ch.docs_older_still () INHERITS (ch.docs)"
 same "a table made since lacks its copies, whatever the search path says first" \
   "$(PSQL -c "CREATE SCHEMA shadow" -c "CREATE TABLE shadow.pg_inherits (LIKE pg_catalog.pg_inherits)" -c "SET client_min_messages = warning" -c "SET search_path = shadow, pg_catalog" \
      -c "SELECT string_agg(child::text || ' ' || name, ', ' ORDER BY name) FROM authz_int.child_triggers()" -c "RESET search_path" -c "DROP SCHEMA shadow CASCADE")" \
-  "ch.docs_older_still authz_doc_col_audit_del, ch.docs_older_still authz_doc_col_audit_ins, ch.docs_older_still authz_doc_col_audit_row, ch.docs_older_still authz_doc_col_audit_upd, ch.docs_older_still authz_doc_forget_del, ch.docs_older_still authz_doc_forget_id, ch.docs_older_still authz_doc_forget_trunc, ch.docs_older_still authz_doc_forget_trunc_first, ch.docs_older_still authz_update owner_id"
+  "ch.docs_older_still authz_doc_col_audit_del, ch.docs_older_still authz_doc_col_audit_ins, ch.docs_older_still authz_doc_col_audit_row, ch.docs_older_still authz_doc_col_audit_trunc, ch.docs_older_still authz_doc_col_audit_trunc_first, ch.docs_older_still authz_doc_col_audit_upd, ch.docs_older_still authz_doc_forget_del, ch.docs_older_still authz_doc_forget_id, ch.docs_older_still authz_doc_forget_trunc, ch.docs_older_still authz_doc_forget_trunc_first, ch.docs_older_still authz_update owner_id"
 PSQL -c "DROP TABLE ch.docs_older_still"
 
 echo "-- a partitioned table: a row that stays in its partition, and one an update puts in another"
@@ -204,6 +204,22 @@ same "... and so it is when a partition of its link table is emptied" \
      -c "SET authz.user_id = 1" -c "SET ROLE app_user" -c "SELECT count(*) FROM ch.posts WHERE id = 2" -c "RESET ROLE" \
      -c "TRUNCATE ch.topic_links_see" -c "SELECT authz.verify()" -c "SET ROLE app_user" -c "SELECT count(*) FROM ch.posts WHERE id = 2" -c "ROLLBACK" | tr '\n' ' ')" "1 t 0 "
 same "TRUNCATE ch.notes, its partitions too: every share of notes goes" "$(PSQL -c "BEGIN" -c "TRUNCATE ch.notes" -c "SELECT '[' || ($(noteshares)) || ']'" -c "ROLLBACK")" "[]"
+# the audit has one line for what a TRUNCATE empties, naming the table it was run on, and the feed one entry
+emptied="SELECT coalesce(string_agg(object_type || ' ' || (detail->>'table'), ', ' ORDER BY id), 'nothing') FROM authz.audit WHERE action = 'truncate' AND txid = txid_current()"
+fedall="SELECT coalesce(string_agg(object_type || ' ' || cause, ', ' ORDER BY pos), 'nothing') FROM authz.changes WHERE txid = txid_current() AND object_ids = '{*}' AND cause IN ('truncate', 'relationship')"
+for t in ch.notes_high ch.docs_old ch.topic_links_see ch.shelf_links_old; do
+  same "TRUNCATE $t: the audit has one line, naming it" "$(PSQL -c "BEGIN" -c "TRUNCATE $t" -c "$emptied" -c "ROLLBACK")" \
+    "$(case $t in ch.notes_high) echo note;; ch.docs_old) echo doc;; ch.topic_links_see) echo topic;; *) echo shelf;; esac) $t"
+done
+same "... and the feed hears of every note, once" "$(PSQL -c "BEGIN" -c "TRUNCATE ch.notes_high" -c "$fedall" -c "ROLLBACK")" "note truncate"
+same "TRUNCATE ch.notes, its partitions too: one line, naming it, and one entry in the feed" \
+  "$(PSQL -c "BEGIN" -c "TRUNCATE ch.notes" -c "$emptied" -c "$fedall" -c "ROLLBACK" | tr '\n' '|')" "note ch.notes|note truncate|"
+same "... and so for ch.docs and the tables that inherit from it" "$(PSQL -c "BEGIN" -c "TRUNCATE ch.docs" -c "$emptied" -c "ROLLBACK")" "doc ch.docs"
+same "... and for a link table and its partitions" "$(PSQL -c "BEGIN" -c "TRUNCATE ch.topic_links" -c "$emptied" -c "ROLLBACK")" "topic ch.topic_links"
+same "TRUNCATE ONLY ch.docs, then the table that inherits: a line for each" \
+  "$(PSQL -c "BEGIN" -c "TRUNCATE ONLY ch.docs" -c "TRUNCATE ch.docs_old" -c "$emptied" -c "ROLLBACK")" "doc ch.docs, doc ch.docs_old"
+same "... and a partition named before its table, in one TRUNCATE: a line for each" \
+  "$(PSQL -c "BEGIN" -c "TRUNCATE ch.notes_high, ch.notes" -c "$emptied" -c "ROLLBACK")" "note ch.notes_high, note ch.notes"
 PSQL -c "DELETE FROM ch.people WHERE id = 15" -c "UPDATE authz.requests SET status = 'cancelled' WHERE status = 'pending'" \
      -c "DELETE FROM authz.shares WHERE (object_type, object_id) IN (('note', '101'), ('doc', '12'))"
 
@@ -216,9 +232,9 @@ same "user 1 sees the posts in the topics and shelves under theirs" "$(seen 1)" 
 same "the app role reads a partition of a table without rules directly, as it reads the table" \
   "$(as 1 -c "SELECT count(*) FROM ch.topics_high")|$(as 1 -c "SELECT count(*) FROM ch.shelves_old")" "3|3"
 same "the partitions have their table's statement triggers (Postgres gave them the row triggers)" "$(triggers ch.topics_high)|$(triggers ch.topic_links_see)|$(triggers ch.frozen_hold)" \
-  "authz_topic__linked_parent__tree_del authz_topic__linked_parent__tree_ins authz_topic__linked_parent__tree_trunc authz_topic__linked_parent__tree_upd authz_topic_col_audit_del authz_topic_col_audit_ins authz_topic_col_audit_row authz_topic_col_audit_upd authz_topic_forget_del authz_topic_forget_id authz_topic_forget_moved authz_topic_forget_trunc authz_topic_forget_trunc_first|authz_rel_audit_2_del authz_rel_audit_2_ins authz_rel_audit_2_upd authz_topic__linked_parent__tree_on_links1_del authz_topic__linked_parent__tree_on_links1_ins authz_topic__linked_parent__tree_on_links1_trunc authz_topic__linked_parent__tree_on_links1_upd|authz_topic__linked_parent__tree_dep"
+  "authz_topic__linked_parent__tree_del authz_topic__linked_parent__tree_ins authz_topic__linked_parent__tree_trunc authz_topic__linked_parent__tree_upd authz_topic_col_audit_del authz_topic_col_audit_ins authz_topic_col_audit_row authz_topic_col_audit_trunc authz_topic_col_audit_trunc_first authz_topic_col_audit_upd authz_topic_forget_del authz_topic_forget_id authz_topic_forget_moved authz_topic_forget_trunc authz_topic_forget_trunc_first|authz_rel_audit_2_del authz_rel_audit_2_ins authz_rel_audit_2_trunc authz_rel_audit_2_trunc_first authz_rel_audit_2_upd authz_topic__linked_parent__tree_on_links1_del authz_topic__linked_parent__tree_on_links1_ins authz_topic__linked_parent__tree_on_links1_trunc authz_topic__linked_parent__tree_on_links1_upd|authz_topic__linked_parent__tree_dep"
 same "... and so have the tables that inherit" "$(triggers ch.shelves_old)|$(triggers ch.shelf_links_old)|$(triggers ch.holds_old)" \
-  "authz_shelf__linked_parent__tree_del authz_shelf__linked_parent__tree_ins authz_shelf__linked_parent__tree_trunc authz_shelf__linked_parent__tree_upd authz_shelf_col_audit_del authz_shelf_col_audit_ins authz_shelf_col_audit_row authz_shelf_col_audit_upd authz_shelf_forget_del authz_shelf_forget_id authz_shelf_forget_trunc authz_shelf_forget_trunc_first|authz_rel_audit_1_del authz_rel_audit_1_ins authz_rel_audit_1_upd authz_shelf__linked_parent__tree_on_links1_del authz_shelf__linked_parent__tree_on_links1_ins authz_shelf__linked_parent__tree_on_links1_trunc authz_shelf__linked_parent__tree_on_links1_upd|authz_shelf__linked_parent__tree_dep"
+  "authz_shelf__linked_parent__tree_del authz_shelf__linked_parent__tree_ins authz_shelf__linked_parent__tree_trunc authz_shelf__linked_parent__tree_upd authz_shelf_col_audit_del authz_shelf_col_audit_ins authz_shelf_col_audit_row authz_shelf_col_audit_trunc authz_shelf_col_audit_trunc_first authz_shelf_col_audit_upd authz_shelf_forget_del authz_shelf_forget_id authz_shelf_forget_trunc authz_shelf_forget_trunc_first|authz_rel_audit_1_del authz_rel_audit_1_ins authz_rel_audit_1_trunc authz_rel_audit_1_trunc_first authz_rel_audit_1_upd authz_shelf__linked_parent__tree_on_links1_del authz_shelf__linked_parent__tree_on_links1_ins authz_shelf__linked_parent__tree_on_links1_trunc authz_shelf__linked_parent__tree_on_links1_upd|authz_shelf__linked_parent__tree_dep"
 as 2 -c "SELECT authz.share('topic', 152, 'viewer', 'user', 3)" -c "SELECT authz.share('shelf', 52, 'viewer', 'user', 3)" >/dev/null
 for kind in topic shelf; do
   if [ $kind = topic ]; then
@@ -265,16 +281,16 @@ run apply; is applied && ok "apply is not 'unchanged' then: it applies" || bad "
 same "... and the partition is closed: the app role reads it through its table" "$(as 2 -c "SELECT count(*) FROM ch.notes_top")|$(as 3 -c "SELECT count(*) FROM ch.notes WHERE id = 1001")" "0|1"
 same "... lint has nothing more to say of it" "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE object = 'ch.notes_top'")" 0
 same "... Postgres gave it the row triggers itself, and apply the statement triggers" "$(triggers ch.notes_top)" \
-  "authz_note__parent__tree_del authz_note__parent__tree_ins authz_note__parent__tree_trunc authz_note__parent__tree_upd authz_note_col_audit_del authz_note_col_audit_ins authz_note_col_audit_row authz_note_col_audit_upd authz_note_forget_del authz_note_forget_id authz_note_forget_moved authz_note_forget_trunc authz_note_forget_trunc_first authz_update owner_id"
+  "authz_note__parent__tree_del authz_note__parent__tree_ins authz_note__parent__tree_trunc authz_note__parent__tree_upd authz_note_col_audit_del authz_note_col_audit_ins authz_note_col_audit_row authz_note_col_audit_trunc authz_note_col_audit_trunc_first authz_note_col_audit_upd authz_note_forget_del authz_note_forget_id authz_note_forget_moved authz_note_forget_trunc authz_note_forget_trunc_first authz_update owner_id"
 run apply; is unchanged && ok "apply again: unchanged" || bad "apply once more after a partition was made" "$out"
 # a partition of a table without rules, made since: given nothing, its rows are written through its table; but a
 # statement on it alone (the owner's, or the app role's once given it) runs none of the table's statement triggers
 PSQL -c "CREATE TABLE ch.topics_top PARTITION OF ch.topics FOR VALUES FROM (1000) TO (2000)"
 same "lint names a partition made since of a table without rules, and the statement triggers it lacks" \
   "$(PSQL -c "SELECT severity || ': ' || problem FROM authz.lint() WHERE object = 'ch.topics_top'")" \
-  "error: is a partition of ch.topics, and was made since the policy was last applied: Postgres runs a table's statement triggers for statements on it only, so a statement on this partition doesn't keep inheritance, shares and the audit current (missing here: authz_topic__linked_parent__tree_del, authz_topic__linked_parent__tree_ins, authz_topic__linked_parent__tree_trunc, authz_topic__linked_parent__tree_upd, authz_topic_col_audit_del, authz_topic_col_audit_ins, authz_topic_col_audit_upd, authz_topic_forget_del, authz_topic_forget_moved, authz_topic_forget_trunc, authz_topic_forget_trunc_first). Apply the policy again (it makes them)"
+  "error: is a partition of ch.topics, and was made since the policy was last applied: Postgres runs a table's statement triggers for statements on it only, so a statement on this partition doesn't keep inheritance, shares and the audit current (missing here: authz_topic__linked_parent__tree_del, authz_topic__linked_parent__tree_ins, authz_topic__linked_parent__tree_trunc, authz_topic__linked_parent__tree_upd, authz_topic_col_audit_del, authz_topic_col_audit_ins, authz_topic_col_audit_trunc, authz_topic_col_audit_trunc_first, authz_topic_col_audit_upd, authz_topic_forget_del, authz_topic_forget_moved, authz_topic_forget_trunc, authz_topic_forget_trunc_first). Apply the policy again (it makes them)"
 PSQL -c "GRANT TRUNCATE ON ch.frozen_hold TO app_user"
-same "lint says the app role may empty a partition of the table a condition reads, which skips row-level security and the audit" \
+same "lint says the app role may empty a partition of the table a condition reads, which skips row-level security" \
   "$(PSQL -c "SELECT count(*) FROM authz.lint() WHERE severity = 'error' AND object = 'ch.frozen_hold' AND problem LIKE 'is a partition of ch.frozen (or inherits from it), and app_user may TRUNCATE it, %'")" 1
 PSQL -c "REVOKE TRUNCATE ON ch.frozen_hold FROM app_user"
 # (a governed table has triggers of rowstile's too: it is still one table above, said once)
@@ -329,7 +345,7 @@ same "both migration files apply in order (the second drops a function the copie
 retitled=${rowtriggers/authz_update owner_id/authz_update owner_id, title}
 same "the table that inherits has the row triggers after them" "$(D=$DB2 triggers ch.docs_old)" "$retitled"
 same "... and the partitions of a link table their table's statement triggers" "$(D=$DB2 triggers ch.topic_links_see)" \
-  "authz_rel_audit_2_del authz_rel_audit_2_ins authz_rel_audit_2_upd authz_topic__linked_parent__tree_on_links1_del authz_topic__linked_parent__tree_on_links1_ins authz_topic__linked_parent__tree_on_links1_trunc authz_topic__linked_parent__tree_on_links1_upd"
+  "authz_rel_audit_2_del authz_rel_audit_2_ins authz_rel_audit_2_trunc authz_rel_audit_2_trunc_first authz_rel_audit_2_upd authz_topic__linked_parent__tree_on_links1_del authz_topic__linked_parent__tree_on_links1_ins authz_topic__linked_parent__tree_on_links1_trunc authz_topic__linked_parent__tree_on_links1_upd"
 D=$DB2 as 1 -c "SELECT authz.share('doc', 12, 'editor', 'user', 2)" >/dev/null
 same "... and the changed rule holds on its rows" "$(D=$DB2 as 2 -c "UPDATE ch.docs SET title = 'mine' WHERE id = 12")" "ERROR:  changing owner_id, title of ch.docs 12 needs: own"
 # a partition of a table with rules made since, given to the app role: open until a migration, then closed by the

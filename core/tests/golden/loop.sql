@@ -878,6 +878,28 @@ BEGIN
     PERFORM pg_notify('authz_changes', v_pos::text);
   END IF;
 END $f$;
+-- A TRUNCATE empties the tables it names and, without ONLY, the tables under them, and Postgres runs the TRUNCATE
+-- triggers of each (those of the audit and the feed too: CHILD_TRIGGERS). They say it once, of the table it was run
+-- on: before it, each table is noted unless one above it is (p_key: the trigger function's, of the table and of those
+-- under it); after it, a table noted says it, and is noted no more. (A table, not a setting: a session can't set it)
+CREATE UNLOGGED TABLE authz_int.truncating (txid bigint NOT NULL, relid oid NOT NULL, key text NOT NULL,
+  PRIMARY KEY (txid, relid, key));
+CREATE FUNCTION authz_int.truncate_once(p_relid oid, p_key text, p_before boolean) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF NOT p_before THEN
+    DELETE FROM authz_int.truncating t WHERE t.txid = txid_current() AND t.relid = p_relid AND t.key = p_key;
+    RETURN FOUND;
+  END IF;
+  IF NOT EXISTS (WITH RECURSIVE up(oid) AS (
+                   SELECT i.inhparent FROM pg_inherits i WHERE i.inhrelid = p_relid
+                   UNION SELECT i.inhparent FROM pg_inherits i JOIN up ON i.inhrelid = up.oid)
+                 SELECT 1 FROM authz_int.truncating t JOIN up ON t.relid = up.oid
+                 WHERE t.txid = txid_current() AND t.key = p_key) THEN
+    INSERT INTO authz_int.truncating VALUES (txid_current(), p_relid, p_key) ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN false;
+END $f$;
 -- objects changed: they, and what reads them (authz_int.dependents)
 CREATE FUNCTION authz_int.changed(p_type text, p_ids text[], p_cause text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
@@ -1871,7 +1893,10 @@ END $tr$;
 CREATE FUNCTION authz_int."org__col_audit_trunc"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.audit('truncate', 'org', NULL, NULL, NULL, NULL, NULL, jsonb_build_object('table', 'lp.orgs'));
+    IF NOT authz_int.truncate_once(TG_RELID, 'org__col_audit_trunc', TG_WHEN = 'BEFORE') THEN
+      RETURN NULL;
+    END IF;
+    PERFORM authz_int.audit('truncate', 'org', NULL, NULL, NULL, NULL, NULL, jsonb_build_object('table', pg_catalog.format('%I.%I', TG_TABLE_SCHEMA, TG_TABLE_NAME)));
     PERFORM authz_int.changed('org', ARRAY['*'], 'truncate');
   RETURN NULL;
 END $f$;
@@ -1879,6 +1904,16 @@ END $f$;
 DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."orgs"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_org_col_audit_trunc" AFTER TRUNCATE ON "lp"."orgs" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_org_col_audit_trunc" ON "lp"."orgs" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
+  ELSE
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."orgs"';
+  END IF;
+END $tr$;
+-- @object trigger "authz_org_col_audit_trunc_first" ON "lp"."orgs"
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."orgs"'::regclass) IN ('r', 'p') THEN
+    EXECUTE 'CREATE TRIGGER "authz_org_col_audit_trunc_first" BEFORE TRUNCATE ON "lp"."orgs" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."org__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_org_col_audit_trunc_first" ON "lp"."orgs" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
   ELSE
     RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."orgs"';
   END IF;
@@ -1968,7 +2003,10 @@ END $tr$;
 CREATE FUNCTION authz_int."setting__col_audit_trunc"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.audit('truncate', 'setting', NULL, NULL, NULL, NULL, NULL, jsonb_build_object('table', 'lp.settings'));
+    IF NOT authz_int.truncate_once(TG_RELID, 'setting__col_audit_trunc', TG_WHEN = 'BEFORE') THEN
+      RETURN NULL;
+    END IF;
+    PERFORM authz_int.audit('truncate', 'setting', NULL, NULL, NULL, NULL, NULL, jsonb_build_object('table', pg_catalog.format('%I.%I', TG_TABLE_SCHEMA, TG_TABLE_NAME)));
     PERFORM authz_int.changed('setting', ARRAY['*'], 'truncate');
   RETURN NULL;
 END $f$;
@@ -1976,6 +2014,16 @@ END $f$;
 DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."settings"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_setting_col_audit_trunc" AFTER TRUNCATE ON "lp"."settings" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."setting__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_setting_col_audit_trunc" ON "lp"."settings" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
+  ELSE
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."settings"';
+  END IF;
+END $tr$;
+-- @object trigger "authz_setting_col_audit_trunc_first" ON "lp"."settings"
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."settings"'::regclass) IN ('r', 'p') THEN
+    EXECUTE 'CREATE TRIGGER "authz_setting_col_audit_trunc_first" BEFORE TRUNCATE ON "lp"."settings" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."setting__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_setting_col_audit_trunc_first" ON "lp"."settings" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
   ELSE
     RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."settings"';
   END IF;
@@ -2061,7 +2109,10 @@ END $tr$;
 CREATE FUNCTION authz_int."email__col_audit_trunc"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.audit('truncate', 'email', NULL, NULL, NULL, NULL, NULL, jsonb_build_object('table', 'lp.emails'));
+    IF NOT authz_int.truncate_once(TG_RELID, 'email__col_audit_trunc', TG_WHEN = 'BEFORE') THEN
+      RETURN NULL;
+    END IF;
+    PERFORM authz_int.audit('truncate', 'email', NULL, NULL, NULL, NULL, NULL, jsonb_build_object('table', pg_catalog.format('%I.%I', TG_TABLE_SCHEMA, TG_TABLE_NAME)));
     PERFORM authz_int.changed('email', ARRAY['*'], 'truncate');
   RETURN NULL;
 END $f$;
@@ -2069,6 +2120,16 @@ END $f$;
 DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."emails"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_email_col_audit_trunc" AFTER TRUNCATE ON "lp"."emails" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."email__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_email_col_audit_trunc" ON "lp"."emails" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
+  ELSE
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."emails"';
+  END IF;
+END $tr$;
+-- @object trigger "authz_email_col_audit_trunc_first" ON "lp"."emails"
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."emails"'::regclass) IN ('r', 'p') THEN
+    EXECUTE 'CREATE TRIGGER "authz_email_col_audit_trunc_first" BEFORE TRUNCATE ON "lp"."emails" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."email__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_email_col_audit_trunc_first" ON "lp"."emails" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
   ELSE
     RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."emails"';
   END IF;
@@ -2154,7 +2215,10 @@ END $tr$;
 CREATE FUNCTION authz_int."domain__col_audit_trunc"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-    PERFORM authz_int.audit('truncate', 'domain', NULL, NULL, NULL, NULL, NULL, jsonb_build_object('table', 'lp.domains'));
+    IF NOT authz_int.truncate_once(TG_RELID, 'domain__col_audit_trunc', TG_WHEN = 'BEFORE') THEN
+      RETURN NULL;
+    END IF;
+    PERFORM authz_int.audit('truncate', 'domain', NULL, NULL, NULL, NULL, NULL, jsonb_build_object('table', pg_catalog.format('%I.%I', TG_TABLE_SCHEMA, TG_TABLE_NAME)));
     PERFORM authz_int.changed('domain', ARRAY['*'], 'truncate');
   RETURN NULL;
 END $f$;
@@ -2162,6 +2226,16 @@ END $f$;
 DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."domains"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_domain_col_audit_trunc" AFTER TRUNCATE ON "lp"."domains" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."domain__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_domain_col_audit_trunc" ON "lp"."domains" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
+  ELSE
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."domains"';
+  END IF;
+END $tr$;
+-- @object trigger "authz_domain_col_audit_trunc_first" ON "lp"."domains"
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."domains"'::regclass) IN ('r', 'p') THEN
+    EXECUTE 'CREATE TRIGGER "authz_domain_col_audit_trunc_first" BEFORE TRUNCATE ON "lp"."domains" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."domain__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_domain_col_audit_trunc_first" ON "lp"."domains" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
   ELSE
     RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."domains"';
   END IF;
@@ -2235,6 +2309,9 @@ END $tr$;
 CREATE FUNCTION authz_int."user__col_audit_trunc"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
+    IF NOT authz_int.truncate_once(TG_RELID, 'user__col_audit_trunc', TG_WHEN = 'BEFORE') THEN
+      RETURN NULL;
+    END IF;
     PERFORM authz_int.changed('user', ARRAY['*'], 'truncate');
   RETURN NULL;
 END $f$;
@@ -2242,6 +2319,16 @@ END $f$;
 DO $tr$ BEGIN
   IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."users"'::regclass) IN ('r', 'p') THEN
     EXECUTE 'CREATE TRIGGER "authz_user_col_audit_trunc" AFTER TRUNCATE ON "lp"."users" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_user_col_audit_trunc" ON "lp"."users" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
+  ELSE
+    RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."users"';
+  END IF;
+END $tr$;
+-- @object trigger "authz_user_col_audit_trunc_first" ON "lp"."users"
+DO $tr$ BEGIN
+  IF (SELECT relkind FROM pg_class WHERE oid = '"lp"."users"'::regclass) IN ('r', 'p') THEN
+    EXECUTE 'CREATE TRIGGER "authz_user_col_audit_trunc_first" BEFORE TRUNCATE ON "lp"."users" FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__col_audit_trunc"()';
+    EXECUTE 'COMMENT ON TRIGGER "authz_user_col_audit_trunc_first" ON "lp"."users" IS ''rowstile: for a TRUNCATE of the tables under its table too'';';
   ELSE
     RAISE NOTICE '% is not a table: changes to it are not audited or fed (audit)', '"lp"."users"';
   END IF;
@@ -4823,7 +4910,7 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
   END LOOP;
   -- partitions and inheritance children: used directly, they skip the rules of the table above (apply turns
   -- row-level security on for the ones there are then; later ones are found here), and TRUNCATE skips the
-  -- triggers for TRUNCATE alone that are not right there (the audit's, the sync mirror's). The tables above: those
+  -- triggers for TRUNCATE alone that are not right there (the sync mirror's). The tables above: those
   -- with rules, and those rowstile watches (a trigger of its own on them)
   FOR r IN WITH RECURSIVE x(tbl, governed) AS (
              SELECT to_regclass(t), true FROM unnest(ARRAY['"lp"."domains"', '"lp"."emails"', '"lp"."orgs"', '"lp"."settings"']::text[]) t
@@ -4840,7 +4927,7 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
            FROM d JOIN pg_class k ON k.oid = d.oid LOOP
     IF has_table_privilege(v_role, r.part, 'TRUNCATE') THEN
       severity := 'error'; object := r.part::text;
-      problem := format('is a partition of %s (or inherits from it), and %s may TRUNCATE it, which skips row-level security, and the audit and the sync index''s mirror of %s don''t hear of it: REVOKE TRUNCATE ON %s FROM %s', r.tbl, 'app_user', r.tbl, r.part, 'app_user');
+      problem := format('is a partition of %s (or inherits from it), and %s may TRUNCATE it, which skips row-level security: REVOKE TRUNCATE ON %s FROM %s', r.tbl, 'app_user', r.part, 'app_user');
       RETURN NEXT;
     END IF;
     -- (on a table without rules, statements on it run the triggers of the table above as their own: the next loop
