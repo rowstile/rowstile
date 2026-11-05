@@ -305,13 +305,13 @@ EOF
 run --db "dbname=$DB3" apply "$T/types.authz"
 case "$out" in *"types.authz: applied") ok "apply: types named with capitals";; *) bad "apply, types named with capitals" "$out";; esac
 got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1', 'view', '1') WITH ORDINALITY x(e, n)")
-[ "$got" = "yes  user 1 holds view on Note 1|  Note.view = folder.view|  yes  folder.view|    yes  folder is Folder 1, which has view|      Folder.view = owner|      yes  owner|        yes  owner: ownerId is you" ] &&
+[ "$got" = "yes  user 1 holds view on Note 1|  Note.view = folder.view|  yes  folder.view|    yes  folder is Folder 1, which has view|      Folder.view = owner|      yes  owner|        yes  owner: ownerId is them" ] &&
   ok "explain follows a relation to a type named with capitals" || bad "explain through folder.view" "$got"
 got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1', 'keep', '1') WITH ORDINALITY x(e, n)")
-[ "$got" = "yes  user 1 holds keep on Note 1|  Note.keep = keeper|  yes  keeper|    yes  keeper: folderId is Folder 1, and you are owner there|      yes  owner: ownerId is you" ] &&
+[ "$got" = "yes  user 1 holds keep on Note 1|  Note.keep = keeper|  yes  keeper|    yes  keeper: folderId is Folder 1, and they are owner there|      yes  owner: ownerId is them" ] &&
   ok "... and a column naming the group of one" || bad "explain through Folder#owner" "$got"
 got=$(L -c "SELECT string_agg(e, '|' ORDER BY n) FROM authz.explain('Note', '1', 'hold', '1') WITH ORDINALITY x(e, n)")
-[ "$got" = "yes  user 1 holds hold on Note 1|  Note.hold = holder|  yes  holder|    yes  holder: a row in public.Note names Folder 1, and you are owner there|      yes  owner: ownerId is you" ] &&
+[ "$got" = "yes  user 1 holds hold on Note 1|  Note.hold = holder|  yes  holder|    yes  holder: a row in public.Note names Folder 1, and they are owner there|      yes  owner: ownerId is them" ] &&
   ok "... and a table's row naming the group of one" || bad "explain through a table naming Folder#owner" "$got"
 [ -z "${KEEP:-}" ] && dropdb "$DB3"
 

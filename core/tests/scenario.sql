@@ -420,8 +420,8 @@ SET authz.user_id = 5;
 SELECT authz.share('folder', 6, 'viewer', 'team', 10, 'member');
 SELECT authz.share('folder', 2, 'viewer', 'team', 12, 'member');
 SELECT test.ok('explain: gina views Handbook through its share with Platform, and is in Platform',
-  (SELECT array_agg(ltrim(e)) FROM authz.explain('folder', '2', 'view', '7') e WHERE e LIKE '%you are member there%')
-  = '{"yes  viewer: shared with team 12, and you are member there"}');
+  (SELECT array_agg(ltrim(e)) FROM authz.explain('folder', '2', 'view', '7') e WHERE e LIKE '%they are member there%')
+  = '{"yes  viewer: shared with team 12, and they are member there"}');
 -- 19 folders in a chain under Engineering: alice may view the last one as Engineering's owner, 60 steps down
 -- (view, edit, share, then share on each folder above, three steps each)
 INSERT INTO app.folders (id, org_id, parent_id, owner_id, name, inherit)

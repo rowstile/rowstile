@@ -202,6 +202,7 @@ FEATURES: list[Feature] = [
         (
             T("devx.sh", "a refused insert says which rule, and which part of it"),
             T("adversarial.sh", "a write refused in a hidden folder explains as for a missing one"),
+            T("adversarial.sh", "why someone else sees her file stops at the folder above it she can't see"),
             T("docs_test.sh", "explain-rule says which rule and what is missing"),
         ),
         (T(DIFF, "explain self"), T(DIFF, "authz.explain_rule(")),
