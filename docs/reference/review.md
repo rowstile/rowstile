@@ -18,10 +18,12 @@ says what a change does, in plain words, for the pull request:
   A number a condition compares a column with in order gets the numbers either side of it and halfway to them
   (`{level > 1}` and `{level >= 2}` differ on 1.5), and an id a condition compares a relation's column with is
   the id of a row there (`{owner_id <> 7}`: a user 7, whose folders it leaves out). <!-- checked: tests/unit_test.py "test_a_number_between_two_a_condition_names_is_tried"; tests/unit_test.py "test_an_id_a_condition_names_is_a_row_of_the_worlds" -->
-  The listing stops after 3,000 worlds, once those are tried. If they all grant the same, the review says
+  The listing stops after 3,000 worlds, once those are tried, and after 12,000 whatever: rows whose conditions
+  give many answers make many worlds of one link. If they all grant the same, the review says
   "Meaning unchanged", and how far the listing got: "every one of up to 3 rows of each type", with "at most 2
-  links" where it stopped there, and, where columns read together take more than 4,096 combinations of values,
-  that only the first of them were tried. <!-- checked: tests/review.sh "a refactor: meaning unchanged, checked in small worlds"; tests/unit_test.py "test_a_refactor_is_checked_in_small_worlds"; tests/unit_test.py "test_the_listing_says_where_it_took_some_values_only"; tests/unit_test.py "test_a_long_and_of_links_widened_is_found"; tests/unit_test.py "test_a_chain_deeper_than_the_drawn_worlds_is_found" -->
+  links" where it stopped there (or "with no link, and some with one", where it stopped before those), and, where
+  columns read together take more than 4,096 combinations of values,
+  that only the first of them were tried. <!-- checked: tests/review.sh "a refactor: meaning unchanged, checked in small worlds"; tests/unit_test.py "test_a_refactor_is_checked_in_small_worlds"; tests/unit_test.py "test_the_listing_says_where_it_took_some_values_only"; tests/unit_test.py "test_a_long_and_of_links_widened_is_found"; tests/unit_test.py "test_a_chain_deeper_than_the_drawn_worlds_is_found"; tests/unit_test.py "test_the_listing_stops_however_many_classes_its_rows_have" -->
   If one world grants otherwise, the review names what differs, for whom and on what, and the comment shows
   that world too. <!-- checked: tests/unit_test.py "test_the_comment_shows_why_it_is_no_refactor" -->
   It is the first world found, made as small as it still grants otherwise in: each row, link and value it holds

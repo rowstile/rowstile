@@ -1301,7 +1301,8 @@ def rare_worlds(pols: Sequence[Policy], worlds: int, seed: str) -> Iterable[Worl
 # few rows that two policies may be told apart in are listed, every one of them, the smallest first (Listing).
 MOST_ROWS = 3  # the rows of one type a listed world has at most
 LISTED = 15  # the listed worlds a comparison tries for each drawn one it asks for (the review's 200: 3,000), once ...
-ALWAYS = 1  # ... it has tried every world with at most this many links, however many they are
+ALWAYS = 1  # ... it has tried every world with at most this many links, however many they are, ...
+LISTED_AT_MOST = 60  # ... but never more than this many for each drawn one (rows of many classes make many worlds)
 CLASS_CHOICES = 4096  # the values a group of columns read together may take, for its classes to be listed whole
 STEPS = 100_000  # the steps of looking for links a listing takes at most
 
@@ -1591,16 +1592,24 @@ class Listing:
         return self.steps > STEPS and self.whole >= ALWAYS
 
     def said(self) -> str:
-        """What was listed, in words: '1,105 listed: every one of up to 3 rows of each type with at most 2 links',
-        and where columns read together had more combinations of values than CLASS_CHOICES, that only those were
-        tried."""
-        most = "" if self.complete else f" with at most {self.whole} link" + ("" if self.whole == 1 else "s")
+        """What was listed, in words: '1,105 listed: every one of up to 3 rows of each type with at most 2 links'
+        ('with no link, and some with one', or 'of up to 3 rows of each type, some with no link', where it stopped
+        before), and where columns read together had more combinations of values than CLASS_CHOICES, that only
+        those were tried."""
+        rows = f"up to {MOST_ROWS} rows of each type"
+        if self.whole < 0:
+            most = f"of {rows}, some with no link"
+        elif self.whole == 0 and not self.complete:
+            most = f"every one of {rows} with no link, and some with one"
+        else:
+            links = "" if self.complete else f" with at most {self.whole} link" + ("" if self.whole == 1 else "s")
+            most = f"every one of {rows}{links}"
         cut = (
             f"; of columns read together, only the first {CLASS_CHOICES:,} combinations of their values"
             if self.cut
             else ""
         )
-        return f"{self.listed:,} listed: every one of up to {MOST_ROWS} rows of each type{most}{cut}"
+        return f"{self.listed:,} listed: {most}{cut}"
 
     def worlds(self) -> Iterator[Listed]:
         """The listed worlds, those with fewer links first, and of those, fewer rows first; up to STEPS steps of
@@ -1809,7 +1818,7 @@ def worlds_to_try(
 ) -> Iterable[World]:
     """The worlds a comparison of policies, or prove, goes through: drawn ones, smallest first, then the corners,
     then the listed ones (with a listing: LISTED for each drawn one asked for, after every one with ALWAYS links at
-    most), then the rare ones (rare_worlds). by_size (prove: its counterexample is the smallest it finds): at each
+    most, but LISTED_AT_MOST at most), then the rare ones (rare_worlds). by_size (prove: its counterexample is the smallest it finds): at each
     size, the drawn worlds and the corners, one of each in turn while both last, so that neither waits for the
     other."""
     # the corners: each condition yes or no on every row (but those that read who is signed in or a relation)
@@ -1834,7 +1843,9 @@ def worlds_to_try(
     if listing is not None:
         for w in listing.worlds():
             yield w
-            if listing.listed >= LISTED * worlds and listing.whole >= ALWAYS:
+            if (
+                listing.listed >= LISTED * worlds and listing.whole >= ALWAYS
+            ) or listing.listed >= LISTED_AT_MOST * worlds:
                 break
     yield from rare_worlds(pols, worlds, seed)
 

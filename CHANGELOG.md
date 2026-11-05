@@ -291,6 +291,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The world `rowstile review` and `rowstile prove` show a difference or a counterexample in leaves out the rows
   that play no part, as it does links and values: one found among 2 users and 4 folders shows the user and the
   folder it is about, not all six.
+- `rowstile review` lists 12,000 small worlds at most (60 for each drawn one), even before it has listed every
+  world with one link: rows whose conditions give many answers made that many grow fourfold with each condition,
+  and a review run for minutes. It then says how far it got ("with no link, and some with one").
 
 ### Upgrading
 
