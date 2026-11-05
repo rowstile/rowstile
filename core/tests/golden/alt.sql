@@ -276,9 +276,11 @@ CREATE TABLE IF NOT EXISTS authz.policy_versions (
   lock    text);
 REVOKE ALL ON authz.policy_versions FROM PUBLIC;
 
--- Request context for conditions: SET LOCAL authz_ctx.mfa = 'yes', then {authz.ctx('mfa') = 'yes'}
+-- Request context for conditions: SET LOCAL authz_ctx.mfa = 'yes', then {authz.ctx('mfa') = 'yes'}. A key
+-- not set is NULL. Once a connection has set a key, Postgres reads it as '' in a later transaction that didn't, so
+-- '' is NULL too: what an earlier request on a pooled connection set must not show
 CREATE OR REPLACE FUNCTION authz.ctx(key text) RETURNS text LANGUAGE sql STABLE AS
-  $$ SELECT current_setting('authz_ctx.' || key, true) $$;
+  $$ SELECT nullif(current_setting('authz_ctx.' || key, true), '') $$;
 
 -- Link tokens the request presents: SET LOCAL authz_ctx.links = '<token>,<token>'
 CREATE OR REPLACE FUNCTION authz.link_hashes() RETURNS text[] LANGUAGE sql STABLE AS $$

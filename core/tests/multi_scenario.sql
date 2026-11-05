@@ -296,6 +296,21 @@ SELECT test.ok('from elsewhere: nothing', test.docs() = '-');
 SELECT set_config('authz_ctx.ip', '10.1.2.3', false);
 SELECT test.ok('from the office: folder 1 and below', test.docs() = '01, 02');
 RESET authz_ctx.ip;
+-- a key set earlier on the connection, then reset or set only for a transaction that has ended, reads as empty in
+-- Postgres; authz.ctx reads it as not set, as on a new connection
+SELECT test.ok('a context key reset on the connection is NULL, as one never set', authz.ctx('ip') IS NULL);
+BEGIN;
+SELECT set_config('authz_ctx.kiosk', 'yes', true);
+COMMIT;
+SELECT test.ok('... and so is one an earlier transaction set with SET LOCAL', authz.ctx('kiosk') IS NULL);
+SELECT test.ok('... and one set to the empty text', set_config('authz_ctx.kiosk', '', false) = '' AND authz.ctx('kiosk') IS NULL);
+RESET authz_ctx.kiosk;
+SELECT test.as(1);
+SELECT test.ok('a caveat share made with an empty ip',
+  test.try($$SELECT authz.share('folder', '1', 'viewer', 'user', '00000000-0000-4000-8000-000000000004', '', NULL, NULL, 'from_ip', '{"ip": ""}')$$) = 'ok');
+SELECT test.as(4);
+SELECT test.ok('... lets nothing through to a request that sets no ip, after one that did on the connection',
+  test.docs() = '-');
 SELECT test.as(1);
 SELECT authz.unshare('folder', '1', 'viewer', 'user', '00000000-0000-4000-8000-000000000004');
 

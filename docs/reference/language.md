@@ -118,6 +118,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   or not (for rules on directories), and `nobody` nobody (`update id : nobody`), `{...}` is any SQL
   condition on the row (columns, subqueries, `now()`, `authz.uid()`, request context
   with `authz.ctx('mfa')`, which the app sets in the transaction: `SET LOCAL authz_ctx.mfa = 'yes'`). <!-- answer: follow-relation, signed-in-anyone-nobody, conditions-sql -->
+  A key the transaction didn't set is NULL, whatever an earlier transaction on the connection set, and so
+  is a key set to `''`. <!-- checked: tests/multi_scenario.sql "a context key reset on the connection is NULL, as one never set"; tests/multi_scenario.sql "and so is one an earlier transaction set with SET LOCAL" -->
   Being SQL, a condition names a column as SQL does: one with capital letters, as Prisma makes them, takes
   double quotes there (`{"parentId" is null}`), while a relation's source is the bare name
   (`parent : folder = parentId`).
