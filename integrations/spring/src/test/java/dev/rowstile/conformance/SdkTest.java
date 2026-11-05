@@ -28,6 +28,8 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 
 /** The SDK's own calls over JDBC, and how it reads the database's answers. */
 class SdkTest extends Conformance {
@@ -95,6 +97,37 @@ class SdkTest extends Conformance {
         assertEquals("target row violates row-level security policy (USING expression) for table \"notes\": MERGE"
                 + " matched a row the update or delete rule doesn't let this user change", refused.get(2).getMessage());
         assertEquals("AZ709", refused.get(2).code());
+        // what tells them in any language: the function that raised each
+        assertEquals(List.of("ExecWithCheckOptions", "ExecWithCheckOptions", "ExecWithCheckOptions"), refused.stream()
+                .map(r -> ((PSQLException) r.getCause()).getServerErrorMessage().getRoutine()).toList());
+    }
+
+    @Test
+    @DisplayName("Postgres's own refusal in another language is told by the function that raised it, the table unnamed")
+    void postgresOwnInAnotherLanguage() {
+        String words = "neue Zeile verletzt Policy für Sicherheit auf Zeilenebene für Tabelle »notes«";
+        Refused refused = Errors.refusal(german(words, "ExecWithCheckOptions")).orElseThrow();
+        assertEquals(Arrays.asList(words, null, null, List.of(), "AZ709"),
+                Arrays.asList(refused.getMessage(), refused.table(), refused.command(), refused.why(), refused.code()));
+        // another 42501 (a grant missing) is none
+        assertEquals(Optional.empty(), Errors.refusal(german("keine Berechtigung für Tabelle notes", "aclcheck_error")));
+    }
+
+    /** A 42501 as a server whose messages are in German sends it, raised by {@code routine}. */
+    static PSQLException german(String message, String routine) {
+        return new PSQLException(new ServerErrorMessage("SFEHLER\0VERROR\0C42501\0M" + message + "\0R" + routine + "\0"));
+    }
+
+    @Test
+    @DisplayName("nobody has one spelling: no id, whatever the type; and acting for null is acting for nobody")
+    void nobody() {
+        for (Principal p : List.of(new Principal("service", null), Principal.of("bot", ""), Principal.user(""),
+                Principal.parse("service:"))) {
+            assertEquals(List.of(Principal.NOBODY, "nobody"), List.of(p, p.toString()), p.toString());
+        }
+        assertEquals(Optional.of(Principal.NOBODY), Rowstile.actingAs(null, Rowstile::current));
+        assertEquals(Optional.of(Principal.NOBODY), Rowstile.actingAs(Principal.user(1),
+                () -> Rowstile.actingAs(null, Rowstile::current)));
     }
 
     @Test
@@ -127,6 +160,19 @@ class SdkTest extends Conformance {
         assertEquals(List.of(Optional.of("28000"), Optional.of("AZ703")),
                 List.of(Errors.sqlState(login), Errors.errorCode(login)));
         assertFalse(Errors.notSignedIn(login));
+        // the code is read from the HINT alone: Postgres's own words quote the request's input
+        DatabaseError cast = assertThrows(DatabaseError.class, () -> as(1, c -> count(c,
+                "SELECT 'rowstile help AZ714'::bigint")));
+        assertEquals(List.of(Optional.of("22P02"), Optional.empty(), Optional.empty()),
+                List.of(Errors.sqlState(cast), Errors.errorCode(cast), Errors.problem(cast)));
+        // a 28000 without code AZ701 (Postgres's own: a login refused when connecting) is not the not-signed-in error
+        DatabaseError refusedLogin = assertThrows(DatabaseError.class, () -> as(1, c -> {
+            try (Statement st = c.createStatement()) {
+                return st.execute("DO $$BEGIN RAISE 'no pg_hba.conf entry' USING ERRCODE = '28000'; END$$");
+            }
+        }));
+        assertEquals(Optional.of("28000"), Errors.sqlState(refusedLogin));
+        assertFalse(Errors.notSignedIn(refusedLogin));
     }
 
     @Test

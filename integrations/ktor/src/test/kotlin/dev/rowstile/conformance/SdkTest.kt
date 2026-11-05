@@ -290,6 +290,23 @@ class SdkTest {
             }
         }
         assertEquals(listOf("insert", "AZ709"), listOf(refused.refusal()!!.command(), refused.errorCode()))
+        // the code is read from the HINT alone: Postgres's own words quote the request's input
+        val cast = assertFailsWith<Exception> {
+            transaction(Principal.user(2), db) { exec("SELECT 'rowstile help AZ714'::bigint") { it.next() } }
+        }
+        assertEquals(listOf(null, null), listOf(cast.errorCode(), cast.problem()))
+    }
+
+    @Test
+    @DisplayName("nobody has one spelling: work for nobody runs in a transaction signed in as a principal without an id")
+    fun nobody() = runBlocking {
+        val spellings = listOf(Principal("service", null), Principal.of("bot", ""), Principal.user(""))
+        for (spelling in spellings) {
+            assertEquals(Principal.NOBODY, spelling)
+            assertEquals(listOf(1L, null), suspendTransaction(spelling, db) {
+                withContext(ActingAs(Principal.NOBODY)) { listOf(Projects.selectAll().count(), signedIn()?.ifEmpty { null }) }
+            })
+        }
     }
 
     @Test

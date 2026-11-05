@@ -24,6 +24,8 @@ public final class Errors {
     // without its schema, and sets no field for it
     private static final Pattern GENERIC = Pattern.compile(
             "(new|target) row violates row-level security policy (\\(USING expression\\) )?for table \"([^\"]+)\"");
+    // the function in Postgres that raises those refusals (the error's routine): what tells one in another language
+    private static final String ROW_CHECK = "ExecWithCheckOptions";
     private static final String UNSEEN = "this user may not see the row as written (the select rule). An insert that"
             + " reads it back (RETURNING), an upsert, and an update with a WHERE need to see it.";
 
@@ -62,17 +64,11 @@ public final class Errors {
 
     /**
      * rowstile's code for a database error ({@code AZ709}; {@code rowstile help AZ709} says what it means): from its
-     * HINT, where the runtime puts it, or its message. None for an error rowstile didn't raise.
+     * HINT, where the runtime puts it, and never its message, which may hold the request's own input (Postgres's own
+     * words quote a value it couldn't read). None for an error rowstile didn't raise.
      */
     public static Optional<String> errorCode(Throwable e) {
-        Optional<ServerErrorMessage> m = server(e);
-        for (String text : m.isPresent() ? List.of(text(m.get().getHint()), text(m.get().getMessage())) : List.<String>of()) {
-            Matcher found = CODE.matcher(text);
-            if (found.find()) {
-                return Optional.of(found.group(1));
-            }
-        }
-        return Optional.empty();
+        return server(e).map(m -> CODE.matcher(text(m.getHint()))).filter(Matcher::find).map(found -> found.group(1));
     }
 
     private static String text(String s) {
@@ -81,11 +77,12 @@ public final class Errors {
 
     /**
      * Whether {@code e} is the not-signed-in error ({@code rowstile help AZ701}): a query that needs to know who is
-     * asking ran in a transaction nobody signed in to, a bug in the app. A login refused (AZ703) and settings changed
-     * by hand (AZ702) share its SQLSTATE, 28000, but are no such thing.
+     * asking ran in a transaction nobody signed in to, a bug in the app. Its SQLSTATE, 28000, is shared by a login
+     * refused (AZ703), settings changed by hand (AZ702) and Postgres's own refusals to connect (a role that isn't
+     * there, pg_hba.conf), which carry no code: none of them is.
      */
     public static boolean notSignedIn(Throwable e) {
-        return sqlState(e).filter("28000"::equals).isPresent() && errorCode(e).orElse("AZ701").equals("AZ701");
+        return sqlState(e).filter("28000"::equals).isPresent() && errorCode(e).filter("AZ701"::equals).isPresent();
     }
 
     /**
@@ -103,10 +100,15 @@ public final class Errors {
         String code = errorCode(e).orElse(null);
         Matcher generic = GENERIC.matcher(message);
         boolean postgresOwn = generic.lookingAt();
+        Throwable cause = postgres(e).orElseThrow();
+        if (!postgresOwn && code == null && ROW_CHECK.equals(m.getRoutine())) {
+            // Postgres's own refusal in another language (the server's lc_messages): which table and rule, its words
+            // alone say
+            return Optional.of(new Refused(message, null, null, List.of(), null, cause));
+        }
         if (!postgresOwn && (code == null || CALLS.containsKey(code))) {
             return Optional.empty(); // sign in first (AZ714) is a 42501 too, but no refusal: a 401
         }
-        Throwable cause = postgres(e).orElseThrow();
         if (postgresOwn) {
             String table = generic.group(3);
             if (generic.group(1).equals("target")) {
