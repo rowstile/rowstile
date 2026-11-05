@@ -26,7 +26,7 @@ T=$(mktemp -d)
 # whatever way the suite ends: its databases, its roles, its files
 cleanup() {
   for d in "$DB" "${DB}_half"; do dropdb --force --if-exists "$d" 2>/dev/null; done
-  for r in $APP $OTHER; do psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1; done
+  for r in $APP $OTHER authz_sess_owners; do psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1; done
   [ -z "${PGSUPERUSER:-}" ] || psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS authz_sess_bypass" >/dev/null 2>&1
   rm -rf "$T"
 }
@@ -377,11 +377,19 @@ expect "... nor after SET ROLE app_user" "0" -c "SET ROLE app_user" -c "SELECT c
 # a login in the app role that owns a governed table: FORCE ROW LEVEL SECURITY or not, it may turn it off
 PSQL -c "GRANT CREATE ON SCHEMA app TO app_user" -c "ALTER TABLE app.files OWNER TO app_user" -c "ALTER TABLE app.files FORCE ROW LEVEL SECURITY" >/dev/null
 expect "a login in the app role that owns a table with rules: an error, FORCE ROW LEVEL SECURITY or not" \
-  "$APP owns app.files (or has its owner's rights): an owner skips row-level security, and may turn it off" \
+  "$APP owns app.files, or is a member of its owner: an owner skips row-level security, and may turn it off" \
   -c "SELECT string_agg(problem, '; ') FROM authz.connection_check() WHERE severity = 'error'"
 # (the owner's privileges go with the table, the app role's own grants with them: given back as app_schema.sql gives them)
 PSQL -c "ALTER TABLE app.files NO FORCE ROW LEVEL SECURITY" -c "ALTER TABLE app.files OWNER TO CURRENT_USER" -c "REVOKE CREATE ON SCHEMA app FROM app_user" \
      -c "GRANT SELECT, INSERT, UPDATE, DELETE ON app.files TO app_user" >/dev/null
+# ... or a member of the owner without its rights (INHERIT FALSE): it may SET ROLE to the owner all the same
+PGOPTIONS="-c client_min_messages=error" PSQL -c "DROP ROLE IF EXISTS authz_sess_owners" -c "CREATE ROLE authz_sess_owners" \
+     -c "GRANT authz_sess_owners TO $APP WITH INHERIT FALSE" -c "GRANT CREATE ON SCHEMA app TO authz_sess_owners" \
+     -c "ALTER TABLE app.files OWNER TO authz_sess_owners" >/dev/null
+expect "... and one that is a member of the owner without its rights, who may SET ROLE to it" \
+  "$APP owns app.files, or is a member of its owner: an owner skips row-level security, and may turn it off" \
+  -c "SELECT string_agg(problem, '; ') FROM authz.connection_check() WHERE severity = 'error'"
+PSQL -c "ALTER TABLE app.files OWNER TO CURRENT_USER" -c "REVOKE CREATE ON SCHEMA app FROM authz_sess_owners" -c "DROP ROLE authz_sess_owners" >/dev/null
 PSQL -c "ALTER TABLE app.files DISABLE ROW LEVEL SECURITY"
 expect "row-level security off on a table with rules: an error" "row-level security is off on app.files: the policy's rules don't apply to it"   -c "SELECT problem FROM authz.connection_check() WHERE severity = 'error'"
 PSQL -c "ALTER TABLE app.files ENABLE ROW LEVEL SECURITY"
