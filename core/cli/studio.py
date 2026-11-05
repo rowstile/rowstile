@@ -411,6 +411,8 @@ class Studio:
                         "elsewhere": [{"type": tn, "perm": pn, "n": n} for tn, pn, n in w.elsewhere],
                         # what other people lose: n other objects of the type (0: this one), from how many people
                         "takes": [{"type": tn, "perm": pn, "n": n, "people": k} for tn, pn, n, k in w.takes],
+                        # what it didn't count: someone holds it on `past` objects of the type or more
+                        "uncounted": [{"type": tn, "perm": pn, "past": n} for tn, pn, n in w.uncounted],
                         "lines": list[Json](sorted({str(ch.loc) for ch in w.changes})),
                         "kinds": list[Json]([ch.kind for ch in w.changes]),
                     }
