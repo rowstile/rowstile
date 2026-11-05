@@ -64,6 +64,13 @@
       "when": 1793900025054,
       "tag": "0008_authz_feed_in_transaction_order",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793900477741,
+      "tag": "0009_authz_kept_trees_tables_below",
+      "breakpoints": true
     }
   ]
 }

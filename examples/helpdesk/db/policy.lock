@@ -148,7 +148,7 @@
 > invariants: never comment: view and not ticket.view
 > invariants: never user: view and not self and not workspace.member and not workspace.connected
 
-always | 3520dba9f0a9
+always | 08910061c2cc
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 4936849e93f2 shape=77f3e79f
@@ -722,7 +722,7 @@ table authz_int.sync_lost | 59ba131ae3a1 shape=59ba131a
 table authz_int.sync_moved | c49c430f9bba shape=6c60da1e
 table authz_int.sync_queued | 360d686b7075 shape=360d686b
 table authz_int.sync_todo | 5530cc58dc54 shape=80f2cd19
-table authz_int.trees | 9c6df163029b shape=02db6ec7
+table authz_int.trees | 6ec52cbb3848 shape=02db6ec7
 table authz_int.types | 792f565ea964 shape=b6d5b497
 tree team__parent__tree | 01127a10f748941f5e847c4b203cc8e0
 trigger "authz_comment_col_audit_del" ON "hd"."comments" | acd8165d405c

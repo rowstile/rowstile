@@ -40,7 +40,7 @@
 > sync app.folders mirrored
 > sync app.notes mirrored
 
-always | f8073e2cd9a7
+always | e637ef384356
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394
@@ -337,7 +337,7 @@ table authz_int.sync_moved | c49c430f9bba shape=6c60da1e
 table authz_int.sync_queued | 360d686b7075 shape=360d686b
 table authz_int.sync_stripes | 2a83b24590eb shape=8356f57c
 table authz_int.sync_todo | 5530cc58dc54 shape=80f2cd19
-table authz_int.trees | ab42c778ec06 shape=02db6ec7
+table authz_int.trees | c689bdf28a32 shape=02db6ec7
 table authz_int.types | 0a502d8ea72b shape=b6d5b497
 tree folder__parent__tree | 046a4f0fa6b0d8753fbb9986c5f3dcfd
 trigger "authz_file_col_audit_del" ON "app"."files" | e2db956a9b06
