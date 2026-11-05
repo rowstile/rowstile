@@ -360,6 +360,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The command signs in with a SCRAM password that mixes right-to-left letters (Hebrew, Arabic) with others, or that
   is made only of characters SCRAM drops, as psql does. It prepared such a password other than Postgres had, and
   the server refused it.
+- A `#`, a `?` or a `[` in a URL's password is the password's, as libpq reads it. Before, the command refused
+  it, or with digits before it connected to the user's name as a host (`postgresql://u:2024#x@h/db`). A message
+  about the connection string no longer repeats a piece of a password that wasn't quoted or escaped: a word after
+  the password that looked like a setting (`password=my secret=x`), or what came before a `/` in a URL's password.
 
 ### Upgrading
 

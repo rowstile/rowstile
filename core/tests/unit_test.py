@@ -6482,6 +6482,12 @@ class Wire(unittest.TestCase):
             (got["database"], got["password"], got["options"], got["sslmode"]),
             ("a+b", "x+y+z", "-c search_path=a+b", "require"),
         )
+        # a #, a ? or a [ before the address's last @ is the password's, as libpq reads it (only a / ends it there)
+        got = parse("postgresql://u:2024#s?c[r]et@h/app?sslmode=require")
+        self.assertEqual((got["password"], got["host"], got["sslmode"]), ("2024#s?c[r]et", "h", "require"))
+        self.assertEqual(parse("postgresql://u:p@s:s%40w\tx@h:5433")["password"], "p@s:s@w\tx")
+        got = parse("postgresql://h/app?user=me@example.com")  # an @ in the query is the query's
+        self.assertEqual((got["host"], got["user"]), ("h", "me@example.com"))
         got = parse("postgresql://h/app?&sslmode=require&&port=5499&")  # an empty part is nothing, as libpq has it
         self.assertEqual((got["sslmode"], got["port"]), ("require", 5499))
 
@@ -6514,7 +6520,6 @@ class Wire(unittest.TestCase):
             ("postgresql://h/app?sslcert=client.crt", "client certificates"),
             ("postgresql://h/app?channel_binding=maybe", "channel_binding=maybe"),
             ("host=h colour=blue", "unknown connection setting 'colour'"),
-            ("postgresql://u:pa#ss@h/app", "must be written %23"),
             ("host=h port=abc", "the port is a number from 1 to 65535, not 'abc'"),
             # SQL's doubled quote isn't libpq's (psql refuses it too): it was read as "its"; what follows the password
             # is likely the rest of it, and isn't repeated
@@ -6529,6 +6534,24 @@ class Wire(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, re.escape(said), msg=dsn) as caught:
                 self.pgwire.parse_dsn(dsn)
             self.assertNotIn("secret", str(caught.exception), dsn)
+
+    def test_a_password_is_never_repeated(self) -> None:
+        # what follows a password with a space, or a / in a URL, is likely the rest of it: no message repeats a piece
+        for dsn, said, piece in (
+            ("host=h password=my secret=x", "after its password (not repeated here): put a value with spaces", "secr"),
+            ("host=h password=my sslmod=x", "after its password (not repeated here)", "sslmod"),
+            (
+                "postgresql://u:12345/secret@h/app",
+                "an @ after its host: a / in the password must be written %2F",
+                "123",
+            ),
+            ("postgresql://u:99999/secret@h/app", "an @ after its host", "999"),  # a port there can't be
+            ("postgresql://u:a,b/secret@h/app", "an @ after its host", "a,b"),  # several hosts
+            ("postgresql://u:pa/ss@h/app", "an @ after its host", "pa"),
+        ):
+            with self.assertRaisesRegex(ValueError, re.escape(said), msg=dsn) as caught:
+                self.pgwire.parse_dsn(dsn, environ={})
+            self.assertNotIn(piece, str(caught.exception).replace("password", ""), dsn)
 
     @staticmethod
     def exactly(conn: socket.socket, n: int) -> bytes:
@@ -7537,8 +7560,8 @@ class Wire(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, f"^the port is a number from 1 to 65535, not '{port}'$", msg=dsn),
             ):
                 parse(dsn)
-        with self.assertRaisesRegex(ValueError, "^the URL's port isn't a number: a #, \\? or / in the password"):
-            parse("postgresql://u:pa/ss@h/app")
+        with self.assertRaisesRegex(ValueError, "^the URL's port isn't a number: a / in the password must be"):
+            parse("postgresql://u:pa/ss")
         # connect_timeout: zero or less waits as long as it takes (None), as libpq; not given, 10 s (libpq: no limit)
         for written, timeout in (("0", None), ("-1", None), ("' 7 '", 7.0), ("+3", 3.0)):
             self.assertEqual(parse(f"host=h connect_timeout={written}")["timeout"], timeout, written)
