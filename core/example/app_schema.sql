@@ -5,7 +5,7 @@
 \set ON_ERROR_STOP on
 SET client_min_messages = warning;
 
-DROP SCHEMA IF EXISTS authz_gen, authz_int, authz, test, bench, app CASCADE;
+DROP SCHEMA IF EXISTS authz_gen, authz_int, authz_sync, authz_keep, authz, test, bench, app CASCADE;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN
     CREATE ROLE app_user NOLOGIN;   -- the role your application connects as

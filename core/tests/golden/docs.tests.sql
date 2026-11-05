@@ -11,7 +11,7 @@ DECLARE
   v_me text := coalesce(current_setting('authz.user_id', true), '');
   v_pt text := coalesce(current_setting('authz.principal_type', true), '');
   v_scopes text := coalesce(current_setting('authz.scopes', true), '');
-  v2_ann text; v2_bo text; v2_acme text; v2_top text; v2_sub text; v2_f text; v3_ann text; v3_acme text; v3_top text; v3_sub text;
+  v2_ann text; v2_bo text; v2_acme text; v2_m text; v2_top text; v2_sub text; v2_f text; v3_ann text; v3_acme text; v3_m text; v3_top text; v3_sub text;
 BEGIN
   -- test section
   v_test := 'test section';
@@ -192,7 +192,16 @@ BEGIN
     END IF;
     v2_acme := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
-    v_line := 'example/docs.test.authz line 8'; v_text := 'given top = {INSERT INTO app.folders (org_id, owner_id, name) VALUES ($acme, $ann, ''Top'') RETURNING id}';
+    v_line := 'example/docs.test.authz line 8'; v_text := 'given m = {INSERT INTO app.org_members (org_id, user_id, role) VALUES ($acme, $ann, ''member'') RETURNING org_id}';
+    PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.org_members (org_id, user_id, role) VALUES (' || quote_nullable(v2_acme) || ', ' || quote_nullable(v2_ann) || ', ''member'') RETURNING org_id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+         || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
+    IF v_n <> 1 THEN
+      RAISE EXCEPTION 'given m = {...} returned % rows: it must return one (RETURNING id)', v_n;
+    END IF;
+    v2_m := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
+                 THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
+    v_line := 'example/docs.test.authz line 9'; v_text := 'given top = {INSERT INTO app.folders (org_id, owner_id, name) VALUES ($acme, $ann, ''Top'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, owner_id, name) VALUES (' || quote_nullable(v2_acme) || ', ' || quote_nullable(v2_ann) || ', ''Top'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
@@ -201,7 +210,7 @@ BEGIN
     END IF;
     v2_top := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
-    v_line := 'example/docs.test.authz line 9'; v_text := 'given sub = {INSERT INTO app.folders (org_id, parent_id, name) VALUES ($acme, $top, ''Sub'') RETURNING id}';
+    v_line := 'example/docs.test.authz line 10'; v_text := 'given sub = {INSERT INTO app.folders (org_id, parent_id, name) VALUES ($acme, $top, ''Sub'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, parent_id, name) VALUES (' || quote_nullable(v2_acme) || ', ' || quote_nullable(v2_top) || ', ''Sub'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
@@ -210,7 +219,7 @@ BEGIN
     END IF;
     v2_sub := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
-    v_line := 'example/docs.test.authz line 10'; v_text := 'given f = {INSERT INTO app.files (folder_id, name) VALUES ($sub, ''plan.txt'') RETURNING id}';
+    v_line := 'example/docs.test.authz line 11'; v_text := 'given f = {INSERT INTO app.files (folder_id, name) VALUES ($sub, ''plan.txt'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.files (folder_id, name) VALUES (' || quote_nullable(v2_sub) || ', ''plan.txt'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
@@ -219,7 +228,7 @@ BEGIN
     END IF;
     v2_f := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
-    v_line := 'example/docs.test.authz line 12'; v_text := 'user $ann can edit file $f';
+    v_line := 'example/docs.test.authz line 13'; v_text := 'user $ann can edit file $f';
     PERFORM set_config('authz.user_id', coalesce(v2_ann, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('file', v2_f, 'edit');
     IF v_ok IS DISTINCT FROM true THEN
@@ -228,7 +237,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || true; r_detail := r_detail || (v_text)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 13'; v_text := 'user $bo cannot view file $f';
+    v_line := 'example/docs.test.authz line 14'; v_text := 'user $bo cannot view file $f';
     PERFORM set_config('authz.user_id', coalesce(v2_bo, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('file', v2_f, 'view');
     IF v_ok IS DISTINCT FROM false THEN
@@ -237,7 +246,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || true; r_detail := r_detail || (v_text)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 14'; v_text := 'as user $ann sees 2 {SELECT FROM app.folders WHERE org_id = $acme}';
+    v_line := 'example/docs.test.authz line 15'; v_text := 'as user $ann sees 2 {SELECT FROM app.folders WHERE org_id = $acme}';
     PERFORM set_config('authz.user_id', coalesce(v2_ann, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     BEGIN
       EXECUTE format('SET LOCAL ROLE %I', 'app_user');
@@ -258,7 +267,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || CASE WHEN v_res = 'allowed' THEN 'sees ' || v_n || ' row(s)' ELSE v_msg END)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 15'; v_text := 'as user $bo sees 0 {SELECT FROM app.folders WHERE org_id = $acme}';
+    v_line := 'example/docs.test.authz line 16'; v_text := 'as user $bo sees 0 {SELECT FROM app.folders WHERE org_id = $acme}';
     PERFORM set_config('authz.user_id', coalesce(v2_bo, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     BEGIN
       EXECUTE format('SET LOCAL ROLE %I', 'app_user');
@@ -279,7 +288,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || CASE WHEN v_res = 'allowed' THEN 'sees ' || v_n || ' row(s)' ELSE v_msg END)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 16'; v_text := 'as user $bo refused {INSERT INTO app.files (folder_id, owner_id, name) VALUES ($sub, $bo, ''mine.txt'')}';
+    v_line := 'example/docs.test.authz line 17'; v_text := 'as user $bo refused {INSERT INTO app.files (folder_id, owner_id, name) VALUES ($sub, $bo, ''mine.txt'')}';
     PERFORM set_config('authz.user_id', coalesce(v2_bo, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     BEGIN
       EXECUTE format('SET LOCAL ROLE %I', 'app_user');
@@ -301,7 +310,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || CASE v_res WHEN 'allowed' THEN 'allowed' || CASE WHEN v_n > 0 THEN ' (' || v_n || ' row(s))' ELSE '' END WHEN 'refused' THEN 'refused: ' || v_msg ELSE v_msg END)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 17'; v_text := 'as user $bo refused {UPDATE app.files SET name = ''x'' WHERE id = $f}';
+    v_line := 'example/docs.test.authz line 18'; v_text := 'as user $bo refused {UPDATE app.files SET name = ''x'' WHERE id = $f}';
     PERFORM set_config('authz.user_id', coalesce(v2_bo, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     BEGIN
       EXECUTE format('SET LOCAL ROLE %I', 'app_user');
@@ -323,7 +332,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || CASE v_res WHEN 'allowed' THEN 'allowed' || CASE WHEN v_n > 0 THEN ' (' || v_n || ' row(s))' ELSE '' END WHEN 'refused' THEN 'refused: ' || v_msg ELSE v_msg END)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 18'; v_text := 'as user $ann allowed {INSERT INTO app.files (folder_id, owner_id, name) VALUES ($sub, $ann, ''notes.txt'')}';
+    v_line := 'example/docs.test.authz line 19'; v_text := 'as user $ann allowed {INSERT INTO app.files (folder_id, owner_id, name) VALUES ($sub, $ann, ''notes.txt'')}';
     PERFORM set_config('authz.user_id', coalesce(v2_ann, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     BEGIN
       EXECUTE format('SET LOCAL ROLE %I', 'app_user');
@@ -352,12 +361,12 @@ BEGIN
       PERFORM set_config('role', v_role, true);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || 'error: ' || SQLERRM)::text;
   END;
-  -- turning inheritance off stops it there (example/docs.test.authz line 20)
+  -- turning inheritance off stops it there (example/docs.test.authz line 21)
   v_test := 'turning inheritance off stops it there';
   BEGIN
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true),
             set_config('authz.scopes', '', true);
-    v_line := 'example/docs.test.authz line 21'; v_text := 'given ann = {INSERT INTO app.users (id, name) VALUES (9001, ''Ann'') RETURNING id}';
+    v_line := 'example/docs.test.authz line 22'; v_text := 'given ann = {INSERT INTO app.users (id, name) VALUES (9001, ''Ann'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.users (id, name) VALUES (9001, ''Ann'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
@@ -366,7 +375,7 @@ BEGIN
     END IF;
     v3_ann := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
-    v_line := 'example/docs.test.authz line 22'; v_text := 'given acme = {INSERT INTO app.orgs (id, name) VALUES (9001, ''Acme'') RETURNING id}';
+    v_line := 'example/docs.test.authz line 23'; v_text := 'given acme = {INSERT INTO app.orgs (id, name) VALUES (9001, ''Acme'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.orgs (id, name) VALUES (9001, ''Acme'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
@@ -375,7 +384,16 @@ BEGIN
     END IF;
     v3_acme := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
-    v_line := 'example/docs.test.authz line 23'; v_text := 'given top = {INSERT INTO app.folders (org_id, owner_id, name) VALUES ($acme, $ann, ''Top'') RETURNING id}';
+    v_line := 'example/docs.test.authz line 24'; v_text := 'given m = {INSERT INTO app.org_members (org_id, user_id, role) VALUES ($acme, $ann, ''member'') RETURNING org_id}';
+    PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
+    EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.org_members (org_id, user_id, role) VALUES (' || quote_nullable(v3_acme) || ', ' || quote_nullable(v3_ann) || ', ''member'') RETURNING org_id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
+         || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
+    IF v_n <> 1 THEN
+      RAISE EXCEPTION 'given m = {...} returned % rows: it must return one (RETURNING id)', v_n;
+    END IF;
+    v3_m := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
+                 THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
+    v_line := 'example/docs.test.authz line 25'; v_text := 'given top = {INSERT INTO app.folders (org_id, owner_id, name) VALUES ($acme, $ann, ''Top'') RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, owner_id, name) VALUES (' || quote_nullable(v3_acme) || ', ' || quote_nullable(v3_ann) || ', ''Top'') RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
@@ -384,7 +402,7 @@ BEGIN
     END IF;
     v3_top := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
-    v_line := 'example/docs.test.authz line 24'; v_text := 'given sub = {INSERT INTO app.folders (org_id, parent_id, name, inherit) VALUES ($acme, $top, ''Private'', false) RETURNING id}';
+    v_line := 'example/docs.test.authz line 26'; v_text := 'given sub = {INSERT INTO app.folders (org_id, parent_id, name, inherit) VALUES ($acme, $top, ''Private'', false) RETURNING id}';
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     EXECUTE 'WITH authz_q AS (' || 'INSERT INTO app.folders (org_id, parent_id, name, inherit) VALUES (' || quote_nullable(v3_acme) || ', ' || quote_nullable(v3_top) || ', ''Private'', false) RETURNING id' || E'\n' || ') SELECT count(*), (array_agg(to_jsonb(authz_q)))[1], '
          || '(array_agg(ROW(authz_q.*)::text))[1] FROM authz_q' INTO v_n, v_json, v_row;
@@ -393,7 +411,7 @@ BEGIN
     END IF;
     v3_sub := CASE WHEN (SELECT count(*) FROM jsonb_object_keys(v_json)) = 1
                  THEN (SELECT e.value FROM jsonb_each_text(v_json) e) ELSE v_row END;
-    v_line := 'example/docs.test.authz line 25'; v_text := 'user $ann can view folder $top';
+    v_line := 'example/docs.test.authz line 27'; v_text := 'user $ann can view folder $top';
     PERFORM set_config('authz.user_id', coalesce(v3_ann, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('folder', v3_top, 'view');
     IF v_ok IS DISTINCT FROM true THEN
@@ -402,7 +420,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || true; r_detail := r_detail || (v_text)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 26'; v_text := 'user $ann cannot view folder $sub';
+    v_line := 'example/docs.test.authz line 28'; v_text := 'user $ann cannot view folder $sub';
     PERFORM set_config('authz.user_id', coalesce(v3_ann, ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('folder', v3_sub, 'view');
     IF v_ok IS DISTINCT FROM false THEN
@@ -418,12 +436,12 @@ BEGIN
       PERFORM set_config('role', v_role, true);
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || 'error: ' || SQLERRM)::text;
   END;
-  -- what erin's shares give: Company to Acme's members, offer-letter.pdf to dave (example/docs.test.authz line 28)
+  -- what erin's shares give: Company to Acme's members, offer-letter.pdf to dave (example/docs.test.authz line 30)
   v_test := 'what erin''s shares give: Company to Acme''s members, offer-letter.pdf to dave';
   BEGIN
     PERFORM set_config('authz.user_id', '', true), set_config('authz.principal_type', '', true),
             set_config('authz.scopes', '', true);
-    v_line := 'example/docs.test.authz line 29'; v_text := 'as user 5 allowed {SELECT authz.share(''folder'', 1, ''viewer'', ''org'', 1, ''member'')}';
+    v_line := 'example/docs.test.authz line 31'; v_text := 'as user 5 allowed {SELECT authz.share(''folder'', 1, ''viewer'', ''org'', 1, ''member'')}';
     PERFORM set_config('authz.user_id', coalesce('5', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     BEGIN
       EXECUTE format('SET LOCAL ROLE %I', 'app_user');
@@ -445,7 +463,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || CASE v_res WHEN 'allowed' THEN 'allowed' || CASE WHEN v_n > 0 THEN ' (' || v_n || ' row(s))' ELSE '' END WHEN 'refused' THEN 'refused: ' || v_msg ELSE v_msg END)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 30'; v_text := 'as user 5 allowed {SELECT authz.share(''file'', 13, ''viewer'', ''user'', 4)}';
+    v_line := 'example/docs.test.authz line 32'; v_text := 'as user 5 allowed {SELECT authz.share(''file'', 13, ''viewer'', ''user'', 4)}';
     PERFORM set_config('authz.user_id', coalesce('5', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     BEGIN
       EXECUTE format('SET LOCAL ROLE %I', 'app_user');
@@ -467,7 +485,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || false; r_detail := r_detail || (v_text || E'\n' || CASE v_res WHEN 'allowed' THEN 'allowed' || CASE WHEN v_n > 0 THEN ' (' || v_n || ' row(s))' ELSE '' END WHEN 'refused' THEN 'refused: ' || v_msg ELSE v_msg END)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 31'; v_text := 'user 3 can view file 11';
+    v_line := 'example/docs.test.authz line 33'; v_text := 'user 3 can view file 11';
     PERFORM set_config('authz.user_id', coalesce('3', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('file', '11', 'view');
     IF v_ok IS DISTINCT FROM true THEN
@@ -476,7 +494,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || true; r_detail := r_detail || (v_text)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 32'; v_text := 'user 3 cannot view file 12';
+    v_line := 'example/docs.test.authz line 34'; v_text := 'user 3 cannot view file 12';
     PERFORM set_config('authz.user_id', coalesce('3', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('file', '12', 'view');
     IF v_ok IS DISTINCT FROM false THEN
@@ -485,7 +503,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || true; r_detail := r_detail || (v_text)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 33'; v_text := 'user 3 cannot view file 14';
+    v_line := 'example/docs.test.authz line 35'; v_text := 'user 3 cannot view file 14';
     PERFORM set_config('authz.user_id', coalesce('3', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('file', '14', 'view');
     IF v_ok IS DISTINCT FROM false THEN
@@ -494,7 +512,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || true; r_detail := r_detail || (v_text)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 34'; v_text := 'user 3 can view file 16';
+    v_line := 'example/docs.test.authz line 36'; v_text := 'user 3 can view file 16';
     PERFORM set_config('authz.user_id', coalesce('3', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('file', '16', 'view');
     IF v_ok IS DISTINCT FROM true THEN
@@ -503,7 +521,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || true; r_detail := r_detail || (v_text)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 35'; v_text := 'user 4 can view file 13';
+    v_line := 'example/docs.test.authz line 37'; v_text := 'user 4 can view file 13';
     PERFORM set_config('authz.user_id', coalesce('4', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('file', '13', 'view');
     IF v_ok IS DISTINCT FROM true THEN
@@ -512,7 +530,7 @@ BEGIN
     ELSE
       r_test := r_test || (v_test)::text; r_line := r_line || (v_line)::text; r_ok := r_ok || true; r_detail := r_detail || (v_text)::text;
     END IF;
-    v_line := 'example/docs.test.authz line 36'; v_text := 'user 4 cannot view file 11';
+    v_line := 'example/docs.test.authz line 38'; v_text := 'user 4 cannot view file 11';
     PERFORM set_config('authz.user_id', coalesce('4', ''), true), set_config('authz.principal_type', '', true), set_config('authz.scopes', '', true);
     v_ok := authz_int.can('file', '11', 'view');
     IF v_ok IS DISTINCT FROM false THEN
