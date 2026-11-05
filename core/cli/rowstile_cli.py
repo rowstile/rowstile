@@ -140,6 +140,16 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import NamedTuple, NoReturn, TypeVar
 
+# run from the source, on whatever python3 is first on PATH: said before anything of rowstile's is imported, which
+# an older Python can't load (pip and the npm package check it themselves)
+if sys.version_info < (3, 11):  # noqa: UP036
+    version = ".".join(str(n) for n in sys.version_info[:3])
+    print(
+        f"rowstile needs Python 3.11 or newer, not {version} ({sys.executable}): run it with a newer one",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(1, os.path.dirname(HERE))

@@ -352,6 +352,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   traceback.
 - `rowstile.toml` refuses a `[migrations] write_after` below 0, which made `rowstile dev` write the migration at
   every save instead of once you stop editing.
+- The command run from the source (`core/cli/rowstile`) on a Python older than 3.11 says it needs 3.11 or newer,
+  and exits 2, where it stopped with a traceback.
 
 ### Upgrading
 
