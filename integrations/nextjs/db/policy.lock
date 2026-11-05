@@ -52,7 +52,8 @@ function authz.break_glass(p_type text, p_id text, p_relation text, p_reason tex
 function authz.can(p_type text, p_id integer, p_perm text) | bead8057c546 shape=c9dbc446
 function authz.can(p_type text, p_id text, p_perm text) | 310f98c9baad shape=220bc89f
 function authz.cancel_request(p_id bigint) | 14f17f222d45 shape=19aa0bb3
-function authz.changes_since(p_pos bigint, p_limit int) | b494cb9cea48 shape=0448ffba
+function authz.changes_position() | 5df1d41ccaab shape=515e7531
+function authz.changes_since(p_pos bigint, p_limit int) | d421b775ac32 shape=0448ffba
 function authz.check_invariants() | f97dc5f1ca4f shape=a2072420
 function authz.close_review(p_review bigint, p_revoke_undecided boolean) | 5c17d4af6ead shape=8a35940c
 function authz.connection_check() | 622b3e3ffea4 shape=35f6ddfc
@@ -100,7 +101,7 @@ function authz.start_review(p_type text, p_id integer, p_closes_at timestamptz) 
 function authz.start_review(p_type text, p_id text, p_closes_at timestamptz) | 54b5115398e4 shape=879e84e5
 function authz.sync_members(p_type text, p_id text, p_relation text, p_members text[], OUT added int, OUT removed int) | 36e5b9e768f5 shape=c0ea90e1
 function authz.trim_audit(p_keep interval) | 506854f7888f shape=59da80c2
-function authz.trim_changes(p_keep interval) | 99129c6c680e shape=5f059d1e
+function authz.trim_changes(p_keep interval) | b05f3766e01d shape=5f059d1e
 function authz.uid() | fb2fb32b221e shape=989761a7
 function authz.unshare(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id integer, p_subject_relation text) | fce36bdc220f shape=272443ba
 function authz.unshare(p_type text, p_id integer, p_relation text, p_subject_type text, p_subject_id text, p_subject_relation text) | f24af047d1b4 shape=acb910a0
@@ -306,7 +307,7 @@ rls "app"."notes" | 895f402ca9d0
 rls "app"."projects" | 432b11d414de
 schema authz_gen | 2956c2066787
 schema authz_int | 985712437937
-step base | c621017d9647
+step base | 799bb7e5cb67
 step cascades | 573b3386f3ac
 step grant_api | 683ac803d217
 step grant_functions | db5343f0fb0f

@@ -57,6 +57,13 @@
       "when": 1793898836878,
       "tag": "0007_authz_one_principal",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793900025054,
+      "tag": "0008_authz_feed_in_transaction_order",
+      "breakpoints": true
     }
   ]
 }
