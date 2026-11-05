@@ -11,7 +11,9 @@ server (`rowstile lsp`, in `core/cli/lsp.py`):
 - **completion**: after `rel.` the target type's permissions, inside a type its relations and permissions, and
   with a `database` in `rowstile.toml`, table names and, inside `{ }`, the columns of the row the condition is
   about, quoted where SQL needs it (`"parentId"`). Names are read from the database once, when first needed; when
-  it can't be reached, the server's log says why, and it is tried again some seconds later;
+  it can't be reached, the server's log says why, and it is tried again some seconds later. The password it sends
+  is the one in the database string, or `PGPASSWORD` in `.env` beside `rowstile.toml`, never the editor's own
+  `PGPASSWORD`: the folder opened names the host;
 - **test files** (only `test "..."` blocks) are checked against the policy `rowstile.toml` names, and again
   when the policy changes.
 

@@ -9,6 +9,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ## Unreleased
 
+### Fixed
+
+- `rowstile lsp` sends, when it reads the table and column names, the password in `rowstile.toml`'s database
+  string or `PGPASSWORD` in `.env` beside it, not the editor's own `PGPASSWORD`: the folder opened names the host.
+
 ## 0.1.0-beta.3 (2026-11-05)
 
 The sync index, its engines (Electric, Zero, PowerSync) and the new SDKs and stacks are previews: they may

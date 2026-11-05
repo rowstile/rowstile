@@ -525,6 +525,12 @@ class Config:
             return value
         return db
 
+    @property
+    def files_password(self) -> str | None:
+        """PGPASSWORD as .env.local or .env beside rowstile.toml sets it (None where they don't): what the language
+        server sends where its database string has no password, in place of the editor's own PGPASSWORD."""
+        return ENV.values.get("PGPASSWORD")
+
     def database_from(self, given: str | None) -> str:
         """The .env files that named the database this command uses ('' when none did): --db is the command
         line's, a literal `database` is rowstile.toml's own."""
