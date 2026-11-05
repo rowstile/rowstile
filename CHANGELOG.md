@@ -98,6 +98,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   inherits made or dropped. The rows such a change brings or takes away, which no trigger saw, are then in the
   table, and an apply of the same policy no longer answers `unchanged` after a partition is detached. The
   migrations `rowstile migrate` writes do the same for each inheritance table they keep.
+- `authz.explain` for another user (its fourth argument) says only what the one asking may see: its walk stops at an
+  object or a team they can't see, as it does when they ask for themselves, and a share's maker, end, start and
+  caveat show only where they may list that object's shares (`authz.list_shares`). It says `shared with them` and
+  `they are member there` of that user, not `you`.
 
 ### Upgrading
 

@@ -1149,7 +1149,7 @@ rm -f $T/shelves.authz $T/shelves.sql
 got=$(PSQL -c "BEGIN" -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (12, 2, NULL, 6, 'twelve')" \
   -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES ('folder', '12', 'viewer', 'team', '12', 'member'), ('file', '12', 'viewer', 'team', '10', 'member')" \
   -c "SELECT ltrim(e) FROM authz.explain('file', '12', 'view', '7') e WHERE e LIKE '%shared with team%'" -c "ROLLBACK")
-[ "$got" = "yes  viewer: shared with team 10, and you are member there" ] &&
+[ "$got" = "yes  viewer: shared with team 10, and they are member there" ] &&
   echo "ok    explain names the team a file is shared with, not one a folder with the same id is shared with" ||
   { echo "FAIL  explain, the team a file is shared with: $got"; fails=$((fails + 1)); }
 

@@ -3294,26 +3294,26 @@ LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50
   SELECT x FROM authz_int."domain_email_org_setting__domain_email_org_settings__tree" c, LATERAL authz_int."setting__edit__who_base"((CASE WHEN c.atype = 'setting' THEN c.aid END)::bigint) x WHERE c.dtype = 'domain' AND c.did = p_id::text
 $f$;
 
-CREATE FUNCTION authz_int."org__owner__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."org__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
   IF p_id IN (SELECT r."id" AS id FROM "lp"."orgs" r WHERE r."owner_id" = (SELECT authz.uid())) THEN
-    RETURN NEXT pad || 'yes  ' || 'owner: owner_id is you' || '';
+    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'owner: owner_id is you' ELSE 'owner: owner_id is them' END || '';
     RETURN;
   END IF;
-  RETURN NEXT pad || 'no   you do not hold org.owner';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'org.owner';
 END $f$;
 
-CREATE FUNCTION authz_int."org__settings__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."org__settings__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
 
-  RETURN NEXT pad || 'no   you do not hold org.settings';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'org.settings';
 END $f$;
 
-CREATE FUNCTION authz_int."org__edit__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."org__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."org__edit");
@@ -3323,26 +3323,26 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."org__owner");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'owner';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."org__owner__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."org__owner__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."org__settings__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'settings.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."setting__edit" v WHERE v.id = tg.id) AS ok
                FROM (SELECT r."settings_id" AS id FROM "lp"."orgs" r WHERE r."id" = p_id AND r."settings_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('setting', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'setting', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'settings is a setting you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'settings is setting '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has edit' ELSE ', without edit' END;
       IF NOT ('setting:edit:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."setting__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('setting:edit:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."setting__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('setting:edit:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."org__view__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."org__view__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."org__view");
@@ -3352,30 +3352,30 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."org__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'edit';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."org__edit__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."org__edit__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."setting__email__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."setting__email__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
 
-  RETURN NEXT pad || 'no   you do not hold setting.email';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'setting.email';
 END $f$;
 
-CREATE FUNCTION authz_int."setting__admin__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."setting__admin__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
   IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'setting' AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
-    RETURN NEXT pad || 'yes  ' || 'admin: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'setting' AND g.object_id = p_id::text AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
+    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'admin: shared with you' ELSE 'admin: shared with them' END || CASE WHEN p_asker IS NULL OR authz_int.asker_sees(p_asker, 'setting', p_id::text, true) THEN coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'setting' AND g.object_id = p_id::text AND g.relation = 'admin' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '') ELSE '' END;
     RETURN;
   END IF;
-  RETURN NEXT pad || 'no   you do not hold setting.admin';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'setting.admin';
 END $f$;
 
-CREATE FUNCTION authz_int."setting__edit__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."setting__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."setting__edit");
@@ -3385,34 +3385,34 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."setting__admin");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'admin';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."setting__admin__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."setting__admin__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."setting__email__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'email.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."email__edit" v WHERE v.id = tg.id) AS ok
                FROM (SELECT r."email_id" AS id FROM "lp"."settings" r WHERE r."id" = p_id AND r."email_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('email', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'email', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'email is an email you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'email is email '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has edit' ELSE ', without edit' END;
       IF NOT ('email:edit:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."email__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('email:edit:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."email__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('email:edit:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."email__domain__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."email__domain__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
 
-  RETURN NEXT pad || 'no   you do not hold email.domain';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'email.domain';
 END $f$;
 
-CREATE FUNCTION authz_int."email__edit__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."email__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."email__edit");
@@ -3428,15 +3428,15 @@ BEGIN
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'domain.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = tg.id) AS ok
                FROM (SELECT r."domain_id" AS id FROM "lp"."emails" r WHERE r."id" = p_id AND r."domain_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('domain', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'domain', v_t.id, false) THEN
         RETURN NEXT pad || '  ' || '       ' || 'domain is a domain you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'domain is domain '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has edit' ELSE ', without edit' END;
       IF NOT ('domain:edit:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND v_holds) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        RETURN QUERY SELECT * FROM authz_int."domain__edit__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('domain:edit:' || v_t.id));
+        RETURN QUERY SELECT * FROM authz_int."domain__edit__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('domain:edit:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     v_ok := (p_id) IN (SELECT r."id" AS id FROM "lp"."emails" r WHERE coalesce((verified), false));
@@ -3444,15 +3444,15 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."domain__org__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."domain__org__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
 
-  RETURN NEXT pad || 'no   you do not hold domain.org';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'domain.org';
 END $f$;
 
-CREATE FUNCTION authz_int."domain__edit__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."domain__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."domain__edit");
@@ -3464,15 +3464,15 @@ BEGIN
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'org.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."org__edit" v WHERE v.id = tg.id) AS ok
                FROM (SELECT r."org_id" AS id FROM "lp"."domains" r WHERE r."id" = p_id AND r."org_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('org', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'org', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'org is an org you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'org is org '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has edit' ELSE ', without edit' END;
       IF NOT ('org:edit:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."org__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('org:edit:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."org__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('org:edit:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
@@ -3516,6 +3516,29 @@ BEGIN
   IF authz_int.caller_is_admin() THEN RETURN true; END IF;
   RETURN EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = 'share')
      AND authz.can(p_type, p_id, 'share');
+END $f$;
+
+-- What explain may show of an object while it walks as another user (p_asker: the one asking, as user id,
+-- principal type and scopes; NULL: they ask of themselves): whether the one asking sees it or, p_inspect, may inspect
+-- it (list its shares). It asks as them, then puts back the user explained.
+CREATE FUNCTION authz_int.asker_sees(p_asker text[], p_type text, p_id text, p_inspect boolean) RETURNS boolean
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_user text := coalesce(current_setting('authz.user_id', true), '');
+        v_pt text := coalesce(current_setting('authz.principal_type', true), '');
+        v_scopes text := coalesce(current_setting('authz.scopes', true), ''); v_ok boolean;
+BEGIN
+  IF p_asker IS NULL THEN RETURN authz_int.visible(p_type, p_id); END IF;   -- (asked only whether they see it)
+  IF authz_int.caller_is_admin() THEN RETURN true; END IF;
+  PERFORM set_config('authz.user_id', p_asker[1], true);
+  PERFORM set_config('authz.principal_type', p_asker[2], true);
+  PERFORM set_config('authz.scopes', p_asker[3], true);
+  PERFORM authz_int.sign();
+  v_ok := CASE WHEN p_inspect THEN authz_int.may_inspect(p_type, p_id) ELSE authz_int.visible(p_type, p_id) END;
+  PERFORM set_config('authz.user_id', v_user, true);
+  PERFORM set_config('authz.principal_type', v_pt, true);
+  PERFORM set_config('authz.scopes', v_scopes, true);
+  PERFORM authz_int.sign();
+  RETURN v_ok;
 END $f$;
 
 -- Everyone who holds a permission on an object: SELECT * FROM authz.who('folder', 3, 'view')
@@ -3610,6 +3633,7 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp A
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_ok boolean; v_bigint bigint;
         v_pt text := coalesce(current_setting('authz.principal_type', true), '');
         v_scopes text := coalesce(current_setting('authz.scopes', true), '');
+        v_asker text[];   -- for another user: the one asking, whose sight the walk keeps to
 BEGIN
   -- the signed-in user's own id is the signed-in user: asked as without it (a service whose id is a user's is not)
   IF p_user IS NOT NULL AND authz_int.canon('user', p_user) IS NOT DISTINCT FROM authz.uid()::text THEN
@@ -3625,6 +3649,7 @@ BEGIN
     RETURN;
   END IF;
   IF p_user IS NOT NULL THEN
+    v_asker := ARRAY[v_me, v_pt, v_scopes];
     PERFORM set_config('authz.user_id', p_user, true);
     PERFORM set_config('authz.principal_type', '', true);
     PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
@@ -3643,29 +3668,29 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."org__edit__why"(v_bigint, 1, '{}');
-        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."org__view__why"(v_bigint, 1, '{}');
+        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."org__edit__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."org__view__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'setting' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."setting__edit__why"(v_bigint, 1, '{}');
+        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."setting__edit__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'email' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."email__edit__why"(v_bigint, 1, '{}');
+        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."email__edit__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'domain' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."domain__edit__why"(v_bigint, 1, '{}');
+        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."domain__edit__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     ELSE

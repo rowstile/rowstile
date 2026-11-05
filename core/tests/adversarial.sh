@@ -13,7 +13,7 @@ ATTACKER=authz_attacker
 T=$(mktemp -d)
 # whatever way the suite ends: its databases, its role, its files
 cleanup() {
-  for d in "$DB" "${DB}_catalog" "${DB}_composite" "${DB}_alt" "${DB}_views" "${DB}_grants"; do dropdb --force --if-exists "$d" 2>/dev/null; done
+  for d in "$DB" "${DB}_catalog" "${DB}_composite" "${DB}_alt" "${DB}_views" "${DB}_teams" "${DB}_grants"; do dropdb --force --if-exists "$d" 2>/dev/null; done
   psql -X -q -d postgres -c "DROP ROLE IF EXISTS $ATTACKER" >/dev/null 2>&1
   rm -rf "$T"
 }
@@ -267,6 +267,51 @@ check_views "explaining an insert tells an id no row has from a hidden row's, as
         = authz.explain_rule('av.folders', 'insert', NULL, '{\"id\": 1009, \"owner_id\": 1}')"
 dropdb "$C"
 
+echo "-- why someone else holds a permission, through teams the one asking can't see"
+C="${DB}_teams"
+dropdb --if-exists "$C" 2>/dev/null; createdb "$C" || exit 1
+cat > $T/adversarial_teams.authz <<'POLICY'
+app role app_user
+type user = at.users
+type team = at.teams
+  member : user        = at.team_members(team_id -> user_id)
+  member : team#member = at.teams(parent_id -> id)
+type doc = at.docs
+  owner  : user = owner_id
+  viewer : team#member shared
+  can share = owner
+  can view  = owner or viewer
+rules at.teams
+  select : member
+rules at.docs
+  select : view
+POLICY
+python3 compile_policy.py $T/adversarial_teams.authz > $T/adversarial_teams.sql &&
+PGOPTIONS="-c client_min_messages=error" psql -X -q -v ON_ERROR_STOP=1 -d "$C" \
+  -c "CREATE SCHEMA at" -c "CREATE TABLE at.users (id bigint PRIMARY KEY)" \
+  -c "CREATE TABLE at.teams (id bigint PRIMARY KEY, parent_id bigint)" -c "CREATE TABLE at.team_members (team_id bigint, user_id bigint)" \
+  -c "CREATE TABLE at.docs (id bigint PRIMARY KEY, owner_id bigint)" \
+  -c "GRANT USAGE ON SCHEMA at TO app_user" -c "GRANT SELECT ON at.users, at.teams, at.team_members, at.docs TO app_user" \
+  -f $T/adversarial_teams.sql -c "INSERT INTO at.users VALUES (1), (2)" \
+  -c "INSERT INTO at.teams VALUES (1, NULL), (2, 1)" -c "INSERT INTO at.team_members VALUES (2, 2)" \
+  -c "INSERT INTO at.docs VALUES (1, 1)" \
+  -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES
+        ('doc', '1', 'viewer', 'team', '1', 'member')" \
+  -c "SELECT count(*) FROM authz.lint()" -c "SELECT count(*) FROM authz.check_invariants()" >/dev/null || exit 1
+# (lint and the invariants asked once on this policy too, so what it makes of them is run)
+# user 1 owns doc 1, shared with team 1, whose members include sub-team 2's: user 2. User 1 is in neither team
+teams_as_1() { psql -X -q -At -1 -U "$ATTACKER" -d "$C" -c "$(sign 1)" -c "SELECT string_agg(ltrim(l), '|') FROM authz.explain('doc', '1', 'view', '2') l" 2>&1; }
+got=$(teams_as_1)
+case "$got" in *"team 1"*|*"team 2"*) false;; *"|yes  viewer: shared with a team you can't see"*) ;; *) false;; esac &&
+  echo "ok    why someone else views her doc names no team she can't see" ||
+  { echo "FAIL  explaining for user 2 names a team user 1 can't see: $got"; fails=$((fails + 1)); }
+psql -X -q -d "$C" -c "INSERT INTO at.team_members VALUES (1, 1)" >/dev/null
+got=$(teams_as_1)
+case "$got" in *"team 2"*) false;; *"|yes  viewer: shared with team 1, and they are member there|yes  through a team you can't see") ;; *) false;; esac &&
+  echo "ok    ... and once she is in the team, names it, but not the sub-team she can't see" ||
+  { echo "FAIL  explaining for user 2 through a sub-team user 1 can't see: $got"; fails=$((fails + 1)); }
+dropdb "$C"
+
 echo "-- grants the policy doesn't give, and schemas on the search path others may create in"
 C="${DB}_grants"
 CP() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$C" "$@"; }
@@ -363,6 +408,28 @@ expect "... while a page of none is no mistake: no row" "0" -c "SELECT count(*) 
 expect "who may see a hidden object" "42501: you cannot see who has access to folder 5" -c "SELECT count(*) FROM authz.who('folder', '5', 'view')"
 expect "...is refused as for a missing one" "42501: you cannot see who has access to folder 999999" -c "SELECT count(*) FROM authz.who('folder', '999999', 'view')"
 expect "asking why for someone else" "42501: you cannot inspect access to file 11" -c "SELECT authz.explain('file', '11', 'view', '2')"
+# files carol owns (so she may ask why someone else sees them) in a folder she can't see (Keys) and in one she sees
+# but can't share (Handbook), each folder shared with bob by erin: why bob sees them says nothing of the hidden
+# folder, nor of a share she can't list
+PSQL -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (30, 6, 3, 'in-keys'), (31, 2, 3, 'in-handbook')" \
+  -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at, created_by)
+      VALUES ('folder', '6', 'viewer', 'user', '2', now() + interval '1 day', '5'),
+             ('folder', '2', 'viewer', 'user', '2', now() + interval '1 day', '5')" >/dev/null
+got=$(said "SELECT string_agg(ltrim(l), '|') FROM authz.explain('file', '30', 'view', '2') l" "@")
+case "$got" in *"folder 6"*|*"folder 5"*|*"(by"*|*team*) false;; *"|folder is a folder you can't see|"*) ;; *) false;; esac &&
+  echo "ok    why someone else sees her file stops at the folder above it she can't see" ||
+  { echo "FAIL  explaining for bob walks into a folder carol can't see: $got"; fails=$((fails + 1)); }
+got=$(said "SELECT string_agg(ltrim(l), '|') FROM authz.explain('file', '31', 'view', '2') l" "@")
+case "$got" in *"(by"*|*"shared with you"*) false;; *"yes  folder is folder 2, which has view"*"yes  viewer: shared with them"*) ;; *) false;; esac &&
+  echo "ok    ... and in a folder she sees, names the share but not who made it or until when, as she can't list its shares" ||
+  { echo "FAIL  explaining for bob shows a share carol can't list: $got"; fails=$((fails + 1)); }
+expect "... as listing them is refused" "42501: you cannot see the shares of folder 2" -c "SELECT count(*) FROM authz.list_shares('folder', '2')"
+got=$(PSQL -c "SET authz.user_id = 3" -c "SELECT string_agg(ltrim(l), '|') FROM authz.explain('file', '30', 'view', '2') l")
+case "$got" in *"yes  folder is folder 6, which has view"*"yes  viewer: shared with them (by 5, until "*) ;; *) false;; esac &&
+  echo "ok    ... while the policy's owner sees the whole walk" ||
+  { echo "FAIL  explaining for bob as the owner: $got"; fails=$((fails + 1)); }
+PSQL -c "DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id IN ('2', '6') AND subject_id = '2' AND created_by = '5'" \
+  -c "DELETE FROM app.files WHERE id IN (30, 31)" >/dev/null
 # explaining never walks into what carol can't see, whatever else she holds there (break_glass on every Acme folder),
 # whether she asks for herself or names her own id (as written, or as another text of it)
 for call in "explain('folder', 'ID', 'edit')" "explain('folder', 'ID', 'edit', '3')" "explain('folder', 'ID', 'edit', '03')"; do

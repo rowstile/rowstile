@@ -3,16 +3,16 @@
 -- + type file: can comment = folder.view
 
 -- a migration is one transaction: outside one, nothing below changes anything
-SELECT pg_catalog.set_config('authz_ctx.migration', '5760d24c91cb0667', true);
+SELECT pg_catalog.set_config('authz_ctx.migration', '0e7f9f7ed10ae5a0', true);
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '5760d24c91cb0667' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '0e7f9f7ed10ae5a0' THEN
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '5760d24c91cb0667' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '0e7f9f7ed10ae5a0' THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
       USING HINT = 'nothing was changed, and this session is read-only from here on; run the file with your migration tool, or with psql -1 -f';
   END IF;
@@ -28,13 +28,13 @@ BEGIN
   IF to_regclass('authz.policy_versions') IS NOT NULL THEN
     EXECUTE 'SELECT lock FROM authz.policy_versions ORDER BY id DESC LIMIT 1' INTO v_lock;
   END IF;
-  IF v_lock = '5760d24c91cb0667' THEN
+  IF v_lock = '0e7f9f7ed10ae5a0' THEN
     RAISE EXCEPTION 'rowstile: this database already holds what this migration brings (it ran here before, or rowstile dev or push took the database there): don''t run it, tell your migration tool it is applied [AZ607]'
       USING HINT = 'Prisma: prisma migrate resolve --applied <the migration''s folder>. Alembic: alembic stamp head. '
                    'Others, and why: rowstile help AZ607';
-  ELSIF v_lock IS DISTINCT FROM '99bf54a781aecea8' THEN
+  ELSIF v_lock IS DISTINCT FROM '2f93e49a1640c6ed' THEN
     RAISE EXCEPTION 'rowstile: this migration changes the policy the migration before it left (%), but the database has % [AZ607]',
-      '99bf54a781aecea8', coalesce(v_lock, 'none')
+      '2f93e49a1640c6ed', coalesce(v_lock, 'none')
       USING HINT = 'apply the migrations in order; a database changed with rowstile push or apply since needs the '
                    'migrations from the start (or rowstile apply of the policy the previous migration left) '
                    '(rowstile help AZ607)';
@@ -445,7 +445,7 @@ LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50
   SELECT x FROM (SELECT r."folder_id" AS id FROM "app"."files" r WHERE r."id" = p_id AND r."folder_id" IS NOT NULL) tg, LATERAL authz_int."folder__view__who"(tg.id) x
 $f$;
 
-CREATE FUNCTION authz_int."file__comment__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."file__comment__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."file__comment");
@@ -457,15 +457,15 @@ BEGIN
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'folder.view';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = tg.id) AS ok
                FROM (SELECT r."folder_id" AS id FROM "app"."files" r WHERE r."id" = p_id AND r."folder_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'folder is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'folder is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has view' ELSE ', without view' END;
       IF NOT ('folder:view:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:view:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:view:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
@@ -585,6 +585,7 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp A
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_ok boolean; v_bigint bigint;
         v_pt text := coalesce(current_setting('authz.principal_type', true), '');
         v_scopes text := coalesce(current_setting('authz.scopes', true), '');
+        v_asker text[];   -- for another user: the one asking, whose sight the walk keeps to
 BEGIN
   -- the signed-in user's own id is the signed-in user: asked as without it (a service whose id is a user's is not)
   IF p_user IS NOT NULL AND authz_int.canon('user', p_user) IS NOT DISTINCT FROM authz.uid()::text THEN
@@ -600,6 +601,7 @@ BEGIN
     RETURN;
   END IF;
   IF p_user IS NOT NULL THEN
+    v_asker := ARRAY[v_me, v_pt, v_scopes];
     PERFORM set_config('authz.user_id', p_user, true);
     PERFORM set_config('authz.principal_type', '', true);
     PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
@@ -614,7 +616,7 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'impersonate' THEN RETURN QUERY SELECT * FROM authz_int."user__impersonate__why"(v_bigint, 1, '{}');
+        WHEN 'impersonate' THEN RETURN QUERY SELECT * FROM authz_int."user__impersonate__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'org' THEN
@@ -629,20 +631,20 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."folder__share__why"(v_bigint, 1, '{}');
-        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_bigint, 1, '{}');
-        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_bigint, 1, '{}');
-        WHEN 'break_glass' THEN RETURN QUERY SELECT * FROM authz_int."folder__break_glass__why"(v_bigint, 1, '{}');
+        WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."folder__share__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'break_glass' THEN RETURN QUERY SELECT * FROM authz_int."folder__break_glass__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'file' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."file__share__why"(v_bigint, 1, '{}');
-        WHEN 'comment' THEN RETURN QUERY SELECT * FROM authz_int."file__comment__why"(v_bigint, 1, '{}');
-        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."file__edit__why"(v_bigint, 1, '{}');
-        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."file__view__why"(v_bigint, 1, '{}');
+        WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."file__share__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'comment' THEN RETURN QUERY SELECT * FROM authz_int."file__comment__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."file__edit__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."file__view__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     ELSE
@@ -933,4 +935,4 @@ test
   user 5 can view file 16      -- erin: Joint project is linked into Company
   user 5 cannot edit file 16   -- links pass on view rights only
 $authz_policy$,
-  $authz_files${}$authz_files$::jsonb, 'BUILD', '5760d24c91cb0667');
+  $authz_files${}$authz_files$::jsonb, 'BUILD', '0e7f9f7ed10ae5a0');

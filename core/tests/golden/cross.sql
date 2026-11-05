@@ -6247,7 +6247,7 @@ LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50
   SELECT u."id" FROM "cx"."users" u
 $f$;
 
-CREATE FUNCTION authz_int."folder__parent__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."folder__parent__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -6256,10 +6256,10 @@ BEGIN
     RETURN;
   END IF;
 
-  RETURN NEXT pad || 'no   you do not hold folder.parent';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.parent';
 END $f$;
 
-CREATE FUNCTION authz_int."folder__owner__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."folder__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -6268,13 +6268,13 @@ BEGIN
     RETURN;
   END IF;
   IF p_id IN (SELECT r."id" AS id FROM "cx"."folders" r WHERE r."owner_id" = (SELECT authz.uid())) THEN
-    RETURN NEXT pad || 'yes  ' || 'owner: owner_id is you' || '';
+    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'owner: owner_id is you' ELSE 'owner: owner_id is them' END || '';
     RETURN;
   END IF;
-  RETURN NEXT pad || 'no   you do not hold folder.owner';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.owner';
 END $f$;
 
-CREATE FUNCTION authz_int."folder__viewer__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."folder__viewer__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -6283,13 +6283,13 @@ BEGIN
     RETURN;
   END IF;
   IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'folder' AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
-    RETURN NEXT pad || 'yes  ' || 'viewer: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
+    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'viewer: shared with you' ELSE 'viewer: shared with them' END || CASE WHEN p_asker IS NULL OR authz_int.asker_sees(p_asker, 'folder', p_id::text, true) THEN coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'folder' AND g.object_id = p_id::text AND g.relation = 'viewer' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '') ELSE '' END;
     RETURN;
   END IF;
-  RETURN NEXT pad || 'no   you do not hold folder.viewer';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.viewer';
 END $f$;
 
-CREATE FUNCTION authz_int."folder__edit__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."folder__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."folder__edit");
@@ -6303,7 +6303,7 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."folder__owner");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'owner';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__owner__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__owner__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT r."id" AS id FROM "cx"."folders" r
   WHERE r."id" IN (SELECT id FROM authz_int."folder__parent__edit")
     AND coalesce((not exists (select 1 from cx.frozen "z""s" where "z""s".folder_id = r.id)), false));
@@ -6312,28 +6312,28 @@ BEGIN
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'parent.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint AS id FROM "cx"."folders" r WHERE r."id" = p_id AND (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '  ' || '       ' || 'parent is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'parent is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has edit' ELSE ', without edit' END;
       IF NOT ('folder:edit:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND v_holds) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('folder:edit:' || v_t.id));
+        RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('folder:edit:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."project__edit" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint AS id FROM "cx"."folders" r WHERE r."id" = p_id AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('project', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'project', v_t.id, false) THEN
         RETURN NEXT pad || '  ' || '       ' || 'parent is a project you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'parent is project '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has edit' ELSE ', without edit' END;
       IF NOT ('project:edit:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND v_holds) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        RETURN QUERY SELECT * FROM authz_int."project__edit__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('project:edit:' || v_t.id));
+        RETURN QUERY SELECT * FROM authz_int."project__edit__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('project:edit:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     v_ok := (p_id) IN (SELECT r."id" AS id FROM "cx"."folders" r WHERE coalesce((not exists (select 1 from cx.frozen "z""s" where "z""s".folder_id = r.id)), false));
@@ -6341,7 +6341,7 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."folder__view__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."folder__view__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."folder__view");
@@ -6355,42 +6355,42 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."folder__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'edit';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."folder__viewer");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'viewer';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__viewer__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__viewer__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."folder__parent__view");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'parent.view';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint AS id FROM "cx"."folders" r WHERE r."id" = p_id AND (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'parent is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'parent is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has view' ELSE ', without view' END;
       IF NOT ('folder:view:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:view:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:view:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."project__view" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint AS id FROM "cx"."folders" r WHERE r."id" = p_id AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('project', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'project', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'parent is a project you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'parent is project '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has view' ELSE ', without view' END;
       IF NOT ('project:view:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."project__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('project:view:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."project__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('project:view:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."folder__file__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."folder__file__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."folder__file");
@@ -6404,7 +6404,7 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."folder__owner");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'owner';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__owner__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__owner__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT r."id" AS id FROM "cx"."folders" r
   WHERE r."id" IN (SELECT id FROM authz_int."folder__parent__file")
     AND coalesce((owner_id is null /* this.owner_id: nobody's */ and parent_type <> $$this.id$$ and parent_type <> e'it\'s' and parent_type <> 'this.id''s' and id <>-1), false));
@@ -6413,28 +6413,28 @@ BEGIN
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'parent.file';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__file" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint AS id FROM "cx"."folders" r WHERE r."id" = p_id AND (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '  ' || '       ' || 'parent is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'parent is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has file' ELSE ', without file' END;
       IF NOT ('folder:file:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND v_holds) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        RETURN QUERY SELECT * FROM authz_int."folder__file__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('folder:file:' || v_t.id));
+        RETURN QUERY SELECT * FROM authz_int."folder__file__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('folder:file:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."project__file" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint AS id FROM "cx"."folders" r WHERE r."id" = p_id AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('project', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'project', v_t.id, false) THEN
         RETURN NEXT pad || '  ' || '       ' || 'parent is a project you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'parent is project '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has file' ELSE ', without file' END;
       IF NOT ('project:file:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND v_holds) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        RETURN QUERY SELECT * FROM authz_int."project__file__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('project:file:' || v_t.id));
+        RETURN QUERY SELECT * FROM authz_int."project__file__why"(v_t.id::bigint, p_depth + 2 + 1, p_seen || ('project:file:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     v_ok := (p_id) IN (SELECT r."id" AS id FROM "cx"."folders" r WHERE coalesce((owner_id is null /* this.owner_id: nobody's */ and parent_type <> $$this.id$$ and parent_type <> e'it\'s' and parent_type <> 'this.id''s' and id <>-1), false));
@@ -6442,7 +6442,7 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."folder__fund__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."folder__fund__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."folder__fund");
@@ -6456,39 +6456,39 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."folder__owner");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'owner';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__owner__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__owner__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."folder__parent__fund");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'parent.fund';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__fund" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint AS id FROM "cx"."folders" r WHERE r."id" = p_id AND (CASE WHEN r."parent_type" = 'folder' THEN r."parent_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'parent is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'parent is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has fund' ELSE ', without fund' END;
       IF NOT ('folder:fund:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__fund__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:fund:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__fund__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:fund:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."project__fund" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint AS id FROM "cx"."folders" r WHERE r."id" = p_id AND (CASE WHEN r."parent_type" = 'project' THEN r."parent_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('project', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'project', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'parent is a project you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'parent is project '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has fund' ELSE ', without fund' END;
       IF NOT ('project:fund:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."project__fund__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('project:fund:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."project__fund__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('project:fund:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."folder__tidy__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."folder__tidy__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."folder__tidy");
@@ -6506,49 +6506,49 @@ BEGIN
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || '(owner and not parent.file)';
     v_ok := (p_id) IN (SELECT id FROM authz_int."folder__owner");
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'owner';
-    IF v_ok AND v_holds THEN RETURN QUERY SELECT * FROM authz_int."folder__owner__why"(p_id, p_depth + 2, p_seen); END IF;
+    IF v_ok AND v_holds THEN RETURN QUERY SELECT * FROM authz_int."folder__owner__why"(p_id, p_depth + 2, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT r."id" AS id FROM "cx"."folders" r
   WHERE NOT EXISTS (SELECT 1 FROM (SELECT id FROM authz_int."folder__parent__file") x WHERE x.id = r."id"));
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'not parent.file';
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."project__inside__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."project__inside__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
 
-  RETURN NEXT pad || 'no   you do not hold project.inside';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.inside';
 END $f$;
 
-CREATE FUNCTION authz_int."project__host__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."project__host__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
 
-  RETURN NEXT pad || 'no   you do not hold project.host';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.host';
 END $f$;
 
-CREATE FUNCTION authz_int."project__lead__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."project__lead__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
   IF p_id IN (SELECT r."id" AS id FROM "cx"."projects" r WHERE r."lead_id" = (SELECT authz.uid())) THEN
-    RETURN NEXT pad || 'yes  ' || 'lead: lead_id is you' || '';
+    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'lead: lead_id is you' ELSE 'lead: lead_id is them' END || '';
     RETURN;
   END IF;
-  RETURN NEXT pad || 'no   you do not hold project.lead';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.lead';
 END $f$;
 
-CREATE FUNCTION authz_int."project__backer__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."project__backer__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
 
-  RETURN NEXT pad || 'no   you do not hold project.backer';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.backer';
 END $f$;
 
-CREATE FUNCTION authz_int."project__edit__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."project__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."project__edit");
@@ -6558,41 +6558,41 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__lead");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'lead';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."project__lead__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."project__lead__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__inside__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'inside.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = tg.id) AS ok
                FROM (SELECT s."folder_id" AS id FROM "cx"."placements" s WHERE s."project_id" = p_id AND s."folder_id" IS NOT NULL AND coalesce((active), false)) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'inside is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'inside is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has edit' ELSE ', without edit' END;
       IF NOT ('folder:edit:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:edit:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:edit:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__host__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'host.edit';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__edit" v WHERE v.id = tg.id) AS ok
                FROM (SELECT g.subject_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = (p_id)::text AND g.relation = 'host' AND g.subject_type = 'folder' AND g.subject_relation = '') tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'host is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'host is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has edit' ELSE ', without edit' END;
       IF NOT ('folder:edit:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:edit:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:edit:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."project__view__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."project__view__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."project__view");
@@ -6602,41 +6602,41 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__edit");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'edit';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."project__edit__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."project__edit__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__inside__view");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'inside.view';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = tg.id) AS ok
                FROM (SELECT s."folder_id" AS id FROM "cx"."placements" s WHERE s."project_id" = p_id AND s."folder_id" IS NOT NULL AND coalesce((active), false)) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'inside is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'inside is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has view' ELSE ', without view' END;
       IF NOT ('folder:view:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:view:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:view:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__host__view");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'host.view';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__view" v WHERE v.id = tg.id) AS ok
                FROM (SELECT g.subject_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'project' AND g.object_id = (p_id)::text AND g.relation = 'host' AND g.subject_type = 'folder' AND g.subject_relation = '') tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'host is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'host is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has view' ELSE ', without view' END;
       IF NOT ('folder:view:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:view:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:view:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."project__file__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."project__file__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."project__file");
@@ -6646,11 +6646,11 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__lead");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'lead';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."project__lead__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."project__lead__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."project__fund__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."project__fund__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."project__fund");
@@ -6660,39 +6660,39 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__lead");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'lead';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."project__lead__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."project__lead__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__backer__fund");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'backer.fund';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."folder__fund" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN s."backer_type" = 'folder' THEN s."backer_id" END)::bigint AS id FROM "cx"."backings" s WHERE s."project_id" = p_id AND (CASE WHEN s."backer_type" = 'folder' THEN s."backer_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('folder', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'folder', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'backer is a folder you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'backer is folder '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has fund' ELSE ', without fund' END;
       IF NOT ('folder:fund:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__fund__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:fund:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."folder__fund__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('folder:fund:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."region__fund" v WHERE v.id = tg.id) AS ok
                FROM (SELECT (CASE WHEN s."backer_type" = 'region' THEN s."backer_id" END)::bigint AS id FROM "cx"."backings" s WHERE s."project_id" = p_id AND (CASE WHEN s."backer_type" = 'region' THEN s."backer_id" END)::bigint IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('region', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'region', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'backer is a region you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'backer is region '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has fund' ELSE ', without fund' END;
       IF NOT ('region:fund:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."region__fund__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('region:fund:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."region__fund__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('region:fund:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."project__judge__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."project__judge__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."project__judge");
@@ -6706,52 +6706,52 @@ BEGIN
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || '(view and not backer.fund)';
     v_ok := (p_id) IN (SELECT id FROM authz_int."project__view");
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'view';
-    IF v_ok AND v_holds THEN RETURN QUERY SELECT * FROM authz_int."project__view__why"(p_id, p_depth + 2, p_seen); END IF;
+    IF v_ok AND v_holds THEN RETURN QUERY SELECT * FROM authz_int."project__view__why"(p_id, p_depth + 2, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT r."id" AS id FROM "cx"."projects" r
   WHERE NOT EXISTS (SELECT 1 FROM (SELECT id FROM authz_int."project__backer__fund") x WHERE x.id = r."id"));
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'not backer.fund';
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."region__over__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."region__over__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
 
-  RETURN NEXT pad || 'no   you do not hold region.over';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'region.over';
 END $f$;
 
-CREATE FUNCTION authz_int."region__chief__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."region__chief__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
   IF p_id IN (SELECT r."id" AS id FROM "cx"."regions" r WHERE r."chief_id" = (SELECT authz.uid())) THEN
-    RETURN NEXT pad || 'yes  ' || 'chief: chief_id is you' || '';
+    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'chief: chief_id is you' ELSE 'chief: chief_id is them' END || '';
     RETURN;
   END IF;
   IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'region' AND g.relation = 'chief' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
-    RETURN NEXT pad || 'yes  ' || 'chief: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'region' AND g.object_id = p_id::text AND g.relation = 'chief' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
+    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'chief: shared with you' ELSE 'chief: shared with them' END || CASE WHEN p_asker IS NULL OR authz_int.asker_sees(p_asker, 'region', p_id::text, true) THEN coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'region' AND g.object_id = p_id::text AND g.relation = 'chief' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '') ELSE '' END;
     RETURN;
   END IF;
-  RETURN NEXT pad || 'no   you do not hold region.chief';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'region.chief';
 END $f$;
 
-CREATE FUNCTION authz_int."region__guest__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."region__guest__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
   IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'region' AND g.relation = 'guest' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
-    RETURN NEXT pad || 'yes  ' || 'guest: shared with you' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'region' AND g.object_id = p_id::text AND g.relation = 'guest' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
+    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'guest: shared with you' ELSE 'guest: shared with them' END || CASE WHEN p_asker IS NULL OR authz_int.asker_sees(p_asker, 'region', p_id::text, true) THEN coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'region' AND g.object_id = p_id::text AND g.relation = 'guest' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '') ELSE '' END;
     RETURN;
   END IF;
   IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'region' AND g.relation = 'guest' AND g.subject_type = 'link' AND g.subject_id = ANY ((SELECT authz.link_hashes())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
-    RETURN NEXT pad || 'yes  ' || 'guest: shared by a link you presented' || coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'region' AND g.object_id = p_id::text AND g.relation = 'guest' AND g.subject_type = 'link' AND g.subject_id = ANY ((SELECT authz.link_hashes())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '');
+    RETURN NEXT pad || 'yes  ' || 'guest: shared by a link you presented' || CASE WHEN p_asker IS NULL OR authz_int.asker_sees(p_asker, 'region', p_id::text, true) THEN coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') FROM authz.shares g WHERE g.object_type = 'region' AND g.object_id = p_id::text AND g.relation = 'guest' AND g.subject_type = 'link' AND g.subject_id = ANY ((SELECT authz.link_hashes())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '') ELSE '' END;
     RETURN;
   END IF;
-  RETURN NEXT pad || 'no   you do not hold region.guest';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'region.guest';
 END $f$;
 
-CREATE FUNCTION authz_int."region__run__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."region__run__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."region__run");
@@ -6761,39 +6761,39 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."region__chief");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'chief';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__chief__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__chief__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."region__over__run");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'over.run';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."site__run" v WHERE v.id = tg.id) AS ok
                FROM (SELECT s."site_id" AS id FROM "cx"."site_links" s WHERE s."region_id" = p_id AND s."site_id" IS NOT NULL AND coalesce((active), false)) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('site', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'site', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'over is a site you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'over is site '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has run' ELSE ', without run' END;
       IF NOT ('site:run:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."site__run__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('site:run:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."site__run__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('site:run:' || v_t.id), p_asker);
       END IF;
     END LOOP;
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."region__run" v WHERE v.id = tg.id) AS ok
                FROM (SELECT s."parent_id" AS id FROM "cx"."region_links" s WHERE s."region_id" = p_id AND s."parent_id" IS NOT NULL) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('region', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'region', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'over is a region you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'over is region '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has run' ELSE ', without run' END;
       IF NOT ('region:run:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."region__run__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('region:run:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."region__run__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('region:run:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."region__rename__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."region__rename__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."region__rename");
@@ -6803,11 +6803,11 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."region__chief");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'chief';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__chief__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__chief__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."region__fund__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."region__fund__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."region__fund");
@@ -6817,11 +6817,11 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."region__chief");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'chief';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__chief__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__chief__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."region__share__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."region__share__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."region__share");
@@ -6831,11 +6831,11 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."region__run");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'run';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__run__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__run__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."region__visit__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."region__visit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."region__visit");
@@ -6845,14 +6845,14 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."region__guest");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'guest';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__guest__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__guest__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."region__run");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'run';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__run__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__run__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."site__over__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."site__over__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -6861,10 +6861,10 @@ BEGIN
     RETURN;
   END IF;
 
-  RETURN NEXT pad || 'no   you do not hold site.over';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'site.over';
 END $f$;
 
-CREATE FUNCTION authz_int."site__warden__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."site__warden__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
@@ -6874,15 +6874,19 @@ BEGIN
   END IF;
   IF p_id IN (SELECT r."id" AS id FROM "cx"."sites" r WHERE r."region_id" IN (SELECT id FROM authz_int."region__chief")) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT r."region_id" AS gid FROM "cx"."sites" r WHERE r."id" = p_id AND r."region_id" IN (SELECT id FROM authz_int."region__chief")) x LIMIT 1 LOOP
-      RETURN NEXT pad || 'yes  ' || 'warden: region_id is' || ' region ' || v_t.gid || ', and you are chief there';
-      RETURN QUERY SELECT * FROM authz_int."region__chief__why"(v_t.gid::bigint, p_depth + 1, p_seen);
+      IF p_asker IS NOT NULL AND NOT authz_int.asker_sees(p_asker, 'region', v_t.gid, false) THEN
+        RETURN NEXT pad || 'yes  ' || 'warden: region_id is' || ' a region you can''t see';
+        RETURN;
+      END IF;
+      RETURN NEXT pad || 'yes  ' || 'warden: region_id is' || ' region ' || v_t.gid || CASE WHEN p_asker IS NULL THEN ', and you are chief there' ELSE ', and they are chief there' END;
+      RETURN QUERY SELECT * FROM authz_int."region__chief__why"(v_t.gid::bigint, p_depth + 1, p_seen, p_asker);
     END LOOP;
     RETURN;
   END IF;
-  RETURN NEXT pad || 'no   you do not hold site.warden';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'site.warden';
 END $f$;
 
-CREATE FUNCTION authz_int."site__run__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."site__run__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."site__run");
@@ -6898,21 +6902,21 @@ BEGIN
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'over.run';
     FOR v_t IN SELECT tg.id::text AS id, EXISTS (SELECT 1 FROM authz_int."region__run" v WHERE v.id = tg.id) AS ok
                FROM (SELECT s."region_id" AS id FROM "cx"."site_regions" s WHERE s."site_id" = p_id AND s."region_id" IS NOT NULL AND coalesce((active), false)) tg ORDER BY 2 DESC, 1 LIMIT 5 LOOP
-      -- the walk stops at an object the user can't see: nothing about it, or above it
-      IF NOT authz_int.visible('region', v_t.id) THEN
+      -- the walk stops at an object the one asking can't see: nothing about it, or above it
+      IF NOT authz_int.asker_sees(p_asker, 'region', v_t.id, false) THEN
         RETURN NEXT pad || '       ' || 'over is a region you can''t see';
         CONTINUE;
       END IF;
       RETURN NEXT pad || '  ' || CASE WHEN v_t.ok THEN 'yes  ' ELSE 'no   ' END || 'over is region '
                   || v_t.id || CASE WHEN v_t.ok THEN ', which has run' ELSE ', without run' END;
       IF NOT ('region:run:' || v_t.id = ANY (p_seen)) AND ((v_t.ok AND v_ok AND NOT v_done) OR (NOT v_ok AND NOT v_t.ok AND p_depth < 5)) THEN
-        v_done := true; RETURN QUERY SELECT * FROM authz_int."region__run__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('region:run:' || v_t.id));
+        v_done := true; RETURN QUERY SELECT * FROM authz_int."region__run__why"(v_t.id::bigint, p_depth + 1 + 1, p_seen || ('region:run:' || v_t.id), p_asker);
       END IF;
     END LOOP;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."site__guard__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."site__guard__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."site__guard");
@@ -6926,25 +6930,25 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."site__warden");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'warden';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."site__warden__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."site__warden__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
     v_ok := (p_id) IN (SELECT id FROM authz_int."site__run");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'run';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."site__run__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."site__run__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."note__author__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."note__author__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
 BEGIN
   IF p_id IN (SELECT r."id" AS id FROM "cx"."notes" r WHERE r."author_id" = (SELECT authz.uid())) THEN
-    RETURN NEXT pad || 'yes  ' || 'author: author_id is you' || '';
+    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'author: author_id is you' ELSE 'author: author_id is them' END || '';
     RETURN;
   END IF;
-  RETURN NEXT pad || 'no   you do not hold note.author';
+  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'note.author';
 END $f$;
 
-CREATE FUNCTION authz_int."note__write__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."note__write__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."note__write");
@@ -6954,11 +6958,11 @@ BEGIN
   BEGIN
     v_ok := (p_id) IN (SELECT id FROM authz_int."note__author");
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'author';
-    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."note__author__why"(p_id, p_depth + 1, p_seen); END IF;
+    IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."note__author__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."note__open__why"(p_id bigint, p_depth int, p_seen text[])
+CREATE FUNCTION authz_int."note__open__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int."note__open");
@@ -7027,6 +7031,29 @@ BEGIN
   IF authz_int.caller_is_admin() THEN RETURN true; END IF;
   RETURN EXISTS (SELECT 1 FROM authz_int.perms WHERE type = p_type AND perm = 'share')
      AND authz.can(p_type, p_id, 'share');
+END $f$;
+
+-- What explain may show of an object while it walks as another user (p_asker: the one asking, as user id,
+-- principal type and scopes; NULL: they ask of themselves): whether the one asking sees it or, p_inspect, may inspect
+-- it (list its shares). It asks as them, then puts back the user explained.
+CREATE FUNCTION authz_int.asker_sees(p_asker text[], p_type text, p_id text, p_inspect boolean) RETURNS boolean
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE v_user text := coalesce(current_setting('authz.user_id', true), '');
+        v_pt text := coalesce(current_setting('authz.principal_type', true), '');
+        v_scopes text := coalesce(current_setting('authz.scopes', true), ''); v_ok boolean;
+BEGIN
+  IF p_asker IS NULL THEN RETURN authz_int.visible(p_type, p_id); END IF;   -- (asked only whether they see it)
+  IF authz_int.caller_is_admin() THEN RETURN true; END IF;
+  PERFORM set_config('authz.user_id', p_asker[1], true);
+  PERFORM set_config('authz.principal_type', p_asker[2], true);
+  PERFORM set_config('authz.scopes', p_asker[3], true);
+  PERFORM authz_int.sign();
+  v_ok := CASE WHEN p_inspect THEN authz_int.may_inspect(p_type, p_id) ELSE authz_int.visible(p_type, p_id) END;
+  PERFORM set_config('authz.user_id', v_user, true);
+  PERFORM set_config('authz.principal_type', v_pt, true);
+  PERFORM set_config('authz.scopes', v_scopes, true);
+  PERFORM authz_int.sign();
+  RETURN v_ok;
 END $f$;
 
 -- Everyone who holds a permission on an object: SELECT * FROM authz.who('folder', 3, 'view')
@@ -7211,6 +7238,7 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp A
 DECLARE v_me text := coalesce(current_setting('authz.user_id', true), ''); v_ok boolean; v_bigint bigint;
         v_pt text := coalesce(current_setting('authz.principal_type', true), '');
         v_scopes text := coalesce(current_setting('authz.scopes', true), '');
+        v_asker text[];   -- for another user: the one asking, whose sight the walk keeps to
 BEGIN
   -- the signed-in user's own id is the signed-in user: asked as without it (a service whose id is a user's is not)
   IF p_user IS NOT NULL AND authz_int.canon('user', p_user) IS NOT DISTINCT FROM authz.uid()::text THEN
@@ -7226,6 +7254,7 @@ BEGIN
     RETURN;
   END IF;
   IF p_user IS NOT NULL THEN
+    v_asker := ARRAY[v_me, v_pt, v_scopes];
     PERFORM set_config('authz.user_id', p_user, true);
     PERFORM set_config('authz.principal_type', '', true);
     PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
@@ -7244,49 +7273,49 @@ BEGIN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_bigint, 1, '{}');
-        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_bigint, 1, '{}');
-        WHEN 'file' THEN RETURN QUERY SELECT * FROM authz_int."folder__file__why"(v_bigint, 1, '{}');
-        WHEN 'fund' THEN RETURN QUERY SELECT * FROM authz_int."folder__fund__why"(v_bigint, 1, '{}');
-        WHEN 'tidy' THEN RETURN QUERY SELECT * FROM authz_int."folder__tidy__why"(v_bigint, 1, '{}');
+        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."folder__edit__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."folder__view__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'file' THEN RETURN QUERY SELECT * FROM authz_int."folder__file__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'fund' THEN RETURN QUERY SELECT * FROM authz_int."folder__fund__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'tidy' THEN RETURN QUERY SELECT * FROM authz_int."folder__tidy__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'project' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."project__edit__why"(v_bigint, 1, '{}');
-        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."project__view__why"(v_bigint, 1, '{}');
-        WHEN 'file' THEN RETURN QUERY SELECT * FROM authz_int."project__file__why"(v_bigint, 1, '{}');
-        WHEN 'fund' THEN RETURN QUERY SELECT * FROM authz_int."project__fund__why"(v_bigint, 1, '{}');
-        WHEN 'judge' THEN RETURN QUERY SELECT * FROM authz_int."project__judge__why"(v_bigint, 1, '{}');
+        WHEN 'edit' THEN RETURN QUERY SELECT * FROM authz_int."project__edit__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'view' THEN RETURN QUERY SELECT * FROM authz_int."project__view__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'file' THEN RETURN QUERY SELECT * FROM authz_int."project__file__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'fund' THEN RETURN QUERY SELECT * FROM authz_int."project__fund__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'judge' THEN RETURN QUERY SELECT * FROM authz_int."project__judge__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'region' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'run' THEN RETURN QUERY SELECT * FROM authz_int."region__run__why"(v_bigint, 1, '{}');
-        WHEN 'rename' THEN RETURN QUERY SELECT * FROM authz_int."region__rename__why"(v_bigint, 1, '{}');
-        WHEN 'fund' THEN RETURN QUERY SELECT * FROM authz_int."region__fund__why"(v_bigint, 1, '{}');
-        WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."region__share__why"(v_bigint, 1, '{}');
-        WHEN 'visit' THEN RETURN QUERY SELECT * FROM authz_int."region__visit__why"(v_bigint, 1, '{}');
+        WHEN 'run' THEN RETURN QUERY SELECT * FROM authz_int."region__run__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'rename' THEN RETURN QUERY SELECT * FROM authz_int."region__rename__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'fund' THEN RETURN QUERY SELECT * FROM authz_int."region__fund__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'share' THEN RETURN QUERY SELECT * FROM authz_int."region__share__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'visit' THEN RETURN QUERY SELECT * FROM authz_int."region__visit__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'site' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'run' THEN RETURN QUERY SELECT * FROM authz_int."site__run__why"(v_bigint, 1, '{}');
-        WHEN 'guard' THEN RETURN QUERY SELECT * FROM authz_int."site__guard__why"(v_bigint, 1, '{}');
+        WHEN 'run' THEN RETURN QUERY SELECT * FROM authz_int."site__run__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'guard' THEN RETURN QUERY SELECT * FROM authz_int."site__guard__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     WHEN 'note' THEN
       IF NOT pg_catalog.pg_input_is_valid(p_id, 'bigint') THEN EXIT asking; END IF;
       v_bigint := p_id::bigint;
       CASE p_perm
-        WHEN 'write' THEN RETURN QUERY SELECT * FROM authz_int."note__write__why"(v_bigint, 1, '{}');
-        WHEN 'open' THEN RETURN QUERY SELECT * FROM authz_int."note__open__why"(v_bigint, 1, '{}');
+        WHEN 'write' THEN RETURN QUERY SELECT * FROM authz_int."note__write__why"(v_bigint, 1, '{}', v_asker);
+        WHEN 'open' THEN RETURN QUERY SELECT * FROM authz_int."note__open__why"(v_bigint, 1, '{}', v_asker);
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
     ELSE
