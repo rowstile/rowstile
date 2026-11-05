@@ -322,6 +322,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile init` beside a `rowstile.toml` there already, in its folder or above, that names another policy says
   that no command reads the draft until it does, and the note in `AGENTS.md` names the policy and the tests
   `rowstile.toml` names. Before, it named the draft's.
+- An `UPDATE` of `authz.shares` made by hand is recorded with what the share was (`detail`'s `was`: its object,
+  relation, subject and times), and announces the object it left also when only its type changed. An `UPDATE` of
+  `authz.role_permissions` is recorded (the permission removed, the one added) and announces the objects the role
+  is given on. Before, neither was recorded or announced.
 
 ### Upgrading
 

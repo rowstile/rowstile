@@ -1369,9 +1369,16 @@ BEGIN
     r.object_type, r.object_id, r.relation, r.subject_type,
     CASE WHEN r.subject_type = 'link' THEN '(link)' ELSE r.subject_id END, r.subject_relation,
     jsonb_strip_nulls(jsonb_build_object('expires_at', r.expires_at, 'starts_at', r.starts_at, 'caveat', r.caveat,
-                                         'created_by', r.created_by)));
+                                         'created_by', r.created_by,
+                                         -- a change: what the share was (whose, of what, its times)
+                                         'was', CASE WHEN TG_OP = 'UPDATE' THEN jsonb_build_object(
+                                           'object_type', OLD.object_type, 'object_id', OLD.object_id,
+                                           'relation', OLD.relation, 'subject_type', OLD.subject_type,
+                                           'subject_id', CASE WHEN OLD.subject_type = 'link' THEN '(link)' ELSE OLD.subject_id END,
+                                           'subject_relation', OLD.subject_relation, 'expires_at', OLD.expires_at,
+                                           'starts_at', OLD.starts_at, 'caveat', OLD.caveat) END)));
   PERFORM authz_int.changed(r.object_type, ARRAY[r.object_id], 'share');
-  IF TG_OP = 'UPDATE' AND OLD.object_id <> NEW.object_id THEN
+  IF TG_OP = 'UPDATE' AND (OLD.object_type, OLD.object_id) IS DISTINCT FROM (NEW.object_type, NEW.object_id) THEN
     PERFORM authz_int.changed(OLD.object_type, ARRAY[OLD.object_id], 'share');
   END IF;
   RETURN NULL;
@@ -1386,9 +1393,15 @@ BEGIN
       CASE WHEN TG_OP = 'DELETE' THEN OLD.owner_id ELSE NEW.owner_id END, NULL, NULL, NULL, NULL,
       to_jsonb(CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END));
   ELSE
-    PERFORM authz_int.audit(CASE TG_OP WHEN 'DELETE' THEN 'role_permission_removed' ELSE 'role_permission_added' END,
-      NULL, NULL, 'role:' || CASE WHEN TG_OP = 'DELETE' THEN OLD.role_id ELSE NEW.role_id END, NULL, NULL, NULL,
-      jsonb_build_object('permission', CASE WHEN TG_OP = 'DELETE' THEN OLD.permission ELSE NEW.permission END));
+    -- (a change: the permission it gave removed, the one it gives added)
+    IF TG_OP IN ('DELETE', 'UPDATE') THEN
+      PERFORM authz_int.audit('role_permission_removed', NULL, NULL, 'role:' || OLD.role_id, NULL, NULL, NULL,
+        jsonb_build_object('permission', OLD.permission));
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+      PERFORM authz_int.audit('role_permission_added', NULL, NULL, 'role:' || NEW.role_id, NULL, NULL, NULL,
+        jsonb_build_object('permission', NEW.permission));
+    END IF;
   END IF;
   RETURN NULL;
 END $f$;
@@ -1396,18 +1409,29 @@ CREATE TRIGGER authz_role_audit AFTER INSERT OR UPDATE OR DELETE ON authz.roles
   FOR EACH ROW EXECUTE FUNCTION authz_int.on_role();
 CREATE TRIGGER authz_role_perm_audit AFTER INSERT OR DELETE ON authz.role_permissions
   FOR EACH ROW EXECUTE FUNCTION authz_int.on_role();
--- a role that gives more or less: the objects it is given on (its assignments are shares, 'role:<id>')
+CREATE TRIGGER authz_role_perm_audit_upd AFTER UPDATE ON authz.role_permissions
+  FOR EACH ROW WHEN (OLD IS DISTINCT FROM NEW) EXECUTE FUNCTION authz_int.on_role();
+-- a role that gives more or less: the objects it is given on (its assignments are shares, 'role:<id>'; a change:
+-- the roles it was in and is in)
 CREATE FUNCTION authz_int.on_role_permissions() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
-  PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'role')
-  FROM authz.shares g WHERE g.relation IN (SELECT 'role:' || r.role_id FROM role_rows r) GROUP BY g.object_type;
+  IF TG_OP = 'UPDATE' THEN
+    PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'role')
+    FROM authz.shares g WHERE g.relation IN (SELECT 'role:' || r.role_id FROM role_rows r
+                                             UNION SELECT 'role:' || n.role_id FROM new_role_rows n) GROUP BY g.object_type;
+  ELSE
+    PERFORM authz_int.changed(g.object_type, array_agg(DISTINCT g.object_id), 'role')
+    FROM authz.shares g WHERE g.relation IN (SELECT 'role:' || r.role_id FROM role_rows r) GROUP BY g.object_type;
+  END IF;
   RETURN NULL;
 END $f$;
 CREATE TRIGGER authz_role_perm_feed_ins AFTER INSERT ON authz.role_permissions
   REFERENCING NEW TABLE AS role_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.on_role_permissions();
 CREATE TRIGGER authz_role_perm_feed_del AFTER DELETE ON authz.role_permissions
   REFERENCING OLD TABLE AS role_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.on_role_permissions();
+CREATE TRIGGER authz_role_perm_feed_upd AFTER UPDATE ON authz.role_permissions
+  REFERENCING OLD TABLE AS role_rows NEW TABLE AS new_role_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int.on_role_permissions();
 
 DO $r$ BEGIN PERFORM set_config('authz_ctx.reason', 'applying the policy: the row was deleted', true); END $r$;
 

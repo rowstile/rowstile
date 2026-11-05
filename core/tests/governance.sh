@@ -80,6 +80,17 @@ admin "a share is recorded, with who made it" "share|5|folder|2|viewer|user|4" \
    FROM authz.audit ORDER BY id DESC LIMIT 1"
 as 5 -c "SELECT authz.unshare('folder', 2, 'viewer', 'user', 4)" >/dev/null
 admin "... and so is taking it back" "unshare|5" "SELECT action || '|' || user_id FROM authz.audit ORDER BY id DESC LIMIT 1"
+# a share changed by hand (an administrator's UPDATE): the trail says what it was, the feed hears of both objects
+as 5 -c "SELECT authz.share('folder', 2, 'viewer', 'user', 4)" >/dev/null
+PSQL -c "UPDATE authz.shares SET subject_id = '3', relation = 'editor', expires_at = '2100-01-01Z'
+         WHERE object_type = 'folder' AND object_id = '2' AND subject_id = '4'" >/dev/null
+admin "a share changed by hand is recorded with what it was: its relation, whose it was, its times" "share_changed|editor|3|viewer|4|no end" \
+  "SELECT action || '|' || relation || '|' || subject_id || '|' || (detail->'was'->>'relation') || '|' || (detail->'was'->>'subject_id')
+          || '|' || coalesce(detail->'was'->>'expires_at', 'no end') FROM authz.audit ORDER BY id DESC LIMIT 1"
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+PSQL -c "UPDATE authz.shares SET object_type = 'file' WHERE object_type = 'folder' AND object_id = '2' AND subject_id = '3'" >/dev/null
+admin "... and one moved to an object of another type announces both, the one it left too" "file 2; folder 2" "$(fed $POS share)"
+PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '2' AND subject_id = '3'" >/dev/null
 PSQL -c "BEGIN" -c "SET LOCAL ROLE app_user" -c "SELECT authz.act_as('user', ' 05')" \
      -c "SELECT authz.share('folder', 2, 'viewer', 'user', 4)" -c "COMMIT" >/dev/null
 admin "an id signed in as ' 05' is recorded as 5, as ids are stored" "share|5|5" \
@@ -356,6 +367,17 @@ RSQL -c "INSERT INTO r.team_members VALUES (1, 2)" >/dev/null
 [ "$(RSQL -c "$(fed $POS dependent)")" = "doc 1" ] && [ "$(RSQL -c "SET authz.user_id = 2" -c "SELECT authz.can('doc', 1, 'view')")" = t ] &&
   echo "ok    a member joining a team given a custom role on a doc: the doc is announced" ||
   { echo "FAIL  the feed after a team given a role grows: $(RSQL -c "$(fed $POS dependent)")"; fails=$((fails + 1)); }
+POS=$(RSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+B=$(RSQL -c "SELECT max(id) FROM authz.audit")
+RSQL -c "UPDATE authz.role_permissions SET permission = 'manage_roles' WHERE role_id = $ROLE" >/dev/null
+[ "$(RSQL -c "$(fed $POS role)")" = "doc 1" ] && [ "$(RSQL -c "SET authz.user_id = 2" -c "SELECT authz.can('doc', 1, 'view')")" = f ] &&
+  echo "ok    a custom role's permission changed by hand: the docs it is given on are announced" ||
+  { echo "FAIL  the feed after a role's permission is changed: $(RSQL -c "$(fed $POS role)")"; fails=$((fails + 1)); }
+got=$(RSQL -c "SELECT string_agg(action || ' ' || relation || ' ' || (detail->>'permission'), ', ' ORDER BY id) FROM authz.audit WHERE id > $B")
+[ "$got" = "role_permission_removed role:$ROLE view, role_permission_added role:$ROLE manage_roles" ] &&
+  echo "ok    ... and recorded: the permission it gave removed, the one it gives added" ||
+  { echo "FAIL  the trail after a role's permission is changed: $got"; fails=$((fails + 1)); }
+RSQL -c "UPDATE authz.role_permissions SET permission = 'view' WHERE role_id = $ROLE" >/dev/null
 POS=$(RSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 RSQL -c "DELETE FROM authz.role_permissions WHERE role_id = $ROLE" >/dev/null
 [ "$(RSQL -c "$(fed $POS role)")" = "doc 1" ] && [ "$(RSQL -c "SET authz.user_id = 2" -c "SELECT authz.can('doc', 1, 'view')")" = f ] &&
