@@ -9005,6 +9005,16 @@ class Confidence(unittest.TestCase):
                 t1 + "({b1} or parent.p) and {not b3}\n", t1 + "({b1} or (parent.p and not {not b2})) and {not b3}\n"
             )
         )
+        # the same where the type's where reads a column a relation reads: a listed row's owner is its link
+        t1 = (
+            "type t1 = app.t1 where {owner_id is not null}\n  parent : t1 = parent_id\n  owner : user = owner_id\n"
+            "  can o = owner\n  can p = "
+        )
+        self.assertFalse(
+            self.same(
+                t1 + "({b1} or parent.p) and {not b3}\n", t1 + "({b1} or (parent.p and not {not b2})) and {not b3}\n"
+            )
+        )
 
     def test_the_small_worlds_are_listed(self) -> None:
         # a row of a document is of two classes ({a} holds or not); with no link, then each document's owner. A world
