@@ -37,6 +37,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   previews (`rowstile diff`, the review's access, `rowstile dev`, `rowstile snapshot`) still list every permission
   gained or lost, on rows the user can't select too.
 
+### Removed
+
+- `rowstile review --json`: `access.users_in_data`, which was always null.
+
 ### Fixed
 
 - `rowstile client LANG` with no file is of the policy `rowstile.toml` names, as `rowstile graph` is and the reference
@@ -276,6 +280,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `''` and with `'*'` makes one share, `authz.unshare` with any id removes it (also once the policy no longer
   shares with anyone), and `authz.who` counts one made with `''`. Applying gives the shares with anyone stored
   before the id `*` and no relation, two of one share kept once.
+- `rowstile review` reads an included file's name that holds spaces: a mistake's line there (`--json`:
+  `base_mistake.line`), and each flag's annotation, on that file and line. `--annotations` escapes the `%`, `:` and
+  `,` of a path, as GitHub reads them. Deploy names a quoted table with a space in its name whole, and counts an
+  app schema whose name starts with `authz` as the app's. The comment's table escapes a `|` in every cell, an
+  invariant's own text too, and a counterexample doubles a quote in a text, as SQL writes it.
 
 ### Upgrading
 

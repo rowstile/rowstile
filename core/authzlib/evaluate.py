@@ -1024,7 +1024,7 @@ def shown(v: str | int | Decimal | bool) -> str:
     """A column's value as SQL writes it (describe leaves NULL out: a smaller world's columns are NULL)."""
     if isinstance(v, bool):
         return "true" if v else "false"
-    return f"'{v}'" if isinstance(v, str) else str(v)
+    return "'" + v.replace("'", "''") + "'" if isinstance(v, str) else str(v)
 
 
 def kept_rows(pol: Policy, alike: frozenset[str] = frozenset()) -> Callable[[Data], Data]:
