@@ -1,7 +1,7 @@
 // The site's links without building it (pages.mjs): where a link to a file on GitHub goes when the site is built from
 // a tag, a heading's anchor, the links to a heading that isn't there, the Markdown copies' links, and the menus
 // against the pages.   node site/pages_test.mjs
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createMarkdownRenderer } from "vitepress";
 
@@ -168,6 +168,15 @@ check("a copy without its notes: after a sentence, and a line of their own", wit
 const notes = Object.keys(PAGES).flatMap((source) => withoutNotes(readFileSync(join(REPO, source), "utf8")).split("\n")
   .filter((line) => NOTE.test(line)).map((line) => `${source}: ${line}`));
 check("... and no page's copy keeps one", notes.length === 0, notes.join("\n"));
+
+// every stack's page and every SDK's README is a page (each TypeScript and .NET package's own README isn't: the
+// SDK's says what each holds)
+const shouldBe = [
+  ...readdirSync(join(REPO, "docs", "stacks")).filter((f) => f.endsWith(".md")).map((f) => `docs/stacks/${f}`),
+  ...readdirSync(join(REPO, "sdk")).filter((d) => existsSync(join(REPO, "sdk", d, "README.md"))).map((d) => `sdk/${d}/README.md`),
+  "sdk/java/rowstile-kotlin/README.md",
+];
+check("every stack's page and every SDK's README is a page", shouldBe.every((f) => f in PAGES), shouldBe.filter((f) => !(f in PAGES)));
 
 // the menus against the pages: every page is in one, every link of one goes to a page
 const everyPage = Object.values(PAGES).filter((a) => a !== "index.md" && !a.startsWith("problems/")).map(url);
