@@ -646,7 +646,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   else finds an account by its exact number (`ms.find_by_phone`). Every signed-in person and bot could read
   everyone's. Signing up reads the phone number before checking it: `abc` was kept as an empty number, which any
   phone made of letters then found. A path under `/api/` the API doesn't have answers 404, not the web app's page.
-  Its schema is one migration, as the file manager's is.
+  Opening a direct chat whose other person left blanked the web app, again on each reload; it opens, unnamed. Its
+  schema is one migration, as the file manager's is.
 
 ### Upgrading
 

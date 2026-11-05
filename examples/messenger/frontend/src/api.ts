@@ -12,8 +12,9 @@ export type ChatSummary = {
 export type Member = { user_id: string; role: "owner" | "admin" | "member"; name: string; phone: string; about: string;
   last_read_seq: number };
 
+// title: a group's, or the other person's name in a direct chat; null when they left (or their account is gone)
 export type Chat = {
-  id: number; kind: "direct" | "group"; title: string; about: string; admins_only: boolean; last_seq: number;
+  id: number; kind: "direct" | "group"; title: string | null; about: string; admins_only: boolean; last_seq: number;
   members: Member[]; bots: { id: number; name: string }[]; perms: string[];
   peer_id?: string; i_blocked?: boolean;
 };

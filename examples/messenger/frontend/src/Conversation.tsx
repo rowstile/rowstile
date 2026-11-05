@@ -64,9 +64,9 @@ export function Conversation({ chatId, me, version, onChanged, onClose }: Props)
     <div className="conversation">
       <div className="chat-main">
         <header onClick={() => setInfo(!info)}>
-          <span className={`avatar ${chat.kind}`}>{chat.kind === "group" ? "👥" : initials(chat.title)}</span>
+          <span className={`avatar ${chat.kind}`}>{chat.kind === "group" ? "👥" : initials(chat.title ?? "?")}</span>
           <div className="grow">
-            <b>{chat.title}</b>
+            <b>{chat.title ?? "(unknown)"}</b>
             <div className="hint">{chat.kind === "group"
               ? [...chat.members.map((m) => m.user_id === me.id ? "You" : m.name), ...chat.bots.map((b) => `${b.name} (bot)`)].join(", ")
               : others[0]?.about}</div>

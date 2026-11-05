@@ -119,6 +119,19 @@ test("a direct chat whose other person left stays in the list, unnamed", async (
   expect(shown()).not.toContain("No chats yet");
 });
 
+test("a direct chat whose other person left opens, unnamed", async () => {
+  const alone: Chat = { ...group, id: 8, kind: "direct", title: null, perms: ["read", "post"] };
+  await start("/?chat=8", {
+    "GET /api/chats": [{ ...summary, id: 8, kind: "direct", name: null }],
+    "GET /api/chats/8": alone,
+    "GET /api/chats/8/messages": [message(1)],
+  });
+  expect(div.querySelector(".conversation header")?.textContent).toContain("(unknown)");
+  expect(shown()).toContain("m1");
+  await press("Chat info");
+  expect(div.querySelector(".info")?.textContent ?? shown()).toContain("(unknown)");
+});
+
 test("signing out that fails says so", async () => {
   await start("/", { "POST /api/logout": new Failure(500, "the server is down") });
   await press("Sign out");

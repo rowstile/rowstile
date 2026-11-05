@@ -22,7 +22,7 @@ export function ChatInfo({ chat, me, onChanged, onClose, onLeft }: Props) {
         <button className="icon" onClick={onClose}>✕</button></header>
       <div className="scroll">
         {chat.kind === "group" ? <GroupSettings chat={chat} manage={manage} run={run} />
-          : <section><h2>{chat.title}</h2><p className="hint">{chat.members.find((m) => m.user_id === chat.peer_id)?.phone}</p>
+          : <section><h2>{chat.title ?? "(unknown)"}</h2><p className="hint">{chat.members.find((m) => m.user_id === chat.peer_id)?.phone}</p>
               <p>{chat.members.find((m) => m.user_id === chat.peer_id)?.about}</p></section>}
 
         {chat.kind === "group" && <section>
@@ -63,8 +63,8 @@ export function ChatInfo({ chat, me, onChanged, onClose, onLeft }: Props) {
 }
 
 function GroupSettings({ chat, manage, run }: { chat: Chat; manage: boolean; run: (fn: () => Promise<unknown>) => void }) {
-  const [title, setTitle] = useState(chat.title), [about, setAbout] = useState(chat.about);
-  useEffect(() => { setTitle(chat.title); setAbout(chat.about); }, [chat.title, chat.about]);
+  const [title, setTitle] = useState(chat.title ?? ""), [about, setAbout] = useState(chat.about);
+  useEffect(() => { setTitle(chat.title ?? ""); setAbout(chat.about); }, [chat.title, chat.about]);
   if (!manage) return <section><h2>{chat.title}</h2>{chat.about && <p>{chat.about}</p>}
     {chat.admins_only && <p className="hint">Only admins can send messages.</p>}</section>;
   return (
