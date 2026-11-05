@@ -801,6 +801,7 @@ BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
   p_subject_id := authz_int.canon(p_subject_type, p_subject_id);
+  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE p_subject_relation END;  -- (no anyone#...)
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) THEN
     RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
@@ -918,6 +919,7 @@ BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
   p_subject_id := authz_int.canon(p_subject_type, p_subject_id);
+  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE p_subject_relation END;  -- (no anyone#...)
   v_by := coalesce(authz_int.manage_perm(p_type, p_relation,
                                          authz_int.subject_key(p_subject_type, p_subject_id, p_subject_relation)),
                    authz_int.manage_perm(p_type, p_relation));
@@ -1933,14 +1935,10 @@ END $f$;""")
                 if t.pktype != "text" or t.composite
             ]
             # anyone is one subject, whatever id a share names it with ('*', as type:* names every principal)
-            + (
-                ["    WHEN 'anyone' THEN RETURN '*';  -- one subject, whatever id names it"]
-                if self.shares_with_anyone()
-                else []
-            )
+            + ["    WHEN 'anyone' THEN RETURN '*';  -- one subject, whatever id names it"]
         )
-        canon = (
-            f"""-- an id as it is stored and compared: '(1, 42)' -> '(1,42)', '007' -> '7' (invalid ids as they are)
+        canon = f"""-- an id as it is stored and compared: '(1, 42)' -> '(1,42)', '007' -> '7', anyone's -> '*' (invalid ids
+-- as they are)
 CREATE FUNCTION authz_int.canon(p_type text, p_id text) RETURNS text
 LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
@@ -1950,39 +1948,21 @@ BEGIN
   END CASE;
   RETURN p_id;
 END $f$;"""
-            if cases
-            else """CREATE FUNCTION authz_int.canon(p_type text, p_id text) RETURNS text
-LANGUAGE sql IMMUTABLE AS $f$ SELECT p_id $f$;"""
-        )
         # views cast stored ids to the key's type ('007' is 7), while the triggers that remove a row's shares and
-        # apply's sweep compare text: every stored id must be canonical, whoever wrote it
-        trigger = (
-            """-- shares written directly get canonical ids too
+        # apply's sweep compare text: every stored id must be canonical, whoever wrote it (and anyone names no
+        # relation: a share with it is one, whatever it was written with)
+        trigger = """-- shares written directly get canonical ids too
 CREATE FUNCTION authz_int.shares_canon() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
   NEW.object_id := authz_int.canon(NEW.object_type, NEW.object_id);
   NEW.subject_id := authz_int.canon(NEW.subject_type, NEW.subject_id);
+  IF NEW.subject_type = 'anyone' THEN NEW.subject_relation := ''; END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER authz_shares_canon BEFORE INSERT OR UPDATE OF object_type, object_id, subject_type, subject_id
-  ON authz.shares FOR EACH ROW EXECUTE FUNCTION authz_int.shares_canon();"""
-            if cases
-            else ""
-        )
+CREATE TRIGGER authz_shares_canon BEFORE INSERT OR UPDATE OF object_type, object_id, subject_type, subject_id,
+  subject_relation ON authz.shares FOR EACH ROW EXECUTE FUNCTION authz_int.shares_canon();"""
         return "\n".join(types + [canon, trigger])
-
-    def shares_with_anyone(self) -> bool:
-        """Whether a shared relation or the custom roles name `anyone`: authz_int.canon then gives its shares the id
-        '*' (base.py gives it to those stored before)."""
-        return any(
-            st == "anyone"
-            for t in self.types.values()
-            for st, _ in [
-                *(s for r in t.relations.values() for src in r.sources for s in src.subjects),
-                *(t.roles[0] if t.roles else []),
-            ]
-        )
 
 
 CANONICAL_SHARES = """-- Shares stored with ids that aren't canonical for their type's key ('007' for a bigint, an uppercase uuid) are

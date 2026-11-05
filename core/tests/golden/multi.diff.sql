@@ -224,14 +224,16 @@ CREATE INDEX IF NOT EXISTS shares_by_subject
 CREATE INDEX IF NOT EXISTS shares_by_end ON authz.shares (expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS shares_by_start ON authz.shares (starts_at) WHERE starts_at IS NOT NULL;
 REVOKE ALL ON authz.shares FROM PUBLIC;
--- A share with anyone names no one: its id is '*', whatever id it was made with (authz_int.canon). One stored with
--- another id takes it; of two that are then one share, the one stored with '*' stays, else the first made
+-- A share with anyone names no one: its id is '*' and its relation '', whatever it was made with (authz_int.canon,
+-- authz.share). One stored with others takes them; of two that are then one share, the one stored so stays, else
+-- the first made
 DELETE FROM authz.shares g USING (
-  SELECT s.ctid AS row, row_number() OVER (PARTITION BY s.object_type, s.object_id, s.relation, s.subject_relation
-                                           ORDER BY s.subject_id <> '*', s.created_at, s.ctid) AS n
+  SELECT s.ctid AS row, row_number() OVER (PARTITION BY s.object_type, s.object_id, s.relation
+                                           ORDER BY (s.subject_id, s.subject_relation) <> ('*', ''), s.created_at, s.ctid) AS n
   FROM authz.shares s WHERE s.subject_type = 'anyone') d
 WHERE g.ctid = d.row AND d.n > 1;
-UPDATE authz.shares SET subject_id = '*' WHERE subject_type = 'anyone' AND subject_id <> '*';
+UPDATE authz.shares SET subject_id = '*', subject_relation = ''
+WHERE subject_type = 'anyone' AND (subject_id, subject_relation) <> ('*', '');
 
 -- Custom roles: sets of permissions defined as data, assigned like shares ('role:<id>')
 CREATE TABLE IF NOT EXISTS authz.roles (
@@ -742,7 +744,8 @@ BEGIN
   PERFORM authz_int.jit_off();
 END $f$;
 
--- an id as it is stored and compared: '(1, 42)' -> '(1,42)', '007' -> '7' (invalid ids as they are)
+-- an id as it is stored and compared: '(1, 42)' -> '(1,42)', '007' -> '7', anyone's -> '*' (invalid ids
+-- as they are)
 CREATE FUNCTION authz_int.canon(p_type text, p_id text) RETURNS text
 LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
@@ -770,10 +773,11 @@ LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
   NEW.object_id := authz_int.canon(NEW.object_type, NEW.object_id);
   NEW.subject_id := authz_int.canon(NEW.subject_type, NEW.subject_id);
+  IF NEW.subject_type = 'anyone' THEN NEW.subject_relation := ''; END IF;
   RETURN NEW;
 END $f$;
-CREATE TRIGGER authz_shares_canon BEFORE INSERT OR UPDATE OF object_type, object_id, subject_type, subject_id
-  ON authz.shares FOR EACH ROW EXECUTE FUNCTION authz_int.shares_canon();
+CREATE TRIGGER authz_shares_canon BEFORE INSERT OR UPDATE OF object_type, object_id, subject_type, subject_id,
+  subject_relation ON authz.shares FOR EACH ROW EXECUTE FUNCTION authz_int.shares_canon();
 
 -- Who is signed in, whatever their type: SELECT * FROM authz.principal()
 CREATE OR REPLACE FUNCTION authz.principal() RETURNS TABLE (principal_type text, principal_id text)
@@ -4387,6 +4391,7 @@ BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
   p_subject_id := authz_int.canon(p_subject_type, p_subject_id);
+  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE p_subject_relation END;  -- (no anyone#...)
   IF NOT EXISTS (SELECT 1 FROM authz.principal()) THEN
     RAISE EXCEPTION 'you cannot share % %', p_type, p_id USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
   END IF;
@@ -4543,6 +4548,7 @@ BEGIN
   PERFORM authz_int.check_writable();
   p_id := authz_int.canon(p_type, p_id);
   p_subject_id := authz_int.canon(p_subject_type, p_subject_id);
+  p_subject_relation := CASE WHEN p_subject_type = 'anyone' THEN '' ELSE p_subject_relation END;  -- (no anyone#...)
   v_by := coalesce(authz_int.manage_perm(p_type, p_relation,
                                          authz_int.subject_key(p_subject_type, p_subject_id, p_subject_relation)),
                    authz_int.manage_perm(p_type, p_relation));

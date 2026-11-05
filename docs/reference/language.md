@@ -107,7 +107,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
 - **Subjects**: `user`, a group such as `team#member` (nested to any depth, loops are
   fine; after the `#`, any relation or permission of the group's type: `team#manage` is whoever holds `manage` on the team), `user:*` (any signed-in user), `anyone` (also signed out) and `link` (anyone
   holding a share link's token). <!-- answer: subjects --> A share with `user:*` or `anyone` names no row: its id
-  is `*`, as in `authz.share('folder', 3, 'viewer', 'anyone', '*')`, and for `anyone` any id given is read as `*`.
+  is `*`, as in `authz.share('folder', 3, 'viewer', 'anyone', '*')`, and for `anyone` any id given is read as `*`, with no relation after it.
 - **Principals**: services, API clients and agents can sign in as themselves:
   `type service = app.services principal`. Relations name them like users
   (`bot : service = bot_id`, `reader : user, service shared`), and `service:*` means any

@@ -27,14 +27,16 @@ CREATE INDEX IF NOT EXISTS shares_by_subject
 CREATE INDEX IF NOT EXISTS shares_by_end ON authz.shares (expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS shares_by_start ON authz.shares (starts_at) WHERE starts_at IS NOT NULL;
 REVOKE ALL ON authz.shares FROM PUBLIC;
--- A share with anyone names no one: its id is '*', whatever id it was made with (authz_int.canon). One stored with
--- another id takes it; of two that are then one share, the one stored with '*' stays, else the first made
+-- A share with anyone names no one: its id is '*' and its relation '', whatever it was made with (authz_int.canon,
+-- authz.share). One stored with others takes them; of two that are then one share, the one stored so stays, else
+-- the first made
 DELETE FROM authz.shares g USING (
-  SELECT s.ctid AS row, row_number() OVER (PARTITION BY s.object_type, s.object_id, s.relation, s.subject_relation
-                                           ORDER BY s.subject_id <> '*', s.created_at, s.ctid) AS n
+  SELECT s.ctid AS row, row_number() OVER (PARTITION BY s.object_type, s.object_id, s.relation
+                                           ORDER BY (s.subject_id, s.subject_relation) <> ('*', ''), s.created_at, s.ctid) AS n
   FROM authz.shares s WHERE s.subject_type = 'anyone') d
 WHERE g.ctid = d.row AND d.n > 1;
-UPDATE authz.shares SET subject_id = '*' WHERE subject_type = 'anyone' AND subject_id <> '*';
+UPDATE authz.shares SET subject_id = '*', subject_relation = ''
+WHERE subject_type = 'anyone' AND (subject_id, subject_relation) <> ('*', '');
 
 -- Custom roles: sets of permissions defined as data, assigned like shares ('role:<id>')
 CREATE TABLE IF NOT EXISTS authz.roles (

@@ -1000,21 +1000,31 @@ got="$got / $(SQ -c "SELECT authz.unshare('folder', '1', 'viewer', 'anyone', 'x'
 [ "$got" = "'*' t / '*' t /  f" ] &&
   ok "a share with anyone is one share, whatever id it is made with: authz.who counts it, and it is unshared with any id" ||
   bad "anyone's ids" "$got"
+# ... nor by the relation it names after the id (the policy writes no anyone#...): stored as ''
+got=$(SQ -c "SELECT authz.share('folder', '1', 'viewer', 'anyone', '*', 'member')" >/dev/null && echo "$(anyone_ids) $(public)")
+got="$got / $(SQ -c "SELECT authz.unshare('folder', '1', 'viewer', 'anyone', '')" >/dev/null && echo "$(anyone_ids) $(public)")"
+[ "$got" = "'*' t /  f" ] && ok "a share with anyone names no relation of anyone: one made with one is unshared without it" ||
+  bad "anyone's relation" "$got"
 # ... and shares stored with another id before take '*' when applying, the one with '*' staying
 SQ -c "SELECT authz.share('folder', '1', 'viewer', 'anyone', '')" -c "ALTER TABLE authz.shares DISABLE TRIGGER authz_shares_canon" \
-   -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES
-         ('folder', '1', 'viewer', 'anyone', ''), ('folder', '2', 'viewer', 'anyone', ''), ('folder', '2', 'viewer', 'anyone', 'x')" >/dev/null
+   -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation) VALUES
+         ('folder', '1', 'viewer', 'anyone', '', ''), ('folder', '2', 'viewer', 'anyone', '', ''),
+         ('folder', '2', 'viewer', 'anyone', 'x', ''), ('folder', '2', 'viewer', 'anyone', '', 'member')" >/dev/null
 before=$(anyone_ids)
 out=$(python3 cli/rowstile_cli.py --db "dbname=$SDB" apply "$T/wide.authz" --force 2>&1)
-got=$(psql -X -q -At -d "$SDB" -c "SELECT string_agg(object_id || ':' || subject_id, ' ' ORDER BY object_id) FROM authz.shares WHERE subject_type = 'anyone'")
-[ "$before" = "'' '*' '' 'x'" ] && [ "$out" = "$T/wide.authz: applied" ] && [ "$got" = "1:* 2:*" ] &&
-  ok "applying gives shares with anyone stored with another id the id '*', two of one share kept once" ||
+got=$(psql -X -q -At -d "$SDB" -c "SELECT string_agg(object_id || ':' || subject_id || ':' || subject_relation, ' ' ORDER BY object_id) FROM authz.shares WHERE subject_type = 'anyone'")
+[ "$before" = "'' '*' '' '' 'x'" ] && [ "$out" = "$T/wide.authz: applied" ] && [ "$got" = "1:*: 2:*:" ] &&
+  ok "applying gives shares with anyone stored with another id the id '*' and no relation, two of one share kept once" ||
   bad "anyone's ids stored before" "$before, then $got: $out"
 SQ -c "DELETE FROM authz.shares WHERE object_id = '2' AND subject_type = 'anyone'" >/dev/null
 out=$(python3 cli/rowstile_cli.py --db "dbname=$SDB" apply example/docs.authz 2>&1)
 [ "$out" = "WARNING: 2 shares are for relations this policy does not declare as shared; they are kept, but grant nothing
 example/docs.authz: applied" ] && ok "applying warns of the shares with user:* and anyone a policy no longer takes, not of a user's or a team's" ||
   bad "shares no relation takes" "$out"
+# a share with anyone is unshared with any id after the policy stopped naming anyone too
+SQ -c "SELECT authz.unshare('folder', '1', 'viewer', 'anyone', '')" >/dev/null
+[ "$(anyone_ids)" = "" ] && ok "a share with anyone is unshared with any id after the policy stopped sharing with anyone" ||
+  bad "unsharing anyone under a policy that doesn't name it" "$(anyone_ids)"
 refused() { SQ -c "SELECT authz.share('folder', '1', 'viewer', $1)" 2>&1 | head -1; }
 got="$(refused "'user', '*'") / $(refused "'anyone', ''") / $(refused "'team', '10', 'admin'")"
 [ "$got" = "ERROR:  the policy does not allow sharing folder.viewer with user:* / ERROR:  the policy does not allow sharing folder.viewer with anyone / ERROR:  the policy does not allow sharing folder.viewer with team#admin" ] &&
