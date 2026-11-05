@@ -1334,7 +1334,7 @@ def main() -> None:
         (
             "an address it can't read",
             "postgres://a@localhost:port/x",
-            ": the URL's port isn't a number: a #, ? or / in the password must be written %23, %3F, %2F",
+            ": the URL's port isn't a number: a / in the password must be written %2F",
         ),
         (
             "a setting it doesn't know",

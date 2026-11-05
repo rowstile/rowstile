@@ -961,11 +961,13 @@ def parse_dsn(text: str | None, environ: Mapping[str, str] | None = None) -> Con
     env = os.environ if environ is None else environ
     out: dict[str, str] = {}
 
-    def setting(k: str, v: str, strict: bool) -> None:
+    def setting(k: str, v: str, strict: bool, after: str = "") -> None:
         if k == "requiressl":  # libpq's old way to say sslmode
             k, v = "sslmode", "require" if v.startswith("1") else "prefer"
         if k in LIBPQ:
             out[k] = v
+        elif strict and after == "password":  # the rest of a password with a space in it, likely
+            raise ValueError(f"can't read the connection string after its password (not repeated here): {QUOTING}")
         elif strict:
             raise ValueError(f"unknown connection setting '{k}' (use host, port, user, password, dbname, sslmode)")
 
@@ -980,7 +982,18 @@ def parse_dsn(text: str | None, environ: Mapping[str, str] | None = None) -> Con
         # a URL: postgresql://user:password@host:port/dbname?sslmode=require
         import urllib.parse
 
+        # the user and the password run to the last @ before the first /, as far as libpq looks for them: a # or a ?
+        # there is the password's, where urlsplit would end the address
+        scheme, _, rest = text.partition("://")
+        address, slash, path = rest.partition("/")
+        if "@" in address:
+            credentials, _, hosts = address.rpartition("@")
+            text = f"{scheme}://{urllib.parse.quote(credentials, safe=':%')}@{hosts}{slash}{path}"
         u = urllib.parse.urlsplit(text)
+        if "@" in u.path and "@" not in u.netloc:  # what comes before the @ would be read as the host: not said
+            raise ValueError(
+                "the URL has an @ after its host: a / in the password must be written %2F, an @ in its database %40"
+            )
         one(u.netloc.rpartition("@")[2])
         port: int | str | None
         try:
@@ -989,7 +1002,7 @@ def parse_dsn(text: str | None, environ: Mapping[str, str] | None = None) -> Con
             port = u.netloc.rpartition("@")[2].rpartition("]")[2].rpartition(":")[2]
             if not re.fullmatch("[0-9]+", port):
                 raise ValueError(
-                    "the URL's port isn't a number: a #, ? or / in the password must be written %23, %3F, %2F"
+                    "the URL's port isn't a number: a / in the password must be written %2F"
                 ) from None  # out of range: said below, as for the port of a keyword string
         for k, v in (
             ("host", u.hostname),
@@ -1016,8 +1029,10 @@ def parse_dsn(text: str | None, environ: Mapping[str, str] | None = None) -> Con
                 k, v = "sslmode", "require"
             setting(k, v, strict=False)
         text = ""
+    after = ""  # the setting before
     for k, v in _keywords(text or ""):
-        setting(k, v, strict=True)
+        setting(k, v, strict=True, after=after)
+        after = k
 
     def given(k: str) -> str | None:
         """A setting as libpq takes it: from the string, else from its variable; empty is not given."""

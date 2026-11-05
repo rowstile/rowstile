@@ -98,7 +98,9 @@ waits as long as it takes; `connect_timeout=0` does here too). <!-- checked: tes
 And the command sends no client certificate: libpq sends `~/.postgresql/postgresql.crt` to a server that asks for
 one.
 A value in a string of
-keywords is quoted as for libpq (`password='it\'s'`). Where nothing names them, the defaults are libpq's: the
+keywords is quoted as for libpq (`password='it\'s'`). In a URL, a `#`, a `?` or a `[` in the password is the
+password's, as libpq reads it, but a `/` there must be written `%2F`. A message about the connection string never
+repeats a piece of the password, one that wasn't quoted or escaped too. <!-- checked: tests/unit_test.py "test_a_password_is_never_repeated" --> Where nothing names them, the defaults are libpq's: the
 system's user, a database named after it, and the server's socket in `/var/run/postgresql` (Debian's and Ubuntu's
 folder) or `/tmp` (libpq's own, as Homebrew and Postgres.app build it), whichever has it, or `localhost` on
 Windows. <!-- checked: tests/unit_test.py "test_the_defaults_are_libpqs" -->
