@@ -4,7 +4,9 @@
 > type user = ms.users (id uuid)
 > type user: self : user = id
 > type user: has_blocked : user = ms.blocks(blocker_id -> blocked_id)
+> type user: in_chat : chat = ms.members(user_id -> chat_id)
 > type user: can edit = self
+> type user: can see_phone = self or in_chat.member
 > type bot = ms.bots principal where {active}
 > type bot: owner : user = owner_id
 > type bot: can manage = owner
@@ -39,8 +41,9 @@
 > type chat_bot: bot : bot = bot_id
 > type block = ms.blocks (blocker_id uuid, blocked_id uuid)
 > type block: blocker : user = blocker_id
-> rules ms.users
+> rules ms.users view ms.people
 > rules ms.users: select : signed_in
+> rules ms.users: mask phone : see_phone
 > rules ms.users: update : edit
 > rules ms.users: update id, phone, created_at : nobody
 > rules ms.bots
@@ -96,14 +99,14 @@
 > rules ms.blocks: cascade from ms.users (blocker_id)
 > rules ms.blocks: cascade from ms.users (blocked_id)
 
-always | 8d34dee7ce3c
+always | 763479256267
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | d54dfc65af0d shape=73a521b1
 function authz.break_glass(p_type text, p_id bigint, p_relation text, p_reason text, p_duration interval) | ade6dbb78b04 shape=70a253d5
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | ff3dc82d6ec2 shape=77f3e79f
 function authz.break_glass(p_type text, p_id uuid, p_relation text, p_reason text, p_duration interval) | a1a184cb7abc shape=3b6da0b2
 function authz.can(p_type text, p_id bigint, p_perm text) | 3b89f3888983 shape=a0df7b00
-function authz.can(p_type text, p_id text, p_perm text) | 9acd3e572d50 shape=220bc89f
+function authz.can(p_type text, p_id text, p_perm text) | 767f90ed7ef7 shape=220bc89f
 function authz.can(p_type text, p_id uuid, p_perm text) | 1acab4c19015 shape=54adceba
 function authz.cancel_request(p_id bigint) | 14f17f222d45 shape=19aa0bb3
 function authz.changes_position() | 5df1d41ccaab shape=515e7531
@@ -121,11 +124,11 @@ function authz.create_role(p_owner_type text, p_owner_id uuid, p_object_type tex
 function authz.decide_request(p_id bigint, p_approve boolean, p_note text) | 763b303c1435 shape=ebe1e76d
 function authz.delete_role(p_role bigint) | b4c64d8168eb shape=7c823e86
 function authz.explain(p_type text, p_id bigint, p_perm text, p_user text) | e9fc8335de7a shape=0a2287cd
-function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 769b89192403 shape=7d6de14b
+function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 3b1e6518163f shape=7d6de14b
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | 935f0ec6d2fd shape=1223ad2f
-function authz.lint() | 41785a0c3258 shape=54cb1505
-function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 8298ff77a2f6 shape=e713a7cc
+function authz.lint() | 77996017bc54 shape=54cb1505
+function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 9fba6ce4043f shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id bigint) | 740da2e3c91e shape=594bc19e
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
@@ -137,7 +140,7 @@ function authz.login_jwt(p_token text) | c4401be73009 shape=57d5745b
 function authz.login_key(p_token text) | f2e2bdc27f6e shape=f3077520
 function authz.pending_requests() | fb26fccd4e34 shape=872485a8
 function authz.perms(p_type text, p_id bigint) | 0326a9267ef0 shape=15912e3e
-function authz.perms(p_type text, p_id text) | 9fb92f838ab6 shape=cd5e1942
+function authz.perms(p_type text, p_id text) | 6236dafdf558 shape=cd5e1942
 function authz.perms(p_type text, p_id uuid) | d1321d04a077 shape=9fa2c71e
 function authz.perms_of(p_type text, p_ids text[]) | 6cb4d6d6f68e shape=00a7b763
 function authz.principal() | 072ccb497f3e shape=bda73c60
@@ -184,7 +187,7 @@ function authz.unshare(p_type text, p_id uuid, p_relation text, p_subject_type t
 function authz.verify() | c964ca8adb45 shape=8e0f53a6
 function authz.view_as(p_user text, p_reason text) | bf76b2722b72 shape=5d7b6326
 function authz.who(p_type text, p_id bigint, p_perm text) | 2e6bf67dc8a8 shape=9a149138
-function authz.who(p_type text, p_id text, p_perm text) | 452f68422893 shape=1cf83af9
+function authz.who(p_type text, p_id text, p_perm text) | 09e0a0e472dc shape=1cf83af9
 function authz.who(p_type text, p_id uuid, p_perm text) | 68091c833309 shape=721cfa7a
 function authz.who_among(p_type text, p_id bigint, p_perm text, p_users text[], p_principal_type text) | c12c43bbe47f shape=9f8e2d53
 function authz.who_among(p_type text, p_id text, p_perm text, p_users text[], p_principal_type text) | 3051f8f59667 shape=17b9de43
@@ -263,7 +266,7 @@ function authz_gen."ms.messages:update:refuse"(p_row "ms"."messages") | b276bc78
 function authz_gen."ms.messages:update:why"(p_row "ms"."messages", p_stored boolean) | 51259ce64922 shape=cf187119
 function authz_gen."ms.users:column id, phone, created_at:items"(p_row "ms"."users") | 32f4a2d1e2c2 shape=bb52dde6 atomic
 function authz_gen."ms.users:column id, phone, created_at:why"(p_row "ms"."users") | 3b0baedcde27 shape=7ad103eb
-function authz_gen."ms.users:rules:explain"(p_command text, p_id text, p_row jsonb) | 589014965b54 shape=8501d847
+function authz_gen."ms.users:rules:explain"(p_command text, p_id text, p_row jsonb) | 2c69633a3f49 shape=8501d847
 function authz_gen."ms.users:update:items"(p_row "ms"."users") | 89ee8668ff89 shape=9b82b864 atomic
 function authz_gen."ms.users:update:refuse"(p_row "ms"."users") | 755d9c05bd78 shape=946d9418
 function authz_gen."ms.users:update:why"(p_row "ms"."users", p_stored boolean) | 0fef2a18d073 shape=942e8860
@@ -391,10 +394,10 @@ function authz_int."rel_audit_3_del"() | c31412d0dadf shape=c2a2a400
 function authz_int."rel_audit_3_ins"() | 31cc535266db shape=db6140b7
 function authz_int."rel_audit_3_trunc"() | a366f05a52fe shape=faac66ca
 function authz_int."rel_audit_3_upd"() | a935feea5b64 shape=db6c71dd
-function authz_int."rel_audit_4_del"() | 523c70884102 shape=89566234
-function authz_int."rel_audit_4_ins"() | 538524cee1ca shape=7b254781
-function authz_int."rel_audit_4_trunc"() | 9581749b8bbe shape=56f5555a
-function authz_int."rel_audit_4_upd"() | 18d4c2f93571 shape=85a84650
+function authz_int."rel_audit_4_del"() | 1ee11cf0dc22 shape=89566234
+function authz_int."rel_audit_4_ins"() | 15d0cd627ce1 shape=7b254781
+function authz_int."rel_audit_4_trunc"() | 65c4d5f91bc1 shape=56f5555a
+function authz_int."rel_audit_4_upd"() | 32f97835b1eb shape=85a84650
 function authz_int."user__col_audit_del"() | 550865ecbaed shape=fc64ec43
 function authz_int."user__col_audit_ins"() | 51b037fe507a shape=dba70c6d
 function authz_int."user__col_audit_row"() | 418d7674f34f shape=da434128
@@ -405,6 +408,8 @@ function authz_int."user__edit__why"(p_id uuid, p_depth int, p_seen text[], p_as
 function authz_int."user__keys_gone"() | f576969ed78b shape=5bf35a03
 function authz_int."user__keys_gone_all"() | 263c92760522 shape=8da0a478
 function authz_int."user__keys_gone_id"() | 22b32b93c393 shape=0e7cbdbc
+function authz_int."user__see_phone__who"(p_id uuid) | 863a1c54baed shape=445050cc
+function authz_int."user__see_phone__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | a7536660ea1f shape=b8792a8a
 function authz_int."user__self__who"(p_id uuid) | 288961983e2f shape=b3cc1098
 function authz_int."user__self__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[]) | 425a29c1f6cc shape=82e03571
 function authz_int.act_as(p_type text, p_id text, p_check boolean) | 953a2032006c shape=338b0233
@@ -416,13 +421,13 @@ function authz_int.audit_is_append_only() | 8c5ce299a394 shape=6d19848d
 function authz_int.b64url(p text) | 5692fc0b5c1e shape=17f0c842
 function authz_int.caller_is_admin() | 33a690b7bfd1 shape=268ddaf7
 function authz_int.caller_role() | f21245c06777 shape=96997846
-function authz_int.can(p_type text, p_id text, p_perm text) | 099e4d7f6223 shape=ab126b5f
+function authz_int.can(p_type text, p_id text, p_perm text) | 3eb8f2c7afa4 shape=ab126b5f
 function authz_int.canon(p_type text, p_id text) | 488d49e14b84 shape=ab774d8a
 function authz_int.changed(p_type text, p_ids text[], p_cause text) | a711a89ca6d9 shape=7a5b1adc
 function authz_int.check_manage_keys(p_type text, p_id text) | 5c1c44f7a9a5 shape=391727a0
 function authz_int.check_writable() | 87ff3161cc1d shape=a16d3e7b
 function authz_int.child_triggers() | 15de79a6e75a shape=52e92456
-function authz_int.dependents(p_type text, p_ids text[]) | 196c53761c06 shape=8a4f5a6e
+function authz_int.dependents(p_type text, p_ids text[]) | 28b7ad647452 shape=8a4f5a6e
 function authz_int.forget_marks(p_type text, p_ids text[]) | 2ddee1fcc0be shape=8933fd55
 function authz_int.hmac_sha256(p_key bytea, p_msg bytea) | 33edf164bad5 shape=4d6b17ae
 function authz_int.hold(p_type text, p_id text) | 3122469f8567 shape=bc067713
@@ -430,7 +435,7 @@ function authz_int.jit_off() | 888eef7af8da shape=35e4d2a9
 function authz_int.key_owner_given(p_type text, p_id text) | d54307169a8f shape=f19edf58
 function authz_int.keys_gone(p_type text, p_ids text[]) | 916efd46b7da shape=e47f75f7
 function authz_int.link_relations(p_type text, p_id text) | 9a47fb2992d0 shape=8bbe4201
-function authz_int.list(p_type text, p_perm text) | d61afaa929c9 shape=057ee12e
+function authz_int.list(p_type text, p_perm text) | 3373e05069b2 shape=057ee12e
 function authz_int.manage_perm(p_type text, p_relation text, p_subject text) | 09bf2a459153 shape=5b4aa64c
 function authz_int.mark_row(p_type text, p_id text) | a3fe56708926 shape=267bf94f
 function authz_int.may_inspect(p_type text, p_id text) | c144ba24c8dd shape=0942af2e
@@ -498,15 +503,15 @@ step cascades | 836fb13e0bf4
 step grant_api | 204583d0a869
 step grant_functions | 8259b3595dbe
 step grant_views | c8e558735372
-step mask_privileges | ef21e3cee165
+step mask_privileges | 0b7a0eb94253
 step share_indexes | 7d0648f6a5ed
 step sweep | 66b168ba0729
-step tables | e73c690dd2de
-table authz_gen.policy_lines | 08eda715962e shape=dcfedc96
+step tables | 6ffbe77ba478
+table authz_gen.policy_lines | cbf59a60b004 shape=dcfedc96
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | 1779df2cc717 shape=1779df2c
-table authz_int.masked_columns | 2067eb678926 shape=2067eb67
-table authz_int.perms | 96efdabcd6ad shape=1d7ef71f
+table authz_int.masked_columns | 0b7505fca221 shape=2067eb67
+table authz_int.perms | 1c3d99224608 shape=1d7ef71f
 table authz_int.role_grantable | aa914205cf6b shape=aa914205
 table authz_int.role_subjects | 0abfdc400757 shape=0abfdc40
 table authz_int.row_marks | 2ed0525ef2fa shape=2ed0525e
@@ -621,6 +626,7 @@ type authz_gen."block__key" | 3cf2920de89a
 type authz_gen."chat_bot__key" | 7efe230a92a5
 type authz_gen."membership__key" | 320616cc5d67
 type authz_gen."message__key" | 1a60ae7135a6
+view "ms"."people" | b8252361a4b9
 view authz_int."bot__manage" | 962874600141
 view authz_int."bot__manage_keys" | 741de196bbb0
 view authz_int."bot__owner" | 6e030187e305
@@ -646,4 +652,6 @@ view authz_int."message__remove" | 83175501f425
 view authz_int."message__sender" | f86ad9317e4e
 view authz_int."user__edit" | 9b40b1c59652
 view authz_int."user__has_blocked" | 29d4c3785101
+view authz_int."user__in_chat__member" | 5ab173684f1d
+view authz_int."user__see_phone" | d04123bab53a
 view authz_int."user__self" | 13417f7f9e64

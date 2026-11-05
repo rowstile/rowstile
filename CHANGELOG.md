@@ -641,8 +641,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   the one who stayed, could put someone else in it, and its creator could start one between two others. A
   message deleted for everyone loses its text, whoever writes it (only the API cleared it). A member marks read
   no further than the chat's last message, and someone added has read what came before, which they never see:
-  read receipts showed messages not sent yet as read, and old ones as unread once someone joined. Its schema
-  is one migration, as the file manager's is.
+  read receipts showed messages not sent yet as read, and old ones as unread once someone joined. A phone number
+  shows only to the people who share a chat with its person (the app reads people through a masked view); anyone
+  else finds an account by its exact number (`ms.find_by_phone`). Every signed-in person and bot could read
+  everyone's. Its schema is one migration, as the file manager's is.
 
 ### Upgrading
 

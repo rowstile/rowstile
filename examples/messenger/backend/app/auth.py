@@ -52,9 +52,9 @@ def user_of(session: str | None) -> DictRow | None:
 
 
 def profile(user_id: str) -> DictRow | None:
-    """A person's profile, read as them."""
+    """A person's profile, read as them (ms.people: a phone number shows to whoever may see it, them included)."""
     with db.as_user(user_id) as tx:
-        return tx.row("SELECT id, phone, name, about FROM ms.users WHERE id = %s", (user_id,))
+        return tx.row("SELECT id, phone, name, about FROM ms.people WHERE id = %s", (user_id,))
 
 
 def current_user(ms_session: str | None = Cookie(default=None)) -> DictRow:

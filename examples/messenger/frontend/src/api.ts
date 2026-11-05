@@ -24,6 +24,9 @@ export type Message = {
   can_edit: boolean; can_remove: boolean;
 };
 
+/** Someone you blocked: their number only if you share a chat with them. */
+export type Blocked = { id: string; name: string; phone: string | null };
+
 export type Bot = { id: number; name: string; active: boolean; created_at: string; key?: string };
 
 /** An invite link as the database lists it: its id names it to turn it off, and is not the link. */
@@ -88,7 +91,7 @@ export const api = {
     get<{ id: number; title: string; about: string; member: boolean }>(`/api/join/${token}${chat ? `?chat=${chat}` : ""}`),
   join: (token: string, chat: string | null) => post<{ id: number }>(`/api/join/${token}${chat ? `?chat=${chat}` : ""}`),
 
-  blocks: () => get<User[]>("/api/blocks"),
+  blocks: () => get<Blocked[]>("/api/blocks"),
   block: (userId: string) => post("/api/blocks", { user_id: userId }),
   unblock: (userId: string) => del(`/api/blocks/${userId}`),
 

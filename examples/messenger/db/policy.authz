@@ -7,7 +7,9 @@ app role ms_app
 type user = ms.users (id uuid)
   self        : user = id                                   -- your own row
   has_blocked : user = ms.blocks(blocker_id -> blocked_id)  -- the people this person blocked
-  can edit = self  -- your own profile
+  in_chat     : chat = ms.members(user_id -> chat_id)       -- the chats this person is in
+  can edit      = self                    -- your own profile
+  can see_phone = self or in_chat.member  -- your number: to the people you share a chat with
 
 -- bots are services: they sign in with their own API keys (made by their owner) and post as themselves
 type bot = ms.bots principal where {active}
@@ -61,8 +63,11 @@ type chat_bot = ms.chat_bots (chat_id, bot_id)
 type block = ms.blocks (blocker_id uuid, blocked_id uuid)
   blocker : user = blocker_id
 
-rules ms.users
-  select                       : signed_in  -- to find people by phone number
+-- the app reads people through ms.people, where a phone number is NULL unless you may see it; anyone else's
+-- account is found by its exact number only (ms.find_by_phone, in the schema)
+rules ms.users view ms.people
+  select                       : signed_in  -- names: who said what, who made a link
+  mask phone                   : see_phone
   update                       : edit
   update id, phone, created_at : nobody
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, Bot, User } from "./api";
+import { api, Blocked, Bot, User } from "./api";
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
@@ -61,7 +61,7 @@ export function NewChatDialog({ me, onClose, onOpen }: { me: User; onClose: () =
 /** Your profile, your bots (and their API keys), the people you blocked. */
 export function SettingsDialog({ me, onMe, onClose }: { me: User; onMe: (u: User) => void; onClose: () => void }) {
   const [name, setName] = useState(me.name), [about, setAbout] = useState(me.about);
-  const [bots, setBots] = useState<Bot[]>([]), [blocked, setBlocked] = useState<User[]>([]);
+  const [bots, setBots] = useState<Bot[]>([]), [blocked, setBlocked] = useState<Blocked[]>([]);
   const [botName, setBotName] = useState(""), [newKey, setNewKey] = useState<Bot | null>(null);
   const [error, setError] = useState("");
   const guard = async (fn: () => Promise<void>) => {

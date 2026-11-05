@@ -228,3 +228,22 @@ test "messages are numbered per chat: a message's key is its chat and its number
   user $ann can edit message $first
   user $bo can read message $first
   user $bo cannot read message $other
+
+test "a phone number is seen by those who share a chat with its person; anyone else finds it only by the number"
+  given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
+  given bo = {INSERT INTO ms.users (phone, name) VALUES ('t-bo', 'Bo') RETURNING id}
+  given cy = {INSERT INTO ms.users (phone, name) VALUES ('t-cy', 'Cy') RETURNING id}
+  given g = {INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Weekend', $ann) RETURNING id}
+  given {INSERT INTO ms.members (chat_id, user_id, role) VALUES ($g, $ann, 'owner'), ($g, $bo, 'member')}
+  as user $bo sees 1 {SELECT FROM ms.people WHERE id = $ann AND phone = 't-ann'}
+  as user $cy sees 1 {SELECT FROM ms.people WHERE id = $cy AND phone = 't-cy'}
+  -- the app reads people through ms.people; Cy shares no chat with Ann: her name, not her number
+  as user $cy sees 1 {SELECT FROM ms.people WHERE id = $ann AND name = 'Ann' AND phone IS NULL}
+  as user $cy refused {SELECT phone FROM ms.users WHERE id = $ann}
+  as user $cy sees 1 {SELECT FROM ms.find_by_phone('t-ann') WHERE id = $ann AND phone = 't-ann'}
+  as user $cy sees 0 {SELECT FROM ms.find_by_phone('t-')}
+  given b = {INSERT INTO ms.bots (name, owner_id) VALUES ('notes', $ann) RETURNING id}
+  as bot $b sees 0 {SELECT FROM ms.find_by_phone('t-ann')}
+  -- leaving the chat, Bo no longer sees it
+  given {DELETE FROM ms.members WHERE chat_id = $g AND user_id = $bo}
+  as user $bo sees 1 {SELECT FROM ms.people WHERE id = $ann AND phone IS NULL}

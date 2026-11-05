@@ -95,8 +95,16 @@ def test_accounts() -> None:
 
 
 def test_people_are_found_by_phone() -> None:
-    a, b = person("Ann"), person("Ben")
+    a, b, c = person("Ann"), person("Ben"), person("Cat")
     assert [p["name"] for p in a.get("/api/people", params={"phone": b.me["phone"]}).json()] == ["Ben"]
+    assert a.get("/api/people", params={"phone": b.me["phone"][:-1]}).json() == []  # the exact number only
+    # whose number the app reads: those you share a chat with
+    g = group(a, b)
+    assert [m["phone"] for m in b.get(f"/api/chats/{g}").json()["members"]] == [a.me["phone"], b.me["phone"]]
+    assert c.post("/api/blocks", json={"user_id": a.me["id"]}).status_code == 201
+    assert [(x["name"], x["phone"]) for x in c.get("/api/blocks").json()] == [("Ann", None)]
+    with psycopg.connect(os.environ["MS_DATABASE_URL"]) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute("SELECT phone FROM ms.users")
 
 
 # --- direct chats ----------------------------------------------------------------------------------
@@ -260,7 +268,8 @@ def test_several_rows_at_once_keep_the_counts() -> None:
 
 def test_lint_has_nothing_new_to_say() -> None:
     """authz.lint() on the app's database: no warning but the ones listed here, each with its reason."""
-    known = {"ms.credentials_for(text)", "ms.sign_up(text,text,text)"}  # accounts are the app's, outside the policy
+    # accounts are the app's, outside the policy; and a phone number finds its one account
+    known = {"ms.credentials_for(text)", "ms.sign_up(text,text,text)", "ms.find_by_phone(text)"}
     found = admin("SELECT severity, object, problem FROM authz.lint() WHERE severity NOT IN ('info')")
     assert {o for _, o, _ in found} <= known, found
     # the app role doesn't read password hashes: signing in goes through the two functions above
