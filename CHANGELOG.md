@@ -103,6 +103,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- VS Code leaves a relation named with a block's first word (`scope : user shared`) where it is typed. It moved it
+  back to the margin, where the compiler refused it.
 - `rowstile init --role` refuses a name the policy's app role line can't hold (a space, a quote), before connecting.
   Before, it wrote a draft that didn't compile and a `CREATE ROLE` for another name.
 - `rowstile init` without `--schema` leaves out the sync index's schema, `authz_sync`: its tables were drafted as
