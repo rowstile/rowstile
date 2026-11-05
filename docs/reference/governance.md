@@ -59,6 +59,8 @@
   emptying its table cancels the request (`status` cancelled, the `note` says why), so it never reaches whoever
   later has that id, and approving it is refused. <!-- checked: tests/governance.sh "a pending request is cancelled when its requester is deleted, its object is, or its object gets a new id, and says why"; tests/governance.sh "a later user with the id has none of the old one's requests"; tests/governance.sh "approving the old request for a later folder with the id is refused" -->
   Decided requests stay as they were. <!-- checked: tests/governance.sh "a decided one stays as it was" -->
+  A delete finds the pending requests and the API keys that name its rows by index: it reads none of the decided
+  requests, however many there are. <!-- checked: tests/governance.sh "deleting a folder and a user reads no decided request and no other principal's key: no scan of either table" -->
   Withdrawing one's own request (`authz.cancel_request`) is in the audit trail, as a decision is. <!-- checked: tests/governance.sh "and the withdrawal is in the trail, with who withdrew it" -->
   Applying the policy cancels those of requesters whose rows went while nothing watched them. <!-- checked: tests/governance.sh "applying the policy cancels the pending requests of requesters whose row is gone" -->
   A request made while its requester is deleted waits for the delete and is refused; a delete in REPEATABLE READ

@@ -700,6 +700,17 @@ admin "a pending request is cancelled when its requester is deleted, its object 
   "cancelled|its requester is gone|cancelled|its object is gone|cancelled|its object is gone" \
   "SELECT string_agg(status || '|' || note, '|' ORDER BY id) FROM authz.requests WHERE id IN ($RQH, $RQO, $RQK)"
 admin "... a decided one stays as it was" "denied|no" "SELECT status || '|' || note FROM authz.requests WHERE id = $RQD"
+# deleting a row looks up the pending requests and keys that name it by index, however many requests were decided
+# (a scan of the whole table counts in pg_stat_xact_user_tables at once, in the transaction itself)
+scans="SELECT string_agg(relname || ' ' || seq_scan, ', ' ORDER BY relname) FROM pg_stat_xact_user_tables WHERE schemaname = 'authz' AND relname IN ('requests', 'api_keys')"
+got=$(PSQL -c "BEGIN" \
+  -c "INSERT INTO authz.requests (object_type, object_id, relation, requester, status) SELECT 'folder', g::text, 'viewer', '8', 'denied' FROM generate_series(1, 20000) g" \
+  -c "INSERT INTO authz.api_keys (user_id, name, prefix, hash) SELECT g::text, 'k', 'ak_', 'scan' || g FROM generate_series(1, 20000) g" \
+  -c "INSERT INTO app.users VALUES (98, 'gone soon')" -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (98, 1, 4, 1, 'gone soon')" \
+  -c "ANALYZE authz.requests" -c "ANALYZE authz.api_keys" -c "$scans" \
+  -c "DELETE FROM app.folders WHERE id = 98" -c "DELETE FROM app.users WHERE id = 98" -c "$scans" -c "ROLLBACK" | tr '\n' '|')
+[ "${got%%|*}|" = "${got#*|}" ] && echo "ok    deleting a folder and a user reads no decided request and no other principal's key: no scan of either table" ||
+  { echo "FAIL  the scans of authz.requests and authz.api_keys before and after the deletes: $got"; fails=$((fails + 1)); }
 PSQL -c "INSERT INTO app.users VALUES (8, 'someone else')" \
      -c "INSERT INTO app.folders (id, org_id, parent_id, owner_id, name) VALUES (41, 1, 4, 1, 'new'), (42, 1, 4, 1, 'new too')" >/dev/null
 check "a later user with the id has none of the old one's requests" "0" "SET authz.user_id = 8; SELECT count(*) FROM authz.pending_requests()"

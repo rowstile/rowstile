@@ -74,7 +74,6 @@ g4ca044894b equivalent output.py OutputMixin.masked_view_sql: no column has attn
 g3b122cc3ba equivalent output.py OutputMixin.compile: no column has attnum 0 (a table's from 1, system columns below 0), so attnum >= 0 reads the same rows.
 gc19042c7a1 equivalent hardening.py LintMixin.lint_sql: a system column (attnum < 0) or a dropped one (renamed ........pg.dropped.N........) never has a name the policy gives a column.
 g15bfa6aeba equivalent governance.py GovernanceMixin.workflow_sql: the compiler refuses a shared relation whose `shared by` isn't a permission of its type (AZ207), so each row of shared_relations meets its permission in perms: the wider join finds the same shared_by values.
-g146b821700 equivalent governance.py GovernanceMixin.workflow_sql: called only by the forget triggers' functions, which are SECURITY DEFINER themselves: it runs as the owner either way, on its own search_path.
 gbeecf08e08 equivalent output.py OutputMixin.share_sql: called only by authz.share, a SECURITY DEFINER function: it runs as the owner either way, on its own search_path.
 g9e43d40bf2 equivalent insight.py InsightMixin.who_items: a permission's who function is read only by authz.who, which keeps the ids that are a user's row (is_user): a NULL id is none, in a UNION or an INTERSECT.
 g8c2edb2161 equivalent insight.py InsightMixin.visible_sql: visible is called with a type the policy has (a literal, or after authz.can refused any other), and a NULL id finds no row either way.

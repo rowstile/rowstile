@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS authz.api_keys (
   revoked_at   timestamptz,
   -- whose key: user_id is the principal's id, of this type
   principal_type text NOT NULL DEFAULT 'user');
+-- a principal's keys: listed, and deleted with its row
+CREATE INDEX IF NOT EXISTS api_keys_by_principal ON authz.api_keys (principal_type, user_id);
 -- Settings for the functions (jwt_secret, jwt_issuer, jwt_audience, jwt_user_claim, jwt_type_claim, ...)
 CREATE TABLE IF NOT EXISTS authz.settings (key text PRIMARY KEY, value text NOT NULL);
 -- The audit trail: every share, role, key, request and impersonation, and relationship changes
@@ -114,6 +116,9 @@ CREATE TABLE IF NOT EXISTS authz.requests (
   decided_at  timestamptz,
   note        text,
   created_at  timestamptz NOT NULL DEFAULT now());
+-- the pending requests of an object, and a requester's: cancelled when their row goes (decided ones stay, history)
+CREATE INDEX IF NOT EXISTS requests_by_object ON authz.requests (object_type, object_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS requests_by_requester ON authz.requests (requester) WHERE status = 'pending';
 -- Access reviews: a snapshot of the shares on an object, each kept or revoked by a reviewer
 CREATE TABLE IF NOT EXISTS authz.reviews (
   id          bigserial PRIMARY KEY,

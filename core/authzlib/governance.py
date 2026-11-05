@@ -813,15 +813,28 @@ END $f$;
 
 -- A pending request goes when its requester's row goes, or its object's (deleted, given a new id, emptied out with
 -- its table: p_ids NULL), so that it never reaches whoever later has that id; it is kept, cancelled, with why.
--- Decided requests are history, and stay as they were
+-- Decided requests are history, and stay as they were. (Each lookup is one an index of the pending requests serves,
+-- requests_by_object or requests_by_requester: a delete reads none of the decided ones, however many there are)
 CREATE FUNCTION authz_int.requests_gone(p_type text, p_ids text[]) RETURNS void
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-  UPDATE authz.requests r SET status = 'cancelled', decided_at = now(),
-    note = CASE WHEN r.object_type = p_type AND (p_ids IS NULL OR r.object_id = ANY (p_ids))
-                THEN 'its object is gone' ELSE 'its requester is gone' END
-  WHERE r.status = 'pending'
-    AND ((r.object_type = p_type AND (p_ids IS NULL OR r.object_id = ANY (p_ids)))
-         OR (p_type = 'user' AND (p_ids IS NULL OR r.requester = ANY (p_ids)))) $f$;
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF p_ids IS NULL THEN
+    UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'its object is gone'
+    WHERE r.status = 'pending' AND r.object_type = p_type;
+  ELSE
+    UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'its object is gone'
+    WHERE r.status = 'pending' AND r.object_type = p_type AND r.object_id = ANY (p_ids);
+  END IF;
+  IF p_type <> 'user' THEN
+    RETURN;
+  ELSIF p_ids IS NULL THEN
+    UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'its requester is gone'
+    WHERE r.status = 'pending';
+  ELSE
+    UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'its requester is gone'
+    WHERE r.status = 'pending' AND r.requester = ANY (p_ids);
+  END IF;
+END $f$;
 
 -- Requests the current user may decide (they may share that relation on the object), and their own
 CREATE FUNCTION authz.pending_requests()
