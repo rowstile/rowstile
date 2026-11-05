@@ -584,9 +584,64 @@ def test_unfinished_uploads_are_cleaned_up(world: World) -> None:
         "UPDATE fm.file_versions SET created_at = now() - interval '2 days' WHERE file_id = %s",
         (started["file"]["id"],),
     )
+    put(started["url"], b"abc", "application/octet-stream")  # the bytes arrived, and nobody confirmed them
+    # a new version of a confirmed file, never confirmed either: it goes, the file stays as it was
+    f = alice.post(f"/api/folders/{sub['id']}/files", files={"file": ("kept.txt", b"kept")}).json()
+    v = alice.post(f"/api/files/{f['id']}/versions", json={"name": "kept.txt", "size": 3}).json()
+    put(v["url"], b"new", "application/octet-stream")
+    keys = admin(
+        "SELECT object_key::text FROM fm.file_versions WHERE NOT ready AND file_id IN (%s, %s)",
+        (started["file"]["id"], f["id"]),
+    )
+    assert len(keys) == 2
+    admin(
+        "UPDATE fm.file_versions SET created_at = now() - interval '2 days' WHERE file_id IN (%s, %s)",
+        (started["file"]["id"], f["id"]),
+    )
     with psycopg.connect(ADMIN, autocommit=True) as conn:
-        assert abandoned_uploads(conn, storage, "1 day") >= 1
+        assert abandoned_uploads(conn, storage, "1 day") >= 2
     assert admin("SELECT count(*) FROM fm.files WHERE id = %s", (started["file"]["id"],)) == [(0,)]
+    assert admin("SELECT count(*), bool_and(ready) FROM fm.file_versions WHERE file_id = %s", (f["id"],)) == [(1, True)]
+    assert download(alice, f["id"]) == b"kept"
+    for (key,) in keys:  # their objects, and what was uploaded for them
+        assert (storage.size(key), storage.size(storage.UPLOADS + key)) == (None, None), key
+
+
+def test_a_new_version_waits_for_the_first_upload() -> None:
+    """A file whose upload isn't confirmed yet has no versions to add to, nor details to show: it isn't there yet."""
+    una = person("una")
+    folder = una.post("/api/folders", json={"name": "Una"}).json()
+    started = una.post(f"/api/folders/{folder['id']}/uploads", json={"name": "first.txt", "size": 3}).json()
+    fid = started["file"]["id"]
+    r = una.post(f"/api/files/{fid}/versions", json={"name": "first.txt", "size": 3})
+    assert (r.status_code, r.json()) == (404, {"detail": "not found"}), r.text
+    assert una.get(f"/api/files/{fid}").status_code == 404
+    assert una.get(f"/api/files/{fid}/versions").status_code == 404
+    put(started["url"], b"one", "application/octet-stream")
+    assert una.post(f"/api/files/{fid}/ready").status_code == 200
+    assert una.post(f"/api/files/{fid}/versions", json={"name": "first.txt", "size": 3}).status_code == 201
+
+
+def test_the_cleanup_removes_a_file_that_never_became_ready_with_every_version() -> None:
+    """A file never confirmed goes with every version it has, even a confirmed one: what the job left of a new
+    version started before the file's own upload was confirmed (which the API no longer allows)."""
+    from app import maintenance
+    from app.main import storage
+
+    vi = person("vi")
+    folder = vi.post("/api/folders", json={"name": "Vi"}).json()
+    started = vi.post(f"/api/folders/{folder['id']}/uploads", json={"name": "stuck.txt", "size": 3}).json()
+    fid = started["file"]["id"]
+    admin(
+        "INSERT INTO fm.file_versions (file_id, size, ready, created_by) VALUES (%s, 0, true, %s)", (fid, vi.me["id"])
+    )
+    admin("UPDATE fm.files SET created_at = now() - interval '2 days' WHERE id = %s", (fid,))
+    admin("DELETE FROM fm.file_versions WHERE file_id = %s AND NOT ready", (fid,))  # as the job used to
+    with psycopg.connect(ADMIN, autocommit=True) as conn:
+        assert maintenance.abandoned_uploads(conn, storage, "1 day") >= 1
+    assert admin("SELECT count(*) FROM fm.file_versions WHERE file_id = %s", (fid,)) == [(0,)]
+    assert admin("SELECT count(*) FROM fm.files WHERE id = %s", (fid,)) == [(0,)]
+    assert vi.delete(f"/api/folders/{folder['id']}").status_code == 204  # nothing is left in it
 
 
 def test_the_maintenance_jobs(

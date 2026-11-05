@@ -607,6 +607,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   data set (`SET search_path`, `SET session_replication_role`, a temporary table) is gone.
 - A playground link that names no example (`#e=` and a recipe renamed or removed since) opens the first one and
   says that no example has that name. Before, it opened the first one and said nothing.
+- The file manager example: a new version of a file whose own upload wasn't confirmed yet is refused (404). It
+  became the file's current one while the file stayed hidden, and the maintenance job then stopped on the
+  version's foreign key, leaving the file hidden for good with its name taken. The job removes a file never
+  confirmed with every version it has.
 
 ### Upgrading
 
