@@ -289,11 +289,8 @@ def source_ts(tree: Tree, rel: ET.Element) -> Shape:
 
 
 def value_ts(tree: Tree, e: ET.Element | None) -> str | None:
-    """A test's id as the parser reads it: a 'quoted' literal unquoted, anything else as written."""
-    if e is None:
-        return None
-    text = tree.text(e)
-    return text[1:-1].replace("''", "'") if e.tag == "literal" else text
+    """A test's id as the parser reads it: as written, a 'quoted' literal in its quotes."""
+    return None if e is None else tree.text(e)
 
 
 def who_ts(tree: Tree, e: ET.Element) -> list[Shape]:

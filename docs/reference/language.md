@@ -234,6 +234,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   {SQL}` or `as user X sees N {SELECT ...}`, which run as the app role signed in as X. A write is
   refused if a rule or a missing privilege stops it, or if it changes no row (the rows it meant are
   hidden from X). <!-- checked: tests/devx.sh "a write after WITH or a comment that changes no row is refused, and one the app role has no privilege for"; tests/devx.sh "an 'allowed' that is refused shows the refusal and why" --> <!-- answer: tests-refused -->
+  An id is written as it is (`11`, a uuid) or in single quotes (`'a b'`, `'it''s'`): `$ann` is what a given
+  line returned, and `'$ann'` is that text.
   Any other error, a unique key say, fails the check whichever was expected. Each named test runs in a transaction that is rolled back.
   What a line sets for its transaction (`set_config(..., true)`, such as a share link's token in `authz_ctx.links`) holds for the test's later lines, unless the line ends in an error.
   After who a line is about, `with scope read` (or several: `with scope read, files`) checks it as a key or

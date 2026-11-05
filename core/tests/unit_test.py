@@ -1349,7 +1349,7 @@ class LanguageForms(unittest.TestCase):
         pol = parse_policy('include "a--b.authz"  -- the rest\n', files={"a--b.authz": read(POLICIES["docs"])})
         self.assertIn("folder", pol.types)
         pol = parse_policy(read(POLICIES["docs"]) + "test\n  user 'it''s' cannot view file 'o''k'\n")
-        self.assertEqual((pol.tests[-1].who, pol.tests[-1].obj), ("it's", "o'k"))
+        self.assertEqual((pol.tests[-1].who, pol.tests[-1].obj), ("'it''s'", "'o''k'"))  # (as written)
 
     def test_a_byte_order_mark_before_an_include(self) -> None:
         # some editors start a UTF-8 file with one: the includes read from disk were missed then
@@ -7418,6 +7418,20 @@ class TestFiles(unittest.TestCase):
                 c = Compiler(parse_policy(self.POLICY, "p.authz"))
                 c.add_test_files({"t.authz": body})
                 self.assertEqual(len(split(c.tests_function_sql())), 2)
+
+    def test_an_id_in_quotes_is_the_text_in_them(self) -> None:
+        # '$zzz' is no name, as $zzz is: a quoted id is the text in its quotes, $ or not; and one without quotes
+        # that holds a $ further on (a$b) is that text too
+        for line, value in (
+            ("user '$zzz' can view doc 1", "'$zzz'"),
+            ("user 1 can view doc '$x$'", "'$x$'"),
+            ("user 1 can view doc 'it''s'", "'it''s'"),
+            ("user a$b can view doc 1", "'a$b'"),
+        ):
+            with self.subTest(line=line):
+                c = Compiler(parse_policy(self.POLICY, "p.authz"))
+                c.add_test_files({"t.authz": f'test "a"\n  {line}\n'})
+                self.assertIn(value, c.tests_function_sql())
 
     def test_a_dollar_quote_is_no_name(self) -> None:
         # (the parser refuses a dollar quote's tag in a test's braces, AZ110: this asks the function itself)

@@ -16,6 +16,7 @@ from .statements import WORD, split
 
 FN = "pg_temp.authz_policy_tests"
 VAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\b(?!\$)")  # $name, not a $tag$ dollar quote
+NAME = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*")  # a test's id that is a name: $ann
 WRITES = ("insert", "update", "delete", "merge")
 COVERAGE = "authz:coverage"  # the test name of coverage rows (tests_function_sql(coverage=True))
 SQL_NL = "E'\\n'"  # a newline in SQL (Python 3.11 allows no backslash inside an f-string's braces)
@@ -66,6 +67,19 @@ class TestMixin(Core):
                         "AZ501",
                     )
 
+        def known_id(v: str | None, loc: Loc, bound: set[str]) -> None:
+            """A test's id: one written $name names what a given line returned."""
+            if v is None or not v.startswith("$"):
+                return  # (a 'quoted' id is the text in its quotes, $ or not)
+            if not NAME.fullmatch(v):
+                fail(
+                    loc,
+                    f"{v}: an id that starts with $ is a name a given line binds ($ann); "
+                    f"write an id that starts with $ in quotes: '{v}'",
+                    "AZ106",
+                )
+            known(v, loc, bound)
+
         section = Scenario("test section", None, [*self.tests])
         scenarios: list[Scenario] = ([section] if self.tests else []) + self.pol.scenarios
         for sc in scenarios:
@@ -76,7 +90,7 @@ class TestMixin(Core):
                     if st.var:
                         bound.add(st.var)
                     continue
-                known(st.who, st.loc, bound)
+                known_id(st.who, st.loc, bound)
                 if st.kind == "as":
                     known(st.sql, st.loc, bound)
                 if st.ptype != "anyone" and not self.is_principal(st.ptype or ""):
@@ -93,7 +107,7 @@ class TestMixin(Core):
                         have = sorted({*self.pol.scopes, "read"})
                         fail(st.loc, f"no scope '{scope}' in the policy (it has: {', '.join(have)})", "AZ503")
                 if st.kind == "check":
-                    known(st.obj, st.loc, bound)
+                    known_id(st.obj, st.loc, bound)
                     self.check_test_perm(st.type or "", st.perm or "", st.loc)
 
     def check_test_perm(self, type_: str, perm: str, loc: Loc) -> None:
@@ -196,9 +210,11 @@ LANGUAGE plpgsql AS {tag}{body}{tag};
 
     @staticmethod
     def value_sql(v: str | None, names: dict[str, str]) -> str:
-        """A test's id: $name is its variable, anything else a literal."""
+        """A test's id: $name is its variable, a 'quoted' one the text in its quotes, anything else as written."""
         v = v or ""
-        return names[v[1:]] if v.startswith("$") else lit(v)
+        if v.startswith("$"):
+            return names[v[1:]]
+        return lit(v[1:-1].replace("''", "'") if v.startswith("'") else v)
 
     @staticmethod
     def statement_sql(sql: str | None, names: dict[str, str]) -> str:
