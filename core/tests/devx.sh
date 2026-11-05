@@ -488,6 +488,13 @@ out=$(cd "$T/rc" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init
 case "$out" in *'CREATE ROLE "TrackerApp" LOGIN'*) grep -q "^app role TrackerApp " "$T/rc/db/policy.authz" &&
   ok "init with a role named with capitals: the policy names it, the CREATE ROLE quotes it" || bad "init: the role with capitals in the policy" "$(head -8 "$T/rc/db/policy.authz")";;
   *) bad "init: CREATE ROLE for a role with capitals" "$out";; esac
+# a --role the policy's app role line can't hold (a space, a quote): refused before connecting, nothing written
+for r in 'my app' 'a"b'; do
+  out=$(mkdir -p "$T/rq" && cd "$T/rq" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=$DB" init --schema app --role "$r" 2>&1); rc=$?
+  [ $rc -eq 2 ] && [ -z "$(ls -A "$T/rq")" ] &&
+    [ "$out" = "rowstile init: --role $r: the policy names its app role with letters, digits and _ (app role app_backend): give the app's role such a name" ] &&
+    ok "init --role ${r// /_}, a name the policy can't write: refused, exit 2, nothing written" || bad "init --role $r" "$rc $out $(ls -A "$T/rq")"
+done
 # a FastAPI app that doesn't depend on rowstile yet: what to add to its dependencies, with the extras it uses
 mkdir -p "$T/fa"
 printf 'fastapi>=0.110\nsqlalchemy\n' > "$T/fa/requirements.txt"

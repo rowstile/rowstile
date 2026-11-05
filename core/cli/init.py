@@ -85,6 +85,19 @@ def out_problem(out: str) -> str | None:
     return None
 
 
+def role_problem(role: str | None) -> str | None:
+    """Why --role can't be the policy's app role, if it can't: the app role line takes a name as the language
+    writes one (a space or a quote would make a draft that doesn't compile)."""
+    from authzlib.parse import IDENT
+
+    if role is not None and not re.fullmatch(IDENT, role):
+        return (
+            f"rowstile init: --role {role}: the policy names its app role with letters, digits and _ "
+            "(app role app_backend): give the app's role such a name"
+        )
+    return None
+
+
 def init(
     policy: str,
     opts: dict[str, str],
@@ -108,7 +121,7 @@ def init(
     m = re.search(r"^app role (\S+)", policy, re.M)
     role = m.group(1) if m else "app_user"  # a draft always has one
     # in SQL: quoted when it has capitals, as the policy names the role as written
-    role_sql = role if re.fullmatch(r"[a-z_][a-z0-9_]*", role) else '"' + role + '"'
+    role_sql = role if re.fullmatch(r"[a-z_][a-z0-9_]*", role) else '"' + role.replace('"', '""') + '"'
     first = re.search(r"^type (?!user\b)(\w+) = (\S+)", policy, re.M)
     example = first.group(1) if first else "user"
     write_new(
