@@ -9,6 +9,8 @@ you see but may not do answers 403, with the database's own explanation of why: 
 """
 
 import asyncio
+import re
+import string
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -33,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from psycopg import errors
 from psycopg.abc import Params
 from psycopg.rows import DictRow
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 from . import auth, db, events
 from .authz_client import NotFound, Refused, refusal
@@ -121,8 +123,22 @@ def found(row: DictRow | None, what: str = "not found") -> DictRow:
 
 
 # --- accounts ----------------------------------------------------------------------------------
+def phone_of(text: str) -> str:
+    """A phone number as it is kept and looked up: its digits, after the + it starts with ("+44 (7700) 900123":
+    "+447700900123")."""
+    return ("+" if text.lstrip().startswith("+") else "") + "".join(c for c in text if c in string.digits)
+
+
+def a_phone_number(text: str) -> str:
+    """A phone number someone signs up with, as it is kept: three digits at least, which spaces, dashes, dots and
+    brackets may separate, after a + it may start with. Anything else is no number (422)."""
+    if not re.fullmatch(r"\s*\+?[0-9 ().-]+", text) or len(phone_of(text).lstrip("+")) < 3:
+        raise ValueError("a phone number is digits, after a + it may start with")
+    return phone_of(text)
+
+
 class SignUp(BaseModel):
-    phone: str = Field(min_length=3, max_length=30)
+    phone: Annotated[str, Field(max_length=30), AfterValidator(a_phone_number)]
     name: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=8, max_length=200)
 
@@ -143,16 +159,12 @@ def set_cookie(response: Response, token: str) -> None:
     )
 
 
-def phone_of(text: str) -> str:
-    return "".join(c for c in text if c.isdigit() or c == "+")
-
-
 @app.post("/api/signup")
 def sign_up(body: SignUp, response: Response) -> DictRow:
     with db.as_user(None) as tx:
         user = tx.one(
             "SELECT id, phone, name, about FROM ms.sign_up(%s, %s, %s)",
-            (phone_of(body.phone), body.name, auth.hash_password(body.password)),
+            (body.phone, body.name, auth.hash_password(body.password)),
         )
         token = auth.new_session(tx, user["id"], settings.session_days)
     set_cookie(response, token)

@@ -92,6 +92,12 @@ def test_accounts() -> None:
     admin("INSERT INTO ms.sessions VALUES ('ended', (SELECT id FROM ms.users LIMIT 1), now() - interval '1 day')")
     assert c.post("/api/login", json={"phone": phone.replace(" ", ""), "password": "long enough"}).status_code == 200
     assert admin("SELECT count(*) FROM ms.sessions WHERE expires_at < now()")[0][0] == 0
+    # a phone number is kept as its digits, after a + it starts with; what has fewer than three is no number
+    me = c.post("/api/signup", json={"phone": f" +44 (7700) {phone[-6:]}1", "name": "Eve", "password": "long enough"})
+    assert me.json()["phone"] == f"+447700{phone[-6:]}1", me.text
+    for junk in ("abc", "+++", "+1 2", "١٢٣٤٥", "1+2+3", "555 0100 x"):
+        r = c.post("/api/signup", json={"phone": junk, "name": "Eve", "password": "long enough"})
+        assert r.status_code == 422, (junk, r.text)
 
 
 def test_people_are_found_by_phone() -> None:
