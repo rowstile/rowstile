@@ -1152,7 +1152,8 @@ $f$;
 -- Retention (both grow forever otherwise); schedule these, with pg_cron or the app's jobs.
 -- The feed: entries older than p_keep, by default the setting changes_keep, else 7 days, and those before them in
 -- the feed's order: what it removes is where the feed starts (changes_trimmed_last, its last entry, where a reader
--- may stand; changes_trimmed_to, the greatest position removed). One trim at a time (writers go on).
+-- may stand, and changes_trimmed_txid, that entry's transaction; changes_trimmed_to, the greatest position removed).
+-- One trim at a time (writers go on).
 CREATE OR REPLACE FUNCTION authz.trim_changes(p_keep interval DEFAULT NULL) RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE
@@ -1167,7 +1168,8 @@ BEGIN
   IF v_last IS NULL THEN RETURN 0; END IF;
   WITH d AS (DELETE FROM authz.changes c WHERE (c.txid, c.pos) <= (v_txid, v_last) RETURNING c.pos)
   SELECT count(*), max(d.pos) INTO n, v_to FROM d;
-  INSERT INTO authz.settings VALUES ('changes_trimmed_to', v_to::text), ('changes_trimmed_last', v_last::text)
+  INSERT INTO authz.settings VALUES ('changes_trimmed_to', v_to::text), ('changes_trimmed_last', v_last::text),
+    ('changes_trimmed_txid', v_txid::text)
     ON CONFLICT (key) DO UPDATE SET value = CASE WHEN EXCLUDED.key = 'changes_trimmed_to'
       THEN greatest(authz.settings.value::bigint, EXCLUDED.value::bigint)::text ELSE EXCLUDED.value END;
   RETURN n;
