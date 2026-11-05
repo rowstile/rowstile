@@ -3,16 +3,16 @@
 -- + type file: can comment = folder.view
 
 -- a migration is one transaction: outside one, nothing below changes anything
-SELECT pg_catalog.set_config('authz_ctx.migration', '7c93cdadaabb5956', true);
+SELECT pg_catalog.set_config('authz_ctx.migration', '57bab0188b8e69f3', true);
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '7c93cdadaabb5956' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '57bab0188b8e69f3' THEN
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '7c93cdadaabb5956' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '57bab0188b8e69f3' THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
       USING HINT = 'nothing was changed, and this session is read-only from here on; run the file with your migration tool, or with psql -1 -f';
   END IF;
@@ -28,13 +28,13 @@ BEGIN
   IF to_regclass('authz.policy_versions') IS NOT NULL THEN
     EXECUTE 'SELECT lock FROM authz.policy_versions ORDER BY id DESC LIMIT 1' INTO v_lock;
   END IF;
-  IF v_lock = '7c93cdadaabb5956' THEN
+  IF v_lock = '57bab0188b8e69f3' THEN
     RAISE EXCEPTION 'rowstile: this database already holds what this migration brings (it ran here before, or rowstile dev or push took the database there): don''t run it, tell your migration tool it is applied [AZ607]'
       USING HINT = 'Prisma: prisma migrate resolve --applied <the migration''s folder>. Alembic: alembic stamp head. '
                    'Others, and why: rowstile help AZ607';
-  ELSIF v_lock IS DISTINCT FROM '682b395a4096d490' THEN
+  ELSIF v_lock IS DISTINCT FROM 'c54b9226d8b0f014' THEN
     RAISE EXCEPTION 'rowstile: this migration changes the policy the migration before it left (%), but the database has % [AZ607]',
-      '682b395a4096d490', coalesce(v_lock, 'none')
+      'c54b9226d8b0f014', coalesce(v_lock, 'none')
       USING HINT = 'apply the migrations in order; a database changed with rowstile push or apply since needs the '
                    'migrations from the start (or rowstile apply of the policy the previous migration left) '
                    '(rowstile help AZ607)';
@@ -679,6 +679,22 @@ INSERT INTO authz_gen.policy_lines VALUES
   ('share folder.viewer team#member', 'line 43'),
   ('share folder.viewer user', 'line 43');
 
+-- The partitions of each table with rules and the tables that inherit from one: row-level security on, with
+-- no policies of their own, so they are read and written through it only (read directly, they would skip its rules
+-- and triggers). Every apply and every migration: one made or attached since is closed too (it alone is locked,
+-- as CHILD_TRIGGERS locks only one that lacks the triggers)
+DO $rls$
+DECLARE c regclass;
+BEGIN
+  FOR c IN WITH RECURSIVE d(oid) AS (
+             SELECT i.inhrelid FROM pg_catalog.pg_inherits i
+             WHERE i.inhparent = ANY (SELECT to_regclass(x)::oid FROM unnest(ARRAY['"app"."files"', '"app"."folders"']::text[]) x)
+             UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN d ON i.inhparent = d.oid)
+           SELECT d.oid::regclass FROM d JOIN pg_catalog.pg_class k ON k.oid = d.oid WHERE NOT k.relrowsecurity LOOP
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', c);
+  END LOOP;
+END $rls$;
+
 -- The partitions of a table rowstile watches and the tables that inherit from it: the triggers made above, on
 -- each, for the rows stored there and the statements on it
 DO $ch$
@@ -935,4 +951,4 @@ test
   user 5 can view file 16      -- erin: Joint project is linked into Company
   user 5 cannot edit file 16   -- links pass on view rights only
 $authz_policy$,
-  $authz_files${}$authz_files$::jsonb, 'BUILD', '7c93cdadaabb5956');
+  $authz_files${}$authz_files$::jsonb, 'BUILD', '57bab0188b8e69f3');

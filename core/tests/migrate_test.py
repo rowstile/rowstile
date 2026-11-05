@@ -380,7 +380,8 @@ CASES: list[tuple[str, str, str, str]] = [
 # a tree the migration keeps (its definition the same) whose table has other partitions under it since it was last
 # computed: rows no trigger saw. The migration computes it again, as applying whole does (PARTITIONS has the change,
 # made on both databases before; and verify() is true after the migration). The notes without their rules: a tree
-# whose table only other tables' rules read, as the topics' is
+# whose table only other tables' rules read, as the topics' is. And one attached to a table with rules, the policy's
+# change elsewhere: the migration turns row-level security on for it, as applying whole does (the snapshot compares it)
 NOTES_TREE = edit(
     CHILDREN,
     (
@@ -395,15 +396,29 @@ PEEK = edit(
         "  can view   = manage or viewer or parent.view\n  can peek   = view\n",
     ),
 )
-PARTITIONS = {
-    "a table with rows attached as a partition of a tree's table": """
+ATTACHED = """
 CREATE TABLE ch.notes_attached (LIKE ch.notes);
 INSERT INTO ch.notes_attached VALUES (2001, 3, 1, 'under top'), (2002, 3, 2001, 'below it');
 ALTER TABLE ch.notes ATTACH PARTITION ch.notes_attached FOR VALUES FROM (2000) TO (3000);
-""",
+"""
+RULES_ELSEWHERE = "a partition attached to a table with rules, the rules of another table changed"
+PARTITIONS = {
+    "a table with rows attached as a partition of a tree's table": ATTACHED,
     "a partition of a tree's table detached": "ALTER TABLE ch.notes DETACH PARTITION ch.notes_high;",
 }
 CASES += [(name, "children", NOTES_TREE, PEEK) for name in PARTITIONS]
+PARTITIONS[RULES_ELSEWHERE] = ATTACHED
+CASES.append(
+    (
+        RULES_ELSEWHERE,
+        "children",
+        CHILDREN,
+        edit(
+            CHILDREN,
+            ("rules ch.tasks\n  select          : view\n", "rules ch.tasks\n  select          : view or owner\n"),
+        ),
+    )
+)
 # the sync index (a preview): sync lines added (and back: removed, the index dropped), and the permission a synced
 # table's readers hold changed (its rows worked out again, by difference). The role the lines name needs only to be
 # there (main makes it)

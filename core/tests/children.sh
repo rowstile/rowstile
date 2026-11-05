@@ -270,6 +270,16 @@ same "... and the partitions of a link table their table's statement triggers" "
   "authz_rel_audit_2_del authz_rel_audit_2_ins authz_rel_audit_2_upd authz_topic__linked_parent__tree_on_links1_del authz_topic__linked_parent__tree_on_links1_ins authz_topic__linked_parent__tree_on_links1_upd"
 D=$DB2 as 1 -c "SELECT authz.share('doc', 12, 'editor', 'user', 2)" >/dev/null
 same "... and the changed rule holds on its rows" "$(D=$DB2 as 2 -c "UPDATE ch.docs SET title = 'mine' WHERE id = 12")" "ERROR:  changing owner_id, title of ch.docs 12 needs: own"
+# a partition of a table with rules made since, given to the app role: open until a migration, then closed by the
+# next one, which changes another table's rules (as each apply closes it)
+D=$DB2 PSQL -c "CREATE TABLE ch.notes_more PARTITION OF ch.notes FOR VALUES FROM (5000) TO (6000)" \
+  -c "GRANT SELECT ON ch.notes_more TO app_user" -c "INSERT INTO ch.notes VALUES (5001, 3, NULL, 'carol''s')" >/dev/null
+same "a partition made since a migration, given to the app role: open until the next one" "$(D=$DB2 as 2 -c "SELECT count(*) FROM ch.notes_more")" 1
+sed -i '/^rules ch.tasks$/,/^$/ s/^  select          : view$/  select          : view or owner/' "$T/db/policy.authz"
+run migrate --name tasks_owner; case "$out" in *"_authz_tasks_owner.sql"*) ok "... a migration that changes the rules of another table";; *) bad "migrate the tasks' rule" "$out";; esac
+psql -X -q -1 -v ON_ERROR_STOP=1 -d "$DB2" -f "$(ls "$T"/db/migrations/*_authz_tasks_owner.sql)" >/dev/null 2>"$T/err" || bad "the tasks' migration" "$(cat "$T/err")"
+same "a migration closes a partition made since, where the rules of its table didn't change" \
+  "$(D=$DB2 PSQL -c "SELECT relrowsecurity FROM pg_class WHERE oid = 'ch.notes_more'::regclass")|$(D=$DB2 as 2 -c "SELECT count(*) FROM ch.notes_more")|$(D=$DB2 as 3 -c "SELECT count(*) FROM ch.notes WHERE id = 5001")" "t|0|1"
 run push --development; is pushed && ok "push: the same change on the first database" || bad "push" "$out"
 same "... where the tables that inherit have the row triggers too" "$(triggers ch.docs_old)|$(triggers ch.docs_older)|$(triggers ch.docs_oldest)" "$retitled|$retitled|$retitled"
 same "... and the changed rule holds" "$(as 2 -c "UPDATE ch.docs SET title = 'mine' WHERE id = 21")" "ERROR:  changing owner_id, title of ch.docs 21 needs: own"
