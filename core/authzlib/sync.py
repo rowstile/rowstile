@@ -57,6 +57,7 @@ from .parse import (
 from .parse import leaves as expr_leaves
 from .sqlutil import (
     AGE,
+    CLOCK,
     TIME_WORDS,
     UNSTABLE,
     ident,
@@ -77,29 +78,9 @@ DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
 # what evaluates the policy's own SQL resolves names as the policy does (output.search_path_sql)
 DEF_CURRENT = "SECURITY DEFINER SET search_path FROM CURRENT"
 KEYWORD_SQL = frozenset(KEYWORDS.values())
-# what reads the clock or chance: the index can't follow it (AZ804); the rest of UNSTABLE reads who asks (AZ805)
-CLOCK = frozenset(
-    {
-        "now",
-        "clock_timestamp",
-        "statement_timestamp",
-        "transaction_timestamp",
-        "timeofday",
-        "random",
-        "random_normal",
-        "gen_random_uuid",
-        "uuidv4",
-        "uuidv7",
-        "current_timestamp",
-        "current_date",
-        "current_time",
-        "localtime",
-        "localtimestamp",
-    }
-)
 LOCK_KEYS = "sync#keys"  # the lock row of groups and keys (no type is named so: a type's name holds no #)
 LOCK_WORK = "sync#work"  # after commit: the lock row of the worker, one at a time
-STRIPES = 4096  # the lock rows of the objects and keys a commit works out: each string's hash, modulo this
+STRIPES = 4096  # the lock rows of the objects a commit works out and reads: each type:id's hash, modulo this
 # the types whose inheritance a sync line's readers are keyed by (`by folder`), rather than copied in
 By = frozenset[str]
 NO_BY: By = frozenset()
@@ -116,6 +97,7 @@ def unstable(sql: str) -> tuple[str, str] | None:
     if m:
         word = (m.group(1) or m.group(2)).lower()
         bare = re.sub(r"\s+", "", word)
+        # (the clock or chance: the index can't follow it, AZ804; the rest of UNSTABLE reads who asks, AZ805)
         return ("AZ804" if bare in CLOCK else "AZ805"), bare + ("()" if m.group(1) else "")
     if any(one_argument(code, a.end()) for a in AGE.finditer(code)):
         return "AZ804", "age() with one argument, which counts from today"
@@ -147,7 +129,6 @@ class SyncState:
     inherits: dict[Name, str] = field(default_factory=dict)  # such a pair -> its function: whose own keys each inherits
     given: dict[Name, str] = field(default_factory=dict)  # a pair whose own keys are a source -> its function
     shared: dict[tuple[str, str], None] = field(default_factory=dict)  # (type, relation) shares read
-    links: dict[tuple[str, str], None] = field(default_factory=dict)  # (type, relation) with link subjects read
     trees: dict[str, None] = field(default_factory=dict)  # closure tables read
     tops: dict[str, str] = field(default_factory=dict)  # synced type -> its readers' function
     expanding: set[str] = field(default_factory=set)  # synced types whose readers may be expanded
@@ -825,7 +806,7 @@ END $f$;"""
             ""
             if st.expanding
             else f"""
--- the lock rows of what a commit works out, by the hash of each object and key: writers whose work meets queue on
+-- the lock rows of what a commit works out, by the hash of each object (type:id): writers whose work meets queue on
 -- them, the others go on (sync_process). Each is updated, to the same row: in REPEATABLE READ, a writer whose
 -- snapshot is older than another's update of it gets a serialization error
 CREATE TABLE authz_int.sync_stripes (stripe int PRIMARY KEY, n bigint NOT NULL);
@@ -2031,7 +2012,7 @@ class Deriver:
         if not any(x.src == src and x.dst == dst and x.sql == sql for x in self.st.edges):
             self.st.edges.append(e)
 
-    def link_edge(self, t: Type, src: Link, st: str, sr: str | None) -> None:
+    def link_edge(self, t: Type, src: Link, st: str) -> None:
         """t's readers read st's objects through a column or table source naming them."""
         c = self.c
         s = c.T(st)
@@ -2175,7 +2156,7 @@ class Deriver:
                     )
                     continue
                 if not self.keyed(st, sr):
-                    self.link_edge(t, src, st, sr)
+                    self.link_edge(t, src, st)
                 cte = f"l{self.st.next()}"
                 parts.append(wrap(f"WITH {cte} AS MATERIALIZED ({links})\n  {self.held(st, sr, cte, 'u', loc)}"))
         return union(parts) if parts else self.none(t)
@@ -2198,7 +2179,6 @@ class Deriver:
         out: list[str] = []
         for st, sr in src.subjects:
             if st == "link":
-                self.st.links[(t.name, r.name)] = None
                 continue
             if st == "anyone":
                 out.append(
@@ -2244,7 +2224,7 @@ class Deriver:
                         self.share_edge(t, st, None, r.name)
                     else:
                         assert src.kind == "column" or src.kind == "table"
-                        self.link_edge(t, src, st, None)
+                        self.link_edge(t, src, st)
                 cte = f"l{self.st.next()}"
                 parts.append(wrap(f"WITH {cte} AS MATERIALIZED ({links})\n  {self.held(st, perm, cte, 'u', loc)}"))
         return union(parts) if parts else self.none(t)
