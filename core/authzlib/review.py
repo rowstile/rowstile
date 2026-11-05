@@ -402,7 +402,8 @@ def review(
         b.entities = {}
     unread = unread_tests(h)
     said = meaning(b, h, worlds)
-    flags = risk(b, h, worlds, said["changed"], said.get("counterexample"))
+    gained = access(db, h) if db is not None else None
+    flags = risk(b, h, worlds, said["changed"], said.get("counterexample"), gained)
     if said["equivalent"] not in (None, "text") and any(f["why"] in ALLOWS_MORE for f in flags):
         said = meaning(b, h, worlds, refactor=False)  # Risk found an example the comparison's worlds didn't
     out: Review = {
@@ -410,7 +411,7 @@ def review(
         "risk": flags,
         "tests": tests(b, h, unread),
         "deploy": deploy(b, h, base_lock, head_lock),
-        "access": access(db, h) if db is not None else None,
+        "access": gained,
     }
     if mistake is not None:
         out["base_mistake"] = mistake
@@ -782,9 +783,18 @@ def who_of(ids: Iterable[str], pol: Policy) -> str:
     return ", ".join(said[:-1]) + " and " + said[-1] if len(said) > 1 else said[0]
 
 
-def risk(b: Side, h: Side, worlds: int, changed: list[Changed], seen: Difference | None = None) -> list[Flag]:
+def risk(
+    b: Side,
+    h: Side,
+    worlds: int,
+    changed: list[Changed],
+    seen: Difference | None = None,
+    on_data: Access | None = None,
+) -> list[Flag]:
     """changed: what Meaning found changed (changes()). seen: Meaning's example of a difference (evaluate.compare's),
-    from worlds of its own: one where the head grants what the base didn't is one more widening found."""
+    from worlds of its own: one where the head grants what the base didn't is one more widening found. on_data:
+    Access on the review data, whose first example of a permission gained there is the example given for it (the
+    small worlds' may name someone who had it already)."""
     flags: list[Flag] = []
 
     def line(key: str) -> str | None:
@@ -954,6 +964,10 @@ def risk(b: Side, h: Side, worlds: int, changed: list[Changed], seen: Difference
         types = {t.table: t.name for t in h.pol.types.values()}  # a rule's row is one of its table's type
         tname = types[seen["what"].split()[1]] if seen["what"].startswith("rule ") else seen["what"].split(".")[0]
         more.setdefault(seen["what"], (named(seen["user"]), f"{tname} {seen['object']}"))
+    for g in (on_data or {}).get("groups", []):
+        key = f"{g['type']}.{g['what'].removeprefix('permission ')}"
+        if g["change"] == "gains" and g["what"].startswith("permission ") and key in more:
+            more[key] = (g["examples"][0]["who"], f"{g['type']} {g['examples'][0]['id']}")
     kinds = {c["what"]: c["kind"] for c in changed}
     for what in own:
         if what not in more:

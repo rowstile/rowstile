@@ -53,6 +53,15 @@ case "$md" in "<!-- rowstile review -->"*"<details><summary>Meaning</summary>"*"
   ok "--markdown: the comment, with its marker and details";; *) bad "markdown" "$md";; esac
 CLI review --base main --json | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['meaning']['changed'][0]['what'] == 'folder.view'" &&
   ok "--json" || bad "json"
+# with the review data, Risk's example is one Access found (someone who gains it there), not the small worlds' own
+CLI --db "dbname=$DB" review --base main --json | python3 -c "
+import json, re, sys
+d = json.load(sys.stdin)
+flag = next(f['flag'] for f in d['risk'] if f['what'] == 'folder.view')
+g = next(g for g in d['access']['groups'] if (g['change'], g['type'], g['what']) == ('gains', 'folder', 'permission view'))
+e = g['examples'][0]
+assert flag.endswith(f\"(e.g. {e['who']} on folder {e['id']})\"), (flag, g['examples'])
+" && ok "on the review data, Risk's example is someone who gains it there, as Access says" || bad "Risk's example with --db"
 case "$(CLI review --base main --annotations)" in "::warning file=p/db/policy.authz,line="*"a permission widened"*)
   ok "--annotations: on the policy line, its path from the repository's top folder";;
   *) bad "annotations" "$(CLI review --base main --annotations)";; esac
