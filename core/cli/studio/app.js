@@ -6,13 +6,17 @@
 // --- what the API answers (studio.py) ---------------------------------------------------------------------
 /** @typedef {{name: string, src: string, line: string}} Perm */
 /** @typedef {{name: string, line: string, subjects: string[], shared: boolean}} Relation */
-/** @typedef {{name: string, table: string, principal: boolean, perms: Perm[], relations: Relation[], line: string}} Type */
+// what the graph draws that the policy doesn't name (a permission's inheritance before a deny, a permission's custom
+// roles), by its node's id in the graph
+/** @typedef {{node: string, name: string, text: string, line: string}} Drawn */
+/** @typedef {{name: string, table: string, perms: Perm[], relations: Relation[], drawn: Drawn[], line: string}} Type */
 /** @typedef {{database: string, as: string, writable: boolean, types: Type[], principals: string[], policy_file: string | null}} Overview */
 /** @typedef {{id: string, visible: boolean, values: Record<string, unknown>, masked: string[], perms: string[]}} Row */
-// a page of a type's rows, in its key's order: offset where it starts, limit the most a page holds
-/** @typedef {{table: string, type: string, columns: string[], rows: Row[], offset: number, limit: number, more: boolean, total: number, visible_total: number}} Rows */
-// fewer_people (who loses it on this object) is also takes' first entry, the one with n 0: the page says it from there
-/** @typedef {{text: string, grants: boolean, more_objects: number, more_people: number, also: string[], elsewhere: {type: string, perm: string, n: number}[], fewer_people: number, takes: {type: string, perm: string, n: number, people: number}[], lines: string[], kinds: string[]}} Way */
+// a page of a type's rows, in its key's order: offset where it starts, limit the most a page holds; columns in the
+// table's order, masked those a rule masks; each total counted up to counted, one more being more than that
+/** @typedef {{table: string, type: string, columns: string[], masked: string[], rows: Row[], offset: number, limit: number, more: boolean, total: number, visible_total: number, counted: number}} Rows */
+// takes' entry with n 0 is who loses it on this object
+/** @typedef {{text: string, grants: boolean, more_objects: number, more_people: number, also: string[], elsewhere: {type: string, perm: string, n: number}[], takes: {type: string, perm: string, n: number, people: number}[], lines: string[], kinds: string[]}} Way */
 /** @typedef {{text: string, error: string, lines: string[], kinds: string[]}} Untried */
 /** @typedef {{holds: boolean, explain: string[], needs: string, tried: boolean, stops: string[], notes: string[], ways: Way[], untried: Untried[]}} Why */
 /** @typedef {{check: string, named: string}} Test */
@@ -41,8 +45,10 @@ const token = new URLSearchParams(location.search).get("token") || sessionStorag
 sessionStorage.setItem("rowstile-token", token);
 if (location.search) history.replaceState(null, "", location.pathname);
 
-/** @type {{overview: Overview | null, as: string, type: string | null, offset: number, rows: Rows | null, selected: Row | null}} */
-const state = { overview: null, as: localStorage.getItem("rowstile-as") || "", type: null, offset: 0, rows: null, selected: null };
+// rowsAs: whom the rows shown were asked as; asked: the rows last asked for (an answer to an earlier ask is dropped);
+// shares: the object whose shares are shown
+/** @type {{overview: Overview | null, as: string, type: string | null, offset: number, rows: Rows | null, rowsAs: string, selected: Row | null, asked: number, shares: [string, string] | null}} */
+const state = { overview: null, as: localStorage.getItem("rowstile-as") || "", type: null, offset: 0, rows: null, rowsAs: "", selected: null, asked: 0, shares: null };
 
 // --- small helpers --------------------------------------------------------------------------------------
 /** @typedef {string | number | boolean | null | undefined | ((ev: Event) => unknown)} AttrValue */
@@ -124,6 +130,11 @@ $("as-form").addEventListener("submit", (e) => {
   state.as = input("as").value.trim();
   localStorage.setItem("rowstile-as", state.as);
   if (state.type) loadRows(state.type, state.offset);
+  // the shares tab's buttons name whom they act as: drawn again for the new person
+  if ($("shares").classList.contains("on")) {
+    loadRequests();
+    if (state.shares) loadShares(...state.shares);
+  }
 });
 
 async function start() {
@@ -170,19 +181,29 @@ async function loadRows(type, offset) {
   state.offset = offset;
   document.querySelectorAll("#table-list button").forEach((b) => b.classList.toggle("on", /** @type {HTMLElement} */ (b).dataset.type === type));
   $("grid-head").textContent = "Loading…";
+  const asked = ++state.asked;
+  const as = who();
   let data;
   try {
     // the policy asked again beside the rows: the panel offers the permissions it has now
-    [data] = await Promise.all([api("rows", { type, as: who(), offset }), refresh()]);
+    [data] = await Promise.all([api("rows", { type, as, offset }), refresh()]);
   } catch (e) {
+    if (asked !== state.asked) return;
     $("grid-head").textContent = message(e);
     $("grid").replaceChildren();
     return;
   }
+  // rows asked for since (another type, page or person): this answer is not theirs
+  if (asked !== state.asked) return;
   state.rows = data;
-  $("grid-head").replaceChildren(el("strong", {}, who()), ` sees ${data.visible_total} of ${data.total} rows of ${data.table}`,
-    ` (type ${data.type}; click a row for why)`);
-  const cols = data.columns.slice(0, 8);
+  state.rowsAs = as;
+  /** @param {number} n */
+  const count = (n) => (n > data.counted ? `more than ${data.counted}` : String(n));
+  // the first 8 columns, and any masked one past them; the others named, not shown
+  const cols = [...data.columns.slice(0, 8), ...data.columns.slice(8).filter((c) => data.masked.includes(c))];
+  const left = data.columns.filter((c) => !cols.includes(c));
+  $("grid-head").replaceChildren(el("strong", {}, as), ` sees ${count(data.visible_total)} of ${count(data.total)} rows of ${data.table}`,
+    ` (type ${data.type}; click a row for why)`, left.length ? `; not shown: ${left.join(", ")}` : "");
   const head = el("tr", {}, el("th", {}, ""), ...cols.map((c) => el("th", {}, c)), el("th", {}, "permissions"));
   const body = data.rows.map((r) => el("tr", {
     class: `row${r.visible ? "" : " gone"}`, "data-id": r.id,
@@ -210,11 +231,13 @@ function select(row, tr) {
   const type = overview().types.find((t) => t.name === state.rows?.type);
   if (!type) return;
   const id = row.id;
+  // the person the rows were asked as: why and the tests are theirs
+  const as = state.rowsAs;
   const panel = $("panel");
   panel.hidden = false;
   panel.replaceChildren(
     el("h3", {}, `${type.name} ${id}`),
-    el("p", { class: "muted" }, `as ${who()}; ${row.visible ? "the row is visible to them" : "the row is hidden from them"}`),
+    el("p", { class: "muted" }, `as ${as}; ${row.visible ? "the row is visible to them" : "the row is hidden from them"}`),
     ...type.perms.map((p) => {
       const holds = row.perms.includes(p.name);
       const out = el("div", { class: "perm-body" });
@@ -222,20 +245,20 @@ function select(row, tr) {
         el("div", { class: "perm-head" },
           el("span", { class: `chip${holds ? "" : " no"}` }, holds ? "yes" : "no"),
           el("span", { class: "name" }, p.name), el("code", { class: "muted" }, p.line),
-          el("button", { onclick: () => why(type.name, id, p.name, out) }, holds ? "Why?" : "Why not?")),
+          el("button", { onclick: () => why(as, type.name, id, p.name, out) }, holds ? "Why?" : "Why not?")),
         out);
     }));
 }
 
-/** @param {string} type @param {string} id @param {string} perm @param {HTMLElement} out */
-async function why(type, id, perm, out) {
+/** @param {string} as @param {string} type @param {string} id @param {string} perm @param {HTMLElement} out */
+async function why(as, type, id, perm, out) {
   // anyone holds nothing to explain: the page asks for someone rather than wait for an answer it won't ask for
-  const someone = !["", "anyone", "nobody"].includes(state.as);
+  const someone = !["", "anyone", "nobody"].includes(as);
   out.replaceChildren(el("p", { class: "muted" }, someone ? "Asking…" : "Pick someone to view as first."));
   if (!someone) return;
   let a;
   try {
-    a = await api("why", { as: who(), type, id, perm });
+    a = await api("why", { as, type, id, perm });
   } catch (e) {
     out.replaceChildren(el("p", {}, message(e)));
     return;
@@ -267,15 +290,15 @@ async function why(type, id, perm, out) {
     for (const n of a.notes) parts.push(el("p", { class: "muted" }, n));
   }
   parts.push(el("div", { class: "actions" }, el("span", { class: "muted" }, "Make a test:"),
-    el("button", { onclick: () => makeTest(type, id, perm, "can", out) }, `${who()} can ${perm}`),
-    el("button", { onclick: () => makeTest(type, id, perm, "cannot", out) }, `… cannot`)));
+    el("button", { onclick: () => makeTest(as, type, id, perm, "can", out) }, `${as} can ${perm}`),
+    el("button", { onclick: () => makeTest(as, type, id, perm, "cannot", out) }, `… cannot`)));
   out.replaceChildren(...parts);
 }
 
-/** @param {string} type @param {string} id @param {string} perm @param {"can" | "cannot"} expect @param {HTMLElement} out */
-async function makeTest(type, id, perm, expect, out) {
+/** @param {string} as @param {string} type @param {string} id @param {string} perm @param {"can" | "cannot"} expect @param {HTMLElement} out */
+async function makeTest(as, type, id, perm, expect, out) {
   try {
-    const t = await api("test", { as: who(), type, id, perm, expect });
+    const t = await api("test", { as, type, id, perm, expect });
     const box = el("div", {},
       el("p", { class: "muted" }, "A check on the data there now (the policy's test section):"),
       el("pre", {}, t.check), copy(t.check),
@@ -333,17 +356,22 @@ function script(src, integrity) {
 /** @param {string} domId */
 function detail(domId) {
   const types = overview().types;
-  // a node is type__name, a type's box type__0 (devtools.py): names hold no __, so the split is the type's. Mermaid
-  // puts the drawing's id and "flowchart-" before it (policy-graph-1-flowchart-folder__view-12), a number after
-  const [typeName, member] = domId.replace(/^.*?flowchart-/, "").replace(/-\d+$/, "").split("__");
-  const t = types.find((x) => x.name === typeName);
-  if (!t) return;
-  const name = member && member !== "0" ? member : null;
+  // a node is type__name, a type's box type__0 (devtools.py): a type's name holds no __, so the first splits it (the
+  // name after it may hold one: view__base). Mermaid puts the drawing's id and "flowchart-" before it
+  // (policy-graph-1-flowchart-folder__view-12), a number after
+  const node = domId.replace(/^.*?flowchart-/, "").replace(/-\d+$/, "");
+  const at = node.indexOf("__");
+  const t = types.find((x) => x.name === node.slice(0, at));
+  if (at < 0 || !t) return;
+  const member = node.slice(at + 2);
+  const d = t.drawn.find((x) => x.node === node);
+  const name = d ? d.name : member && member !== "0" ? member : null;
   const p = t.perms.find((x) => x.name === name);
   const r = t.relations.find((x) => x.name === name);
   $("graph-detail").replaceChildren(...present(
     el("h3", {}, name ? `${t.name}.${name}` : `type ${t.name}`),
     el("p", { class: "muted mono" }, `${t.table}, ${t.line}`),
+    d ? el("pre", {}, `${d.text}   (${d.line})`) : null,
     p ? el("pre", {}, `can ${p.name} = ${p.src}   (${p.line})`) : null,
     r ? el("pre", {}, `${r.name} : ${r.subjects.join(", ")}${r.shared ? "  shared" : ""}   (${r.line})`) : null,
     !name ? el("pre", {}, [...t.relations.map((x) => `${x.name} : ${x.subjects.join(", ")}${x.shared ? "  shared" : ""}`),
@@ -387,6 +415,7 @@ $("shares-form").addEventListener("submit", async (e) => {
 async function loadShares(type, id) {
   const view = $("shares-view");
   if (!id) return;
+  state.shares = [type, id];
   let d;
   try {
     d = await api("shares", { type, id });
@@ -396,6 +425,7 @@ async function loadShares(type, id) {
   }
   const w = overview().writable;
   const t = overview().types.find((x) => x.name === type);
+  const as = who();
   // a link is no subject Unshare can name: authz.revoke_link turns it off, by the id authz.list_links gives
   const link = (/** @type {Share} */ s) => s.subject_type === "link";
   view.replaceChildren(
@@ -405,24 +435,24 @@ async function loadShares(type, id) {
       el("td", { class: "muted" }, [s.starts_at ? `from ${s.starts_at}` : "", s.expires_at ? `until ${s.expires_at}` : "", s.caveat ? `if ${s.caveat}` : ""].filter(Boolean).join(", ")),
       el("td", { class: "muted" }, s.created_by ? `by ${s.created_by}` : ""),
       w ? el("td", link(s) ? { class: "muted" } : {}, link(s) ? "turned off with authz.revoke_link"
-        : el("button", { onclick: () => change("unshare", { type, id, relation: s.relation, subject_type: s.subject_type, subject_id: s.subject_id, subject_relation: s.subject_relation }, () => loadShares(type, id)) }, "Unshare")) : null))))
+        : el("button", { onclick: () => change(as, "unshare", { type, id, relation: s.relation, subject_type: s.subject_type, subject_id: s.subject_id, subject_relation: s.subject_relation }, () => loadShares(type, id)) }, "Unshare")) : null))))
       : el("p", { class: "muted" }, `No shares on ${type} ${id}.`),
-    w && t ? shareForm(t, id) : el("p", { class: "muted" }, "Read-only: start Studio with --write (or rowstile dev) to change shares."));
+    w && t ? shareForm(as, t, id) : el("p", { class: "muted" }, "Read-only: start Studio with --write (or rowstile dev) to change shares."));
 }
-/** @param {Type} t @param {string} id */
-function shareForm(t, id) {
+/** @param {string} as @param {Type} t @param {string} id */
+function shareForm(as, t, id) {
   const rel = el("select", {}, t.relations.filter((r) => r.shared).map((r) => el("option", {}, r.name)));
   const st = el("input", { placeholder: "user", size: 8, value: "user" });
   const sid = el("input", { placeholder: "id", size: 6 });
   return el("form", { class: "actions", onsubmit: (e) => {
     e.preventDefault();
-    change("share", { type: t.name, id, relation: rel.value, subject_type: st.value, subject_id: sid.value }, () => loadShares(t.name, id));
-  } }, el("span", { class: "muted" }, `As ${who()}, share`), rel, "with", st, sid, el("button", { class: "primary" }, "Share"));
+    change(as, "share", { type: t.name, id, relation: rel.value, subject_type: st.value, subject_id: sid.value }, () => loadShares(t.name, id));
+  } }, el("span", { class: "muted" }, `As ${as}, share`), rel, "with", st, sid, el("button", { class: "primary" }, "Share"));
 }
-/** @param {"share" | "unshare" | "decide"} what @param {object} body @param {() => unknown} then */
-async function change(what, body, then) {
+/** A change, made as the person its button names. @param {string} as @param {"share" | "unshare" | "decide"} what @param {object} body @param {() => unknown} then */
+async function change(as, what, body, then) {
   try {
-    await api(what, {}, { ...body, as: who() });
+    await api(what, {}, { ...body, as });
     toast("Done");
     then();
   } catch (e) {
@@ -439,11 +469,12 @@ async function loadRequests() {
     return;
   }
   const w = overview().writable;
+  const as = who();
   view.replaceChildren(d.requests.length ? el("table", {}, el("tbody", {}, d.requests.map((r) => el("tr", {},
     el("td", {}, `#${r.id}`), el("td", {}, `user ${r.requester} asks for ${r.relation} on ${r.object_type} ${r.object_id}${r.duration ? ` for ${r.duration}` : ""}`),
     el("td", { class: "muted" }, r.reason || ""),
-    w ? el("td", {}, el("button", { onclick: () => change("decide", { request: r.id, approve: true }, loadRequests) }, `Approve as ${who()}${r.duration ? ` for ${r.duration}` : ""}`),
-      " ", el("button", { onclick: () => change("decide", { request: r.id, approve: false }, loadRequests) }, "Deny")) : null))))
+    w ? el("td", {}, el("button", { onclick: () => change(as, "decide", { request: r.id, approve: true }, loadRequests) }, `Approve as ${as}${r.duration ? ` for ${r.duration}` : ""}`),
+      " ", el("button", { onclick: () => change(as, "decide", { request: r.id, approve: false }, loadRequests) }, "Deny")) : null))))
     : el("p", { class: "muted" }, "None pending."));
 }
 

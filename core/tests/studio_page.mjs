@@ -54,7 +54,8 @@ function command(...args) {
   if (r.status !== 0) throw new Error(`rowstile ${args.join(" ")}: ${r.stdout}${r.stderr}`);
   return r.stdout;
 }
-// the docs app's policy, with what the shares tab shows besides: a link, a custom role, a caveat
+// the docs app's policy, with what the shares tab shows besides: a link, a custom role, a caveat; and a column of the
+// files masked, past the eighth the grid shows (the files get four more columns)
 const dir = mkdtempSync(join(tmpdir(), "rowstile-studio-page-policy-"));
 const policy = join(dir, "docs.authz");
 const docs = readFileSync(join(CORE, "example", "docs.authz"), "utf8");
@@ -63,6 +64,7 @@ const withShares = [
   ["app role app_user\n", "app role app_user\n\ncaveat business_hours = {authz.ctx('mode') = 'business'}\n"],
   ["type org = app.orgs\n", "type org = app.orgs\n  can manage_roles = admin\n"],
   ["  can break_glass = org.member\n", "  can break_glass = org.member\n  roles       : user from org\n  can peek    = view or roles\n"],
+  ["rules app.files\n", "rules app.files view app.files_seen\n  mask note                         : edit\n"],
 ].reduce((text, [from, to]) => {
   if (!text.includes(from)) throw new Error(`docs.authz has no ${JSON.stringify(from)}`);
   return text.replace(from, to);
@@ -72,6 +74,7 @@ sql("postgres", `DROP DATABASE IF EXISTS ${DB}`);
 sql("postgres", `CREATE DATABASE ${DB}`);
 // psql's own lines (\set) are psql's: the rest is SQL
 sql(DB, readFileSync(join(CORE, "example", "app_schema.sql"), "utf8").replace(/^\\.*$/gm, ""));
+sql(DB, "ALTER TABLE app.files ADD COLUMN size bigint, ADD COLUMN kind text, ADD COLUMN tag text, ADD COLUMN note text");
 command("apply", policy);
 // erin owns Company (folder 1) and is an admin of Acme: she shares it with Acme's members, with dave from tomorrow on,
 // with gina as a reviewer (a role Acme made), with frank in business hours, and as a link; bob asks to see Secrets for
@@ -293,6 +296,13 @@ try {
   check("... a node, clicked: how the permission is written",
     (await until("document.querySelector('#graph-detail h3')?.textContent")) === "folder.view",
     await js("document.getElementById('graph-detail').textContent"));
+  // a node the policy doesn't name, whose id holds the name of a permission: what it is, not that permission
+  await js(`(() => { const n = [...document.querySelectorAll('#graph-view g.node')].find((x) => /flowchart-folder__roles_peek-\\d+$/.test(x.id));
+    if (!n) throw new Error('no node for folder roles:peek: ' + [...document.querySelectorAll('#graph-view g.node')].map((x) => x.id).join(' '));
+    n.dispatchEvent(new MouseEvent('click', { bubbles: true })); })()`);
+  const roles = await until("document.querySelector('#graph-detail h3')?.textContent === 'folder.custom roles → peek' && document.querySelector('#graph-detail pre')?.textContent", 5000);
+  check("... a custom roles' node, clicked: what it is", /^roles:peek : user {3}\(line \d+\)$/.test(String(roles)),
+    await js("document.getElementById('graph-detail').textContent"));
 
   // shares and requests, as the API sends them
   await click("nav button", "Shares and requests");
@@ -317,10 +327,41 @@ try {
     requests);
   check("a custom role's share: the role's name", got.some((r) => JSON.stringify(r) === '["reviewer","user 7","","by 5","Unshare"]'), got);
   check("a share with a caveat: on what condition", got.some((r) => JSON.stringify(r) === '["viewer","user 6","if business_hours","by 5","Unshare"]'), got);
+  // someone else viewed as, on this tab: the buttons name whom they act as now
+  await viewAs("user:5");
+  const relabelled = await until("[...document.querySelectorAll('#requests-view button')].some((b) => b.textContent === 'Approve as user:5 for 7 days')"
+    + " && document.querySelector('#shares-view form span')?.textContent", 5000);
+  check("another person viewed as: the approval and the share form name them", relabelled === "As user:5, share",
+    await js("document.getElementById('shares').innerText.slice(0, 600)"));
+  await viewAs("user:3");
 
   // the policy changes while the page is open (rowstile dev applies each save). The page asks for it again when a
   // table is opened: a new permission is offered in the panel
   await click("nav button", "Tables");
+  // a table of more columns than the grid holds: the first 8, any masked one past them, and the others named
+  await openTable("file", "user:3");
+  await until("document.getElementById('grid-head').textContent.includes('rows of app.files ')");
+  const heads = await js("[...document.querySelectorAll('#grid thead th')].map((th) => th.textContent).join(' ')");
+  check("more columns than the grid holds: the first 8, and the masked one past them",
+    heads === " id folder_id owner_id name confidential body size kind note permissions", heads);
+  const named = await js("document.getElementById('grid-head').textContent");
+  check("... and the others named", String(named).endsWith("; not shown: tag"), named);
+  // rows asked for since: an earlier ask's answer, come last, is dropped (the folders' held back, the files' asked after)
+  await call(() => {
+    const page = /** @type {any} */ (globalThis);
+    page.realFetch = page.fetch;
+    page.fetch = (/** @type {RequestInfo} */ url, /** @type {RequestInit} */ init) => (String(url).includes("type=folder")
+      ? new Promise((r) => setTimeout(r, 1500)).then(() => page.realFetch(url, init)) : page.realFetch(url, init));
+  });
+  await clickWhere("#table-list button", "type", "folder");
+  await clickWhere("#table-list button", "type", "file");
+  await new Promise((r) => setTimeout(r, 3000));
+  const late = await js("document.getElementById('grid-head').textContent");
+  await call(() => {
+    const page = /** @type {any} */ (globalThis);
+    page.fetch = page.realFetch;
+  });
+  check("the rows of the type asked last, though an earlier answer came after", /rows of app\.files /.test(String(late)), late);
   const glance = withShares.replace("  can peek    = view or roles\n", "  can peek    = view or roles\n  can glance  = viewer\n");
   writeFileSync(policy, glance);
   command("apply", policy);
