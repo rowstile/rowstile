@@ -110,10 +110,11 @@ your policy that calls such a function writes `extensions.` too.
 **What to know:**
 
 - **Node: `sslmode=require` means `verify-full` to node-postgres**, and Supabase's certificate is signed by
-  Supabase's own authority: every connection fails with "self-signed certificate in certificate chain". Write
-  `?uselibpqcompat=true&sslmode=require` (encrypted, the certificate not checked, as libpq means it), or give
-  node-postgres Supabase's authority (`sslrootcert`: the certificate the project's database settings offer to
-  download) and keep `verify-full`. Prisma's client goes through node-postgres too (`@prisma/adapter-pg`);
+  Supabase's own authority: every connection fails with "self-signed certificate in certificate chain". Give
+  node-postgres Supabase's authority and keep `verify-full`: `sslrootcert`, the certificate the project's
+  database settings offer to download. `?uselibpqcompat=true&sslmode=require` connects too, as libpq means
+  it: encrypted, but the certificate is not checked, so a machine between the app and Supabase could read and
+  change every row the app role reads or writes. Prisma's client goes through node-postgres too (`@prisma/adapter-pg`);
   Prisma Migrate and the command take `sslmode=require` as libpq does. The command, as libpq, then checks the
   certificate against a root certificate when there is one: the authority `sslrootcert` names, or `root.crt` in
   libpq's folder (`~/.postgresql`).
