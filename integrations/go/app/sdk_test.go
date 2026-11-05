@@ -445,3 +445,49 @@ func TestPerPackageSaysWhyItCantCopy(t *testing.T) {
 		t.Error(rowstiletest.Worker())
 	}
 }
+
+func TestALoginInsideTxIsWhomTheTransactionIsFor(t *testing.T) {
+	check(t, "a key's sign-in inside Tx is whom the transaction is signed in as: nested work for the key's principal "+
+		"is a savepoint, anyone else's refused; the database refuses a key for someone else in a user's transaction")
+	key, _ := annsKey(t, "read")
+	var said []string
+	var refused, notConfigured error
+	err := rowstile.TxAs(context.Background(), pool, rowstile.Nobody, func(ctx context.Context, tx pgx.Tx) error {
+		// a token the database refuses (AZ703), in a savepoint: the transaction goes on, signed in as nobody
+		notConfigured = rowstile.Tx(ctx, tx, func(ctx context.Context, inner pgx.Tx) error {
+			_, _, err := rowstile.LoginJWT(ctx, inner, "a.b.c")
+			return err
+		})
+		keyed, who, err := rowstile.LoginKey(ctx, tx, key)
+		if err != nil {
+			return err
+		}
+		said = append(said, name(who), whom(ctx, tx))
+		err = rowstile.Tx(keyed, tx, func(ctx context.Context, inner pgx.Tx) error {
+			said = append(said, whom(ctx, inner))
+			return nil
+		})
+		said = append(said, fmt.Sprint(err))
+		refused = rowstile.Tx(ctx, tx, func(context.Context, pgx.Tx) error { return errors.New("ran") })
+		return nil
+	})
+	if err != nil || strings.Join(said, ", ") != "user 1, user 1, user 1, <nil>" ||
+		refused == nil || refused.Error() != signedInAlready("user 1", "nobody") {
+		t.Errorf("%v %v %v", said, refused, err)
+	}
+	var call *rowstile.CallError
+	if !errors.As(notConfigured, &call) || call.Code != "AZ703" {
+		t.Errorf("%v", notConfigured)
+	}
+	// in a transaction signed in as bo, ann's key: the database's refusal, AZ716
+	err = rowstile.TxAs(context.Background(), pool, rowstile.User("2"), func(ctx context.Context, tx pgx.Tx) error {
+		_, _, err := rowstile.LoginKey(ctx, tx, key)
+		return err
+	})
+	if rowstile.ErrorCode(err) != "AZ716" || !strings.Contains(err.Error(), "signed in as user 2 already") {
+		t.Errorf("%v", err)
+	}
+}
+
+// name is who, in the words the database's refusals use
+func name(who rowstile.Principal) string { return who.Type + " " + who.ID }

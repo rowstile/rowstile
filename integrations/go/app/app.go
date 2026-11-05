@@ -142,7 +142,7 @@ func New(pool *pgxpool.Pool) http.Handler {
 		var key string
 		err := rowstile.Tx(r.Context(), pool, func(ctx context.Context, tx pgx.Tx) error {
 			if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
-				if _, err := tx.Exec(ctx, "SELECT authz.login_key($1)", apiKey); err != nil {
+				if _, _, err := rowstile.LoginKey(ctx, tx, apiKey); err != nil {
 					return err
 				}
 			}

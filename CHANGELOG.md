@@ -61,6 +61,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   Postgrex transaction's connection) raises a `RuntimeError` before anything is sent, as the Python and PHP SDKs
   do, instead of signing that transaction in. `Rowstile.acting_as` says, in its docs, that inside a `transact` the
   statements still run as that transaction's principal.
+- The Go SDK: `rowstile.LoginKey(ctx, tx, key)` and `rowstile.LoginJWT` sign a request in with an API key or a
+  token inside `Tx`, and `Tx` follows whom the transaction is signed in as from then on: a nested `Tx` for the
+  key's principal is a savepoint, and anyone else's is refused. A login made with SQL inside `Tx` left `Tx`
+  answering for the principal it began with ([Go](docs/stacks/go.md)).
 
 ### Upgrading
 
