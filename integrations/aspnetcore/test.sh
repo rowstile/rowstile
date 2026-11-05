@@ -82,10 +82,20 @@ mkdir -p "$COVERAGE" && rm -f "$COVERAGE"/coverage*.xml "$COVERAGE/report.txt"
 dotnet Tests/bin/Debug/net10.0/Tests.dll --results-directory "$COVERAGE" --coverlet --output Detailed "$@" >"$LOG/tests.log" 2>&1
 tests=$?
 # a line for each test, as the other suites print theirs: Check_7_hidden_is_404 is "ok    7: hidden is 404", the SDK's
-# own by their words, sorted by number; the whole log when one failed
-sed -nE 's/^\s*(passed|failed) Conformance\.Tests\.[A-Za-z0-9]+\.([A-Za-z0-9_]+) \(.*$/\1 \2/p' "$LOG/tests.log" |
+# own by their words, sorted by number; the whole log when one failed. (.NET colours the log where the console says
+# it may, into a file too, as on GitHub's runners: the colours are taken out first)
+printed=$(sed -E 's/\x1b\[[0-9;]*m//g' "$LOG/tests.log" |
+  sed -nE 's/^\s*(passed|failed) Conformance\.Tests\.[A-Za-z0-9]+\.([A-Za-z0-9_]+) \(.*$/\1 \2/p' |
   sed -E 's/^passed /ok    /; s/^failed /FAIL  /; s/Check_([0-9]+)_([0-9]+)_/\1, \2: /; s/Check_([0-9]+)_/\1: /; s/_/ /g' |
-  awk '{ print ($2 ~ /^[0-9]/ ? $2 + 0 : 99) "\t" $0 }' | sort -s -n -k1,1 | cut -f2-
+  awk '{ print ($2 ~ /^[0-9]/ ? $2 + 0 : 99) "\t" $0 }' | sort -s -n -k1,1 | cut -f2-)
+[ -z "$printed" ] || echo "$printed"
+# and each check by number the tests hold has its line (11 is this script's alone, 15 Next.js's): none read from the
+# log, or one missing, is a run that checked less than it seems
+if [ $# = 0 ]; then
+  numbers=$(sed -nE 's/^(ok|FAIL) +([0-9, ]+):.*/\2/p' <<<"$printed" | tr -s ', ' '\n' | sort -un | paste -sd' ')
+  [ "$numbers" = "1 2 3 4 5 6 7 8 9 10 12 13 14 16" ] ||
+    { echo "FAIL  the tests' lines name checks ${numbers:-none}, not 1 to 16 but 11 and 15"; [ $tests != 0 ] || cat "$LOG/tests.log"; rc=1; }
+fi
 [ $tests = 0 ] || { cat "$LOG/tests.log"; rc=1; }
 $PYTHON - "$COVERAGE" >"$COVERAGE/report.txt" <<'PY'
 import glob, os, sys
