@@ -207,6 +207,14 @@ test("a group's admins may run it, and only its owner is offered Delete", async 
   expect(actions("Mine")).toEqual(["Add sub-group", "Rename", "Delete"]);
 });
 
+test("a search link with a broken escape searches for its text as written, instead of a blank page", async () => {
+  await start("#/search/50%", { "GET /api/search?q=50%25": { folders: [], files: [], next: { folder: null, file: null } } });
+  expect(div.querySelector("h2")?.textContent).toBe("Search: 50%");
+  expect(shown()).toContain("Nothing found.");
+  await start("#/search/caf%C3%A9");
+  expect(div.querySelector("h2")?.textContent).toBe("Search: café");
+});
+
 test("leaving a group asks only to leave, and a refusal says so", async () => {
   const team = { id: "g1", name: "Team", parent_id: null, member: true, manage: false, own: false };
   await start("#/groups", {

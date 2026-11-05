@@ -18,8 +18,13 @@ export function parse(hash: string): Route {
   if (page === "folder" && Number(id) > 0) return { page, id: Number(id) };
   if (page === "review" && Number(id) > 0) return { page, id: Number(id) };
   if (page === "requests" || page === "groups") return { page };
-  if (page === "search" && id) return { page, q: decodeURIComponent(id) };
+  if (page === "search" && id) return { page, q: decoded(id) };
   return { page: "home" };
+}
+
+/** The words of a link the app wrote (encoded), or of one typed by hand as it stands ("50%" is no escape). */
+function decoded(text: string): string {
+  try { return decodeURIComponent(text); } catch { return text; }
 }
 
 export const go = (path: string) => { window.location.hash = path; };
