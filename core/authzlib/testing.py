@@ -155,9 +155,7 @@ class TestMixin(Core):
     {self.add_result("''", "true", lit(f"{len(self.pol.invariants)} invariant(s) hold"))}
   END IF;
 """
-        return f"""DROP FUNCTION IF EXISTS {FN}();
-CREATE FUNCTION {FN}() RETURNS TABLE (test text, line text, ok boolean, detail text)
-LANGUAGE plpgsql AS $authz_tests$
+        body = f"""
 #variable_conflict use_column
 DECLARE
   r_test text[] := '{{}}'; r_line text[] := '{{}}'; r_ok boolean[] := '{{}}'; r_detail text[] := '{{}}';
@@ -172,7 +170,15 @@ BEGIN
 {"".join(blocks)}{invariants}  PERFORM set_config('authz.user_id', v_me, true), set_config('authz.principal_type', v_pt, true),
           set_config('authz.scopes', v_scopes, true);
   RETURN QUERY SELECT * FROM unnest(r_test, r_line, r_ok, r_detail);
-END $authz_tests$;
+END """
+        # the body holds the tests' names and ids as written: its quote's tag is one none of them holds
+        tag, n = "$authz_tests$", 0
+        while tag in body:
+            n += 1
+            tag = f"$authz_tests{n}$"
+        return f"""DROP FUNCTION IF EXISTS {FN}();
+CREATE FUNCTION {FN}() RETURNS TABLE (test text, line text, ok boolean, detail text)
+LANGUAGE plpgsql AS {tag}{body}{tag};
 """
 
     def coverage_sql(self, st: CheckStep, obj: str) -> str:

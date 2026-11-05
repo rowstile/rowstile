@@ -7404,6 +7404,21 @@ class TestFiles(unittest.TestCase):
                 c.add_test_files({"t.authz": body})
                 c.check_scenarios()
 
+    def test_a_tag_in_a_name_or_an_id_ends_no_function(self) -> None:
+        # a test's name and an id in quotes are written into the tests' function, whose body is quoted with a tag
+        # none of them holds: the function is still two statements (DROP, CREATE)
+        from authzlib.statements import split
+
+        for body in (
+            'test "ends $authz_tests$ here"\n  user 1 can view doc 1\n',
+            "test \"a\"\n  user 1 can view doc 'a$authz_tests$'\n",
+            "test \"a\"\n  user 1 can view doc 'a$authz_tests$ $authz_tests1$'\n",
+        ):
+            with self.subTest(body=body):
+                c = Compiler(parse_policy(self.POLICY, "p.authz"))
+                c.add_test_files({"t.authz": body})
+                self.assertEqual(len(split(c.tests_function_sql())), 2)
+
     def test_a_dollar_quote_is_no_name(self) -> None:
         # (the parser refuses a dollar quote's tag in a test's braces, AZ110: this asks the function itself)
         self.assertEqual(
