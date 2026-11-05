@@ -936,6 +936,22 @@ def test_the_readme_gives_each_setting_and_its_default(monkeypatch: pytest.Monke
     assert rest == {"FM_ADMIN_URL": "none", "FM_APP_PASSWORD": "none"}
 
 
+def test_settings_say_true_or_false_in_any_case_and_list_origins_with_spaces(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FM_COOKIE_SECURE=TRUE keeps the cookie to HTTPS as `true` does; a word that is neither stops the app at
+    start, rather than leaving the cookie on plain HTTP."""
+    from app import config
+
+    for word, meant in (("true", True), ("TRUE", True), ("1", True), ("False", False), ("0", False)):
+        monkeypatch.setenv("FM_COOKIE_SECURE", word)
+        assert config.load().cookie_secure is meant, word
+    monkeypatch.setenv("FM_COOKIE_SECURE", "yes please")
+    with pytest.raises(ValueError, match="FM_COOKIE_SECURE is 'yes please': say true or false"):
+        config.load()
+    monkeypatch.setenv("FM_COOKIE_SECURE", "true")
+    monkeypatch.setenv("FM_WEB_ORIGINS", "http://a, http://b ,")
+    assert config.load().web_origins == ("http://a", "http://b")
+
+
 def test_the_readme_names_each_part_of_the_backend() -> None:
     """The table of how it fits together: each module of backend/app, and only paths that are there."""
     paths = [k for k in readme_rows() if "/" in k or "." in k]
