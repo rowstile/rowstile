@@ -181,8 +181,26 @@ final class SdkTest extends TestCase
         self::assertSame(['7', '7', 'a', '(1,"a b",,"","x""y","\\\\")'], [
             Rowstile::keyText(7), Rowstile::keyText([7]), Rowstile::keyText('a'), Rowstile::keyText([1, 'a b', null, '', 'x"y', '\\']),
         ]);
+        // a field quoted for ASCII's six spaces alone, as Postgres does: not for a no-break space, an em space
+        self::assertSame(["(\"\vv\",a\u{a0}b)", "(\u{2003}\x1c,\"\r\n\f\")"], [
+            Rowstile::keyText(["\vv", "a\u{a0}b"]), Rowstile::keyText(["\u{2003}\x1c", "\r\n\f"]),
+        ]);
         self::assertSame(['not found', 'row 7 not found', 'app.notes not found', 'app.notes 7 not found'], [
             (new NotFound())->getMessage(), (new NotFound(null, '7'))->getMessage(), (new NotFound('app.notes'))->getMessage(), (new NotFound('app.notes', '7'))->getMessage(),
+        ]);
+    }
+
+    #[TestDox('a principal as text, as every SDK writes it and the audit trail names who acted, and read back')]
+    public function test_a_principal_as_text(): void
+    {
+        $each = ['nobody' => Principal::nobody(), '42' => Principal::user(42), 'service:3' => Principal::of('service', 3),
+            'user:a:b' => Principal::user('a:b'), 'user:nobody' => Principal::user('nobody'), '(1,2)' => Principal::user('(1,2)')];
+        foreach ($each as $text => $principal) {
+            self::assertSame([(string) $text, true], [(string) $principal, Principal::parse((string) $text)->equals($principal)]);
+        }
+        self::assertSame([true, true, true], [
+            Principal::parse('user:42')->equals(Principal::user(42)), Principal::parse('service:')->isNobody(),
+            Principal::parse(':x')->equals(Principal::user(':x')),
         ]);
     }
 
