@@ -1910,10 +1910,18 @@ END $f$;""")
         composite = [t for t in self.types.values() if t.composite]
         types = [f"CREATE TYPE {t.keytype} AS ({', '.join(f'{q(c)} {ty}' for c, ty in t.key)});" for t in composite]
         cases = "\n".join(
-            f"    WHEN {lit(t.name)} THEN\n"
-            f"      IF pg_catalog.pg_input_is_valid(p_id, {lit(t.keytype)}) THEN RETURN p_id::{t.keytype}::text; END IF;"
-            for t in self.types.values()
-            if t.pktype != "text" or t.composite
+            [
+                f"    WHEN {lit(t.name)} THEN\n"
+                f"      IF pg_catalog.pg_input_is_valid(p_id, {lit(t.keytype)}) THEN RETURN p_id::{t.keytype}::text; END IF;"
+                for t in self.types.values()
+                if t.pktype != "text" or t.composite
+            ]
+            # anyone is one subject, whatever id a share names it with ('*', as type:* names every principal)
+            + (
+                ["    WHEN 'anyone' THEN RETURN '*';  -- one subject, whatever id names it"]
+                if self.shares_with_anyone()
+                else []
+            )
         )
         canon = (
             f"""-- an id as it is stored and compared: '(1, 42)' -> '(1,42)', '007' -> '7' (invalid ids as they are)
@@ -1947,6 +1955,18 @@ CREATE TRIGGER authz_shares_canon BEFORE INSERT OR UPDATE OF object_type, object
             else ""
         )
         return "\n".join(types + [canon, trigger])
+
+    def shares_with_anyone(self) -> bool:
+        """Whether a shared relation or the custom roles name `anyone`: authz_int.canon then gives its shares the id
+        '*' (base.py gives it to those stored before)."""
+        return any(
+            st == "anyone"
+            for t in self.types.values()
+            for st, _ in [
+                *(s for r in t.relations.values() for src in r.sources for s in src.subjects),
+                *(t.roles[0] if t.roles else []),
+            ]
+        )
 
 
 CANONICAL_SHARES = """-- Shares stored with ids that aren't canonical for their type's key ('007' for a bigint, an uppercase uuid) are
