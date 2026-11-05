@@ -177,8 +177,8 @@ export function checkSitemap(sitemap, paths = Object.values(PAGES).map(url)) {
   if (paths.filter(inSitemap).length === paths.length) throw new Error("inSitemap leaves out no page: the error codes' are");
 }
 
-/** Whether the sitemap lists a page (its URL: "/errors/AZ201"). An error code's page is left out: there are some eighty
- *  of them, short and alike, and a new site's crawl goes first to what the sitemap lists. They stay pages, linked from
+/** Whether the sitemap lists a page (its URL: "/errors/AZ201"). An error code's page is left out: there is one for each
+ *  code, short and alike, and a new site's crawl goes first to what the sitemap lists. They stay pages, linked from
  *  the errors' index and `rowstile help`. @param {string} path */
 export function inSitemap(path) {
   return !/^\/errors\/AZ\d+$/.test(path);
@@ -224,7 +224,7 @@ export const DESCRIPTIONS = {
   "words.md": "The words rowstile uses: policy, object, subject, principal, relation, permission, share, role, rule.",
   "editor.md": "rowstile in your editor: the VS Code and Zed extensions, Tree-sitter for Helix and Neovim, and the language server for .authz files.",
   "benchmark.md": "rowstile's scale benchmark: row-level security reads and tree writes in Postgres, measured with 20 million files and a million folders.",
-  "stacks/index.md": "rowstile in your stack: FastAPI, Next.js with Prisma, Node with pg, postgres.js or Drizzle, Python, ASP.NET Core with EF Core, Rails, Laravel, or plain SQL from any language.",
+  "stacks/index.md": "rowstile in your stack: FastAPI, Django, Next.js with Prisma, Node, Python, Go, ASP.NET Core, Rails, Spring, Ktor, Axum, Phoenix, Laravel, Electric, Zero, PowerSync, or plain SQL from any language.",
   "stacks/fastapi.md": "Permissions for a FastAPI app with SQLAlchemy and Alembic, enforced by Postgres row-level security: each transaction signed in, 403 and 404 from the database.",
   "stacks/nextjs.md": "Permissions for a Next.js app with Prisma and React, enforced by Postgres row-level security: every query signed in, refusals as errors, signed-in reads out of the caches.",
   "stacks/node.md": "rowstile for Node apps on pg, postgres.js or Drizzle (Express, Hono, workers): transactions signed in as the request's user.",
@@ -242,8 +242,8 @@ export const DESCRIPTIONS = {
   "stacks/zero.md": "Zero, the sync engine, on rowstile's sync index (a preview): the app's query endpoint adds each table's filter to the ZQL for the signed-in user, and its mutate endpoint signs each mutation in.",
   "stacks/powersync.md": "PowerSync, the sync engine, on rowstile's sync index (a preview): mirrors of the synced tables, each row with its readers, and the streams that put each row in a bucket for each key that may read it.",
   "stacks/rails.md": "Permissions for a Rails app on Active Record, enforced by Postgres row-level security: each transaction signed in, 403 and 404 from the database (preview).",
-  "sdk/python.md": "The rowstile Python SDK: FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic and pytest on a rowstile policy.",
-  "sdk/typescript.md": "The rowstile TypeScript SDK: Next.js, Prisma, Drizzle, pg, postgres.js, React and Vitest on a rowstile policy.",
+  "sdk/python.md": "The rowstile Python SDK: FastAPI, SQLAlchemy, psycopg, asyncpg, Alembic and pytest on a rowstile policy, and Django (preview).",
+  "sdk/typescript.md": "The rowstile TypeScript SDK: Next.js, Prisma, Drizzle, pg, postgres.js, React, Vitest and Jest on a rowstile policy.",
   "sdk/go.md": "The rowstile Go SDK (preview): pgx transactions signed in, sqlc's code inside them, net/http answers as problem details, and test databases.",
   "sdk/dotnet.md": "The rowstile .NET SDK (preview): Npgsql, EF Core and ASP.NET Core on a rowstile policy, refusals as 403 and 404, and test databases.",
   "sdk/ruby.md": "The rowstile Ruby SDK (preview): Rails, Active Record, Active Job and Minitest on a rowstile policy.",
@@ -350,8 +350,8 @@ export function structured(address, description) {
   };
 }
 
-/** A summary as a description. A search result shows about 160 characters: the first sentences that fit, else cut
- *  at a word. @param {string} summary */
+/** A summary as a description: up to 200 characters (a search result shows about 160 of them, a shared link more),
+ *  the first sentences within them, else cut at a word. @param {string} summary */
 function short(summary) {
   if (summary.length <= 200) return summary;
   const sentences = summary.slice(0, 200).match(/^.*[.!?](?= )/s);
