@@ -10,6 +10,9 @@ from .parse import Loc, fail
 # The comments that mark rowstile's own RLS policies and masked views: applying, removing and lint know them by
 # these alone
 POLICY_MARKS = "('rowstile')"
+# rowstile's own schemas, which hold none of the app's tables: what it keeps, what it generates, the views the rules
+# read, the trees apply keeps, and the sync index
+OWN_SCHEMAS = ("authz", "authz_gen", "authz_int", "authz_keep", "authz_sync")
 VIEW_MARKS = "('rowstile masked view')"
 # ... and the triggers given to the tables under a table rowstile watches (CHILD_TRIGGERS below)
 CHILD_TRIGGER_MARK = "rowstile: the trigger of the table above, for the rows stored here"

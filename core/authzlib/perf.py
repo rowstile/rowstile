@@ -24,14 +24,13 @@ from typing import TYPE_CHECKING, TypeAlias, TypedDict
 
 from .connection import Db, Value, text
 from .parse import Loc, Type, cols
-from .sqlutil import POLICY_MARKS, ident, lit, q, qt
+from .sqlutil import OWN_SCHEMAS, POLICY_MARKS, ident, lit, q, qt
 
 if TYPE_CHECKING:
     from . import Compiler
 
 BIG = 10_000  # rows: a full scan of a table this size is worth a warning
 SLOW_MS = 100  # a read slower than this on the data there is worth a warning
-OWN_SCHEMAS = ("authz", "authz_gen", "authz_int", "authz_keep")  # rowstile's: their indexes are its own business
 
 # a lookup the policy makes: (table, columns, why, the policy line, the columns that serve it alone too: a (type, id)
 # pair's ids where they are two columns, its type where its id is one, as authz.lint() counts them)
