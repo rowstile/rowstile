@@ -87,7 +87,9 @@ is a link out of the folder isn't read at all, and with `--db` neither is: the c
 Values are as dotenv writes them: quotes, `#` comments,
 `export`, and `${NAME}` filled in. A URL's `?sslmode=`, `?host=`, `?port=` and the like are read, and `?ssl=true`
 as `sslmode=require`, as libpq reads it (where the URL has both, the one written last wins); any other value of
-`ssl` is refused. <!-- checked: tests/unit_test.py "test_a_urls_ssl_option_as_libpq_reads_it" --> Each of
+`ssl` is refused. <!-- checked: tests/unit_test.py "test_a_urls_ssl_option_as_libpq_reads_it" --> A URL's
+parameters that libpq doesn't have are left to the ORM they are for (`?schema=`, `?pgbouncer=`), but one a letter
+away from one of libpq's (`?sslmod=`, `?SSL_MODE=`) is refused, as a typo. <!-- checked: tests/unit_test.py "test_a_typo_in_a_urls_setting_is_refused" --> Each of
 libpq's settings, in a connection string, a URL or a `PG*` variable, is done as libpq does it, left alone where
 that changes neither what is checked nor where the command connects (`application_name`, `keepalives`, `sslsni`
 and the like), or refused, naming it: a service, a password file where no password is given, a host address apart

@@ -6535,6 +6535,33 @@ class Wire(unittest.TestCase):
                 self.pgwire.parse_dsn(dsn)
             self.assertNotIn("secret", str(caught.exception), dsn)
 
+    def test_a_typo_in_a_urls_setting_is_refused(self) -> None:
+        # a URL's parameters libpq doesn't have are an ORM's own, left to it; but one a letter away from one of libpq's
+        # settings (one changed, added, dropped, or two side by side swapped; in any case, _ and - aside) is a typo,
+        # refused as libpq refuses it, rather than connecting without what it asks for
+        parse = self.pgwire.parse_dsn
+        for written, meant in (
+            ("sslmod", "sslmode"),
+            ("sslmodes", "sslmode"),
+            ("sslmoda", "sslmode"),
+            ("sslmdoe", "sslmode"),
+            ("SSL_MODE", "sslmode"),
+            ("chanel_binding", "channel_binding"),
+            ("channel-binding", "channel_binding"),
+            ("sslrootcrt", "sslrootcert"),
+            ("hots", "host"),
+        ):
+            said = f'^invalid URI query parameter: "{written}": did you mean {meant}\\?$'
+            with self.assertRaisesRegex(ValueError, said, msg=written):
+                parse(f"postgresql://h/app?{written}=require", environ={})
+        # Prisma's, Supabase's and node-postgres's own, and asyncpg's server settings: left alone, as before
+        others = "schema=public&pgbouncer=true&connection_limit=1&pool_timeout=5&socket_timeout=3&sslaccept=strict"
+        others += "&statement_cache_size=0&sslidentity=id.p12&uselibpqcompat=true&search_path=app&pool=5&database=x"
+        self.assertEqual(parse(f"postgresql://h/app?{others}", environ={})["database"], "app")
+        # after a password, the rest of it, likely, with an & in it: not repeated
+        with self.assertRaisesRegex(ValueError, "after its password \\(not repeated here\\): an & in the password"):
+            parse("postgresql://u@h/app?password=my&sslmod=x", environ={})
+
     def test_a_password_is_never_repeated(self) -> None:
         # what follows a password with a space, or a / in a URL, is likely the rest of it: no message repeats a piece
         for dsn, said, piece in (
