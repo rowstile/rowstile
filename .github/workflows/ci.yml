@@ -4,7 +4,8 @@
 name: ci
 on:
   push:
-    branches: [main]      # a pull request's branch runs once, as the pull request
+    # main and a release's line (release.yml asks for a green run); a pull request's branch runs as the pull request
+    branches: [main, "release/**"]
   pull_request:
   workflow_dispatch:
 # a new push to a pull request cancels its run still going (main's runs all finish)

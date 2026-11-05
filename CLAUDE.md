@@ -141,8 +141,9 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   job, and by hand `gh workflow run release.yml -f latest=true`).
   `server.json` (the repository's root) is the MCP server's entry in the official registry: it names the npm
   package, whose `mcpName` must be its name (`Version` in `unit_test.py`), and the release publishes it last.
-  `.github/workflows/release.yml` publishes them on a tag of a commit of `main` or `release/X.Y`: PyPI, npm,
-  ghcr.io and a GitHub release, each file built once in a job that can't publish. The workflows run on
+  `.github/workflows/release.yml` publishes them on a tag of a commit of `main` or `release/X.Y` once ci.yml's run of
+  that branch's push is green on it (or on the commit after it, the next version): PyPI, npm, ghcr.io and a GitHub
+  release, each file built once in a job that can't publish. The workflows run on
   GitHub's runners (`ubuntu-latest`)
 - `demo/` — the recording at the top of the README (`demo.gif`): `record.sh` runs `demo.tape` in a terminal
   recorder in a container, on the guide's own app (`files.py` takes it from `docs/getting-started.md`); made
@@ -200,7 +201,7 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   tag (`blog-vN`) publishes `docs/blog/` and `docs/compare/` alone, on the site of the newest of those. One on a
   commit older than another of its kind deploys nothing. `source.mjs` is the rule (whether a tag deploys, what
   from, and the checkout), `source_test.mjs` its test, `RELEASING.md` the steps
-- `.github/workflows/ci.yml` — on each pull request and push to `main`: `tests/unit_test.py` and the type checks
+- `.github/workflows/ci.yml` — on each pull request and push to `main` or `release/X.Y`: `tests/unit_test.py` and the type checks
   (`unit`), the suites (`suites.yml`, called once per version: every suite on PG 16, `ci.sh`, and what depends on
   the version on 17 and 18, `ci.sh --short`), what they run of the code (`coverage`: on a pull request, a line or
   branch it changes in `authzlib` or `cli` that no suite runs fails it, and on any run PL/pgSQL never run other

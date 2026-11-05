@@ -76,7 +76,8 @@ A build from `main` records its version with a hash of the compiler's sources (`
   tag is never moved or deleted once pushed: a bad release is followed by a new one.
 - A patch comes from `main` when `main` holds only fixes since the last release. Otherwise, make
   `release/X.Y` from the tag `vX.Y.Z` (once), land the fix on `main` first, then cherry-pick it to the branch
-  (`git cherry-pick -x`) in a pull request, and release from there.
+  (`git cherry-pick -x`) in a pull request, and release from there. CI runs on each push to `release/X.Y` as on
+  `main`, and the release waits for its green run there.
 
 ## The changelog
 
@@ -145,7 +146,8 @@ request of its own, before the release's.
    2. `main`'s next version: `python3 packaging/version.py X.(Y+1).0-dev` after a final release,
       `X.Y.Z-dev` after an alpha, a beta or a candidate, with the subject line that version.
 2. **Merge it** with a rebase once CI is green, so both commits land on `main` as they are.
-3. **Tag the first commit** and push the tag:
+3. **Tag the first commit** once CI is green on `main` after the merge (its run of the push, on the second
+   commit: the first has no run of its own), and push the tag:
 
        git fetch origin
        sha=$(git log origin/main --format=%H -1 --grep '^X.Y.Z-rc.N$')
@@ -153,8 +155,10 @@ request of its own, before the release's.
        git push origin vX.Y.Z-rc.N
 
 4. **The release workflow** (`.github/workflows/release.yml`) runs on the tag. It checks that the tag and the
-   version agree and that the tag's commit is on `main` or `release/X.Y`, runs the unit tests and the packaging
-   tests, then publishes: the Python package, the npm packages, the image, and a GitHub release holding the
+   version agree, that the tag's commit is on `main` or `release/X.Y`, and that CI passed on that branch's push of
+   it or of a later commit that is it but for its version (the second commit of step 1). Tagged too early, it
+   stops there and is run again once CI is green. It then runs the unit tests and the packaging tests, and
+   publishes: the Python package, the npm packages, the image, and a GitHub release holding the
    wheel, the sdist, the npm launcher and the VS Code extension, with the changelog's section as its notes.
    Each file is built once, in a job with no right to publish, and PyPI and the Marketplace get the files the
    GitHub release attaches. Last, the MCP server's entry in the official registry (`server.json`): that
