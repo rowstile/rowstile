@@ -22,7 +22,13 @@ from typing import NamedTuple
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # the pages that quote another project's documentation
-PAGES = ("docs/comparison.md", "docs/compare/openfga.md", "docs/compare/spicedb.md", "docs/compare/zenstack.md")
+PAGES = (
+    "docs/comparison.md",
+    "docs/compare/app-code.md",
+    "docs/compare/openfga.md",
+    "docs/compare/spicedb.md",
+    "docs/compare/zenstack.md",
+)
 READ = re.compile(r"read\s+on\s+(\d{4}-\d{2}-\d{2})\s+and\s+linked")
 
 

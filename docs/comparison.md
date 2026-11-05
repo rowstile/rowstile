@@ -93,8 +93,8 @@ The same rule as `CREATE POLICY` and as a policy file, and where a tree stops be
 ## Checks in app code: CASL, Casbin, Pundit
 
 An `if` in each handler is where most apps start, and for a few roles it is enough. It gets hard in two
-places: every new handler must remember the check, and a list must be filtered after it is read, or the rule
-written a second time as a `WHERE`.
+places: every new handler must remember the check, and a list needs the rule as a query too, which some
+libraries make from it and others leave to be written beside it.
 
 **It is the better choice** for a small app with a few roles and no sharing between users.
 
