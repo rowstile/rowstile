@@ -113,6 +113,21 @@ def test_an_atomic_block_signs_in_as_whoever_the_code_acts_for_now() -> None:
         assert rowstile.error_code(e.value) == "AZ701"
 
 
+def test_nobody_has_one_spelling() -> None:
+    """In a transaction signed in as nobody, a statement while the code acts for no one is nobody's work, and so is
+    one for a principal without an id: the same principal, as SQLAlchemy and the drivers take it."""
+    with transaction.atomic():
+        with rowstile.acting_as(None):
+            assert projects() == NOBODY
+        assert projects() == NOBODY and who() is None
+        with rowstile.acting_as(("service", None)):
+            assert projects() == NOBODY
+    with transaction.atomic(), rowstile.acting_as(("service", "")):
+        assert projects() == NOBODY and signed_in_as() == ""
+        with rowstile.acting_as(None):
+            assert projects() == NOBODY
+
+
 def test_a_savepoint_rolled_back_leaves_the_transaction_signed_in_as_the_code_acts_for() -> None:
     """Rolled back to a savepoint made before the sign-in, Postgres has undone it: the transaction is still the same
     principal's, who signs in again at the next statement, and another is still refused. Rolled back to a
@@ -189,6 +204,10 @@ def test_pytest_djangos_own_transaction_around_a_test(client: Client) -> None:
             pass
     with rowstile.acting_as(2):  # the block is released: bo again
         assert projects() == BO
+    with transaction.atomic():  # a block nobody's from its first statement: one for no one is nobody's work too
+        with rowstile.acting_as(None):
+            assert projects() == NOBODY
+        assert projects() == NOBODY
     try:
         with transaction.atomic(), rowstile.acting_as(1):
             assert projects() == ANN
