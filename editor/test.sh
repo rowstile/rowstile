@@ -1,9 +1,10 @@
 #!/bin/bash
 # test.sh: the editors' side, each in a container:
-#   - the Tree-sitter grammar (tree-sitter-authz): src/ is what grammar.js generates, its corpus passes, and
-#     every .authz file in the repository parses without an error, the queries included; and it reads each of
-#     them, 200 random policies and core/tests/small.py's set up to size 4 (each written two ways), as
-#     core/authzlib/parse.py does (core/tests/parse_agreement.py); editor/test/*.authz are forms easy to misread
+#   - the Tree-sitter grammar (tree-sitter-authz): src/ is what grammar.js generates, its corpus passes and it
+#     highlights test/highlight/ as their comments say, every .authz file in the repository parses without an
+#     error, the queries included; and it reads each of them, 200 random policies and core/tests/small.py's set up
+#     to size 4 (each written two ways), as core/authzlib/parse.py does (core/tests/parse_agreement.py);
+#     editor/test/*.authz are forms easy to misread
 #   - the VS Code extension packages as the README says, with the licence and only full addresses on its
 #     Marketplace page, extension.js passes extension_test.js, and the TextMate grammar colours the policies in
 #     editor/test/ as their comments say (textmate_test.js)
@@ -52,7 +53,7 @@ docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz
     (cd /tmp/gen-src && /repo/editor/tree-sitter-authz/node_modules/.bin/tree-sitter generate >/dev/null 2>&1) &&
     diff -r /tmp/gen-src/src src >/dev/null && echo "ok    src/ is what grammar.js generates" ||
     { echo "FAIL  src/ is not what grammar.js generates: run npx tree-sitter generate in editor/tree-sitter-authz, and commit src/"; exit 1; }
-  npx tree-sitter test >/tmp/corpus.log 2>&1 && echo "ok    the corpus" || { cat /tmp/corpus.log; exit 1; }
+  npx tree-sitter test >/tmp/corpus.log 2>&1 && echo "ok    the corpus and the highlight tests" || { cat /tmp/corpus.log; exit 1; }
   files=$(find /repo -name "*.authz" -not -path "*/node_modules/*" -not -path "*/.venv/*" | sort)
   npx tree-sitter parse -q $files 2>/dev/null && echo "ok    every policy in the repository parses ($(echo "$files" | wc -l) files)" ||
     { npx tree-sitter parse -q $files; echo "FAIL  a policy has a parse error"; exit 1; }

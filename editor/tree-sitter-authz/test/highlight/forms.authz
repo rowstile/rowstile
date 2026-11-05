@@ -1,0 +1,12 @@
+type user = app.users
+type file = app.files
+  guest : user shared by view if {expires_at > now()}
+--                       ^ function
+
+test "scopes"
+  user 3 with scope read, files:write cannot view file 1
+--       ^ keyword
+--                  ^ label
+--                        ^ label
+  as user 3 with scope read-only refused {SELECT 1}
+--                     ^ label

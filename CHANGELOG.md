@@ -586,6 +586,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - Zed, Neovim and Helix read a condition as Postgres and the parser do where it holds a comment inside a comment, a
   dollar quote with a tag of letters past ASCII, or a character past U+FFFF in a name. Before, they marked it as an
   error, and a brace inside could end the condition early.
+- VS Code and the site colour the permission after `shared by` as a permission, and Zed, Neovim and Helix colour the
+  scopes of a test line's `with scope`: each editor colours those lines as the others do.
 
 ### Upgrading
 

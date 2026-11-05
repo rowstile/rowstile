@@ -351,6 +351,20 @@
           }
         },
         {
+          "match": "\\b(shared)\\s+(by)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.authz"
+            },
+            "2": {
+              "name": "keyword.other.authz"
+            },
+            "3": {
+              "name": "entity.name.function.permission.authz"
+            }
+          }
+        },
+        {
           "match": "\\b(shared|by|if|where|from)\\b",
           "name": "keyword.other.authz"
         },
