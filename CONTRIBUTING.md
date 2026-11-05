@@ -52,8 +52,9 @@ Fixes go to `main` first, then to the release branch.
   SDK's Django module after `uv sync --project integrations/django`: `uvx ty@0.0.56 check --project
   integrations/django integrations/django sdk/python/rowstile/django`). The
   command's code uses the standard library only, annotations included. TypeScript is `strict`, and so is the
-  plain JavaScript (Studio's page, the playground, the site, the npm scripts, the editors): typed with JSDoc and
-  checked by `npx tsc -p <folder>` (the `tsconfig.json` beside it; Studio's is `core/cli/tsconfig.studio.json`).
+  plain JavaScript (Studio's page and its test in `core/tests`, the playground, the site, the npm scripts, the
+  editors): typed with JSDoc and checked by `npx tsc -p <folder>` (the `tsconfig.json` beside it; Studio's is
+  `core/cli/tsconfig.studio.json`).
 - **Plain words** in messages and docs: short sentences, the names users know (`core/CONTEXT.md`). An error a
   policy can cause names the policy line and has a code with its own page (`core/authzlib/errors.py`).
 
