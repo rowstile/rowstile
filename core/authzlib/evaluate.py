@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import NamedTuple, TypeAlias, TypedDict, TypeVar, cast
 
-from .conditions import Node, Scalar, alike_columns, columns_of, reads_alike, simple, truth, uses_uid
+from .conditions import Node, Scalar, alike_columns, columns_of, held, reads_alike, simple, truth, uses_uid
 from .parse import (
     KEYWORDS,
     ROLES,
@@ -453,6 +453,27 @@ def facts(sql: str, alike: frozenset[str]) -> Node | None:
     return None if node is None or reads_alike(node, alike) else node
 
 
+ORDERED = ("<", "<=", ">", ">=")
+
+
+def between(used: list[tuple[str, Scalar]], values: list[Scalar]) -> list[Scalar]:
+    """Next to each number an order compares a column with (columns_of's hows), the values halfway to the nearest
+    of these values on either side: a numeric or a double precision column holds 1.5, where `{level > 1}` and
+    `{level >= 2}` say otherwise (on an integer column they say the same: a change seen where there is none, never
+    the other way round). Only one each of the column types holds as it is (conditions.held: those of the bounds
+    the parser read, halfway to one either side, are)."""
+    bounds = {
+        Decimal(v) for how, v in used if how in ORDERED and isinstance(v, (int, Decimal)) and not isinstance(v, bool)
+    }
+    numbers = sorted({Decimal(v) for v in values if isinstance(v, (int, Decimal)) and not isinstance(v, bool)})
+    out: list[Scalar] = []
+    for a, b in itertools.pairwise(numbers):
+        half = (a + b) / 2
+        if (a in bounds or b in bounds) and held(half):
+            out.append(half)
+    return out
+
+
 def groups(nodes: list[tuple[Node, bool]], links: Collection[str] = ()) -> list[list[tuple[Node, bool]]]:
     """Conditions in groups that read columns in common: a group's values are chosen together, apart from the
     others'. Not links: the columns a relation reads, whose values are the links' (two conditions that read only
@@ -593,7 +614,7 @@ class World:
             values += [True, False]
         # (a number is an int or a Decimal; Decimal's 28 digits hold one of 15 and 2 more, exactly)
         for how, v in used:
-            if how in ("<", "<=", ">", ">=") and isinstance(v, (int, Decimal)) and not isinstance(v, bool):
+            if how in ORDERED and isinstance(v, (int, Decimal)) and not isinstance(v, bool):
                 values += [v - 1, v, v + 1]
             elif how not in ("bool", "uid", "null") and v is not None:
                 values.append(v)
@@ -602,6 +623,7 @@ class World:
         numbers = [v for v in consts if isinstance(v, (int, Decimal)) and not isinstance(v, bool)]
         if numbers:
             values.append(max(numbers) + 2)
+        values += between(used, values)
         if any(how == "uid" for how, _ in used):
             values += self.ids("user")
         if not values:

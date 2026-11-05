@@ -189,6 +189,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile review` and `rowstile prove` give each value to the other columns a condition reads beside a
   relation's column (`{owner_id = authz.uid() and not locked}`), in the listed worlds and in the corners, so a
   change behind a long `and` in such a condition shows.
+- `rowstile review` and `rowstile prove` try, beside a number a condition compares a column with in order, the
+  numbers halfway to one less and one more: a numeric column holds 1.5, where `{level > 1}` and `{level >= 2}`
+  differ. A whole number past 8,388,607 so compared is left to the database (a real column rounds the half).
 
 ### Upgrading
 

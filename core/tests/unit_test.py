@@ -8132,17 +8132,18 @@ class Confidence(unittest.TestCase):
         self.assertEqual(simple('this."a""b" = 1'), Cmp("=", Col('a"b'), Const(1)))
         self.assertEqual(simple('Done or "Done"'), Bool("or", (Col("done"), Col("Done"))))
         # a decimal exactly, as numeric reads it, where a numeric, a double precision and a real column all hold it
-        # as written (1.50, 0.25), and the values the worlds draw around it (one less, one more, two past); any other
-        # is the database's: a real column holds 0.1 as 0.100000001 and 16777217 as 16777216, a double precision one
-        # 1.00000000000000001 as 1
+        # as written (1.50, 0.25), and the values the worlds draw around it (one less, one more, two past, halfway to
+        # one less and one more); any other is the database's: a real column holds 0.1 as 0.100000001 and 16777217 as
+        # 16777216, a double precision one 1.00000000000000001 as 1
         self.assertEqual(simple("price >= 1.50"), Cmp(">=", Col("price"), Const(Decimal("1.50"))))
         node = simple("price > 0.25")
         assert node is not None
         self.assertEqual([truth(node, {"price": Decimal(v)}, None) for v in ("0.25", "0.2500000001")], [False, True])
         for sql in ("price > 0.1", "price >= 1.10", "price = 1.00000000000000001", "price < 16777217"):
             self.assertIsNone(simple(sql), sql)
-        # 2^24 itself a real column holds, but not 2^24 + 1, which the worlds draw beside it: 2^24 - 2 is the last
-        self.assertEqual([simple(f"price < {n}") is None for n in (16777214, 16777215, 16777216)], [False, True, True])
+        # 2^23 + 0.5 a real column doesn't hold, which the worlds draw beside 2^23 (and 2^24 + 1 beside 2^24 - 1):
+        # 2^23 - 1 is the last
+        self.assertEqual([simple(f"price < {n}") is None for n in (8388606, 8388607, 8388608)], [False, False, True])
         # one that ends on a `not` (as `x not in (...)` begins) is none the evaluator reads: never a crash
         self.assertIsNone(simple("archived not"))
         # up to 15 digits written (1 + 2^-14, its neighbours held by every column), not 16 (1 + 2^-15); and null
@@ -8999,6 +9000,20 @@ class Confidence(unittest.TestCase):
         folder = "type folder = app.folders\n  owner : user = owner_id\n  viewer : user = viewer_id\n  can view = "
         long = " and ".join(f"c{i}" for i in range(8))
         self.assertFalse(self.same(folder + "viewer\n", folder + f"viewer or {{owner_id = authz.uid() and {long}}}\n"))
+
+    def test_a_number_between_two_a_condition_names_is_tried(self) -> None:
+        # a numeric column holds 1.5: `{level > 1} and {level < 2}` holds there, and `{level > 1}` says otherwise than
+        # `{level >= 2}` (on an integer column they say the same: a change said where there is none, never the other
+        # way round)
+        folder = "type folder = app.folders\n  viewer : user = viewer_id\n  can view = viewer\n  can edit = "
+        self.assertFalse(self.same(folder + "viewer\n", folder + "viewer or ({level > 1} and {level < 2})\n"))
+        self.assertFalse(self.same(folder + "viewer and {level > 1}\n", folder + "viewer and {level >= 2}\n"))
+        self.assertFalse(self.same(folder + "viewer and {level > 0.5}\n", folder + "viewer and {level >= 1}\n"))
+        self.assertEqual(
+            self.proofs(folder + "viewer and {level > 1} and {level < 2}\ninvariants\n  never folder: edit\n"), [False]
+        )
+        # between two numbers that close, the one halfway
+        self.assertFalse(self.same(folder + "viewer and {level > 0.5}\n", folder + "viewer and {level >= 0.75}\n"))
 
     def test_a_corner_chooses_the_columns_a_condition_reads_beside_a_relations(self) -> None:
         # the corner where {owner_id is not null and a and b} holds: on each row with an owner (its link), a and b
@@ -9914,9 +9929,10 @@ class HandAnswers(unittest.TestCase):
             "size > " + "9" * 8,
             "size > 0.1",
             "size = 16777216",
+            "size > " + "9" * 7,  # (9999999.5, between it and the next, a real column rounds)
         ):
             self.assertIsNone(simple(sql), sql[:20])
-        self.assertIsNotNone(simple("size > " + "9" * 7))
+        self.assertIsNotNone(simple("size > " + "9" * 6))
         # SQL's words for who is signed in to the database and for the clock name no column: Postgres reads them as
         # the role, the session or the time, so a condition on one is the database's to read, not a fact of the row
         for sql in (
