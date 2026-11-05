@@ -14844,7 +14844,11 @@ class LlmsTxt(unittest.TestCase):
         # sdk/, those it reads are the READMEs, and the files context7.json leaves out are there
         with open(os.path.join(self.REPO, "context7.json"), encoding="utf-8") as fh:
             index = json.load(fh)
-        left_out = [os.path.join(self.REPO, *g.split("/")) for g in index["excludeFolders"] if not g.startswith("**/")]
+        left_out = [
+            os.path.join(self.REPO, *g.rstrip("/").split("/"))
+            for g in index["excludeFolders"]
+            if not g.startswith("**/")
+        ]
         read = [
             os.path.relpath(f, self.REPO)
             for f in self.files(os.path.join(self.REPO, "sdk"))
@@ -14856,6 +14860,29 @@ class LlmsTxt(unittest.TestCase):
         found = {os.path.basename(f) for f in self.files(self.REPO)}
         for name in index["excludeFiles"]:
             self.assertIn(name, found, f"context7.json leaves out {name}, which no folder holds")
+
+    def test_the_index_reads_the_posts_not_their_runs(self) -> None:
+        # under docs/blog, Context7 reads the posts and their index: a post's folder holds its experiment and the
+        # logs of its runs (run-*.txt), which are no docs
+        with open(os.path.join(self.REPO, "context7.json"), encoding="utf-8") as fh:
+            index = json.load(fh)
+        left_out = [
+            os.path.join(self.REPO, *g.rstrip("/").split("/"))
+            for g in index["excludeFolders"]
+            if not g.startswith("**/")
+        ]
+        read = [
+            os.path.relpath(f, self.REPO).replace(os.sep, "/")
+            for f in self.files(os.path.join(self.REPO, "docs", "blog"))
+            if f.endswith((".md", ".mdx", ".markdown", ".rst", ".txt", ".ipynb"))
+            and os.path.basename(f) not in index["excludeFiles"]
+            and not any(fnmatch.fnmatch(f, g + "/*") for g in left_out)
+        ]
+        posts = sorted(
+            f"docs/blog/{f}" for f in os.listdir(os.path.join(self.REPO, "docs", "blog")) if f.endswith(".md")
+        )
+        self.assertEqual(sorted(read), posts)
+        self.assertTrue(any(f.endswith("/README.md") for f in posts) and len(posts) > 1, posts)
 
     def test_the_notes_left_out_are_those_the_docs_hold(self) -> None:
         # the kinds of notes for the checks, which llms-full.txt and the site's Markdown copies leave out: one list

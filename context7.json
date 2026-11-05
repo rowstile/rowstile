@@ -3,7 +3,7 @@
   "projectTitle": "rowstile",
   "description": "Access rules for Postgres: a policy file compiled into row-level security and shipped as migrations. SDKs for Python and TypeScript; previews for Go, .NET, Ruby, Java and Kotlin, Rust, Elixir and PHP.",
   "folders": ["docs", "sdk"],
-  "excludeFolders": ["**/node_modules"],
+  "excludeFolders": ["**/node_modules", "docs/blog/*/"],
   "excludeFiles": [
     "CLAUDE.md",
     "CODE_OF_CONDUCT.md",
