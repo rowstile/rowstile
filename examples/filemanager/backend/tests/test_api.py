@@ -111,8 +111,6 @@ def accounts(c: TestClient) -> None:
 
 
 def test_sign_up_can_be_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    import dataclasses
-
     from app import main
 
     monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, open_signup=False))
@@ -499,8 +497,6 @@ def test_uploading_straight_to_storage(world: World) -> None:
 
 def test_the_upload_size_limit_holds_for_what_arrives(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
     """FM_MAX_UPLOAD_BYTES: the size claimed when an upload starts, and the size of what the browser sent."""
-    import dataclasses
-
     from app import main
 
     alice, sub = world["alice"], world["sub"]
@@ -855,8 +851,6 @@ def test_the_upload_link_is_spent_once_the_upload_is_confirmed(world: World) -> 
     put(v["url"], b"y" * 4000)
     assert download(alice, fid) == b"two"
     # and what was sent after is swept away later
-    from datetime import timedelta
-
     from app.main import storage
 
     assert storage.sweep_uploads(timedelta(days=-1)) >= 2  # (everything there, whatever the clocks say)
@@ -961,8 +955,6 @@ def test_the_signed_url_page_uploads_where_the_example_does() -> None:
 
 def test_the_app_does_not_start_as_the_tables_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     """Last: it opens and closes the pool. With the owner's URL, row-level security would be skipped."""
-    import dataclasses
-
     from app import db, main
 
     monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, database_url=ADMIN))
