@@ -9015,6 +9015,48 @@ class Confidence(unittest.TestCase):
         # between two numbers that close, the one halfway
         self.assertFalse(self.same(folder + "viewer and {level > 0.5}\n", folder + "viewer and {level >= 0.75}\n"))
 
+    def test_an_id_a_condition_names_is_a_row_of_the_worlds(self) -> None:
+        # `{owner_id <> 7}` reads the owner's link: the worlds hold a user 7 (and those either side of an id an order
+        # compares with, an id of the key's type), so a folder may be theirs, or not
+        folder = (
+            "type folder = app.folders\n  owner : user = owner_id\n  viewer : user = viewer_id\n  can view = viewer\n"
+        )
+        folder += "  parent : folder = parent_id\n  can up = parent.view\n  can edit = "
+        self.assertFalse(self.same(folder + "owner\n", folder + "owner and {owner_id <> 7}\n"))
+        self.assertFalse(self.same(folder + "viewer\n", folder + "viewer or ({owner_id = 7} and signed_in)\n"))
+        self.assertFalse(self.same(folder + "viewer\n", folder + "viewer or ({owner_id in (5, 6)} and signed_in)\n"))
+        self.assertFalse(self.same(folder + "viewer and {owner_id > 7}\n", folder + "viewer and {owner_id >= 7}\n"))
+        self.assertFalse(
+            self.same(
+                folder + "owner and {parent_id is null}\n", folder + "owner and {parent_id is null or parent_id = 0}\n"
+            )
+        )
+        self.assertEqual(self.proofs(folder + "owner and {owner_id = 7}\ninvariants\n  never folder: edit\n"), [False])
+        # a key of text: a text is an id
+        from authzlib import evaluate
+
+        text = "app role app_user\ntype user = app.users (id text)\n" + folder.replace(
+            "app.folders", "app.folders (id text)"
+        )
+        a, b = (parse_policy(text + x, "p.authz") for x in ("owner\n", "owner and {owner_id <> 'root'}\n"))
+        self.assertIsNotNone(evaluate.compare(a, b, 200))
+        # on a key of whole numbers, no id lies between two: `> 7` and `>= 8` are one; on a numeric one, 7.5
+        self.assertTrue(self.same(folder + "viewer and {owner_id > 7}\n", folder + "viewer and {owner_id >= 8}\n"))
+        numeric = text.replace("(id text)", "(id numeric)")
+        a, b = (parse_policy(numeric + f"viewer and {{owner_id {x}}}\n", "p.authz") for x in ("> 7", ">= 8"))
+        self.assertIsNotNone(evaluate.compare(a, b, 200))
+        # the listed worlds hold them too: every one of up to 3 rows of each type tells these apart
+        a = parse_policy(self.HEAD + folder + "owner\n", "a.authz")
+        b = parse_policy(self.HEAD + folder + "owner and {owner_id <> 7}\n", "b.authz")
+        listing = evaluate.Listing((a, b))
+        told = 0
+        for w in itertools.islice(listing.worlds(), 3000):
+            da, db = w.data(a), w.data(b)
+            for user in w.principals((a, b)):
+                edits = [evaluate.Reference(p).evaluate(d, user)[("folder", "edit")] for p, d in ((a, da), (b, db))]
+                told += edits[0] != edits[1]
+        self.assertGreater(told, 0)
+
     def test_a_corner_chooses_the_columns_a_condition_reads_beside_a_relations(self) -> None:
         # the corner where {owner_id is not null and a and b} holds: on each row with an owner (its link), a and b
         # are chosen so that it holds there

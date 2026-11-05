@@ -192,6 +192,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile review` and `rowstile prove` try, beside a number a condition compares a column with in order, the
   numbers halfway to one less and one more: a numeric column holds 1.5, where `{level > 1}` and `{level >= 2}`
   differ. A whole number past 8,388,607 so compared is left to the database (a real column rounds the half).
+- `rowstile review` and `rowstile prove` give their small worlds a row whose id is one a condition compares a
+  relation's column with (`{owner_id <> 7}`: a user 7; `{parent_id = 0}`: a folder 0), and the ids either side of
+  one compared in order. Such a condition held on every row or on none there, so the review called a change that
+  lets everyone edit user 7's folders unchanged, and prove missed the row that breaks an invariant.
 
 ### Upgrading
 
