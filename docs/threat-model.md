@@ -40,7 +40,7 @@ do depends on identity:
   is believed (`authz.who()`, `authz.explain()` and the like switch who is signed in only for the length of
   their call). <!-- checked: tests/sessions.sh "the key is out of the app role's reach"; tests/sessions.sh "a forged signature is an error"; tests/sessions.sh "view_as signs who it shows" -->
   So the app role can't change who is signed in by setting it, widen a key's scopes, leave
-  view-as, or reuse a sign-in from another transaction or connection (`tests/sessions.sh`). <!-- checked: tests/sessions.sh "changing authz.user_id after signing in is an error"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
+  view-as, or reuse a sign-in from another transaction or connection (`tests/sessions.sh`). <!-- checked: tests/sessions.sh "settings that differ never sign alike"; tests/sessions.sh "changing authz.user_id after signing in is an error"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
 - **The app role may call `authz.act_as()`**, so code running as the app role can claim to be anyone. <!-- checked: tests/sessions.sh "authz.act_as signs carol in: she sees her files" -->
   Postgres roles other than the app role
   and its members can't sign anyone in. <!-- checked: tests/sessions.sh "a role that isn't the app role can't act_as"; tests/docs_test.sh "another role can't say who is signed in" -->

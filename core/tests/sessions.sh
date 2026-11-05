@@ -85,6 +85,20 @@ expect "sharing as a chosen user is refused" "28000: who is signed in was change
   -c "SELECT authz.share('folder', 1, 'viewer', 'user', 3)"
 expect "... and so is asking can() as one" "28000: who is signed in was changed after signing in" -c "$(ACT "'user', '3'")" -c "SET LOCAL authz.user_id = 1" \
   -c "SELECT authz.can('folder', 5, 'view')"
+# A user id or a token's subject may hold any character: settings that differ never sign alike, however one is
+# cut. (user 7␟service, and user 7 of type service, put side by side with a separator, would read the same.)
+got=$(PSQL 2>&1 <<'SQL' | tail -n 1
+BEGIN;
+SELECT set_config('authz.user_id', E'7\x1fservice', true), set_config('authz.principal_type', '', true),
+       set_config('authz.scopes', 'read', true), set_config('authz.acting_user', '', true);
+CREATE TEMP TABLE sigs ON COMMIT DROP AS SELECT authz_int.session_sig() AS s;
+SELECT set_config('authz.user_id', '7', true), set_config('authz.principal_type', 'service', true),
+       set_config('authz.scopes', '', true), set_config('authz.acting_user', E'read\x1f', true);
+SELECT count(DISTINCT s) FROM (SELECT s FROM sigs UNION ALL SELECT authz_int.session_sig()) x;
+COMMIT;
+SQL
+)
+[ "$got" = 2 ] && ok "settings that differ never sign alike, whatever characters an id holds" || bad "two settings, one signature" "$got"
 
 echo "-- a signature is good for one transaction on one connection"
 got=$(error_of "$(psql -X -q -At -U "$APP" -d "$DB" -v VERBOSITY=verbose 2>&1 <<'SQL'

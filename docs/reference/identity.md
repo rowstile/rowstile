@@ -73,7 +73,7 @@ The
 settings are believed only with it, so nothing but rowstile's own functions (`act_as`, the logins, `view_as`,
 `sign_out`, and `who`, `explain` and the like for the length of their call) can change who is signed in, widen a key's
 scopes, or leave view-as, on any Postgres: setting `authz.user_id` is an error, and so is
-a signature from another transaction or connection. <!-- checked: tests/sessions.sh "and so is a user set directly"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
+a signature from another transaction or connection. <!-- checked: tests/sessions.sh "and so is a user set directly"; tests/sessions.sh "settings that differ never sign alike"; tests/sessions.sh "clearing its scopes is an error, not a way to write"; tests/sessions.sh "authz.acting_user too"; tests/sessions.sh "a signature from an earlier transaction is refused in the next one"; tests/sessions.sh "and one from another connection too" -->
 A transaction in which nobody signed in gets an error
 too, not an empty result (`act_as(NULL, NULL)` says "nobody" on purpose). <!-- checked: tests/sessions.sh "but nobody signed in is an error, not an empty result"; tests/sessions.sh "act_as(NULL, NULL): nobody, on purpose, no error" -->
 Sessions of the policy's owner
