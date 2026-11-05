@@ -199,7 +199,6 @@ class Group(TypedDict):
 
 class Access(TypedDict):
     groups: list[Group]
-    users_in_data: int | None
     error: NotRequired[str]
 
 
@@ -1101,24 +1100,33 @@ def tests(b: Side, h: Side, unread: list[Unread]) -> Tests:
 
 
 # --- deploy ------------------------------------------------------------------------------------------
+# a name as SQL writes it, quoted ("my files", "a""b") or not, and a table's, its schema's before it or not
+NAME = r'(?:"(?:[^"]|"")*"|[^\s."(;]+)'
+TABLE = rf"(?P<table>(?:(?P<schema>{NAME})\.)?{NAME})"
 LOCKS = [
     (
-        re.compile(r"^(CREATE|DROP)\s+POLICY\s+(?:IF\s+EXISTS\s+)?\S+\s+ON\s+(\S+)", re.I),
+        re.compile(rf"^(CREATE|DROP)\s+POLICY\s+(?:IF\s+EXISTS\s+)?{NAME}\s+ON\s+{TABLE}", re.I),
         "ACCESS EXCLUSIVE",
         "its row-level security policies",
     ),
     (
-        re.compile(r"^DROP\s+TRIGGER\s+(?:IF\s+EXISTS\s+)?\S+\s+ON\s+(\S+)", re.I),
+        re.compile(rf"^DROP\s+TRIGGER\s+(?:IF\s+EXISTS\s+)?{NAME}\s+ON\s+{TABLE}", re.I),
         "ACCESS EXCLUSIVE",
         "a trigger dropped",
     ),
-    (re.compile(r"^CREATE\s+TRIGGER\s+\S+\s+.*?\bON\s+(\S+)", re.I | re.S), "SHARE ROW EXCLUSIVE", "a trigger made"),
     (
-        re.compile(r"^ALTER\s+TABLE\s+(\S+)\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY", re.I),
+        re.compile(rf"^CREATE\s+TRIGGER\s+{NAME}\s+.*?\bON\s+{TABLE}", re.I | re.S),
+        "SHARE ROW EXCLUSIVE",
+        "a trigger made",
+    ),
+    (
+        re.compile(rf"^ALTER\s+TABLE\s+{TABLE}\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY", re.I),
         "ACCESS EXCLUSIVE",
         "row-level security turned on",
     ),
 ]
+# rowstile's own schemas: what a migration locks there is none of the app's
+OWN_SCHEMAS = ("authz", "authz_gen", "authz_int")
 STRENGTH = {"SHARE ROW EXCLUSIVE": 1, "ACCESS EXCLUSIVE": 2}
 
 
@@ -1130,8 +1138,8 @@ def table_locks(sql: str) -> dict[str, tuple[str, str]]:
         for rx, mode, why in LOCKS:
             mm = rx.match(s)
             if mm:
-                tbl = mm.groups()[-1]
-                if tbl.strip('"').startswith("authz"):
+                tbl = mm.group("table")
+                if (mm.group("schema") or "").strip('"') in OWN_SCHEMAS:
                     break
                 if STRENGTH[mode] > STRENGTH.get(out.get(tbl, ("", ""))[0], 0):
                     out[tbl] = (mode, why)
@@ -1202,7 +1210,7 @@ def access(db: Db, h: Side, examples: int = 3) -> Access:
     try:
         rows = database.diff(db, h.policy, h.files)
     except (database.Error, db.errors) as e:  # db.errors: a condition that fails on a row of the review data
-        return {"groups": [], "users_in_data": None, "error": getattr(e, "message", str(e))}
+        return {"groups": [], "error": getattr(e, "message", str(e))}
     users: dict[tuple[str, str, str], set[str]] = {}
     objects: dict[tuple[str, str, str], set[str]] = {}
     shown: dict[tuple[str, str, str], list[database.DiffRow]] = {}
@@ -1229,7 +1237,7 @@ def access(db: Db, h: Side, examples: int = 3) -> Access:
                 ],
             }
         )
-    return {"groups": out, "users_in_data": None}
+    return {"groups": out}
 
 
 # --- writing it out ----------------------------------------------------------------------------------
@@ -1406,11 +1414,17 @@ def markdown(r: Review, title: str = "rowstile: what this pull request changes")
     def cell(x: str | None) -> str:
         return "" if x is None else "`" + x.replace("|", "\\|").replace("`", "'") + "`"
 
+    def where(line: str | None) -> str:  # (an included file's name may hold a `|`)
+        return (line or "").replace("|", "\\|")
+
     out += ["", "<details><summary>Meaning</summary>", "", "| | before | after | line |", "|---|---|---|---|"]
     for c in m["changed"]:
-        out.append(f"| `{c['what']}` ({c['kind']}) | {cell(c['before'])} | {cell(c['after'])} | {c['line'] or ''} |")
+        out.append(
+            f"| {cell(c['what'])} ({c['kind']}) | {cell(c['before'])} | {cell(c['after'])} | {where(c['line'])} |"
+        )
     for t in m["through"]:
-        out.append(f"| `{t['what']}` | | changes through {', '.join(f'`{v}`' for v in t['via'])} | {t['line'] or ''} |")
+        via = ", ".join(cell(v) for v in t["via"])
+        out.append(f"| {cell(t['what'])} | | changes through {via} | {where(t['line'])} |")
     ce = m.get("counterexample")
     if ce:
         grants = (
@@ -1554,13 +1568,13 @@ def annotations(r: Review, path: str) -> str:
     out = []
     note = mistake_note(r)
     if note:  # on the file, not a line: the line is the base's
-        out.append(f"::warning file={path},title=rowstile review::{escape_command(note)}")
+        out.append(f"::warning file={escape_property(path)},title=rowstile review::{escape_command(note)}")
     folder = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
     for f in r["risk"]:
         # 'line 12' is the policy file's; 'roles.authz line 3' an included file's, beside the policy
         m = re.fullmatch(r"(?:(.+) )?line (\d+)", f["line"] or "")
-        file = folder + m.group(1) if m and m.group(1) else path
-        where = f"file={file},line={m.group(2)}" if m else f"file={path}"
+        file = escape_property(folder + m.group(1) if m and m.group(1) else path)
+        where = f"file={file},line={m.group(2)}" if m else f"file={escape_property(path)}"
         out.append(f"::warning {where},title=rowstile review::{escape_command(f['why'] + ': ' + f['flag'])}")
     return "\n".join(out) + ("\n" if out else "")
 
@@ -1568,6 +1582,12 @@ def annotations(r: Review, path: str) -> str:
 def escape_command(msg: str) -> str:
     """A workflow command's message: % and line breaks escaped, without the backticks GitHub would show."""
     return msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace("`", "")
+
+
+def escape_property(value: str) -> str:
+    """A workflow command's property (a file's path): % and line breaks escaped, and the `:` and `,` that would end
+    it."""
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(":", "%3A").replace(",", "%2C")
 
 
 def as_json(r: Review) -> str:

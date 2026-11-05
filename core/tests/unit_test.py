@@ -5207,7 +5207,6 @@ rules app.folders
                 group("loses", "rows to select", 4),
                 group("loses", "permission view", 5),
             ],
-            "users_in_data": 1,
         }
         r["tests"]["run"] = {
             "checks": 3,
@@ -5412,6 +5411,60 @@ rules app.files
         self.assertRegex(said, r"^Not a refactor: `folder\.view` differs for user \S+ on folder \S+ \(")
         self.assertIn(said + "\n\n```\n" + "\n".join(ce["world"]) + "\n```\n", md)
         self.assertIn(f"  not a refactor: {self.review.differs(ce)}\n", self.review.text(r))
+
+    def test_a_file_name_with_spaces_commas_or_colons_is_read_and_written_whole(self) -> None:
+        # an included file's name may hold spaces (`include "my org, 1.authz"`): its line is read whole, from a
+        # mistake's message and from a flag's line, and GitHub's properties have their `%`, `:` and `,` escaped
+        mistake = self.review.mistake_of(
+            PolicyError("my roles.authz line 2: a source is missing", "AZ103", file="my roles.authz", line=2)
+        )
+        self.assertEqual(mistake, {"line": "my roles.authz line 2", "message": "a source is missing", "code": "AZ103"})
+        org = (
+            "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n"
+            "  admin  : user = app.org_members(org_id -> user_id) where {role = 'admin'}\n"
+            "  can manage = admin\n  can see = member\n"
+        )
+        main = replaced(self.SMALL, org, 'include "my org: 1, 2%.authz"\n')
+        files = {"my org: 1, 2%.authz": org}
+        r = self.review.review(
+            (main, files, {}),
+            (main, {**files, "my org: 1, 2%.authz": org.replace("can manage = admin", "can manage = member")}, {}),
+            worlds=10,
+        )
+        self.assertEqual([f["line"] for f in r["risk"]], ["my org: 1, 2%.authz line 4"])
+        notes = self.review.annotations(r, "db,x/policy.authz")
+        self.assertTrue(
+            notes.startswith("::warning file=db%2Cx/my org%3A 1%2C 2%25.authz,line=4,title=rowstile review::"), notes
+        )
+        r["base_mistake"] = mistake
+        self.assertTrue(self.review.annotations(r, "db,x/p.authz").startswith("::warning file=db%2Cx/p.authz,title="))
+
+    def test_the_tables_a_migration_locks_are_read_by_their_whole_names(self) -> None:
+        # a quoted name with a space is one name; an app schema whose name starts with authz is the app's
+        sql = (
+            'CREATE POLICY "authz select" ON app."my files" USING (true);\n'
+            'DROP TRIGGER "t 1" ON app."my files";\n'
+            'ALTER TABLE "authzapp"."files" ENABLE ROW LEVEL SECURITY;\n'
+            'CREATE TRIGGER "x" AFTER INSERT ON "a""b".c FOR EACH ROW EXECUTE FUNCTION f();\n'
+            'DROP TRIGGER u ON authz.audit;\nCREATE POLICY p ON "authz_int"."x" USING (true);\n'
+            "CREATE POLICY p ON authz_gen.y USING (true);\n"
+        )
+        self.assertEqual(
+            self.review.table_locks(sql),
+            {
+                'app."my files"': ("ACCESS EXCLUSIVE", "its row-level security policies"),
+                '"authzapp"."files"': ("ACCESS EXCLUSIVE", "row-level security turned on"),
+                '"a""b".c': ("SHARE ROW EXCLUSIVE", "a trigger made"),
+            },
+        )
+
+    def test_the_comments_table_escapes_every_cell(self) -> None:
+        # an invariant's key holds its text: its `|` would end the cell, as in the before and after cells
+        never = "invariants\n  never folder: view and {status || 'x' = 'ax'}\n"
+        r = self.review.review((self.SMALL + never, {}, {}), (self.SMALL, {}, {}), worlds=10)
+        [row] = [x for x in self.review.markdown(r).splitlines() if x.startswith("| `invariant")]
+        self.assertEqual(len(re.findall(r"(?<!\\)\|", row)), 5, row)
+        self.assertIn(r"`invariant never folder: view and {status \|\| 'x' = 'ax'}` (removed)", row)
 
 
 class Graph(unittest.TestCase):
@@ -8641,6 +8694,8 @@ class Confidence(unittest.TestCase):
         self.assertEqual(world.describe(pol, data), ["user: 1, 2", "org: 1", "doc: 1", *lines])
         self.assertEqual(evaluate.World.named(pol, data), {"user", "org", "doc"})
         self.assertEqual(world.describe(pol, data, {"doc"}), ["doc: 1", *lines[2:]])
+        # a text as SQL writes it, a quote in it doubled
+        self.assertEqual([evaluate.shown(v) for v in ("it's", 2, True)], ["'it''s'", "2", "true"])
 
     def test_prove_counts_one_world_as_one(self) -> None:
         from authzlib import prove
