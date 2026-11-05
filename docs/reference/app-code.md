@@ -14,7 +14,8 @@ kept out of caches, 403 and 404 from route handlers and server actions), `/react
 headless share dialog, live updates), `/vitest` and `/jest` (a preview); [`integrations/nextjs`](../../integrations/nextjs) is their
 conformance suite, [`integrations/node`](../../integrations/node) a plain Express server's (a preview),
 [`integrations/electric`](../../integrations/electric) that of `/client`'s route in front of Electric ([Electric](sync.md#electric), a preview), and
-`rowstile client` writes only the policy's names for them (`src/authz.gen.ts`). <!-- checked: tests/unit_test.py "test_typescript_sdk_gets_only_the_names" -->
+`rowstile client` writes only the policy's names for them (`src/authz.gen.ts`), as `rowstile client ts-sdk` does. <!-- checked: tests/unit_test.py "test_typescript_sdk_gets_only_the_names"; tests/cli.sh "client ts-sdk: the names alone, asked by name" -->
+`rowstile client ts` is a client of its own, for `pg` without the SDK: its types don't reach the SDK's calls.
 A transaction is one principal's: inside one these packages signed in, their work for anyone else throws an `Error`
 before anything is sent for it ([Node apps](../stacks/node.md#who-a-transaction-acts-for)).
 Rails apps use [the Ruby SDK](../../sdk/ruby/README.md), a preview: its Railtie signs every Active Record transaction
@@ -92,7 +93,7 @@ Administrators (the policy's owner and superusers; the app role is refused) also
 Generated clients wrap these with the policy's names, so a typo in a permission is a
 compile error: `rowstile client py > authz_client.py`
 (DB-API: psycopg and friends) or `rowstile client ts > authz.ts` (TypeScript, for `pg` or
-anything with `query(text, params)`); `rowstile client go` writes the names alone, for the Go SDK. Generate it from the policy in force and commit it next to
+anything with `query(text, params)`; on the TypeScript SDK, `rowstile client ts-sdk`, the names alone); `rowstile client go` writes the names alone, for the Go SDK. Generate it from the policy in force and commit it next to
 your code; regenerate when the policy changes (the file manager's tests fail when it is stale).
 
 - **Python: supported.** Part of the 1.0 surface: `Authz(conn)`, with `sign_in`, `sign_in_as` (a principal
