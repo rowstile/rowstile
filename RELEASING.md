@@ -6,8 +6,15 @@ gets into `main`.
 ## Versions
 
 rowstile follows [semantic versioning](https://semver.org/). One version covers everything a release ships:
-the `rowstile` command, the Python package, the TypeScript packages (`@rowstile/*` and the command's
-platform packages), the image, and the review for CI. `packaging/version.py` sets it in every file but the
+the `rowstile` command, the Python package (`sdk/python`, on PyPI), the TypeScript packages (`sdk/typescript`:
+`@rowstile/*`, and the command's platform packages, on npm), the image (ghcr.io), the review for CI (at the
+release's tag), and the SDKs that are previews: Go (`sdk/go`), .NET (`sdk/dotnet`), Java and Kotlin
+(`sdk/java`), Ruby (`sdk/ruby`), Rust (`sdk/rust`), Elixir (`sdk/elixir`) and PHP (`sdk/php`). Those seven are
+on no registry yet: an app takes them from the repository, at a release's tag or from `main`, as each one's
+README says, and they carry the release's version. The Go module has no version of its own yet: Go's tools read
+a module in a folder from the tags `sdk/go/vX.Y.Z`, and a release makes none, so `go get` takes `main`'s newest
+commit. Putting one of them on a registry, or tagging the Go module, is a step this page gets once it is
+decided. `packaging/version.py` sets the version in every file but the
 install lines that name the image's tag (the release pull request edits those), and a unit test fails if two
 files disagree. The lines that show how to use the review for CI name the newest release: a release sets them,
 and a `-dev` version leaves them, as no tag of it exists. The editor extensions (VS Code, Zed) have their own versions, raised
@@ -117,10 +124,14 @@ request of its own, before the release's.
         (`python3 packaging/changelog.py X.Y.Z-rc.N` prints them). A final release's section opens with a
         sentence saying which candidate it is and that its alphas', betas' and candidates' sections below hold
         what changed since the release before; under it, what changed since that candidate, if anything
-      - the apps' migrations, where `rowstile migrate --check` asks for one: in `examples/filemanager`,
-        `examples/messenger`, `integrations/fastapi` and `integrations/nextjs`, run
-        `python3 ../../core/cli/rowstile_cli.py migrate --name rowstile_X_Y_Z`. This is the upgrade users
-        will make, run by CI on each app
+      - the apps' migrations, where `rowstile migrate --check` asks for one: in every app whose
+        `rowstile.toml` has `[migrations]` (the example apps and the conformance apps, each with a lock file),
+        run `rowstile migrate --name rowstile_X_Y_Z` from the checkout. It writes nothing where the lock is up
+        to date. This is the upgrade users will make, run by CI on each app:
+
+            for app in $(git grep -l '^\[migrations\]' -- '*rowstile.toml' | xargs -n1 dirname); do
+              (cd "$app" && python3 "$OLDPWD/core/cli/rowstile_cli.py" migrate --name rowstile_X_Y_Z) || break
+            done
       - `python3 core/tests/docs_app.py --sync`: the release records its own docs app
         (`core/tests/docs_apps/releases.txt`, from `0.1.0-beta.1` on: the beta's release is the first line), which
         `tests/upgrade.sh` upgrades it with later; without it the release run's unit tests, which have the tags,

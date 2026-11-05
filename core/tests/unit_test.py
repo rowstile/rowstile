@@ -18346,6 +18346,23 @@ class Delivery(unittest.TestCase):
                 name = fh.readline().removeprefix("# ").strip().lower()
             self.assertTrue(name in text, f"CHANGELOG.md never names {os.path.relpath(readme, self.REPO)}: {name}")
 
+    def test_the_release_migrates_every_app_with_a_lock_file(self) -> None:
+        # RELEASING.md's step finds the apps by their rowstile.toml's [migrations], not from a list: each app that
+        # keeps a lock file has one, so the release's migration reaches it
+        with open(os.path.join(self.REPO, "RELEASING.md"), encoding="utf-8") as fh:
+            self.assertIn("for app in $(git grep -l '^\\[migrations\\]' -- '*rowstile.toml'", fh.read())
+        locks = [
+            p
+            for depth in ("", "*", "*/*")
+            for p in glob.glob(os.path.join(self.REPO, "examples", "*", depth, "policy.lock"))
+            + glob.glob(os.path.join(self.REPO, "integrations", "*", depth, "policy.lock"))
+        ]
+        self.assertGreaterEqual(len(locks), 18, "the apps' lock files aren't found")
+        for lock in locks:
+            app = os.path.join(*os.path.relpath(lock, self.REPO).split(os.sep)[:2])
+            with open(os.path.join(self.REPO, app, "rowstile.toml"), encoding="utf-8") as fh:
+                self.assertRegex(fh.read(), r"(?m)^\[migrations\]$", f"{app} keeps a lock file, without [migrations]")
+
     def test_main_s_notes_are_what_unreleased_holds(self) -> None:
         # the release workflow run by hand (a dry run) from main writes main's notes: after a final release main is
         # the next minor's -dev, which has no section yet, and right after it Unreleased is empty
@@ -19570,6 +19587,15 @@ class Version(unittest.TestCase):
         finally:
             sys.path.pop(0)
         self.assertEqual(list(version.found()), [authzlib.__version__])
+
+    def test_releasing_names_every_sdk(self) -> None:
+        # RELEASING.md's Versions says what one version covers, and how each part is released: an SDK added is
+        # named there too
+        with open(os.path.join(self.REPO, "RELEASING.md"), encoding="utf-8") as fh:
+            said = search(r"\n## Versions\n([\s\S]*?)\n## ", fh.read()).group(1)
+        sdks = sorted(e.name for e in os.scandir(os.path.join(self.REPO, "sdk")) if e.is_dir() and e.name[0] != ".")
+        self.assertGreaterEqual(len(sdks), 9, "the SDKs aren't found")
+        self.assertEqual([s for s in sdks if f"`sdk/{s}`" not in said], [], "RELEASING.md's Versions doesn't name")
 
     def test_the_review_for_cis_examples_name_a_release(self) -> None:
         # the lines a user copies (docs/reference/review.md's workflow, the action's and the template's comments)
