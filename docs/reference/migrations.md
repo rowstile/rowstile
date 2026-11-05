@@ -47,6 +47,12 @@ already. <!-- checked: tests/migration_tools.sh "numbered after them" -->
 - **Each migration is one transaction**, your tool's. Plain SQL files run with
   `psql -1 -v ON_ERROR_STOP=1 -f <file>`. Run a statement at a time (`psql -f` alone), a migration refuses
   before it changes anything (`AZ615`). <!-- checked: tests/migrations.sh "a migration run a statement at a time is refused (AZ615), and changes nothing" -->
+  It makes its session read-only first, and its last statement puts the setting back. <!-- checked: tests/migrations.sh "... read-only until its last statement, which puts the setting back" -->
+  So run migrations on a direct connection to Postgres, or through a pooler in session mode, not through one
+  in transaction mode: there the last statement may run on another server connection, and the first one stays
+  read-only for the next client. <!-- unchecked: no pooler runs in the suites; a pooler in transaction mode hands out server connections as it likes -->
+  With `ON_ERROR_STOP`, psql stops before that statement; on a direct connection the session then ends, and
+  the setting with it.
 - **Each migration starts with what changed**, as comments (`-- + type file: can comment = folder.view`). <!-- checked: tests/migrations.sh "starting with what changed, as comments" -->
   `migrate` also marks the lock and its migrations `linguist-generated` in `.gitattributes`, so reviews
   show them collapsed. <!-- checked: tests/docs_test.sh "rowstile migrate writes the first migration, the lock file and .gitattributes"; tests/unit_test.py "test_only_what_is_below_is_marked_generated" -->

@@ -670,7 +670,9 @@ CODES = {
         "it refused before changing anything, and made the session read-only, since psql goes on after an error "
         "unless told to stop. The migration's last statement puts the setting back, so a connection a pooler hands "
         "to another client next isn't left read-only. Run it with your migration tool, which wraps each migration "
-        "in a transaction, or `psql -1 -v ON_ERROR_STOP=1 -f <file>`.",
+        "in a transaction, or `psql -1 -v ON_ERROR_STOP=1 -f <file>`, on a direct connection to Postgres: through a "
+        "pooler in transaction mode, the last statement may run on another server connection, and the first one "
+        "stays read-only.",
         "",
         "",
         when="deploy",
