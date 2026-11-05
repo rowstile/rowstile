@@ -37,7 +37,9 @@ The exit code is for scripts and CI: 0 when the command did what was asked and f
 found something or something was refused (a mistake in the policy, a failing test, a lint warning, a `--check` that
 finds a difference, a counterexample, an error from the database); 2 when it couldn't do what was asked (a mistake on
 the command line or in `rowstile.toml`, a file it can't read or write, a database it can't reach or lost); 130 when
-stopped with Ctrl-C. <!-- checked: tests/cli.sh "check names the included file and line, exit 1"; tests/cli.sh "a failing test fails the command, exit 1"; tests/cli.sh "an option of another command is refused, exit 2"; tests/cli.sh "fmt on a file that isn't there says so, exit 2"; tests/cli.sh "a database that doesn't exist: exit 2"; tests/cli.sh "Ctrl-C while sql waits on a statement: stopped at once (exit 130)" -->
+stopped with Ctrl-C. <!-- checked: tests/cli.sh "check names the included file and line, exit 1"; tests/cli.sh "a failing test fails the command, exit 1"; tests/cli.sh "an option of another command is refused, exit 2"; tests/cli.sh "fmt on a file that isn't there says so, exit 2"; tests/cli.sh "a database that doesn't exist: exit 2"; tests/cli.sh "Ctrl-C while sql waits on a statement: stopped at once (exit 130)"; tests/unit_test.py "test_ctrl_c_stops_a_command_with_130_and_ends_dev_with_0" -->
+`rowstile dev` and `rowstile studio` run until you stop them: Ctrl-C is how they end, with 0 (`dev --once`, which
+stops by itself, with 130). <!-- checked: tests/devx.sh "... and Ctrl-C ends it, exit 0"; tests/studio_test.py "... and Ctrl-C stops it"; tests/unit_test.py "test_ctrl_c_stops_a_command_with_130_and_ends_dev_with_0" -->
 `rowstile review` exits 0 whatever it finds: `test` and `migrate --check` are the gates. <!-- checked: tests/review.sh "a base whose policy has a mistake: said first, with its line there and its code, and the policy reviewed as new, exit 0" -->
 
 Commands without a policy file read `rowstile.toml`, found in the current folder or a folder above it:

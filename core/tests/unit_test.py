@@ -2547,6 +2547,31 @@ class Command(unittest.TestCase):
             p = subprocess.run([sys.executable, cli, "check", "閲.authz"], cwd=d, env=env, capture_output=True)
             self.assertIn("閲.authz: ", p.stderr.decode("utf-8"))
 
+    def test_ctrl_c_stops_a_command_with_130_and_ends_dev_with_0(self) -> None:
+        # Ctrl-C (a KeyboardInterrupt where it lands) stops any command with "stopped" and 130, never a traceback: a
+        # command that reads no database (a long prove) too. rowstile dev ends that way, exit 0, from its first pass
+        # on; dev --once is a command like the others
+        def interrupted(module: str, where: str, *argv: str) -> tuple[int, str]:
+            """The exit code and what it said on stderr, with Ctrl-C landing in the module's function `where`."""
+            code = (
+                f"import rowstile_cli\nimport {module}\n"
+                "def stop(*args: object, **kwargs: object) -> None:\n    raise KeyboardInterrupt\n"
+                f"{module}.{where} = stop\n"
+                f"rowstile_cli.main({list(argv)!r})\n"
+            )
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join([os.path.join(ROOT, "cli"), ROOT]))
+            with tempfile.TemporaryDirectory() as d:
+                p = subprocess.run([sys.executable, "-c", code], cwd=d, env=env, capture_output=True, text=True)
+            return p.returncode, p.stderr
+
+        docs = os.path.join(ROOT, "example", "docs.authz")
+        self.assertEqual(interrupted("authzlib.prove", "prove", "prove", docs), (130, "stopped\n"))
+        self.assertEqual(interrupted("rowstile_cli", "load_config", "check", docs), (130, "stopped\n"))
+        self.assertEqual(
+            interrupted("rowstile_cli", "Dev.cycle", "dev", "--once", "--no-studio", docs), (130, "stopped\n")
+        )
+        self.assertEqual(interrupted("rowstile_cli", "Dev.cycle", "dev", "--no-studio", docs), (0, ""))
+
     def test_an_older_python_is_named_before_anything_is_imported(self) -> None:
         # run from the source (cli/rowstile, python3 cli/rowstile_cli.py) on a Python older than 3.11, the command
         # stopped with a traceback from its imports (a pattern 3.10 can't compile, tomllib): it says what it needs

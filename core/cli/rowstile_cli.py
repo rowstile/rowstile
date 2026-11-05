@@ -1035,6 +1035,16 @@ class Dev:
         return False
 
     def run(self, once: bool) -> bool:
+        """The first pass, then (unless once) a pass at each save. Ctrl-C is how the loop ends (exit 0), whenever it
+        comes, the first pass too; with --once dev is a command like the others: Ctrl-C stops it, 130."""
+        try:
+            return self.passes(once)
+        except KeyboardInterrupt:
+            if once:
+                raise
+            return True
+
+    def passes(self, once: bool) -> bool:
         reconfigure = getattr(sys.stdout, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(line_buffering=True)  # a line as it happens, even into a pipe or a log
@@ -1066,21 +1076,18 @@ class Dev:
         after = self.cfg.write_after
         pending: float | None = None
         print(f"watching {len(files)} file(s); Ctrl-C to stop")
-        try:
-            while True:
-                time.sleep(0.4)
-                files = watched(self.cfg, self.policy)
-                now = stamp(files)
-                if now != seen:
-                    changed = [relative(f) for f in files if now.get(f) != seen.get(f)]
-                    time.sleep(0.1)  # editors write in steps
-                    seen = stamp(files)
-                    pending = time.monotonic() if self.cycle(", ".join(changed[:3]) + " saved") and after else None
-                if pending is not None and time.monotonic() - pending >= after:
-                    pending = None
-                    self.write_migration()
-        except KeyboardInterrupt:
-            return True
+        while True:
+            time.sleep(0.4)
+            files = watched(self.cfg, self.policy)
+            now = stamp(files)
+            if now != seen:
+                changed = [relative(f) for f in files if now.get(f) != seen.get(f)]
+                time.sleep(0.1)  # editors write in steps
+                seen = stamp(files)
+                pending = time.monotonic() if self.cycle(", ".join(changed[:3]) + " saved") and after else None
+            if pending is not None and time.monotonic() - pending >= after:
+                pending = None
+                self.write_migration()
 
     def write_migration(self) -> None:
         """'stopped editing': the migration for what changed, if the lock file is behind the policy: the policy
@@ -1214,6 +1221,15 @@ def is_option(word: str) -> bool:
 
 
 def main(argv: list[str]) -> None:
+    """The command. Ctrl-C stops it wherever it comes, with 130 (one in a transaction says nothing was kept): never
+    a traceback."""
+    try:
+        run_command(argv)
+    except KeyboardInterrupt:
+        fail("stopped", 130)
+
+
+def run_command(argv: list[str]) -> None:
     utf8_output()
     dsn: str | None = None
     opts: dict[str, str] = {}
