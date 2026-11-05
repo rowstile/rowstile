@@ -145,10 +145,11 @@ EOF
 ' || rc=1
 
 echo "-- the Zed extension"
-docker run --rm "${as_me[@]}" -e CARGO_HOME=/tmp/cargo -v "$REPO:/repo" -w /repo/editor/zed "$RUST" bash -c '
+# (with the committed Cargo.lock, which Zed's build uses too: --locked refuses to change it)
+docker run --rm "${as_me[@]}" -e CARGO_HOME=/tmp/cargo -v "$REPO:/repo:ro" -w /repo/editor/zed "$RUST" bash -c '
   cp -r /usr/local/cargo /tmp/cargo 2>/dev/null
   rustup target add wasm32-wasip2 >/dev/null 2>&1 &&
-    cargo build -q --release --target wasm32-wasip2 --target-dir /tmp/target 2>&1 &&
+    cargo build --locked -q --release --target wasm32-wasip2 --target-dir /tmp/target 2>&1 &&
     ls /tmp/target/wasm32-wasip2/release/rowstile_zed.wasm >/dev/null' \
   && ok "it builds for wasm32-wasip2" || bad "the Zed extension doesn't build"
 
