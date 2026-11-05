@@ -51,7 +51,7 @@ class TestMixin(Core):
             except PolicyError as e:
                 # a mistake in a test file is named with its file, like an included one (it says `line N: ...`: the
                 # file is read as the policy, whose own lines say no file)
-                e.args = (f"{name} {e}",)
+                e.args, e.file = (f"{name} {e}",), name
                 raise
             for sc in pol.scenarios:
                 assert sc.loc is not None  # (only the unnamed test section has no line of its own)

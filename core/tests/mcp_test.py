@@ -481,6 +481,17 @@ def without_db(folder: str) -> None:
         s,
     )
     with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(good.replace("app role app_user", 'app role app_user\ninclude "my roles.authz"', 1))
+    os.replace(os.path.join(folder, "db", "roles.authz"), os.path.join(folder, "db", "my roles.authz"))
+    s = c.tool("check")["structuredContent"]
+    check(
+        "... one whose name has a space too",
+        (s.get("error", {}).get("file"), s["error"].get("line"), s["error"].get("message"))
+        == ("db/my roles.authz", 2, "robot.owner: unknown type 'martian'"),
+        s,
+    )
+    os.remove(os.path.join(folder, "db", "my roles.authz"))
+    with open(policy, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(good)
     r = c.tool("check", policy="db/nothing.authz")
     check("a policy file that isn't there: a failed call", r["isError"] and r["structuredContent"]["exit_code"] == 2, r)

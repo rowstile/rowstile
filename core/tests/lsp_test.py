@@ -735,6 +735,20 @@ with tempfile.TemporaryDirectory() as d:
         fh.write(org_text)
     changed(pu, main_text + "\n")
     clean("... and cleared when it is saved as UTF-8", c, pu)
+    # a file whose name has a space: its mistake is marked on it, where the parser says
+    spaced = os.path.join(d, "my org.authz")
+    with open(spaced, "w", encoding="utf-8") as fh:
+        fh.write(org_text.replace("can see = member", "can see = nosuch"))
+    changed(pu, main_text.replace('include "org.authz"', 'include "my org.authz"'))
+    found = c.diagnostics(uri(spaced))
+    ok(
+        "a mistake in an included file whose name has a space is marked on it, on its words",
+        [(x["range"]["start"], x["message"][:40]) for x in found]
+        == [({"line": 2, "character": 12}, "org has no relation or permission 'nosuc")],
+        found,
+    )
+    os.remove(spaced)
+    changed(pu, main_text)
     opened(tu, tests_text)
     syms = c.request("textDocument/documentSymbol", {"textDocument": {"uri": tu}})
     ok(

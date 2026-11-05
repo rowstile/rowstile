@@ -155,6 +155,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - An included file that is there and can't be read says why, in the editor and in the suites' compiler as in
   `rowstile check`: it isn't UTF-8, say. Before, the editor and `compile_policy.py` said they couldn't find it.
   `parse_policy` called with neither a path nor the files reads no included file from the current folder.
+- A mistake in an included file whose name has a space (`include "my roles.authz"`) is shown where it is: on that
+  file and its words in the editor, with its line in `rowstile dev`, with its file and line in the MCP server's
+  `check`, in the review and in the playground. Before, the editor put it on the policy's first line, and the
+  others lost its place.
 
 ### Upgrading
 
