@@ -992,6 +992,15 @@ CODES = {
         "(`Refused`, with this code).",
         when="runtime",
     ),
+    "AZ718": Code(
+        "The review's deadline passed",
+        "An access review takes decisions until its deadline: `authz.start_review(type, id, closes_at)`, two weeks "
+        "after it starts unless the call says otherwise (NULL: no deadline). `authz.review_decide` after that is "
+        "refused, and the message says when it was. Nothing closes a review by itself: `authz.close_review` still "
+        "closes it and applies the decisions made in time, and `authz.review_items` still lists them. Start a new "
+        "review to decide again. SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this code).",
+        when="runtime",
+    ),
     "AZ801": Code(
         "A sync line that names nothing to sync",
         "`sync schema.table : permission` keeps, for each row of a type's table, the keys that hold the permission "

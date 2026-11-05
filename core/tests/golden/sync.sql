@@ -6607,9 +6607,9 @@ CREATE OR REPLACE FUNCTION authz.break_glass(p_type text, p_id bigint, p_relatio
   p_duration interval DEFAULT interval '1 hour') RETURNS void LANGUAGE sql AS
   $$ SELECT authz.break_glass(p_type, p_id::text, p_relation, p_reason, p_duration) $$;
 
--- Access reviews: snapshot the shares on an object; reviewers keep or revoke each; closing applies it.
--- Starting one needs 'share' on the object (or being an administrator); revoking an item needs
--- what unsharing it needs.
+-- Access reviews: snapshot the shares on an object; reviewers keep or revoke each until its deadline (p_closes_at,
+-- NULL: none); closing applies it. Starting one needs 'share' on the object (or being an administrator); revoking an
+-- item needs what unsharing it needs.
 -- Reviews are for users: a service signed in is refused (users_only).
 CREATE OR REPLACE FUNCTION authz.start_review(p_type text, p_id text, p_closes_at timestamptz DEFAULT now() + interval '14 days')
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
@@ -6657,6 +6657,11 @@ BEGIN
   SELECT * INTO v FROM authz.reviews WHERE id = p_review AND closed_at IS NULL;
   IF v.id IS NULL OR NOT authz_int.may_inspect(v.object_type, v.object_id) THEN
     RAISE EXCEPTION 'you cannot decide in review %', p_review USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ705';
+  END IF;
+  -- the review's deadline (closes_at, NULL: none): decisions after it are refused; closing applies those made in time
+  IF v.closes_at <= now() THEN
+    RAISE EXCEPTION 'review % closed for decisions at %', p_review, v.closes_at
+      USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ718';
   END IF;
   SELECT * INTO i FROM authz.review_items WHERE review_id = p_review AND item = p_item;
   IF i.item IS NULL THEN RAISE EXCEPTION 'no item % in review %', p_item, p_review USING HINT = 'rowstile help AZ708'; END IF;
