@@ -93,6 +93,12 @@ for args in "migrate --check" "migrate"; do
     *) bad "$args on a merged lock" "$out";; esac
 done
 cp "$T/lock" "$P/db/policy.lock"
+# one that isn't UTF-8 (saved in another encoding, say): named, as a file it can't read (exit 2), nothing written
+at=$(stat -c %s "$P/db/policy.lock"); printf '\351\n' >> "$P/db/policy.lock"
+out=$(CLI migrate 2>&1); rc=$?
+[ "$rc $out" = "2 db/policy.lock: not UTF-8 (the byte at $at): save it as UTF-8" ] && [ "$(ls "$P/db/migrations" | wc -l)" = 1 ] &&
+  ok "a lock file that isn't UTF-8: named, exit 2, nothing written" || bad "a lock file not UTF-8" "$rc $out"
+cp "$T/lock" "$P/db/policy.lock"
 
 echo "-- a change"
 sed -i 's/^  can share = owner or folder.share$/  can share = owner or folder.share\n  can comment = folder.view/' "$P/db/policy.authz"
@@ -569,6 +575,13 @@ PY
       ;;
   esac
 done
+# a journal a merge left its conflict markers in: named, as a file it can't read (exit 2), and no migration written
+rm -f "$W/policy.lock"; mkdir -p "$W/m_merged/meta"; printf '{"entries": [\n<<<<<<< HEAD\n' > "$W/m_merged/meta/_journal.json"
+out=$( cd "$W" && python3 "$OLDPWD/cli/rowstile_cli.py" migrate policy.authz --tool drizzle --dir m_merged 2>&1); rc=$?
+case "$rc $out" in "2 rowstile migrate: "*"m_merged/meta/_journal.json: not JSON (Expecting value: line 2 column 1 (char 14)): a merge left both branches' lines in it?")
+    [ "$(ls "$W/m_merged")" = meta ] && [ ! -e "$W/policy.lock" ] && ok "drizzle: a journal a merge left its markers in: named, exit 2, nothing written" ||
+      bad "drizzle on a merged journal: wrote" "$(ls -R "$W/m_merged")";;
+  *) bad "drizzle on a merged journal" "$rc $out";; esac
 
 echo "-- a policy that holds the quote its migration records it in"
 Q="$T/q"; mkdir -p "$Q"

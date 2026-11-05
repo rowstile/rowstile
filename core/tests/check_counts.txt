@@ -30,7 +30,7 @@ language server 145
 masks 39
 mcp 79
 migrate vs apply 97
-migrations 83
+migrations 85
 moves 23
 multi scenario 119
 policy errors 291
@@ -43,5 +43,5 @@ small policies 4
 studio 227
 sync index 256
 tools 42
-unit 713
+unit 714
 upgrade 71

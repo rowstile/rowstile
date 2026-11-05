@@ -1871,10 +1871,11 @@ def migrate_cmd(
     )
     lock = lock_path(cfg, path)
     try:
-        with open(lock, encoding="utf-8") as fh:
-            old = fh.read()
+        old = read_text(lock)
     except FileNotFoundError:
         old = ""
+    except OSError as e:  # one that isn't UTF-8 too
+        fail(f"{relative(lock)}: {e.strerror}", 2)
     try:
         ms = database.migrations(text, files, old, opts.get("--name") or migration_name, not one_phase, downgrade)
     except database.Error as e:
