@@ -2,9 +2,10 @@
 // has, so they read the pages again without waiting for a crawl. Bing's index is what several assistants search.
 // The key is public by design: the file /<KEY>.txt on the site, which build.mjs writes, says the site sent it.
 // Plain JavaScript, typed with JSDoc and checked strictly (site/tsconfig.json).
-//   node site/indexnow.mjs          after a deploy (site.yml): the live sitemap's addresses, sent
-//   node site/indexnow.mjs --dry    what it would send
-import { realpathSync } from "node:fs";
+//   node site/indexnow.mjs [sitemap.xml]          after a deploy (site.yml): the addresses of the sitemap the build
+//                                                  wrote, sent (without one, the live site's)
+//   node site/indexnow.mjs --dry [sitemap.xml]    what it would send
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ORIGIN } from "./pages.mjs";
 
@@ -24,10 +25,16 @@ export function payload(sitemap) {
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
-  const got = await fetch(`${ORIGIN}/sitemap.xml`);
-  if (!got.ok) throw new Error(`${ORIGIN}/sitemap.xml: ${got.status}`);
-  const body = payload(await got.text());
-  if (process.argv[2] === "--dry") {
+  const dry = process.argv[2] === "--dry";
+  const file = process.argv[dry ? 3 : 2];
+  /** @returns {Promise<string>} */
+  const live = async () => {
+    const got = await fetch(`${ORIGIN}/sitemap.xml`);
+    if (!got.ok) throw new Error(`${ORIGIN}/sitemap.xml: ${got.status}`);
+    return got.text();
+  };
+  const body = payload(file ? readFileSync(file, "utf8") : await live());
+  if (dry) {
     console.log(JSON.stringify(body, null, 2));
   } else {
     // 200: taken; 202: taken, the key not yet checked. Anything else is a refusal, said with its reason

@@ -204,8 +204,9 @@ check("build.mjs writes what the site shows, which the next run reads (source.mj
 check("site.yml says why a tag deploys nothing, or deploys the newest site in its place",
   /- if: steps\.from\.outputs\.why != ''\n\s+env:\n\s+WHY: \$\{\{ steps\.from\.outputs\.why \}\}\n\s+run: echo "::notice::\$GIVEN \(\$WHY\)"\n/.test(workflow));
 
-check("site.yml sends IndexNow after the deploy, never failing it",
-  /\n  indexnow:\n    needs: deploy\n[\s\S]*- run: node site\/indexnow\.mjs\n\s+continue-on-error: true\n/.test(workflow));
+check("site.yml sends IndexNow after the deploy, the sitemap it built, never failing it",
+  /\n  indexnow:\n    needs: deploy\n[\s\S]*with: \{name: sitemap, path: "\$\{\{ runner\.temp \}\}\/sitemap"\}\n\s+- run: node site\/indexnow\.mjs "\$RUNNER_TEMP\/sitemap\/sitemap\.xml"\n\s+continue-on-error: true\n/.test(workflow) &&
+  /- if: steps\.from\.outputs\.deploy == 'true'\n\s+uses: actions\/upload-artifact@\w+ +# v[\d.]+\n\s+with: \{name: sitemap, path: site\/dist\/sitemap\.xml, retention-days: 1\}\n/.test(workflow));
 
 console.log(failed ? `pages: ${failed} failed` : "pages: all passed");
 process.exit(failed ? 1 : 0);
