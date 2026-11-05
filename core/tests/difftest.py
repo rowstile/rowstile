@@ -1453,14 +1453,18 @@ class Checker:
                 "DELETE FROM authz.requests WHERE reason = 'difftest';" + (f"\n{insert};" if made else "")
             )
         }
-        # each of those users' shares of a relation (as a user, not as one of a group's): whether it lets them in
-        # now and for the next hour (breaking the glass leaves such a one as it is, and changes any other)
+        # each of those users' shares of a relation (as a user, not as one of a group's): `lets` them in now and
+        # for the next hour (breaking the glass leaves it as it is), is `waiting` (it hasn't ended, and starts later
+        # or has a caveat: breaking the glass would replace it, and is refused), or is `short` (it ends sooner or
+        # has ended: breaking the glass makes it last the hour)
         shared = ", ".join(lit(x) for x in self.requesters) or "NULL"
-        self.user_shares: dict[tuple[str, str, str, str], bool] = {
-            (tname, i, rname, sid): lets == "true"
-            for tname, i, rname, sid, lets in self.db.rows(
-                "SELECT object_type, object_id, relation, subject_id, (caveat IS NULL AND (starts_at IS NULL OR "
-                "starts_at <= now()) AND (expires_at IS NULL OR expires_at >= now() + interval '1 hour'))::text "
+        self.user_shares: dict[tuple[str, str, str, str], str] = {
+            (tname, i, rname, sid): kind
+            for tname, i, rname, sid, kind in self.db.rows(
+                "SELECT object_type, object_id, relation, subject_id, CASE "
+                "WHEN (expires_at IS NULL OR expires_at > now()) AND (caveat IS NOT NULL OR starts_at > now()) "
+                "THEN 'waiting' WHEN expires_at IS NULL OR expires_at >= now() + interval '1 hour' THEN 'lets' "
+                "ELSE 'short' END "
                 f"FROM authz.shares WHERE subject_type = 'user' AND subject_relation = '' AND subject_id IN ({shared})"
             )
         }
@@ -1583,13 +1587,14 @@ class Checker:
                     want = f"42501: you cannot break the glass on {tname} {i}"
                 elif (tname, rname, "user") not in self.catalog:
                     want = f"P0001: the policy does not allow sharing {tname}.{rname} with a user"
+                elif (held := self.user_shares.get((tname, i, rname, uid))) == "waiting":
+                    want = f"42501: a share of yours gives you {tname}.{rname} on {tname} {i} "
                 else:
-                    lets = self.user_shares.get((tname, i, rname, uid))
-                    share = entry("share" if lets is None else "share_changed", tname, i, rname, uid)
+                    share = entry("share" if held is None else "share_changed", tname, i, rname, uid)
                     share[-1] = True
                     want = {
                         "lets_in": True,
-                        "trail": [*([] if lets else [share]), entry("break_glass", tname, i, rname, uid)],
+                        "trail": [*([] if held == "lets" else [share]), entry("break_glass", tname, i, rname, uid)],
                     }
                 judge(f"authz.break_glass('{tname}', {i}, '{rname}')", got, want)
         for tname in self.inspected:

@@ -4307,11 +4307,17 @@ BEGIN
     INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, subject_relation,
                               expires_at, created_by)
     VALUES (p_type, p_id, p_relation, 'user', authz.uid()::text, '', v_until, authz_int.actor());
-  ELSIF g.caveat IS NOT NULL OR (g.starts_at IS NOT NULL AND g.starts_at > now())
-        OR (g.expires_at IS NOT NULL AND g.expires_at < v_until) THEN
-    -- a share that would not let them in now becomes an unconditional one until then (the old one is in the audit)
-    UPDATE authz.shares SET expires_at = CASE WHEN g.expires_at IS NULL THEN v_until ELSE greatest(g.expires_at, v_until) END,
-      starts_at = NULL, caveat = NULL, caveat_args = NULL
+  ELSIF (g.expires_at IS NULL OR g.expires_at > now())
+        AND (g.caveat IS NOT NULL OR (g.starts_at IS NOT NULL AND g.starts_at > now())) THEN
+    -- a share of theirs that starts later or holds while a caveat does: the emergency access would replace it (one
+    -- share a subject and relation on an object), and it would be gone when that ends; its manager decides instead
+    RAISE EXCEPTION 'a share of yours gives you %.% on % % %, and breaking the glass would replace it', p_type, p_relation,
+      p_type, p_id, concat_ws(' ', CASE WHEN g.starts_at > now() THEN 'from ' || g.starts_at END,
+                              CASE WHEN g.caveat IS NOT NULL THEN 'while caveat ' || g.caveat || ' holds' END)
+      USING ERRCODE = 'insufficient_privilege', HINT = 'rowstile help AZ717';
+  ELSIF g.expires_at IS NOT NULL AND g.expires_at < v_until THEN
+    -- one that ends sooner, or has ended, lasts until then, unconditionally (the old one is in the audit)
+    UPDATE authz.shares SET expires_at = v_until, starts_at = NULL, caveat = NULL, caveat_args = NULL
     WHERE object_type = p_type AND object_id = p_id AND relation = p_relation
       AND subject_type = 'user' AND subject_id = authz.uid()::text AND subject_relation = '';
   END IF;

@@ -353,7 +353,14 @@ FEATURES: list[Feature] = [
         1,
         "Requests for access and breaking the glass: `authz.request_access`, `authz.decide_request`, "
         "`authz.cancel_request`, `authz.pending_requests`, `authz.break_glass`",
-        ("api.request_access", "api.decide_request", "api.cancel_request", "api.pending_requests", "api.break_glass"),
+        (
+            "api.request_access",
+            "api.decide_request",
+            "api.cancel_request",
+            "api.pending_requests",
+            "api.break_glass",
+            "err.AZ717",
+        ),
         Doc(GOV, "Requests and approvals"),
         (
             T("governance.sh", "carol cannot approve her own request"),
@@ -361,6 +368,7 @@ FEATURES: list[Feature] = [
             T("governance.sh", "a pending request is cancelled when its requester is deleted"),
             T("governance.sh", "a later user with the id has none of the old one's requests"),
             T("governance.sh", "carol breaks the glass, and the alert goes out"),
+            T("governance.sh", "with its own code (AZ717)"),
             T("concurrency.sh", "breaking the glass waits for the delete, then is refused"),
         ),
         (

@@ -910,6 +910,18 @@ CODES = {
         "a 500.",
         when="runtime",
     ),
+    "AZ717": Code(
+        "A share of yours is in the way",
+        "`authz.break_glass` gives its caller the relation through a share of their own that ends with the "
+        "emergency access. Here the caller holds a share of that relation on the object already, one that "
+        "doesn't let them in now: it starts later, or holds only while a caveat does. Breaking the glass would "
+        "replace that share (a person holds one share of a relation on an object), and what it gives later would "
+        "be gone when the emergency access ends. So it is refused, and the message names the share. Ask whoever "
+        "manages that share, or break the glass with another relation. A share that lets them in now is kept (one "
+        "that ends sooner lasts until the emergency access ends). SQLSTATE 42501; answer 403, as the SDKs do "
+        "(`Refused`, with this code).",
+        when="runtime",
+    ),
     "AZ801": Code(
         "A sync line that names nothing to sync",
         "`sync schema.table : permission` keeps, for each row of a type's table, the keys that hold the permission "
