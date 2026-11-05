@@ -6,6 +6,9 @@
   relation tables and columns are recorded too (as relate/unrelate), including
   TRUNCATE, but not what is written in replica mode, where no ordinary trigger runs ([How it
   works](guarantees.md)). <!-- checked: tests/governance.sh "memberships kept in your tables are recorded too"; tests/governance.sh "emptying a link table is recorded" -->
+  A share or a custom role's permission changed by hand (an `UPDATE` of `authz.shares` or
+  `authz.role_permissions`) is recorded with what it was: a share's line has the old one in `detail` (`was`), and a
+  permission changed is one removed and one added. <!-- checked: tests/governance.sh "a share changed by hand is recorded with what it was: its relation, whose it was, its times"; tests/governance.sh "and recorded: the permission it gave removed, the one it gives added" -->
   Nobody can update or delete rows, whatever the session sets (`session_replication_role`
   too), not even a superuser without first dropping or disabling the trigger (DDL, which DDL logging
   and event triggers see). <!-- checked: tests/governance.sh "the trail cannot be edited, even by an administrator"; tests/governance.sh "whatever the session sets"; tests/governance.sh "nor by a superuser in replica role: an entry deleted" -->
@@ -19,7 +22,8 @@
   That includes what reads a changed object through a relation, and what reads those in turn, with the cause
   `dependent`: the files in a moved folder; the folders and files a team is given, shared with or given a custom
   role on when its members change, and the teams it sits in; the folders of an org whose admins change. <!-- checked: tests/governance.sh "and the file in it, whose view reads the folder's: a dependent"; tests/governance.sh "bob leaves Backend: the team it sits in, the folders either is given (and what sits below them) and their files are announced"; tests/governance.sh "gina leaves Platform, which Handbook is shared with: the teams it sits in, two deep, and Handbook and its files too"; tests/governance.sh "alice made a Globex admin: its folders (whose share reads org.admin) and their files are announced"; tests/governance.sh "a share on Company: every folder below it, the one linked into it, and their files are announced"; tests/governance.sh "a member joining a team given a custom role on a doc: the doc is announced" -->
-  A custom role whose permissions change announces the objects it is given on (the cause `role`). <!-- checked: tests/governance.sh "a custom role that no longer gives view: the docs it is given on are announced" -->
+  A custom role whose permissions change announces the objects it is given on (the cause `role`). <!-- checked: tests/governance.sh "a custom role that no longer gives view: the docs it is given on are announced"; tests/governance.sh "a custom role's permission changed by hand: the docs it is given on are announced" -->
+  A share moved to another object by hand announces both objects. <!-- checked: tests/governance.sh "and one moved to an object of another type announces both, the one it left too" -->
   A row of a type's table is announced when it is added or deleted, whether or not its columns hold relations,
   and when an update changes what access may read: its key, a relation's column, or a column the type's
   conditions name (in its permissions, its rules or its where). Where the compiler can't tell which columns
