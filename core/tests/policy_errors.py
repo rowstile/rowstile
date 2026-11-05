@@ -1881,15 +1881,23 @@ def main() -> None:
         ok = want in got and got.startswith(f"line {line}:") and coded(got, code)
         fails += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  named tests: {what}: {got}")
-    try:
-        c = Compiler(parse_policy(BASE))
-        c.add_test_files({"more.authz": "type x = alt.x\n"})
-        got = "(compiled without error)"
-    except PolicyError as e:
-        got = str(e)
-    ok = got.startswith("more.authz: a test file holds only named tests") and coded(got, "AZ106")
-    fails += not ok
-    print(f"{'ok  ' if ok else 'FAIL'}  named tests: a test file with a type in it: {got}")
+    for what, line in (
+        ("a type", "type x = alt.x"),
+        ("a sync line", "sync alt.docs : share"),
+        ("the sync engine's role", "sync role sync_engine"),
+        ("sync after commit", "sync after commit"),
+        ("a masked view", "rules alt.docs view alt.docs_masked"),
+        ("a cascade line", "rules alt.docs\n  cascade from alt.users"),
+    ):
+        try:
+            c = Compiler(parse_policy(BASE))
+            c.add_test_files({"more.authz": f'test "t"\n  user 1 can share doc 1\n{line}\n'})
+            got = "(compiled without error)"
+        except PolicyError as e:
+            got = str(e)
+        ok = got.startswith("more.authz: a test file holds only named tests") and coded(got, "AZ106")
+        fails += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  named tests: a test file with {what} in it: {got}")
     try:
         c = Compiler(parse_policy(BASE))
         c.add_test_files({"more.authz": 'test "t"\n  user 1 can view doc 1\n'})
