@@ -35,6 +35,12 @@ this list.
     every integration that answers HTTP, each code through each (Next.js: `route()` and `action()`), and through
     `authzRoutes()` the codes its calls can meet (AZ705, AZ706, AZ707, AZ708, AZ710, AZ714).
 
+Every SDK reads the database's errors by the same rules: the code from the HINT alone, the not-signed-in error
+only with its code, Postgres's own refusal in any language, and one spelling for nobody
+([Using it from app code](../docs/reference/app-code.md)). Each SDK's own tests (`test_sdk.py`, `sdk.test.ts`,
+`sdk_test.go`, `SdkTests.cs`, `sdk_test.rb`, `SdkTest.java`, `SdkTest.kt`, `sdk.rs`, `sdk_test.exs`,
+`SdkTest.php`) check them.
+
 `fastapi/` runs the background jobs' checks (10, and 4, 6 and 7 for a job) in Celery's worker and RQ's, on a Redis of
 its own (`tests/test_jobs.py`, preview): a job started by a request acts for its service, or for the user who
 asked, given to it as an argument, and the next job on the worker's one connection never acts for the one before.

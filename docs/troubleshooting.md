@@ -130,7 +130,9 @@ With `(USING expression)` before `for table`, it comes from an upsert (`INSERT .
 met a row the user may not update or may not see. MERGE says `target row violates row-level security policy
 (USING expression)` when it matched a row the update or delete rule doesn't let the user change. The SDKs answer
 all three with a 403: `Refused` names the select rule for the first, the update rule for an upsert, and no
-command for MERGE, whose words don't say which rule.
+command for MERGE, whose words don't say which rule. On a server whose `lc_messages` isn't English the words are
+another language's: the SDKs still answer 403, told by the function that raised it, and name no table or rule
+([What every SDK reads of an error](reference/app-code.md); PHP reads the English words alone).
 
 ## Your app's role sees everything
 

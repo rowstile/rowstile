@@ -396,6 +396,18 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   on an object a thousand people may share. They also count up to 1,000 objects of a type that someone holds a
   permission on, before and after a change: past that, the permission is said as not counted ("not counted: view
   on folders, past 1000"), not as a number.
+- Every SDK reads rowstile's code from the error's HINT alone, never from its message, which may quote the
+  request's input: an id of `rowstile help AZ708` cast by the app's SQL is the app's error (a 500), not a 404. The
+  PHP SDK reads the HINT libpq writes after the message, and the severity in the server's language.
+- Every SDK takes a 28000 as the not-signed-in error only with code AZ701: Postgres's own refusal to connect (a
+  role that isn't there, `pg_hba.conf`) stays a database error, instead of naming `authz.act_as`.
+- Every SDK but PHP's reads Postgres's own row-level security refusal on a server whose messages aren't English as a
+  refusal (403, naming no table), by the function that raised it. The Ruby SDK reads the English words at the
+  message's start alone, as the others do, and the TypeScript and PHP SDKs a refusal's rule at its start.
+- Nobody has one spelling in every SDK: a principal without an id (none, or empty), whatever its type, is the SDK's
+  nobody, as the database signs it in. Work for nobody inside a transaction begun for another spelling of it runs,
+  instead of being refused; Django's guard and Ruby's take code that acts for no one, in a transaction signed in as
+  nobody, as nobody's work. In Java, `Rowstile.actingAs(null, ...)` acts for nobody, not for whoever the request is.
 
 ### Upgrading
 
