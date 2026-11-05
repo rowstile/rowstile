@@ -39,6 +39,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile review` and `rowstile prove` work out what their small worlds read of a policy once, not in each
   world, and prove makes each world once for all the invariants: on the docs app's policy, reviewing a refactor
   takes a third less time, and proving four invariants a quarter of the time it did.
+- `rowstile init` with `--db` and another `DATABASE_URL` writes `database = "env:ROWSTILE_OWNER_DSN"` in
+  `rowstile.toml`, the name the stack pages give the tables' owner's connection, instead of
+  `ROWSTILE_DATABASE_URL`. Its next steps name the variable `rowstile.toml` reads, not always `DATABASE_URL`.
 
 ### Removed
 
@@ -308,6 +311,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile review` lists the small worlds where a column compared with `authz.uid()` names a user other than
   the one its row links to (two folders, each made by the other's owner): it took them for the same world with
   the users renamed, which changes whose id the column holds.
+- `rowstile init` beside a `rowstile.toml` there already, in its folder or above, that names another policy says
+  that no command reads the draft until it does, and the note in `AGENTS.md` names the policy and the tests
+  `rowstile.toml` names. Before, it named the draft's.
 
 ### Upgrading
 
