@@ -127,6 +127,13 @@
       "when": 1793908367189,
       "tag": "0017_authz_lint_column_privileges",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793909576997,
+      "tag": "0018_authz_identity_ids_and_signature",
+      "breakpoints": true
     }
   ]
 }
