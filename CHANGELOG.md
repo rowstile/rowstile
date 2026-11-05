@@ -172,6 +172,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   instead of Postgres's own not-null error.
 - `authz.explain` for another user names them as the rest of the API does (`user 5`, asked as `'05'`), and
   `authz.sync_members` records the group's id in the audit trail as its shares hold it (`10`, synced as `'010'`).
+- The signature `authz.act_as`, the logins and `authz.view_as` put in `authz.session` signs the settings as a list
+  that can be read only one way. Before, they were joined with a separator a user id or a token's subject could
+  hold, so two different settings could sign alike.
 
 ### Upgrading
 
@@ -182,6 +185,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - Code that signs one transaction in as two principals now gets AZ716: begin a transaction for each. A test that
   acts for several people in one transaction calls `authz.sign_out()` between them, as the SDKs' test modes do.
   The next apply (or migration) makes the change.
+- Sign-ins are signed in a new way. A signature lasts one transaction, so a connection pool keeps none across the
+  upgrade. `rowstile apply` and `push` wait for the transactions signed in before them; a migration doesn't, and a
+  transaction signed in before it and still open when it commits gets AZ702 on its next statement: retry it.
 - A reader of the change feed reads everything again once after the upgrade, then follows from
   `authz.changes_position()` (no longer `max(pos)`, which may stand past an entry still to come).
 

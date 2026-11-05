@@ -518,7 +518,7 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp A
 DECLARE k authz_int.session_key;
 BEGIN
   SELECT * INTO k FROM authz_int.session_key;
-  RETURN pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to(pg_catalog.concat_ws(pg_catalog.chr(31), coalesce(pg_catalog.current_setting('authz.user_id', true), ''), coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), coalesce(pg_catalog.current_setting('authz.scopes', true), ''), coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), pg_catalog.pg_backend_pid()::text, (EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text), 'UTF8'))), 'hex');
+  RETURN pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to(pg_catalog.to_jsonb(ARRAY[coalesce(pg_catalog.current_setting('authz.user_id', true), ''), coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), coalesce(pg_catalog.current_setting('authz.scopes', true), ''), coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), pg_catalog.pg_backend_pid()::text, (EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text])::text, 'UTF8'))), 'hex');
 END $f$;
 -- signs the settings as they are now: for rowstile's own functions, after they switch who is signed in
 CREATE FUNCTION authz_int.sign() RETURNS void
@@ -543,7 +543,7 @@ DECLARE k authz_int.session_key;
 BEGIN
   SELECT * INTO k FROM authz_int.session_key;
   RETURN pg_catalog.sha256(pg_catalog.convert_to(coalesce(current_setting('authz.session', true), ''), 'UTF8'))
-         = pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to(pg_catalog.concat_ws(pg_catalog.chr(31), coalesce(pg_catalog.current_setting('authz.user_id', true), ''), coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), coalesce(pg_catalog.current_setting('authz.scopes', true), ''), coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), pg_catalog.pg_backend_pid()::text, (EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text), 'UTF8'))), 'hex'), 'UTF8'))
+         = pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to(pg_catalog.to_jsonb(ARRAY[coalesce(pg_catalog.current_setting('authz.user_id', true), ''), coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), coalesce(pg_catalog.current_setting('authz.scopes', true), ''), coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), pg_catalog.pg_backend_pid()::text, (EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text])::text, 'UTF8'))), 'hex'), 'UTF8'))
          OR authz_int.session_refused();
 END $f$;
 -- When the signature doesn't match: true for the owner's and superusers' sessions, else an error saying why
@@ -584,7 +584,7 @@ BEGIN
   SELECT * INTO k FROM authz_int.session_key;
   -- (compared through their hashes, as session_ok() does)
   IF pg_catalog.sha256(pg_catalog.convert_to(coalesce(current_setting('authz.session', true), ''), 'UTF8'))
-     <> pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to(pg_catalog.concat_ws(pg_catalog.chr(31), coalesce(pg_catalog.current_setting('authz.user_id', true), ''), coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), coalesce(pg_catalog.current_setting('authz.scopes', true), ''), coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), pg_catalog.pg_backend_pid()::text, (EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text), 'UTF8'))), 'hex'), 'UTF8')) THEN
+     <> pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to(pg_catalog.to_jsonb(ARRAY[coalesce(pg_catalog.current_setting('authz.user_id', true), ''), coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), coalesce(pg_catalog.current_setting('authz.scopes', true), ''), coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), pg_catalog.pg_backend_pid()::text, (EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text])::text, 'UTF8'))), 'hex'), 'UTF8')) THEN
     RETURN;  -- nobody signed in in this transaction yet
   END IF;
   IF coalesce(current_setting('authz.acting_user', true), '') <> '' THEN

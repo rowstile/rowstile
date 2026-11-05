@@ -9,16 +9,17 @@ from .sqlutil import below_too, lit, q, qt
 DEF = "SECURITY DEFINER SET search_path = pg_catalog, pg_temp"
 
 # HMAC-SHA256 of who is signed in, this backend and this transaction, with k a row of
-# authz_int.session_key: only functions that run as the policy's owner can read it
+# authz_int.session_key: only functions that run as the policy's owner can read it. The settings are signed as a
+# JSON array: a user id or a token's subject may hold any character, and no two lists of them read the same.
 SESSION_SIG = (
     "pg_catalog.encode(pg_catalog.sha256(k.opad || pg_catalog.sha256(k.ipad || pg_catalog.convert_to("
-    "pg_catalog.concat_ws(pg_catalog.chr(31), "
+    "pg_catalog.to_jsonb(ARRAY["
     "coalesce(pg_catalog.current_setting('authz.user_id', true), ''), "
     "coalesce(pg_catalog.current_setting('authz.principal_type', true), ''), "
     "coalesce(pg_catalog.current_setting('authz.scopes', true), ''), "
     "coalesce(pg_catalog.current_setting('authz.acting_user', true), ''), "
     "pg_catalog.pg_backend_pid()::text, "
-    "(EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text), 'UTF8'))), 'hex')"
+    "(EXTRACT(epoch FROM pg_catalog.transaction_timestamp()) * 1000000)::bigint::text])::text, 'UTF8'))), 'hex')"
 )
 # Are the settings to be believed? true, or an error saying why not. Called by the functions that read them
 # (uid, the principals' __me, actor, scopes), which all run as the owner.
