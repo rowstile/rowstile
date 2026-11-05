@@ -453,12 +453,13 @@ def facts(sql: str, alike: frozenset[str]) -> Node | None:
     return None if node is None or reads_alike(node, alike) else node
 
 
-def groups(nodes: list[tuple[Node, bool]]) -> list[list[tuple[Node, bool]]]:
+def groups(nodes: list[tuple[Node, bool]], links: Collection[str] = ()) -> list[list[tuple[Node, bool]]]:
     """Conditions in groups that read columns in common: a group's values are chosen together, apart from the
-    others'."""
+    others'. Not links: the columns a relation reads, whose values are the links' (two conditions that read only
+    such a column in common are chosen for apart)."""
     out: list[tuple[set[str], list[tuple[Node, bool]]]] = []
     for item in nodes:
-        cols, members = set(columns_of(item[0])), [item]
+        cols, members = set(columns_of(item[0])) - set(links), [item]
         for other in [g for g in out if g[0] & cols]:
             out.remove(other)
             cols |= other[0]
@@ -654,10 +655,10 @@ class World:
         """In a corner, each row's values for the columns its type's simple conditions read: chosen so that as
         many of those conditions as can be say what the corner says. They are still read from the columns, so a
         condition and its opposite (`{archived}`, `{not archived}`) never both hold: the values decide. Conditions
-        that share no column are chosen for apart. Not those that read who is signed in or a relation's column
-        (those come from the links, the same facts as the relation). The conditions are those of every policy
-        of the world: a column one reads beside another and its rewrite reads alone is chosen once, the same for
-        both."""
+        that share no column are chosen for apart. Not those that read who is signed in. A relation's column is
+        its link (the same facts as the relation): it isn't chosen, and the other columns a condition reads beside
+        it are chosen for each row, given its link. The conditions are those of every policy of the world: a
+        column one reads beside another and its rewrite reads alone is chosen once, the same for both."""
         if not self.conds:
             return
         domains, linked = self.domains(pol), self.linked(pol)
@@ -671,27 +672,39 @@ class World:
             node = self.facts(pol, cond)
             if squeeze_sql(cond) not in self.conds or tname not in pol.types or node is None or uses_uid(node):
                 continue
-            if not any((tname, col) in linked for col in columns_of(node)):
-                wanted.setdefault(tname, []).append((node, self.conds[squeeze_sql(cond)]))
+            wanted.setdefault(tname, []).append((node, self.conds[squeeze_sql(cond)]))
         for tname, nodes in sorted(wanted.items(), key=lambda kv: kv[0]):
-            for group in groups(nodes):
-                cols = sorted({col for node, _ in group for col in columns_of(node)})
+            links = {col for t, col in linked if t == tname}
+            for group in groups(nodes, links):
+                read = {col for node, _ in group for col in columns_of(node)}
+                cols, by_link = sorted(read - links), sorted(read & links)
                 combos = 1
                 for col in cols:
                     combos *= len(domains[(tname, col)])
-                if combos > self.CORNER_CHOICES:
-                    continue
+                if not cols or combos > self.CORNER_CHOICES:
+                    continue  # (a condition on links alone: the links say)
 
-                def said(
-                    values: tuple[Scalar, ...], cols: list[str] = cols, group: list[tuple[Node, bool]] = group
-                ) -> int:
-                    row = dict(zip(cols, values, strict=True))
-                    return sum((truth(node, row, None) is True) == want for node, want in group)
+                def best_of(
+                    given: dict[str, Scalar],
+                    choices: list[tuple[Scalar, ...]],
+                    cols: list[str] = cols,
+                    group: list[tuple[Node, bool]] = group,
+                ) -> list[tuple[Scalar, ...]]:
+                    """The values of cols that make the most of the group say what the corner says, on a row whose
+                    links give it these values (given)."""
+                    said = [
+                        sum(
+                            (truth(node, {**given, **dict(zip(cols, v, strict=True))}, None) is True) == want
+                            for node, want in group
+                        )
+                        for v in choices
+                    ]
+                    return [v for v, n in zip(choices, said, strict=True) if n == max(said)]
 
                 choices = list(itertools.product(*[domains[(tname, col)] for col in cols]))
-                most = max(said(v) for v in choices)
-                best = [v for v in choices if said(v) == most]
+                alike = best_of({}, choices) if not by_link else []
                 for i in out[tname]:
+                    best = alike or best_of({c: out[tname][i][c] for c in by_link}, choices)
                     values = self.pick(("corner", tname, i, *cols), lambda rng, best=best: rng.choice(best))
                     out[tname][i].update(zip(cols, values, strict=True))
 
@@ -1301,12 +1314,21 @@ class Listing:
                 continue
             if node is None or (c == t.where and uses_uid(node)):
                 opaque.append(squeeze_sql(c))  # (drawn by its text laid out one way, as World.holds draws it)
-            elif not any((t.name, col) in self.linked for col in columns_of(node)):
+            else:
                 plain.append((node, True))
         users = [str(i) for i in range(1, MOST_ROWS + 1)]
+        # a relation's column is the row's link (Listed.data): the classes are of the other columns, each class an
+        # answer of the conditions for every link the row may have (to a row of the type it names, or none)
+        links = {col for tname, col in self.linked if tname == t.name}
         parts: list[list[tuple[tuple[str, Scalar], ...]]] = []
-        for group in groups(plain):
-            cols = sorted({col for node, _ in group for col in columns_of(node)})
+        for group in groups(plain, links):
+            read = {col for node, _ in group for col in columns_of(node)}
+            cols, by_link = sorted(read - links), sorted(read & links)
+            if not cols:
+                continue  # (a condition on links alone: they vary)
+            given = [
+                dict(zip(by_link, vs, strict=True)) for vs in itertools.product(*[[*users, None] for _ in by_link])
+            ]
             uids: list[str | None] = [*users, None] if any(uses_uid(node) for node, _ in group) else [None]
             choices = itertools.product(*[domains.get((t.name, col), [None]) for col in cols])
             total = 1
@@ -1318,7 +1340,9 @@ class Listing:
             answers: dict[tuple[bool, ...], tuple[tuple[str, Scalar], ...]] = {}
             for values in choices:
                 row = dict(zip(cols, values, strict=True))
-                said = tuple(truth(node, row, uid) is True for node, _ in group for uid in uids)
+                said = tuple(
+                    truth(node, {**link, **row}, uid) is True for node, _ in group for uid in uids for link in given
+                )
                 answers.setdefault(said, tuple(row.items()))
             parts.append(list(answers.values()))
         opaque = list(dict.fromkeys(opaque))

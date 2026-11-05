@@ -8995,6 +8995,28 @@ class Confidence(unittest.TestCase):
         rules = "\nrules app.docs\n  select : view\n"
         self.assertFalse(self.same(doc + long + rules, doc + long + " and not {hidden}" + rules))
         self.assertFalse(self.same(doc + long + " and not {hidden}" + rules, doc + long + rules))
+        # a long `and` in one condition that also reads a relation's column (the owner's, from its link)
+        folder = "type folder = app.folders\n  owner : user = owner_id\n  viewer : user = viewer_id\n  can view = "
+        long = " and ".join(f"c{i}" for i in range(8))
+        self.assertFalse(self.same(folder + "viewer\n", folder + f"viewer or {{owner_id = authz.uid() and {long}}}\n"))
+
+    def test_a_corner_chooses_the_columns_a_condition_reads_beside_a_relations(self) -> None:
+        # the corner where {owner_id is not null and a and b} holds: on each row with an owner (its link), a and b
+        # are chosen so that it holds there
+        from authzlib import evaluate
+
+        cond = "owner_id is not null and a and b"
+        pol = parse_policy(
+            self.HEAD + f"type doc = app.docs\n  owner : user = owner_id\n  can view = owner or {{{cond}}}\n", "p.authz"
+        )
+        owned = 0
+        for k in range(10):
+            rows = evaluate.World(f"s/{k}", 4, {cond: True}, pols=[pol]).columns(pol)["doc"]
+            for row in rows.values():
+                if row["owner_id"] is not None:
+                    owned += 1
+                    self.assertEqual((row["a"], row["b"]), (True, True), k)
+        self.assertGreater(owned, 0)
 
     def test_conditions_that_differ_between_two_linked_rows_are_found(self) -> None:
         # the child (b1 false, b2 false) of a parent with b1: only nobody signed in, through the parent's b1, holds
