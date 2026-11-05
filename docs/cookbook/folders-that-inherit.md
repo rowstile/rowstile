@@ -58,7 +58,8 @@ the test, in your browser, with nothing to install. Or try it on a database of y
 ## What it costs
 
 Reads stay fast however deep the tree: rowstile keeps who is above whom in a table of its own, maintained by
-triggers. Writes pay for it. A move rewrites a row for each folder below the one moved, and tree writes
+triggers. Writes pay for it. A move rewrites a row for each folder below the one moved and for each ancestor it gains or
+loses, and tree writes
 (moves, new and deleted folders) to one type wait for each other. [Speed and limits](../reference/limits.md) has the numbers, at a million
 folders.
 

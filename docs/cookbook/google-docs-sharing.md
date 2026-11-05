@@ -23,9 +23,12 @@ rules app.documents
 - **Private** is the absence of everything else: only `owner` holds.
 - **Shared with people**: `authz.share('document', 7, 'viewer', 'user', 4)`, or `'editor'`.
 - **Anyone with the link**: `viewer` may be given to `link`. `authz.create_link('document', 7, 'viewer')`
-  returns a token, and a request that carries it sets `authz_ctx.links` to it for its transaction.
+  returns a token, and a request that carries it sets `authz_ctx.links` to it for its transaction. A visitor
+  who isn't signed in still starts the transaction with `SELECT authz.act_as(NULL, NULL)` (nobody), as every
+  transaction says who asks: without it, the app role gets an error.
   `authz.list_links` shows a document's links and `authz.revoke_link` turns one off.
-- **Public**: `{visibility = 'public'}` is a condition on the row, true for everyone, signed in or not.
+- **Public**: `{visibility = 'public'}` is a condition on the row, true for everyone, signed in or not
+  (nobody signed in is `authz.act_as(NULL, NULL)`).
 - `update owner_id, visibility : share`: an editor changes the text, and only the owner changes who sees it.
 
 ## Tested

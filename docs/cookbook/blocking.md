@@ -18,7 +18,10 @@ rules app.direct_messages
 
 - `not recipient.has_blocked` refuses a message to someone who blocked its sender.
 - The relation is read with the policy's rights, not the sender's. The app role isn't granted `app.blocks` at
-  all here, so nobody can list who blocked them, and the rule still works.
+  all here, so nobody can read the table, and the rule still works.
+- A block can still be found out, one person at a time. A refused message says why, and
+  `authz.explain_rule` says it without writing one: `no   not recipient.has_blocked`. If the person blocked must
+  not know, let the insert through and don't deliver the message.
 - A `{condition}` with a subquery would do the same. The relation says it in the policy's words, and
   `rowstile prove` and the review can read it.
 

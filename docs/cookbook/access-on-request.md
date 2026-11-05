@@ -43,8 +43,8 @@ test "ask, and whoever may share decides"
   as user $ann sees 1 {SELECT FROM authz.list_shares('document', $d) WHERE expires_at = now() + interval '7 days'}
 ```
 
-Bo can't decide his own request, and he can't share the document either. Ann can, so her own request shows
-the first rule alone. Cy asks for the document, and for one that doesn't exist: both are taken, and both wait
+Bo can't decide his own request, and he can't share the document either. Ann may share it, so her own request
+is refused by one rule alone: nobody decides their own request. Cy asks for the document, and for one that doesn't exist: both are taken, and both wait
 alike.
 
 ```authz

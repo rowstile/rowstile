@@ -1,7 +1,7 @@
 # API keys limited to some permissions
 
-A person makes a key for a script. The key acts for them, and should do less than they can: read and change
-nothing, or add notes and nothing else. A **scope** names what a key is left with, and a key never does more
+A person makes a key for a script. The key acts for them, and should do less than they can: read what they read and
+change nothing, or add notes and nothing else. A **scope** names what a key is left with, and a key never does more
 than its user.
 
 ```authz
