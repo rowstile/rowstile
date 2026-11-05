@@ -363,6 +363,17 @@ def test_read_receipts() -> None:
     assert ben.get("/api/chats").json()[0]["unread"] == 0
     seen = {m["name"]: m["last_read_seq"] for m in ann.get(f"/api/chats/{chat}").json()["members"]}
     assert seen["Ben"] == seq
+    # not past what was said: the receipts would claim messages not sent yet
+    r = ben.post(f"/api/chats/{chat}/read", json={"seq": seq + 1})
+    assert r.status_code == 403 and r.json()["why"], r.text
+    # someone added to a group has read what came before (they never will): its receipts don't wait for them
+    cat, dan = person("Cat"), person("Dan")
+    g = group(ann, cat)
+    seq = say(ann, g, "before Dan").json()["seq"]
+    cat.post(f"/api/chats/{g}/read", json={"seq": seq})
+    ann.post(f"/api/chats/{g}/members", json={"user_id": dan.me["id"]})
+    seen = {m["name"]: m["last_read_seq"] for m in ann.get(f"/api/chats/{g}").json()["members"]}
+    assert seen == {"Ann": seq, "Cat": seq, "Dan": seq}, seen
 
 
 def test_the_chat_list_counts_unread_without_reading_them() -> None:

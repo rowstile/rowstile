@@ -48,12 +48,14 @@ CREATE INDEX ON ms.members (user_id);
 CREATE UNIQUE INDEX members_one_owner ON ms.members (chat_id) WHERE role = 'owner';
 
 -- joined_seq is set by the database, whatever the insert says: members read the messages after it, by number,
--- not by the clock (a clock that steps back refuses nothing). SECURITY DEFINER: it reads the chat's counter,
+-- not by the clock (a clock that steps back refuses nothing). And what came before, they will never read: their
+-- read mark starts there, so read receipts don't wait for them. SECURITY DEFINER: it reads the chat's counter,
 -- like ms.number_message below
 CREATE FUNCTION ms.stamp_joined_seq() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 BEGIN
   NEW.joined_seq := coalesce((SELECT c.last_seq FROM ms.chats c WHERE c.id = NEW.chat_id), 0);
+  NEW.last_read_seq := NEW.joined_seq;
   RETURN NEW;
 END $f$;
 CREATE TRIGGER stamp_joined_seq BEFORE INSERT ON ms.members FOR EACH ROW EXECUTE FUNCTION ms.stamp_joined_seq();

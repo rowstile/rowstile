@@ -136,6 +136,20 @@ test "you edit your own messages for 15 minutes and delete them; admins delete a
   as user $bo refused {UPDATE ms.messages SET deleted = true WHERE chat_id = $g AND body = 'secret'}
   as user $bo sees 1 {SELECT FROM ms.messages WHERE chat_id = $g AND NOT deleted AND body = 'secret'}
 
+test "read receipts: you mark read what was said, and someone added later has read what came before"
+  given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
+  given bo = {INSERT INTO ms.users (phone, name) VALUES ('t-bo', 'Bo') RETURNING id}
+  given cy = {INSERT INTO ms.users (phone, name) VALUES ('t-cy', 'Cy') RETURNING id}
+  given g = {INSERT INTO ms.chats (kind, title, created_by) VALUES ('group', 'Weekend', $ann) RETURNING id}
+  given {INSERT INTO ms.members (chat_id, user_id, role) VALUES ($g, $ann, 'owner'), ($g, $bo, 'member')}
+  given {INSERT INTO ms.messages (chat_id, sender_id, body) VALUES ($g, $ann, 'one')}
+  as user $bo allowed {UPDATE ms.members SET last_read_seq = 1 WHERE chat_id = $g AND user_id = $bo}
+  as user $bo refused {UPDATE ms.members SET last_read_seq = 2 WHERE chat_id = $g AND user_id = $bo}
+  as user $ann refused {UPDATE ms.members SET last_read_seq = 0 WHERE chat_id = $g AND user_id = $bo}
+  -- what was said before Cy joined, Cy never reads: their mark starts past it, whatever the insert says
+  given {INSERT INTO ms.members (chat_id, user_id, last_read_seq) VALUES ($g, $cy, 0)}
+  as user $cy sees 1 {SELECT FROM ms.members WHERE chat_id = $g AND user_id = $cy AND last_read_seq = 1}
+
 test "invite links: an admin makes one for a group, and whoever holds it joins"
   given ann = {INSERT INTO ms.users (phone, name) VALUES ('t-ann', 'Ann') RETURNING id}
   given bo = {INSERT INTO ms.users (phone, name) VALUES ('t-bo', 'Bo') RETURNING id}

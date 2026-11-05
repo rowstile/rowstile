@@ -96,6 +96,7 @@ rules ms.members
   update role                                    : chat.manage and {role <> 'owner'}              -- nobody demotes the owner
   update role after                              : {role <> 'owner'}                              -- nor makes another
   update last_read_seq                           : person
+  update last_read_seq after                     : {last_read_seq <= (select c.last_seq from ms.chats c where c.id = chat_id)}
   update chat_id, user_id, joined_at, joined_seq : nobody
   delete                                         : (person or chat.manage) and {role <> 'owner'}  -- leave, or be removed; never the owner
   -- a group deleted by its owner takes every membership in it; an account deleted, its memberships

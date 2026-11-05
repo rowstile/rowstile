@@ -57,7 +57,7 @@ set that database up, so mark it as a development database once first: `rowstile
 
 Each row of this table is checked in [`db/tests/rules.authz`](db/tests/rules.authz): each test makes the people
 and chats it needs, checks who may do what (as the app, through row-level security), and rolls back. `rowstile
-test` runs them: 83 checks, in about a second.
+test` runs them: 87 checks, in about a second.
 
 ## What the backend doesn't have to do
 
@@ -71,7 +71,7 @@ test` runs them: 83 checks, in about a second.
   changed nothing asks for the same (`tx.authz.expect`). The web app shows it behind a "why?" link:
 
   ```
-  no   insert : chat.post and ((sender and {bot_id is null}) or (from_bot and {sender_id is null}))  (line 107)
+  no   insert : chat.post and ((sender and {bot_id is null}) or (from_bot and {sender_id is null}))  (line 108)
     no   chat.post
       no   user 5cf5… does not hold post on chat 16
         chat.post = (member and not blocked and ({not admins_only} or admin)) or bot
