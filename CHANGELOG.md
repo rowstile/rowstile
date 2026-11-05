@@ -162,6 +162,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile apply` remakes a trigger the policy made that is gone when a write rule's condition reads a column named
   `begin`, instead of saying `unchanged`: reading the compiled SQL back, a `begin` in parentheses no longer opens a
   block, as psql reads it. Migrations for Drizzle Kit keep one statement between breakpoints there too.
+- A migration that removes an inheritance tree drops the tree's index by its schema (`authz_int`), not by its
+  name alone on the search path, where an index of the app's with that name would have gone instead. The lock
+  file names those indexes with their schema from the next migration on; one written before needs no migration.
 
 ### Upgrading
 

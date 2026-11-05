@@ -57,6 +57,7 @@ SCHEMAS = {
 REORDERED_COLUMN_RULES = "column rules written in another order"  # (whose migration must make no trigger again)
 LOST_RULES = "a table with no rules any more"  # (whose migration warns that row-level security stays on)
 LINES_MOVE = "lines that only move"  # (the one change that needs no migration: the database stays as it is)
+TREE_GOES = "a link that stops passing view on (a tree removed)"  # (an index of the app's has its index's name)
 # (name, schema, old policy, new policy): a kind of change each, both ways. The kinds held so far: a permission, a
 # relation (shared, shared if, from a table with a where), a type (its line, moved, added as a principal, removed),
 # inheritance (changed, removed, with a deny), rules (changed, gone, on columns), a scope, a caveat, custom roles, an
@@ -126,7 +127,7 @@ CASES: list[tuple[str, str, str, str]] = [
         ),
     ),
     (
-        "a link that stops passing view on (a tree removed)",
+        TREE_GOES,
         "docs",
         DOCS,
         edit(
@@ -553,6 +554,12 @@ APP_VIEW = (
     "CREATE FUNCTION mt.count_docs() RETURNS bigint LANGUAGE sql BEGIN ATOMIC SELECT count(*) FROM mt.docs_visible; END;"
 )
 
+# an index of the app's, on the search path, with the name of the index of the tree that TREE_GOES removes
+APP_INDEX = (
+    "CREATE TABLE public.near (x int);\n"
+    'CREATE INDEX "folder__linked_into_parent__tree_ancestor_idx" ON public.near (x);'
+)
+
 
 def sh(*args: str, stdin: str | None = None, check: bool = True) -> str:
     p = subprocess.run(args, input=stdin, capture_output=True, text=True)
@@ -801,6 +808,11 @@ def check(label: str, name: str, schema: str, ms: list[migrate.Migration], new: 
             ).split()
             if left != ["1", "f", "t"]:
                 diffs.append(f"  {db}: the app's view after: {left}")
+    if (
+        name == TREE_GOES
+        and psql(db_m, "SELECT to_regclass('public.folder__linked_into_parent__tree_ancestor_idx')") == "\n"
+    ):
+        diffs.append("  the migration drops the app's index named as the tree's was")
     if ms[0].empty:
         size = "no migration needed"
     else:
@@ -834,7 +846,7 @@ def main() -> None:
             label = name + direction
             fresh("authz_mig_m", SCHEMAS[schema])
             apply_whole("authz_mig_m", a)
-            psql("authz_mig_m", APP_VIEW if "a view of the app's" in name else "")
+            psql("authz_mig_m", APP_VIEW if "a view of the app's" in name else APP_INDEX if name == TREE_GOES else "")
             lock = migrate.lock_of(database.migratable(a, {})[1])
             ms = database.migrations(b, {}, lock, label)
             if name == REORDERED_COLUMN_RULES and any(re.search(r"(?m)^(CREATE|DROP) TRIGGER", m.sql) for m in ms):

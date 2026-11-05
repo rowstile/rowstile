@@ -38,7 +38,7 @@ from . import BUILD, __version__
 from .compiler import NextTree
 from .parse import meaning_lines
 from .sqlutil import DROP_CHILD_TRIGGERS, STUB_COLUMNS, dep_trigger
-from .statements import drop_sql, made, references, split, unquoted
+from .statements import NAME, drop_sql, made, references, split, unquoted
 
 if TYPE_CHECKING:
     from . import Compiler
@@ -310,6 +310,14 @@ def parse_lock(text: str | None) -> Lock:
                 elif w.startswith("tree="):
                     info["tree"] = w[len("tree=") :]
             lock.objects[head] = info
+    # a lock written by 0.1.0-beta.3 or before keys a tree's index by its bare name: it is in its tree's table's schema
+    schemas = {
+        o["tree"]: re.findall(NAME, o["key"])[0] for o in lock.objects.values() if o["kind"] == "table" and o["tree"]
+    }
+    for info in lock.objects.values():
+        if info["kind"] == "index" and info["tree"] in schemas and re.fullmatch(NAME, info["key"]):
+            info["key"] = f"{schemas[info['tree']]}.{info['key']}"
+    lock.objects = {f"{o['kind']} {o['key']}": o for o in lock.objects.values()}
     return lock
 
 
