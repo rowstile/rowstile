@@ -18039,6 +18039,57 @@ class Delivery(unittest.TestCase):
         pip = search(r"package-ecosystem: pip\n    directory: (\S+)", dependabot).group(1)
         self.assertTrue(glob.glob(os.path.join(self.REPO, pip.lstrip("/"), "*requirements*.txt")), pip)
 
+    # each lock file's ecosystem in Dependabot's words
+    LOCKS: ClassVar[dict[str, str]] = {
+        "package-lock.json": "npm",
+        "uv.lock": "uv",
+        "Cargo.lock": "cargo",
+        "Gemfile.lock": "bundler",
+        "go.sum": "gomod",
+        "mix.lock": "mix",
+        "composer.lock": "composer",
+        "dotnet-tools.json": "nuget",
+    }
+    # lock files no entry updates, and why
+    UNLOCKED: ClassVar[dict[str, str]] = {
+        "sdk/go/go.sum": "the Go SDK's go.mod names the oldest pgx it takes, which users may run with, and Dependabot "
+        "can't update go.sum alone",
+    }
+
+    def test_every_lock_file_is_dependabots(self) -> None:
+        # what the apps, the tests and the tools run gets the monthly and the security updates: each lock file's
+        # folder is in an entry of its ecosystem (walked, as the Dockerfiles are)
+        entries: dict[str, set[str]] = {}
+        for eco, body in re.findall(
+            r"(?ms)^  - package-ecosystem: (\S+)\n(.*?)(?=^  - |\Z)", read("../.github/dependabot.yml")
+        ):
+            listed = re.search(r"(?m)^    directories: \[([^\]]*)\]", body)
+            folders = (
+                re.findall(r'"([^"]+)"', listed.group(1)) if listed else [search(r"directory: (\S+)", body).group(1)]
+            )
+            entries.setdefault(eco, set()).update(folders)
+        skipped = {".git", "node_modules", ".venv", ".ci", "dist", "target", "deps", "_build", "vendor", "bin", "obj"}
+        found = []
+        for root, dirs, files in os.walk(self.REPO):
+            dirs[:] = sorted(d for d in dirs if d not in skipped and not d.startswith(".feed"))
+            for name in sorted(set(files) & set(self.LOCKS)):
+                path = os.path.relpath(os.path.join(root, name), self.REPO).replace(os.sep, "/")
+                found.append(path)
+                if path in self.UNLOCKED:
+                    continue
+                folder = "/" + os.path.dirname(path) if os.path.dirname(path) else "/"
+                self.assertIn(folder, entries.get(self.LOCKS[name], set()), f"{path}: Dependabot's {self.LOCKS[name]}")
+        for path in ("integrations/django/uv.lock", "integrations/rails/Gemfile.lock", "sdk/rust/Cargo.lock"):
+            self.assertIn(path, found)
+        self.assertLessEqual(set(self.UNLOCKED), set(found), "a lock file left out that isn't there")
+        # the Java SDK's POMs name what its users get: only the plugins that build it move
+        java = search(
+            r'(?ms)^  - package-ecosystem: maven\n    directories: \["/sdk/java"\]\n(.*?)(?=^  - |\Z)',
+            read("../.github/dependabot.yml"),
+        ).group(1)
+        self.assertIn("    allow:\n", java)
+        self.assertNotIn("springframework", java)
+
     # files that start containers from an image by its tag alone, and why (images built here aside)
     BY_TAG: ClassVar[dict[str, str]] = {
         "review-ci/gitlab/rowstile-review.gitlab-ci.yml": "users' pipelines include it, and Dependabot reads no "
