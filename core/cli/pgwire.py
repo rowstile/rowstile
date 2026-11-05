@@ -19,7 +19,7 @@ import os
 import re
 import struct
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, NamedTuple, TypeAlias, TypedDict, TypeGuard
 
 if TYPE_CHECKING:
@@ -944,14 +944,15 @@ def _integer(text: str) -> int | None:
     return number if number is not None and -(2**31) <= number < 2**31 else None
 
 
-def parse_dsn(text: str | None) -> ConnectArgs:
+def parse_dsn(text: str | None, environ: Mapping[str, str] | None = None) -> ConnectArgs:
     """connect() arguments from "host=... port=... user=... password=... dbname=... sslmode=..." (read as libpq
     reads it) or a postgresql:// URL (its ?options too), with libpq's variables (PGHOST, PGSSLMODE, ...) for
     whatever is left out. Each of libpq's settings is honoured as libpq honours it, left alone where that changes
     nothing checked, or refused (ValueError, naming it); so are several hosts, and a setting libpq doesn't have, in
     a keyword string. A URL's other options (an ORM's own: ?schema=, ?pgbouncer=) are left to whoever they are
     for. Three things differ from libpq (the module's docstring): the password file, connect_timeout's default, and
-    client certificates."""
+    client certificates. environ: the variables read (the process's environment where None)."""
+    env = os.environ if environ is None else environ
     out: dict[str, str] = {}
 
     def setting(k: str, v: str, strict: bool) -> None:
@@ -1015,7 +1016,7 @@ def parse_dsn(text: str | None) -> ConnectArgs:
     def given(k: str) -> str | None:
         """A setting as libpq takes it: from the string, else from its variable; empty is not given."""
         var = LIBPQ[k]
-        return (out[k] if k in out else os.environ.get(var) if var else None) or None
+        return (out[k] if k in out else env.get(var) if var else None) or None
 
     def refused(k: str, what: str, then: str = "") -> ValueError:
         name = k if k in out else LIBPQ[k] or k  # the setting, or the variable that gave it
@@ -1034,7 +1035,7 @@ def parse_dsn(text: str | None) -> ConnectArgs:
         raise refused("passfile", "a password file", ": give the password in the connection string or PGPASSWORD")
     sslrootcert = given("sslrootcert")
     sslmode = given("sslmode")
-    if sslmode is None and os.environ.get("PGREQUIRESSL", "").startswith("1"):
+    if sslmode is None and env.get("PGREQUIRESSL", "").startswith("1"):
         sslmode = "require"  # libpq's old variable, where nothing else says
     if sslmode is None:
         sslmode = "verify-full" if sslrootcert == "system" else "prefer"  # as libpq: the system's roots, checked
@@ -1088,9 +1089,7 @@ def parse_dsn(text: str | None) -> ConnectArgs:
         "require_auth": require_auth,
         "target_session_attrs": target,
         "settings": {
-            name: value
-            for var, name in STARTUP.items()
-            if (value := os.environ.get(var)) and value.lower() != "default"
+            name: value for var, name in STARTUP.items() if (value := env.get(var)) and value.lower() != "default"
         },
     }
 

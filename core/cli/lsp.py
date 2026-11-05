@@ -3,7 +3,8 @@
 For .authz files: errors while typing (from the compiler), hover, go to definition, find references, an outline,
 and completion. It needs nothing but Python's standard library and the compiler next to it. With a database in
 rowstile.toml it also completes table and column names (read once from the catalog; a database it can't reach is
-tried again later), a column inside { } as SQL names it.
+tried again later), a column inside { } as SQL names it. The password it sends is the database string's, or PGPASSWORD
+in .env beside rowstile.toml, never the editor's own: the folder opened names the host.
 
 rowstile.toml is read again at each message, so that a change to it is taken at once. A mistake in it is shown on
 it (and in a message), and the server goes on without its settings until the mistake is fixed.
@@ -776,13 +777,20 @@ class Server:
             return {}
         catalog: dict[str, list[str]] = {}
         said = io.StringIO()
+        withheld = False  # the editor's PGPASSWORD left out, and no other password given
         try:
             import pgwire
 
             with contextlib.redirect_stderr(said):
                 database = self.cfg.database  # stops the command when it names a variable that isn't set
             if database:
-                args = pgwire.parse_dsn(database)
+                # a password from the string, or from the .env files beside rowstile.toml, never the editor's own
+                # PGPASSWORD: the folder opened chose the host, and the server reads it unasked
+                env = {k: v for k, v in os.environ.items() if k != "PGPASSWORD"}
+                if (own := self.cfg.files_password) is not None:
+                    env["PGPASSWORD"] = own
+                args = pgwire.parse_dsn(database, environ=env)
+                withheld = args["password"] is None and bool(os.environ.get("PGPASSWORD"))
                 args["timeout"] = 3
                 conn = pgwire.connect(**args)
                 try:
@@ -801,7 +809,13 @@ class Server:
             self.failing(said.getvalue().strip())
             return {}
         except Exception as e:  # no database there, or it refused: complete without it, and try again later
-            self.failing(f"rowstile lsp: no table or column names to complete: {e}")
+            note = (
+                " (the language server doesn't send the editor's PGPASSWORD: put the password in the database string,"
+                " or PGPASSWORD in .env beside rowstile.toml)"
+                if withheld
+                else ""
+            )
+            self.failing(f"rowstile lsp: no table or column names to complete: {e}{note}")
             return {}
         self.catalog = catalog
         return catalog

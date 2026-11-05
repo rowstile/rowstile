@@ -9,6 +9,7 @@ import json
 import os
 import queue
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -34,10 +35,11 @@ def ok(what: str, cond: object, got: Answer = None) -> None:
 
 
 class Client:
-    def __init__(self, cwd: str) -> None:
+    def __init__(self, cwd: str, env: dict[str, str] | None = None) -> None:
         self.p = subprocess.Popen(
             [sys.executable, os.path.join(ROOT, "cli", "rowstile_cli.py"), "lsp"],
             cwd=cwd,
+            env=env,  # the editor's environment (None: this one)
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,  # the editor's log for the server
@@ -474,6 +476,74 @@ with tempfile.TemporaryDirectory() as d:
             [said, f"waited {waited:.1f}s"],
         )
     silent.close()
+
+
+# the password the catalog read sends: the one in rowstile.toml's database string, or PGPASSWORD in .env beside it,
+# never the editor's own PGPASSWORD (the folder opened names the host, and the server connects unasked). A stand-in
+# server asks for the password as it is written (cleartext), and keeps what it gets
+asked = socket.socket()
+asked.bind(("127.0.0.1", 0))
+asked.listen()
+sent: list[str] = []
+
+
+def stand_in() -> None:
+    while True:
+        try:
+            conn, _ = asked.accept()
+        except OSError:
+            return  # closed: the checks are done
+        with conn:
+            conn.settimeout(10)
+            try:
+                startup = conn.recv(4)
+                conn.recv(struct.unpack("!i", startup)[0] - 4)
+                conn.sendall(b"R" + struct.pack("!ii", 8, 3))  # AuthenticationCleartextPassword
+                head = conn.recv(5)
+                if len(head) == 5:  # a password message; a client with none to send hangs up
+                    sent.append(conn.recv(struct.unpack("!i", head[1:])[0] - 4).rstrip(b"\0").decode())
+                    fields = b"SFATAL\0C28P01\0Mpassword authentication failed\0\0"
+                    conn.sendall(b"E" + struct.pack("!i", len(fields) + 4) + fields)
+            except (OSError, struct.error):
+                pass
+
+
+threading.Thread(target=stand_in, daemon=True).start()
+there = f"host=127.0.0.1 port={asked.getsockname()[1]} user=someone dbname=x sslmode=disable"
+editors = dict(os.environ, PGPASSWORD="the-editors-own")
+for label, setting, env_file, expected in (
+    ("no password in the string: none sent", there, None, []),
+    ("one in the string: that one", f"{there} password=the-strings-own", None, ["the-strings-own"]),
+    ("PGPASSWORD in .env beside rowstile.toml: that one", there, "PGPASSWORD=the-folders-own\n", ["the-folders-own"]),
+):
+    sent.clear()
+    with tempfile.TemporaryDirectory() as folder:
+        with open(os.path.join(folder, "policy.authz"), "w", encoding="utf-8") as fh:
+            fh.write(policy)
+        with open(os.path.join(folder, "rowstile.toml"), "w", encoding="utf-8") as fh:
+            fh.write(f'policy = "policy.authz"\ndatabase = "{setting}"\n')
+        if env_file:
+            with open(os.path.join(folder, ".env"), "w", encoding="utf-8") as fh:
+                fh.write(env_file)
+        c = Client(folder, editors)
+        c.request("initialize", {"capabilities": {}})
+        e = Editor(c, os.path.join(folder, "policy.authz"), policy)
+        typed = policy + "\ntype extra = app.\n"
+        tables = e.offered(typed, "type extra = app.", len("type extra = app."))
+        said = c.close()
+    ok(
+        f"the editor has PGPASSWORD, rowstile.toml names a host that asks for a password, {label}",
+        sent == expected and tables == [] and "the-editors-own" not in said,
+        [sent, tables, said],
+    )
+    if not expected:
+        ok(
+            "... the server's log says why",
+            "doesn't send the editor's PGPASSWORD: put the password in the database string, or PGPASSWORD in .env "
+            "beside rowstile.toml" in said,
+            said,
+        )
+asked.close()
 
 
 # a mistake in rowstile.toml: the server starts all the same, shows it on rowstile.toml (its line) and in a message,
