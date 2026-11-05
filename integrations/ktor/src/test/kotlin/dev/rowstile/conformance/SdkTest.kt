@@ -280,6 +280,11 @@ class SdkTest {
         assertEquals(listOf(null, null, null), listOf(plain.problem(), plain.refusal(), plain.errorCode()))
         val notFound = NotFound("app.notes", 7)
         assertEquals(404, notFound.problem()!!.status())
+        // a key of several columns as Kotlin writes one: an array (Object[]), a primitive array, a list
+        assertEquals(
+            listOf("(1,2)", "(1,2)", "(1,\"a b\")"),
+            listOf(arrayOf(1, 2), longArrayOf(1, 2), listOf(1, "a b")).map { NotFound("app.members", it).id() },
+        )
         val refused = assertFailsWith<Exception> {
             transaction(Principal.user(2), db) {
                 Notes.insert {
