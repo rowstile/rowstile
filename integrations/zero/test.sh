@@ -26,7 +26,8 @@ BIN=$ROOT/node_modules/.bin
 # zero-cache's image, pinned in images/Dockerfile beside this folder
 ZERO_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS zero$/\1/p' ../images/Dockerfile)
 export PYTHON=${PYTHON:-python3}
-[ -d "$ROOT/node_modules" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
+# the workspace's packages, installed again when the lock file is newer than the install (a pull that changed it)
+[ "$ROOT/node_modules/.package-lock.json" -nt "$ROOT/package-lock.json" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
 LOG=$(mktemp -d)
 servers=()
 cleanup() {
