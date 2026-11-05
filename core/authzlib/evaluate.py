@@ -1451,6 +1451,8 @@ class Listing:
             for t in p.types.values():
                 self.types.setdefault(t.name, t)
         self.listed, self.whole, self.cut, self.steps, self.complete = 0, -1, False, 0, False
+        # whether a row's class holds a user's id: a column a condition compares with authz.uid() (classes_of)
+        self.holds_users = False
         self._renamings: dict[tuple[tuple[str, int], ...], list[dict[str, dict[str, str]]]] = {}
         found = cone(self.pols)
         if found is None:
@@ -1512,6 +1514,7 @@ class Listing:
                 for vs in itertools.product(*[[*self.possible_ids(self.linked_to[(t.name, c)]), None] for c in by_link])
             ]
             uids: list[str | None] = [*users, None] if any(uses_uid(node) for node, _ in group) else [None]
+            self.holds_users |= len(uids) > 1
             choices = itertools.product(*[domains.get((t.name, col), [None]) for col in cols])
             total = 1
             for col in cols:
@@ -1719,7 +1722,11 @@ class Listing:
         self, rows: dict[str, int], combo: Sequence[Candidate], autos: list[dict[str, dict[str, str]]]
     ) -> Iterator[Listed]:
         """The worlds of these links: every class of each row (each class in turn, for the row of a type no link
-        names and nobody signs in as), each once up to the renamings that keep the links."""
+        names and nobody signs in as), each once up to the renamings that keep the links. Not those that rename
+        users where a class holds a user's id (holds_users): a renaming changes which user it names, so the world
+        renamed is another one."""
+        if self.holds_users:
+            autos = [ren for ren in autos if all(a == b for a, b in ren.get("user", {}).items())]
         varied = [
             (t, str(i)) for t, m in rows.items() for i in range(1, max(m, 1) + 1) if m > 0 or self.types[t].principal
         ]
