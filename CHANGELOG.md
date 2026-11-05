@@ -614,6 +614,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The file manager example's policy: only a group's owner hands it over or deletes it. Its admins still run its
   members and sub-groups, but they could make themselves its owner, which took the group from the person who made
   it, and delete it. The web app offers Delete only to the owner.
+- The file manager example reads `FM_COOKIE_SECURE` and `FM_OPEN_SIGNUP` as true or false (or 1 and 0) in any
+  case, and stops at start on another word: `TRUE` left the session cookie on plain HTTP. `FM_WEB_ORIGINS` may
+  have spaces after its commas.
 
 ### Upgrading
 

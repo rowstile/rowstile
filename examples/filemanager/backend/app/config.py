@@ -21,6 +21,15 @@ class Settings:
     web_origins: tuple[str, ...]  # where the web app runs: browsers there may upload straight to RustFS
 
 
+def flag(name: str, default: str) -> bool:
+    """A setting that is true or false: those words, or 1 and 0, in any case. Anything else stops the app at start:
+    a spelling must not send a cookie meant for HTTPS alone over plain HTTP."""
+    word = os.environ.get(name, default).strip().lower()
+    if word not in ("true", "false", "1", "0"):
+        raise ValueError(f"{name} is {os.environ.get(name)!r}: say true or false")
+    return word in ("true", "1")
+
+
 def load() -> Settings:
     env = os.environ.get
     endpoint = env("FM_S3_ENDPOINT", "http://localhost:9000")
@@ -33,9 +42,13 @@ def load() -> Settings:
         s3_secret_key=env("FM_S3_SECRET_KEY", "rustfsadmin"),
         s3_region=env("FM_S3_REGION", "us-east-1"),
         session_days=int(env("FM_SESSION_DAYS", "14")),
-        cookie_secure=env("FM_COOKIE_SECURE", "false") == "true",
-        open_signup=env("FM_OPEN_SIGNUP", "true") == "true",
+        cookie_secure=flag("FM_COOKIE_SECURE", "false"),
+        open_signup=flag("FM_OPEN_SIGNUP", "true"),
         max_upload_bytes=int(env("FM_MAX_UPLOAD_BYTES", str(1 << 30))),
         link_minutes=int(env("FM_LINK_MINUTES", "10")),
-        web_origins=tuple(env("FM_WEB_ORIGINS", "http://localhost:8000,http://localhost:5173").split(",")),
+        web_origins=tuple(
+            o.strip()
+            for o in env("FM_WEB_ORIGINS", "http://localhost:8000,http://localhost:5173").split(",")
+            if o.strip()
+        ),
     )
