@@ -92,10 +92,11 @@ conformance app has no sign-in, so its `auth.py` stands in for one: it takes the
 set, which a real app must never believe. That is why this page doesn't show it.
 
 ```python
+# app/main.py
 import os
 
 import rowstile
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from rowstile import NotFound, Principal
 from rowstile import sqlalchemy as authz_sa
 from rowstile.fastapi import Rowstile

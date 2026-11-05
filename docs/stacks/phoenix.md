@@ -92,7 +92,12 @@ An Oban job for the user who asked takes them from its arguments: the request pu
 for nobody, whoever the worker ran before it.
 
 ```elixir
+# lib/conformance_web/controllers/note_controller.ex
+      %{project_id: project_id, body: body}
       |> Rowstile.Oban.args()
+      |> AddNote.new()
+
+# lib/conformance/jobs.ex
     Rowstile.Oban.acting_as(job, fn ->
       note = %Note{project_id: project_id, author_id: ConformanceWeb.signed_in(), body: body}
       Rowstile.transact(Repo, fn -> Repo.insert(note) end)

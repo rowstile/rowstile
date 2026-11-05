@@ -173,12 +173,13 @@ Neon's serverless driver, `@neondatabase/serverless`, talks to Postgres over Web
 does, and `@rowstile/pg` takes it as it takes pg's: the transactions get Neon's own client, typed.
 
 ```ts
-import { Pool, neonConfig } from "@neondatabase/serverless";
+// tests/neon.test.ts
+import { Pool } from "@neondatabase/serverless";
 import { authz } from "@rowstile/pg";
 
-  const one = new Pool({ connectionString: NEON, max: 1 });
-  const a = authz(one);
-      const ids = await a.transaction(async (c) => (await c.query("SELECT id FROM app.notes ORDER BY id")).rows.map((r) => r.id), user || null);
+const one = new Pool({ connectionString: NEON, max: 1 });
+const a = authz(one);
+const ids = await a.transaction(async (c) => (await c.query("SELECT id FROM app.notes ORDER BY id")).rows.map((r) => r.id), user || null);
 ```
 
 On Neon it needs no settings. In front of your own Postgres it needs a WebSocket proxy, Neon's `wsproxy`, and

@@ -26,8 +26,8 @@ signs in each transaction, reads a refusal, and ships the policy with its migrat
 Every line of code these pages show is in a tested app ([`integrations/fastapi`](../../integrations/fastapi), [`integrations/nextjs`](../../integrations/nextjs),
 [`integrations/go`](../../integrations/go), [`integrations/django`](../../integrations/django), [`integrations/aspnetcore`](../../integrations/aspnetcore), [`integrations/rails`](../../integrations/rails), [`integrations/spring`](../../integrations/spring), [`integrations/ktor`](../../integrations/ktor), [`integrations/axum`](../../integrations/axum), [`integrations/phoenix`](../../integrations/phoenix), [`integrations/laravel`](../../integrations/laravel), [`integrations/electric`](../../integrations/electric), [`integrations/zero`](../../integrations/zero), [`integrations/powersync`](../../integrations/powersync), the conformance suites), in [`docs/getting-started.md`](../getting-started.md), which runs as written, or, for the SQL the SDKs send, in
 the SDKs' own code. [`core/tests/unit_test.py`](../../core/tests/unit_test.py) checks each line, and that the install lines have each rowstile
-package the code imports. It checks lines one by one: a block may be a few lines of a longer file, so read
-the text around it too.
+package the code imports. A block is lines of one file, in their order, though it may leave lines out; a comment
+naming a file (`# app/worker.py`) starts the lines of that file. So read the text around a block too.
 
 Start with [getting started](../getting-started.md) for the policy itself. Or from an app that already
 runs, as a template repository: the [FastAPI starter](https://github.com/rowstile/starter-fastapi) and the

@@ -80,8 +80,7 @@ An UPDATE or DELETE the rules refuse changes 0 rows, without an error; `expect` 
 
 ```python
         with pytest.raises(Refused), pgp.transaction(conn, 3):
-            cur = conn.execute("UPDATE app.notes SET body = 'x' WHERE id = 1")
-            pgp.expect(conn, cur.rowcount, "app.notes", "update", 1)
+            pgp.expect(conn, conn.execute("UPDATE app.notes SET body = 'x' WHERE id = 1"), "app.notes", "update", 1)
 ```
 
 A refused INSERT is an error already: `rowstile.refusal(exc)` reads it as `Refused`.
@@ -208,8 +207,7 @@ An async job runs in an event loop of its own (RQ runs a coroutine with `asyncio
 A pool would keep connections of a loop that is gone, so its engine pools nothing:
 
 ```python
-import asyncio
-
+# app/jobs.py
 @functools.cache
 def async_engine() -> AsyncEngine:
     """For async jobs: each runs in an event loop of its own (asyncio.run), so no connection outlives its job."""
@@ -219,6 +217,15 @@ def async_engine() -> AsyncEngine:
 async def digest_async() -> int:
     async with AsyncSession(async_engine()) as s:
         return await s.scalar(select(func.count()).select_from(Project)) or 0
+```
+
+Celery's task runs it:
+
+```python
+# app/worker.py
+import asyncio
+
+from . import jobs
 
 @celery.task
 def digest_async() -> int:
