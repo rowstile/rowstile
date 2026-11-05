@@ -616,19 +616,21 @@ export type SyncedTable = keyof typeof shapes;
     def _client_powersync(self, source_name: str, columns: Mapping[str, list[str]]) -> str:
         """For PowerSync's service (a preview): a stream of each mirrored table, its rows in the bucket of each key
         that may read them, for the principal the token names (its sub, and principal_type: user if it says none);
-        the mirror's columns but readers (which would tell a client who else reads the row)."""
+        the mirror's columns but readers (which would tell a client who else reads the row). A stream's alias is the
+        table's name on the client: the table's own, which no two mirrored tables share (AZ811), quoted (`order`)."""
         streams = []
         for s, t in self.mirrored():
             name = s.table.split(".")[-1]
             cols = columns.get(s.table)
-            assert cols, f"{s.table}'s mirror: its columns, from the database"
-            listed = ", ".join(f"{name}.{q(c)}" for c in cols)
+            assert cols, f"{s.table}'s mirror: its columns, from the database (database.mirror_columns)"
+            alias = q(name)
+            listed = ", ".join(f"{alias}.{q(c)}" for c in cols)
             streams.append(
                 f"""  {name}:
     auto_subscribe: true
     query: |
       SELECT {listed}
-      FROM authz_sync.{q(t.name + "__mirror")} {name}, json_each({name}.readers) r
+      FROM authz_sync.{q(t.name + "__mirror")} {alias}, json_each({alias}.readers) r
       WHERE r.value IN (SELECT key FROM authz_sync.keys
                         WHERE principal_type = ifnull(auth.parameter('principal_type'), 'user')
                           AND principal_id = auth.user_id())"""

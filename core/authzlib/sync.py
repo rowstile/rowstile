@@ -259,6 +259,20 @@ class SyncMixin(Core):
                     span=s.mirrored_span,
                 )
 
+        mirrored: dict[str, str] = {}  # a mirrored table's name on PowerSync's clients: its own -> the table
+        for s in pol.syncs.values():
+            if s.mirrored:
+                name = s.table.split(".")[-1]
+                if name in mirrored:
+                    fail(
+                        s.loc,
+                        f"sync {s.table} ... mirrored: {mirrored[name]} is mirrored too, and a PowerSync client names "
+                        f"each table by its own name, {name} for both: mirror one of them",
+                        "AZ811",
+                        span=s.mirrored_span,
+                    )
+                mirrored[name] = s.table
+
     # --- which keys are groups ------------------------------------------------------------------------
     def group_types(self) -> set[str]:
         """The types named as a subject with a relation (`team#member`): their relations and permissions may be

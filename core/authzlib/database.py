@@ -1107,7 +1107,15 @@ def mirror_columns(db: Db, policy: str, files: Mapping[str, object] | str | None
     by_mirror: dict[str, list[str]] = {}
     for r in db.rows(MIRROR_COLUMNS):
         by_mirror.setdefault(text(r, "relname"), []).append(text(r, "attname"))
-    return {s.table: by_mirror.get(c.sync_type(s).name + "__mirror", []) for s in pol.syncs.values() if s.mirrored}
+    out = {s.table: by_mirror.get(c.sync_type(s).name + "__mirror", []) for s in pol.syncs.values() if s.mirrored}
+    missing = [table for table, columns in out.items() if not columns]
+    if missing:
+        raise Error(
+            f"{', '.join(missing)}: mirrored by the policy, and no mirror in the database yet: PowerSync's streams "
+            f"list the mirror's columns [AZ811]",
+            "apply or push the policy first, then write the streams again",
+        )
+    return out
 
 
 def test_files(tests: Mapping[str, str] | None) -> Files:
