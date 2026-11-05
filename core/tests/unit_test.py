@@ -19288,6 +19288,10 @@ class Editors(unittest.TestCase):
         for word in parse.TOP_WORDS + ("include",):
             self.assertRegex(f"    {word}", outdent)
         self.assertNotRegex("    owner : user = owner_id", outdent)
+        # ... but not a relation named with one of those words (`scope : user shared` stays in its type)
+        for word in parse.TOP_WORDS + ("include",):
+            self.assertNotRegex(f"    {word} : user shared", outdent)
+            self.assertNotRegex(f"    {word}: user shared", outdent)
         pairs = {(p["open"], p["close"]) for p in config["autoClosingPairs"]}
         self.assertEqual(pairs, {(b["start"], b["end"]) for b in zed["brackets"] if b["close"]})
 
