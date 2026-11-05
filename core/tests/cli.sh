@@ -465,6 +465,48 @@ out=$(TOML snapshot --out db 2>&1); rc=$?
 toml 'policy = "db/policy.authz"\n[migrations]\ntool = "sql"\ndir = "db/migrations"\nlock = "state/policy.lock"\n' migrate
 [ $rc -eq 0 ] && case "$out" in *"wrote state/policy.lock"*) true;; *) false;; esac && [ -s "$P/state/policy.lock" ] && [ ! -e "$P/db/policy.lock" ] &&
   ok "migrate writes the lock file where [migrations] lock says, making its folder" || bad "the lock where rowstile.toml says" "$rc $out"
+# the files rowstile.toml names to be written stay in the git repository it is in, or in its folder when it is in
+# none (the policy, the tests and the lock it reads, in its folder): it may be a pull request's, run by CI
+printf 'a line of its own\n' > "$T/outside.txt"; ln -s "$T/outside.txt" "$P/db/link.txt"
+outside() { [ $rc -eq 2 ] && [ "$out" = "$1: $2 = \"$3\" is outside $4 (or a link out of it): the files it writes stay there" ] &&
+  [ "$(cat "$T/outside.txt")" = "a line of its own" ]; }
+in_repository() { local d; d=$(cd "$1" && pwd -P); while :; do [ -e "$d/.git" ] || [ -L "$d/.git" ] && return 0; [ "$d" = / ] && return 1; d=$(dirname "$d"); done; }
+if in_repository "$P"; then
+  echo "skip  what rowstile.toml writes, in no git repository and in one: the suite's folder is in a git repository (8 checks)"
+else
+  nogit="the folder rowstile.toml is in, which is in no git repository"
+  toml 'policy = "db/policy.authz"\n[review]\nsnapshot = "../outside.txt"\n' snapshot --check
+  outside "$P/rowstile.toml" "[review] snapshot" ../outside.txt "$nogit" &&
+    ok "checking the snapshot reads no [review] snapshot outside rowstile.toml's folder, in no git repository" || bad "snapshot outside" "$rc $out"
+  toml 'policy = "db/policy.authz"\n[review]\nsnapshot = "db/link.txt"\n' snapshot
+  outside "$P/rowstile.toml" "[review] snapshot" db/link.txt "$nogit" && ok "... nor writes one through a link out of it" || bad "snapshot through a link" "$rc $out"
+  printf 'policy = "db/policy.authz"\n[clients]\npy = "%s"\n' "$T/outside.txt" > "$P/rowstile.toml"
+  out=$(OWN client 2>&1); rc=$?
+  outside "$P/rowstile.toml" "[clients] py" "$T/outside.txt" "$nogit" && ok "... nor a [clients] file" || bad "client outside" "$rc $out"
+  toml 'policy = "db/policy.authz"\n[migrations]\ntool = "sql"\ndir = "../outside-migrations"\n' migrate
+  outside "$P/rowstile.toml" "[migrations] dir" ../outside-migrations "$nogit" && [ ! -e "$T/outside-migrations" ] &&
+    ok "... nor a [migrations] dir" || bad "migrations outside" "$rc $out"
+  # in a git repository (a .git there is enough: no git runs), a monorepo's sibling folders
+  R="$T/repo"; mkdir -p "$R/.git" "$R/backend/db"; cp example/docs.authz "$R/backend/db/policy.authz"
+  repo() { printf "$1" > "$R/backend/rowstile.toml"; out=$(cd "$R/backend" && python3 "$CLI_PY" "${@:2}" 2>&1); rc=$?; }
+  repo 'policy = "db/policy.authz"\n[clients]\npy = "../frontend/authz_client.py"\n[migrations]\ntool = "sql"\ndir = "../migrations"\n[review]\nsnapshot = "../review/access.snapshot"\n' client
+  a=$rc; out2=$(cd "$R/backend" && python3 "$CLI_PY" migrate 2>&1); b=$?
+  out3=$(cd "$R/backend" && python3 "$CLI_PY" --db "dbname=$DB" snapshot 2>&1); c=$?
+  [ "$a $b $c" = "0 0 0" ] && [ -s "$R/frontend/authz_client.py" ] && ls "$R/migrations/"*_policy.sql >/dev/null 2>&1 && [ -s "$R/review/access.snapshot" ] &&
+    ok "in a git repository, a client, the migrations and the snapshot are written in a folder beside rowstile.toml's" ||
+    bad "sibling folders in a repository" "$a $b $c $out $out2 $out3"
+  top=$(cd "$R" && pwd -P)
+  repo 'policy = "db/policy.authz"\n[clients]\npy = "../../outside.txt"\n' client
+  outside "$R/backend/rowstile.toml" "[clients] py" ../../outside.txt "the git repository rowstile.toml is in ($top)" &&
+    ok "... but not outside the repository: a [clients] file" || bad "client outside the repository" "$rc $out"
+  repo 'policy = "db/policy.authz"\n[migrations]\ntool = "sql"\ndir = "../../outside-migrations"\n' migrate
+  outside "$R/backend/rowstile.toml" "[migrations] dir" ../../outside-migrations "the git repository rowstile.toml is in ($top)" &&
+    [ ! -e "$T/outside-migrations" ] && ok "... nor a [migrations] dir outside it" || bad "migrations outside the repository" "$rc $out"
+  repo 'policy = "../policy.authz"\n' check
+  [ $rc -eq 2 ] && [ "$out" = "$R/backend/rowstile.toml: policy = \"../policy.authz\" is outside the folder rowstile.toml is in (or a link out of it): the files it names stay in that folder" ] &&
+    ok "... and the policy it reads stays in rowstile.toml's own folder" || bad "policy in a repository" "$rc $out"
+fi
+rm "$P/db/link.txt"
 
 echo "-- a server that goes away, two applies at once"
 # (ended once it runs the statement)

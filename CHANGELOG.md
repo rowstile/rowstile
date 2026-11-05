@@ -25,6 +25,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   the other `inet_*` functions, `current_schemas()`, `pg_my_temp_schema()`, `pg_trigger_depth()`, `nextval()`,
   `currval()` or `lastval()`: compiling refuses it (AZ305), in a condition that reads another table too, where
   applying can't ask Postgres. A synced permission that reads them is refused (AZ805).
+- `[review] snapshot`, the `[clients]` paths and `[migrations] dir` in `rowstile.toml` stay in the git repository
+  it is in (the first folder up with a `.git`), or in its folder when it is in none: `rowstile snapshot` (with or
+  without `--check`), `rowstile client`, `rowstile dev` and `rowstile migrate` refuse a path outside it, or a link
+  out of it, and name it (exit 2). A monorepo's `../frontend/src/authz.ts` still works. `--out` and `--dir` are
+  still the caller's.
 
 ## 0.1.0-beta.3 (2026-11-05)
 
