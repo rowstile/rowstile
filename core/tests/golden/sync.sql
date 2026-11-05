@@ -1017,7 +1017,7 @@ CREATE UNLOGGED TABLE authz_int.sync_found (txid bigint NOT NULL, ptype text NOT
   round int NOT NULL);
 CREATE INDEX ON authz_int.sync_found (txid, round);
 INSERT INTO authz_int.locks VALUES ('sync#keys', 0) ON CONFLICT DO NOTHING;
--- the lock rows of what a commit works out, by the hash of each object and key: writers whose work meets queue on
+-- the lock rows of what a commit works out, by the hash of each object (type:id): writers whose work meets queue on
 -- them, the others go on (sync_process). Each is updated, to the same row: in REPEATABLE READ, a writer whose
 -- snapshot is older than another's update of it gets a serialization error
 CREATE TABLE authz_int.sync_stripes (stripe int PRIMARY KEY, n bigint NOT NULL);

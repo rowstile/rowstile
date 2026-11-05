@@ -691,9 +691,15 @@ def row_cond(sql: str, alias: str) -> str:
 # asks Postgres about the rest (tree_checks): the app's functions, and in a condition that reads no other table,
 # anything that isn't IMMUTABLE. In one that reads another table, Postgres can't say, so this list is all that
 # keeps a built-in out there.
-UNSTABLE_CALLS = (
+# (the clock and chance first: the sync index tells them from who asks, AZ804 and AZ805, by CLOCK)
+CLOCK_CALLS = (
     *("now", "clock_timestamp", "statement_timestamp", "transaction_timestamp", "timeofday"),
     *("random", "random_normal", "gen_random_uuid", "uuidv4", "uuidv7"),
+)
+CLOCK_WORDS = ("current_timestamp", "current_date", "current_time", "localtime", "localtimestamp")
+CLOCK = frozenset(CLOCK_CALLS + CLOCK_WORDS)
+UNSTABLE_CALLS = (
+    *CLOCK_CALLS,
     *("authz.uid", "authz.ctx", "authz.principal", "current_setting", "current_database", "pg_backend_pid"),
     *("txid_current", "pg_current_xact_id", "current_schemas", "pg_my_temp_schema", "pg_trigger_depth"),
     *("pg_has_role", "has_*_privilege", "row_security_active"),
@@ -701,7 +707,7 @@ UNSTABLE_CALLS = (
     *("nextval", "currval", "lastval"),
 )
 UNSTABLE_WORDS = (
-    *("current_timestamp", "current_date", "current_time", "localtime", "localtimestamp"),
+    *CLOCK_WORDS,
     *("current_user", "current_role", "session_user", "user", "system_user", "current_schema", "current_catalog"),
 )
 UNSTABLE_CALL = "|".join(n.replace("*", "[a-z_]+").replace(".", r"\s*\.\s*") for n in UNSTABLE_CALLS)
