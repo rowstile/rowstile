@@ -143,6 +143,14 @@ EOF
     *"filetype=authz highlighted=true"*function*keyword*type*) echo "ok    Neovim 0.11 highlights a policy as the README sets it up" ;;
     *) echo "FAIL  Neovim does not highlight a policy as the README sets it up: $out"; exit 1 ;;
   esac
+  # the language server starts in the folder rowstile.toml is in, which it reads from where it starts, though
+  # Neovim started elsewhere (a stand-in rowstile says where it was started)
+  mkdir -p /tmp/bin /tmp/project/db && printf "#!/bin/sh\npwd > /tmp/lsp-cwd\n" > /tmp/bin/rowstile && chmod +x /tmp/bin/rowstile &&
+    touch /tmp/project/rowstile.toml && cp /repo/core/example/docs.authz /tmp/project/db/ || exit 1
+  (cd / && PATH="/tmp/bin:$PATH" nvim --headless /tmp/project/db/docs.authz \
+    -c "lua vim.wait(5000, function() return vim.uv.fs_stat(\"/tmp/lsp-cwd\") ~= nil end)" -c "qa!" >/dev/null 2>&1)
+  [ "$(cat /tmp/lsp-cwd 2>/dev/null)" = /tmp/project ] && echo "ok    Neovim starts the language server where rowstile.toml is" ||
+    { echo "FAIL  Neovim starts the language server in $(cat /tmp/lsp-cwd 2>/dev/null || echo "no folder"), not where rowstile.toml is"; exit 1; }
 ' || rc=1
 
 echo "-- the Zed extension"
