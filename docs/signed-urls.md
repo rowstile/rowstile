@@ -56,7 +56,7 @@ own:
 
 ```python
 with transaction_as(user):                                    # authz.act_as('user', ...)
-    row = one("SELECT object_key FROM app.files WHERE id = %s AND NOT ready", file_id)
+    row = one("SELECT object_key FROM app.files WHERE id = %s AND NOT ready FOR UPDATE", file_id)
     if row is None:
         return 404                                            # hidden, missing or confirmed already
     key = str(row.object_key)
@@ -66,9 +66,16 @@ with transaction_as(user):                                    # authz.act_as('us
     size = size_of(key)                                       # head_object's ContentLength, or None
     if size is None:
         return 409                                            # nothing was uploaded
-    execute("UPDATE app.files SET ready = true, size = %s WHERE id = %s", size, file_id)
+    if one("UPDATE app.files SET ready = true, size = %s WHERE id = %s RETURNING id", size, file_id) is None:
+        return 403                                            # it changed nothing: not confirmed
 ```
 
+- `FOR UPDATE` holds the row until the transaction ends: a second confirm of the same file waits, then finds it
+  ready and stops. Without it, two confirms can run side by side with a second `PUT` between them, and the row
+  can end with one upload's bytes and the other's size. With row-level security, `FOR UPDATE` returns only a
+  row the user may also update: one who may add a file but not change it gets the 404.
+- Check what the `UPDATE` changed: an update the rules refuse changes no row and raises no error, and the file
+  would stay not ready with nothing said. `RETURNING` tells (the SDKs' `expect` also says why not).
 - Why a place of its own: a signed `PUT` URL works until it expires, also after the upload was confirmed.
   Signed for the object's own key, it would let its holder replace a confirmed file, and the stored size
   (a quota's count) would no longer be the file's. Moved on confirm, the bytes are out of its reach: what is
@@ -89,8 +96,10 @@ the other order could leave a row pointing at nothing.
 ## Sharing with a link
 
 `authz.create_link()` returns a token once and stores only its hash. A request presenting it
-(`SET LOCAL authz_ctx.links = '<token>'`, or `Authz.use_links()` in the Python client) can read what the
-link shares, signed in or not, so downloads for link holders follow the same pattern. Send the token
-in a header rather than the URL your server logs. `authz.list_links()` lists an object's links for the
+(`SELECT set_config('authz_ctx.links', $1, true)`, or `Authz.use_links()` in the Python client) can read what
+the link shares, signed in or not, so downloads for link holders follow the same pattern. Send the token in a
+header rather than the URL your server logs, and pass it to the query as a parameter (`$1` above). Don't write
+it into a `SET` statement: `SET` takes no parameter, so the token would be pasted into the SQL, and a header
+is text the caller chose. `authz.list_links()` lists an object's links for the
 people who may turn them off, each with an id, and `authz.revoke_link()` turns one off by that id: the
 token is never shown again, and the id opens nothing.
