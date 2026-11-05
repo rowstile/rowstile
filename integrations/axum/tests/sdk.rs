@@ -455,10 +455,14 @@ async fn a_test_database_per_binary() {
         owner.close().await;
         n
     };
-    let kept = rowstile::testing::per_binary(&tests, Some("nonsense"), false).await.unwrap();
+    // (an app role's URL that names no database, or another, names the copy)
+    let app = std::env::var("ROWSTILE_APP_URL").unwrap();
+    let server = app.rsplit_once('/').unwrap().0;
+    let name = db.url.rsplit('/').next().unwrap();
+    let kept = rowstile::testing::per_binary(&tests, Some(&format!("{server}?sslmode=disable")), false).await.unwrap();
     assert_eq!(
-        (kept.url.as_str(), kept.app_url.as_deref(), users(&kept.url).await),
-        (db.url.as_str(), Some("nonsense"), 3)
+        (kept.url.as_str(), kept.app_url.unwrap(), users(&kept.url).await),
+        (db.url.as_str(), format!("{server}/{name}?sslmode=disable"), 3)
     );
     let again = rowstile::testing::per_binary(&tests, None, true).await.unwrap();
     assert_eq!((again.url.as_str(), again.app_url, users(&again.url).await), (db.url.as_str(), None, 0));
@@ -469,11 +473,22 @@ async fn a_test_database_per_binary() {
     let _held = holder.acquire().await.unwrap();
     let err = rowstile::testing::per_binary(&db.url, None, true).await.unwrap_err();
     assert!(err.to_string().contains("can't be copied while anything is connected to it"), "{err}");
-    // a URL that names no database, a server that isn't there, an original that isn't there
-    for url in ["nonsense", "postgres://conf_owner:owner@localhost", "postgres://conf_owner:owner@localhost/"] {
+    // a URL that names no database (or a name that isn't one: an escape that isn't, bytes that aren't UTF-8), an
+    // app role's URL that isn't one, a server that isn't there, an original that isn't there
+    let wrong = [
+        "nonsense",
+        "postgres://conf_owner:owner@localhost",
+        "postgres://conf_owner:owner@localhost/",
+        "postgres://h/%",
+        "postgres://h/%zz",
+        "postgres://h/%ff",
+    ];
+    for url in wrong {
         let err = rowstile::testing::per_binary(url, None, true).await.unwrap_err();
         assert!(err.to_string().contains("is not a URL that names a database to copy"), "{err}");
     }
+    let err = rowstile::testing::per_binary(&tests, Some("nonsense"), true).await.unwrap_err();
+    assert_eq!(err.to_string(), "rowstile::testing: \"nonsense\" is not a Postgres URL");
     let port = tests.split(':').nth(3).unwrap().split('/').next().unwrap().to_owned();
     let nowhere = tests.replace(&format!(":{port}/"), ":1/");
     assert!(rowstile::testing::per_binary(&nowhere, None, true).await.is_err());
@@ -482,6 +497,36 @@ async fn a_test_database_per_binary() {
     assert!(err.to_string().contains("does not exist"), "{err}");
     let worker = rowstile::testing::worker();
     assert!(worker.starts_with("sdk_") && worker.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'), "{worker}");
+}
+
+#[tokio::test]
+async fn a_long_name_is_shortened_by_a_hash() {
+    let _check = Check("12: ... a name past Postgres's 63 bytes is shortened by a hash, never the original's");
+    // the same original as each SDK's check: its name 63 bytes, with "é" across byte 54
+    let long = format!("conf_é_long_{}é{}", "x".repeat(40), "y".repeat(8));
+    let short = format!("conf_é_long_{}_", "x".repeat(40)); // its first 54 bytes, but half a character, and _
+    let tests = std::env::var("ROWSTILE_TESTS_URL").unwrap();
+    let server = tests.rsplit_once('/').unwrap().0;
+    let (admin, connection) = tokio_postgres::connect(&format!("{server}/postgres"), NoTls).await.unwrap();
+    tokio::spawn(connection);
+    admin.batch_execute(&format!("DROP DATABASE IF EXISTS \"{long}\"")).await.unwrap();
+    admin.batch_execute(&format!("CREATE DATABASE \"{long}\"")).await.unwrap();
+    let encoded = |name: &str| name.replace('é', "%C3%A9");
+    let copy = rowstile::testing::per_binary(&format!("{server}/{}", encoded(&long)), None, true).await.unwrap();
+    // the hash of the whole name, which the worker's makes this binary's (Postgres would cut it to the original's)
+    let prefix = format!("{server}/{}", encoded(&short));
+    let hash = copy.url.strip_prefix(&prefix).unwrap_or_else(|| panic!("{}", copy.url));
+    assert!(hash.len() == 8 && hash.chars().all(|c| c.is_ascii_hexdigit()), "{}", copy.url);
+    let named = format!("{short}{hash}");
+    let there = admin
+        .query("SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%' ORDER BY datname COLLATE \"C\"", &[])
+        .await
+        .unwrap();
+    let there: Vec<String> = there.iter().map(|row| row.get(0)).collect();
+    for name in [&named, &long] {
+        admin.batch_execute(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)")).await.unwrap();
+    }
+    assert_eq!(there, [named, long]);
 }
 
 #[test]

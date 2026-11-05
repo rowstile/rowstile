@@ -20,7 +20,9 @@ this list.
 10. A background job signs in as a service principal.
 11. A fresh database: migrate, and the policy tests pass. Then the tool's own diff shows no change.
 12. The framework's test database has the policy: a copy of the migrated one for each test worker (Vitest's,
-    pytest-xdist's; for Go, each test package, which `go test` runs in a process of its own).
+    pytest-xdist's; for Go, each test package, which `go test` runs in a process of its own). A copy's name longer
+    than Postgres's 63 bytes is shortened the same way in every SDK: its first 54 bytes (fewer, not to cut a
+    character in two), `_`, and the first 8 hex digits of the SHA-256 of the whole name.
 13. The app refuses to start on a connection that skips row-level security.
 14. After a policy change and a new migration, the app works with the new generated names.
 15. Next.js only: a signed-in page is never served from a cache to another user, and a signed-in read inside

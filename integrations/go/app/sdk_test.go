@@ -5,9 +5,13 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -491,3 +495,53 @@ func TestALoginInsideTxIsWhomTheTransactionIsFor(t *testing.T) {
 
 // name is who, in the words the database's refusals use
 func name(who rowstile.Principal) string { return who.Type + " " + who.ID }
+
+func TestPerPackageShortensALongName(t *testing.T) {
+	check(t, "a database per package: a name past Postgres's 63 bytes is shortened by a hash, never the original's")
+	ctx := context.Background()
+	// the same original as each SDK's check: its name 63 bytes, with "é" across byte 54
+	long := "conf_é_long_" + strings.Repeat("x", 40) + "é" + strings.Repeat("y", 8)
+	short := "conf_é_long_" + strings.Repeat("x", 40) // its first 54 bytes, but half a character
+	sum := sha256.Sum256([]byte(long + "_" + rowstiletest.Worker()))
+	named := short + "_" + hex.EncodeToString(sum[:])[:8]
+	server, err := url.Parse(os.Getenv("ROWSTILE_TESTS_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Path = "/postgres"
+	admin, err := pgx.Connect(ctx, server.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(ctx)
+	run := func(sql string) {
+		if _, err := admin.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(`DROP DATABASE IF EXISTS ` + pgx.Identifier{long}.Sanitize())
+	run(`CREATE DATABASE ` + pgx.Identifier{long}.Sanitize())
+	defer func() {
+		for _, n := range []string{named, long} {
+			run(`DROP DATABASE IF EXISTS ` + pgx.Identifier{n}.Sanitize() + ` WITH (FORCE)`)
+		}
+	}()
+	original := *server
+	original.Path = "/" + long
+	got, err := rowstiletest.PerPackage(ctx, original.String(), "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (&url.URL{Path: "/" + named}).String(); !strings.HasSuffix(got.URL, want) || len(named) != 62 {
+		t.Errorf("%s, not %s", got.URL, want)
+	}
+	// Postgres would cut the whole name to the original's: the original is there, and its copy beside it
+	rows, err := admin.Query(ctx, `SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%' ORDER BY datname COLLATE "C"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	there, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || !slices.Equal(there, []string{named, long}) {
+		t.Errorf("%v %v", there, err)
+	}
+}

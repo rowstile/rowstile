@@ -1,5 +1,6 @@
 package dev.rowstile.conformance;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -9,6 +10,7 @@ import dev.rowstile.DatabaseError;
 import dev.rowstile.Principal;
 import dev.rowstile.Rowstile;
 import dev.rowstile.testing.WorkerDatabase;
+import java.net.URLEncoder;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -87,6 +89,42 @@ class WorkerDatabaseTest {
             sql(url("postgres"), "DROP DATABASE conf_tests_w" + own + " WITH (FORCE)");
         } finally {
             System.setProperty("rowstile.worker", worker);
+        }
+    }
+
+    @Test
+    @DisplayName("12: ... a name past Postgres's 63 bytes is shortened by a hash, never the original's")
+    void longName() throws SQLException {
+        // the same original as each SDK's check: its name 63 bytes, with "é" across byte 54
+        String longName = "conf_é_long_" + "x".repeat(40) + "é" + "y".repeat(8);
+        String shortName = "conf_é_long_" + "x".repeat(40); // its first 54 bytes, but half a character
+        List<String> named = List.of(shortName + "_404b91d0", shortName + "_5c325d62", longName);
+        String worker = System.getProperty("rowstile.worker");
+        sql(url("postgres"), "DROP DATABASE IF EXISTS \"" + longName + "\"");
+        sql(url("postgres"), "CREATE DATABASE \"" + longName + "\"");
+        try {
+            List<String> copies = new ArrayList<>();
+            for (String own : List.of("1", "10")) {
+                System.setProperty("rowstile.worker", own);
+                copies.add(WorkerDatabase.copy(url(URLEncoder.encode(longName, UTF_8)), null, null, null, true).url());
+            }
+            // (Postgres would cut both to the original's name)
+            assertEquals(List.of(url(URLEncoder.encode(named.get(0), UTF_8)), url(URLEncoder.encode(named.get(1), UTF_8))),
+                    copies);
+            List<String> there = new ArrayList<>();
+            try (Connection conn = DriverManager.getConnection(url("postgres")); Statement st = conn.createStatement();
+                    ResultSet rs = st.executeQuery("SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%'"
+                            + " ORDER BY datname COLLATE \"C\"")) {
+                while (rs.next()) {
+                    there.add(rs.getString(1));
+                }
+            }
+            assertEquals(named, there);
+        } finally {
+            System.setProperty("rowstile.worker", worker);
+            for (String name : named) {
+                sql(url("postgres"), "DROP DATABASE IF EXISTS \"" + name + "\" WITH (FORCE)");
+            }
         }
     }
 

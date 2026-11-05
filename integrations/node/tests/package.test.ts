@@ -117,4 +117,36 @@ describe("@rowstile/jest", () => {
         c.query("DROP DATABASE IF EXISTS conf_hold WITH (FORCE)")), new URL("/postgres", TESTS).toString());
     }
   });
+
+  // the same original as each SDK's check: its name 63 bytes, with "é" across byte 54
+  test("a database per worker: a name past Postgres's 63 bytes is shortened by a hash, never the original's", async () => {
+    const long = "conf_é_long_" + "x".repeat(40) + "é" + "y".repeat(8);
+    const short = "conf_é_long_" + "x".repeat(40);                       // its first 54 bytes, but half a character
+    const named = [`${short}_404b91d0`, `${short}_5c325d62`, long];
+    const server = new URL("/postgres", TESTS).toString();
+    await owner(async (c) => {
+      await c.query(`DROP DATABASE IF EXISTS "${long}"`);
+      await c.query(`CREATE DATABASE "${long}"`);
+    }, server);
+    const saved = process.env.JEST_WORKER_ID;
+    try {
+      const original = new URL(TESTS);
+      original.pathname = "/" + encodeURIComponent(long);
+      const copies: string[] = [];
+      for (const worker of ["1", "10"]) {
+        process.env.JEST_WORKER_ID = worker;
+        copies.push(new URL((await databasePerWorker(original.toString())).url).pathname);
+      }
+      // (Postgres would cut both to the original's name)
+      expect(copies).toEqual(named.slice(0, 2).map((n) => "/" + encodeURIComponent(n)));
+      const there = await owner((c) => c.query<{ datname: string }>(
+        `SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%' ORDER BY datname COLLATE "C"`), server);
+      expect(there.rows.map((r) => r.datname)).toEqual(named);
+    } finally {
+      process.env.JEST_WORKER_ID = saved;
+      await owner(async (c) => {
+        for (const n of named) await c.query(`DROP DATABASE IF EXISTS "${n}" WITH (FORCE)`);
+      }, server);
+    }
+  });
 });

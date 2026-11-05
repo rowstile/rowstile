@@ -1,9 +1,14 @@
 package dev.rowstile.testing;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import dev.rowstile.DatabaseError;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.regex.Matcher;
@@ -12,7 +17,9 @@ import java.util.regex.Pattern;
 /**
  * A test worker's own database, copied from the migrated test database (with the policy), so that tests that write
  * don't meet each other: one for each JVM a test run forks (Maven Surefire's {@code forkCount}, Gradle's
- * {@code maxParallelForks}).
+ * {@code maxParallelForks}). The copy is named {@code <database>_w<worker>}; a name longer than Postgres's 63 bytes is
+ * shortened: its first 54 bytes (fewer, not to cut a character in two), {@code _}, and the first 8 hex digits of the
+ * SHA-256 of the whole name.
  *
  * <pre>{@code
  * WorkerDatabase db = WorkerDatabase.copy("jdbc:postgresql://localhost/app_tests", "owner", password, appUrl, true);
@@ -44,11 +51,12 @@ public record WorkerDatabase(String url, String appUrl) {
         if (!parts.matches() || parts.group(2).isEmpty()) {
             throw new IllegalArgumentException("WorkerDatabase needs a database to copy, and this URL names none: " + url);
         }
-        String template = parts.group(2);
-        String name = template + "_w" + workerId();
+        String template = URLDecoder.decode(parts.group(2), UTF_8);
+        String name;
         // CREATE DATABASE ... TEMPLATE needs no one connected to the original, this connection included
         try (Connection conn = DriverManager.getConnection(parts.group(1) + "postgres" + parts.group(3), user, password);
                 Statement st = conn.createStatement()) {
+            name = fitted(conn, template + "_w" + workerId());
             boolean exists;
             try (PreparedStatement q = conn.prepareStatement("SELECT 1 FROM pg_database WHERE datname = ?")) {
                 q.setString(1, name);
@@ -64,6 +72,27 @@ public record WorkerDatabase(String url, String appUrl) {
             throw new DatabaseError(e);
         }
         return new WorkerDatabase(named(url, name), appUrl == null ? null : named(appUrl, name));
+    }
+
+    /**
+     * A database's name within Postgres's 63 bytes (see the class's doc): Postgres would cut a longer one at 63 bytes,
+     * where two workers' names, or a copy's and its original's, can come out the same. (The hash is the server's.)
+     */
+    private static String fitted(Connection conn, String name) throws SQLException {
+        if (name.getBytes(UTF_8).length <= 63) {
+            return name;
+        }
+        int end = 0;
+        while (name.substring(0, name.offsetByCodePoints(end, 1)).getBytes(UTF_8).length <= 54) {
+            end = name.offsetByCodePoints(end, 1);
+        }
+        try (PreparedStatement q = conn.prepareStatement("SELECT left(encode(sha256(convert_to(?, 'UTF8')), 'hex'), 8)")) {
+            q.setString(1, name);
+            try (ResultSet hash = q.executeQuery()) {
+                hash.next();
+                return name.substring(0, end) + "_" + hash.getString(1);
+            }
+        }
     }
 
     private static void create(Statement st, String name, String template) throws SQLException {
@@ -90,6 +119,6 @@ public record WorkerDatabase(String url, String appUrl) {
         if (!parts.matches()) {
             throw new IllegalArgumentException("not a Postgres JDBC URL: " + url);
         }
-        return parts.group(1) + name + parts.group(3);
+        return parts.group(1) + URLEncoder.encode(name, UTF_8) + parts.group(3);
     }
 }

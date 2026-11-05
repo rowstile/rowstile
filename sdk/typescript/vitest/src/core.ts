@@ -3,6 +3,7 @@
  * expect.extend), asUser, the worker's number and a database per worker. Each package re-exports it, beside its
  * framework's types for the matchers.
  */
+import { createHash } from "node:crypto";
 import { actingAs, translate, NotFound, Refused, type Who } from "@rowstile/client";
 
 /** Runs fn acting for `who`: every transaction it begins signs in as them. */
@@ -54,12 +55,14 @@ export function workerId(): string {
 
 /** A database for this worker, copied from `url`'s (migrated, with the policy): its URL, with the same user.
  *  The copy is made once per run by a role that may create databases (the owner), while nothing else is
- *  connected to the original. appUrl: the app role's URL for the copy, if given. */
+ *  connected to the original. appUrl: the app role's URL for the copy, if given. The copy is named
+ *  `<database>_w<worker>`; a name longer than Postgres's 63 bytes is shortened: its first 54 bytes (fewer, not to
+ *  cut a character in two), `_`, and the first 8 hex digits of the SHA-256 of the whole name. */
 export async function databasePerWorker(url: string, options: { appUrl?: string; fresh?: boolean } = {}): Promise<{ url: string; appUrl?: string }> {
   const { default: pg } = await import("pg");
   const base = new URL(url);
   const template = decodeURIComponent(base.pathname.slice(1));
-  const name = `${template}_w${workerId()}`;
+  const name = fitted(`${template}_w${workerId()}`);
   const admin = new pg.Client({ connectionString: url });
   await admin.connect();
   try {
@@ -91,6 +94,19 @@ export async function databasePerWorker(url: string, options: { appUrl?: string;
     await admin.end().catch(/* v8 ignore next */ () => undefined);
   }
   return { url: withDatabase(url, name), appUrl: options.appUrl ? withDatabase(options.appUrl, name) : undefined };
+}
+
+/** A database's name within Postgres's 63 bytes (see databasePerWorker): Postgres would cut a longer one at 63
+ *  bytes, where two workers' names, or a copy's and its original's, can come out the same. */
+function fitted(name: string): string {
+  const bytes = (s: string) => new TextEncoder().encode(s).length;
+  if (bytes(name) <= 63) return name;
+  let cut = "";
+  for (const ch of name) {
+    if (bytes(cut + ch) > 54) break;
+    cut += ch;
+  }
+  return `${cut}_${createHash("sha256").update(name).digest("hex").slice(0, 8)}`;
 }
 
 function withDatabase(url: string, db: string): string {

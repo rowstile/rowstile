@@ -668,4 +668,40 @@ describe("@rowstile/vitest", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  // the same original as each SDK's check: its name 63 bytes, with "é" across byte 54
+  test("a database per worker: a name past Postgres's 63 bytes is shortened by a hash, never the original's", async () => {
+    const long = "conf_é_long_" + "x".repeat(40) + "é" + "y".repeat(8);
+    const short = "conf_é_long_" + "x".repeat(40);                       // its first 54 bytes, but half a character
+    const named = [`${short}_404b91d0`, `${short}_5c325d62`, long];
+    const server = new URL(process.env.ROWSTILE_TESTS_DSN!);
+    server.pathname = "/postgres";
+    async function run(q: string) {
+      const c = new pg.Client({ connectionString: server.toString() });
+      await c.connect();
+      try {
+        return (await c.query(q)).rows;
+      } finally {
+        await c.end();
+      }
+    }
+    await run(`DROP DATABASE IF EXISTS "${long}"`);
+    await run(`CREATE DATABASE "${long}"`);
+    try {
+      const original = new URL(server);
+      original.pathname = "/" + encodeURIComponent(long);
+      const copies: string[] = [];
+      for (const worker of ["1", "10"]) {
+        vi.stubEnv("VITEST_POOL_ID", worker);
+        copies.push(new URL((await databasePerWorker(original.toString())).url).pathname);
+      }
+      // (Postgres would cut both to the original's name)
+      expect(copies).toEqual(named.slice(0, 2).map((n) => "/" + encodeURIComponent(n)));
+      const there = await run(`SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%' ORDER BY datname COLLATE "C"`);
+      expect(there.map((r) => r.datname)).toEqual(named);
+    } finally {
+      vi.unstubAllEnvs();
+      for (const n of named) await run(`DROP DATABASE IF EXISTS "${n}" WITH (FORCE)`);
+    }
+  });
 });

@@ -22,7 +22,7 @@ sqlx = ["dep:sqlx"]
 # Axum: a transaction signed in for each request (an extractor), and rowstile's errors answered as problem bodies
 axum = ["sqlx", "dep:axum", "dep:tracing"]
 # help for an app's tests: a copy of the migrated test database for each test binary, and assertions
-testing = ["tokio-postgres", "dep:tokio"]
+testing = ["tokio-postgres", "dep:tokio", "dep:sha2"]
 
 [dependencies]
 serde_json = "1.0.140"
@@ -31,6 +31,7 @@ sqlx = { version = "0.9.0", optional = true, default-features = false, features 
 axum = { version = "0.8.4", optional = true, default-features = false }
 tracing = { version = "0.1.41", optional = true }
 tokio = { version = "1.44.0", optional = true, default-features = false, features = ["rt"] }
+sha2 = { version = "0.10.9", optional = true }
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -425,6 +426,44 @@ async def test_12_a_test_database_per_worker_has_the_policy(
     assert worker_id() == "3" and database_per_worker(tests).url.endswith(f"/{copied}_w3")
     with pytest.raises(ValueError, match="a database to copy"):
         database_per_worker("postgresql://conf_owner:owner@localhost")
+
+
+# the same original, its name 63 bytes with "é" across byte 54, as each SDK's check copies it
+LONG = "conf_é_long_" + "x" * 40 + "é" + "y" * 8
+SHORT = "conf_é_long_" + "x" * 40  # its first 54 bytes, but half a character
+
+
+# 12: ... a copy's name past Postgres's 63 bytes is shortened (its first 54 bytes, `_`, a hash of the whole name),
+# so it is never the original's, nor another worker's
+def test_12_a_long_name_is_shortened_by_a_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    tests = libpq(os.environ["ROWSTILE_TESTS_URL"])
+    server = tests.rsplit("/", 1)[0]
+    with psycopg.connect(f"{server}/postgres", autocommit=True) as conn:
+        conn.execute(f'DROP DATABASE IF EXISTS "{LONG}"')
+        conn.execute(f'CREATE DATABASE "{LONG}"')
+        try:
+            long_url = f"{server}/{urllib.parse.quote(LONG)}"
+            copies: dict[str, str] = {}
+            for worker in ["1", "10"]:
+                monkeypatch.setenv("PYTEST_XDIST_WORKER", f"gw{worker}")
+                copies[worker] = database_per_worker(long_url).url
+            # (the same names as every SDK's check: Postgres would cut both to the original's)
+            assert copies == {
+                "1": f"{server}/{urllib.parse.quote(SHORT)}_404b91d0",
+                "10": f"{server}/{urllib.parse.quote(SHORT)}_5c325d62",
+            }
+            there = conn.execute(
+                'SELECT datname FROM pg_database WHERE datname LIKE $$conf_é_long_%$$ ORDER BY datname COLLATE "C"'
+            )
+            assert [r[0] for r in there] == [f"{SHORT}_404b91d0", f"{SHORT}_5c325d62", LONG]
+            # and a URL whose host is in its settings keeps its form: postgresql:///<copy>?host=...
+            host, port = re.findall(r"@([^:/]+):(\d+)$", server)[0]
+            settings = f"?host={host}&port={port}&user=conf_owner&password=owner"
+            in_settings = database_per_worker(f"postgresql:///{urllib.parse.quote(LONG)}{settings}").url
+            assert in_settings == f"postgresql:///{urllib.parse.quote(SHORT)}_5c325d62{settings}"
+        finally:
+            for name in [f"{SHORT}_404b91d0", f"{SHORT}_5c325d62", LONG]:
+                conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
 # 13: the app refuses to start on a connection that skips row-level security

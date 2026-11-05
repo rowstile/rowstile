@@ -189,6 +189,39 @@ defmodule Conformance.ChecksTest do
     assert error.message =~ "a database to copy"
   end
 
+  # the same original as each SDK's check: its name 63 bytes, with "é" across byte 54
+  test "12: ... a name past Postgres's 63 bytes is shortened by a hash, never the original's" do
+    long = "conf_é_long_" <> String.duplicate("x", 40) <> "é" <> String.duplicate("y", 8)
+    # its first 54 bytes, but half a character
+    short = "conf_é_long_" <> String.duplicate("x", 40)
+    named = [short <> "_e9dc8356", short <> "_4d7e20f5", long]
+    server = &Rows.owner(&1, "postgres")
+    server.(&Postgrex.query!(&1, ~s{DROP DATABASE IF EXISTS "#{long}"}, []))
+    server.(&Postgrex.query!(&1, ~s{CREATE DATABASE "#{long}"}, []))
+    url = Rows.owner_url(URI.encode(long, &URI.char_unreserved?/1))
+
+    try do
+      # (Postgres would cut both to the original's name)
+      assert Enum.map(["1", "10"], &Rowstile.Testing.database_per_partition(url, partition: &1)) ==
+               Enum.take(named, 2)
+
+      there =
+        server.(fn conn ->
+          sql =
+            ~s{SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%' ORDER BY datname COLLATE "C"}
+
+          Postgrex.query!(conn, sql, []).rows |> Enum.map(&hd/1)
+        end)
+
+      # (as the bytes order them)
+      assert there == Enum.sort(named)
+    after
+      for name <- named,
+          do:
+            server.(&Postgrex.query!(&1, ~s{DROP DATABASE IF EXISTS "#{name}" WITH (FORCE)}, []))
+    end
+  end
+
   test "12: ... and a copy is refused, saying why, while something is connected to the original" do
     held = "#{Rows.database()}_held"
 
