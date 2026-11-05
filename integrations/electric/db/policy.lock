@@ -44,7 +44,7 @@ always | 0697f1cf5a5d
 function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394
-function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 45dbc2c29b55 shape=77f3e79f
+function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 4936849e93f2 shape=77f3e79f
 function authz.can(p_type text, p_id integer, p_perm text) | bead8057c546 shape=c9dbc446
 function authz.can(p_type text, p_id text, p_perm text) | 6bebe9ae32ee shape=220bc89f
 function authz.cancel_request(p_id bigint) | 14f17f222d45 shape=19aa0bb3
