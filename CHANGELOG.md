@@ -332,6 +332,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - Deleting a row finds the pending access requests and the API keys that name it by index (`authz.requests` has
   indexes of its pending requests, by object and by requester, and `authz.api_keys` one by principal): it no longer
   reads every request ever decided.
+- `authz.announce_timed_shares()` keeps each object's next share start or end (`authz.shares_due`, which each
+  write of a share puts in) instead of the time of its last run: a clock set back no longer hides the shares that
+  end or begin after it until the clock is past that time again. A run waits for a writer adding a share to one of
+  the objects it announces, and reads the shares as it left them.
 
 ### Upgrading
 
@@ -349,6 +353,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `authz.changes_position()` (no longer `max(pos)`, which may stand past an entry still to come).
 - A review started more than two weeks ago with the default deadline takes no more decisions: close it, or start
   it again.
+- The next apply (or migration) makes `authz.shares_due` from the times the shares have after the last
+  `authz.announce_timed_shares()`, and drops the indexes `authz.shares_by_end` and `authz.shares_by_start`, which
+  nothing reads any more.
 
 ## 0.1.0-beta.3 (2026-11-05)
 

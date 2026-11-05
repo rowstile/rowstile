@@ -324,8 +324,35 @@ got=$(PSQL -c "BEGIN" -c "INSERT INTO authz.shares (object_type, object_id, rela
   -c "SELECT authz.announce_timed_shares()" -c "$(fed $POS share_ended)" -c "ROLLBACK" | tr '\n' '|')
 [ "$got" = "1|file 14|" ] && echo "ok    ... and a share ending at the very moment it runs has ended: announced then, not left for a later call that starts after it" ||
   { echo "FAIL  a share ending as announce_timed_shares runs: $got"; fails=$((fails + 1)); }
+# a clock set back: a run ahead of now (what one under the clock before left behind) hides nothing that ends later
+PSQL -c "INSERT INTO authz.settings VALUES ('timed_shares_to', '2100-01-01T00:00:00Z') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value" \
+     -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
+         VALUES ('file', '11', 'viewer', 'user', '6', clock_timestamp() + interval '0.5 seconds')" >/dev/null
+sleep 0.7
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+same_as() { if [ "$2" = "$3" ]; then echo "ok    $1"; else echo "FAIL  $1: expected '$3', got '$2'"; fails=$((fails + 1)); fi; }
+same_as "a share that ends after the clock was set back is announced when it ends" \
+  "$(PSQL -c "SELECT authz.announce_timed_shares()" -c "$(fed $POS share_ended)" | tr '\n' '|')" "1|file 11|"
+# a run while a writer adds a share to an object it announces: the run waits for the writer, and the share's end is
+# announced when it comes (the run reads the shares again once the writer is done)
+PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
+         VALUES ('file', '14', 'viewer', 'user', '6', clock_timestamp() + interval '0.3 seconds')" >/dev/null
+sleep 0.5
+race
+PGAPPNAME=authz_gov_a psql -X -q -d "$DB" -c "BEGIN" \
+  -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at)
+      VALUES ('file', '14', 'viewer', 'user', '7', clock_timestamp() + interval '2 seconds')" -c "$HOLD" -c "COMMIT" >/dev/null 2>&1 &
+held authz_gov_a
+PGAPPNAME=authz_gov_b psql -X -q -At -d "$DB" -c "SELECT authz.announce_timed_shares()" > "$T/tick.out" 2>&1 &
+blocked authz_gov_b
+go; wait
+same_as "a run that waited for a writer announces the share that ended" "$(cat "$T/tick.out")" 1
+sleep 2
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+same_as "... and the next one, after it, the writer's share that ended since" \
+  "$(PSQL -c "SELECT authz.announce_timed_shares()" -c "$(fed $POS share_ended)" | tr '\n' '|')" "1|file 14|"
 expect_code "the app role cannot run it" "42501: permission denied for function announce_timed_shares" -c "SELECT authz.announce_timed_shares()"
-PSQL -c "DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id = '6' AND (expires_at IS NOT NULL OR starts_at IS NOT NULL)" >/dev/null
+PSQL -c "DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id IN ('6', '7') AND (expires_at IS NOT NULL OR starts_at IS NOT NULL)" >/dev/null
 
 # custom roles, a type whose condition reads its own columns (no relation kept in them), and one whose rows only links
 # name
