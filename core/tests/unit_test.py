@@ -9370,6 +9370,32 @@ class Confidence(unittest.TestCase):
         self.assertIsNone(evaluate.compare(a, b, worlds=40, listing=listing))
         self.assertEqual(listing.said(), "2,049 listed: every one of up to 3 rows of each type with at most 1 link")
 
+    def test_a_world_renamed_is_one_only_where_the_ids_its_columns_hold_follow(self) -> None:
+        # two folders, each with its owner: swapping the folders and the users gives the same links. But a column a
+        # condition compares with authz.uid() holds a user's id, which a renaming doesn't change: "each folder made by
+        # the other's owner" is a world of its own, not "each made by its owner" renamed
+        from authzlib import evaluate
+
+        doc = self.HEAD + "type folder = app.folders\n  owner : user = owner_id\n  can view = "
+        a = parse_policy(doc + "owner and {creator_id = authz.uid()}\n", "a.authz")
+        b = parse_policy(doc + "{creator_id = authz.uid()} and owner\n", "b.authz")
+        made: set[tuple[str, ...]] = set()
+        for w in evaluate.Listing((a, b)).worlds():
+            data = w.data(a)
+            owners = dict(data.pairs[("folder", "owner", 0, "user", "")])
+            if len(w.links_held) == 2 and len(owners) == 2 and len(set(owners.values())) == 2:
+                creators = {o: data.columns["folder"][o]["creator_id"] for o in owners}
+                made.add(
+                    tuple(
+                        sorted(
+                            "its owner" if c == owners[o] else "the other's" if c in owners.values() else str(c)
+                            for o, c in creators.items()
+                        )
+                    )
+                )
+        self.assertIn(("its owner", "its owner"), made)
+        self.assertIn(("the other's", "the other's"), made)
+
     def test_the_listing_stops_however_many_classes_its_rows_have(self) -> None:
         # five flags on users and five on folders: 32 classes of each, so the worlds of one link (an owner) are
         # 32 x 32. The listing stops at LISTED_AT_MOST for each drawn world, and says how far it got

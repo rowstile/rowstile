@@ -296,6 +296,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile review` lists 12,000 small worlds at most (60 for each drawn one), even before it has listed every
   world with one link: rows whose conditions give many answers made that many grow fourfold with each condition,
   and a review run for minutes. It then says how far it got ("with no link, and some with one").
+- `rowstile review` lists the small worlds where a column compared with `authz.uid()` names a user other than
+  the one its row links to (two folders, each made by the other's owner): it took them for the same world with
+  the users renamed, which changes whose id the column holds.
 
 ### Upgrading
 
