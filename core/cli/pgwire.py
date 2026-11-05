@@ -187,7 +187,6 @@ class Connection:
         self.sock = sock
         self.buf = b""
         self.params: dict[str, str] = {}
-        self.in_error = False
         self.busy = False  # a query was sent and its answer not fully read (the connection is unusable)
         self.tag = ""  # what the last statement of query_described did, in the server's words ("DELETE 0")
         # called with each NOTICE / WARNING the server sends, those it sends as the session starts too (a database's
@@ -484,7 +483,6 @@ class Connection:
                 self._send(b"f", self._cstr(NO_COPY))
                 self._send(b"S")
             elif kind == b"Z":
-                self.in_error = payload == b"E"
                 self.busy = False
                 if error:
                     raise error
@@ -514,7 +512,6 @@ class Connection:
             elif kind in (b"G", b"W"):  # a COPY ... FROM STDIN waits for rows: the copy is failed, the server says so
                 self._send(b"f", self._cstr(NO_COPY))
             elif kind == b"Z":
-                self.in_error = payload == b"E"
                 self.busy = False
                 if error:
                     raise error
