@@ -459,6 +459,18 @@ admin "... for an hour" "t" \
   "SELECT expires_at BETWEEN now() + interval '55 minutes' AND now() + interval '65 minutes' FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'"
 admin "the trail has it, with the reason" "break_glass|3|prod outage INC-7" \
   "SELECT action || '|' || user_id || '|' || reason FROM authz.audit WHERE action = 'break_glass' ORDER BY id DESC LIMIT 1"
+# a relation's `shared if` holds for whoever breaks the glass, as for any share: viewer refused to carol here
+sed "s/^  viewer      : user, team#member, org#member shared$/& if {subject_type <> 'user' or subject_id <> '3'}/" \
+  example/docs.authz > $T/governance_shared_if.authz
+grep -q "subject_id <> '3'}$" $T/governance_shared_if.authz || { echo "FAIL  could not make the policy with shared if"; fails=$((fails + 1)); }
+python3 compile_policy.py $T/governance_shared_if.authz > $T/governance_shared_if.sql && reapply $T/governance_shared_if.sql
+expect_code "a relation's shared if refuses whoever breaks the glass too" \
+  "42501: the policy does not allow you folder.viewer on folder 5, even to break the glass (line 43)" \
+  -c "SET authz.user_id = 3" -c "SELECT authz.break_glass('folder', '5', 'viewer', 'outage')"
+admin "... and gives her nothing" "f" "SELECT EXISTS (SELECT 1 FROM authz.shares WHERE object_id = '5' AND subject_id = '3' AND relation = 'viewer')"
+expect_code "... while a relation without one is hers to take" ok -c "SET authz.user_id = 3" -c "BEGIN" \
+  -c "SELECT authz.break_glass('folder', '5', 'editor', 'outage')" -c "ROLLBACK"
+reapply $T/governance.sql
 # as the reference writes them, the id a number (docs/reference/app-code.md)
 expect_code "the id may be a number, as for authz.can" ok -c "SET authz.user_id = 3" \
   -c "SELECT authz.break_glass('folder', 6, 'viewer', 'INC-7 outage', '1 hour')"

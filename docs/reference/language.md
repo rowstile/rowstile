@@ -97,6 +97,7 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   its giver doesn't hold. <!-- checked: tests/principals.sh "a viewer may share helper, but not grant assist, which they don't hold"; tests/hand/shares-by.authz "reader gives view, which ed lacks" --> <!-- answer: shares-by --> `shared if {...}` is a
   condition on the share being made (`object_id`, `subject_type`, `subject_id`, `subject_relation`), which
   `authz.share` checks: "only to active users". <!-- checked: tests/multi_scenario.sql "shared if: no sharing with inactive users" --> <!-- answer: shared-if -->
+  `authz.break_glass` checks it too, for whoever breaks the glass, and refuses them a relation it doesn't let them hold. <!-- checked: tests/governance.sh "a relation's shared if refuses whoever breaks the glass too" -->
   Shares may expire or start later: `authz.share`'s seventh argument is when it ends, its eighth when it starts. A share counts from its start, that instant included, until its end, that instant not included. <!-- answer: shares-expire --> A share goes with its object: deleting the object deletes its shares, so an object made again with the same id starts with none. <!-- answer: shares-gone --> A **caveat** is a
   condition that goes with one share and is checked at each request:
   `authz.share('folder', 3, 'viewer', 'user', 4, '', NULL, NULL, 'from_ip', '{"ip": "10.0.0.1"}')` gives
