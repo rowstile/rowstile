@@ -14,7 +14,7 @@ supported stack passes ([`integrations/go/test.sh`](../../integrations/go/test.s
 ## Install
 
 ```sh
-go get github.com/rowstile/rowstile/sdk/go    # a preview: the repository's tag sdk/go/vX.Y.Z
+go get github.com/rowstile/rowstile/sdk/go    # a preview: no tag yet, so main's newest commit
 pip install --pre rowstile                    # the command (or npm install rowstile@next, or its image)
 rowstile init                                 # once your migrations made the tables: a first policy from them, a test file, rowstile.toml
 ```
