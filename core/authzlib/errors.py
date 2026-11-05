@@ -668,8 +668,9 @@ CODES = {
         "statements only make sense together. This one was run a statement at a time, each committed on its own "
         "(`psql -f` does that), where a change to inheritance would stop half way with the old trees dropped. So "
         "it refused before changing anything, and made the session read-only, since psql goes on after an error "
-        "unless told to stop. Run it with your migration tool, which wraps each migration in a transaction, or "
-        "`psql -1 -v ON_ERROR_STOP=1 -f <file>`.",
+        "unless told to stop. The migration's last statement puts the setting back, so a connection a pooler hands "
+        "to another client next isn't left read-only. Run it with your migration tool, which wraps each migration "
+        "in a transaction, or `psql -1 -v ON_ERROR_STOP=1 -f <file>`.",
         "",
         "",
         when="deploy",
