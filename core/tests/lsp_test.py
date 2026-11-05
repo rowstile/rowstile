@@ -721,6 +721,20 @@ with tempfile.TemporaryDirectory() as d:
         fh.write(org_text)
     changed(pu, main_text + "\n")
     clean("... and cleared when the file is fixed", c, on_disk)
+    with open(os.path.join(d, "org.authz"), "wb") as fh:
+        fh.write(org_text.encode() + b"-- caf\xe9\n")
+    changed(pu, main_text)
+    found = c.diagnostics(pu)
+    ok(
+        "an included file that isn't UTF-8 is said to be so, on the policy",
+        [x["message"] for x in found]
+        == ["the file it includes, org.authz, is not UTF-8 (the byte at 98): save it as UTF-8"],
+        found,
+    )
+    with open(os.path.join(d, "org.authz"), "w", encoding="utf-8") as fh:
+        fh.write(org_text)
+    changed(pu, main_text + "\n")
+    clean("... and cleared when it is saved as UTF-8", c, pu)
     opened(tu, tests_text)
     syms = c.request("textDocument/documentSymbol", {"textDocument": {"uri": tu}})
     ok(

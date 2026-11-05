@@ -70,7 +70,11 @@ def read(path: str) -> str:
 
 
 def load(path: str) -> Compiler:
-    return Compiler(parse_policy(read(path), path))
+    text = read(path)
+    try:
+        return Compiler(parse_policy(text, path))
+    except OSError as e:  # a file it includes that is there and can't be read
+        raise Unreadable(f"{path}: {e.strerror}") from e
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1361,6 +1361,19 @@ class LanguageForms(unittest.TestCase):
         pol = parse_policy(read(POLICIES["docs"]) + "test\n  user 'it''s' cannot view file 'o''k'\n")
         self.assertEqual((pol.tests[-1].who, pol.tests[-1].obj), ("'it''s'", "'o''k'"))  # (as written)
 
+    def test_without_a_path_nor_files_it_includes_nothing(self) -> None:
+        # a file the policy names isn't read from the current folder: the caller gives the files, or the path
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "docs.authz"), "w", encoding="utf-8") as fh:
+                fh.write(read(POLICIES["docs"]))
+            here = os.getcwd()
+            os.chdir(d)
+            try:
+                with self.assertRaisesRegex(PolicyError, "can't find docs.authz in the policy's folder"):
+                    parse_policy('include "docs.authz"\n')
+            finally:
+                os.chdir(here)
+
     def test_a_byte_order_mark_before_an_include(self) -> None:
         # some editors start a UTF-8 file with one: the includes read from disk were missed then
         with tempfile.TemporaryDirectory() as d:
@@ -7538,15 +7551,20 @@ class CompilePolicy(unittest.TestCase):
     def test_a_file_it_cant_read_is_the_one_named(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             policy, bad, missing = (os.path.join(d, n) for n in ("p.authz", "bad.authz", "missing.authz"))
+            latin = os.path.join(d, "latin.authz")
             with open(policy, "w", encoding="utf-8") as fh:
                 fh.write(self.POLICY)
             with open(bad, "wb") as fh:
                 fh.write(b'test "a"\n  \xff\n')
+            with open(latin, "w", encoding="utf-8") as fh:
+                fh.write('include "bad.authz"\n')
             for argv, said in (
                 ([policy, "--tests", bad], f"{bad}: not UTF-8: "),
                 ([policy, "--tests", missing], f"{missing}: No such file or directory"),
                 ([bad], f"{bad}: not UTF-8: "),
                 ([missing], f"{missing}: No such file or directory"),
+                # a file it includes that is there: why it can't be read, not that it can't be found
+                ([latin], f"{latin}: the file it includes, bad.authz, is not UTF-8 (the byte at 11): save it as UTF-8"),
             ):
                 with self.subTest(argv=argv):
                     rc, out, err = self.run_main(argv)
