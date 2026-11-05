@@ -2,10 +2,11 @@
 # docs_test.sh: docs/getting-started.md runs as written and does what the guide says (its Python too, against the
 # client it writes: tests/guide_app.py), the blog post's experiment.sql runs as its header says, and the code of the
 # landing pages (README.md, site/index.md) runs and does what its comments say.
-#   PGHOST=... PGUSER=authz_owner tests/docs_test.sh
+#   PGHOST=... PGUSER=authz_owner PGSUPERUSER=postgres tests/docs_test.sh
 # Walks the guide's blocks in order, in a fresh database and an empty folder: ```sql blocks run in psql,
 # ```authz <file> blocks are written to that file, ```sh blocks run (with rowstile on the PATH, and
-# DATABASE_URL naming the database). Then checks what the guide's comments promise.
+# DATABASE_URL naming the database). Then checks what the guide's comments promise. Then walks it again as
+# PGSUPERUSER, the postgres superuser the guide is written for.
 set -u
 cd "$(dirname "$0")/.."
 DB=authz_docs
@@ -14,9 +15,10 @@ fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok    $1"; else echo "FAIL  $1: expected '$3', got '$2'"; fails=$((fails + 1)); fi; }
 
 dropdb --if-exists "$DB" 2>/dev/null; createdb "$DB" || exit 1
-drop_roles() {
+drop_roles() {   # as the owner, and as the superuser for those the guide made as the superuser (below)
   for r in app_backend docs_other; do
     psql -X -q -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1
+    [ -z "${PGSUPERUSER:-}" ] || psql -X -q -U "$PGSUPERUSER" -d postgres -c "DROP ROLE IF EXISTS $r" >/dev/null 2>&1
   done
 }
 drop_roles
@@ -25,7 +27,8 @@ DIR=$(mktemp -d)
 CLI=$(sed -n 's/^ *export PATH="\$PWD\/\([^:"]*\):\$PATH".*/\1/p' "$GUIDE" | head -n 1)
 [ -n "$CLI" ] && [ -x "../$CLI/rowstile" ] && echo "ok    the guide's PATH line names the command's folder ($CLI)" ||
   { echo "FAIL  the guide's PATH line: '$CLI' doesn't hold the rowstile command"; fails=$((fails + 1)); CLI=core/cli; }
-out=$(DATABASE_URL="dbname=$DB" PATH="$PWD/../$CLI:$PATH" python3 - "$GUIDE" "$DIR" "$DB" <<'PY'
+walk() {   # the guide's blocks in order, in the database $1 and the folder $2, as PGUSER
+  DATABASE_URL="dbname=$1" PATH="$PWD/../$CLI:$PATH" python3 - "$GUIDE" "$2" "$1" <<'PY'
 import os, re, subprocess, sys
 guide, folder, db = sys.argv[1:]
 text = open(guide, encoding="utf-8").read()
@@ -49,7 +52,8 @@ for kind, name, body in re.findall(r"```(sql|authz|sh)[ \t]*([^\n]*)\n(.*?)```",
         print(f"BLOCK FAILED ({kind}, exit {p.returncode}):\n{body}")
         sys.exit(1)
 PY
-)
+}
+out=$(walk "$DB" "$DIR")
 rc=$?
 check "every block of the guide runs" "$rc" "0"
 [ $rc -ne 0 ] && echo "$out" | tail -n 25
@@ -104,6 +108,27 @@ check "... and the database lets him add a note" "$(echo "$out" | sed -n 2p)" "n
 rm -r "$DIR"
 dropdb "$DB"
 drop_roles
+
+# the guide again, as it is written: as the superuser of a new container (above, as the suites' owner, who isn't
+# one). Its blocks run alike, and step 6's authz.connection_check() gives the one row it says, the superuser's
+if [ -n "${PGSUPERUSER:-}" ]; then
+  createdb "$DB" || exit 1
+  DIR=$(mktemp -d)
+  out=$(PGUSER="$PGSUPERUSER" walk "$DB" "$DIR")
+  rc=$?
+  check "every block of the guide runs as the superuser $PGSUPERUSER" "$rc" "0"
+  [ $rc -ne 0 ] && echo "$out" | tail -n 25
+  case "$out" in *"ok   compiles"*"applied in"*"check(s) pass"*) echo "ok    ... and rowstile dev applies the policy and its tests pass";;
+    *) echo "FAIL  rowstile dev as $PGSUPERUSER: $(echo "$out" | grep -A 12 'sh$' | head -30)"; fails=$((fails + 1));; esac
+  check "... and authz.connection_check() gives one row for its connection: a superuser's" \
+    "$(psql -X -At -U "$PGSUPERUSER" -d "$DB" -c "SELECT severity || ': ' || problem FROM authz.connection_check()")" \
+    "error: $PGSUPERUSER is a superuser: row-level security does not apply to it"
+  rm -r "$DIR"
+  dropdb "$DB"
+  drop_roles
+else
+  echo "skip  the guide as the superuser it is written for: PGSUPERUSER names none"
+fi
 
 # the blog post's experiment runs as its header says, small, as a role that isn't a superuser: with the setting
 # a stock server has (the suites' owner has createrole_self_grant, which would hide a missing grant)
