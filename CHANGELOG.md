@@ -367,6 +367,15 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A URL's parameter a letter away from a libpq setting (`?sslmod=require`, `?chanel_binding=require`) is refused,
   as a typo, naming the setting meant. Before, it was left alone as an ORM's own, and the command connected
   without what it asked for. An ORM's parameters (`?schema=`, `?pgbouncer=`) are still left alone.
+- Studio's grid, on a partitioned table or one that other tables inherit from, marked a row visible when the person
+  could see another row stored at the same place in another partition or table. It now tells the tables apart.
+- Studio's grid shows a table's columns in the table's order (it put short names first): the first eight, any
+  masked column after them, and the names of the others. It counts a table's rows up to 10,000, and says "more
+  than 10,000" past that: each page of a big table no longer reads all of it twice.
+- Studio's "Make a test" copies json values as the row holds them: a string, a number, a boolean or null in a json
+  column made a test that failed. A key that is not a number, text or a uuid is copied as it is, and the test says
+  to give the copy a key of its own.
+- Studio's access diff no longer says the policy file is the one in force when only an included file changed.
 
 ### Upgrading
 

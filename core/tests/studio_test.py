@@ -1583,6 +1583,16 @@ def main() -> None:
             and not any("role:" in w or "custom role" in w for w in ways),
             said,
         )
+        status, o = c.call("/api/overview")
+        drawn = [d for x in o.get("types", []) if x["name"] == "project" for d in x["drawn"]]
+        check(
+            "the overview: a custom roles' relation, which the graph draws, by its node; not among the relations",
+            status == 200
+            and [(d["node"], d["name"], d["text"]) for d in drawn]
+            == [("project__roles_view", "custom roles → view", "roles:view : user, team#member")]
+            and "roles:view" not in [r["name"] for x in o["types"] if x["name"] == "project" for r in x["relations"]],
+            (status, drawn),
+        )
         # rows keyed by uuid: the copies a test brings get keys of their own, and the rest as the rows hold it
         status, t = c.call(f"/api/test?as=user:{bob}&type=doc&id={plain}&perm=edit&expect=cannot")
         named = t.get("named", "") if status == 200 else ""
@@ -1828,6 +1838,7 @@ def main() -> None:
     subprocess.run(["dropdb", "--if-exists", cross], capture_output=True)
 
     grid(db + "_grid")
+    partitions(db + "_parts")
     corners(db + "_why")
 
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
@@ -1840,12 +1851,22 @@ CREATE SCHEMA gr;
 CREATE TABLE gr.users (id bigint PRIMARY KEY);
 CREATE TABLE gr.notes (id bigint PRIMARY KEY, owner_id bigint NOT NULL REFERENCES gr.users);
 CREATE TABLE gr.items (id bigint PRIMARY KEY, owner_id bigint REFERENCES gr.users);
+-- facts: more columns than the grid shows, the masked one last, and json values that are no objects; days: a key
+-- that is a network card's address (neither a number, nor text, nor a uuid)
+CREATE TABLE gr.facts (
+  id bigint PRIMARY KEY, owner_id bigint, title text, meta jsonb, flag jsonb, num jsonb, nul jsonb, tags text[],
+  ratio float8, made date, secret text
+);
+CREATE TABLE gr.devices (mac macaddr PRIMARY KEY, owner_id bigint);
 GRANT USAGE ON SCHEMA gr TO app_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA gr TO app_user;
 -- 120 notes, made last first: ann's (1) the odd ones, bo's (2) the even ones; items 1 (ann's) and 2 (bo's)
 INSERT INTO gr.users VALUES (1), (2);
 INSERT INTO gr.notes SELECT g, 2 - g % 2 FROM generate_series(120, 1, -1) g;
 INSERT INTO gr.items VALUES (1, 1), (2, 2);
+INSERT INTO gr.facts VALUES (1, 1, 'first', '"a string"', 'true', '5', 'null', '{a,b}', 0.5, '2026-01-01', 'hush'),
+  (2, 1, 'second', '{"k": 1}', 'false', '[1, 2]', NULL, NULL, NULL, NULL, 'hush too');
+INSERT INTO gr.devices VALUES ('08:00:2b:01:02:03', 1);
 """
 # two types over one table: a table with no rules may be read as several types (one with rules is one type's: AZ401)
 GRID_POLICY = """app role app_user
@@ -1867,8 +1888,22 @@ type chore = gr.items
   owner : user = owner_id
   can sweep = owner
 
+type fact = gr.facts
+  owner  : user = owner_id
+  reader : user shared by own
+  can own  = owner
+  can see  = own or reader
+
+type device = gr.devices (mac macaddr)
+  owner : user = owner_id
+  can see = owner
+
 rules gr.notes
   select : edit
+
+rules gr.facts view gr.facts_seen
+  select      : see
+  mask secret : own
 """
 
 
@@ -1883,6 +1918,7 @@ def grid(db: str) -> None:
         rc, out = cli(db, "apply", path)
     if rc:
         raise SystemExit(out)
+    psql(db, "SELECT authz.act_as('user', '1'); SELECT authz.share('fact', '1', 'reader', 'user', '2')")
     s = studio.Studio(f"dbname={db}", None, port=0)
     s.start()
     c = Client(s)
@@ -1919,6 +1955,16 @@ def grid(db: str) -> None:
             and pages[0].get("visible_total") == 60,
             pages[0],
         )
+        # a page's counts stop at a bound: a click on Next on a big table doesn't read it all, twice
+        with mock.patch.object(studio, "COUNTED", 100):
+            status, r = c.call("/api/rows?type=note&as=user:1&offset=50")
+        check(
+            "a table with more rows than Studio counts: more than the bound said, and what is under it counted",
+            status == 200
+            and (r["total"], r["visible_total"], r["counted"]) == (101, 60, 100)
+            and [x["id"] for x in r["rows"]][:1] == ["51"],
+            r,
+        )
         status, o = c.call("/api/overview")
         check(
             "two types over one table: each in the overview, with its table",
@@ -1936,6 +1982,63 @@ def grid(db: str) -> None:
                 ("chore", "gr.items", [("1", ["sweep"]), ("2", [])]),
             ],
             rows,
+        )
+        status, r = c.call("/api/rows?type=fact&as=user:2")
+        by = {x["id"]: x for x in r.get("rows", [])}
+        check(
+            "a table of more columns than the grid shows: its columns in the table's order, and the masked ones named",
+            status == 200
+            and r["columns"]
+            == ["id", "owner_id", "title", "meta", "flag", "num", "nul", "tags", "ratio", "made", "secret"]
+            and r["masked"] == ["secret"],
+            r,
+        )
+        check(
+            "... and the row shared with bo: visible, its last column masked; the other hidden",
+            status == 200
+            and by["1"]["visible"]
+            and by["1"]["masked"] == ["secret"]
+            and by["1"]["values"]["secret"] is None
+            and not by["2"]["visible"],
+            r,
+        )
+        status, t = c.call("/api/test?as=user:1&type=fact&id=1&perm=see&expect=cannot")
+        named = t.get("named", "") if status == 200 else ""
+        made, row = made_and_copied(db, named, "it", "gr.facts", "id = 1")
+        check(
+            "a test on a row whose json holds a string, a boolean, a number and null: the copy is the row",
+            status == 200 and made == row and '"nul": null' in row and '"num": 5' in row,
+            (status, t, made, row),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
+                fh.write(named)
+            _, out = cli(db, "test", os.path.join(tmp, "made.authz"))
+        ran = out.split("user 1 cannot see fact 1", 1)[-1].split("invariants", 1)[0]
+        check(
+            "... and the test runs as it is",
+            "user 1 cannot see fact 1" in out and "ok    " in ran and "FAIL" not in ran,
+            out[-800:],
+        )
+        status, t = c.call("/api/test?as=user:1&type=device&id=08:00:2b:01:02:03&perm=see&expect=cannot")
+        named = t.get("named", "") if status == 200 else ""
+        check(
+            "a test on a row keyed by a network card's address: the copy keeps the key, and the test says to give it one of its own",
+            status == 200
+            and 'INSERT INTO "gr"."devices" ("mac", "owner_id") VALUES (\'08:00:2b:01:02:03\', 1) RETURNING "mac"}'
+            in named
+            and '  -- "mac" is the copied row\'s: give the copy a key of its own' in named,
+            (status, t),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "made.authz"), "w", encoding="utf-8") as fh:
+                fh.write(named.replace("VALUES ('08:00:2b:01:02:03'", "VALUES ('08:00:2b:01:02:04'"))
+            _, out = cli(db, "test", os.path.join(tmp, "made.authz"))
+        ran = out.split("user 1 cannot see device 08:00:2b:01:02:03", 1)[-1].split("invariants", 1)[0]
+        check(
+            "... and with a key of its own, the test runs",
+            "user 1 cannot see device 08:00:2b:01:02:03" in out and "ok    " in ran and "FAIL" not in ran,
+            out[-800:],
         )
     finally:
         s.stop()
@@ -1963,6 +2066,66 @@ def grid(db: str) -> None:
         )
     finally:
         s.stop()
+    # the same policy from two files: the access diff when only the included one changed, and no one's access
+    with tempfile.TemporaryDirectory() as tmp:
+        main, rest = os.path.join(tmp, "grid.authz"), os.path.join(tmp, "rest.authz")
+        head, body = GRID_POLICY.split("\n", 1)
+        with open(main, "w", encoding="utf-8") as fh:
+            fh.write(f'{head}\n\ninclude "rest.authz"\n')
+        with open(rest, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        rc, out = cli(db, "apply", main)
+        if rc:
+            raise SystemExit(out)
+        with open(rest, "a", encoding="utf-8") as fh:
+            fh.write("-- a comment, which changes no one's access\n")
+        s = studio.Studio(f"dbname={db}", main, writable=True, port=0, read_policy=rowstile_cli.read_policy)
+        s.start()
+        try:
+            status, d = Client(s).call("/api/diff")
+        finally:
+            s.stop()
+    check(
+        "the access diff when only an included file changed, and no one's access: not said to be the one in force",
+        status == 200 and not d["same_text"] and d["summary"] == [],
+        (status, d),
+    )
+    subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
+
+
+def partitions(db: str) -> None:
+    print("-- Studio's grid on tables with tables under them (tests/children.authz)")
+    scratch_db(db)
+    subprocess.run(
+        ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", os.path.join(HERE, "children_schema.sql")],
+        check=True,
+        capture_output=True,
+    )
+    rc, out = cli(db, "apply", os.path.join(HERE, "children.authz"))
+    if rc:
+        raise SystemExit(out)
+    # bob is shared task 1 (in the open tasks' partition) and doc 1 (in docs itself). Task 3 (the done ones') and
+    # doc 11 (in docs_old) are each first in their own table, where they sit at the same place as task 1 and doc 1
+    psql(
+        db,
+        "SELECT authz.act_as('user', '1'); SELECT authz.share('task', '1', 'viewer', 'user', '2'); "
+        "SELECT authz.share('doc', '1', 'editor', 'user', '2')",
+    )
+    s = studio.Studio(f"dbname={db}", None, port=0)
+    s.start()
+    try:
+        seen: dict[str, tuple[int, list[str], Answer]] = {}
+        for t in ("task", "doc"):
+            status, r = Client(s).call(f"/api/rows?type={t}&as=user:2")
+            seen[t] = (status, [x["id"] for x in r.get("rows", []) if x["visible"]], r.get("visible_total"))
+    finally:
+        s.stop()
+    check(
+        "a partitioned table, and a table others inherit from: bob sees the row shared with him, and no other row "
+        "at the same place in another table",
+        seen == {"task": (200, ["1"], 1), "doc": (200, ["1"], 1)},
+        seen,
+    )
     subprocess.run(["dropdb", "--if-exists", db], capture_output=True)
 
 
@@ -2541,6 +2704,17 @@ def corners(db: str) -> None:
     s = studio.Studio(f"dbname={db}", None, writable=True, port=0)
     s.start()
     try:
+        status, o = Client(s).call("/api/overview")
+        page = next((x for x in o.get("types", []) if x["name"] == "page"), {})
+        check(
+            "the overview: a deny's inheritance, which the graph draws, by its node; not among the permissions",
+            status == 200
+            and [(d["node"], d["name"]) for d in page.get("drawn", [])]
+            == [("page__read__base", "read, before the deny")]
+            and page["drawn"][0]["text"].startswith("can read__base = ")
+            and "read__base" not in [p["name"] for p in page["perms"]],
+            (status, page),
+        )
         status, w = Client(s).call("/api/why?as=user:3&type=shelf&id=2&perm=use")
         check(
             "Studio says what couldn't be tried, with the database's reason, as the command does",
