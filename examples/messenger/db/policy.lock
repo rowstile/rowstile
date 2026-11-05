@@ -74,7 +74,7 @@
 > rules ms.messages: update : edit or remove
 > rules ms.messages: update body after : (edit and {not deleted}) or {deleted and body = ''}
 > rules ms.messages: update deleted : remove
-> rules ms.messages: update deleted after : {deleted}
+> rules ms.messages: update deleted after : {deleted and body = ''}
 > rules ms.messages: update edited_at : edit
 > rules ms.messages: update chat_id, seq, sender_id, bot_id, created_at : nobody
 > rules ms.messages: delete : nobody
@@ -243,8 +243,8 @@ function authz_gen."ms.messages:column body after:items"(p_row "ms"."messages") 
 function authz_gen."ms.messages:column body after:why"(p_row "ms"."messages") | dfd37ab1a92e shape=d48c6d39
 function authz_gen."ms.messages:column chat_id, seq, sender_id, bot_id, cr_cb6d8c70"(p_row "ms"."messages") | 39eb41e0e84a shape=a33b84d4 atomic
 function authz_gen."ms.messages:column chat_id, seq, sender_id, bot_id, cr_f7ab4c37"(p_row "ms"."messages") | 0dafdfed0cc5 shape=007b8576
-function authz_gen."ms.messages:column deleted after:items"(p_row "ms"."messages") | b2077c22a31f shape=017bf726 atomic
-function authz_gen."ms.messages:column deleted after:why"(p_row "ms"."messages") | fd9fe86bb2f3 shape=adbba70f
+function authz_gen."ms.messages:column deleted after:items"(p_row "ms"."messages") | dbddaa6b8273 shape=017bf726 atomic
+function authz_gen."ms.messages:column deleted after:why"(p_row "ms"."messages") | 04e931c9d714 shape=adbba70f
 function authz_gen."ms.messages:column deleted:items"(p_row "ms"."messages") | 3d4020caa21c shape=26c59c7b atomic
 function authz_gen."ms.messages:column deleted:why"(p_row "ms"."messages") | 95b7168d766f shape=c2d4c732
 function authz_gen."ms.messages:column edited_at:items"(p_row "ms"."messages") | 688af7a2af79 shape=3619ad4c atomic
@@ -363,8 +363,8 @@ function authz_int."ms.messages:column body after"() | 733cd6dd44f8 shape=96abdf
 function authz_int."ms.messages:column body after:holds"(p_row "ms"."messages") | a351403cdb82 shape=57c63676 atomic
 function authz_int."ms.messages:column chat_id, seq, sender_id, bot_id, cr_95321345"(p_row "ms"."messages") | 3c5f9d12934f shape=e77bbb45 atomic
 function authz_int."ms.messages:column chat_id, seq, sender_id, bot_id, created_at"() | 757d414710b5 shape=7492f037
-function authz_int."ms.messages:column deleted after"() | f0c04631917b shape=5d642ee4
-function authz_int."ms.messages:column deleted after:holds"(p_row "ms"."messages") | dab898e0cab7 shape=5b2987f4 atomic
+function authz_int."ms.messages:column deleted after"() | c1242a10c5e9 shape=5d642ee4
+function authz_int."ms.messages:column deleted after:holds"(p_row "ms"."messages") | c07516a2dd89 shape=5b2987f4 atomic
 function authz_int."ms.messages:column deleted"() | 3b1710d5af37 shape=e380ce0b
 function authz_int."ms.messages:column deleted:holds"(p_row "ms"."messages") | 21ed765405ff shape=83ea9aa3 atomic
 function authz_int."ms.messages:column edited_at"() | 8b83d305370b shape=58c6b436
