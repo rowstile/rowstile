@@ -41,7 +41,13 @@ BEGIN
   ELSE
     PERFORM authz_int.forget_marks(p_type, p_ids);
   END IF;
-  FOR k IN DELETE FROM authz.api_keys WHERE principal_type = p_type AND (p_ids IS NULL OR user_id = ANY (p_ids))
+  -- (by api_keys_by_principal: one lookup for each id, or for the type)
+  FOR k IN DELETE FROM authz.api_keys WHERE principal_type = p_type AND p_ids IS NULL
+           RETURNING id, user_id, name LOOP
+    PERFORM authz_int.audit('delete_api_key', p_type, k.user_id, NULL, NULL, NULL, NULL,
+                            jsonb_build_object('key', k.id, 'name', k.name, 'why', 'its principal is gone'));
+  END LOOP;
+  FOR k IN DELETE FROM authz.api_keys WHERE principal_type = p_type AND user_id = ANY (p_ids)
            RETURNING id, user_id, name LOOP
     PERFORM authz_int.audit('delete_api_key', p_type, k.user_id, NULL, NULL, NULL, NULL,
                             jsonb_build_object('key', k.id, 'name', k.name, 'why', 'its principal is gone'));

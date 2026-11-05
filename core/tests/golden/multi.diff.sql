@@ -265,6 +265,8 @@ CREATE TABLE IF NOT EXISTS authz.api_keys (
   revoked_at   timestamptz,
   -- whose key: user_id is the principal's id, of this type
   principal_type text NOT NULL DEFAULT 'user');
+-- a principal's keys: listed, and deleted with its row
+CREATE INDEX IF NOT EXISTS api_keys_by_principal ON authz.api_keys (principal_type, user_id);
 -- Settings for the functions (jwt_secret, jwt_issuer, jwt_audience, jwt_user_claim, jwt_type_claim, ...)
 CREATE TABLE IF NOT EXISTS authz.settings (key text PRIMARY KEY, value text NOT NULL);
 -- The audit trail: every share, role, key, request and impersonation, and relationship changes
@@ -311,6 +313,9 @@ CREATE TABLE IF NOT EXISTS authz.requests (
   decided_at  timestamptz,
   note        text,
   created_at  timestamptz NOT NULL DEFAULT now());
+-- the pending requests of an object, and a requester's: cancelled when their row goes (decided ones stay, history)
+CREATE INDEX IF NOT EXISTS requests_by_object ON authz.requests (object_type, object_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS requests_by_requester ON authz.requests (requester) WHERE status = 'pending';
 -- Access reviews: a snapshot of the shares on an object, each kept or revoked by a reviewer
 CREATE TABLE IF NOT EXISTS authz.reviews (
   id          bigserial PRIMARY KEY,
@@ -6272,7 +6277,13 @@ BEGIN
   ELSE
     PERFORM authz_int.forget_marks(p_type, p_ids);
   END IF;
-  FOR k IN DELETE FROM authz.api_keys WHERE principal_type = p_type AND (p_ids IS NULL OR user_id = ANY (p_ids))
+  -- (by api_keys_by_principal: one lookup for each id, or for the type)
+  FOR k IN DELETE FROM authz.api_keys WHERE principal_type = p_type AND p_ids IS NULL
+           RETURNING id, user_id, name LOOP
+    PERFORM authz_int.audit('delete_api_key', p_type, k.user_id, NULL, NULL, NULL, NULL,
+                            jsonb_build_object('key', k.id, 'name', k.name, 'why', 'its principal is gone'));
+  END LOOP;
+  FOR k IN DELETE FROM authz.api_keys WHERE principal_type = p_type AND user_id = ANY (p_ids)
            RETURNING id, user_id, name LOOP
     PERFORM authz_int.audit('delete_api_key', p_type, k.user_id, NULL, NULL, NULL, NULL,
                             jsonb_build_object('key', k.id, 'name', k.name, 'why', 'its principal is gone'));
@@ -6717,15 +6728,28 @@ CREATE OR REPLACE FUNCTION authz.request_access(p_type text, p_id uuid, p_relati
 
 -- A pending request goes when its requester's row goes, or its object's (deleted, given a new id, emptied out with
 -- its table: p_ids NULL), so that it never reaches whoever later has that id; it is kept, cancelled, with why.
--- Decided requests are history, and stay as they were
+-- Decided requests are history, and stay as they were. (Each lookup is one an index of the pending requests serves,
+-- requests_by_object or requests_by_requester: a delete reads none of the decided ones, however many there are)
 CREATE FUNCTION authz_int.requests_gone(p_type text, p_ids text[]) RETURNS void
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-  UPDATE authz.requests r SET status = 'cancelled', decided_at = now(),
-    note = CASE WHEN r.object_type = p_type AND (p_ids IS NULL OR r.object_id = ANY (p_ids))
-                THEN 'its object is gone' ELSE 'its requester is gone' END
-  WHERE r.status = 'pending'
-    AND ((r.object_type = p_type AND (p_ids IS NULL OR r.object_id = ANY (p_ids)))
-         OR (p_type = 'user' AND (p_ids IS NULL OR r.requester = ANY (p_ids)))) $f$;
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF p_ids IS NULL THEN
+    UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'its object is gone'
+    WHERE r.status = 'pending' AND r.object_type = p_type;
+  ELSE
+    UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'its object is gone'
+    WHERE r.status = 'pending' AND r.object_type = p_type AND r.object_id = ANY (p_ids);
+  END IF;
+  IF p_type <> 'user' THEN
+    RETURN;
+  ELSIF p_ids IS NULL THEN
+    UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'its requester is gone'
+    WHERE r.status = 'pending';
+  ELSE
+    UPDATE authz.requests r SET status = 'cancelled', decided_at = now(), note = 'its requester is gone'
+    WHERE r.status = 'pending' AND r.requester = ANY (p_ids);
+  END IF;
+END $f$;
 
 -- Requests the current user may decide (they may share that relation on the object), and their own
 CREATE OR REPLACE FUNCTION authz.pending_requests()
