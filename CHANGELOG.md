@@ -30,6 +30,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- `authz.ctx(key)` is NULL for a key the transaction didn't set, also on a connection where an earlier
+  transaction set it (Postgres then reads it as `''`), and for a key set to `''`: a condition or a caveat that
+  reads the request context answers the same on a pooled connection as on a new one.
 - `rowstile lsp` sends, when it reads the table and column names, the password in `rowstile.toml`'s database
   string or `PGPASSWORD` in `.env` beside it, not the editor's own `PGPASSWORD`: the folder opened names the host.
 - The sync index, a preview: a PowerSync mirror (`mirrored`) is made again when the policy masks a column of its
