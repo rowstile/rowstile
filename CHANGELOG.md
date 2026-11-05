@@ -25,6 +25,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Rust SDK's `rowstile::axum::SignedIn`: an extractor for who a request acts for, with no connection yet, for a
   handler that reads a body; `who.begin()` begins its transaction once the body is read. A `Tx` holds a connection,
   its transaction open, from the moment Axum extracts it, and Axum reads the body last.
+- The helpdesk, a third example app ([examples/helpdesk](examples/helpdesk/README.md)): several companies' support
+  desks on one database, each company's workspace kept apart by the policy, with teams inside teams, custom roles,
+  internal notes, the vendor's staff by break glass, and live updates through Electric. Next.js, Prisma and the
+  TypeScript SDK.
 
 ### Changed
 

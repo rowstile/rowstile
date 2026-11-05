@@ -18334,6 +18334,18 @@ class Delivery(unittest.TestCase):
         # the repository's own
         self.assertEqual(changelog.layout(changelog.read()), [])
 
+    def test_the_changelog_names_every_example_app(self) -> None:
+        # an example app is on the site and in the README: the release that brings one says so, by the name its
+        # README gives it (pr.yml asks for a line for what users run, which examples/ isn't)
+        with open(os.path.join(self.REPO, "CHANGELOG.md"), encoding="utf-8") as fh:
+            text = " ".join(fh.read().lower().split())
+        apps = sorted(glob.glob(os.path.join(self.REPO, "examples", "*", "README.md")))
+        self.assertGreaterEqual(len(apps), 3, "the example apps aren't found")
+        for readme in apps:
+            with open(readme, encoding="utf-8") as fh:
+                name = fh.readline().removeprefix("# ").strip().lower()
+            self.assertTrue(name in text, f"CHANGELOG.md never names {os.path.relpath(readme, self.REPO)}: {name}")
+
     def test_main_s_notes_are_what_unreleased_holds(self) -> None:
         # the release workflow run by hand (a dry run) from main writes main's notes: after a final release main is
         # the next minor's -dev, which has no section yet, and right after it Unreleased is empty
