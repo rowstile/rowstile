@@ -81,9 +81,11 @@ for v in $VERSIONS; do
     state=$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null) || state="not there"
     [ "$state" = true ] || why="the container stopped before the suites ended (running: $state)"
   fi
-  # each suite passed as many checks as tests/check_counts.txt says (tests/check_counts.py, on the log, in the
-  # container: its python3)
-  counts=$(docker exec -i -w /src/core "$name" python3 tests/check_counts.py /dev/stdin < "$log" 2>&1) ||
+  # each suite passed as many checks as tests/check_counts.txt says, and each one this mode and part run ran
+  # (tests/check_counts.py, on the log, in the container: its python3)
+  run=${MODE:---full}
+  counts=$(docker exec -i -w /src/core "$name" python3 tests/check_counts.py --mode "${run#--}" \
+    --part "${ROWSTILE_PART:-}" --upgrades "${ROWSTILE_UPGRADES:-}" /dev/stdin < "$log" 2>&1) ||
     { [ "$rc" -ne 0 ] || rc=1; }
   printf '%s\n' "$counts" >> "$log"
   [ -z "$why" ] || echo "FAILED: $why" >> "$log"

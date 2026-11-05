@@ -15480,6 +15480,60 @@ class CheckCounts(unittest.TestCase):
         for name in ("difftest docs", "genpolicy", "around", "invariance", "rewrites", "conditions", "fuzz parser"):
             self.assertIsNone(self.c.FIXED.match(name), name)
 
+    def test_a_suite_that_didnt_run_is_said(self) -> None:
+        # a step that disappears from a run (a wrong part or mode, a unit that ends before its record, a name
+        # changed) passes no fewer checks: it isn't in the log. Its mode and part must have each of theirs
+        log = "ok    one\n--- passed: masks (1s)\n--- FAILED: governance (2s)\n"
+        missing = self.c.not_run(log, self.c.wanted("quick", "policy"))
+        self.assertIn("scenario didn't run, though this run's mode and part have it", missing)
+        self.assertNotIn("masks didn't run, though this run's mode and part have it", missing)
+        self.assertNotIn("governance didn't run, though this run's mode and part have it", missing)  # it ran
+        self.assertEqual(self.c.not_run(log, self.c.wanted("soak", "changes-1")), [])  # nothing counted there
+        # each mode's own: --short leaves out what is the same on every version, the full run READ COMMITTED's
+        # interleavings (it has every level's, in its races part), nightly's upgrades are from every release
+        self.assertNotIn("unit", self.c.wanted("short"))
+        self.assertNotIn("migrate vs apply", self.c.wanted("short", "command"))
+        self.assertIn("interleavings (read committed, docs)", self.c.wanted("short", "policy"))
+        self.assertNotIn("interleavings (read committed, docs)", self.c.wanted("full"))
+        self.assertEqual(self.c.wanted("full", "races"), {"interleavings", "cuts half way, every statement"})
+        self.assertEqual(self.c.wanted("proofs"), {"interleavings", "cuts half way, every statement"})
+        self.assertEqual(self.c.wanted("soak"), {"small policies", "interleavings", "cuts half way, other policies"})
+        self.assertIn("upgrade", self.c.wanted("quick", "command"))
+        every = self.c.wanted("quick", "command", "every")
+        self.assertIn("upgrade from every release", every)
+        self.assertNotIn("upgrade", every)
+        # a whole run has every part's
+        self.assertEqual(
+            self.c.wanted("quick"),
+            set().union(*(self.c.wanted("quick", p) for p in ("unit", "policy", "command", "random"))),
+        )
+
+    def test_each_suite_counted_has_its_place(self) -> None:
+        # PLACES places each suite check_counts.txt names, in a part of the modes that run it; where run_tests.sh
+        # runs it as a unit (`unit PART SECONDS FUNCTION`), that unit is in the part PLACES says
+        placed = [(p, modes, n) for (p, modes), names in self.c.PLACES.items() for n in names]
+        self.assertEqual({n for _, _, n in placed}, set(self.c.expected()))
+        with open(os.path.join(ROOT, "run_tests.sh"), encoding="utf-8") as fh:
+            run = fh.read()
+        parts = re.search(r'^PARTS_SUITES="([^"]+)".*\n^PARTS_SOAK="([^"]+)"', run, re.M)
+        assert parts is not None, "run_tests.sh's parts aren't where they were"
+        modes = {"quick": parts.group(1).split(), "short": parts.group(1).split()[1:], "full": parts.group(1).split()}
+        modes["full"].append("races")
+        modes |= {"proofs": ["races"], "soak": parts.group(2).split()}
+        for p, ms, n in placed:
+            for m in ms:
+                self.assertIn(p, modes[m], f"{n}: {m} has no part {p}")
+        units: dict[str, set[str]] = {}
+        for p, f in re.findall(r"^\s*unit (\w+) \S+ (\w+)", run, re.M):
+            units.setdefault(f, set()).add(p)
+        in_units: dict[str, set[str]] = {}
+        for f, body in re.findall(r"(?ms)^[ \t]*(\w+)\(\) \{\n(.*?)^[ \t]*\}\n", run):
+            for n in re.findall(r'record \S+ "([^"$]+)"', body):
+                in_units.setdefault(n, set()).update(units.get(f, set()))
+        for p, ms, n in placed:
+            if ms & {"quick", "short", "full"} and p != "races":
+                self.assertEqual(in_units.get(n), {p}, n)
+
     def test_an_upgrade_with_nothing_to_upgrade_from(self) -> None:
         # the beta is out and versions only grow: a release to upgrade from is always there. One PyPI's index seems
         # not to have fails the suite (tests/previous_release.py, exit 1), never a skip under a name of its own that

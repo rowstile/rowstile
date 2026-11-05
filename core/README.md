@@ -136,7 +136,9 @@ suite cut short, a test that skips. So `tests/check_counts.txt` says how many ch
 `core/ci.sh` holds every run to it (`tests/check_counts.py`, on the run's log): a suite that passes fewer or more
 fails the run, though each of its checks passed, and a count that changes is in the diff, like the golden SQL. After
 adding or taking away checks on purpose, write the new count there, or `python3 tests/check_counts.py --write LOG`
-with the run's log (`/tmp/rowstile-ci-16.log`). A skipped unit test isn't a passed one: the unit tests' count is
+with the run's log (`/tmp/rowstile-ci-16.log`). A suite that didn't run at all fails the run too: `ci.sh` tells it
+the run's mode and part, and `PLACES` in `tests/check_counts.py` says which suites each part of each mode runs (a new
+counted suite gets its place there). A skipped unit test isn't a passed one: the unit tests' count is
 what they pass in `ci.sh`'s container, where those that ask git skip. The random suites (difftest, genpolicy, around,
 the invariance of random policies, the conditions, the parser fuzzer, the rewrites, the stress test) check as many
 things as their seeds draw, and aren't counted. They fail when they judged too little instead: genpolicy, around,
