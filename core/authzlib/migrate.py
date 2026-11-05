@@ -692,7 +692,8 @@ def sql_lit(s: object) -> str:
 
 
 def dollar(text: str, tag: str = "authz_policy") -> str:
-    while f"${tag}$" in text:
+    # (a text that ends in $tag would close the quote with the closing tag's first $)
+    while f"${tag}" in text:
         tag += "_"
     return f"${tag}${text}${tag}$"
 

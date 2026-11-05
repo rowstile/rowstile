@@ -165,6 +165,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A migration that removes an inheritance tree drops the tree's index by its schema (`authz_int`), not by its
   name alone on the search path, where an index of the app's with that name would have gone instead. The lock
   file names those indexes with their schema from the next migration on; one written before needs no migration.
+- A migration of a policy whose text ends in `$authz_policy` (a comment, with no newline after it) runs: the quote it
+  records the text in no longer ends early.
 
 ### Upgrading
 

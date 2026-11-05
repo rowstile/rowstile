@@ -3581,6 +3581,14 @@ class Migrations(unittest.TestCase):
         self.assertTrue(database.migration(self.text, {}, older).empty)
         self.assertEqual(self.migrate.parse_lock(older).objects, self.migrate.parse_lock(lock).objects)
 
+    def test_a_text_in_a_dollar_quote(self) -> None:
+        # the quote ends at the first closing tag after the opening one: the end, whatever the text ends in
+        for text in ("-- the end: $authz_policy", "a $authz_policy$ b", "$authz_policy_$authz_policy", "x $"):
+            quoted = self.migrate.dollar(text)
+            tag = quoted[: quoted.index("$", 1) + 1]
+            self.assertEqual(quoted, tag + text + tag)
+            self.assertEqual(quoted.index(tag, len(tag)), len(tag) + len(text), quoted)
+
     def test_the_first_is_the_whole_policy(self) -> None:
         m = database.migration(self.text, {}, "")
         self.assertIn(compiled("docs", transaction=False).split("\n", 1)[1], m.sql)
