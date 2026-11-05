@@ -150,7 +150,10 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   `random_normal()`, `gen_random_uuid()`, `uuidv4()`, `uuidv7()`), who asks or the session (`authz.uid()`,
   `authz.ctx()`, `authz.principal()`, `current_user`, `current_role`, `session_user`, `user`, `system_user`,
   `current_setting()`, `current_schema`, `current_catalog`, `current_database()`, `pg_backend_pid()`,
-  `txid_current()`, `pg_current_xact_id()`): that is refused (AZ305). <!-- checked: tests/unit_test.py "test_what_inheritance_cant_read_is_named_where_it_is_refused"; tests/policy_errors.py "inheritance that depends on the time" -->
+  `txid_current()`, `pg_current_xact_id()`, `current_schemas()`, `pg_my_temp_schema()`, `pg_trigger_depth()`,
+  `pg_has_role()`, `has_*_privilege()` (`has_table_privilege()` and the others), `row_security_active()`,
+  `inet_client_addr()`, `inet_client_port()`, `inet_server_addr()`, `inet_server_port()`, `nextval()`,
+  `currval()`, `lastval()`): that is refused (AZ305). <!-- checked: tests/unit_test.py "test_what_inheritance_cant_read_is_named_where_it_is_refused"; tests/policy_errors.py "inheritance that depends on the time" -->
   Applying then asks Postgres, which refuses a function of the app's that isn't IMMUTABLE and, in a condition
   that reads no other table, anything else that isn't (a cast that depends on the time zone) (AZ603). <!-- checked: tests/policy_errors.py "inheritance calling a function that isn't IMMUTABLE"; tests/policy_errors.py "inheritance limited by a time-zone dependent expression" -->
 - **Denies**: `can view = (viewer or parent.view) and not hidden` takes `view` away on a

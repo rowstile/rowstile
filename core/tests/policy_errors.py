@@ -286,6 +286,22 @@ COMPILE = [
         "AZ305",
     ),
     (
+        "inheritance that depends on who asks, in a condition that reads another table",
+        "  can view = owner or (parent.view and {exists (select 1 from alt.holds h where h.target = this.doc_no "
+        "and pg_has_role('app_user', 'member'))})\n",
+        "can't limit inheritance: it depends on pg_has_role",
+        10,
+        "AZ305",
+    ),
+    (
+        "inheritance that depends on the session, beside a subquery",
+        "  can view = owner or (parent.view and {exists (select 1 from alt.holds h where h.target = this.doc_no) "
+        "or inet_client_addr() is null})\n",
+        "can't limit inheritance: it depends on inet_client_addr",
+        10,
+        "AZ305",
+    ),
+    (
         "inheritance that depends on the time, after a $$ string holding an apostrophe",
         "  can view = owner or (parent.view and {title <> $$it's$$ and created_at > now() and title <> 'x'})\n",
         "can't limit inheritance: it depends on now",
