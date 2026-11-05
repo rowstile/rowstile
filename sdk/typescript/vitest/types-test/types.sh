@@ -19,8 +19,8 @@ for v in $VERSIONS; do
   printf '{"compilerOptions": {"strict": true, "noEmit": true, "target": "ES2022", "module": "NodeNext",
     "moduleResolution": "NodeNext", "skipLibCheck": false, "types": []}, "files": ["use.ts"]}\n' > "$dir/tsconfig.json"
   cp "$HERE/vitest-$v/package.json" "$HERE/vitest-$v/package-lock.json" "$dir/"
-  (cd "$dir" && npm ci --no-audit --no-fund --ignore-scripts >/dev/null 2>&1) \
-    || { echo "FAIL  installing Vitest $v"; fails=$((fails + 1)); continue; }
+  (cd "$dir" && npm ci --no-audit --no-fund --ignore-scripts >install.log 2>&1) \
+    || { cat "$dir/install.log"; echo "FAIL  installing Vitest $v"; fails=$((fails + 1)); continue; }
   # the built packages, after npm (which removes what its package.json doesn't name)
   for p in client vitest; do
     mkdir -p "$dir/node_modules/@rowstile/$p"
