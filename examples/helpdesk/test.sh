@@ -13,7 +13,8 @@ ROOT=$(cd ../.. && pwd)
 BIN=$ROOT/node_modules/.bin
 PYTHON=${PYTHON:-python3}
 ROWSTILE="$PYTHON $ROOT/core/cli/rowstile_cli.py"
-[ -d "$ROOT/node_modules" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
+# the workspace's packages, installed again when the lock file is newer than the install (a pull that changed it)
+[ "$ROOT/node_modules/.package-lock.json" -nt "$ROOT/package-lock.json" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 cleanup() {
   docker rm -f -v "$NAME-electric" >/dev/null 2>&1

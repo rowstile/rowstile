@@ -19,7 +19,8 @@ REDIS_PORT=${CONFORMANCE_REDIS_PORT:-26380}
 ROOT=$(cd ../.. && pwd)
 BIN=$ROOT/node_modules/.bin
 export PYTHON=${PYTHON:-python3}
-[ -d "$ROOT/node_modules" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
+# the workspace's packages, installed again when the lock file is newer than the install (a pull that changed it)
+[ "$ROOT/node_modules/.package-lock.json" -nt "$ROOT/package-lock.json" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
 source ../pooler.sh
 # the services beside Postgres, a stage each in images/Dockerfile, pinned by digest
