@@ -855,7 +855,8 @@ CODES = {
     ),
     "AZ710": Code(
         "A missing or wrong argument",
-        "A call is missing something it needs (a reason, kept in the audit trail; approve or deny) or has a value "
+        "A call is missing something it needs (a reason, kept in the audit trail; approve or deny; a key's name; the "
+        "id of the principal whose keys it names) or has a value "
         "out of range (a duration that isn't positive, emergency access longer than a day, a command "
         "`authz.explain_rule` doesn't explain, a row it can't find without an id, a page cursor for `authz.list` "
         "that isn't an id of the type, a negative page size, a member list for `authz.sync_members` that is NULL or "

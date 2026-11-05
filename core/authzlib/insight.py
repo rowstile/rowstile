@@ -617,7 +617,7 @@ BEGIN
   END IF;
   IF p_user IS NOT NULL THEN
     v_asker := ARRAY[v_me, v_pt, v_scopes];
-    PERFORM set_config('authz.user_id', p_user, true);
+    PERFORM set_config('authz.user_id', authz_int.canon('user', p_user), true);
     PERFORM set_config('authz.principal_type', '', true);
     PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
     PERFORM authz_int.sign();
