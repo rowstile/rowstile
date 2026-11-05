@@ -53,6 +53,11 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         // in a message: 7, (1,2), a field quoted only where Postgres would. One spelling, for 403 and 404
         object?[] keys = [7, new object?[] { 7 }, (1, 2), new object?[] { "a b", "x,y" }, ("", "q\"t"), ("b\\s", "(1)"), new object?[] { 1, null }, null];
         Assert.Equal(["7", "7", "(1,2)", "(\"a b\",\"x,y\")", "(\"\",\"q\"\"t\")", "(\"b\\\\s\",\"(1)\")", "(1,)", null], keys.Select(Keys.Text));
+        // any array or list of the columns (a long[] too), and a field quoted for ASCII's six spaces alone, as Postgres
+        // does: not for a no-break space, an em space
+        object?[] more = [new long[] { 1, 2 }, new[] { Guid.Empty }, new List<int> { 3, 4 }, ("\vv", "a\u00a0b"), new[] { "\u2003\x1c", "\r\n\f" }];
+        Assert.Equal(["(1,2)", Guid.Empty.ToString(), "(3,4)", "(\"\vv\",a\u00a0b)", "(\u2003\x1c,\"\r\n\f\")"], more.Select(Keys.Text));
+        Assert.Equal("app.members (1,2) not found", new NotFoundException("app.members", new long[] { 1, 2 }).Message);
         Assert.Equal("app.members (1,2) not found", new NotFoundException("app.members", (1, 2)).Message);
         Assert.Equal(("app.members", "(1,2)"), (new NotFoundException("app.members", (1, 2)).Table, new NotFoundException("app.members", (1, 2)).Id));
         Assert.Equal(
