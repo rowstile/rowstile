@@ -25,7 +25,7 @@ they would agree. So the evaluator is held to answers that neither of them wrote
   written two ways: as listed, and with its names swapped and its parts turned round), and compares what they
   read: the types, each relation's sources, the permissions with their grouping, the rules, each line of the tests
   part by part, and of a policy that includes a file, its own lines. They read each one alike.
-  Each night they read all 130,431 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways" -->
+  Each night they read all 130,431 small policies, and each written another way where that is a policy. <!-- checked: tests/unit_test.py "test_small_policies_written_two_ways"; tests/unit_test.py "test_each_night_the_grammar_reads_every_small_policy" -->
   (The grammar takes more than the parser does, as an editor must: what the parser refuses isn't compared.) <!-- checked: tests/parse_agreement.py "policy the parser refuses is not compared" -->
 - **Random data**: [`tests/difftest.py`](../core/tests/difftest.py) fills six policies' tables with random
   rows and makes random changes to each (moves, links, loops, groups inside groups, inheritance
@@ -172,16 +172,17 @@ what).
 ## Trees, under load
 
 Inherited permissions are kept in tables by triggers, and those tables must match the tree at every commit. <!-- checked: tests/interleave.py "inheritance tables exact after each"; tests/stress.sh "the inheritance tables match a rebuild" -->
-[`tests/interleave.py`](../core/tests/interleave.py) runs two writes to a tree in two sessions, on four trees:
-the docs app's folders (a folder created, moved, linked, unlinked, deleted, given a new id, shared, unshared); a
-tree of two types whose condition reads another table (folders and projects); a tree on a partitioned table,
-whose links and the table its condition reads each have a table that inherits from them; and a tree of two types
-linked by their own columns, whose condition reads the tree's own table. Each of the 88 pairs runs in every order
-of its steps that Postgres allows (a read, the write, the commit: 1,286 of the 1,760 orders written out), with
-each session at each isolation level, 11,574 schedules. It sends one step at a time and asks Postgres which session
-waits for a lock, so no order depends on timing. After each, the tables are compared with a rebuild, what
-`authz.list` says with the reference evaluator, and in SERIALIZABLE the rows with the two transactions run one
-after the other. In READ COMMITTED no write ever needs a retry. <!-- checked: tests/interleave.py "none needing a retry" -->
+[`tests/interleave.py`](../core/tests/interleave.py) runs two writes to a tree in two sessions, in six worlds:
+the docs app's folders (a folder created, moved, linked, unlinked, deleted, given a new id, shared, unshared),
+with its sync index (a preview); the same twice more, the index keyed by folder, and brought up to date by a
+worker after commit; a tree of two types whose condition reads another table (folders and projects); a tree on a
+partitioned table, whose links and the table its condition reads each have a table that inherits from them; and a
+tree of two types linked by their own columns, whose condition reads the tree's own table. Each of the 160 pairs runs in
+every order of its steps that Postgres allows (a read, the write, the commit: 2,402 of the 3,200 orders written
+out), with each session at each isolation level, 21,618 schedules. It sends one step at a time and asks Postgres
+which session waits for a lock, so no order depends on timing. After each, the tables are compared with a
+rebuild (and the sync index with what it should hold), what `authz.list` says with the reference evaluator, and
+in SERIALIZABLE the rows with the two transactions run one after the other. In READ COMMITTED no write ever needs a retry. <!-- checked: tests/interleave.py "none needing a retry" -->
 Each change runs it in READ COMMITTED, and every night at all three levels on 16, 17 and 18.
 [`tests/stress.sh`](../core/tests/stress.sh) lets sixteen clients write one tree at once; after it, the tables
 are compared with a rebuild, and the biggest moves on the tree it leaves are timed alone.
