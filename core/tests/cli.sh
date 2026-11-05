@@ -358,6 +358,9 @@ toml 'policy = "db/policy.authz"\ntest = ["db/tests/*.authz"]\n' check
 toml 'policy = "db/policy.authz"\n[migrations]\ntests = ["x"]\n' check
 [ "$rc $out" = "2 $P/rowstile.toml: [migrations] tests is not a setting rowstile knows (tool, dir, lock, write_after)" ] &&
   ok "a setting in the wrong table is refused" || bad "wrong table" "$rc $out"
+toml 'policy = "db/policy.authz"\n[migrations]\nwrite_after = -60\n' check
+[ "$rc $out" = "2 $P/rowstile.toml: [migrations] write_after is seconds after the last save, 0 or more (0: never): write_after = 300" ] &&
+  ok "a write_after below 0 is refused (it wrote the migration at every save)" || bad "write_after -60" "$rc $out"
 toml '\357\273\277policy = "db/policy.authz"\n' check; [ $rc -eq 0 ] && ok "a byte order mark is skipped" || bad "BOM" "$rc $out"
 toml 'policy = "db/policy.authz\n' check
 [ $rc -eq 2 ] && case "$out" in "$P/rowstile.toml: "*) true;; *) false;; esac && ok "a rowstile.toml that isn't TOML is named, with what is wrong, exit 2" || bad "toml syntax" "$rc $out"
