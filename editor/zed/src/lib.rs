@@ -4,6 +4,8 @@
 //! project, node_modules/.bin or a .venv, isn't on that PATH):
 //!
 //!     "lsp": { "rowstile": { "binary": { "path": "/path/to/rowstile", "arguments": ["lsp"] } } }
+//!
+//! and with the environment the shell gives the project, and what `binary.env` there sets.
 use zed_extension_api::{self as zed, settings::LspSettings, LanguageServerId, Result};
 
 struct Rowstile;
@@ -19,6 +21,12 @@ impl zed::Extension for Rowstile {
             .as_ref()
             .and_then(|b| b.arguments.clone())
             .unwrap_or_else(|| vec!["lsp".into()]);
+        // the shell's environment, with what the settings' binary.env sets in place of its own
+        let mut env = worktree.shell_env();
+        if let Some(set) = binary.as_ref().and_then(|b| b.env.clone()) {
+            env.retain(|(name, _)| !set.contains_key(name));
+            env.extend(set);
+        }
         let command = match binary.and_then(|b| b.path) {
             Some(path) => path,
             None => worktree.which("rowstile").ok_or(
@@ -27,7 +35,7 @@ impl zed::Extension for Rowstile {
                  (node_modules/.bin/rowstile or .venv/bin/rowstile in the project)",
             )?,
         };
-        Ok(zed::Command { command, args, env: worktree.shell_env() })
+        Ok(zed::Command { command, args, env })
     }
 }
 

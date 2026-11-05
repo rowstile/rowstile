@@ -591,6 +591,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - VS Code and the site end a condition at its last brace when a dollar quote (`$$...$$`, `$tag$...$tag$`) or an
   `E'...'` string inside it holds a brace or a quote. Before, the SQL colouring ended it early, and coloured the rest
   as policy words.
+- The Zed extension starts the language server with what Zed's `lsp.rowstile.binary.env` setting sets, and adds no
+  closing quote to one typed inside a test's name, a quoted id or a comment. Before, it ignored that setting, and
+  closed every quote.
 
 ### Upgrading
 

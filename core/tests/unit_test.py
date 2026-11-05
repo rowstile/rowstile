@@ -19323,6 +19323,21 @@ class Editors(unittest.TestCase):
         pairs = {(p["open"], p["close"]) for p in config["autoClosingPairs"]}
         self.assertEqual(pairs, {(b["start"], b["end"]) for b in zed["brackets"] if b["close"]})
 
+    def test_zeds_pairs_name_scopes_the_overrides_capture(self) -> None:
+        # not_in: the scopes where Zed closes no quote typed, which its overrides.scm captures (a name it has not
+        # is no scope: the quote is closed everywhere)
+        import tomllib
+
+        with open(os.path.join(self.REPO, "editor", "zed", "languages", "authz", "config.toml"), "rb") as fb:
+            zed = tomllib.load(fb)
+        with open(
+            os.path.join(self.REPO, "editor", "zed", "languages", "authz", "overrides.scm"), encoding="utf-8"
+        ) as fh:
+            captured = {name.split(".")[0] for name in re.findall(r"@([\w.]+)", fh.read())}
+        named = {scope for b in zed["brackets"] for scope in b.get("not_in", [])}
+        self.assertTrue(named)
+        self.assertLessEqual(named, captured, "editor/zed/languages/authz/config.toml: not_in names a scope")
+
     def test_zed_builds_this_grammar(self) -> None:
         # extension.toml names the commit Zed fetches the grammar from: its grammar must be this one
         with open(os.path.join(self.REPO, "editor", "zed", "extension.toml"), encoding="utf-8") as fh:
