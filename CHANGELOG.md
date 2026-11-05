@@ -623,6 +623,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   deleted file's objects, when deleting them failed after its rows were gone, stayed in the bucket for good.
 - A type keyed by a date, a time, an interval or money is refused when the policy compiles, naming its line
   (AZ206). Before, applying failed with Postgres's own message about an index, which named no line.
+- `rowstile review --db`: Risk's example of a permission that allows more is someone Access shows gaining it on
+  the review data, when it shows one. Before, it came from the review's small worlds alone, and could name a user
+  who held the permission already.
 
 ### Upgrading
 
