@@ -23,6 +23,7 @@ The data (Data; difftest reads it from a database, World makes it up):
 from __future__ import annotations
 
 import dataclasses
+import functools
 import itertools
 import random
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
@@ -494,10 +495,11 @@ def alike_in(pols: Iterable[Policy]) -> frozenset[str]:
     return remembered(pols, ("alike",), make)
 
 
+@functools.lru_cache(maxsize=4096)
 def facts(sql: str, alike: frozenset[str]) -> Node | None:
     """A condition as facts about its row's columns (conditions.simple), unless it compares a column of alike with a
     text: whether a row equal to one of its texts equals another is the column's collation's to say, so its rows are
-    drawn as any other condition's are."""
+    drawn as any other condition's are. (Read once for each text: every world asks.)"""
     node = simple(sql)
     return None if node is None or reads_alike(node, alike) else node
 
@@ -751,17 +753,22 @@ class World:
     def link_domains(self, pol: Policy, table: str) -> dict[str, list[Scalar]]:
         """{column: the values it takes} for a link table's columns its simple wheres read, in any of the world's
         policies (as domains, for a type's columns)."""
-        hows: dict[str, list[tuple[str, Scalar]]] = {}
-        for p in [*self.pols, pol]:
-            for t in p.types.values():
-                for r in t.relations.values():
-                    for src in r.sources:
-                        read = src.kind == "table" and src.table == table and src.where
-                        node = self.facts(pol, src.where) if read else None
-                        if node is not None:
-                            for col, how in columns_of(node).items():
-                                hows.setdefault(col, []).extend(how)
-        return {col: self.values_of(used) for col, used in sorted(hows.items())}
+        pols = [*self.pols, pol]
+
+        def make() -> list[tuple[str, list[tuple[str, Scalar]]]]:
+            hows: dict[str, list[tuple[str, Scalar]]] = {}
+            for p in pols:
+                for t in p.types.values():
+                    for r in t.relations.values():
+                        for src in r.sources:
+                            read = src.kind == "table" and src.table == table and src.where
+                            node = self.facts(pol, src.where) if read else None
+                            if node is not None:
+                                for col, how in columns_of(node).items():
+                                    hows.setdefault(col, []).extend(how)
+            return sorted(hows.items())
+
+        return {col: self.values_of(used) for col, used in remembered(pols, ("link hows", table), make)}
 
     def columns(self, pol: Policy) -> dict[str, dict[str, dict[str, Scalar]]]:
         """{type: {id: {column: value}}} for the columns the simple conditions read: drawn from the values the
