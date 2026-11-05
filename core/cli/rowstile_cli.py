@@ -1382,9 +1382,9 @@ def main(argv: list[str]) -> None:
         fail(f"rowstile {cmd}: an expression in the policy is nested too deep to read", 1)
 
     if cmd == "init":
-        from init import out_problem
+        from init import out_problem, role_problem
 
-        problem = out_problem(opts.get("--out", "db"))
+        problem = out_problem(opts.get("--out", "db")) or role_problem(opts.get("--role"))
         if problem:
             fail(problem, 2)
     given = dsn

@@ -46,6 +46,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- `rowstile init --role` refuses a name the policy's app role line can't hold (a space, a quote), before connecting.
+  Before, it wrote a draft that didn't compile and a `CREATE ROLE` for another name.
 - `rowstile init` without `--schema` leaves out the sync index's schema, `authz_sync`: its tables were drafted as
   the app's, and the roles granted them counted when it chose the app role.
 - `rowstile init` reads `pyproject.toml` as TOML: its dependencies, optional ones, dependency groups and Poetry's
