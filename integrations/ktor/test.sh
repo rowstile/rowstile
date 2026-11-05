@@ -59,6 +59,9 @@ ROWSTILE_OWNER_URL=$ROWSTILE_TESTS_URL $MVN flyway:migrate >"$LOG/migrate-tests.
 # tests' JVMs: the report is printed, and kept in CONFORMANCE_COVERAGE (a folder of its own if not given) with its pages
 COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
 mkdir -p "$COVERAGE" && rm -rf "$COVERAGE"/jacoco.exec "$COVERAGE"/report.txt "$COVERAGE"/rowstile-kotlin
+# and an earlier run's pages in the module: JaCoCo's report skips, and passes, without its data, which would leave
+# them to be judged
+rm -rf ../../sdk/java/rowstile-kotlin/target/site/jacoco
 ../../sdk/java/mvnw -B verify -Djacoco.destFile="$COVERAGE/jacoco.exec" "$@" >"$LOG/verify.log" 2>&1
 verified=$?
 grep -E '^(ok|FAIL)  ' "$LOG/verify.log"
@@ -66,16 +69,20 @@ grep -E '^(ok|FAIL)  ' "$LOG/verify.log"
 $MVN -f ../../sdk/java/pom.xml -pl rowstile-kotlin org.jacoco:jacoco-maven-plugin:0.8.16:report \
   -Djacoco.dataFile="$COVERAGE/jacoco.exec" >"$LOG/report.log" 2>&1 || { cat "$LOG/report.log"; rc=1; }
 cp -r ../../sdk/java/rowstile-kotlin/target/site/jacoco "$COVERAGE/rowstile-kotlin" 2>/dev/null
-# each class: lines and branches missed, then the total (jacoco.csv: a row per class)
+missing=""; [ -s "$COVERAGE/jacoco.exec" ] || missing="$COVERAGE/jacoco.exec"
+[ -s "$COVERAGE/rowstile-kotlin/jacoco.csv" ] || missing="$missing${missing:+, }rowstile-kotlin's jacoco.csv"
+# each class: lines and branches missed, then the total (jacoco.csv: a row per class); no line at all is no coverage
 awk -F, '$1 != "GROUP" {
     lm += $8; lc += $9; bm += $6; bc += $7
     if ($8 + $6 > 0) printf "%-60s %3d lines, %3d branches missed\n", $2 "." $3, $8, $6
-  } END { printf "TOTAL  %d of %d lines, %d of %d branches run\n", lc, lm + lc, bc, bm + bc; exit (lm + bm > 0) }' \
+  } END { printf "TOTAL  %d of %d lines, %d of %d branches run\n", lc, lm + lc, bc, bm + bc; exit (lm + bm > 0 || lc == 0) }' \
   "$COVERAGE/rowstile-kotlin/jacoco.csv" >"$COVERAGE/report.txt" 2>/dev/null
 covered=$?
 cat "$COVERAGE/report.txt"
 if [ $# -gt 0 ]; then
   echo "(some of the checks ran: the SDK's coverage isn't judged)"
+elif [ -n "$missing" ]; then
+  echo "FAIL  no coverage of the Kotlin SDK to judge: $missing missing"; rc=1
 elif [ $covered = 0 ] && [ -s "$COVERAGE/report.txt" ]; then
   echo "ok    the checks run every line and branch of the Kotlin SDK"
 else

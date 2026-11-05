@@ -57,25 +57,32 @@ ROWSTILE_OWNER_URL=$ROWSTILE_TESTS_URL $MVN flyway:migrate >"$LOG/migrate-tests.
 # printed, and kept in CONFORMANCE_COVERAGE (a folder of its own if not given) with each module's pages
 COVERAGE=${CONFORMANCE_COVERAGE:-$(mktemp -d)}
 mkdir -p "$COVERAGE" && rm -rf "$COVERAGE"/jacoco.exec "$COVERAGE"/report.txt "$COVERAGE"/rowstile*
+# and an earlier run's pages in each module: JaCoCo's report skips, and passes, without its data, which would leave
+# them to be judged
+for m in rowstile rowstile-spring-boot-starter; do rm -rf "../../sdk/java/$m/target/site/jacoco"; done
 ../../sdk/java/mvnw -B verify -Djacoco.destFile="$COVERAGE/jacoco.exec" "$@" >"$LOG/verify.log" 2>&1
 verified=$?
 grep -E '^(ok|FAIL)  ' "$LOG/verify.log"
 [ $verified = 0 ] || { grep -E '^\[ERROR\]' "$LOG/verify.log" | head -40; echo "(Maven's log: $LOG/verify.log)"; rc=1; }
 $MVN -f ../../sdk/java/pom.xml -pl rowstile,rowstile-spring-boot-starter org.jacoco:jacoco-maven-plugin:0.8.16:report \
   -Djacoco.dataFile="$COVERAGE/jacoco.exec" >"$LOG/report.log" 2>&1 || { cat "$LOG/report.log"; rc=1; }
+missing=""; [ -s "$COVERAGE/jacoco.exec" ] || missing="$COVERAGE/jacoco.exec"
 for m in rowstile rowstile-spring-boot-starter; do
   cp -r "../../sdk/java/$m/target/site/jacoco" "$COVERAGE/$m" 2>/dev/null
+  [ -s "$COVERAGE/$m/jacoco.csv" ] || missing="$missing${missing:+, }$m's jacoco.csv"
 done
-# each class: lines and branches missed, then the total (jacoco.csv: a row per class)
+# each class: lines and branches missed, then the total (jacoco.csv: a row per class); no line at all is no coverage
 cat "$COVERAGE"/rowstile*/jacoco.csv 2>/dev/null | awk -F, '$1 != "GROUP" {
     lm += $8; lc += $9; bm += $6; bc += $7
     if ($8 + $6 > 0) printf "%-60s %3d lines, %3d branches missed\n", $2 "." $3, $8, $6
-  } END { printf "TOTAL  %d of %d lines, %d of %d branches run\n", lc, lm + lc, bc, bm + bc; exit (lm + bm > 0) }' \
+  } END { printf "TOTAL  %d of %d lines, %d of %d branches run\n", lc, lm + lc, bc, bm + bc; exit (lm + bm > 0 || lc == 0) }' \
   >"$COVERAGE/report.txt"
 covered=$?
 cat "$COVERAGE/report.txt"
 if [ $# -gt 0 ]; then
   echo "(some of the checks ran: the SDK's coverage isn't judged)"
+elif [ -n "$missing" ]; then
+  echo "FAIL  no coverage of the Java SDK to judge: $missing missing"; rc=1
 elif [ $covered = 0 ] && [ -s "$COVERAGE/report.txt" ]; then
   echo "ok    the checks run every line and branch of the Java SDK"
 else
