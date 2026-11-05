@@ -17,6 +17,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ111](AZ111.md): No app role
 - [AZ112](AZ112.md): `this` where there is no row
 - [AZ113](AZ113.md): A name rowstile keeps for itself
+- [AZ114](AZ114.md): A quote that goes on to the next line
 
 ## Types and relations
 

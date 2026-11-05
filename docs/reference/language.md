@@ -131,6 +131,8 @@ test "a folder's owner edits what is inside"    -- brings its own data, rolled b
   `shared if`. A caveat has no row. <!-- answer: conditions-this -->
   `this.` names the row whatever a subquery of the condition calls its tables, even by the name rowstile gives the row where it is checked. <!-- checked: tests/hand/conditions-this-alias.authz "this. names the row, whatever the condition's subquery calls its table" -->
   Names that start with `authz__` are rowstile's own: a condition that writes one is refused (AZ113). <!-- checked: tests/policy_errors.py "a name that starts with authz__ in a condition" -->
+  A string, a quoted name or a dollar quote in a condition ends on the line it starts on (AZ114): a line break in a
+  string is `E'\n'`. In a named test's statements, a quote may go on over several lines, and holds them as written.
 - **Conditions read with the policy's rights**, wherever they are checked (a rule, a permission, a caveat,
   `authz.can`, another type's rule through `rel.perm`), as relations do: a subquery sees every row of the tables it reads,
   not only those the signed-in user may. <!-- checked: tests/devx.sh "a rule condition that reads a governed table runs with the policy's rights, as a function"; tests/apply.sh "a condition in a permission sees every membership in its table's rules too"; tests/apply.sh "a function a condition calls runs with the policy's rights where a view reads it too"; tests/apply.sh "a function a caveat calls runs with the policy's rights where a view reads the share" --> <!-- answer: conditions-rights -->

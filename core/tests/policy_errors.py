@@ -78,6 +78,13 @@ COMPILE = [
         "AZ113",
     ),
     (
+        "a quote in a condition that goes on to the next line",
+        "  can see = owner and {up <> 'one\n    two'}\n",
+        "a quote in {...} goes on to the next line: write it on one line, a line break in a string as E'\\n'",
+        10,
+        "AZ114",
+    ),
+    (
         "a character that doesn't print, shown escaped",
         "  can see = owner \x01\n",
         "unexpected '\\x01' in expression",

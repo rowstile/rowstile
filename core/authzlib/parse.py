@@ -890,16 +890,28 @@ def disk_reader(folder: str) -> Callable[[str], str | None]:
 
 def file_lines(name: str | None, text: str) -> list[Line]:
     """A file's lines as the parser reads them, without comments or blank lines: a line starting with or, and, if
-    or where goes on from the one before, as does each line while a { is open."""
+    or where goes on from the one before, joined to it by a space, as does each line while a { is open. While a
+    quote inside braces is open (a string, a quoted name, a dollar quote: not a /* comment */), the lines are its
+    text: joined by a line break, each kept whole, its spaces and blank lines too (Reader.read refuses that but in
+    a named test's lines)."""
     scan = Scanner()
     out: list[Line] = []
     for n, raw in enumerate(text.removeprefix(BOM).split("\n"), 1):
-        open_before = scan.depth > 0
-        code = raw[: scan.code_end(raw)].rstrip()
-        s = code.strip()
+        raw = raw.removesuffix("\r")  # (a file written with CRLF reads as one with LF)
+        open_before, quoted_before = scan.depth > 0, scan.quote not in ("", "/*")
+        code = raw[: scan.code_end(raw)]
+        if scan.quote in ("", "/*"):  # (a quote left open at the line's end keeps its spaces)
+            code = code.rstrip()
+        if quoted_before and out:
+            last = out[-1]
+            last.loc.origin.append((len(last.text) + 1, n, 0))
+            last.loc.text = last.text + "\n" + code
+            out[-1] = last._replace(text=last.loc.text)
+            continue
+        s = code.lstrip()
         if not s:
             continue
-        indent = len(code) - len(code.lstrip())
+        indent = len(code) - len(s)
         if out and (open_before or CONTINUES.match(s)):
             last = out[-1]
             last.loc.origin.append((len(last.text) + 1, n, indent))
@@ -1424,19 +1436,23 @@ class Reader:
     def __init__(self) -> None:
         self.pol = Policy()
         self.block: Block | None = None  # what reads the indented lines below; None: they belong to nothing
+        self.steps = False  # whether the block is a named test's: its lines' quotes may go over lines
         self.errors: list[PolicyError] = []
 
     def read(self, parts: list[list[Line]]) -> Policy:
         for n, part in enumerate(parts):
-            self.block = None  # (a block ends where another file's lines start, or end)
+            self.block, self.steps = None, False  # (a block ends where another file's lines start, or end)
             for line in part:
                 try:
                     if line.indent == 0:
-                        self.block = skip  # (until the line says which block it starts)
+                        self.block, self.steps = skip, False  # (until the line says which block it starts)
                         no_dollar_tags(line)
+                        one_line_quotes(line)
                         self.block = self.top(line)
                         continue
                     no_dollar_tags(line)
+                    if not self.steps:
+                        one_line_quotes(line)
                     if self.block is None:
                         self.block = skip  # (once for the lines together)
                         fail(line.loc, OUTSIDE + (OUTSIDE_AFTER_INCLUDE if n else ""), "AZ101")
@@ -1628,6 +1644,7 @@ class Reader:
             fail(loc, f"there is already a test named {name!r}", "AZ109", at=at)
         test = Scenario(name, loc)
         self.pol.scenarios.append(test)
+        self.steps = True
         return lambda line: test.steps.append(parse_step(line.text, line.loc))
 
     def invariant(self, line: Line) -> None:
@@ -1685,6 +1702,20 @@ def no_dollar_tags(line: Line) -> None:
                 "AZ110",
                 at=tag.span(),
             )
+
+
+def one_line_quotes(line: Line) -> None:
+    """A quote in a condition ends on the line it starts on: the condition's text goes into the generated SQL's
+    comments too, which a line break would end. (A named test's statements are passed as text: theirs may not.)"""
+    at = line.text.find("\n")
+    if at >= 0:
+        fail(
+            line.loc,
+            "a quote in {...} goes on to the next line: write it on one line, a line break in a string as E'\\n' "
+            "('a' || E'\\n' || 'b')",
+            "AZ114",
+            at=(at, at + 1),
+        )
 
 
 # a test's id: a 'quoted' literal, or anything up to the next space ($ann, 11, a uuid)

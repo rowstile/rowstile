@@ -1208,9 +1208,19 @@ class LanguageForms(unittest.TestCase):
 
         for cond in ('"we}ird" = 1', "note = $$--}$$", "note = E'a\\'}'", "note = 'it''s {'"):
             self.assertEqual(condition("  can view = owner and {" + cond + "}\n"), authzlib.parse.Cond(cond))
-        # a quote may go on to the next line inside a condition; outside, an apostrophe opens none
+        # a quote in a condition ends on its line (its text goes into the generated SQL's comments too), but in a
+        # named test's statements, whose quotes hold their lines as written (line breaks, spaces, blank lines);
+        # outside braces, an apostrophe opens none
+        for cond in ("note = 'a\n  -- b}'", 'x."a\nb" = 1', "note <> $$p\nq$$", "note <> E'p\\\n  q'"):
+            with self.assertRaisesRegex(PolicyError, r"^line 5: a quote in \{...\} goes on to the next line.*AZ114"):
+                parse_policy(base + "  can view = owner and {" + cond + "}\n")
+        given = "INSERT INTO app.docs (note) VALUES ($$p  \r\n\n    q -- r$$\n    , 'it''s\n  -- {')"
+        pol = parse_policy(base + '  can view = owner\ntest "t"\n  given {' + given + "}\n  user 1 can view doc 1\n")
+        step = pol.scenarios[0].steps[0]
+        assert isinstance(step, authzlib.parse.GivenStep)
         self.assertEqual(
-            condition("  can view = owner and {note = 'a\n  -- b}'}\n"), authzlib.parse.Cond("note = 'a -- b}'")
+            step.sql,
+            "INSERT INTO app.docs (note) VALUES ($$p  \n\n    q -- r$$ , 'it''s\n  -- {')",
         )
         pol = parse_policy(base + '  can view = owner\ntest "Bob\'s test" -- the comment\n  user 1 can view doc 1\n')
         self.assertEqual(pol.scenarios[0].name, "Bob's test")
@@ -7639,6 +7649,17 @@ class Fmt(unittest.TestCase):
         want = "type folder = app.folders\n  owner  : user = owner_id\n  viewer : user shared\n"
         self.assertEqual(format(src), want)
 
+    def test_a_quote_over_lines_is_kept_as_written(self) -> None:
+        # a quote's lines in a named test's statement are its text: their indent, their spaces at the end and a
+        # blank line among them stay
+        from authzlib.fmt import format
+
+        head = self.BASE + '\ntest "t"\n'
+        src = head + "   given  d  =  {INSERT INTO app.docs (note) VALUES ('a  \n\n      b')\n   RETURNING id}\n"
+        want = head + "  given d = {INSERT INTO app.docs (note) VALUES ('a  \n\n      b')\n            RETURNING id}\n"
+        self.assertEqual(format(src), want)
+        self.assertEqual(format(want), want)
+
     def test_a_condition_goes_on_as_written(self) -> None:
         # the lines of a condition after its first are its SQL: their spaces are kept, only the indent changes
         from authzlib.fmt import format
@@ -7795,21 +7816,18 @@ class Fmt(unittest.TestCase):
             fmt.format(self.BASE.replace("can view = owner", "can view"))
 
     def test_a_line_that_starts_with_dashes_inside_a_quote_is_no_comment(self) -> None:
-        # a string, a name or a dollar quote left open on the line before goes on: its -- is in the quote, and the
-        # line is laid out as the condition's next line
-        from authzlib.fmt import format
-        from authzlib.parse import meaning_lines
+        # a string, a name or a dollar quote a named test's line left open goes on: its -- is in the quote, and the
+        # line is the quote's text, kept as written
+        from authzlib.fmt import format, tests_of
 
         for quote, close in (("'", "'"), ('"', '"'), ("$$", "$$")):
-            src = self.BASE.replace(
-                "  can view = owner\n", f"  can view = owner and {{x <> {quote}a\n-- b{close} or y}}\n"
+            src = (
+                self.BASE
+                + f'\ntest "t"\n  as user 1 allowed {{UPDATE app.docs SET x = {quote}a\n-- b{close} WHERE y}}\n'
             )
-            want = self.BASE.replace(
-                "  can view = owner\n", f"  can view = owner and {{x <> {quote}a\n             -- b{close} or y}}\n"
-            )
-            self.assertEqual(format(src), want, quote)
-            self.assertEqual(format(want), want, quote)
-            self.assertIn(f"type doc: can view = owner and {{x <> {quote}a -- b{close} or y}}", meaning_lines(want, {}))
+            self.assertEqual(format(src), src, quote)
+            sql = f"UPDATE app.docs SET x = {quote}a\n-- b{close} WHERE y"
+            self.assertEqual(tests_of(src, {}), [("t", [("user", "1", "allowed", sql, (), "as")])], quote)
 
     def test_spaces_inside_a_quote_are_what_the_policy_says(self) -> None:
         # a run of spaces counts inside a string or a name, not between words: the lock file's lines and fmt's

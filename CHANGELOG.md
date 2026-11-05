@@ -148,9 +148,15 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A test file holding a `sync` line, a masked view (`rules app.files view ...`) or a `cascade from` line is
   refused (AZ106), as one holding a type is: a test file holds only named tests. Before, those lines did
   nothing, and nothing said so.
+- A string, a quoted name or a dollar quote in a named test's statement (`given {...}`, `as ... {...}`) that goes
+  over several lines holds them as written: its line breaks, its spaces and a `--` in it. Before, its lines were
+  joined by a space. `rowstile fmt` leaves those lines as written. In a condition elsewhere, such a quote is
+  refused with its line (AZ114), where its text was changed the same way.
 
 ### Upgrading
 
+- A condition with a string, a quoted name or a dollar quote over several lines is refused (AZ114): write it on
+  one line, a line break in a string as `E'\n'`.
 - A type, a relation or a permission whose name starts or ends with `_` is refused (AZ107), with the line it is
   on: rename it.
 - Code that signs one transaction in as two principals now gets AZ716: begin a transaction for each. A test that
