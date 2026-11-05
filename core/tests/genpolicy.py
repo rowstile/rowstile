@@ -1182,7 +1182,7 @@ class GenPolicyGen(Gen):
         to = [] if subject in anybody else self.shareable(subject, ids)
         if not on or (subject not in anybody and not to):
             return difftest.NOTHING
-        if subject == "link":  # a token's hash, as authz.share_link() writes it
+        if subject == "link":  # a token's hash, as authz.create_link() writes it
             sid = f"encode(sha256(convert_to({lit(r.choice(TOKENS))}, 'UTF8')), 'hex')"
         else:
             sid = lit("*" if subject in anybody else r.choice(to))
