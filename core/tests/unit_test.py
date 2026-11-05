@@ -8761,6 +8761,29 @@ class Confidence(unittest.TestCase):
         )
         self.assertEqual(diff["world"], ["user: 1", "folder: 1", "folder.viewer: folder 1 -> user 1"])
         self.assertEqual((da.pairs, da.columns), (db.pairs, db.columns))
+        # the rows that play no part go too: the one who asks, the object, and the rows its links and values name
+        # stay (found in a world of 2 users and 4 folders)
+        doc = (
+            self.HEAD + "type folder = app.folders\n  owner : user = owner_id\n"
+            "  viewer : user = app.folder_viewers(folder_id -> user_id)\n  can view = owner or viewer\n  can edit = "
+        )
+        a = parse_policy(doc + "viewer\n", "a.authz")
+        b = parse_policy(doc + "viewer or (owner and {a} and {b} and {c})\n", "b.authz")
+        found = evaluate.first_difference(a, b)
+        assert found is not None
+        diff, _, db = found
+        self.assertGreater(diff["worlds"], 1)
+        o, u = diff["object"], diff["user"]
+        self.assertEqual(
+            diff["world"],
+            [
+                f"user: {u}",
+                f"folder: {o}",
+                f"folder {o}: a = true, b = true, c = true",
+                f"folder.owner: folder {o} -> user {u}",
+            ],
+        )
+        self.assertEqual(db.ids, {"user": [u], "folder": [o]})
 
     def test_one_world_as_two_policies_read_it_is_made_smaller_as_one(self) -> None:
         # a link both read goes from both at once; a condition or a column only one reads, from that one
@@ -8772,12 +8795,19 @@ class Confidence(unittest.TestCase):
         b = evaluate.Data(
             ids=ids, valid=ids, pairs={q: [("1", "1")]}, cond={("doc", "c"): ["1"]}, columns={"doc": {"1": {"y": 1}}}
         )
-        sa, sb = evaluate.smallest_of([a, b], lambda ds: True)
+        sa, sb = evaluate.smallest_of([a, b], lambda ds: True, keep=[("user", "1"), ("doc", "1")])
         self.assertEqual((sa.pairs, sa.cond, sa.columns), ({q: []}, {}, {"doc": {"1": {"x": None}}}))
         self.assertEqual((sb.pairs, sb.cond, sb.columns), ({q: []}, {("doc", "c"): []}, {"doc": {"1": {"y": None}}}))
         # the link stays where one of them needs it, in both
         sa, sb = evaluate.smallest_of([a, b], lambda ds: bool(ds[1].pairs[q]))
         self.assertEqual((sa.pairs, sb.pairs), ({q: [("1", "1")]}, {q: [("1", "1")]}))
+        # rows go too, with what names them, but those kept
+        self.assertEqual(evaluate.smallest_of([a, b], lambda ds: True)[1].ids, {"user": [], "doc": []})
+        sa, sb = evaluate.smallest_of([a, b], lambda ds: True, keep=[("user", "1")])
+        self.assertEqual(
+            (sb.ids, sb.valid, sb.cond, sb.columns),
+            ({"user": ["1"], "doc": []},) * 2 + ({("doc", "c"): []}, {"doc": {}}),
+        )
 
     def test_a_polymorphic_row_has_one_parent(self) -> None:
         both = "  owner : user = owner_id\n  can x = owner\n  can y = not owner\n"

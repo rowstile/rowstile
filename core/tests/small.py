@@ -1124,7 +1124,8 @@ def smallest_failing(db: DB, workdir: str, it: Item, before: bool) -> list[str]:
             def still(d: evaluate.Data) -> bool:
                 return bool(check_batch(db, [Item(it.number, it.spec, [revalid(pol, d)])], workdir, before))
 
-            small = revalid(pol, evaluate.smallest(w, still))
+            # (the users are fixed: their rows stay)
+            small = revalid(pol, evaluate.smallest(w, still, keep=[("user", u) for u in w.ids["user"]]))
             got = check_batch(db, [Item(it.number, it.spec, [small])], workdir, before)
             return [
                 "in this world (the smallest found; users " + ", ".join(USERS) + "):",
