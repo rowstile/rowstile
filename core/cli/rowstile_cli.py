@@ -1208,7 +1208,10 @@ def main(argv: list[str]) -> None:
     # options are read wherever they are on the line: `rowstile --db URL lint` and `rowstile lint --db URL`
     # (for `sql`, not in its last argument: that is the statement, which may hold anything)
     def options() -> list[str]:
-        return argv[:-1] if "sql" in argv else argv
+        i = 0  # the command: the first word that is neither an option nor an option's value (`--tool sql`)
+        while i < len(argv) and is_option(argv[i]):
+            i += 2 if argv[i] in VALUED else 1
+        return argv[:-1] if argv[i : i + 1] == ["sql"] else argv
 
     written: list[str] = []  # the options on the line, in its order
     for i, word in enumerate(options()):
@@ -1228,7 +1231,8 @@ def main(argv: list[str]) -> None:
     if "--db" in opts:
         dsn = opts.pop("--db")
     for flag in ("--limit", "--port", "--studio-port", "--worlds", "--people", "--rounds"):
-        if flag in opts and not (opts[flag].isdigit() and int(opts[flag]) > 0):
+        # (ASCII digits: str.isdigit takes ², which int() refuses)
+        if flag in opts and not (re.fullmatch("[0-9]+", opts[flag]) and int(opts[flag]) > 0):
             fail(f"{flag} needs a whole number above 0, not {opts[flag]!r}", 2)
     for flag in ("--port", "--studio-port"):
         if flag in opts and int(opts[flag]) > 65535:
