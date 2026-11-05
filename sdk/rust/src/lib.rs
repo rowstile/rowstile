@@ -52,7 +52,8 @@ pub mod axum;
 pub mod testing;
 
 /// Who a transaction acts for: a user, another principal type the policy declares (a service, a bot), or nobody
-/// (only what `anyone` may see).
+/// (only what `anyone` may see). Nobody has one spelling: a principal without an id, whatever its type, is
+/// [`Principal::Nobody`], as the database signs it in.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Principal {
     /// No one signed in: only what `anyone` may see.
@@ -68,14 +69,18 @@ pub enum Principal {
 }
 
 impl Principal {
-    /// The user whose id this is, whatever it holds (`service:3` too: ids come from outside).
+    /// The user whose id this is, whatever it holds (`service:3` too: ids come from outside); nobody for `""`.
     pub fn user(id: impl Into<String>) -> Self {
         Self::of("user", id)
     }
 
-    /// A principal of another type the policy declares: `Principal::of("service", "3")`.
+    /// A principal of another type the policy declares: `Principal::of("service", "3")`; nobody without an id.
     pub fn of(principal_type: impl Into<String>, id: impl Into<String>) -> Self {
-        Self::Signed { principal_type: principal_type.into(), id: id.into() }
+        let id = id.into();
+        if id.is_empty() {
+            return Self::Nobody;
+        }
+        Self::Signed { principal_type: principal_type.into(), id }
     }
 }
 

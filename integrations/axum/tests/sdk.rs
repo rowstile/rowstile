@@ -177,6 +177,13 @@ async fn a_transaction_is_one_principals() {
     let changed = bo.execute("UPDATE app.notes SET body = body WHERE id IN (1, 2)").await.unwrap();
     assert_eq!(changed.rows_affected(), 1);
     bo.commit().await.unwrap();
+    // a principal without an id, made by hand, signs in as nobody: only the public project
+    let hand = Principal::Signed { principal_type: "service".into(), id: String::new() };
+    let mut nobody = rowstile::sqlx::begin(&pool, &hand).await.unwrap();
+    let projects: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM app.projects ORDER BY id").fetch_all(&mut *nobody).await.unwrap();
+    assert_eq!(projects, [3]);
+    drop(nobody);
     // on a pool of one, the second waits for the first to end, up to the pool's timeout
     let one = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
@@ -235,6 +242,8 @@ async fn postgres_own_refusals_name_the_rule() {
             (got.table.as_deref(), got.command.as_deref(), got.message.as_str()),
             (Some("notes"), command, message)
         );
+        // what tells it in any language: the function that raised it
+        assert_eq!(got.source.as_ref().and_then(|db| db.routine.as_deref()), Some("ExecWithCheckOptions"));
         let body = Error::Refused(Box::new(got)).problem().unwrap().to_json();
         assert_eq!((&body["command"], &body["why"]), (&json!(command), &json!([])), "{body}");
     }
@@ -248,10 +257,12 @@ fn db(sqlstate: &str, message: &str) -> DbError {
 #[test]
 fn errors_made_up_as_the_database_sends_them() {
     let _check = Check("errors as the database sends them: each translated, said, and answered as the others do");
-    // the code is read from the HINT, then the message; only a code that is one
+    // the code is read from the HINT alone, never the message (Postgres's own words quote the request's input); only a
+    // code that is one
     for (hint, message, code) in [
         (Some("rowstile help AZ709"), "no", Some("AZ709")),
-        (None, "a check said no (rowstile help AZ612)", Some("AZ612")),
+        (None, "a check said no (rowstile help AZ612)", None),
+        (None, "invalid input syntax for type bigint: \"rowstile help AZ708\"", None),
         (Some("see rowstile help AZx12"), "or rowstile help AZ1", None),
         (Some("nothing"), "nothing", None),
     ] {
@@ -285,15 +296,23 @@ fn errors_made_up_as_the_database_sends_them() {
     ] {
         assert!(matches!(Error::from_database(db("42501", message)), Error::Database(_)), "{message}");
     }
-    // the not-signed-in error, with its code or none; a login refused is a call's; settings changed by hand the app's
+    // Postgres's own refusal on a server whose messages aren't English: told by the function that raised it, not its
+    // words, the table and the rule unnamed; another 42501 (a grant missing) is none
+    let words = "neue Zeile verletzt Policy für Sicherheit auf Zeilenebene für Tabelle »notes«";
+    let german = |routine: &str| DbError { routine: Some(routine.into()), ..db("42501", words) };
+    let Error::Refused(r) = Error::from_database(german("ExecWithCheckOptions")) else { panic!() };
+    assert_eq!((r.message.as_str(), r.table, r.command, r.code.as_str()), (words, None, None, "AZ709"));
+    assert!(matches!(Error::from_database(german("aclcheck_error")), Error::Database(_)));
+    // the not-signed-in error has its code; a 28000 with none is Postgres's own (a login refused when connecting, a
+    // role that isn't there); a login refused is a call's; settings changed by hand the app's
     for (hint, not_signed_in) in
-        [(None, true), (Some("rowstile help AZ701"), true), (Some("rowstile help AZ702"), false)]
+        [(None, false), (Some("rowstile help AZ701"), true), (Some("rowstile help AZ702"), false)]
     {
         let e = Error::from_database(DbError { hint: hint.map(Into::into), ..db("28000", "x") });
         assert_eq!(matches!(e, Error::NotSignedIn(_)), not_signed_in, "{hint:?}");
     }
     // what each says, and what lies under it
-    let not_signed_in = Error::from_database(db("28000", "x"));
+    let not_signed_in = Error::from_database(DbError { hint: Some("rowstile help AZ701".into()), ..db("28000", "x") });
     assert_eq!(
         not_signed_in.to_string(),
         "a query ran in a transaction nobody signed in to: every transaction must begin with authz.act_as() \
@@ -363,6 +382,8 @@ fn keys_principals_and_names() {
         r#"(1,"a b","","q""t","b\\s","(1)",)"#
     );
     assert_eq!(Principal::user("7"), Principal::Signed { principal_type: "user".into(), id: "7".into() });
+    // nobody has one spelling: no id, whatever the type
+    assert_eq!((Principal::user(""), Principal::of("service", "")), (Principal::Nobody, Principal::Nobody));
     assert_eq!(NotePermission::from_name("edit"), Some(NotePermission::Edit));
     assert_eq!((NotePermission::from_name("edt"), NotePermission::OBJECT_TYPE), (None, "note"));
 }
