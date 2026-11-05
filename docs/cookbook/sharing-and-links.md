@@ -35,7 +35,8 @@ The end comes first, then the start: the last share holds from tomorrow until a 
 
 - `authz.create_link('document', 7, 'viewer')` returns a token. A request that carries it sets
   `authz_ctx.links` to it for its transaction, and holds what the link gives
-  ([using it from app code](../reference/app-code.md)).
+  ([using it from app code](../reference/app-code.md)). A visitor who isn't signed in starts the transaction
+  with `SELECT authz.act_as(NULL, NULL)` (nobody) first: without it, the app role gets an error.
 
 ## Tested
 

@@ -16,6 +16,6 @@ DO $$ BEGIN
   END IF;
 END $$;
 GRANT USAGE ON SCHEMA app TO app_user;
-GRANT SELECT ON app.users, app.direct_messages TO app_user;   -- not app.blocks: who blocked whom is private
+GRANT SELECT ON app.users, app.direct_messages TO app_user;   -- not app.blocks: nobody reads the table
 GRANT INSERT ON app.direct_messages TO app_user;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA app TO app_user;
