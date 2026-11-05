@@ -3,10 +3,13 @@ package rowstile
 import (
 	"cmp"
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -195,44 +198,92 @@ const explainRule = "SELECT authz.explain_rule(t.tbl, $2, $3, NULL), " +
 // sqlc's :execrows returns). When it changed none, row-level security left the row out: Expect asks the database
 // why, in the same transaction, and gives *NotFound (the user can't see the row, or the statement matched nothing
 // for another reason, such as a WHERE with more than the key) or *Refused, worded as the database words a
-// refused insert: "permission denied: user 2 may not update row 7 of app.notes". key: the row's key, or a []any of
-// its columns for a key of several.
+// refused insert: "permission denied: user 2 may not update row 7 of app.notes". key: the row's key, or a slice or
+// an array of its columns for a key of several ([]any{1, "a"}, []int64{1, 2}).
 func Expect(ctx context.Context, q Querier, affected int64, table, command string, key any) error {
 	if affected > 0 {
 		return nil
 	}
+	asked, err := keyText(key)
+	if err != nil {
+		return err
+	}
+	shown, _ := asked.(string)
 	var why []string
 	var who, named string
-	if err := q.QueryRow(ctx, explainRule, table, command, keyText(key)).Scan(&why, &who, &named); err != nil {
+	if err := q.QueryRow(ctx, explainRule, table, command, asked).Scan(&why, &who, &named); err != nil {
 		return translate(err)
 	}
 	if why == nil || strings.HasPrefix(strings.TrimLeft(why[0], " "), "yes") {
-		return &NotFound{Table: named, ID: keyText(key)}
+		return &NotFound{Table: named, ID: shown}
 	}
 	return &Refused{Message: fmt.Sprintf("permission denied: %s may not %s row %s of %s", who, command,
-		keyText(key), named), Table: named, Command: command, Why: why, Code: "AZ709"}
+		shown, named), Table: named, Command: command, Why: why, Code: "AZ709"}
 }
 
-// keyText is a row's key as Postgres writes it: 7, or (1,2) for a key of several columns, a field quoted only where
-// Postgres would (empty, or holding a comma, a quote, a backslash, a parenthesis or a space). What a message
-// shows, and what authz.explain_rule reads back.
-func keyText(key any) string {
-	fields, many := key.([]any)
-	if !many {
-		return fmt.Sprint(key)
+// keyText is a row's key as Postgres writes it, as a query's argument: nil (NULL) for no key, 7, or (1,2) for a key
+// of several columns, given as any slice or array of its values in the key's order ([]any{1, "a"}, []int64{1, 2},
+// [2]string{...}); one of a single value is that value. A field is quoted only where Postgres would: when it is
+// empty, or holds a comma, a quote, a backslash, a parenthesis or one of ASCII's six spaces, and for no other
+// character. What a message shows, and what authz.explain_rule reads back.
+func keyText(key any) (any, error) {
+	v := reflect.ValueOf(key)
+	if kind := v.Kind(); (kind != reflect.Slice && kind != reflect.Array) || v.Type().Elem().Kind() == reflect.Uint8 {
+		return valueText(key)
 	}
-	if len(fields) == 1 {
-		return fmt.Sprint(fields[0])
+	if v.Len() == 1 {
+		return valueText(v.Index(0).Interface())
 	}
-	shown := make([]string, len(fields))
-	for i, f := range fields {
-		if text := fmt.Sprint(f); f != nil && (text == "" || strings.ContainsAny(text, "\",\\() \t\n\r\v\f")) {
-			shown[i] = `"` + strings.ReplaceAll(strings.ReplaceAll(text, `\`, `\\`), `"`, `""`) + `"`
-		} else if f != nil {
-			shown[i] = text
+	shown := make([]string, v.Len())
+	for i := range shown {
+		text, err := valueText(v.Index(i).Interface())
+		if err != nil {
+			return nil, err
+		}
+		if s, ok := text.(string); ok && (s == "" || strings.ContainsAny(s, "\",\\() \t\n\r\v\f")) {
+			shown[i] = `"` + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), `"`, `""`) + `"`
+		} else if ok {
+			shown[i] = s
 		}
 	}
-	return "(" + strings.Join(shown, ",") + ")"
+	return "(" + strings.Join(shown, ",") + ")", nil
+}
+
+// valueText is one value of a key as Postgres writes it: nil (NULL) for nil, a nil pointer or a driver.Valuer
+// without a value (pgtype's, not Valid); a Valuer's value (pgtype.Int8, pgtype.UUID), a fmt.Stringer's String(),
+// or fmt.Sprint's text. A time.Time, a []byte, and a slice, a map or a struct that is neither have another text in
+// Go than in Postgres: an error, before anything is sent.
+func valueText(value any) (any, error) {
+	if r := reflect.ValueOf(value); r.Kind() == reflect.Pointer && r.IsNil() {
+		return nil, nil
+	}
+	if valuer, ok := value.(driver.Valuer); ok {
+		v, err := valuer.Value()
+		if err != nil {
+			return nil, err
+		}
+		value = v
+	}
+	switch v := value.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return v, nil
+	case time.Time:
+	case fmt.Stringer:
+		return v.String(), nil
+	default:
+		r := reflect.ValueOf(value)
+		switch r.Kind() {
+		case reflect.Pointer:
+			return valueText(r.Elem().Interface())
+		case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct:
+		default:
+			return fmt.Sprint(value), nil
+		}
+	}
+	return nil, fmt.Errorf("rowstile: a key's value of type %T has another text in Go than in Postgres: give its "+
+		"text as Postgres writes it (a string)", value)
 }
 
 // Check is nil on a connection row-level security applies to, and *ConnectionProblem on one that skips it (a

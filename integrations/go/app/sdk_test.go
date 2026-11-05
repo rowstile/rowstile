@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql/driver"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,9 +17,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	rowstile "github.com/rowstile/rowstile/sdk/go"
 	"github.com/rowstile/rowstile/sdk/go/rowstiletest"
@@ -414,27 +417,103 @@ func (r row) Scan(dest ...any) error {
 	return nil
 }
 
-type asked struct{ key string }
+type asked struct{ key any }
 
 func (a *asked) QueryRow(_ context.Context, _ string, args ...any) pgx.Row {
-	a.key = args[2].(string)
+	a.key = args[2]
 	return row{args[0].(string)}
 }
 
+// stringer is a value with a String() of its own
+type stringer struct{}
+
+func (stringer) String() string { return "s t" }
+
+// unvalued is a driver.Valuer that has no value to give
+type unvalued struct{}
+
+func (unvalued) Value() (driver.Value, error) { return nil, errors.New("no value") }
+
 func TestAKeyIsSpelledAsTheDatabaseWritesIt(t *testing.T) {
-	check(t, "a key in a message: 7, (1,2), a field quoted only where Postgres would, and asked about so")
+	check(t, "a key in a message: 7, (1,2) from any slice or array, a field quoted only where Postgres would, and asked about so")
+	five, none := int64(5), (*int64)(nil)
 	for _, c := range []struct {
 		key  any
 		said string
 	}{
 		{7, "7"}, {[]any{7}, "7"}, {[]any{1, 2}, "(1,2)"}, {[]any{"a b", "x,y"}, `("a b","x,y")`},
 		{[]any{"", `q"t`}, `("","q""t")`}, {[]any{`b\s`, "(1)"}, `("b\\s","(1)")`}, {[]any{1, nil}, "(1,)"},
+		// quoted for ASCII's six spaces alone, as Postgres does: not for a no-break space, an em space
+		{[]any{"\vv", "a\u00a0b"}, "(\"\vv\",a\u00a0b)"}, {[]any{"\u2003\x1c", "\r\n\f"}, "(\u2003\x1c,\"\r\n\f\")"},
+		// any slice or array of the columns, a Valuer's value (pgtype's: NULL when not Valid), a pointer's
+		{[]int64{1, 2}, "(1,2)"}, {[2]string{"a b", "x"}, `("a b",x)`}, {[]int{3}, "3"},
+		{[]any{pgtype.Int8{Int64: 5, Valid: true}, pgtype.Text{}}, "(5,)"}, {[]any{&five, none}, "(5,)"},
+		{pgtype.Int8{Int64: 9, Valid: true}, "9"}, {[]any{stringer{}, 1}, `("s t",1)`},
 	} {
 		q := &asked{}
 		err := rowstile.Expect(context.Background(), q, 0, "app.members", "delete", c.key)
 		if err.Error() != "app.members "+c.said+" not found" || q.key != c.said {
-			t.Errorf("%v: %v, asked about %s", c.key, err, q.key)
+			t.Errorf("%v: %v, asked about %v", c.key, err, q.key)
 		}
+	}
+	// no key: NULL, as Python's SDK sends it
+	q := &asked{}
+	if err := rowstile.Expect(context.Background(), q, 0, "app.notes", "delete", nil); err.Error() != "app.notes not found" || q.key != nil {
+		t.Errorf("%v, asked about %v", err, q.key)
+	}
+	// a value whose text in Go isn't Postgres's: refused before anything is sent
+	for _, key := range []any{time.Now(), []byte("ab"), []any{1, []int{2}}, []any{1, struct{ A int }{}}, map[string]int{}, unvalued{}} {
+		q := &asked{}
+		if err := rowstile.Expect(context.Background(), q, 0, "app.members", "delete", key); err == nil ||
+			(key != (unvalued{}) && !strings.Contains(err.Error(), "has another text in Go than in Postgres")) || q.key != nil {
+			t.Errorf("%T: %v", key, err)
+		}
+	}
+}
+
+func TestAKeyGoCantWriteIsRefusedByEveryCall(t *testing.T) {
+	check(t, "a key Go can't write as Postgres does: Can, PermsOf and List refuse it, before anything is sent")
+	ctx := context.Background()
+	when := time.Now()
+	_, can := rowstile.Can(ctx, pool, authz.ProjectView, when)
+	_, of := rowstile.PermsOf[authz.ProjectPermission](ctx, pool, []any{1, when})
+	_, list := rowstile.List(ctx, pool, authz.ProjectView, &rowstile.Page{After: when})
+	for _, err := range []error{can, of, list} {
+		if err == nil || !strings.Contains(err.Error(), "of type time.Time has another text in Go than in Postgres") {
+			t.Errorf("%v", err)
+		}
+	}
+}
+
+func TestAPageWithACursorAndNoSize(t *testing.T) {
+	check(t, "a page with a cursor and no size (Limit 0): every id after it, as in every SDK")
+	ctx := rowstile.ActingAs(context.Background(), rowstile.User("1"))
+	var all, after []string
+	err := rowstile.Tx(ctx, pool, func(ctx context.Context, tx pgx.Tx) (err error) {
+		if all, err = rowstile.List(ctx, tx, authz.ProjectView, nil); err != nil || len(all) < 2 {
+			return fmt.Errorf("%v: %w", all, err)
+		}
+		after, err = rowstile.List(ctx, tx, authz.ProjectView, &rowstile.Page{After: all[0]})
+		return err
+	})
+	if err != nil || !slices.Equal(after, all[1:]) {
+		t.Errorf("%v after %v: %v", after, all, err)
+	}
+}
+
+func TestAPrincipalIsWrittenAndReadBackAsEverySDKDoes(t *testing.T) {
+	check(t, "a principal as text, as every SDK writes it and the audit trail names who acted, and read back")
+	for p, text := range map[rowstile.Principal]string{
+		rowstile.Nobody: "nobody", rowstile.User("42"): "42", rowstile.As("service", "3"): "service:3",
+		rowstile.User("a:b"): "user:a:b", rowstile.User("nobody"): "user:nobody", rowstile.User("(1,2)"): "(1,2)",
+	} {
+		if p.String() != text || rowstile.ParsePrincipal(text) != p {
+			t.Errorf("%#v: %q, read back %#v", p, p.String(), rowstile.ParsePrincipal(text))
+		}
+	}
+	if rowstile.ParsePrincipal("user:42") != rowstile.User("42") || rowstile.ParsePrincipal("service:") != rowstile.Nobody ||
+		rowstile.ParsePrincipal(":x") != rowstile.User(":x") {
+		t.Errorf("user:42, service: and :x")
 	}
 }
 
