@@ -6,7 +6,7 @@
                                                    Studio on http://127.0.0.1:4983 beside it
     rowstile studio  [--port N] [--write]          Studio: the tables as anyone, why and how to grant, the graph,
                                                    the access diff, shares and requests (read-only unless --write)
-    rowstile migrate [POLICY.authz] [--name NAME] [--check] [--tool T] [--dir D] [--one-phase]
+    rowstile migrate [POLICY.authz] [--name NAME] [--check] [--tool T] [--dir D] [--one-phase] [--downgrade]
                                                    write the policy's changes since the lock file as a migration
                                                    for the app's migration tool (no database needed); two when
                                                    inheritance trees are built beside the ones in use first
@@ -20,7 +20,7 @@
                                                    (exit 0 whatever it finds: test and migrate --check gate)
     rowstile fmt     [--check] [FILE.authz ...]    write policies and test files one way (--check: exit 1 if
                                                    one isn't; for CI); line endings stay the file's own
-    rowstile push    [POLICY.authz] [--development]
+    rowstile push    [POLICY.authz] [--development] [--downgrade]
                                                    bring a development database to the policy with the same
                                                    migration (never production: that takes migrations); a
                                                    database with a policy must be marked as one first, once:
@@ -88,7 +88,7 @@
 
     rowstile reapply [--force]                     apply the policy in force again (after upgrading rowstile);
                                                    --force: and compute every inheritance table again
-    rowstile remove  --yes                         remove everything the current policy made
+    rowstile remove  --yes [--downgrade]           remove everything the current policy made
 
 The database is --db DSN (host=... port=... user=... password=... dbname=..., or a postgresql:// URL), else
 rowstile.toml's `database` (in this folder or a folder above it), else DATABASE_URL, else the PG* environment variables.

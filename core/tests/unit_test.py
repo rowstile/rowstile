@@ -3173,9 +3173,8 @@ class Command(unittest.TestCase):
 
     def test_each_command_takes_the_options_its_usage_names(self) -> None:
         # the options the command takes (it refuses the others) are those its usage names, and those the reference's
-        # table names (docs/reference/tools.md), and --db where it reads a database; --downgrade on push, migrate and
-        # remove is named once in the usage, under apply. The usage names the arguments it takes, and the table the
-        # policy file where the usage does
+        # table names (docs/reference/tools.md), and --db where it reads a database. The usage names the arguments it
+        # takes, and the table the policy file where the usage does
         import features
         import mcp
 
@@ -3184,8 +3183,7 @@ class Command(unittest.TestCase):
         self.assertEqual(set(table), set(listed), "the commands of docs/reference/tools.md's table and of --help")
         for cmd, takes in rowstile_cli.ARGUMENTS.items():
             options = set(takes.options.split())
-            named = listed[cmd] | ({"--downgrade"} if cmd in ("push", "migrate", "remove") else set())
-            self.assertEqual(options - {"--db"}, named - {"--db"}, cmd)  # (review names --db: its access part)
+            self.assertEqual(options - {"--db"}, listed[cmd] - {"--db"}, cmd)  # (review names --db: its access part)
             self.assertEqual(options - {"--db"}, table[cmd][0] - {"--db"}, f"docs/reference/tools.md: rowstile {cmd}")
             line = rowstile_cli.usage_lines(cmd)[0]  # its words, then (at column 47, if on this line) what it does
             signature = (line[:47] if line[45:47] == "  " else line).removeprefix(f"rowstile {cmd}")
