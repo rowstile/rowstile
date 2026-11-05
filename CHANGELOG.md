@@ -46,6 +46,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- `rowstile init` reads `pyproject.toml` as TOML: its dependencies, optional ones, dependency groups and Poetry's
+  tables. Before, each line's first word counted as a package, so any `pyproject.toml` made the app a Python one.
+  It reads Alembic's `script_location` as Alembic does (`%(here)s` without a slash, a folder written with `\`), and
+  for a package's (`myapp:migrations`) leaves `[migrations]` out, saying why. The paths it writes in
+  `rowstile.toml` are TOML strings, so a quote or a backslash in one no longer makes the file unreadable.
 - `rowstile client LANG` with no file is of the policy `rowstile.toml` names, as `rowstile graph` is and the reference
   says, with no database (but `powersync`, which reads the database `rowstile.toml` names); before, it connected and
   wrote the client of the policy in force. A language it doesn't write, or none with no `[clients]`, is refused

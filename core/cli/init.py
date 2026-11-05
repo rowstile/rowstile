@@ -3,7 +3,6 @@ the coding agents that work in the app (AGENTS.md)."""
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from typing import TYPE_CHECKING
@@ -86,11 +85,6 @@ def out_problem(out: str) -> str | None:
     return None
 
 
-def toml_text(value: str) -> str:
-    """A TOML string holding value: JSON's escapes are TOML's."""
-    return json.dumps(value, ensure_ascii=False)
-
-
 def init(
     policy: str,
     opts: dict[str, str],
@@ -167,8 +161,8 @@ test "nobody signed in sees a {example}"
         ]
         write_new(
             CONFIG,
-            f'''policy   = {toml_text(policy_path.replace(os.sep, "/"))}
-tests    = [{toml_text(os.path.join(out, "tests").replace(os.sep, "/") + "/*.authz")}]
+            f'''policy   = {stack.toml_text(policy_path.replace(os.sep, "/"))}
+tests    = [{stack.toml_text(os.path.join(out, "tests").replace(os.sep, "/") + "/*.authz")}]
 database = "{database}"     # {why}
 '''
             + "\n".join(extra)
@@ -187,7 +181,7 @@ database = "{database}"     # {why}
         print(f"added   rowstile's section to {AGENTS} (for coding agents: where the policy is, and the loop)")
     else:
         print(f"kept {AGENTS} (it has rowstile's section already)")
-    if found.tool and CONFIG in written:
+    if found.migrations_dir and CONFIG in written:
         import migrations
 
         lock = os.path.join(out, "policy.lock").replace(os.sep, "/")

@@ -23,7 +23,7 @@ class Stack:
         default_factory=list
     )  # what was found, in words: "Next.js", "Prisma (prisma/schema.prisma)"
     tool: str = ""  # the migration tool: prisma, drizzle, alembic, goose, dbmate, flyway, sql, or "" (unknown)
-    migrations_dir: str = ""
+    migrations_dir: str = ""  # where it keeps them ("": no folder rowstile could write in, notes say why)
     notes: list[str] = field(default_factory=list)  # what init says it couldn't settle
     clients: dict[str, str] = field(default_factory=dict)  # {"ts": "src/authz.gen.ts"} or {"py": "app/authz_types.py"}
     npm: list[str] = field(default_factory=list)  # @rowstile/* packages to add
@@ -71,30 +71,60 @@ def _find(root: str, exts: tuple[str, ...], pattern: str) -> str:
     return ""
 
 
-def _python_names(root: str) -> set[str]:
-    """The Python packages the project depends on: names from pyproject.toml and requirements*.txt, and what
-    rowstile's own extras bring (`rowstile[fastapi,asyncpg]` is how the stack pages install FastAPI's part)."""
-    text = (_read(root, "pyproject.toml") or "") + "\n"
+# a requirement's name and extras: "fastapi[standard]>=0.110", "SQLAlchemy==2.0.30", "x @ git+https://..."
+REQUIREMENT = re.compile(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[([^\]]*)\])?")
+
+
+def _requirements(root: str) -> list[str]:
+    """The requirements the project lists: pyproject.toml's (its dependencies, optional ones, dependency groups and
+    Poetry's tables, read as TOML: one that isn't is none) and each line of requirements*.txt. Poetry's are its
+    names, with rowstile's extras when it lists them."""
+    out: list[str] = []
+    text = _read(root, "pyproject.toml")
+    if text is not None:
+        import tomllib
+
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            data = {}
+        project = _object(data.get("project"))
+        lists = [
+            project.get("dependencies"),
+            *_object(project.get("optional-dependencies")).values(),
+            *_object(data.get("dependency-groups")).values(),  # an {include-group = ...} is no requirement
+        ]
+        out += [x for v in lists if isinstance(v, list) for x in v if isinstance(x, str)]
+        poetry = _object(_object(data.get("tool")).get("poetry"))
+        groups = [_object(g).get("dependencies") for g in _object(poetry.get("group")).values()]
+        for name, spec in (
+            kv
+            for t in (poetry.get("dependencies"), poetry.get("dev-dependencies"), *groups)
+            for kv in _object(t).items()
+        ):
+            extras = _object(spec).get("extras")
+            out.append(name + (f"[{','.join(str(x) for x in extras)}]" if isinstance(extras, list) else ""))
     try:
         for n in sorted(os.listdir(root)):
             if n.startswith("requirements") and n.endswith(".txt"):
-                text += (_read(root, n) or "") + "\n"
+                out += (_read(root, n) or "").splitlines()
     except OSError:
         pass
-    extras = {
-        x.strip().lower()
-        for m in re.finditer(r"(?i)\browstile\s*\[([^\]]*)\]", text)
-        for x in m.group(1).split(",")
-        if x.strip()
-    }
-    return (
-        {m.group(1).lower().replace("_", "-") for m in re.finditer(r'(?m)^\s*"?([A-Za-z][A-Za-z0-9_.-]*)', text)}
-        | {  # each one of a list on one line: "fastapi>=0.110", "sqlalchemy (>=2.0)" (Poetry's), "x @ git+https://..."
-            m.group(1).lower().replace("_", "-")
-            for m in re.finditer(r'"([A-Za-z][A-Za-z0-9_.-]*)\s*(?:\[[^\]]*\])?\s*(?:[(<>=!~;@][^"]*)?"', text)
-        }
-        | extras
-    )
+    return out
+
+
+def _python_names(root: str) -> set[str]:
+    """The Python packages the project depends on, and what rowstile's own extras bring (`rowstile[fastapi,asyncpg]`
+    is how the stack pages install FastAPI's part)."""
+    names: set[str] = set()
+    for req in _requirements(root):
+        m = REQUIREMENT.match(req)  # a line of options (-r base.txt), a comment or none: no name
+        if m:
+            name = m.group(1).lower().replace("_", "-")
+            names.add(name)
+            if name == "rowstile" and m.group(2):
+                names |= {x.strip().lower() for x in m.group(2).split(",") if x.strip()}
+    return names
 
 
 def _object(value: object) -> dict[str, object]:
@@ -154,9 +184,18 @@ def detect(root: str = ".") -> Stack:
     elif _read(root, "alembic.ini") is not None or "alembic" in py:
         ini = _read(root, "alembic.ini") or ""
         m = re.search(r"(?m)^script_location\s*=\s*(\S+)", ini)
-        loc = (m.group(1) if m else "alembic").replace("%(here)s/", "").strip("/")
+        loc = m.group(1) if m else "alembic"
         s.found.append("Alembic")
-        s.tool, s.migrations_dir = "alembic", f"{loc}/versions"
+        s.tool = "alembic"
+        if ":" in loc:  # a package's (myapp:migrations), which Alembic finds where it is installed
+            s.notes.append(
+                f"alembic.ini's script_location, {loc}, names a package, not a folder: rowstile.toml has no [migrations] "
+                '(add one: tool = "alembic", dir = its versions folder)'
+            )
+        else:  # %(here)s is alembic.ini's folder, this one; a folder written with \ (Windows) is the same with /
+            folder = loc.replace("\\", "/")
+            folder = (folder.removeprefix("%(here)s").lstrip("/") or ".") if folder.startswith("%(here)s") else folder
+            s.migrations_dir = posixpath.normpath(posixpath.join(folder, "versions"))
     else:
         sql_migrations(root, s)
 
@@ -314,15 +353,20 @@ def config_lines(s: Stack) -> list[str]:
     out: list[str] = []
     if s.clients:
         out += ["[clients]                    # written on each change by rowstile dev"] + [
-            f'{lang} = "{path}"' for lang, path in s.clients.items()
+            f"{lang} = {toml_text(path)}" for lang, path in s.clients.items()
         ]
-    if s.tool:
+    if s.migrations_dir:
         out += [
             "[migrations]                 # rowstile migrate writes the policy's changes for this tool",
-            f'tool = "{s.tool}"',
-            f'dir  = "{s.migrations_dir}"',
+            f"tool = {toml_text(s.tool)}",
+            f"dir  = {toml_text(s.migrations_dir)}",
         ]
     return out
+
+
+def toml_text(value: str) -> str:
+    """A TOML string holding value: JSON's escapes are TOML's."""
+    return json.dumps(value, ensure_ascii=False)
 
 
 def pip_requirement(name: str, version: str) -> str:
