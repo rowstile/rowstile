@@ -96,6 +96,7 @@ test "customers don't see internal notes, nor the agents' notes on them"
   given a = {INSERT INTO hd.workspaces (name) VALUES ('Acme') RETURNING id}
   given ann = {INSERT INTO hd.users (workspace_id, kind, role, name, email) VALUES ($a, 'agent', 'admin', 'Ann', 'ann@acme') RETURNING id}
   given cy = {INSERT INTO hd.users (workspace_id, kind, name, email, notes) VALUES ($a, 'customer', 'Cy', 'cy@mail', 'prefers phone') RETURNING id}
+  given di = {INSERT INTO hd.users (workspace_id, kind, name, email) VALUES ($a, 'customer', 'Di', 'di@mail') RETURNING id}
   given t = {INSERT INTO hd.tickets (workspace_id, subject, requester_id) VALUES ($a, 'Help', $cy) RETURNING id}
   given reply = {INSERT INTO hd.comments (ticket_id, author_id, body) VALUES ($t, $ann, 'On it') RETURNING id}
   given note = {INSERT INTO hd.comments (ticket_id, author_id, internal, body) VALUES ($t, $ann, true, 'refund?') RETURNING id}
@@ -106,6 +107,9 @@ test "customers don't see internal notes, nor the agents' notes on them"
   as user $cy allowed {INSERT INTO hd.comments (ticket_id, author_id, body) VALUES ($t, $cy, 'thanks')}
   as user $cy refused {INSERT INTO hd.comments (ticket_id, author_id, body) VALUES ($t, $ann, 'as Ann')}
   as user $cy sees 1 {SELECT FROM hd.users_visible WHERE id = $cy AND notes IS NULL}
+  -- they see who answered them, an agent of the workspace, but not the other customers
+  user $cy can view user $ann
+  user $cy cannot view user $di
   as user $ann sees 1 {SELECT FROM hd.users_visible WHERE id = $cy AND notes = 'prefers phone'}
   as user $cy refused {SELECT notes FROM hd.users}
   as user $cy refused {UPDATE hd.users SET notes = 'nice' WHERE id = $cy}

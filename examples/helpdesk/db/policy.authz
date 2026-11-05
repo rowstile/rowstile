@@ -36,7 +36,9 @@ type user = hd.users (id uuid) where {active}
   can see_notes   = workspace.work
   -- the requester's colleagues, where their customer org shares its tickets
   can org_tickets = org.see_tickets
-  can view        = self or workspace.work or (org.member and workspace.member) or workspace.connected
+  -- a workspace's agents are seen by its people: a customer sees who answered them (not the notes, see_notes)
+  can view = self or workspace.work or (org.member and workspace.member) or (workspace.member and {kind = 'agent'})
+          or workspace.connected
 
 -- the email intake and the like: they sign in as themselves, with keys an admin makes
 type integration = hd.integrations (id uuid) principal where {active}

@@ -10,6 +10,12 @@ row-level security on the app's tables. The route handlers ([`app/api/`](app/api
 at all**: they sign each transaction in as the person asking, run Prisma queries, and pass the database's
 refusals on as 403s that say why.
 
+![The inbox as Al, in Billing: every ticket of Acme's workspace, and the one Billing works marked his](docs/inbox.png)
+
+![The same ticket as Al: the internal note shows, and authz.perms says he may work it](docs/ticket.png)
+
+![The ticket as Peter, who asked: no internal note, Al's reply signed; closing it is refused, and "why?" shows the rule](docs/refused.png)
+
 ```
 ./test.sh                      # everything below, from an empty database in Docker (Postgres 16; PG_MAJOR=17 or 18)
 ```
@@ -56,6 +62,7 @@ another workspace in a few worlds: rows the keys forbid, but a policy that would
 | Internal notes are for those who work the ticket | `can view = ticket.work or (ticket.view and {not internal})` on comments, and the insert rule |
 | A customer org's people see each other's tickets, if it says so | `can see_tickets = member and {shared_tickets}`, and `requester.org_tickets` in the ticket's `view` |
 | Copying a colleague in: only someone of the ticket's workspace | `cc : user shared by reply if {hd.same_workspace(this.object_id, this.subject_id)}` |
+| A workspace's people see its agents (a customer sees who answered them), and customers see only themselves and their org's people | `can view = self or workspace.work or (org.member and workspace.member) or (workspace.member and {kind = 'agent'}) or ...` on users |
 | The agents' notes on a customer: no one else reads them | `rules hd.users view hd.users_visible`, `mask notes : see_notes`: the column is null in the view for anyone else, and the table refuses it to everyone |
 | Custom roles, made by a workspace's admins, count for its own agents only | `roles : user, team#member from workspace`, and `roles and workspace.agent`: a role given to someone of another workspace gives nothing |
 | The vendor's staff come in by break glass, where a workspace lets them | `support : user = hd.support_access(...) where {until > now()}`, `can break_glass = workspace.support`, and `responder`'s `shared if {hd.is_staff(...)}`, which break glass asks too |

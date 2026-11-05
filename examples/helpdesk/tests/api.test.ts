@@ -69,6 +69,8 @@ describe("customers", () => {
     const invoice = (await peter.get(`/api/tickets/${tickets.invoice}`)).json;
     expect(invoice.comments).toHaveLength(2);
     expect(invoice.comments.some((c: { internal: boolean }) => c.internal)).toBe(false);
+    // and who answered them: the workspace's agents are seen by its people
+    expect(invoice.comments.map((c: { author: { name: string } | null }) => c.author?.name)).toEqual(["Peter Gibbons", "Al Billing"]);
     const cy = await as("cy@mail.test");
     expect(subjects((await cy.get("/api/tickets")).json)).toEqual(["Password reset never arrives"]);
   });

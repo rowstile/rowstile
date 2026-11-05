@@ -22,7 +22,7 @@
 > type user: can impersonate = workspace.admin
 > type user: can see_notes = workspace.work
 > type user: can org_tickets = org.see_tickets
-> type user: can view = self or workspace.work or (org.member and workspace.member) or workspace.connected
+> type user: can view = self or workspace.work or (org.member and workspace.member) or (workspace.member and {kind = 'agent'}) or workspace.connected
 > type integration = hd.integrations (id uuid) principal where {active}
 > type integration: self : integration = id
 > type integration: workspace : workspace = workspace_id
@@ -153,7 +153,7 @@ function authz.act_as(p_type text, p_id text) | 92a836396cb1 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id text, p_relation text, p_reason text, p_duration interval) | 4936849e93f2 shape=77f3e79f
 function authz.break_glass(p_type text, p_id uuid, p_relation text, p_reason text, p_duration interval) | a1a184cb7abc shape=3b6da0b2
-function authz.can(p_type text, p_id text, p_perm text) | 1d68f62f43f2 shape=220bc89f
+function authz.can(p_type text, p_id text, p_perm text) | 1bdbbaf72c56 shape=220bc89f
 function authz.can(p_type text, p_id uuid, p_perm text) | 1acab4c19015 shape=54adceba
 function authz.cancel_request(p_id bigint) | 14f17f222d45 shape=19aa0bb3
 function authz.changes_since(p_pos bigint, p_limit int) | b494cb9cea48 shape=0448ffba
@@ -171,7 +171,7 @@ function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 28a79
 function authz.explain(p_type text, p_id uuid, p_perm text, p_user text) | d0e05eb87342 shape=94941757
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | e98f52f28997 shape=1223ad2f
 function authz.lint() | ce76cb3830bb shape=54cb1505
-function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 4294f2f533c8 shape=e713a7cc
+function authz.list(p_type text, p_perm text, p_after text, p_limit int) | 998f85a26f4a shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | 9a3b10b6e81a shape=04dcffde
 function authz.list_links(p_type text, p_id text) | a2d91074fb5c shape=a74ce96d
 function authz.list_links(p_type text, p_id uuid) | 444a8ce8fb74 shape=d1c0c3ba
@@ -401,7 +401,7 @@ function authz_int."hd.users:column notes"() | aae7f2acba75 shape=8466634d
 function authz_int."hd.users:column notes:holds"(p_row "hd"."users") | 3ba63fdd4652 shape=d3867805 atomic
 function authz_int."hd.users:column role, active"() | 0638f0ad68d9 shape=64fb1365
 function authz_int."hd.users:column role, active:holds"(p_row "hd"."users") | cec5ae78ae77 shape=0e15c3da atomic
-function authz_int."hd.users:seen"(p_id uuid) | 6803c116230e shape=b5446d83
+function authz_int."hd.users:seen"(p_id uuid) | 7415e953e81e shape=b5446d83
 function authz_int."hd.workspaces:column id"() | 524654b0c9e0 shape=f7acceda
 function authz_int."hd.workspaces:column id:holds"(p_row "hd"."workspaces") | 5bbebf71f556 shape=9a2c6d92 atomic
 function authz_int."hd.workspaces:seen"(p_id uuid) | 66e7d9b04565 shape=c46e91fb
@@ -499,7 +499,7 @@ function authz_int."team__oversee__who"(p_id uuid) | 1afb889c6140 shape=5e358181
 function authz_int."team__oversee__who_base"(p_id uuid) | b4bc0652f168 shape=e970b567
 function authz_int."team__oversee__why"(p_id uuid, p_depth int, p_seen text[]) | e5c973f95a19 shape=6d9cc72c
 function authz_int."team__parent__tree_check_loops"(p_ids uuid[]) | 405b250632a4 shape=1d6d765c tree=team__parent__tree
-function authz_int."team__parent__tree_compute"(p_ids uuid[]) | 10de8544f49a shape=2956df39 tree=team__parent__tree
+function authz_int."team__parent__tree_compute"(p_ids uuid[]) | d55c8900aef6 shape=2956df39 tree=team__parent__tree
 function authz_int."team__parent__tree_on_rows"() | edc09443039a shape=cdbdd025 tree=team__parent__tree
 function authz_int."team__parent__tree_on_truncate"() | 82352905632c shape=8d79087c tree=team__parent__tree
 function authz_int."team__parent__tree_rebuild"() | 6930d7733e2e shape=2cb50913 tree=team__parent__tree
@@ -562,8 +562,8 @@ function authz_int."user__see_notes__who"(p_id uuid) | 1ea18739cd02 shape=f35948
 function authz_int."user__see_notes__why"(p_id uuid, p_depth int, p_seen text[]) | c1f17815733a shape=e01ca2d8
 function authz_int."user__self__who"(p_id uuid) | 6d9a6a220123 shape=b3cc1098
 function authz_int."user__self__why"(p_id uuid, p_depth int, p_seen text[]) | 82a98956fe5f shape=e8c98d94
-function authz_int."user__view__who"(p_id uuid) | 0c89bc00840c shape=b39a9e44
-function authz_int."user__view__why"(p_id uuid, p_depth int, p_seen text[]) | 0d6f9087aec1 shape=ee39e69c
+function authz_int."user__view__who"(p_id uuid) | 9e17a27ebcd0 shape=b39a9e44
+function authz_int."user__view__why"(p_id uuid, p_depth int, p_seen text[]) | b6ac9ce88e4b shape=ee39e69c
 function authz_int."user__workspace__why"(p_id uuid, p_depth int, p_seen text[]) | 59f9f217697a shape=4725f8d1
 function authz_int."workspace__admin__who"(p_id uuid) | 6ecc350a7402 shape=38a1bebe
 function authz_int."workspace__admin__why"(p_id uuid, p_depth int, p_seen text[]) | bd1e483f2110 shape=9e8eeeca
@@ -638,7 +638,7 @@ function authz_int.sync_process() | 3b21d02c3986 shape=bbf006cf
 function authz_int.sync_refresh(p_hash text, p_force boolean) | 2c41cae3cae9 shape=5328af1d
 function authz_int.sync_spread(p_tx bigint, p_round int) | 0f0b7412195a shape=53f27788
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
-function authz_int.visible(p_type text, p_id text) | 98606566d678 shape=e14964bd
+function authz_int.visible(p_type text, p_id text) | 1697178faeca shape=e14964bd
 function authz_int.writable() | dce4bbfe1638 shape=2260a03a
 index "team__parent__tree_ancestor_idx" | a7feba4d3ed4 tree=team__parent__tree
 policy "authz_delete" ON "hd"."comments" | ae16242c898f
@@ -666,7 +666,7 @@ policy "authz_select" ON "hd"."team_leads" | 4907ad3791c7
 policy "authz_select" ON "hd"."team_members" | fd0ed346ff6b
 policy "authz_select" ON "hd"."teams" | 3f8a319303cb
 policy "authz_select" ON "hd"."tickets" | 0c67c9caa1b7
-policy "authz_select" ON "hd"."users" | ad84d907522a
+policy "authz_select" ON "hd"."users" | 5c8d5b7f1ee5
 policy "authz_select" ON "hd"."workspaces" | 3f616b80f348
 policy "authz_update" ON "hd"."comments" | 59f60e490d78
 policy "authz_update" ON "hd"."customer_orgs" | 16e980750a61
@@ -701,7 +701,7 @@ step sweep | 720e0c5ae09f
 step sync_base | db56d795f460
 step sync_refresh | 1971c39cef56
 step tables | ef6cba4514a6
-table authz_gen.policy_lines | 64ebfb972f94 shape=dcfedc96
+table authz_gen.policy_lines | 7e497c6e8386 shape=dcfedc96
 table authz_int."team__parent__tree" | ed6220be97e0 shape=ed6220be tree=team__parent__tree
 table authz_int.caveats | e8d713b6c2e3 shape=e8d713b6
 table authz_int.locks | a2f979053d93 shape=1779df2c
@@ -848,7 +848,7 @@ trigger authz_sync_commit ON authz_int.sync_queued | 99d556cf901d
 type authz_gen."leadership__key" | a6c2529748a7
 type authz_gen."membership__key" | 180358685cff
 type authz_gen."support_grant__key" | 456118743eeb
-view "hd"."users_visible" | 0bfa593a2f1b
+view "hd"."users_visible" | 02a03ef6999b
 view authz_int."comment__never__3" | 52e319506941
 view authz_int."comment__ticket__view" | 793248a992e2
 view authz_int."comment__ticket__work" | 11fc48739426
@@ -902,7 +902,7 @@ view authz_int."user__org__see_tickets" | 4712c31c65c9
 view authz_int."user__org_tickets" | 3c05fb525a7d
 view authz_int."user__see_notes" | 7a5f1d8f0041
 view authz_int."user__self" | cb82fa644917
-view authz_int."user__view" | fcca2fdd4d77
+view authz_int."user__view" | 7f3e242d1d93
 view authz_int."user__workspace__admin" | 7d4a4bc715bf
 view authz_int."user__workspace__connected" | e4bf23640410
 view authz_int."user__workspace__member" | ef778ed1f7df
