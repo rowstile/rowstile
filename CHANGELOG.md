@@ -167,6 +167,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   file names those indexes with their schema from the next migration on; one written before needs no migration.
 - A migration of a policy whose text ends in `$authz_policy` (a comment, with no newline after it) runs: the quote it
   records the text in no longer ends early.
+- `authz.create_api_key` and `authz.list_api_keys` refuse a principal type given without its id (AZ710), instead of
+  taking it for the caller's own keys, and `authz.create_api_key` refuses a key with no name or a blank one (AZ710),
+  instead of Postgres's own not-null error.
+- `authz.explain` for another user names them as the rest of the API does (`user 5`, asked as `'05'`), and
+  `authz.sync_members` records the group's id in the audit trail as its shares hold it (`10`, synced as `'010'`).
 
 ### Upgrading
 

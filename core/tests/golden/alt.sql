@@ -5684,7 +5684,7 @@ BEGIN
   END IF;
   IF p_user IS NOT NULL THEN
     v_asker := ARRAY[v_me, v_pt, v_scopes];
-    PERFORM set_config('authz.user_id', p_user, true);
+    PERFORM set_config('authz.user_id', authz_int.canon('user', p_user), true);
     PERFORM set_config('authz.principal_type', '', true);
     PERFORM set_config('authz.scopes', '', true);   -- that user's access, with full rights (as authz.who)
     PERFORM authz_int.sign();
@@ -5812,6 +5812,10 @@ DECLARE v_token text := 'ak_' || replace(gen_random_uuid()::text || gen_random_u
         v_type text := coalesce(p_principal_type, 'user'); v_id text;
 BEGIN
   PERFORM authz_int.check_writable();
+  IF coalesce(btrim(p_name), '') = '' THEN
+    RAISE EXCEPTION 'name the key (its name says what it is for)' USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
+  END IF;
+  PERFORM authz_int.key_owner_given(p_principal_type, p_principal_id);
   -- the principal's row is locked (FOR KEY SHARE) before it is checked: a delete of it waits for this key, or this
   -- for the delete, which leaves no principal to make it for (a delete with an older snapshot: keys_gone)
   IF p_principal_id IS NULL THEN
@@ -5841,6 +5845,16 @@ BEGIN
   RETURN v_token;
 END $f$;
 
+-- A principal's keys are named by its type and its id; a type without an id is a mistake, not one's own keys
+CREATE FUNCTION authz_int.key_owner_given(p_type text, p_id text) RETURNS void
+LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+  IF p_id IS NULL AND coalesce(p_type, 'user') <> 'user' THEN
+    RAISE EXCEPTION 'a key for % needs its id too (give neither for your own keys)', p_type
+      USING ERRCODE = 'invalid_parameter_value', HINT = 'rowstile help AZ710';
+  END IF;
+END $f$;
+
 -- May the signed-in principal manage the keys of this one? Needs `can manage_keys` on its type.
 CREATE FUNCTION authz_int.check_manage_keys(p_type text, p_id text) RETURNS void
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
@@ -5864,6 +5878,7 @@ RETURNS TABLE (id bigint, name text, prefix text, scopes text, created_at timest
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE v_type text; v_id text;
 BEGIN
+  PERFORM authz_int.key_owner_given(p_principal_type, p_principal_id);
   IF p_principal_id IS NULL THEN
     SELECT p.principal_type, p.principal_id INTO v_type, v_id FROM authz.principal() p;
   ELSE
@@ -6084,7 +6099,7 @@ BEGIN
     ELSE RAISE EXCEPTION '%.% has no single table of members to sync (it needs one source: table(group -> user), without where)',
       p_type, p_relation USING HINT = 'rowstile help AZ707';
   END CASE;
-  PERFORM authz_int.audit('sync_members', p_type, p_id, p_relation, 'user', NULL, NULL,
+  PERFORM authz_int.audit('sync_members', p_type, authz_int.canon(p_type, p_id), p_relation, 'user', NULL, NULL,
                           jsonb_build_object('added', added, 'removed', removed, 'members', p_members));
 END $f$;
 

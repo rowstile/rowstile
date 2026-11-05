@@ -144,6 +144,8 @@ expect_code "it can't have user 7's access explained on what it can't share (the
   -c "$AS_SVC" -c "SELECT authz.explain('doc', 5, 'view', '7')"
 check "a user may have their own explained, by id" "yes  user 1 holds view on doc 1" \
   "$AS_USER SELECT e FROM authz.explain('doc', 1, 'view', '1') e LIMIT 1;"
+check "another user's access, asked by an id written another way, names them as the rest of the API does" \
+  "no   user 2 does not hold view on doc 1" "$AS_USER SELECT e FROM authz.explain('doc', 1, 'view', '02') e LIMIT 1;"
 check "... and by id, a doc they can't see reads as a missing one" "no   you have no access to doc 5" \
   "$AS_USER SELECT string_agg(e, ' / ') FROM authz.explain('doc', 5, 'view', '1') e;"
 # a relation held by a pair of columns: explain names both, the type's column first
@@ -297,6 +299,15 @@ check "the key signs in as the service" "service:7|service|7|" \
   "BEGIN; SELECT authz.login_key('$KEY') || '|' || (SELECT principal_type || '|' || principal_id FROM authz.principal()) || '|' || coalesce(authz.uid()::text, ''); COMMIT;"
 expect_code "someone else may not" "42501: you cannot manage the keys of service 7" -c "SET authz.user_id = '2'" -c "SELECT authz.create_api_key('x', '', NULL, 'service', '7')"
 expect_code "nor for a type that doesn't sign in" "P0001: no type doc that signs in (type ... principal) in the policy" -c "$AS_USER" -c "SELECT authz.create_api_key('x', '', NULL, 'doc', '1')"
+expect_code "a principal type without its id is refused, not taken as one's own keys" \
+  "22023: a key for service needs its id too (give neither for your own keys)" -c "$AS_USER" \
+  -c "SELECT authz.create_api_key('x', '', NULL, 'service', NULL)"
+expect_code "... and listing them" "22023: a key for service needs its id too (give neither for your own keys)" -c "$AS_USER" \
+  -c "SELECT * FROM authz.list_api_keys('service', NULL)"
+expect_code "a key needs a name" "22023: name the key (its name says what it is for)" -c "$AS_USER" \
+  -c "SELECT authz.create_api_key(NULL)"
+expect_code "... not a blank one" "22023: name the key (its name says what it is for)" -c "$AS_USER" \
+  -c "SELECT authz.create_api_key(' ', '', NULL, 'service', '7')"
 check "the owner lists its keys" "deploy" "$AS_USER SELECT string_agg(name, ',') FROM authz.list_api_keys('service', '7');"
 check "the service lists its own" "deploy" "$AS_SVC SELECT string_agg(name, ',') FROM authz.list_api_keys();"
 PSQL -c "UPDATE ps.services SET active = true WHERE id = 9" >/dev/null

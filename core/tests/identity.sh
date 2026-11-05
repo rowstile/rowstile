@@ -276,6 +276,9 @@ caught "... caught at a savepoint: who was signed in before still is" "SELECT au
 echo "-- group sync (administrators)"
 check "sync Engineering to alice and carol" "1|0" \
   "RESET ROLE; SELECT added || '|' || removed FROM authz.sync_members('team', '10', 'member', ARRAY['1', '3']);"
+check "... the audit trail names the group as shares do, however its id is written" "10" \
+  "RESET ROLE; BEGIN; SELECT authz.sync_members('team', '010', 'member', ARRAY['1', '3']);
+   SELECT object_id FROM authz.audit WHERE action = 'sync_members' ORDER BY id DESC LIMIT 1; ROLLBACK;"
 check "... carol is now in Engineering" "t" "SET authz.user_id = 3; SELECT authz.can('folder', 3, 'edit');"
 expect_code "the app role cannot sync" "42501: permission denied for function sync_members" -c "SELECT authz.sync_members('team', '10', 'member', ARRAY['4'])"
 # NULL is no list (a sync job's failed fetch): the group is left as it is, not emptied
