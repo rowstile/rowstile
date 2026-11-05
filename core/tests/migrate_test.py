@@ -234,6 +234,12 @@ CASES: list[tuple[str, str, str, str]] = [
         edit(DOCS, ("scope read ", "caveat from_ip = {authz.ctx('ip') = arg('ip')}\nscope read ")),
     ),
     (
+        "a caveat that comes to call a function (one that runs it with the policy's rights)",
+        "docs",
+        edit(DOCS, ("scope read ", "caveat from_ip = {authz.ctx('ip') = arg('ip')}\nscope read ")),
+        edit(DOCS, ("scope read ", "caveat from_ip = {pg_catalog.lower(authz.ctx('ip')) = arg('ip')}\nscope read ")),
+    ),
+    (
         "custom roles",
         "docs",
         DOCS,

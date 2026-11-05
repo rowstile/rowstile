@@ -1261,9 +1261,7 @@ class Core:
         """A share counts between its start and its expiry, and while its caveat holds."""
         caveats = self.pol.caveats
         if caveats:
-            cases = " ".join(
-                f"WHEN {lit(c.name)} THEN coalesce(({self.caveat_sql(c, alias)}), false)" for c in caveats.values()
-            )
+            cases = " ".join(f"WHEN {lit(c.name)} THEN {self.caveat_holds(c, alias)}" for c in caveats.values())
             cav = f"({alias}.caveat IS NULL OR CASE {alias}.caveat {cases} ELSE false END)"
         else:
             cav = f"{alias}.caveat IS NULL"
@@ -1276,6 +1274,24 @@ class Core:
     def caveat_sql(c: Caveat, alias: str = "g") -> str:
         """The caveat's condition on the share aliased alias: arg('x') reads what the share was made with."""
         return with_uid(CAVEAT_ARG.sub(rf"({alias}.caveat_args ->> '\1')", c.sql))
+
+    def caveat_holds(self, c: Caveat, alias: str = "g") -> str:
+        """Whether the caveat holds for the share aliased alias: inline, unless it calls a function or operator of
+        the app's. A view reads its tables as its owner but runs what it calls as whoever reads it, so that call
+        goes through a function that runs it as the owner, as cond_sql's do: it sees what the policy sees."""
+        sql = self.caveat_sql(c)
+        if not calls_app_code(sql):
+            return f"coalesce(({self.caveat_sql(c, alias)}), false)"
+        name = f"caveat:{c.name}"
+        fn = f"authz_int.{q(name)}"
+        if self.first_time(name, c.sql):
+            self.view_sql.append(
+                f"-- caveat {c.name}: it calls the app's code, run with the policy's rights wherever it is checked\n"
+                f"CREATE FUNCTION {fn}(p_args jsonb) RETURNS boolean\n"
+                f"LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$\n"
+                f"  SELECT coalesce(({sql}), false) FROM (SELECT p_args AS caveat_args) AS g\n$f$;"
+            )
+        return f"{fn}({alias}.caveat_args)"
 
     # --- functions over every type: one branch per type, the id converted to its key ----------------
     def id_vars(self) -> str:
@@ -1513,6 +1529,8 @@ class Core:
                     f"SELECT {extra}{self.key(t, 'r')} AS {obj}, {sid} AS {subj} "
                     f"FROM {qt(t.table)} r WHERE {sid} IS NOT NULL{m}"
                 )
+            # inline, even where it calls the app's code: whatever reads these pairs runs as the owner (a nested
+            # groups' view through its __ids function, the trees' triggers, who and explain, the command's previews)
             where = f" AND coalesce(({on_row(src.where, 's')}), false)" if src.where else ""
             oid = self.ref(t, "s", src.obj_col)
             return (

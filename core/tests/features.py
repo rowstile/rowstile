@@ -1187,6 +1187,7 @@ FEATURES: list[Feature] = [
         (
             T("multi_scenario.sql", "alice re-shares it for business hours only (a caveat)"),
             T("multi_scenario.sql", "a parameterised caveat: only from the office IP"),
+            T("apply.sh", "a function a caveat calls runs with the policy's rights where a view reads the share"),
         ),
         (T(DIFF, "'business_hours', NULL"), T("genpolicy.py", "CAVEATS = {")),
         hand=("caveats",),
