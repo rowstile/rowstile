@@ -18,6 +18,20 @@ conformance suite, [`integrations/node`](../../integrations/node) a plain Expres
 `rowstile client ts` is a client of its own, for `pg` without the SDK: its types don't reach the SDK's calls.
 A transaction is one principal's: inside one these packages signed in, their work for anyone else throws an `Error`
 before anything is sent for it ([Node apps](../stacks/node.md#who-a-transaction-acts-for)).
+The TypeScript SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
+`listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
+`ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,
+requests, reviews, keys), call the `authz.*` function in SQL. The other SDKs' calls are fewer: their paragraphs
+below name them.
+Go apps use [the Go SDK](../../sdk/go/README.md) (preview): `rowstile.Tx` signs pgx transactions in,
+`rowstile.Middleware` says whom each request acts for, and `Handler` and `WriteProblem` answer refusals with problem
+details; [`integrations/go`](../../integrations/go) is its conformance suite, and `rowstile client go` writes the policy's names for it
+(`internal/authz/authz.go`).
+.NET apps use [the .NET SDK](../../sdk/dotnet/README.md) (preview): `Rowstile.EntityFrameworkCore` signs in every EF
+Core transaction, and every command outside one; `Rowstile.AspNetCore` says whom each request acts for and answers
+refusals with problem details; on Npgsql alone, `Rowstile` begins transactions signed in.
+[`integrations/aspnetcore`](../../integrations/aspnetcore) is its conformance suite, and `rowstile client csharp` writes the policy's names for it
+(`Authz.g.cs`).
 Rails apps use [the Ruby SDK](../../sdk/ruby/README.md), a preview: its Railtie signs every Active Record transaction
 in, answers a refusal with 403 and a hidden row with 404, and checks the app's connection when it is served;
 [`integrations/rails`](../../integrations/rails) is its conformance suite.
@@ -78,12 +92,7 @@ tests hold each rule:
 - A principal is written as text as the audit trail and `created_by` name who acted, and read back by the SDK:
   `42` for a user, `service:3`, `nobody`, and `user:<id>` for a user whose id holds `:` or is `nobody`.
 
-The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
-`listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
-`ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,
-requests, reviews, keys), call the `authz.*` function in SQL.
-Underneath, and for every
-other stack:
+Underneath every SDK, and for every other stack:
 
 Everything is a SQL function in schema `authz`, callable by the app role, acting as
 the signed-in user. Ids are text or the type's key type. A composite key's id is the text
@@ -110,9 +119,9 @@ you can't see. <!-- checked: tests/governance.sh "carol breaks the glass, and th
 | which of these people may see it (live updates) | `authz.who_among('file', 11, 'view', ARRAY['1', '2'])`: it signs each one in with `authz.act_as`, so it is for whoever may call that (the app role, a backend trusted to sign people in) |
 | the sharing dialog | `authz.list_shares('folder', 3)`, for people who may share it: a row a share, with `relation`, `role` (a custom role's name), `subject_type`, `subject_id` (`(link)` for a share link), `subject_relation` (`member` for `team#member`, else empty), `expires_at`, `starts_at`, `caveat`, `created_by` and `created_at` |
 | share and unshare | `authz.share('file', 13, 'viewer', 'user', 4, '', now() + interval '1 day')` (then when it starts, a caveat and its arguments: [the language](language.md)), `authz.unshare(...)` |
-| share links | `authz.create_link('folder', 3, 'viewer')` returns a token; requests use it with `SET LOCAL authz_ctx.links = '<token>'` |
+| share links | `authz.create_link('folder', 3, 'viewer')` returns a token; requests use it with `SET LOCAL authz_ctx.links = '<token>'`, which the rules read through `authz.link_hashes()` (the tokens' hashes: the app sets the setting, and has no need to call it) |
 | an object's links, and turning one off | `authz.list_links('folder', 3)`: each link's id, relation, who made it, when, and until when, for people who can share the object or may make such links; `authz.revoke_link('folder', 3, '<id>')` turns one off, and needs what unsharing its relation needs (the id is not the token, and opens nothing; an id that names no link there: AZ708); a link given in several relations is judged in each as things are before it goes, and goes from all of them or from none <!-- checked: tests/governance.sh "a link in two relations, which its token lets user 1 share: turned off in both"; tests/governance.sh "turned off in neither" --> |
-| custom roles | `authz.create_role('org', 1, 'folder', 'reviewer', ARRAY['view'])` returns the role's id (needs `manage_roles` on the org); share it as `authz.share('folder', 3, 'role:<id>', 'user', 7)`; `authz.set_role_permissions(id, ARRAY[...])` (adding a permission needs it held on each object the role is given on), `authz.delete_role(id)`, `authz.roles_of('org', 1)`; for users, not services (AZ715) <!-- checked: tests/principals.sh "authz.create_role is for users: a service is told so"; tests/principals.sh "authz.set_role_permissions is for users: a service is told so"; tests/principals.sh "authz.delete_role is for users: a service is told so"; tests/principals.sh "authz.roles_of is for users: a service is told so" --> |
+| custom roles | `authz.create_role('org', 1, 'folder', 'reviewer', ARRAY['view'])` returns the role's id (needs `manage_roles` on the org); share it as `authz.share('folder', 3, 'role:<id>', 'user', 7)`; `authz.set_role_permissions(id, ARRAY[...])` (adding a permission needs it held on each object the role is given on), `authz.delete_role(id)`, `authz.roles_of('org', 1)` (for those who hold `manage_roles` or `view` on the org); for users, not services (AZ715) <!-- checked: tests/principals.sh "authz.create_role is for users: a service is told so"; tests/principals.sh "authz.set_role_permissions is for users: a service is told so"; tests/principals.sh "authz.delete_role is for users: a service is told so"; tests/principals.sh "authz.roles_of is for users: a service is told so"; tests/difftest.py "roles_of: the owner's roles, to whoever manages it or may view it" --> |
 | API keys | `authz.create_api_key('laptop', 'read')` (shown once), `authz.list_api_keys()`, `authz.revoke_api_key(id)`; a service's keys are made by a user holding `manage_keys` on it ([Identity](identity.md)), and a service making its own is refused (AZ715) <!-- checked: tests/principals.sh "authz.create_api_key for oneself is for users: a service is told so"; tests/principals.sh "its owner makes service 7 a key" --> |
 | sign in | `authz.login_key('ak_...')`, `authz.login_jwt('eyJ...')` (HS256; settings in `authz.settings`) |
 | the app's connection, at start-up | `authz.connection_check()`: a row per problem, `severity` and `problem` ([Checking the database](governance.md#checking-the-database)) |
@@ -220,7 +229,10 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   whom the code acts for, and `actingFor()` reads it; the Ktor plugin `Rowstile` gives each request one, and answers
   rowstile's errors with problem details (`respondProblem`). `calls`, on a connection or in an Exposed transaction, is
   the Java SDK's `Authz`, and `expect` takes an Exposed table. `problem()`, `refusal()` and `errorCode()` read an
-  error, or give null; `assertRefused` and `assertNotFound` are for tests. It may change before it is supported.
+  error, or give null; `assertRefused` and `assertNotFound` are for tests. A transaction is one principal's: in one
+  these signed in, a statement while the code acts for someone else (`withContext(ActingAs(...))`), or for nobody,
+  throws an `IllegalStateException` before it is sent, and the transaction goes on as it was. It may change before it
+  is supported.
 - **Rust: preview.** `rowstile::sqlx::begin(pool, who)` and `rowstile::pg::begin(client, who)` begin a transaction
   signed in; each module has `can`, `perms_of`, `list` (with a `Page`), `expect` and `check`. `Error` is `Refused`,
   `NotFound`, `Call`, `NotSignedIn`, `Connection`, `Database` or `Other`, with `code()` and `problem()`. With the
@@ -232,7 +244,9 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
 - **Elixir: preview.** `rowstile client elixir` writes the policy's names as a module for each type and a function for
   each permission (`MyApp.Authz.Note.edit()`), which `Rowstile.can?`, `perms_of` and `list` take, so a misspelled one
   doesn't compile. The package has `Rowstile.transact`, `Rowstile.expect`, `Rowstile.Refused`, `Rowstile.NotFound`,
-  `Rowstile.CallError` and `Rowstile.problem(e)`: [Phoenix](../stacks/phoenix.md). It may change before it is
+  `Rowstile.CallError` and `Rowstile.problem(e)`: [Phoenix](../stacks/phoenix.md). A transaction is one principal's:
+  inside one `Rowstile.transact` signed in already, a `transact` for someone else raises a `RuntimeError` before
+  anything is sent, and so does a `transact` inside a transaction it didn't begin. It may change before it is
   supported.
 - **PHP: preview.** `Rowstile::transaction($pdo, fn)` and `transactionAs($pdo, $who, fn)` run `fn` in a PDO
   transaction signed in; `Rowstile::actingAs($who, fn)` says whom the transactions Laravel's connections begin act
