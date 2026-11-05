@@ -1058,7 +1058,7 @@ FEATURES: list[Feature] = [
         "lang.conditions",
         1,
         "Conditions: `{...}`, `this`, read with the policy's rights",
-        ("lang.sql", "lang.sql_text", "err.AZ110", "err.AZ112", "err.AZ113", "err.AZ613"),
+        ("lang.sql", "lang.sql_text", "err.AZ110", "err.AZ112", "err.AZ113", "err.AZ114", "err.AZ613"),
         Doc(LANG, "Conditions name their row `this`"),
         (
             T("devx.sh", "a rule condition that reads a governed table runs with the policy's rights, as a function"),
@@ -1068,6 +1068,7 @@ FEATURES: list[Feature] = [
             T("apply.sh", "a signing-in type's where whose subquery calls its table w: applies, then is unchanged"),
             T("governance.sh", "the audit trail relates only the link rows whose where holds"),
             T("policy_errors.py", "a name that starts with authz__ in a condition"),
+            T("policy_errors.py", "a quote in a condition that goes on to the next line"),
         ),
         (T("conditions_test.py", "def condition("), T("genpolicy.py", "READS = [")),
         hand=("conditions-sql", "conditions-null", "conditions-this", "conditions-rights"),

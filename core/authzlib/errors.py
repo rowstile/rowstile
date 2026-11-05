@@ -197,6 +197,17 @@ CODES = {
         "type folder = app.folders\n  owner : user = owner_id\n"
         "  can view = owner and {not exists (select 1 from app.folder_links l where l.folder_id = this.id)}\n",
     ),
+    "AZ114": Code(
+        "A quote that goes on to the next line",
+        "A string, a quoted name or a dollar quote in a condition ends on the line it starts on. The condition's "
+        "text goes into the generated SQL, in its comments too, where a line break would end the comment. Write "
+        "the text on one line, and a line break in a string as `E'\\n'`: `'one' || E'\\n' || 'two'`. A named "
+        "test's statements (`given {...}`, `as user 3 allowed {...}`) may hold quotes over several lines: they are "
+        "run as written.",
+        "type folder = app.folders\n  owner : user = owner_id\n  can view = owner and {name <> 'one\n    two'}\n",
+        "type folder = app.folders\n  owner : user = owner_id\n"
+        "  can view = owner and {name <> 'one' || E'\\n' || 'two'}\n",
+    ),
     "AZ201": Code(
         "Unknown type",
         "A relation's subjects, an invariant, a scope and a test name types the policy declares "

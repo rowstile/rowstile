@@ -31,10 +31,11 @@ class FormatError(Exception):
 
 
 class Line(NamedTuple):
-    kind: str  # 'blank', 'comment', 'top', 'scope', 'cont', or a body kind (kind_of)
+    kind: str  # 'blank', 'comment', 'top', 'scope', 'cont', 'quoted', or a body kind (kind_of)
     code: str
     comment: str
     indent: int
+    end: str = ""  # the spaces at the end of a line whose quote goes on to the next: the quote's, kept
 
 
 # a line of an aligned run: (left of the ':' or '=', right of it, and for a relation the source after its '=')
@@ -98,6 +99,14 @@ def format_policy(text: str) -> str:
     reading = Scanner()  # the lines as the parser reads them: what is a comment, which braces are open
     code_before = False  # a line of code before this one (not a blank line, nor a comment)
     for raw in lines:
+        if reading.quote not in ("", "/*"):
+            # a line that goes on with a quote the line before left open (a named test's): the quote's text, as
+            # written
+            reading.marks(raw)
+            code = raw if reading.quote not in ("", "/*") else raw.rstrip()
+            items.append(Line("quoted", code.rstrip(), "", 0, code[len(code.rstrip()) :]))
+            code_before = True
+            continue
         if not raw.strip():
             items.append(Line("blank", "", "", 0))
             continue
@@ -111,21 +120,22 @@ def format_policy(text: str) -> str:
         # a trailing comment outside {}; one in a condition is SQL's, kept with it
         at = next((i for i, m in enumerate(marks) if m.comment and not m.depth), len(raw))
         code, comment = raw[:at].rstrip(), raw[at:].rstrip()
+        end = raw[len(code) :] if reading.quote not in ("", "/*") else ""  # (a quote left open: its spaces)
         indent = len(raw) - len(raw.lstrip())
         s = squeeze(code) if open_braces == 0 else code.strip()
         # a line that starts with or, and, ... continues the one before it, however it is indented (as the parser reads it)
         if open_braces > 0 or (CONT.match(code.strip()) and code_before):
-            items.append(Line("cont", code.strip() if open_braces else squeeze(code), comment, indent))
+            items.append(Line("cont", code.strip() if open_braces else squeeze(code), comment, indent, end))
         elif indent == 0:  # an indented line is never a top-level one: `role : user = ...` is a relation
             m = TOP.match(stripped)
             block = m.group(1) if m else None
-            items.append(Line("scope" if block == "scope" and top_split(s, "=") else "top", s, comment, 0))
+            items.append(Line("scope" if block == "scope" and top_split(s, "=") else "top", s, comment, 0, end))
         else:
             if block == "rules" and (m := CASCADE.fullmatch(s)):  # cascade from app.users (a, b)
                 s = f"cascade from {m.group(1)}" + (
                     f" ({', '.join(c.strip() for c in m.group(2).split(','))})" if m.group(2) is not None else ""
                 )
-            items.append(Line(kind_of(s, block), s, comment, 2))
+            items.append(Line(kind_of(s, block), s, comment, 2, end))
         code_before = True
 
     # blank lines: one before each block that follows another (with its comments), none doubled, none at the ends
@@ -165,7 +175,7 @@ def format_policy(text: str) -> str:
             continue
         j = i
         run: list[int] = []
-        while j < len(final) and final[j][0] in (kind, "cont"):
+        while j < len(final) and final[j][0] in (kind, "cont", "quoted"):
             run.append(j)
             j += 1
         _align(final, run, kind, rendered)
@@ -173,7 +183,7 @@ def format_policy(text: str) -> str:
     out: list[str] = []
     last_expr_col = 2
     for k, it in enumerate(final):
-        kind, code, comment, indent = it
+        kind, code, comment, indent, end = it
         done = rendered[k]
         if done is not None:
             text_line, last_expr_col = done
@@ -184,13 +194,14 @@ def format_policy(text: str) -> str:
             comment = ""
         elif kind == "cont":
             text_line = hang(last_expr_col, code)
-        else:  # a top-level line: the lines of a block are in a run, aligned above
+        else:  # a top-level line: the lines of a block are in a run, aligned above (a quote over lines too: the parser
+            # takes one only in a named test's statement, an indented line)
             assert kind == "top", kind
             text_line = code
             last_expr_col = _expr_col(code, 0)
         if comment and rendered[k] is None:
             text_line = (text_line + "  " + comment) if text_line else comment
-        out.append(text_line.rstrip())
+        out.append(text_line.rstrip() + end)
     result = "\n".join(out) + "\n"
     return result
 
@@ -216,7 +227,7 @@ def _align(final: list[Line], run: list[int], kind: str, rendered: list[Rendered
     heads: list[Head | None] = []
     for k in run:
         it = final[k]
-        if it[0] == "cont":
+        if it[0] in ("cont", "quoted"):
             heads.append(None)
             continue
         code = it[1]
@@ -239,7 +250,7 @@ def _align(final: list[Line], run: list[int], kind: str, rendered: list[Rendered
     for k, h in zip(run, heads, strict=True):
         it = final[k]
         if h is None:
-            lines.append((k, hang(col, it[1]), it[2]))
+            lines.append((k, it[1] if it[0] == "quoted" else hang(col, it[1]), it[2]))
             continue
         if kind == "relation":
             if h[2] is not None:
