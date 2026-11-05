@@ -14642,6 +14642,136 @@ class LlmsTxt(unittest.TestCase):
         self.assertEqual(sorted(used - {"rowstile"}), sorted(kinds))  # rowstile:begin, a marker a page names
 
 
+class Lists(unittest.TestCase):
+    """Where a page, the files for agents or CLAUDE.md lists what the code holds (the migration tools, the SDKs, the
+    modules), the list names each one: a list that looks whole but isn't tells a reader their tool isn't there."""
+
+    REPO = os.path.dirname(ROOT)
+    TOOLS: ClassVar[dict[str, str]] = {  # each tool rowstile migrate writes for, as the pages name it
+        "alembic": "Alembic",
+        "prisma": "Prisma",
+        "drizzle": "Drizzle Kit",
+        "efcore": "EF Core",
+        "rails": "Rails",
+        "ecto": "Ecto",
+        "laravel": "Laravel",
+        "sql": "SQL",
+        "goose": "goose",
+        "dbmate": "dbmate",
+        "flyway": "Flyway",
+        "django": "Django",
+        "sqlx": "sqlx",
+    }
+    SDKS: ClassVar[dict[str, str]] = {  # each folder of sdk/, as the pages name its language
+        "python": "Python",
+        "typescript": "TypeScript",
+        "go": "Go",
+        "dotnet": ".NET",
+        "ruby": "Ruby",
+        "java": "Java",
+        "rust": "Rust",
+        "elixir": "Elixir",
+        "php": "PHP",
+    }
+
+    def page(self, *rel: str) -> str:
+        with open(os.path.join(self.REPO, *rel), encoding="utf-8") as fh:
+            return fh.read()
+
+    @staticmethod
+    def missing(text: str, names: Iterable[str]) -> list[str]:
+        """The names the text doesn't hold as words."""
+        return [n for n in names if not re.search(rf"(?<![\w.-]){re.escape(n)}(?![\w-])", text)]
+
+    def test_each_migration_tool_is_named(self) -> None:
+        import migrations
+
+        self.assertEqual(sorted(self.TOOLS), sorted(migrations.TOOLS))
+        # the list in parentheses that names Alembic, on each page that has one
+        for rel in ("README.md", "llms.txt", "site/index.md", "CLAUDE.md"):
+            listed = search(r"\(([^()]*\bAlembic\b[^()]*)\)", self.page(*rel.split("/"))).group(1)
+            self.assertEqual(self.missing(listed, self.TOOLS.values()), [], rel)
+        said = search(r'\n  "reference/migrations\.md": "([^"]*)",\n', self.page("site", "pages.mjs")).group(1)
+        self.assertEqual(self.missing(said, self.TOOLS.values()), [], "site/pages.mjs")
+        # AZ607's page: how to tell each tool that a migration is applied, a line each
+        from authzlib.errors import CODES
+
+        bullets = re.findall(r"^- ([^:(]+?)(?: \([^)]*\))?:", CODES["AZ607"].text, re.M)
+        self.assertEqual(sorted(bullets), sorted(self.TOOLS.values()))
+
+    def test_the_tools_that_run_rowstiles_migrations_are_named(self) -> None:
+        # migration_tools.sh runs the migrations rowstile migrate writes by the tools themselves: its own header,
+        # the nightly's and the core's README name each tool it runs
+        script = self.page("core", "tests", "migration_tools.sh")
+        run = search(r"\nfor tool in ([a-z ]+); do\n", script).group(1).split()
+        run += sorted(set(re.findall(r"--tool ([a-z]+)", script)))
+        self.assertEqual(run, ["goose", "dbmate", "flyway", "django"])
+        names = [self.TOOLS[t] for t in run]
+        header = search(r"\A#!/bin/bash\n((?:#.*\n)+)", script).group(1)
+        nightly = self.page(".github", "workflows", "nightly.yml")
+        lines = nightly.split("\n")
+        at = lines.index("  tools:")
+        above = list(itertools.takewhile(lambda x: x.startswith("  #"), reversed(lines[:at])))
+        core = search(r"\n\| `tests/migration_tools\.sh` \|(.*)\n", self.page("core", "README.md")).group(1)
+        layout = search(r"migrations `rowstile migrate` writes run by ([^(]*)\(", self.page("CLAUDE.md")).group(1)
+        for where, text in [
+            ("its header", header.split("(")[0]),
+            ("nightly.yml's top", search(r"\A((?:#.*\n)+)", nightly).group(1)),
+            ("nightly.yml's tools job", "\n".join(reversed(above))),
+            ("core/README.md", core),
+            ("CLAUDE.md", layout),
+        ]:
+            self.assertEqual(self.missing(text, names), [], where)
+
+    def test_each_sdk_is_named_where_agents_read(self) -> None:
+        self.assertEqual(sorted(self.SDKS), sorted(os.listdir(os.path.join(self.REPO, "sdk"))))
+        llms = self.page("llms.txt")
+        summary = search(r"\A# rowstile\n\n((?:>.*\n)+)", llms).group(1)
+        with open(os.path.join(self.REPO, "context7.json"), encoding="utf-8") as fh:
+            description = json.load(fh)["description"]
+        readme, installing = self.page("README.md"), self.page("docs", "installing.md")
+        for folder, name in self.SDKS.items():
+            self.assertEqual(self.missing(summary, [name]), [], f"llms.txt's summary: {name}")
+            self.assertEqual(self.missing(description, [name]), [], f"context7.json's description: {name}")
+            for rel, text in (("llms.txt", llms), ("README.md", readme), ("docs/installing.md", installing)):
+                self.assertIn(f"sdk/{folder}/README.md)", text, f"{rel} links the {name} SDK's README")
+
+    def test_the_conventions_file_maps_each_part(self) -> None:
+        # the layout CLAUDE.md gives: each module of authzlib and cli, each SDK, each example, each reference page,
+        # each TypeScript package and npm workspace, each language of rowstile client, each project ty checks with
+        # its own environment and each folder tsc checks
+        layout = self.page("CLAUDE.md")
+        names: list[str] = []
+        for folder in ("authzlib", "cli"):
+            names += [f"`{f}`" for f in sorted(os.listdir(os.path.join(ROOT, folder))) if f.endswith(".py")]
+        names.remove("`__init__.py`")
+        names += [f"`sdk/{f}/`" for f in sorted(os.listdir(os.path.join(self.REPO, "sdk")))]
+        examples = os.path.join(self.REPO, "examples")
+        names += [
+            f"`examples/{f}/`"
+            for f in sorted(os.listdir(examples))
+            if os.path.isfile(os.path.join(examples, f, "test.sh"))
+        ]
+        names += [f"`{f}`" for f in sorted(os.listdir(os.path.join(self.REPO, "docs", "reference")))]
+        workspaces = json.loads(self.page("package.json"))["workspaces"]
+        names += [
+            f"`/{w.split('/')[-1]}`" for w in workspaces if w.startswith("sdk/typescript/") and w[-6:] != "client"
+        ]
+        names += [f"`{w}`" for w in workspaces if not w.startswith("sdk/")]
+        self.assertEqual([n for n in names if n not in layout], [])
+        devtools = search(r"\n    - `devtools\.py` — (.*?)\n    - ", layout, re.S).group(1)
+        self.assertEqual(self.missing(devtools, rowstile_cli.LANGUAGES), [])
+        ci = self.page(".github", "workflows", "ci.yml")
+        apps = search(r"for app in ([a-z ]+); do", ci).group(1).split()
+        projects = [p for p in re.findall(r"ty@\S+ check --project (\S+)", ci) if "$" not in p]
+        projects += [f"examples/{a}" for a in apps]
+        types = search(r"\n- Types: (.*?)\n- ", layout, re.S).group(1)
+        self.assertEqual(self.missing(types, projects), [])
+        checked = search(r"for p in ([^;]*); do\n\s*npx tsc -p", ci).group(1).split()
+        javascript = search(r"\n- JavaScript is typed too: (.*?)\n- ", layout, re.S).group(1)
+        self.assertEqual(self.missing(javascript, checked), [])
+
+
 class PythonExtras(unittest.TestCase):
     """The Python package's extras promise only what runs: each package an extra brings has the floor the
     conformance app gives it, and each night that app's suite runs on those floors (RESOLUTION=lowest-direct)."""

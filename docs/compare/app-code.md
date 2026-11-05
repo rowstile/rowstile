@@ -93,4 +93,4 @@ rules app.notes
 ## Try it
 
 [Getting started](../getting-started.md) takes a schema to a tested policy in about fifteen minutes, and the
-[stack pages](../stacks/README.md) show the app's side for FastAPI, Next.js and plain SQL.
+[stack pages](../stacks/README.md) show the app's side for each SDK's stacks, and for plain SQL.

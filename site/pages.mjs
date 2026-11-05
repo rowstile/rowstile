@@ -191,7 +191,7 @@ export const DESCRIPTIONS = {
   "reference/identity.md": "Who is asking, in each transaction: a trusted backend, API keys with scopes, JWT login, services, and signed sessions in Postgres.",
   "reference/governance.md": "Audit trail, change feed, access requests, break glass, access reviews and authz.lint() for Postgres row-level security.",
   "reference/tools.md": "Every rowstile command (init, dev, check, test, prove, review, migrate, why, Studio), rowstile.toml and the MCP server for coding agents.",
-  "reference/migrations.md": "A policy change as a migration for Alembic, Prisma, Drizzle Kit, plain SQL, goose, dbmate or Flyway, and the lock file.",
+  "reference/migrations.md": "A policy change as a migration for Alembic, Django, Prisma, Drizzle Kit, Rails, Laravel, Ecto, EF Core, sqlx, goose, dbmate, Flyway or plain SQL, and the lock file.",
   "reference/review.md": "rowstile review says on the pull request what a policy change does: who gains or loses access, the risk, the tests, the deploy. For GitHub and GitLab.",
   "reference/guarantees.md": "How rowstile works: what a policy compiles to in Postgres (views, closure tables, row-level security policies), what it guarantees, security.",
   "reference/limits.md": "The measured speed of rowstile's row-level security at 20 million files, its limits, and what a 0.x release promises.",

@@ -1,11 +1,12 @@
 # rowstile
 
 > Authorization for apps on Postgres: sharing, groups, nested folders and tenants, with no service beside the
-> database. A policy file (`.authz`) says who can do what; the `rowstile` command compiles it
-> into row-level security, trigger-maintained tables for inheritance and `authz.*` SQL functions, and ships
-> each change as a migration for the app's own tool (Alembic, Prisma, Drizzle Kit, SQL, goose, dbmate,
-> Flyway). Any Postgres 16, 17 or 18; no extension, no superuser. SDKs for Python (FastAPI, SQLAlchemy) and
-> TypeScript (Next.js, Prisma, Drizzle, pg, postgres.js, React).
+> database. A policy file (`.authz`) says who can do what; the `rowstile` command compiles it into row-level
+> security, trigger-maintained tables for inheritance and `authz.*` SQL functions, and ships each change as a
+> migration for the app's own tool (Alembic, Django, Prisma, Drizzle Kit, Rails, Laravel, Ecto, EF Core, sqlx,
+> goose, dbmate, Flyway or plain SQL). Any Postgres 16, 17 or 18; no extension, no superuser. SDKs for Python
+> (FastAPI, SQLAlchemy, Django as a preview) and TypeScript (Next.js, Prisma, Drizzle, pg, postgres.js, React);
+> previews for Go, .NET, Ruby, Java and Kotlin, Rust, Elixir and PHP.
 
 What an agent needs to know:
 
@@ -96,6 +97,13 @@ rules app.folders
 - [Any other stack](docs/stacks/sql.md): the SQL an app sends
 - [Python SDK](sdk/python/README.md): `pip install --pre rowstile` (pre-releases so far), its modules
 - [TypeScript SDK](sdk/typescript/README.md): the `@rowstile/*` packages
+- [Go SDK](sdk/go/README.md): on pgx (a preview)
+- [.NET SDK](sdk/dotnet/README.md): Npgsql, EF Core, ASP.NET Core (a preview)
+- [Ruby SDK](sdk/ruby/README.md): the `rowstile` gem, for Rails (a preview)
+- [Java SDK](sdk/java/README.md): JDBC, Spring Boot, and a Kotlin module (a preview)
+- [Rust SDK](sdk/rust/README.md): the `rowstile` crate, on sqlx or tokio-postgres (a preview)
+- [Elixir SDK](sdk/elixir/README.md): on Ecto or Postgrex (a preview)
+- [PHP SDK](sdk/php/README.md): `rowstile/rowstile`, on PDO, with Laravel (a preview)
 
 ## Optional
 

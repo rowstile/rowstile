@@ -277,6 +277,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   migration the database holds already, AZ203's no longer names `shared by` and scopes (AZ207, AZ404),
   AZ107's names `roles`, and AZ208's message and page name the same uses: a permission, a rule, an invariant,
   a group or a roles line's `from`.
+- AZ607's page gives Flyway's and sqlx's own commands for recording a migration as applied, and the row Drizzle
+  Kit reads to know one ran. It said those three tools could only make the database again from the migrations.
 - `authz.can`, `authz.list`, `authz.perms` and `authz.perms_of` answer for the rows the user may select: on a table
   with a select rule, a row its rule doesn't let them select reads as a missing one (false, left out of the list,
   no permissions). A permission made of conditions on the row, such as the deny the docs teach (`can hidden =

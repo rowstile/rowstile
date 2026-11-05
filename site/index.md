@@ -23,7 +23,7 @@ features:
   - title: A change you can review
     details: Tests next to the policy, invariants checked in many small worlds, and on each pull request a review that says who gains or loses access.
   - title: Plain SQL, shipped as migrations
-    details: Each change to the policy is a migration for the tool your app already uses (Alembic, Prisma, Drizzle Kit, SQL, goose, dbmate, Flyway). Any Postgres 16, 17 or 18. No extension, no superuser, and what lands in the database is SQL you can read.
+    details: Each change to the policy is a migration for the tool your app already uses (Alembic, Django, Prisma, Drizzle Kit, Rails, Laravel, Ecto, EF Core, sqlx, goose, dbmate, Flyway or plain SQL). Any Postgres 16, 17 or 18. No extension, no superuser, and what lands in the database is SQL you can read.
 ---
 
 ## A small policy
