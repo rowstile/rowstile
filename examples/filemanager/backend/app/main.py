@@ -438,7 +438,9 @@ def too_large(stored: int, key: str) -> None:
 @app.post("/api/files/{file_id}/ready")
 def finish_upload(file_id: int, user: DictRow = Depends(auth.current_user)) -> DictRow | None:
     with db.as_user(user["id"]) as tx:
-        row = found(tx.row("SELECT object_key FROM fm.files WHERE id = %s AND NOT ready", (file_id,)))
+        # FOR UPDATE: a second confirm of the file waits for this one, then finds it ready (404), so the size stored
+        # is that of the bytes moved; it also takes only a row the user may update
+        row = found(tx.row("SELECT object_key FROM fm.files WHERE id = %s AND NOT ready FOR UPDATE", (file_id,)))
         stored = storage.accept(str(row["object_key"]))  # the bytes move to the file's object: the link is spent
         if stored is None:
             raise HTTPException(409, "the file's bytes haven't arrived")
@@ -500,7 +502,7 @@ def make_current(tx: db.Tx, version: DictRow) -> DictRow | None:
 @app.post("/api/versions/{version_id}/ready")
 def finish_version(version_id: int, user: DictRow = Depends(auth.current_user)) -> DictRow | None:
     with db.as_user(user["id"]) as tx:
-        v = found(tx.row("SELECT * FROM fm.file_versions WHERE id = %s AND NOT ready", (version_id,)))
+        v = found(tx.row("SELECT * FROM fm.file_versions WHERE id = %s AND NOT ready FOR UPDATE", (version_id,)))
         stored = storage.accept(str(v["object_key"]))
         if stored is None:
             raise HTTPException(409, "the version's bytes haven't arrived")
