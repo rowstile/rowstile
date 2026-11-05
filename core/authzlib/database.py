@@ -148,6 +148,12 @@ def compiled(policy: str, files: Mapping[str, object] | str | None, make: Callab
 def check(policy: str, files: Mapping[str, object] | str | None = None) -> str | None:
     """The first mistake in the policy (None if none), its own tests included. Only what can be checked without a
     database: tables and columns that don't exist are reported by apply() and diff()."""
+    e = mistake(policy, files)
+    return None if e is None else f"policy {e}"
+
+
+def mistake(policy: str, files: Mapping[str, object] | str | None = None) -> PolicyError | None:
+    """check()'s mistake as it was raised: its file and line (PolicyError.file, .line) too."""
 
     def make(c: Compiler) -> None:
         c.compile("the policy", transaction=False)
@@ -156,7 +162,7 @@ def check(policy: str, files: Mapping[str, object] | str | None = None) -> str |
     try:
         build(policy, files, make)
     except PolicyError as e:
-        return f"policy {e}"
+        return e
     return None
 
 

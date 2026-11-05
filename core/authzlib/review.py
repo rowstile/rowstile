@@ -357,10 +357,8 @@ def rules_reading(pol: Policy) -> dict[tuple[str, str], dict[str, list[str]]]:
 # --- the review --------------------------------------------------------------------------------------
 def mistake_of(e: PolicyError) -> BaseMistake:
     """A policy's mistake as the review reports it: 'line 12: message [AZ203]' -> its line, message and code."""
-    code = e.code
-    text = str(e).removesuffix(f" [{code}]")
-    m = re.match(r"((?:\S+ )?line \d+): (.*)$", text, re.S)
-    return {"line": m.group(1) if m else None, "message": m.group(2) if m else text, "code": code}
+    line = None if e.line is None else f"line {e.line}" if e.file is None else f"{e.file} line {e.line}"
+    return {"line": line, "message": e.said(), "code": e.code}
 
 
 class Side:
@@ -1555,7 +1553,7 @@ def annotations(r: Review, path: str) -> str:
     folder = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
     for f in r["risk"]:
         # 'line 12' is the policy file's; 'roles.authz line 3' an included file's, beside the policy
-        m = re.fullmatch(r"(?:(\S+) )?line (\d+)", f["line"] or "")
+        m = re.fullmatch(r"(?:(.+) )?line (\d+)", f["line"] or "")
         file = folder + m.group(1) if m and m.group(1) else path
         where = f"file={file},line={m.group(2)}" if m else f"file={path}"
         out.append(f"::warning {where},title=rowstile review::{escape_command(f['why'] + ': ' + f['flag'])}")

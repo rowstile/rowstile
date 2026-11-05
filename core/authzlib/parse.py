@@ -28,13 +28,29 @@ Span: TypeAlias = "tuple[int, int, int, int]"
 class PolicyError(Exception):
     """A mistake in a policy: 'line 12: message [AZ201]'. code is the mistake's stable code (authzlib/errors.py,
     a page in docs/errors/, `rowstile help AZ201`); span, when the parser knows it, the words the mistake is
-    about (an editor underlines them; the message names the line alone)."""
+    about (an editor underlines them; the message names the line alone); file and line, where it is when the
+    message names a line ('roles.authz line 3: ...': file roles.authz; the policy's own lines: file None), for
+    the editor, the review and the dev loop to read rather than the message (a file's name may hold a space)."""
 
-    def __init__(self, message: str, code: str | None = None, span: Span | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        code: str | None = None,
+        span: Span | None = None,
+        file: str | None = None,
+        line: int | None = None,
+    ) -> None:
         super().__init__(f"{message} [{code}]" if code else message)
-        self.code, self.span = code, span
+        self.code, self.span, self.file, self.line = code, span, file, line
         # every mistake the parser found in the policy, this one first (it reads on after one)
         self.errors: list[PolicyError] = [self]
+
+    def said(self) -> str:
+        """The message without its place and its code: 'roles.authz line 3: x [AZ201]' -> 'x'."""
+        text = str(self).removesuffix(f" [{self.code}]")
+        if self.line is None:
+            return text
+        return text.removeprefix(f"line {self.line}: " if self.file is None else f"{self.file} line {self.line}: ")
 
 
 class Loc:
@@ -83,7 +99,8 @@ def fail(loc: Loc | int, msg: str, code: str, at: tuple[int, int] | None = None,
     file, for words the parser read before (a name the compiler looks up keeps where it was written)."""
     if span is None and at and isinstance(loc, Loc):
         span = loc.span(*at)
-    raise PolicyError(f"{loc if isinstance(loc, Loc) else f'line {loc}'}: {msg}", code, span)
+    file, line = (loc.file, loc.line) if isinstance(loc, Loc) else (None, loc)
+    raise PolicyError(f"{loc if isinstance(loc, Loc) else f'line {loc}'}: {msg}", code, span, file, line)
 
 
 def head(span: Span | None, n: int) -> Span | None:
@@ -1205,7 +1222,7 @@ def reading(loc: Loc, msg: str, code: str, read: Callable[[], T]) -> T:
     try:
         return read()
     except Unread as stop:
-        raise PolicyError(f"{loc}: {msg}", code, loc.span(*stop.at)) from None
+        raise PolicyError(f"{loc}: {msg}", code, loc.span(*stop.at), loc.file, loc.line) from None
 
 
 def qname(w: Words) -> Piece:

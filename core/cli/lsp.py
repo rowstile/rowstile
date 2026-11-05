@@ -34,7 +34,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from authzlib import Compiler, PolicyError, parse_policy  # noqa: E402
 from authzlib.connection import Value as Json  # noqa: E402
-from authzlib.errors import split as split_code  # noqa: E402
 from authzlib.parse import (  # noqa: E402
     IDENT,
     QNAME,
@@ -128,7 +127,6 @@ def number(message: Message, key: str) -> int:
 
 THIS = "(this-file)"  # what a test file is called while it is checked
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
-ERROR = re.compile(r"^(?:(\S+?) )?line (\d+): (.*)$", re.S)
 TOP_WORDS = [
     "app role",
     "type",
@@ -256,7 +254,7 @@ class Server:
         try:
             return collect_includes(text, read)
         except OSError as e:  # one that is there and isn't read: not UTF-8, say
-            raise PolicyError(f"line 1: {e.strerror}") from None
+            raise PolicyError(f"line 1: {e.strerror}", line=1) from None
 
     def named_policy(self) -> str | None:
         """The policy rowstile.toml names. One the command refuses (outside rowstile.toml's folder) is a mistake to
@@ -266,13 +264,13 @@ class Server:
                 self.mistake is not None
             )  # no settings: rowstile.toml has a mistake (read before any file is checked)
             path, words = self.mistake
-            raise PolicyError(f"line 1: {os.path.basename(path)}: {words}")
+            raise PolicyError(f"line 1: {os.path.basename(path)}: {words}", line=1)
         said = io.StringIO()
         try:
             with contextlib.redirect_stderr(said):
                 return self.cfg.policy
         except SystemExit:
-            raise PolicyError(f"line 1: {said.getvalue().strip()}") from None
+            raise PolicyError(f"line 1: {said.getvalue().strip()}", line=1) from None
 
     def included_by(self, path: str) -> tuple[str, str] | None:
         """The policy rowstile.toml names, and its text, when it includes this file: the file is a part of it, not
@@ -311,12 +309,14 @@ class Server:
             if main is None and self.is_test_file(text):
                 policy = self.named_policy()
                 if not policy:
-                    raise PolicyError('line 1: to check tests, name the policy in rowstile.toml: policy = "..."')
+                    raise PolicyError(
+                        'line 1: to check tests, name the policy in rowstile.toml: policy = "..."', line=1
+                    )
                 try:
                     ptext = self.text_of(policy)
                 except OSError as e:
                     named = self.cfg.setting(None, "policy") if self.cfg else policy
-                    raise PolicyError(f'line 1: rowstile.toml: policy = "{named}": {e.strerror or e}') from None
+                    raise PolicyError(f'line 1: rowstile.toml: policy = "{named}": {e.strerror or e}', line=1) from None
                 against, files = policy, self.includes(policy, ptext)
                 c = Compiler(parse_policy(ptext, None, files=files))
                 c.add_test_files({THIS: text})
@@ -331,10 +331,7 @@ class Server:
                 c.tests_function_sql()  # the policy's own test lines, as rowstile test reads them
         except PolicyError as e:
             for mistake in e.errors:  # (every one the parser found; the compiler stops at its first)
-                m = ERROR.match(split_code(str(mistake))[0])
-                name, line, msg = (
-                    (m.group(1), int(m.group(2)), m.group(3)) if m else (None, 1, split_code(str(mistake))[0])
-                )
+                name, line, msg = mistake.file, mistake.line or 1, mistake.said()
                 target = uri if main is None else self.uri_of(main)
                 span = mistake.span
                 if against is not None and name != THIS:

@@ -16,19 +16,14 @@
 /** @typedef {{run(data: string, compiled: Compiled): Promise<Run>, ask(who: string, sql: string): Promise<Answer>}} Database */
 
 const GLUE = `
-import json, re, sys
+import json, sys
 sys.path.insert(0, "/rowstile")
 from authzlib import Compiler, PolicyError, parse_policy, errors
 
-LINE = re.compile(r"(?:(\\S+) )?line (\\d+): (.*)", re.S)
-
 
 def _mistake(e):
-    message, code = errors.split(str(e))
-    m = LINE.fullmatch(message)
-    return {"ok": False, "file": m.group(1) if m else None, "line": int(m.group(2)) if m else None,
-            "message": m.group(3) if m else message, "code": code,
-            "help": errors.page(code) if code in errors.CODES else None}
+    return {"ok": False, "file": e.file, "line": e.line, "message": e.said(), "code": e.code,
+            "help": errors.page(e.code) if e.code in errors.CODES else None}
 
 
 def pg_compile(policy, tests):

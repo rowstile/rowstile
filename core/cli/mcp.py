@@ -33,7 +33,8 @@ VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]  # newest fi
 TIMEOUT = 600  # seconds, for one call
 GRACE = 10  # seconds a stopped command has to end on its own (a push rolls back) before it is killed
 NO_DATABASE = ("check", "prove")  # the commands of its tools that read no database
-ERROR = re.compile(r"^(?P<file>.+?): (?:(?P<inc>\S+) )?line (?P<line>\d+): (?P<message>.*)$", re.S)
+# `rowstile check`'s mistake: '<policy>: [<included file> ]line N: message', a file's name with spaces too
+ERROR = re.compile(r"^(?P<file>.+?): (?:(?P<inc>.+?) )??line (?P<line>\d+): (?P<message>.*)$", re.S)
 
 INSTRUCTIONS = """rowstile compiles an access policy (.authz) into row-level security for Postgres.
 The policy file and the database come from rowstile.toml in this project.

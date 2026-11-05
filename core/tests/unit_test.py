@@ -4568,10 +4568,20 @@ rules app.folders
             self.review.mistake_of(PolicyError("the policy: something", "AZ999")),
             {"line": None, "message": "the policy: something", "code": "AZ999"},
         )
-        self.assertEqual(
-            self.review.mistake_of(PolicyError("roles.authz line 3: a 100% mistake", "AZ201"))["line"],
-            "roles.authz line 3",
-        )
+        # its place as the mistake holds it (a file's name may hold a space), not read back from its words
+        try:
+            parse_policy('include "my roles.authz"\n', files={"my roles.authz": "type x = app.x\n  can view\n"})
+        except PolicyError as e:
+            self.assertEqual(
+                self.review.mistake_of(e),
+                {
+                    "line": "my roles.authz line 2",
+                    "message": "write permissions as: can name = expression",
+                    "code": "AZ104",
+                },
+            )
+        else:
+            self.fail("the mistake was not seen")
 
     def test_a_base_in_forms_the_language_does_not_have_is_a_base_with_a_mistake(self) -> None:
         """`role x` for the app role, `roles : user grant view` for custom roles, a word after an update rule's
@@ -4608,25 +4618,29 @@ rules app.folders
         self.assertIn("removed from carol: user 3 cannot view file 12", self.review.text(r))
 
     def test_a_flag_in_an_included_file_is_annotated_there(self) -> None:
-        main = self.SMALL.replace(
-            "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n"
-            "  admin  : user = app.org_members(org_id -> user_id) where {role = 'admin'}\n"
-            "  can manage = admin\n  can see = member\n",
-            'include "org.authz"\n',
-        )
-        org = (
-            "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n"
-            "  admin  : user = app.org_members(org_id -> user_id) where {role = 'admin'}\n"
-            "  can manage = admin\n  can see = member\n"
-        )
-        self.assertNotEqual(main, self.SMALL)
-        r = self.review.review(
-            (main, {"org.authz": org}, {}),
-            (main, {"org.authz": org.replace("can manage = admin", "can manage = admin or member")}, {}),
-            worlds=40,
-        )
-        notes = self.review.annotations(r, "db/policy.authz")
-        self.assertRegex(notes, r"^::warning file=db/org.authz,line=4,title=rowstile review::a permission widened")
+        # (a file's name may hold a space)
+        for name in ("org.authz", "the org.authz"):
+            main = self.SMALL.replace(
+                "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n"
+                "  admin  : user = app.org_members(org_id -> user_id) where {role = 'admin'}\n"
+                "  can manage = admin\n  can see = member\n",
+                f'include "{name}"\n',
+            )
+            org = (
+                "type org = app.orgs\n  member : user = app.org_members(org_id -> user_id)\n"
+                "  admin  : user = app.org_members(org_id -> user_id) where {role = 'admin'}\n"
+                "  can manage = admin\n  can see = member\n"
+            )
+            self.assertNotEqual(main, self.SMALL)
+            r = self.review.review(
+                (main, {name: org}, {}),
+                (main, {name: org.replace("can manage = admin", "can manage = admin or member")}, {}),
+                worlds=40,
+            )
+            notes = self.review.annotations(r, "db/policy.authz")
+            self.assertRegex(
+                notes, rf"^::warning file=db/{name},line=4,title=rowstile review::a permission widened", name
+            )
 
     def test_a_column_rule_is_known_however_its_head_is_written(self) -> None:
         """`update owner_id before : ...` says what `update owner_id : ...` says, and `update a,b` what `update a, b`

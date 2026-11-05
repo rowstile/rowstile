@@ -12,7 +12,7 @@ cookbook 102
 cuts half way 28
 cuts half way, every statement 31
 cuts half way, other policies 1
-devx 150
+devx 151
 docs 37
 governance 282
 hand answers 370
@@ -26,9 +26,9 @@ interleavings (read committed, docs) 36
 interleavings (read committed, parts) 21
 invariance of the fixed policies 27
 keep unchanged trees 16
-language server 137
+language server 138
 masks 39
-mcp 75
+mcp 76
 migrate vs apply 97
 migrations 79
 moves 23

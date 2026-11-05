@@ -889,20 +889,17 @@ class Dev:
             return False
         self.read = (text, files)
         try:
-            msg = database.check(text, files)
+            err = database.mistake(text, files)
+            where = None if err is None else str(err)
         except RecursionError:
-            msg = "an expression in the policy is nested too deep to read"
-        if msg:
-            where = msg.removeprefix("policy ")
-            line = re.match(r"(?:(\S+) )?line (\d+):", where)
+            err, where = None, "an expression in the policy is nested too deep to read"
+        if where is not None:
             source = ""
-            if line:
-                name = line.group(1)
-                body = files.get(name, text) if name else text
+            if err is not None and err.line is not None:
+                body = files.get(err.file, text) if err.file else text
                 lines = body.split("\n")
-                n = int(line.group(2))
-                assert 0 < n <= len(lines), where  # a line of the file it read (tests/fuzz_parser.py checks)
-                source = "\n  " + lines[n - 1].strip()
+                assert 0 < err.line <= len(lines), where  # a line of the file it read (tests/fuzz_parser.py checks)
+                source = "\n  " + lines[err.line - 1].strip()
             self.say(
                 "x",
                 f"{relative(self.policy)}: {where}{source}\nnothing applied: the database keeps the policy in force",

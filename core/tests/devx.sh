@@ -660,6 +660,14 @@ sed -i 's/can edit  = share or editor or/can edit  = share or edtor or/' "$T/p/p
 case "$(cat "$T/dev.log")" in *"policy.authz: line "*"edtor"*"nothing applied"*) [ $rc -eq 1 ] && ok "... a mistake stops it before applying, exit 1" || bad "dev mistake exit" "$rc";;
   *) bad "dev mistake" "$(cat "$T/dev.log")";; esac
 sed -i 's/edtor/editor/' "$T/p/policy.authz"
+cp "$T/p/policy.authz" "$T/policy.keep"
+printf 'include "my part.authz"\n' >> "$T/p/policy.authz"
+printf 'type extra = app.extras\n  can see = nosuch\n' > "$T/p/my part.authz"
+( cd "$T/p" && python3 "$OLDPWD/cli/rowstile_cli.py" dev --once ) > "$T/dev.log" 2>&1; rc=$?
+case "$(cat "$T/dev.log")" in *"policy.authz: my part.authz line 2: extra has no relation or permission 'nosuch'"*"         can see = nosuch"*"nothing applied"*)
+  [ $rc -eq 1 ] && ok "... and one in an included file whose name has a space: its line shown" || bad "dev mistake in a spaced file: exit" "$rc";;
+  *) bad "dev mistake in a spaced file" "$(cat "$T/dev.log")";; esac
+cp "$T/policy.keep" "$T/p/policy.authz"; rm "$T/p/my part.authz"
 # what it says of a test that fails, a test file it can't read, and a table the database doesn't have
 devonce() { ( cd "$T/p" && python3 "$OLDPWD/cli/rowstile_cli.py" dev --once ) > "$T/dev.log" 2>&1; rc=$?; }
 cp "$T/p/tests/docs.authz" "$T/docs.keep"
