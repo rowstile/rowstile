@@ -15,10 +15,9 @@ index gives, and its files are put in DIR, a virtual environment made without pi
 files, and the image the suites run in has no pip. `DIR/bin/python -m rowstile` is then that release's command.
 
 Exit 0: installed, and its version printed (--list: the versions, one a line). Exit 2: PyPI can't be reached from
-here, and why: the suite says so and skips. Exit 3: PyPI has no release from FIRST on that is older than this
-version: there is nothing to upgrade from, which the suite says and skips. Exit 1: anything else (PyPI answered
-something this doesn't read, a wheel that isn't the one the index names, a release asked for by name that is older
-than FIRST).
+here, and why: the suite says so and skips. Exit 1: anything else (PyPI answered something this doesn't read, a
+wheel that isn't the one the index names, a release asked for by name that is older than FIRST, or no release from
+FIRST on that is older than this version: FIRST is out and versions only grow, so the index was misread).
 """
 
 from __future__ import annotations
@@ -168,11 +167,12 @@ def from_first(version: str) -> bool:
     return k is not None and first is not None and k >= first
 
 
-def nothing_before(mine: str) -> str:
-    """What the suite says when no release from FIRST on is older than mine."""
-    return (
-        f"PyPI has no release of rowstile from {FIRST} on that is older than {mine}: there is nothing to upgrade "
-        f"from (a database an alpha before {FIRST} made is applied from scratch, never upgraded)"
+def nothing_before(mine: str) -> Wrong:
+    """No release from FIRST on is older than mine: FIRST is on PyPI and versions only grow, so the index or the
+    version was misread. The suite fails rather than check nothing."""
+    return Wrong(
+        f"PyPI's index has no release of rowstile from {FIRST} on that is older than {mine}, though {FIRST} is out: "
+        "there is nothing to upgrade from"
     )
 
 
@@ -187,14 +187,12 @@ def main(argv: list[str]) -> int:
         if argv[0] == "--list":
             every = older(__version__, found)
             if not every:
-                print(nothing_before(__version__))
-                return 3
+                raise nothing_before(__version__)
             print("\n".join(spelled(v) for v in every))
             return 0
         old = named(argv[1], found) if len(argv) == 2 else before(__version__, found)
         if old is None:
-            print(nothing_before(__version__))
-            return 3
+            raise nothing_before(__version__)
         install(argv[0], *found[old])
     except Unreachable as e:
         print(f"PyPI can't be reached from here ({e}): there is nothing to upgrade from")

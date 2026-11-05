@@ -211,8 +211,8 @@ not a proof for worlds of any size, and it reads the policy, not your data.
   the app would, and each holds what applying this version on a new database leaves, down to the columns of the
   tables rowstile keeps across applies; the policy's tests and the scenario pass, and what the app made before
   still works. <!-- checked: tests/upgrade.sh "it holds what applying this version on a new database leaves"; tests/upgrade.sh "the API key made before still signs dave in" -->
-  The release before is one from 0.1.0-beta.1 on: the beta started afresh, and no alpha is upgraded from. Until
-  a release after the beta is out, the suite says there is nothing to upgrade from, and skips. <!-- checked: tests/unit_test.py "test_the_alphas_are_never_the_release_before"; tests/unit_test.py "test_an_upgrade_with_nothing_to_upgrade_from" -->
+  The release before is one from 0.1.0-beta.1 on: the beta started afresh, and no alpha is upgraded from. The
+  beta is out, so a run that finds no release to upgrade from fails: it doesn't pass having checked nothing. <!-- checked: tests/unit_test.py "test_the_alphas_are_never_the_release_before"; tests/unit_test.py "test_an_upgrade_with_nothing_to_upgrade_from" -->
   It also makes a world of data the way the random checks do: shares in every state, links, moves, through that
   release's own triggers and `authz.share`; every night it does all of this from every release on PyPI
   from the beta on. Each release is upgraded with the docs app it was released with: a copy in the tests where it

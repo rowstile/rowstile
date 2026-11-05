@@ -8,9 +8,9 @@
 # for access. Then this checkout's command upgrades each as the app would: push; apply, or reapply (the policy the
 # database holds); and the next migration from the old lock file. Each database then holds what applying this
 # version on a new one leaves, the policy's tests and the docs scenario pass, and what the app made before is still
-# there and still in force. Where PyPI can't be reached, it says so and skips; where PyPI has no release from the
-# beta on that is older than this version (until 0.1.0-beta.1 is out, and on the beta's own commit), it says so too,
-# and skips with a last line of its own, which run_tests.sh records under a name of its own: no checks to count.
+# there and still in force. Where PyPI can't be reached, it says so and skips (and falls short of its count); where
+# PyPI has no release from the beta on that is older than this version, it fails: the beta is out, so the index was
+# misread.
 # Right after a release this version makes just what the release before made (a new version alone is no
 # migration): then migrate has nothing to write, and that database stays as the release before's migrations left
 # it, which must still be what this version leaves on a new one. The checks are as many either way.
@@ -22,8 +22,7 @@
 # and by the next migration, and each then answers every user, object and permission as the reference evaluator
 # does and as a new database does, with this version applied whole on the same rows, and holds what that one holds.
 # --every: from each release PyPI has that is older than this version (--from V --world for each, oldest first);
-# each upgrades with as many checks, and the last line says so. Nightly; it needs PyPI too, and skips without it, or
-# without a release from the beta on before this version.
+# each upgrades with as many checks, and the last line says so. Nightly; it needs PyPI too, and skips without it.
 #   PGHOST=... PGUSER=... tests/upgrade.sh [--from VERSION] [--world] | --every
 set -u
 cd "$(dirname "$0")/.."
@@ -39,7 +38,6 @@ done
 if [ -n "${EVERY:-}" ]; then
   out=$(python3 tests/previous_release.py --list 2>&1); rc=$?
   if [ $rc -eq 2 ]; then echo "skip  $out"; echo "upgrade: skipped"; exit 0; fi
-  if [ $rc -eq 3 ]; then echo "skip  $out"; echo "upgrade: skipped, nothing to upgrade from"; exit 0; fi
   [ $rc -eq 0 ] || { echo "FAIL  the releases on PyPI: $out"; echo "upgrade: 1 failed"; exit 1; }
   failed=() counts=()
   for v in $out; do
@@ -74,7 +72,6 @@ if [ -n "$FROM" ]; then BEFORE="the older release"; else BEFORE="the release bef
 echo "-- ${FROM:-the release before this one}, from PyPI"
 out=$(python3 tests/previous_release.py "$T/old" $FROM 2>&1); rc=$?
 if [ $rc -eq 2 ]; then echo "skip  $out"; echo "upgrade: skipped"; exit 0; fi
-if [ $rc -eq 3 ]; then echo "skip  $out"; echo "upgrade: skipped, nothing to upgrade from"; exit 0; fi
 [ $rc -eq 0 ] || { bad "$BEFORE, from PyPI" "$out"; echo "upgrade: 1 failed"; exit 1; }
 OLD_VERSION=$out
 NEW_VERSION=$(python3 -c 'import authzlib; print(authzlib.__version__)')
