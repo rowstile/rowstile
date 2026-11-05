@@ -41,6 +41,25 @@ PHP apps use [the PHP SDK](../../sdk/php/README.md) (preview): `rowstile/rowstil
 provider that signs in every transaction as the request's or the job's principal and answers refusals with problem
 details; [`integrations/laravel`](../../integrations/laravel) is its conformance suite, and `rowstile client php` writes the policy's names for it
 (`database/authz.php`).
+
+**What every SDK reads of an error.** The SDKs read the database's errors by the same rules, and each SDK's own
+tests hold each rule:
+
+- rowstile's code is the `rowstile help AZ709` in the error's HINT. The message is not read for one: Postgres's
+  own messages quote the input they couldn't read (`invalid input syntax for type bigint: "..."`), so a code
+  there would be the request's choice.
+- The not-signed-in error is a 28000 with code AZ701. A 28000 without a code is Postgres's own: a login turned down
+  when connecting, a role that isn't there, a line missing from `pg_hba.conf`. It stays a database error, a 500.
+- Postgres's own row-level security refusal (`new row violates row-level security policy for table "notes"`: an
+  insert read back without the select rule, an upsert, a MERGE) is a refusal, a 403, in any language. The SDKs
+  tell it by the function in Postgres that raised it (`ExecWithCheckOptions`, the error's routine field), not by
+  its words. On a server whose `lc_messages` isn't English, the table and the rule it names are in words the
+  SDKs don't read, so the refusal names neither. PHP's driver gives the server's text and not that field: in
+  PHP, the refusal in another language stays a database error. Set the app role's messages to English there
+  (`ALTER ROLE app_user SET lc_messages = 'C'`, by a superuser).
+- Nobody has one spelling: a principal without an id (none, or empty), whatever its type, is the SDK's nobody,
+  as `authz.act_as` signs it in. So work for nobody runs inside a transaction begun for any spelling of it.
+
 The SDK's calls (`calls(q)`, and each driver's: Prisma's `db.$authz`) are `can`, `perms`, `permsOf`, `list`,
 `listShares`, `share`, `unshare`, `requestAccess`, `explainRule`, `connectionCheck` and `expect` (and Prisma's
 `ids`). Its `share` takes no expiry, start or caveat. For those, and for the rest of the table below (`who`, `explain`, links,

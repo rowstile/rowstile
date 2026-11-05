@@ -87,8 +87,8 @@ A refused INSERT is an error already: `rowstile.refusal(exc)` reads it as `Refus
 
 A query in a transaction nobody signed in to (a connection the SDK doesn't sign in, an engine in `AUTOCOMMIT`)
 fails with the not-signed-in error (AZ701), a bug in the app: `rowstile.not_signed_in(exc)` says whether an
-error is that one. A login the database refuses (AZ703) and settings changed by hand (AZ702) have its
-SQLSTATE, 28000, but are not it.
+error is that one: SQLSTATE 28000 with code AZ701. A login the database refuses (AZ703), settings changed by
+hand (AZ702) and Postgres's own refusal to connect (no code) have its SQLSTATE, but are not it.
 
 ## asyncpg
 

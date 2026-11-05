@@ -169,8 +169,8 @@ table as the policy names it, with its schema (`public.Note` for a model `Note`)
 says names something that isn't there (a share with someone who doesn't exist) is 404 too, one it says
 lacks an argument or has a wrong one (a negative page size) 400, one that needs someone signed in, from a
 visitor who isn't, 401, and a folder moved into one of its own subfolders 409, each with the database's words.
-Prisma's driver adapter keeps no hint for SQLSTATE 28000, so a login the database refuses
-(`authz.login_key`, AZ703) reads as `NotSignedIn` through Prisma; through `pg` it answers 401.
+Prisma's driver adapter keeps no hint for SQLSTATE 28000, so through Prisma a login the database refuses
+(`authz.login_key`, AZ703) has no code and stays Prisma's error, a 500; through `pg` it answers 401.
 
 ```ts
 import { route } from "@rowstile/next";
