@@ -21,8 +21,8 @@ order (`{name < 'b'}` follows the database's collation), no text Postgres would 
 boolean (`{size = '10'}`, `{done = 't'}`), no number a numeric, a double precision and a real column don't all
 hold as written (read: 0.5, 0.25, 1.5, 100; not 0.1, which a real column holds as 0.100000001, so
 `0.1::real = 0.1` is false; not 1.00000000000000001, which is 1 in a double precision column; not 16777217,
-which a real column rounds, nor 16777216, one more than which it rounds: the made-up rows hold the values around a
-number too), no order against authz.uid() (the user key's type decides it). Those are left to the
+which a real column rounds, nor 9999999, half more than which it rounds: the made-up rows hold the values around a
+number too, halfway to the next ones among them), no order against authz.uid() (the user key's type decides it). Those are left to the
 database too. A column a relation reads holds the linked ids' text: compared with a number, as a number
 (tests/conditions_test.py asks Postgres the same questions).
 
@@ -56,8 +56,9 @@ Scalar: TypeAlias = "str | int | Decimal | bool | None"
 # (15); the made-up rows' numbers around it (one less, one more) are then exact in Decimal's 28 digits
 DIGITS = 15
 # the values the worlds draw for a column around a number it is compared with (evaluate.domains): one less, the
-# number, one more, two past the largest; each must be one every numeric column holds as it is
-AROUND = (-1, 0, 1, 2)
+# number, one more, two past the largest, and halfway between the number and one either side of it (a numeric
+# column holds 1.5 between 1 and 2); each must be one every numeric column holds as it is
+AROUND = tuple(Decimal(k) for k in ("-1", "-0.5", "0", "0.5", "1", "2"))
 
 
 class Col(NamedTuple):
