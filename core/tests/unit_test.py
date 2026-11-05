@@ -17125,6 +17125,10 @@ class PublicSurface(unittest.TestCase):
     PRIVATE = "uses rowstile's private schemas"
     SEARCH_PATH = "puts a schema of rowstile's in the search_path"
     SETS = "sets a setting of rowstile's (only authz.act_as() and the logins do)"
+    QUOTED = (
+        "names a setting of rowstile's in a string (only authz.act_as() and the logins set it; authz.uid() and the "
+        "like read it)"
+    )
 
     def test_names_as_postgres_reads_them(self) -> None:
         self.assertEqual(self.found("SELECT AUTHZ_INT.canon(1);"), [f"{self.PRIVATE}: SELECT AUTHZ_INT.canon(1);"])
@@ -17247,11 +17251,24 @@ class PublicSurface(unittest.TestCase):
             "set \"authz.principal_type\" = 'bot';",
             "SELECT set_config('authz.scopes', 'read', true);",
             "postgresql://app@db/x?options=-c authz.acting_user=1",
+            # options written as a URL writes them: the space and the equals sign encoded
+            "postgresql://app@db/x?options=-c%20authz.user_id%3D1",
+            "postgresql://app@db/x?options=-c+authz.user_id%3d1",
             "RESET authz.user_id;",
         ):
             self.assertEqual(self.found(line), [f"{self.SETS}: {line}"], line)
         line = "SELECT current_setting('authz.session');"
         self.assertEqual(self.found(line), [f"names the setting rowstile signs sessions with: {line}"])
+        # a setting's name in a string: given to set_config as a parameter, or read raw (which nothing signs)
+        for line in (
+            'cur.execute("SELECT set_config(%s, %s, true)", ("authz.user_id", uid))',
+            "await sql`SELECT set_config(${'authz.Principal_Type'}, ${kind}, true)`",
+            "SELECT current_setting('authz.user_id', true)::uuid;",
+            'const key = "authz.scopes";',
+        ):
+            self.assertEqual(self.found(line), [f"{self.QUOTED}: {line}"], line)
+        # named in prose (in backticks too) or unquoted, as the examples' docs and comments do
+        self.assertEqual(self.found("signed in as the user (`authz.user_id`, authz.acting_user)", "README.md"), [])
 
     def test_the_examples_pass(self) -> None:
         for app in ("filemanager", "messenger"):

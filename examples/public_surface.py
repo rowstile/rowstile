@@ -10,7 +10,7 @@ clients and the SDKs (the helpdesk is built on the TypeScript SDK's packages). N
 and authz_int; rowstile's tables (authz.shares, authz.audit, ...), which only its functions read or write; a
 search_path naming a schema of rowstile's; and setting authz.user_id, authz.principal_type, authz.scopes,
 authz.acting_user or authz.session, which only authz.act_as() and the logins do (the generated clients and the
-SDKs call them).
+SDKs call them), or naming one in a string (set_config's parameter, current_setting reading it unsigned).
 
 Every text file is read, whatever its name, comments too (a name in a comment is cheap to reword), and names
 are matched as Postgres reads them: in any case, quoted or not, with spaces around the dot. What rowstile
@@ -48,8 +48,12 @@ TABLES = (
 )
 # the settings that say who is signed in: named in prose, never set by the app
 SETTINGS = ("user_id", "principal_type", "scopes", "acting_user")
-# SET [LOCAL] authz.x, set_config('authz.x', ...), -c authz.x=... in a connection's options
-SETS = re.compile(rf"(?:(?<!{WORD})(?:re)?set\s+(?:local\s+|session\s+)?|set_config\s*\(\s*'|-c\s*)\"?authz\.", re.I)
+# SET [LOCAL] authz.x, set_config('authz.x', ...), -c authz.x=... in a connection's options (in a URL too: -c%20authz.x)
+SETS = re.compile(
+    rf"(?:(?<!{WORD})(?:re)?set\s+(?:local\s+|session\s+)?|set_config\s*\(\s*'|-c(?:\s|%20|\+)*)\"?authz\.", re.I
+)
+# 'authz.user_id' in a string: a name set_config is given as a parameter, or one current_setting reads raw (unsigned)
+QUOTED = re.compile(rf"""(['"])authz\.(?:{"|".join(SETTINGS)})\1""", re.I)
 # SET search_path TO authz, set_config('search_path', 'app, authz', ...), options=-csearch_path%3Dauthz
 SEARCH_PATH = re.compile(
     rf'search_path\b[^;\n]*?(?:(?<!{WORD})|(?<=%3d))"?authz(?:_gen|_int)?"?(?!{WORD})(?!"?\s*\.)', re.I
@@ -100,8 +104,18 @@ def places(text: str, public: frozenset[str]) -> list[tuple[int, str]]:
         found.append((m.start(), "uses rowstile's private schemas"))
     for m in SEARCH_PATH.finditer(text):
         found.append((m.start(), "puts a schema of rowstile's in the search_path"))
-    for m in SETS.finditer(text):
-        found.append((m.start(), "sets a setting of rowstile's (only authz.act_as() and the logins do)"))
+    sets = [m.span() for m in SETS.finditer(text)]
+    for start, _ in sets:
+        found.append((start, "sets a setting of rowstile's (only authz.act_as() and the logins do)"))
+    for m in QUOTED.finditer(text):
+        if not any(start <= m.start() < end for start, end in sets):  # SET "authz.x" says so already
+            found.append(
+                (
+                    m.start(),
+                    "names a setting of rowstile's in a string (only authz.act_as() and the logins set it; "
+                    "authz.uid() and the like read it)",
+                )
+            )
     for m in NAME.finditer(text):
         name, called = m.group(1).lower(), m.group(2) is not None
         if name in TABLES and not called:
