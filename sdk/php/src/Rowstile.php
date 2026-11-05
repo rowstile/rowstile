@@ -10,7 +10,7 @@ use PDO;
 use Throwable;
 use WeakMap;
 
-use function array_map, array_values, count, explode, implode, in_array, is_array, is_string, json_decode, ltrim, preg_match, sprintf, str_replace, str_starts_with, strpbrk;
+use function array_map, array_values, count, explode, implode, is_array, is_string, json_decode, ltrim, preg_match, sprintf, str_replace, str_starts_with, strpbrk;
 
 /**
  * rowstile for PHP apps on PDO (pdo_pgsql), a preview: it may change in any release.
@@ -250,7 +250,8 @@ final class Rowstile
         return match (true) {
             ($refused = self::refusal($error)) !== null => $refused,
             $code !== null && isset(CallError::CODES[$code]) => new CallError($said->message, $code, $error),
-            // a login refused (AZ703) and settings changed by hand (AZ702) share its SQLSTATE, and are no such thing
+            // a login refused (AZ703), settings changed by hand (AZ702) and Postgres's own refusals to connect (no code)
+            // share its SQLSTATE, and are no such thing
             self::notSignedIn($error) => new NotSignedIn($error),
             default => $error,
         };
@@ -291,10 +292,10 @@ final class Rowstile
      */
     private static function rule(string $message): array
     {
-        if (preg_match('/ may not insert this row into (\S+)$/', $message, $m) === 1) {
+        if (preg_match('/^permission denied: .* may not insert this row into (\S+)$/', $message, $m) === 1) {
             return [$m[1], 'insert'];
         }
-        if (preg_match('/ may not update this row of (\S+) to these values$/', $message, $m) === 1) {
+        if (preg_match('/^permission denied: .* may not update this row of (\S+) to these values$/', $message, $m) === 1) {
             return [$m[1], 'update'];
         }
         if (preg_match('/^changing .+? of (\S+) .* needs: /', $message, $m) === 1) {
@@ -346,13 +347,14 @@ final class Rowstile
 
     /**
      * Whether the error is strict sign-in's (rowstile help AZ701): a query that needs to know who is asking ran in a
-     * transaction nobody signed in to. A login refused (AZ703) and settings changed by hand (AZ702) share its
-     * SQLSTATE, 28000, but are no such thing.
+     * transaction nobody signed in to. Its SQLSTATE, 28000, is shared by a login refused (AZ703), settings changed
+     * by hand (AZ702) and Postgres's own refusals to connect (a role that isn't there, pg_hba.conf), which carry no
+     * code: none of them is.
      */
     public static function notSignedIn(Throwable $error): bool
     {
         $said = Said::of($error);
-        return $error instanceof NotSignedIn || ($said?->sqlstate === '28000' && in_array($said->code(), [null, 'AZ701'], true));
+        return $error instanceof NotSignedIn || ($said?->sqlstate === '28000' && $said->code() === 'AZ701');
     }
 
     /**
