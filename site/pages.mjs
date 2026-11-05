@@ -61,21 +61,29 @@ export function readPost(file, text) {
            author: byline[1].trim(), summary: plain(first) };
 }
 
+/** Posts, newest first, from their files, each listed in the blog's index. Two with one slug fail the build, and so
+ *  does one the index doesn't list. @param {Record<string, string>} files each post's text, by its file's name
+ *  @param {() => string} index the index's text (read only when there is a post) @returns {Post[]} */
+export function readPosts(files, index) {
+  const posts = Object.entries(files).map(([f, text]) => readPost(f, text))
+    .sort((a, b) => (a.date === b.date ? a.slug.localeCompare(b.slug) : a.date < b.date ? 1 : -1));
+  const listed = posts.length ? index() : "";
+  for (const p of posts) {
+    if (posts.some((q) => q !== p && q.slug === p.slug)) throw new Error(`docs/blog: two posts are named ${p.slug}`);
+    if (!listed.includes(`](${p.file})`)) throw new Error(`docs/blog/README.md doesn't list ${p.file}`);
+  }
+  return posts;
+}
+
 /** The blog's posts, newest first: docs/blog/<date>-<slug>.md, each listed in docs/blog/README.md (the index, on
  *  GitHub too). With no post there is no blog: no page, no feed, nothing in the navigation.
  *  @type {Post[]} */
 export const POSTS = (() => {
   const folder = join(REPO, "docs", "blog");
   if (!existsSync(folder)) return [];
-  const posts = readdirSync(folder).filter((f) => f.endsWith(".md") && f !== "README.md")
-    .map((f) => readPost(f, readFileSync(join(folder, f), "utf8")))
-    .sort((a, b) => (a.date === b.date ? a.slug.localeCompare(b.slug) : a.date < b.date ? 1 : -1));
-  const index = posts.length ? readFileSync(join(folder, "README.md"), "utf8") : "";
-  for (const p of posts) {
-    if (posts.some((q) => q !== p && q.slug === p.slug)) throw new Error(`docs/blog: two posts are named ${p.slug}`);
-    if (!index.includes(`](${p.file})`)) throw new Error(`docs/blog/README.md doesn't list ${p.file}`);
-  }
-  return posts;
+  const names = readdirSync(folder).filter((f) => f.endsWith(".md") && f !== "README.md");
+  return readPosts(Object.fromEntries(names.map((f) => [f, readFileSync(join(folder, f), "utf8")])),
+    () => readFileSync(join(folder, "README.md"), "utf8"));
 })();
 
 /** Repository path -> address in the site (the page's path, with .md). @type {Record<string, string>} */
@@ -154,6 +162,18 @@ export const PAGES = {
 
 /** Titles for pages whose first heading says something else on the site. @type {Record<string, string>} */
 export const TITLES = { "development.md": "Working on rowstile", "words.md": "Words" };
+
+/** The sitemap VitePress wrote, against the pages: it lists each page but those inSitemap leaves out, and none of
+ *  those; and inSitemap leaves some out (the error codes'). @param {string} sitemap
+ *  @param {string[]} [paths] the pages' URLs */
+export function checkSitemap(sitemap, paths = Object.values(PAGES).map(url)) {
+  const has = (/** @type {string} */ p) => sitemap.includes(`<loc>${ORIGIN}${p}</loc>`);
+  const unlisted = paths.filter(inSitemap).filter((p) => !has(p));
+  if (unlisted.length) throw new Error(`sitemap.xml doesn't list ${unlisted.join(", ")}`);
+  const listed = paths.filter((p) => !inSitemap(p)).filter(has);
+  if (listed.length) throw new Error(`sitemap.xml lists what it leaves out: ${listed.join(", ")}`);
+  if (paths.filter(inSitemap).length === paths.length) throw new Error("inSitemap leaves out no page: the error codes' are");
+}
 
 /** Whether the sitemap lists a page (its URL: "/errors/AZ201"). An error code's page is left out: there are some eighty
  *  of them, short and alike, and a new site's crawl goes first to what the sitemap lists. They stay pages, linked from
@@ -241,11 +261,14 @@ export const DESCRIPTIONS = {
   "errors/index.md": "Every rowstile error code: what it means, the mistake, and the same mistake fixed.",
 };
 
-{
-  const addresses = new Set(Object.values(PAGES));
-  const stale = Object.keys(DESCRIPTIONS).filter((a) => !addresses.has(a));
+/** A sentence for each page only: one for what isn't a page (a page gone, or moved) fails the build.
+ *  @param {Record<string, string>} descriptions @param {Record<string, string>} pages */
+export function checkDescriptions(descriptions, pages) {
+  const addresses = new Set(Object.values(pages));
+  const stale = Object.keys(descriptions).filter((a) => !addresses.has(a));
   if (stale.length) throw new Error(`site/pages.mjs: DESCRIPTIONS names what isn't a page: ${stale.join(", ")}`);
 }
+checkDescriptions(DESCRIPTIONS, PAGES);
 
 /** A page's description. A page without one fails the build: add its sentence to DESCRIPTIONS.
  *  @param {string} address @param {string} title */
@@ -344,6 +367,13 @@ const NOTE_AFTER = new RegExp(` ?<!-- (?:${NOTE_KINDS}):[^>]*-->`, "g");
  *  @param {string} text @returns {string} */
 export function withoutNotes(text) {
   return text.replace(NOTE_LINE, "").replace(NOTE_AFTER, "");
+}
+
+/** A page's Markdown copy keeps no note for the repository's checks: one withoutNotes can't take out (written
+ *  another way) fails the build. @param {string} source @param {string} copy */
+export function checkCopy(source, copy) {
+  const kept = copy.split("\n").find((line) => NOTE.test(line));
+  if (kept !== undefined) throw new Error(`${source}: its Markdown copy keeps a note: ${kept}`);
 }
 
 /** A page's URL: "/reference", "/stacks/". @param {string} address */

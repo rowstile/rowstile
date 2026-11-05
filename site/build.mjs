@@ -12,7 +12,7 @@ import { build, createMarkdownRenderer } from "vitepress";
 import { FEED, LANGUAGES, feed, forFeed, postBody } from "./blog.mjs";
 import { KEY, KEY_FILE } from "./indexnow.mjs";
 import { DEPLOYED, deployed } from "./source.mjs";
-import { NOTE, ORIGIN, PAGES, POSTS, REPO, deadAnchors, inSitemap, rewriteLinks, siteLink, url, withoutNotes } from "./pages.mjs";
+import { ORIGIN, PAGES, POSTS, REPO, checkCopy, checkSitemap, deadAnchors, rewriteLinks, siteLink, url, withoutNotes } from "./pages.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = join(HERE, "dist");
@@ -61,13 +61,7 @@ const parse = (source) => (text) => md.parse(text, { path: join(REPO, source), r
 // for search engines: the sitemap VitePress wrote must hold every page but those inSitemap leaves out, and
 // robots.txt names it (the site's source folder is the repository's root, so there is no public/ folder to put the
 // file in)
-const sitemap = await written(join(DIST, "sitemap.xml"), "</urlset>");
-const paths = Object.values(PAGES).map(url);
-const unlisted = paths.filter(inSitemap).filter((p) => !sitemap.includes(`<loc>${ORIGIN}${p}</loc>`));
-if (unlisted.length) throw new Error(`sitemap.xml doesn't list ${unlisted.join(", ")}`);
-const listed = paths.filter((p) => !inSitemap(p)).filter((p) => sitemap.includes(`<loc>${ORIGIN}${p}</loc>`));
-if (listed.length) throw new Error(`sitemap.xml lists what it leaves out: ${listed.join(", ")}`);
-if (paths.filter(inSitemap).length === paths.length) throw new Error("inSitemap leaves out no page: the error codes' are");
+checkSitemap(await written(join(DIST, "sitemap.xml"), "</urlset>"));
 // the mark and the card for shared links, at the site's root (no public/ folder: see above)
 for (const f of ["mark.svg", "card.png"]) cpSync(join(HERE, "assets", f), join(DIST, f));
 writeFileSync(join(DIST, "robots.txt"), `User-agent: *\nAllow: /\n\nSitemap: ${ORIGIN}/sitemap.xml\n`);
@@ -99,8 +93,7 @@ cpSync(join(REPO, "playground", "dist"), join(DIST, "playground"), { recursive: 
 for (const [source, address] of Object.entries(PAGES)) {
   mkdirSync(dirname(join(DIST, address)), { recursive: true });
   const copy = markdownLinks(source, withoutNotes(readFileSync(join(REPO, source), "utf8")));
-  const kept = copy.split("\n").find((line) => NOTE.test(line));
-  if (kept !== undefined) throw new Error(`${source}: its Markdown copy keeps a note: ${kept}`);
+  checkCopy(source, copy);
   writeFileSync(join(DIST, address), copy);
 }
 const llms = markdownLinks("llms.txt", readFileSync(join(REPO, "llms.txt"), "utf8"));
