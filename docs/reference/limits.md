@@ -169,8 +169,9 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   both, and `rowstile apply` then applies (it does not answer `unchanged`). Truncating a partition, or a
   table that inherits, removes the shares, API keys and pending requests of the rows it empties, and
   rebuilds the trees they are in. <!-- checked: tests/children.sh "the shares of its rows go, those of the other partitions' stay"; tests/children.sh "the keys of the people stored there go, the others' stay"; tests/children.sh "and the pending requests naming its rows are cancelled"; tests/children.sh "a topic whose parent is in the partition emptied is under it no more: the tree is rebuilt" -->
-  The audit and the sync index's mirror don't hear of it (they would take it for the whole table
-  emptied), and `authz.lint()` reports an app role that may do it. <!-- checked: tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips row-level security and the audit" -->
+  The audit doesn't hear of it (it would take it for the whole table emptied); a PowerSync mirror of
+  the sync index follows it ([The mirror](sync.md#the-mirror)). `authz.lint()` reports an app role
+  that may do it. <!-- checked: tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips row-level security and the audit" -->
   Dropping or detaching a partition runs no trigger at all: until the next apply, the shares of its
   rows stay, and a row made later with one of their ids gets them. <!-- unchecked: Postgres runs no trigger for DROP TABLE or DETACH PARTITION; the next apply's sweep removes them -->
   An inheritance table whose table, or link table, has other tables under it than at the last apply (a

@@ -401,6 +401,15 @@ same "... an update that puts it in another partition: the mirror follows" "$(mi
 D=$DB3 PSQL -c "INSERT INTO ch.docs_old (id, owner_id, title) VALUES (30, 2, 'old')" >/dev/null
 same "a row made in the table that inherits: in the mirror of the table above" "$(mirrored doc 30)" 30
 same "... and the mirrors match a rebuild" "$(D=$DB3 PSQL -c "SELECT authz.sync_verify()")" t
+# a partition emptied, and the table that inherits: their own copy of the mirror's TRUNCATE trigger takes the rows
+# stored there out of the mirror, and works out the readers again
+mirror_is_table() { D=$DB3 PSQL -c "SELECT (SELECT coalesce(array_agg(id ORDER BY id), '{}') FROM authz_sync.${1}__mirror)
+                                         = (SELECT coalesce(array_agg(id ORDER BY id), '{}') FROM ch.${1}s)"; }
+same "a partition of a mirrored table emptied: the rows stored there leave the mirror, the others stay" \
+  "$(mirrored note 101)|$(D=$DB3 PSQL -c "TRUNCATE ch.notes_high" && mirrored note 101)|$(mirror_is_table note)" "101||t"
+same "... and the readers follow: the index matches a rebuild" "$(D=$DB3 PSQL -c "SELECT authz.sync_verify()")" t
+same "the table that inherits from a mirrored table emptied: the same" \
+  "$(mirrored doc 11)|$(D=$DB3 PSQL -c "TRUNCATE ch.docs_old" && mirrored doc 11)|$(mirror_is_table doc)|$(D=$DB3 PSQL -c "SELECT authz.sync_verify()")" "11||t|t"
 D=$DB3 PSQL -c "TRUNCATE ch.notes CASCADE" >/dev/null
 same "the partitioned table emptied: so is its mirror" "$(D=$DB3 PSQL -c "SELECT count(*) FROM authz_sync.note__mirror")" 0
 same "... which still matches a rebuild" "$(D=$DB3 PSQL -c "SELECT authz.sync_verify()")" t

@@ -65,6 +65,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   mirror. Apply also makes again a mirror, or the table of what waits after commit, that was dropped since (the
   table's writes failed until then), and warns of each publication a readers table made again (its type's key
   changed) is no longer in.
+- The sync index, a preview: a `TRUNCATE` of one partition of a mirrored table, or of a table that inherits from
+  it, takes the rows stored there out of the PowerSync mirror, and the index works out the type's readers again.
+  Before, the mirror kept them, and PowerSync kept syncing rows the app had deleted.
 - A condition that calls a function by its three-part name (`mydb.app.f(id)`), or a function named `filter`,
   `within`, `over` or `is`, is read as calling the app's code, as one written `app.f(id)` is: it runs with the
   policy's rights wherever it is checked, the change feed watches every column of its row, and the sync index

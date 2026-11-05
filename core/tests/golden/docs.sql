@@ -6359,12 +6359,12 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
   FROM below b
   JOIN pg_class u ON u.oid = b.oid
   JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal
+  JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
    AND CASE WHEN g.tgtype & 1 = 1 THEN NOT u.relispartition         -- a row trigger: Postgres copies it to partitions
             ELSE u.relkind IN ('r', 'p')                            -- a statement trigger: not for TRUNCATE alone,
-                 AND (g.tgtype & 28 <> 0                              -- unless it is right there too (below_too)
+                 AND (g.tgtype & 28 <> 0 OR f.proname LIKE '%\_\_mirror'  -- but a mirror's,
                       OR EXISTS (SELECT 1 FROM pg_description x WHERE x.objoid = g.oid AND x.classoid = 'pg_trigger'::regclass
-                                 AND x.description = 'rowstile: for a TRUNCATE of the tables under its table too')) END
-  JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
+                                 AND x.description = 'rowstile: for a TRUNCATE of the tables under its table too')) END  -- and one right there too (below_too)
   CROSS JOIN LATERAL (SELECT pg_get_triggerdef(g.oid) AS def) d
   CROSS JOIN LATERAL (SELECT format('%I.%I', n.nspname, k.relname) AS name
                       FROM pg_class k JOIN pg_namespace n ON n.oid = k.relnamespace WHERE k.oid = b.top) p
