@@ -499,38 +499,69 @@ class SyncMixin(Core):
         )
 
     def mirror_columns_sql(self, s: Sync, rel: str, mirror: bool = False) -> str:
-        """The columns of rel, as `name type`: of the table, but the masked, those its mirror should have; of a mirror,
-        every one but its readers (so a masked column a mirror holds, from before the mask, makes the two differ)."""
+        """The columns of rel, as `name type`, by name: of the table, but the masked, those its mirror should have; of
+        a mirror, every one but its readers (so a masked column a mirror holds, from before the mask, makes the two
+        differ). By name, not place: a column added to a mirror in place comes after its readers."""
         masked = (
             "ARRAY[" + ", ".join(lit(c) for c in (["readers"] if mirror else self.masked_of(s.table))) + "]::name[]"
         )
         return (
             "(SELECT pg_catalog.array_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) "
-            f"ORDER BY a.attnum) FROM pg_catalog.pg_attribute a WHERE a.attrelid = {rel} AND a.attnum > 0 "
+            f"ORDER BY a.attname) FROM pg_catalog.pg_attribute a WHERE a.attrelid = {rel} AND a.attnum > 0 "
             f"AND NOT a.attisdropped AND a.attname <> ALL ({masked}))"
         )
 
+    def mirror_same_sql(self, s: Sync, t: Type) -> str:
+        """Whether a mirror has its table's columns, but the masked (false where either isn't there)."""
+        mt, tbl = lit(self.mirror_table(t)), lit(qt(s.table))
+        return (
+            f"coalesce({self.mirror_columns_sql(s, f'to_regclass({mt})', mirror=True)} = "
+            f"{self.mirror_columns_sql(s, f'to_regclass({tbl})')}, false)"
+        )
+
     def mirror_base_sql(self, s: Sync, t: Type) -> str:
-        """PowerSync's mirror of a table: made from the table's columns when it isn't there or they changed, and filled."""
+        """PowerSync's mirror of a table: made from the table's columns when it isn't there, changed in place to them
+        when they changed (a publication that holds it keeps it), and filled."""
         mt = self.mirror_table(t)
         tbl = qt(s.table)
         drops = "".join(f"\n    ALTER TABLE {mt} DROP COLUMN {q(c)};" for c in self.masked_of(s.table))
+        masked = "ARRAY[" + ", ".join(lit(c) for c in self.masked_of(s.table)) + "]::name[]"
         pk = ", ".join(q(c) for c, _ in t.key)
-        have = self.mirror_columns_sql(s, f"to_regclass({lit(mt)})", mirror=True)
+        rows = self.mirror_rows_sql(t, tbl, "f")
         return f"""-- PowerSync's mirror of {s.table} (mirrored): every column of the table but those the policy masks, and readers, a
--- JSON array of the keys that may read the row, which a stream's buckets are keyed by. Kept across applies; made
--- again when the table's columns changed
+-- JSON array of the keys that may read the row, which a stream's buckets are keyed by. Kept across applies; changed
+-- in place when the table's columns changed (so the publication that holds it keeps it)
 -- @object table {mt}
 DO $mi$
-DECLARE c name;
+DECLARE c name; ty text;
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = {lit(tbl)}::regclass AND a.attname = 'readers'
              AND a.attnum > 0 AND NOT a.attisdropped) THEN
     RAISE EXCEPTION '{s.table} has a column readers, which its mirror keeps each row''s keys in [AZ811]'
       USING HINT = 'rename the column, or sync the table without mirrored: rowstile help AZ811';
   END IF;
-  IF to_regclass({lit(mt)}) IS NOT NULL AND {have} IS DISTINCT FROM {self.mirror_columns_sql(s, f"{lit(tbl)}::regclass")} THEN
-    DROP TABLE {mt};
+  IF to_regclass({lit(mt)}) IS NOT NULL AND NOT {self.mirror_same_sql(s, t)} THEN
+    -- its columns that aren't the table's (dropped there, masked since, or of another type there) go, and those it
+    -- lacks are added (a key column among them takes the primary key with it: made again below) ...
+    FOR c IN SELECT a.attname FROM pg_catalog.pg_attribute a WHERE a.attrelid = {lit(mt)}::regclass AND a.attnum > 0
+               AND NOT a.attisdropped AND a.attname <> 'readers' AND NOT EXISTS (
+                 SELECT 1 FROM pg_catalog.pg_attribute b WHERE b.attrelid = {lit(tbl)}::regclass AND b.attnum > 0
+                 AND NOT b.attisdropped AND b.attname = a.attname AND b.atttypid = a.atttypid AND b.atttypmod = a.atttypmod
+                 AND b.attname <> ALL ({masked})) LOOP
+      EXECUTE pg_catalog.format('ALTER TABLE %s DROP COLUMN %I', {lit(mt)}, c);
+    END LOOP;
+    FOR c, ty IN SELECT b.attname, pg_catalog.format_type(b.atttypid, b.atttypmod) FROM pg_catalog.pg_attribute b
+                 WHERE b.attrelid = {lit(tbl)}::regclass AND b.attnum > 0 AND NOT b.attisdropped AND b.attname <> ALL ({masked})
+                 AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = {lit(mt)}::regclass
+                                 AND a.attname = b.attname AND a.attnum > 0 AND NOT a.attisdropped) ORDER BY b.attnum LOOP
+      EXECUTE pg_catalog.format('ALTER TABLE %s ADD COLUMN %I %s', {lit(mt)}, c, ty);
+    END LOOP;
+    -- ... then its rows are written again where they differ
+    DELETE FROM {mt} m WHERE NOT EXISTS (SELECT 1 FROM ({rows}) x WHERE x::text = m::text);
+    INSERT INTO {mt} SELECT x.* FROM ({rows}) x WHERE NOT EXISTS (SELECT 1 FROM {mt} m WHERE m::text = x::text);
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = {lit(mt)}::regclass AND k.contype = 'p') THEN
+      ALTER TABLE {mt} ADD PRIMARY KEY ({pk});
+    END IF;
   END IF;
   IF to_regclass({lit(mt)}) IS NULL THEN
     CREATE TABLE {mt} (LIKE {tbl});{drops}
@@ -540,7 +571,7 @@ BEGIN
       EXECUTE pg_catalog.format('ALTER TABLE %s ALTER COLUMN %I DROP NOT NULL', {lit(mt)}, c);
     END LOOP;
     ALTER TABLE {mt} ADD COLUMN readers text NOT NULL DEFAULT '[]', ADD PRIMARY KEY ({pk}), REPLICA IDENTITY FULL;
-    INSERT INTO {mt} {self.mirror_rows_sql(t, tbl, "f")};
+    INSERT INTO {mt} {rows};
   END IF;
 END $mi$;"""
 
@@ -600,12 +631,11 @@ CREATE TRIGGER {readers_trig("ins")} AFTER INSERT ON {self.readers_table(t)}
 CREATE TRIGGER {readers_trig("del")} AFTER DELETE ON {self.readers_table(t)}
   REFERENCING OLD TABLE AS changed_rows FOR EACH STATEMENT EXECUTE FUNCTION {fn_readers}();"""
 
-    def sync_base_sql(self) -> str:
-        """authz_sync and its tables, kept across applies (CREATE ... IF NOT EXISTS): a table this policy no longer
-        keeps goes, and so does a readers table whose key columns changed."""
+    def sync_tables(self) -> list[tuple[str, list[str], list[str]]]:
+        """The index's tables but the mirrors, each with its columns and their types: what sync_base_sql keeps, and
+        what applying looks for (sync_intact_sql)."""
         st = self.sync_build()
-        synced = [self.T(n) for n in st.tops]
-        want = (
+        return (
             [
                 ("keys", ["principal_type", "principal_id", "key"], ["text"] * 3),
                 ("groups", ["grp", "key"], ["text"] * 2),
@@ -625,9 +655,29 @@ CREATE TRIGGER {readers_trig("del")} AFTER DELETE ON {self.readers_table(t)}
             )
             + [
                 (t.name + "__readers", [c for c, _ in t.key] + ["key"], [ty for _, ty in t.key] + ["text"])
-                for t in synced
+                for t in (self.T(n) for n in st.tops)
             ]
         )
+
+    def sync_intact_sql(self) -> str:
+        """Whether the index is as applying leaves it (database.intact): each of its tables there, with the columns
+        sync_base_sql gives it (a readers table whose type's key changed is made again), and each mirror with its
+        table's columns (one added, dropped or of another type since, a mask added or taken off: apply changes it)."""
+        there = [
+            "coalesce((SELECT array_agg(a.attname ORDER BY a.attnum) = "
+            f"ARRAY[{', '.join(lit(c) for c in cs)}]::name[] AND array_agg(a.atttypid::regtype ORDER BY a.attnum) = "
+            f"ARRAY[{', '.join(lit(ty) for ty in tys)}]::regtype[] FROM pg_catalog.pg_attribute a "
+            f"WHERE a.attrelid = to_regclass({lit('authz_sync.' + q(n))}) AND a.attnum > 0 AND NOT a.attisdropped), false)"
+            for n, cs, tys in self.sync_tables()
+        ]
+        return "SELECT " + " AND ".join(there + [self.mirror_same_sql(s, t) for s, t in self.mirrored()]) + " AS there"
+
+    def sync_base_sql(self) -> str:
+        """authz_sync and its tables, kept across applies (CREATE ... IF NOT EXISTS): a table this policy no longer
+        keeps goes, and so does a readers table whose key columns changed."""
+        st = self.sync_build()
+        synced = [self.T(n) for n in st.tops]
+        want = self.sync_tables()
         # (a mirror's columns are its table's: its own block below checks them)
         mirrors = [t.name + "__mirror" for _, t in self.mirrored()]
         rows = ",\n             ".join(
@@ -678,9 +728,9 @@ CREATE SCHEMA IF NOT EXISTS authz_sync;
 REVOKE ALL ON SCHEMA authz_sync FROM PUBLIC;
 -- tables this policy doesn't keep, and a readers table whose key columns are not the type's any more, go
 DO $sb$
-DECLARE r record;
+DECLARE r record; p name;
 BEGIN
-  FOR r IN SELECT c.oid::regclass AS tbl FROM pg_catalog.pg_class c
+  FOR r IN SELECT c.oid::regclass AS tbl, w.name IS NOT NULL AS again FROM pg_catalog.pg_class c
            LEFT JOIN (VALUES {rows}) w(name, cols, types) ON w.name = c.relname
            WHERE c.relnamespace = 'authz_sync'::regnamespace AND c.relkind IN ('r', 'p')
              AND (w.name IS NULL
@@ -689,6 +739,11 @@ BEGIN
                      WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.cols
                     OR (SELECT array_agg(a.atttypid::regtype ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
                         WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.types)) LOOP
+    -- (made again: a publication that names it no longer holds it, which Postgres doesn't say)
+    FOR p IN SELECT u.pubname FROM pg_catalog.pg_publication_rel pr JOIN pg_catalog.pg_publication u ON u.oid = pr.prpubid
+             WHERE r.again AND pr.prrelid = r.tbl ORDER BY u.pubname LOOP
+      RAISE WARNING '%', pg_catalog.format('%s is made again (its columns are not the index''s any more: a type''s key changed), so the publication %I no longer holds it: ALTER PUBLICATION %I ADD TABLE %s', r.tbl, p, p, r.tbl);
+    END LOOP;
     EXECUTE format('DROP TABLE %s', r.tbl);
   END LOOP;
   -- a table missing (dropped since, or just now): what the index holds is worked out again (sync_refresh)
@@ -1349,9 +1404,8 @@ END $f$;"""
         """authz_int.sync_mirrors_match(): each mirror has its table's columns (but the masked) and rows, with the
         readers the index holds (false says which differs, in a notice); sync_verify's last answer."""
         checks = "\n".join(
-            f"""  IF {self.mirror_columns_sql(s, f"to_regclass({lit(self.mirror_table(t))})", mirror=True)}
-       IS DISTINCT FROM {self.mirror_columns_sql(s, f"{lit(qt(s.table))}::regclass")} THEN
-    RAISE NOTICE 'the sync index differs from a rebuild: %', {lit(f"{s.table}'s mirror: its columns are not its table's (rowstile reapply makes it again)")};
+            f"""  IF NOT {self.mirror_same_sql(s, t)} THEN
+    RAISE NOTICE 'the sync index differs from a rebuild: %', {lit(f"{s.table}'s mirror: its columns are not its table's (rowstile apply changes it to them)")};
     RETURN false;
   END IF;
   IF EXISTS (
@@ -1619,14 +1673,23 @@ SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type
         role = self.pol.sync_role
         assert role is not None
         tables = "ARRAY[" + ", ".join(lit(qt(t)) for t in sorted({t.table for t in self.types.values()})) + "]::text[]"
+        # a mirror whose columns are not its table's (the app's table changed since): apply changes it to them
+        stale = "".join(
+            f"""
+  IF to_regclass({lit(self.mirror_table(t))}) IS NOT NULL AND NOT {self.mirror_same_sql(s, t)} THEN
+    severity := 'warning'; object := {lit(self.mirror_table(t).replace('"', ""))};
+    problem := {lit(f"has not the columns of {s.table} (one added, dropped or of another type since, or a mask changed): PowerSync syncs the old ones. rowstile apply changes the mirror to them")}; RETURN NEXT;
+  END IF;"""
+            for s, t in self.mirrored()
+        )
         # a masked column in a mirror (put there since: applying makes a mirror without them) reaches the engine
-        mirrors = "".join(
+        mirrors = stale + "".join(
             f"""
   FOR r IN SELECT a.attrelid::regclass::text || '.' || a.attname AS col FROM pg_attribute a
            WHERE a.attrelid = to_regclass({lit(self.mirror_table(t))}) AND a.attnum > 0 AND NOT a.attisdropped
              AND a.attname = ANY (ARRAY[{", ".join(lit(c) for c in self.masked_of(s.table))}]::name[]) LOOP
     severity := 'error'; object := r.col;
-    problem := {lit(f"is masked, and the mirror of {s.table} holds it: the engine reads it, and every client of it. rowstile reapply makes the mirror again without it")}; RETURN NEXT;
+    problem := {lit(f"is masked, and the mirror of {s.table} holds it: the engine reads it, and every client of it. rowstile apply takes it out of the mirror")}; RETURN NEXT;
   END LOOP;"""
             for s, t in self.mirrored()
             if self.masked_of(s.table)

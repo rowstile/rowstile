@@ -59,6 +59,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The sync index, a preview: a PowerSync mirror (`mirrored`) is made again when the policy masks a column of its
   table since, so the masked column leaves the mirror and the sync engine's role can't read it; `authz.sync_verify()`
   says false, and `authz.lint()` reports an error, while a mirror holds a masked column.
+- The sync index, a preview: `rowstile apply` changes a PowerSync mirror in place when its table's columns changed
+  since (a column added, dropped, or of another type), so the `powersync` publication keeps it; before, apply said
+  `unchanged`, and `rowstile reapply` made the mirror again out of the publication. `authz.lint()` warns of such a
+  mirror. Apply also makes again a mirror, or the table of what waits after commit, that was dropped since (the
+  table's writes failed until then), and warns of each publication a readers table made again (its type's key
+  changed) is no longer in.
 - A condition that calls a function by its three-part name (`mydb.app.f(id)`), or a function named `filter`,
   `within`, `over` or `is`, is read as calling the app's code, as one written `app.f(id)` is: it runs with the
   policy's rights wherever it is checked, the change feed watches every column of its row, and the sync index

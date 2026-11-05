@@ -297,9 +297,9 @@ CREATE SCHEMA IF NOT EXISTS authz_sync;
 REVOKE ALL ON SCHEMA authz_sync FROM PUBLIC;
 -- tables this policy doesn't keep, and a readers table whose key columns are not the type's any more, go
 DO $sb$
-DECLARE r record;
+DECLARE r record; p name;
 BEGIN
-  FOR r IN SELECT c.oid::regclass AS tbl FROM pg_catalog.pg_class c
+  FOR r IN SELECT c.oid::regclass AS tbl, w.name IS NOT NULL AS again FROM pg_catalog.pg_class c
            LEFT JOIN (VALUES ('keys', ARRAY['principal_type', 'principal_id', 'key']::name[], ARRAY['text', 'text', 'text']::regtype[]),
              ('groups', ARRAY['grp', 'key']::name[], ARRAY['text', 'text']::regtype[]),
              ('expanded', ARRAY['object_type', 'object_id', 'key']::name[], ARRAY['text', 'text', 'text']::regtype[]),
@@ -314,6 +314,11 @@ BEGIN
                      WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.cols
                     OR (SELECT array_agg(a.atttypid::regtype ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
                         WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) IS DISTINCT FROM w.types)) LOOP
+    -- (made again: a publication that names it no longer holds it, which Postgres doesn't say)
+    FOR p IN SELECT u.pubname FROM pg_catalog.pg_publication_rel pr JOIN pg_catalog.pg_publication u ON u.oid = pr.prpubid
+             WHERE r.again AND pr.prrelid = r.tbl ORDER BY u.pubname LOOP
+      RAISE WARNING '%', pg_catalog.format('%s is made again (its columns are not the index''s any more: a type''s key changed), so the publication %I no longer holds it: ALTER PUBLICATION %I ADD TABLE %s', r.tbl, p, p, r.tbl);
+    END LOOP;
     EXECUTE format('DROP TABLE %s', r.tbl);
   END LOOP;
   -- a table missing (dropped since, or just now): what the index holds is worked out again (sync_refresh)
