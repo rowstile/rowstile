@@ -341,7 +341,7 @@ Tier 2 is otherwise an answer shown to people, tier 3 the tools around them. `py
 | The language server: `rowstile lsp` | 3 | [tools](reference/tools.md) | `lsp_test.py` |  |
 | The MCP server, for coding agents: `rowstile mcp` | 2 | [tools](reference/tools.md) | `mcp_test.py`, `reference.sh` |  |
 | Types and the rows that count: `type`, `where`, `app role` | 1 | [language](reference/language.md) | `unit_test.py`, `policy_errors.py`, `principals.sh`, `apply.sh` | `difftest.py`, `small.py`, `genpolicy.py`, hand answers |
-| Keys: of any type, of several columns | 1 | [language](reference/language.md) | `unit_test.py` | `difftest.py`, `genpolicy.py`, `around.py`, hand answers |
+| Keys: of any type, of several columns | 1 | [language](reference/language.md) | `unit_test.py`, `apply.sh` | `difftest.py`, `genpolicy.py`, `around.py`, hand answers |
 | Policies in several files: `include` | 2 | [language](reference/language.md) | `unit_test.py`, `cli.sh`, `policy_errors.py` | `invariance.py`, `genpolicy.py` |
 | Relations and their sources: columns, pairs of columns, link tables | 1 | [language](reference/language.md) | `unit_test.py`, `scenario.sql` | `difftest.py`, `small.py`, `genpolicy.py`, hand answers |
 | Subjects and principals: a type, a group's members, `user:*`, `anyone`, `link`, services | 1 | [language](reference/language.md) | `principals.sh`, `unit_test.py` | `difftest.py`, `small.py`, hand answers |

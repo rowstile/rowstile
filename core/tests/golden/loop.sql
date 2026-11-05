@@ -395,6 +395,31 @@ BEGIN
     missing := missing || E'\n  ' || 'line 24: lp.domains.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'user'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 7: ' || v_n || ' shares of user name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'org'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 9: ' || v_n || ' shares of org name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'setting'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 15: ' || v_n || ' shares of setting name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'email'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 20: ' || v_n || ' shares of email name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'domain'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 24: ' || v_n || ' shares of domain name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
   IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;
 END $chk$;
 

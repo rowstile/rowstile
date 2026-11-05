@@ -554,6 +554,36 @@ BEGIN
     missing := missing || E'\n  ' || 'line 44: mt.docs.id is ' || v_type
       || ', not uuid: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'user'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'uuid');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 5: ' || v_n || ' shares of user name ids a uuid can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'org'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 7: ' || v_n || ' shares of org name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'team'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 13: ' || v_n || ' shares of team name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'project'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 19: ' || v_n || ' shares of project name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'folder'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 29: ' || v_n || ' shares of folder name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'doc'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'uuid');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 44: ' || v_n || ' shares of doc name ids a uuid can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
   IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;
 END $chk$;
 

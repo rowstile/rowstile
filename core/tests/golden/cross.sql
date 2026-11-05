@@ -485,6 +485,36 @@ BEGIN
     missing := missing || E'\n  ' || 'line 56: cx.notes.id is ' || v_type
       || ', not bigint: write its type after the key, (id ' || v_type || ') [AZ602]';
   END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'user'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 13: ' || v_n || ' shares of user name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'folder'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 15: ' || v_n || ' shares of folder name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'project'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 27: ' || v_n || ' shares of project name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'region'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 38: ' || v_n || ' shares of region name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'site'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 50: ' || v_n || ' shares of site name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
+  SELECT count(*) INTO v_n FROM authz.shares g WHERE g.object_type = 'note'
+    AND NOT pg_catalog.pg_input_is_valid(g.object_id, 'bigint');
+  IF v_n > 0 THEN
+    missing := missing || E'\n  ' || 'line 56: ' || v_n || ' shares of note name ids a bigint can''t read (their rows are gone): delete them first, as rowstile help AZ627 says [AZ627]';
+  END IF;
   IF missing <> '' THEN RAISE EXCEPTION 'the policy does not match this database:%', missing; END IF;
 END $chk$;
 
