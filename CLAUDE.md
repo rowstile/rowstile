@@ -21,7 +21,8 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
     - `governance.py` — audit/feed triggers, requests, break_glass, reviews, invariants, diff (`diff_parts`)
     - `hardening.py` — `authz.lint()`
     - `devtools.py` — graph (Mermaid), clients (py, ts; with `Refused`, `NotFound`, `refusal`, `expect`, `who_among`;
-      `ts-sdk`: only the names, for apps on the TypeScript SDK)
+      `ts-sdk`: only the names, for apps on the TypeScript SDK; the names alone for the other SDKs: go, csharp, ruby,
+      rbs (their signatures), java, rust, elixir, php; and for the sync engines: electric, zero, powersync)
     - `testing.py` — policy tests: the unnamed section, named tests (`given`, `as user X allowed|refused|sees`;
       `with scope a, b` after who: the line as a key limited to those scopes), invariants,
       compiled into one plpgsql function `pg_temp.authz_policy_tests()` returning a row per check
