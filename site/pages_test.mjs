@@ -8,8 +8,8 @@ import { createMarkdownRenderer } from "vitepress";
 // what site.yml gives the build when a blog tag publishes onto a site tag (read when pages.mjs is imported)
 process.env.SITE_CODE = "site-v4";
 process.env.SITE_CONTENT = "blog-v2";
-const { NOTE, PAGES, POSTS, REPO, checkMenus, deadAnchors, inSitemap, menuLinks, pageTitle, rewriteLinks, siteLink, slug,
-  structured, url, withoutNotes } = await import("./pages.mjs");
+const { DESCRIPTIONS, NOTE, PAGES, POSTS, REPO, checkCopy, checkDescriptions, checkMenus, checkSitemap, deadAnchors, describe,
+  inSitemap, menuLinks, pageTitle, rewriteLinks, siteLink, slug, structured, url, withoutNotes } = await import("./pages.mjs");
 const { KEY, KEY_FILE, payload } = await import("./indexnow.mjs");
 
 let failed = 0;
@@ -45,6 +45,16 @@ for (const [label, source, href, want] of [
   const got = siteLink(source, href);
   check(`a link at a tag: ${label}`, got === want, got);
 }
+// a link to what isn't in the repository fails the build, and so does one out of it
+for (const [label, href, said] of [
+  ["a file that isn't there", "nowhere.md", "docs/x.md: the link nowhere.md points to docs/nowhere.md, which isn't in the repository"],
+  ["a folder that isn't there", "../core/nowhere/#top", "docs/x.md: the link ../core/nowhere/#top points to core/nowhere, which isn't in the repository"],
+  ["out of the repository", "../../etc/passwd", "docs/x.md: the link ../../etc/passwd points to ../etc/passwd, which isn't in the repository"],
+  ["from its root, a file that isn't there", "/etc/passwd", "docs/x.md: the link /etc/passwd points to etc/passwd, which isn't in the repository"],
+]) {
+  check(`refused, a link: ${label}`, refused(() => siteLink("docs/x.md", href)) === said, refused(() => siteLink("docs/x.md", href)));
+}
+
 // an image: the file itself (raw), not GitHub's page about it
 const RAW = "https://raw.githubusercontent.com/rowstile/rowstile";
 check("an image at a tag: the file itself", siteLink("examples/messenger/README.md", "docs/group.png", true) ===
@@ -170,6 +180,33 @@ check("refused: pages no menu lists", refused(() => checkMenus(without)) ===
   "site/.vitepress/config.mts: no menu lists /signed-urls, /stacks/: add each to the sidebar", refused(() => checkMenus(without)));
 check("refused: a menu's link to no page", refused(() => checkMenus([...menuLinks(menus), "/reference/nothing"])) ===
   "site/.vitepress/config.mts: a menu links to /reference/nothing, which is no page");
+
+// a sentence for every page, and only for pages
+check("descriptions: one for each page passes", refused(() => checkDescriptions(DESCRIPTIONS, PAGES)) === "");
+check("refused: a description of what isn't a page", refused(() => checkDescriptions({ ...DESCRIPTIONS, "gone.md": "x", "old/a.md": "y" }, PAGES)) ===
+  "site/pages.mjs: DESCRIPTIONS names what isn't a page: gone.md, old/a.md");
+check("refused: a page with no description", refused(() => describe("operations-new.md", "x")) ===
+  "operations-new.md: no description in site/pages.mjs (DESCRIPTIONS)");
+check("... an error page's and a recipe's are made from their titles", describe("errors/AZ999.md", "AZ999: x").startsWith("AZ999: x: ") &&
+  describe("cookbook/new.md", "New").startsWith("New: a tested recipe"));
+
+// the sitemap VitePress wrote: every page but an error code's, and none of those
+/** @param {string[]} paths */
+const sitemapOf = (paths) => `<urlset>${paths.map((p) => `<url><loc>https://rowstile.dev${p}</loc></url>`).join("")}</urlset>`;
+const somePages = ["/", "/operations", "/errors/", "/errors/AZ201", "/errors/AZ202"];
+check("sitemap: every page but the error codes' passes", refused(() => checkSitemap(sitemapOf(["/", "/operations", "/errors/"]), somePages)) === "");
+check("... and the site's own pages", refused(() => checkSitemap(sitemapOf(Object.values(PAGES).map(url).filter(inSitemap)))) === "");
+check("refused: a sitemap without a page", refused(() => checkSitemap(sitemapOf(["/", "/errors/"]), somePages)) ===
+  "sitemap.xml doesn't list /operations");
+check("refused: a sitemap with an error code's page", refused(() => checkSitemap(sitemapOf(["/", "/operations", "/errors/", "/errors/AZ202"]),
+  somePages)) === "sitemap.xml lists what it leaves out: /errors/AZ202");
+check("refused: no page left out", refused(() => checkSitemap(sitemapOf(["/", "/operations"]), ["/", "/operations"])) ===
+  "inSitemap leaves out no page: the error codes' are");
+
+// a copy keeps no note: one written so that withoutNotes can't take it out fails the build
+check("a copy without notes passes", refused(() => checkCopy("docs/x.md", withoutNotes(noted))) === "");
+check("refused: a copy that keeps a note", refused(() => checkCopy("docs/x.md", withoutNotes('A promise. <!-- checked: tests/x.sh "a > b" -->\n'))) ===
+  'docs/x.md: its Markdown copy keeps a note: A promise. <!-- checked: tests/x.sh "a > b" -->');
 
 // a page's title says what rowstile is after its own words, once; the home page says it in one title
 check("title: the home page's, alone", same(pageTitle("index.md", "rowstile"),
