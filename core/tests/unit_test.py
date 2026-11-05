@@ -2547,6 +2547,22 @@ class Command(unittest.TestCase):
             p = subprocess.run([sys.executable, cli, "check", "閲.authz"], cwd=d, env=env, capture_output=True)
             self.assertIn("閲.authz: ", p.stderr.decode("utf-8"))
 
+    def test_an_older_python_is_named_before_anything_is_imported(self) -> None:
+        # run from the source (cli/rowstile, python3 cli/rowstile_cli.py) on a Python older than 3.11, the command
+        # stopped with a traceback from its imports (a pattern 3.10 can't compile, tomllib): it says what it needs
+        cli = os.path.join(ROOT, "cli", "rowstile_cli.py")
+        code = (
+            "import runpy, sys\n"
+            "sys.version_info = (3, 10, 12, 'final', 0)\n"
+            f"sys.argv = [{cli!r}, '--version']\n"
+            f"runpy.run_path({cli!r}, run_name='__main__')\n"
+        )
+        p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        self.assertEqual(
+            (p.returncode, p.stdout, p.stderr),
+            (2, "", f"rowstile needs Python 3.11 or newer, not 3.10.12 ({sys.executable}): run it with a newer one\n"),
+        )
+
     def test_a_row_that_isnt_json_is_shown_as_it_arrived(self) -> None:
         # Windows PowerShell 5 and cmd take the double quotes out of '{"column": 1}': JSON's message alone
         # ("Expecting property name enclosed in double quotes") doesn't say what happened
