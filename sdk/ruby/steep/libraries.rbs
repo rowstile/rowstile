@@ -158,6 +158,7 @@ module PG
   PG_DIAG_SCHEMA_NAME: Integer
   PG_DIAG_TABLE_NAME: Integer
   PG_DIAG_CONSTRAINT_NAME: Integer
+  PG_DIAG_SOURCE_FUNCTION: Integer
 
   def self.connect: (String url, **String options) -> Connection
 

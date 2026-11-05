@@ -30,6 +30,7 @@ module Rowstile
   CONFLICT: problem
   UNSEEN: String
   GENERIC: Regexp
+  ROW_CHECK: String
   EXPLAIN: String
 
   def self.current: () -> Principal?
@@ -86,6 +87,7 @@ module Rowstile
     attr_reader schema: String?
     attr_reader table: String?
     attr_reader constraint: String?
+    attr_reader routine: String?
     def initialize: (PG::Result result) -> void
     def self.of: (Exception error) -> Said?
     def self.pg_error: (Exception? error) -> PG::Error?
