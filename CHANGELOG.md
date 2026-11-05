@@ -16,6 +16,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `authz.sign_out()`: nobody is signed in in the transaction afterwards, and it may sign in again, as anyone. It
   is for a test's transaction that acts for one person, then another, and is rolled back at the end; the SDKs'
   test modes call it ([Identity](docs/reference/identity.md)).
+- The Go, Rust and PHP SDKs write a principal as text and read it back, as the other SDKs do and as the audit trail
+  names who acted (`42`, `service:3`, `nobody`): `String` and `rowstile.ParsePrincipal` in Go, `Display` and
+  `FromStr` in Rust, `__toString` and `Principal::parse` in PHP. In Laravel's logs a principal reads `service:3`.
 
 ### Changed
 
@@ -45,6 +48,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `authz.review_decide` refuses a decision after the review's deadline, the `closes_at` of `authz.start_review`
   (two weeks after it starts unless the call says otherwise; NULL: none), and says when it was (AZ718).
   `authz.close_review` still applies the decisions made in time. Before, the deadline was kept and never read.
+- A page with a cursor and no size is every row after the cursor in every SDK: Go's `Page{After: x}` (a `Limit` of
+  0) no longer asks for an empty page, and the Rust SDK's `Page.limit` is an `Option<i32>` (`None`: no size). The
+  Rust SDK's `composite_key` of one field is that field's value, as a key of one column is.
 
 ### Removed
 
@@ -408,6 +414,18 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   nobody, as the database signs it in. Work for nobody inside a transaction begun for another spelling of it runs,
   instead of being refused; Django's guard and Ruby's take code that acts for no one, in a transaction signed in as
   nobody, as nobody's work. In Java, `Rowstile.actingAs(null, ...)` acts for nobody, not for whoever the request is.
+- Every SDK writes a key as Postgres writes the row, a field quoted for ASCII's six spaces alone: the Python,
+  TypeScript, Java and .NET SDKs quoted a field holding a no-break space or an em space, so a hidden row's id and a
+  refusal's message spelled it another way than `authz.list`.
+- Every SDK takes a key of several columns as any of its language's arrays, lists or tuples: Go any slice or array
+  (`[]int64{1, 2}`), .NET any array or list (`long[]`), Java and Kotlin any array or collection (`long[]`,
+  `arrayOf(1, 2)`), Elixir a tuple. Before, those were sent as the language's own text (`[1 2]`, `System.Int64[]`),
+  and `can` answered false. The Go SDK sends no key as NULL, writes pgtype's values and pointers as their values,
+  and refuses a value whose text in Go isn't Postgres's (a `time.Time`, a `[]byte`) before anything is sent.
+- The TypeScript and Java SDKs word a hidden row as the others do: `row 7 not found` without the table and `not
+  found` with neither, instead of `the row 7 not found` and `null 7 not found`.
+- The Elixir and TypeScript SDKs take a null cursor (`after: nil`) as the first page. Elixir sent `""`, which the
+  database refused (AZ710).
 
 ### Upgrading
 
