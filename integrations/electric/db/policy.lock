@@ -40,7 +40,7 @@
 > sync app.folders
 > sync app.notes
 
-always | 3b042e923725
+always | 57608366fd53
 function authz.act_as(p_type text, p_id text) | 353865560389 shape=0b4efcae
 function authz.announce_timed_shares() | 9129dc2396d5 shape=73a521b1
 function authz.break_glass(p_type text, p_id integer, p_relation text, p_reason text, p_duration interval) | 9a41b8f39c7c shape=1b059394
@@ -63,7 +63,7 @@ function authz.delete_role(p_role bigint) | ca259b1fd863 shape=7c823e86
 function authz.explain(p_type text, p_id integer, p_perm text, p_user text) | 1409a3a04a15 shape=7d31b532
 function authz.explain(p_type text, p_id text, p_perm text, p_user text) | 927285cd86ab shape=7d6de14b
 function authz.explain_rule(p_table text, p_command text, p_id text, p_row jsonb) | b4934125ed34 shape=1223ad2f
-function authz.lint() | da787211c2da shape=54cb1505
+function authz.lint() | 2b37ef7769fa shape=54cb1505
 function authz.list(p_type text, p_perm text, p_after text, p_limit int) | e19a46b0e0c1 shape=e713a7cc
 function authz.list_api_keys(p_principal_type text, p_principal_id text) | d655dcfce01d shape=04dcffde
 function authz.list_links(p_type text, p_id integer) | cec8e40d450f shape=92b36157
@@ -245,7 +245,7 @@ function authz_int.canon(p_type text, p_id text) | bd7d55539348 shape=ab774d8a
 function authz_int.changed(p_type text, p_ids text[], p_cause text) | ea7f9d82be5d shape=7a5b1adc
 function authz_int.check_manage_keys(p_type text, p_id text) | 1e1b710abecd shape=391727a0
 function authz_int.check_writable() | 87ff3161cc1d shape=a16d3e7b
-function authz_int.child_triggers() | 376787138a7e shape=52e92456
+function authz_int.child_triggers() | 15de79a6e75a shape=52e92456
 function authz_int.dependents(p_type text, p_ids text[]) | 3347870b52bb shape=8a4f5a6e
 function authz_int.forget_marks(p_type text, p_ids text[]) | 2ddee1fcc0be shape=8933fd55
 function authz_int.hmac_sha256(p_key bytea, p_msg bytea) | 33edf164bad5 shape=4d6b17ae
@@ -281,7 +281,7 @@ function authz_int.sign() | 26fda3872285 shape=de0f1c18
 function authz_int.subject_key(p_type text, p_id text, p_relation text) | fda03b078e77 shape=13054e65
 function authz_int.sync_commit() | 2a3840a9a87b shape=88d2f2c3
 function authz_int.sync_dirty(p_type text, p_ids text[]) | 2e4d509b9a8f shape=420df95d
-function authz_int.sync_process() | 1220074f8a65 shape=bbf006cf
+function authz_int.sync_process() | ec019ba09e72 shape=bbf006cf
 function authz_int.sync_refresh(p_hash text, p_force boolean) | 150324051fa2 shape=5328af1d
 function authz_int.sync_spread(p_tx bigint, p_round int) | f77e0e109c9e shape=53f27788
 function authz_int.users_only(p_what text) | 51a4de66a12e shape=89b5b973
@@ -307,7 +307,7 @@ step grant_views | 79e8f933ff65
 step mask_privileges | f8051dad4a89
 step share_indexes | db4592740040
 step sweep | 1dfed05490f4
-step sync_base | c8751c359280
+step sync_base | eda14fe1b754
 step sync_refresh | f7ca7fe08318
 step tables | 9360c5b984f3
 table authz_gen.policy_lines | 21fafe4e9464 shape=dcfedc96

@@ -134,6 +134,13 @@
       "when": 1793909576997,
       "tag": "0018_authz_identity_ids_and_signature",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793911896440,
+      "tag": "0019_authz_sync_index_leftovers",
+      "breakpoints": true
     }
   ]
 }
