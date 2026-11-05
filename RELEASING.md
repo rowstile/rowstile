@@ -227,7 +227,9 @@ pages and the playground are all built from one commit of `main`. A **site tag**
   tag already holds deploys nothing, nor one older than another blog tag; a site or release tag deploys the
   newer blog tag's two folders with its own site, so an article never leaves it. A post that links to a page
   that site doesn't have fails the build, and so does a post or a comparison page its code can't make: nothing
-  is deployed, and the workflow's run says which. Then a site tag is what it needs.
+  is deployed, and the workflow's run says which. Then a site tag is what it needs. A blog tag may add a
+  comparison page, but removing or renaming one the site tag has takes a site tag: that site's own pages name
+  it (`docs/comparison.md` links each, `site/pages.mjs` describes it), and the workflow refuses the blog tag.
 - `site/source.mjs` holds the rule and `site/source_test.mjs` checks it; `node site/source.mjs site-vN` (or
   `blog-vN`) says whether a tag deploys, and what from. The site's links to files in the two folders go to the
   blog tag.

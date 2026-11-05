@@ -144,16 +144,16 @@ try {
   check("... else by hand it is: the site as released", now("docs/reference.md") === "as released\n" && now("docs/blog/2026-10-23-a-post.md") === null);
 
   git("checkout", "--quiet", "--force", "main");
-  commit({ "docs/reference.md": "the next release's\n", "docs/compare/a.md": "a comparison\n" }, "v0.1.0");
+  commit({ "docs/reference.md": "the next release's\n", "docs/compare/a.md": "a comparison\n", "docs/blog/old/run.txt": "a run\n" }, "v0.1.0");
   take(repo, "v0.1.0", false);
   check("the next release deploys: everything its own, the post merged since too",
     now("docs/reference.md") === "the next release's\n" && now("docs/blog/2026-11-06-not-yet.md") === "merged, not published\n" &&
       git("status", "--porcelain") === "");
 
-  // a blog tag: a post arrives and one changes, a comparison page goes, the reference moves on, on the release's site
+  // a blog tag: a post arrives and one changes, a run goes, the reference moves on, on the release's site
   git("checkout", "--quiet", "--force", "main");
   commit({ "docs/reference.md": "main moves on\n", "docs/blog/2026-11-06-not-yet.md": "corrected\n",
-           "docs/blog/2026-11-20-third.md": "a third\n", "docs/blog/third/run.txt": "its run\n", "docs/compare/a.md": null }, "blog-v1");
+           "docs/blog/2026-11-20-third.md": "a third\n", "docs/blog/third/run.txt": "its run\n", "docs/blog/old/run.txt": null }, "blog-v1");
   commit({ "docs/blog/2026-12-01-after.md": "merged after the blog tag\n" });
   check("in a repository: the blog tag on the release's site", JSON.stringify(read(repo, "blog-v1", false)) ===
     JSON.stringify({ deploy: true, why: "", code: "v0.1.0", content: "blog-v1" }), JSON.stringify(read(repo, "blog-v1", false)));
@@ -162,9 +162,9 @@ try {
   check("... the two folders as the blog tag has them: what arrived, what changed",
     now("docs/blog/2026-11-20-third.md") === "a third\n" && now("docs/blog/third/run.txt") === "its run\n" &&
       now("docs/blog/2026-11-06-not-yet.md") === "corrected\n");
-  check("... without what it removed, or what main got after it", now("docs/compare/a.md") === null && now("docs/blog/2026-12-01-after.md") === null);
+  check("... without what it removed, or what main got after it", now("docs/blog/old/run.txt") === null && now("docs/blog/2026-12-01-after.md") === null);
   check("the built site lacks the pages the site's code doesn't make", JSON.stringify(missing(repo)) ===
-    JSON.stringify(["blog/a-post.html", "blog/index.html", "blog/not-yet.html", "blog/third.html"]), missing(repo));
+    JSON.stringify(["blog/a-post.html", "blog/index.html", "blog/not-yet.html", "blog/third.html", "compare/a.html"]), missing(repo));
   for (const p of missing(repo)) {
     mkdirSync(dirname(join(repo, "site", "dist", p)), { recursive: true });
     writeFileSync(join(repo, "site", "dist", p), "");
@@ -191,6 +191,20 @@ try {
     now("docs/blog/2026-11-20-third.md") === "a third\n", git("rev-parse", "HEAD"));
   git("checkout", "--quiet", "--force", "main");
   git("branch", "-D", "site-v2", "v0.1.0", "blog-v1");
+
+  // a comparison page a blog tag adds, a later one may remove; one the site tag has, its own pages name
+  commit({ "docs/compare/b.md": "a newer comparison\n" }, "blog-v2");
+  commit({ "docs/compare/b.md": null }, "blog-v3");
+  take(repo, "blog-v3", false);
+  check("a blog tag removes a comparison page a blog tag added", now("docs/compare/b.md") === null && now("docs/compare/a.md") === "a comparison\n");
+  git("checkout", "--quiet", "--force", "main");
+  commit({ "docs/compare/a.md": null, "docs/compare/a2.md": "renamed\n" }, "blog-v4");
+  const removes = "blog-v4 removes docs/compare/a.md, which site-v2's own pages name (docs/comparison.md links each " +
+    "comparison page, site/pages.mjs describes it): removing or renaming a comparison page takes a site tag";
+  check("refused: a blog tag that removes a comparison page the site tag has", refused(() => take(repo, "blog-v4", false)) === removes,
+    refused(() => take(repo, "blog-v4", false)));
+  check("... by hand too, and nothing is checked out", refused(() => take(repo, "blog-v4", true)) === removes &&
+    git("rev-parse", "HEAD") === git("rev-parse", "main"));
 
   git("checkout", "--quiet", "-b", "aside", "main");
   commit({ "docs/blog/2026-12-02-unmerged.md": "not on main\n" }, "site-v3");
