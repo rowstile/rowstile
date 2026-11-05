@@ -51,6 +51,10 @@ printf 'include "parts/bad.authz"\n' > "$T/bad.authz"
 run check "$T/bad.authz"
 case "$out" in "$T/bad.authz: parts/bad.authz line 3: "*) [ $rc -eq 1 ] && ok "check names the included file and line, exit 1" || bad "check exit" "$rc";;
   *) bad "check bad" "$out";; esac
+printf 'app role app_user\ntype user = app.users\n  can view = nosuch\n  can edit = other\n' > "$T/two.authz"
+run check "$T/two.authz"
+case "$out" in "$T/two.authz: line 3: "*"[AZ203]") [ $rc -eq 1 ] && [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] && ok "check reports the first of two mistakes, on one line, exit 1" || bad "check two exit" "$rc";;
+  *) bad "check two mistakes" "$out";; esac
 run apply "$T/bad.authz"
 case "$out" in *"parts/bad.authz line 3"*) [ $rc -eq 1 ] && ok "apply refuses it, exit 1" || bad "apply bad exit" "$rc";; *) bad "apply bad" "$out";; esac
 printf 'include "parts/missing.authz"\n' > "$T/missing.authz"

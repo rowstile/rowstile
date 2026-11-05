@@ -11,7 +11,7 @@
 | `rowstile review [p.authz] [--base main] [--markdown\|--json\|--annotations] [--out FILE] [--db DSN]` | what the change since `--base` does: meaning, access (on a review database), risk, tests, deploy; the pull request comment with `--markdown`, or in a file with `--out FILE`, beside what it prints <!-- checked: tests/review.sh "Meaning: what changed, and what changes through it"; tests/review.sh "Access: who gains what, on the review data"; tests/review.sh "the comment, with its marker and details"; tests/review.sh "the comment in the file, and the annotations printed, from one review" --> |
 | `rowstile fmt [--check] [files]` | writes policies and test files one way; `--check` exits 1 when one isn't (for CI) <!-- checked: tests/review.sh "exit 1, and which file"; tests/review.sh "fmt writes it; then" --> |
 | `rowstile apply [p.authz] [--force] [--downgrade]` | apply it whole, with the files it includes (read from disk by the command), unless it is in force already (the same text and build, and what it made still there: row-level security on, its policies and triggers). <!-- checked: tests/cli.sh "apply reads the included files from disk"; tests/apply.sh "again: unchanged"; tests/apply.sh "or row-level security turned off on a table with rules"; tests/apply.sh "or a trigger it made on an app table dropped" --> A condition only a function reads (a signing-in type's `where`, a `shared ... if`) that no longer runs, on a column the app dropped since, is refused with its line, as when it was first applied (AZ613), not taken as unchanged. <!-- checked: tests/apply.sh "a column it reads that the app dropped since: apply refuses it with its line, not unchanged"; tests/apply.sh "and a shared if's, the same" --> `--force` applies in any case and computes every inheritance table again, which a plain apply keeps: what to run when `authz.verify()` says false <!-- checked: tests/apply.sh "applies the same text again"; tests/apply.sh "applying again keeps them as they are (unchanged tables are kept)"; tests/apply.sh "and so does apply" --> |
-| `rowstile check p.authz` | only report mistakes (the policy's own test lines' too), as `file: line N: message [AZ201]`; exit 1 if there are any <!-- checked: tests/cli.sh "check names the included file and line, exit 1"; tests/cli.sh "check: ok, exit 0"; tests/cli.sh "check, graph and client of a file need no database" --> |
+| `rowstile check p.authz` | only report its first mistake (in the policy's own test lines too), as `file: line N: message [AZ201]`; exit 1 if there is one <!-- checked: tests/cli.sh "check names the included file and line, exit 1"; tests/cli.sh "check reports the first of two mistakes, on one line, exit 1"; tests/cli.sh "check: ok, exit 0"; tests/cli.sh "check, graph and client of a file need no database" --> |
 | `rowstile help AZ201`, `rowstile --version` | what a mistake's code means, and the same mistake fixed ([error codes](../errors/README.md); `help errors` lists them); the version, and the Python it runs on |
 | `rowstile prove [p.authz] [--worlds N]` | every invariant in many small worlds, with no database: the smallest counterexample (exit 1), or that none was found. <!-- checked: tests/confidence_test.py "an invariant the policy doesn't guarantee: exit 1, and the smallest counterexample"; tests/confidence_test.py "one it does: exit 0" --> A data check (`authz.check_invariants()`) says the data keeps it; prove says whether the policy does <!-- checked: tests/governance.sh "the example data keeps the invariant"; tests/governance.sh "a Globex user owning an Acme folder breaks it"; tests/mcp_test.py "prove: the docs example's counterexample (an owner outside the org may share)" --> `--worlds N` (400) is how many worlds it draws at random. It also tries, at each size, the corners (each condition true on every row, or on none) and the worlds a draw rarely makes (dense links, a chain one link longer than the policy reads), so the count it says is more than N. <!-- checked: tests/confidence_test.py "after every world" --> |
 | `rowstile test --coverage` | the tests, then the branches of each permission no passing check makes true, with their lines (`rowstile dev` shows how many on each save). The checks that count are the `can` ones (`user 1 can view folder 3`): a `cannot`, or a statement run `as` someone, covers nothing |
@@ -78,8 +78,8 @@ The paths in it are from its own folder, wherever the command runs, and so is `m
 
 The database is `--db` (before or after the command), else `rowstile.toml`'s, else `DATABASE_URL`, else libpq's
 `PG*` variables (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGOPTIONS`, `PGSSLMODE`,
-`PGSSLROOTCERT`, `PGCHANNELBINDING`, and the others libpq reads; not a password file or a service file). Those nine variables, and the one `database = "env:NAME"`
-names, may be in `.env.local` or `.env` beside `rowstile.toml` (in the current folder while there is none), where
+`PGSSLROOTCERT`, `PGCHANNELBINDING`, and the others libpq reads; not a password file or a service file). `DATABASE_URL`, those nine `PG*` variables, and the one
+`database = "env:NAME"` names, may be in `.env.local` or `.env` beside `rowstile.toml` (in the current folder while there is none), where
 Next.js, Prisma and many others keep them: the environment comes first, then `.env.local`, then `.env`, and
 `rowstile dev` says when the database came from a file. <!-- checked: tests/cli.sh "the environment comes before both"; tests/cli.sh "rowstile dev says the database came from .env" -->
 Nothing else in those files is read, a file that
@@ -124,7 +124,7 @@ Over TLS the password exchange is bound to the server's certificate when
 the server offers it (`channel_binding=prefer`, the default, as in libpq; `disable` never does), so a connection
 string from Neon's dashboard works as it is. <!-- checked: tests/unit_test.py "test_scram_is_bound_to_the_tls_channel" -->
 With `channel_binding=require`, a server that asks for the password
-any other way, or signs the command in without asking, is refused before anything is sent to it. <!-- checked: tests/unit_test.py "test_what_it_refuses_to_send"; tests/unit_test.py "test_each_way_a_server_asks_for_the_password" -->
+any other way, or signs the command in without asking, is refused before anything is sent to it. <!-- checked: tests/unit_test.py "test_scram_is_bound_to_the_tls_channel" -->
 `require_auth`
 says which ways the server may ask, and `target_session_attrs` which session will do, as in libpq. <!-- checked: tests/unit_test.py "test_require_auth_as_libpq_reads_it"; tests/unit_test.py "test_target_session_attrs_as_libpq_checks_it" -->
 
@@ -136,7 +136,8 @@ A setting it doesn't know, or one of the wrong type, is an error. <!-- checked: 
 [Getting started](../getting-started.md) goes through all of it; [the cookbook](../cookbook.md) has tested patterns and
 [troubleshooting](../troubleshooting.md) what people run into.
 
-Your stack, step by step: [stacks](../stacks/README.md) (FastAPI, Next.js, other Node and Python apps, and the SQL any other
+Your stack, step by step: [stacks](../stacks/README.md) (each stack an SDK serves, from FastAPI and Next.js to Rails, Spring,
+Go, Rust, Phoenix, Laravel and ASP.NET Core; the sync engines Electric, Zero and PowerSync; and the SQL any other
 language sends). To try rowstile with nothing installed, [the playground](../../playground/README.md) runs the compiler and a real Postgres in
 the browser (Pyodide and PGlite).
 
