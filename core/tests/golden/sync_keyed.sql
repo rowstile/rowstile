@@ -6958,6 +6958,18 @@ BEGIN
     problem := format('this connection logs in as %s, a superuser, BYPASSRLS or the policy''s owner, and switched to %s: RESET ROLE leaves row-level security, and who is signed in is believed without a signature. Log in as the app role', r.login, v_me::regrole);
     RETURN NEXT;
   END LOOP;
+  -- ... or a member of a table's owner (another role than the policy's, said above): RESET ROLE, then SET ROLE to
+  -- the owner, leaves row-level security
+  FOR r IN SELECT l.oid::regrole AS login, c.oid::regclass AS tbl FROM pg_roles l, pg_namespace n, pg_class c
+           WHERE l.rolname = session_user AND n.nspname = 'authz_int' AND l.oid <> v_me
+             AND NOT (l.rolsuper OR l.rolbypassrls OR pg_has_role(l.oid, n.nspowner, 'MEMBER'))
+             AND c.oid = ANY (SELECT to_regclass(x) FROM unnest(ARRAY['"app"."files"', '"app"."folders"']::text[]) x)
+             AND pg_has_role(l.oid, c.relowner, 'MEMBER')
+           ORDER BY c.oid::regclass::text LOOP
+    severity := 'error';
+    problem := format('this connection logs in as %s, which owns %s or is a member of its owner, and switched to %s: RESET ROLE leaves row-level security. Log in as the app role', r.login, r.tbl, v_me::regrole);
+    RETURN NEXT;
+  END LOOP;
   IF v_app IS NULL OR NOT pg_has_role(v_me, v_app, 'USAGE') THEN
     severity := 'error';
     problem := format('%s is not the policy''s app role %s, nor a member of it: the rules apply to %s only',

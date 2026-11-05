@@ -128,6 +128,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   view that runs with its owner's rights of which it may read one column, and the notes that go with them.
   `authz.connection_check()` reports a login that is a member of a table's owner without inheriting its rights:
   it may `SET ROLE` to the owner.
+- `authz.lint()` counts a privilege on one column as it counts one on the table: it reports a membership table
+  without rules that the app role may insert into or update one column of, a partition it may use that way, a
+  view that runs with its owner's rights of which it may read one column, and the notes that go with them.
+  `authz.connection_check()` reports a login that is a member of a table's owner without inheriting its rights:
+  it may `SET ROLE` to the owner. It also reports a login that switched to the app role with `SET ROLE` and owns a
+  table with rules, or is a member of its owner: `RESET ROLE` leaves the rules.
 
 ### Upgrading
 
