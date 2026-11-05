@@ -3,6 +3,7 @@ on the app's folder (exit 1 and a list of places otherwise):
 
     python3 examples/filemanager/check_public_surface.py
     python3 examples/messenger/check_public_surface.py
+    python3 examples/helpdesk/check_public_surface.py
 
 Public: the rowstile command, and the authz.* functions the reference documents (docs/reference/). Not public:
 the schemas authz_gen and authz_int; rowstile's tables (authz.shares, authz.audit, ...), which only its functions
@@ -21,9 +22,9 @@ from pathlib import Path
 
 REFERENCE = Path(__file__).resolve().parent.parent / "docs" / "reference"
 # what rowstile migrate writes, as the apps' .gitattributes name it
-GENERATED = ("db/migrations/*_authz_*", "db/policy.lock")
+GENERATED = ("db/migrations/*_authz_*", "db/policy.lock", "prisma/migrations/*_authz_*/**")
 # what the app doesn't write: its packages, builds and caches
-SKIP = {".git", "node_modules", ".venv", "dist", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+SKIP = {".git", "node_modules", ".next", ".venv", "dist", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 # a word: what may come before or after a name for it to be the whole name
 WORD = r"[\w$]"
 PRIVATE = re.compile(rf"(?<!{WORD})authz_(gen|int)(?!{WORD})", re.I)

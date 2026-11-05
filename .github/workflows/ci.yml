@@ -584,3 +584,18 @@ jobs:
           node-version: "24"
       - run: cd examples/messenger/frontend && npm ci && npm run build && npm test
       - run: bash examples/messenger/test.sh
+
+  # The helpdesk (several companies' support desks on one database; Next.js, Prisma, the TypeScript SDK) against the
+  # rowstile image built from the same commit: migrated from empty, its policy's tests, prove, lint, public surface.
+  helpdesk:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
+        with:
+          node-version: "24"
+      - run: npm ci --no-audit --no-fund
+      - run: bash examples/helpdesk/test.sh

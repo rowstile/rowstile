@@ -9,3 +9,6 @@ its tests in Docker, and CI runs them on every change.
   and groups, links, file versions. FastAPI, React, RustFS for the file contents.
 - [`messenger/`](messenger/): a WhatsApp-style app. Direct chats and groups, admins, invite links,
   blocking, bots with their own API keys, live updates. FastAPI, React.
+- [`helpdesk/`](helpdesk/): several companies' support desks on one database. Workspaces kept apart by the
+  policy itself, teams inside teams, custom roles, internal notes, the vendor's staff by break glass, an email
+  intake with a scoped key. Next.js, Prisma, the TypeScript SDK.

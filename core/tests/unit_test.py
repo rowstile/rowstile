@@ -15676,11 +15676,18 @@ class PublicSurface(unittest.TestCase):
             }
         )
         self.assertEqual((n, found), (3, [f"{self.PRIVATE}: {private}"] * 3))
-        # the files the apps' .gitattributes mark as rowstile's
-        for app in ("filemanager", "messenger"):
+        # the files the apps' .gitattributes mark as rowstile's (the SQL layout's, or Prisma's): each app's are some
+        # of the patterns, and together they are all of them
+        every: set[str] = set()
+        for app in ("filemanager", "messenger", "helpdesk"):
             with open(os.path.join(self.REPO, "examples", app, ".gitattributes"), encoding="utf-8") as fh:
-                marked = [line.split()[0] for line in fh if line.strip().endswith("linguist-generated=true")]
-            self.assertEqual(sorted(marked), sorted(public_surface.GENERATED), app)
+                marked = {line.split()[0] for line in fh if line.strip().endswith("linguist-generated=true")}
+            self.assertLessEqual(marked, set(public_surface.GENERATED), app)
+            every |= marked
+        self.assertEqual(sorted(every), sorted(public_surface.GENERATED))
+        # Prisma's layout: a folder a migration, its file migration.sql
+        self.assertTrue(public_surface.generated("prisma/migrations/20261105000000_authz_policy/migration.sql"))
+        self.assertFalse(public_surface.generated("prisma/migrations/0001_schema/migration.sql"))
 
     def test_only_documented_functions(self) -> None:
         line = "SELECT authz.not_documented_anywhere();"

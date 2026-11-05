@@ -294,6 +294,6 @@ files, each runs in one transaction: `psql -1 -v ON_ERROR_STOP=1 -f migrations/<
 - [Troubleshooting](troubleshooting.md): what people run into, by symptom.
 - The reference: [the language](reference/language.md), [every function](reference/app-code.md) and
   [every command](reference/tools.md).
-- [The messenger](../examples/messenger/README.md) and [the file manager](../examples/filemanager/README.md):
-  complete apps with no permission checks in their backends.
+- [The messenger](../examples/messenger/README.md), [the file manager](../examples/filemanager/README.md) and
+  [the helpdesk](../examples/helpdesk/README.md): complete apps with no permission checks in their backends.
 - [Running rowstile](operations.md): upgrading, backups, retention, monitoring.

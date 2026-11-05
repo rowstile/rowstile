@@ -16,7 +16,8 @@
     "integrations/node",
     "integrations/electric",
     "integrations/zero",
-    "integrations/powersync"
+    "integrations/powersync",
+    "examples/helpdesk"
   ],
   "devDependencies": {
     "typescript": "~6.0.3"
