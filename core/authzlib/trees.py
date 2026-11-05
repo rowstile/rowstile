@@ -704,7 +704,10 @@ CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
         (it is kept, trees.swap_in_kept) and does again what changed since the first one's snapshot: rows
         of the type written since (their xmin), links changed since (the feed the relationship triggers
         write: not what it announces because something it reads changed, its dependents), and rows deleted since
-        (no longer there)."""
+        (no longer there). Unless the feed was trimmed of what it needs: a trim removes the feed's entries up to one
+        (in the feed's order, by transaction), so where that transaction is not older than the snapshot's oldest open
+        one, the tree is computed again whole (and after a trim an older rowstile made, which records only the greatest
+        position it removed, where that is past the build's last one)."""
         g: Namer = lambda suffix: f"authz_int.{q(name + '__next' + suffix)}"
         tbl, pkt = qt(t.table), t.pktype
         # a row's xmin as a full transaction id (xmin has no epoch: take the current one, or the one before)
@@ -722,6 +725,8 @@ CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
         )
         full = (
             f"coalesce((SELECT s.value::bigint FROM authz.settings s WHERE s.key = 'changes_trimmed_to'), 0) > v.feed\n"
+            f"     OR (SELECT s.value::bigint FROM authz.settings s WHERE s.key = 'changes_trimmed_txid')\n"
+            f"        >= pg_catalog.pg_snapshot_xmin(v.snap)::text::bigint\n"
             f"     OR EXISTS (SELECT 1 FROM authz.changes c WHERE c.object_type = {lit(t.name)} AND '*' = ANY (c.object_ids)\n"
             f"                AND c.cause <> 'dependent'\n"
             f"                AND NOT pg_catalog.pg_visible_in_snapshot(c.txid::text::xid8, v.snap))"

@@ -17,7 +17,7 @@ T=$(mktemp -d)
 # whatever way the suite ends: the sessions it left running, its databases, its files
 cleanup() {
   stop_sessions
-  for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8" "${DB}_9" "${DB}_10"; do dropdb --force --if-exists "$db" 2>/dev/null; done
+  for db in "$DB" "${DB}_2" "${DB}_3" "${DB}_4" "${DB}_5" "${DB}_6" "${DB}_7" "${DB}_8" "${DB}_9" "${DB}_10" "${DB}_11" "${DB}_12"; do dropdb --force --if-exists "$db" 2>/dev/null; done
   rm -rf "$T"
 }
 trap cleanup EXIT
@@ -249,7 +249,7 @@ case "$out" in *"beside the ones in use"*"two migrations"*) [ "$(ls "$P"/db/migr
   case "$build" in *_authz_build_*) true;; *) false;; esac && ok "migrate writes two: build beside, then swap in" || bad "two files" "$(ls "$P/db/migrations")";;
   *) bad "two-phase migrate" "$out";; esac
 dropdb --if-exists "${DB}_5" 2>/dev/null; createdb --template "${DB}_2" "${DB}_5"   # (before the build: the oldest writer, below)
-for n in 6 7 8 9; do dropdb --if-exists "${DB}_$n" 2>/dev/null; createdb --template "${DB}_2" "${DB}_$n"; done   # (and four more)
+for n in 6 7 8 9 11 12; do dropdb --if-exists "${DB}_$n" 2>/dev/null; createdb --template "${DB}_2" "${DB}_$n"; done   # (and four more)
 said=$(sed -n 3p "$build")
 [ "$said" = "-- builds folder__linked_into_parent__tree beside the ones in use; the next migration swaps it in" ] &&
   ok "... the first says which tree it builds beside, and that the next swaps it in" || bad "the first's summary" "$said"
@@ -327,6 +327,48 @@ PSQL -d "${DB}_7" -c "TRUNCATE app.folder_links" >/dev/null
 out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_7" -f "$swap" 2>&1) &&
   [ "$(PSQL -d "${DB}_7" -c "SELECT authz.verify()")" = t ] &&
   ok "... and a link table emptied meanwhile" || bad "swap after an emptying" "$out"
+# the feed trimmed between the two (its entries older than the keep period) up to the entries of a transaction
+# still open when the build took its snapshot, the feed holding later positions already then (another
+# transaction's, committed): the swap computes the tree again, since the trim ended at or after the snapshot's
+# oldest open transaction. (The build's snapshot is set to say T is that one, as on a server where nothing older runs)
+RACE_DB=${DB}_12 race
+PGAPPNAME=authz_migrations_open psql -X -q -v ON_ERROR_STOP=1 -d "${DB}_12" -c "BEGIN" \
+  -c "INSERT INTO app.folder_links VALUES (6, 20)" -c "$HOLD" -c "COMMIT" >/dev/null 2>&1 &
+RACE_DB=${DB}_12 held authz_migrations_open
+x=$(PSQL -d "${DB}_12" -c "SELECT backend_xid FROM pg_stat_activity WHERE datname = current_database() AND application_name = 'authz_migrations_open'")
+u=$(PSQL -d "${DB}_12" -c "BEGIN" -c "INSERT INTO authz.changes (object_type, object_ids, cause) VALUES ('tag', ARRAY['red'], 'links changed')" \
+      -c "SELECT pg_current_xact_id()" -c "COMMIT")
+PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_12" -f "$build" >/dev/null 2>&1 ||
+  bad "the build, on a copy with a transaction open"
+RACE_DB=${DB}_12 go; wait
+# trimmed: its keep period over for T's entries (not the later one's), once no transaction older than T runs
+trims() {
+  PSQL -d "$1" -c "UPDATE authz.changes SET at = at - interval '30 days' WHERE txid = $2" >/dev/null
+  for _ in $(seq 240); do [ "$(PSQL -d "$1" -c "SELECT authz.trim_changes()")" -gt 0 ] && return 0; sleep 0.25; done
+  return 1
+}
+PSQL -d "${DB}_12" -c "UPDATE authz_int.next_trees SET snap = '$x:$((u + 1)):$x'" >/dev/null
+trims "${DB}_12" "$x" && [ "$(PSQL -d "${DB}_12" -c "SELECT (SELECT value::bigint FROM authz.settings WHERE key = 'changes_trimmed_to') <= feed FROM authz_int.next_trees")" = t ] &&
+  out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_12" -f "$swap" 2>&1) &&
+  [ "$(PSQL -d "${DB}_12" -c "SELECT authz.verify()")" = t ] &&
+  [ "$(PSQL -d "${DB}_12" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 6 AND ancestor = 20")" = 1 ] &&
+  ok "... and the feed trimmed meanwhile of a transaction open at the build, before positions the build saw: computed again" ||
+  bad "swap after a trim of what was open at the build" "${out:-the trim}"
+# ... and a trim an older rowstile made, which records only the greatest position it removed: past the build's
+RACE_DB=${DB}_11 race
+PGAPPNAME=authz_migrations_open psql -X -q -v ON_ERROR_STOP=1 -d "${DB}_11" -c "BEGIN" \
+  -c "INSERT INTO app.folder_links VALUES (6, 20)" -c "$HOLD" -c "COMMIT" >/dev/null 2>&1 &
+RACE_DB=${DB}_11 held authz_migrations_open
+x=$(PSQL -d "${DB}_11" -c "SELECT backend_xid FROM pg_stat_activity WHERE datname = current_database() AND application_name = 'authz_migrations_open'")
+PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_11" -f "$build" >/dev/null 2>&1 ||
+  bad "the build, on another copy with a transaction open"
+RACE_DB=${DB}_11 go; wait
+trims "${DB}_11" "$x" && PSQL -d "${DB}_11" -c "DELETE FROM authz.settings WHERE key = 'changes_trimmed_txid'" >/dev/null &&
+  out=$(PGOPTIONS="-c client_min_messages=error" psql -X -q -1 -v ON_ERROR_STOP=1 -d "${DB}_11" -f "$swap" 2>&1) &&
+  [ "$(PSQL -d "${DB}_11" -c "SELECT authz.verify()")" = t ] &&
+  [ "$(PSQL -d "${DB}_11" -c "SELECT count(*) FROM authz_int.folder__linked_into_parent__tree WHERE descendant = 6 AND ancestor = 20")" = 1 ] &&
+  ok "... and after a trim that recorded only the greatest position it removed, past the build's: computed again" ||
+  bad "swap after an older trim" "${out:-the trim}"
 # the build's record gone: the swap refuses rather than catch up from nothing. (The build records no policy: it
 # moves the lock the last one was recorded with, and no earlier one's)
 locks() { PSQL -d "${DB}_6" -c "SELECT string_agg(coalesce(lock, '-'), ' ' ORDER BY id) FROM authz.policy_versions WHERE id < (SELECT max(id) FROM authz.policy_versions)"; }
