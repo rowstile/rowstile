@@ -86,6 +86,10 @@ export function pages(files) {
   return made.sort();
 }
 
+/** A tag, or MAIN, as git must read it: in full, so a branch of the same name isn't taken for it.
+ *  @param {string} name @returns {string} */
+const ref = (name) => (name === MAIN ? MAIN : `refs/tags/${name}`);
+
 /** @param {string} repo @param {string[]} args @returns {{ok: boolean, out: string}} */
 function git(repo, ...args) {
   const run = spawnSync("git", args, { cwd: repo, encoding: "utf8" });
@@ -97,7 +101,7 @@ function git(repo, ...args) {
  *  @returns {Decision} */
 export function read(repo, given, byHand) {
   const tags = git(repo, "tag", "-l").out.split("\n").map((t) => t.trim()).filter(Boolean);
-  return deploys(given, tags, (a, b) => git(repo, "merge-base", "--is-ancestor", `${a}^{commit}`, `${b}^{commit}`).ok,
+  return deploys(given, tags, (a, b) => git(repo, "merge-base", "--is-ancestor", `${ref(a)}^{commit}`, `${ref(b)}^{commit}`).ok,
     byHand);
 }
 
@@ -109,13 +113,13 @@ export function take(repo, given, byHand) {
   if (!decided.deploy) return decided;
   const changed = git(repo, "status", "--porcelain").out;
   if (changed) throw new Error(`this clone has changes of its own, which taking ${given} would lose:\n${changed}`);
-  const out = git(repo, "checkout", "--quiet", "--detach", decided.code);
+  const out = git(repo, "checkout", "--quiet", "--detach", `${ref(decided.code)}^{commit}`);
   if (!out.ok) throw new Error(`git checkout ${decided.code}: ${out.out}`);
   if (!decided.content) return decided;
   for (const folder of FOLDERS) {
     rmSync(join(repo, folder), { recursive: true, force: true });
-    if (!git(repo, "cat-file", "-e", `${decided.content}:${folder}`).ok) continue;     // the blog tag has no such folder
-    const put = git(repo, "checkout", "--quiet", decided.content, "--", folder);
+    if (!git(repo, "cat-file", "-e", `${ref(decided.content)}:${folder}`).ok) continue;     // the blog tag has no such folder
+    const put = git(repo, "checkout", "--quiet", ref(decided.content), "--", folder);
     if (!put.ok) throw new Error(`git checkout ${decided.content} -- ${folder}: ${put.out}`);
   }
   return decided;

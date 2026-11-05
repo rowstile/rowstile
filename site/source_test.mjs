@@ -177,6 +177,21 @@ try {
     JSON.stringify({ deploy: true, why: "", code: "site-v2", content: "" }));
   check("... the release by hand: the blog tag's, which it doesn't hold", read(repo, "v0.1.0", true).content === "blog-v1");
 
+  // a branch named like a tag, on another commit: what is decided and what is checked out are the tag's
+  git("checkout", "--quiet", "--force", "main");
+  git("branch", "site-v2", "v0.1.0");
+  git("branch", "v0.1.0", "v0.1.0-beta.1");
+  git("branch", "blog-v1", "v0.1.0-beta.1");
+  take(repo, "site-v2", true);
+  check("a branch named like a tag: the tag's commit is checked out", git("rev-parse", "HEAD") === git("rev-parse", "refs/tags/site-v2^{commit}") &&
+    now("site/pages.mjs") === "main's, later\n", git("rev-parse", "HEAD"));
+  git("checkout", "--quiet", "--force", "main");
+  take(repo, "v0.1.0", true);
+  check("... and with a blog tag's two folders", git("rev-parse", "HEAD") === git("rev-parse", "refs/tags/v0.1.0^{commit}") &&
+    now("docs/blog/2026-11-20-third.md") === "a third\n", git("rev-parse", "HEAD"));
+  git("checkout", "--quiet", "--force", "main");
+  git("branch", "-D", "site-v2", "v0.1.0", "blog-v1");
+
   git("checkout", "--quiet", "-b", "aside", "main");
   commit({ "docs/blog/2026-12-02-unmerged.md": "not on main\n" }, "site-v3");
   git("update-ref", MAIN, "main");
