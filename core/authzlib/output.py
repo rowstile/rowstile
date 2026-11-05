@@ -1278,7 +1278,8 @@ END $kv$;"""
             alias = q(table.split(".")[1])
             cmds = {r.command: r for r in rules if not r.columns}
             policies.append(f"ALTER TABLE {qt(table)} ENABLE ROW LEVEL SECURITY;")
-            policies.append(self.seen_sql(t, table, alias))
+            if any(r.command != "select" and r.command != "mask" for r in rules):  # (what the write rules' items call)
+                policies.append(self.seen_sql(t, table, alias))
             # refused writes raise with the rule and why (refusals.py); an allowed write never calls these
             explaining, refuse = self.refusal_sql(t, table, alias, rules)
             policies += explaining

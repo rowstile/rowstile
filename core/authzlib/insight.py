@@ -32,6 +32,22 @@ def expr_text(node: Expr) -> str:
             return "(" + (" or " if isinstance(node, Or) else " and ").join(expr_text(x) for x in node.items) + ")"
 
 
+def named(fns: list[tuple[str | None, str]], roots: set[str] | None = None) -> list[str]:
+    """Of the functions (name, SQL), in their order: those without a name (always made), and the named ones that one
+    made names, or roots. A relation followed only by an arrow, or that no permission names, gets none: nothing
+    would call it."""
+    rels = {name: sql for name, sql in fns if name is not None}
+    keep = set(roots or ()) & rels.keys()
+    todo = [sql for name, sql in fns if name is None or name in keep]
+    while todo:
+        sql = todo.pop()
+        for name, body in rels.items():
+            if name not in keep and name in sql:
+                keep.add(name)
+                todo.append(body)
+    return [sql for name, sql in fns if name is None or name in keep]
+
+
 class InsightMixin(Core):
     # ------------------------------------------------------------------
     # who: candidates (a superset, from the data), then each one checked
@@ -170,15 +186,22 @@ class InsightMixin(Core):
         """One function per relation and permission: users that may hold it on an
         object (a superset; authz.who checks each one)."""
         u = self.T("user")
-        out: list[str] = []
+        out: list[tuple[str | None, str]] = []
+        # the members of a group a share may name (team#member): `rowstile why` asks who they are (grant.people_in)
+        groups: set[str] = set()
         for t in self.types.values():
             for r in t.relations.values():
+                groups |= {self.who_fn(self.T(st), sr) for st, sr in r.subjects() if sr and sr != "*"}
                 if all(sr is None and st in self.types and not self.T(st).principal for st, sr in r.subjects()):
                     continue  # links to objects: nobody holds them
+                fn = self.who_fn(t, r.name)
                 out.append(
-                    f"CREATE FUNCTION {self.who_fn(t, r.name)}(p_id {t.pktype}) RETURNS SETOF {u.pktype}\n"
-                    f"LANGUAGE sql STABLE STRICT {DEFINER_FROM_CURRENT} ROWS 50 AS $f$\n"
-                    f"  {self.rel_who_sql(t, r, 'p_id')}\n$f$;"
+                    (
+                        fn,
+                        f"CREATE FUNCTION {fn}(p_id {t.pktype}) RETURNS SETOF {u.pktype}\n"
+                        f"LANGUAGE sql STABLE STRICT {DEFINER_FROM_CURRENT} ROWS 50 AS $f$\n"
+                        f"  {self.rel_who_sql(t, r, 'p_id')}\n$f$;",
+                    )
                 )
         for t in self.types.values():
             for p in t.perms.values():
@@ -187,8 +210,11 @@ class InsightMixin(Core):
                     sql = self.who_items(t, p.expr, "p_id")
                     body = self.all_users() if sql is None else sql
                     out.append(
-                        f"CREATE FUNCTION {self.who_fn(t, p.name)}(p_id {t.pktype}) RETURNS SETOF {u.pktype}\n"
-                        f"LANGUAGE sql STABLE STRICT {DEFINER_FROM_CURRENT} ROWS 50 AS $f$\n  {body}\n$f$;"
+                        (
+                            None,
+                            f"CREATE FUNCTION {self.who_fn(t, p.name)}(p_id {t.pktype}) RETURNS SETOF {u.pktype}\n"
+                            f"LANGUAGE sql STABLE STRICT {DEFINER_FROM_CURRENT} ROWS 50 AS $f$\n  {body}\n$f$;",
+                        )
                     )
                     continue
                 items = self.base_items(t, p)
@@ -201,8 +227,11 @@ class InsightMixin(Core):
                     else f"SELECT NULL::{u.pktype} WHERE false"
                 )  # a loop's member that only inherits
                 out.append(
-                    f"CREATE FUNCTION {self.who_base_fn(t, p.name)}(p_id {t.pktype}) RETURNS SETOF {u.pktype}\n"
-                    f"LANGUAGE sql STABLE STRICT {DEFINER_FROM_CURRENT} ROWS 50 AS $f$\n  {base}\n$f$;"
+                    (
+                        None,
+                        f"CREATE FUNCTION {self.who_base_fn(t, p.name)}(p_id {t.pktype}) RETURNS SETOF {u.pktype}\n"
+                        f"LANGUAGE sql STABLE STRICT {DEFINER_FROM_CURRENT} ROWS 50 AS $f$\n  {base}\n$f$;",
+                    )
                 )
                 members = self.scc_members[key]
                 if len(members) == 1:
@@ -220,10 +249,13 @@ class InsightMixin(Core):
                         for mt, mp in members
                     )
                 out.append(
-                    f"CREATE FUNCTION {self.who_fn(t, p.name)}(p_id {t.pktype}) RETURNS SETOF {u.pktype}\n"
-                    f"LANGUAGE sql STABLE STRICT {DEFINER_FROM_CURRENT} ROWS 50 AS $f$\n  {body}\n$f$;"
+                    (
+                        None,
+                        f"CREATE FUNCTION {self.who_fn(t, p.name)}(p_id {t.pktype}) RETURNS SETOF {u.pktype}\n"
+                        f"LANGUAGE sql STABLE STRICT {DEFINER_FROM_CURRENT} ROWS 50 AS $f$\n  {body}\n$f$;",
+                    )
                 )
-        return out
+        return named(out, groups)
 
     # ------------------------------------------------------------------
     # why: the path that grants a permission (or what is missing)
@@ -332,8 +364,8 @@ END $f$;"""
         return "".join(loops)
 
     def why_sql(self) -> list[str]:
-        """One function per relation and permission explaining it for the current user."""
-        out: list[str] = []
+        """One function per permission explaining it for the current user, and one per relation they name."""
+        out: list[tuple[str | None, str]] = []
         for t in self.types.values():
             where = (
                 (
@@ -346,11 +378,14 @@ END $f$;"""
                 else ""
             )
             for r in t.relations.values():
-                out.append(self.rel_why_sql(t, r, where))
+                out.append((self.why_fn(t, r.name), self.rel_why_sql(t, r, where)))
             for p in t.perms.values():
                 items = self.top_items(p)
                 body = "".join(self.why_item_sql(t, i, "p_id") for i in items)
-                out.append(f"""CREATE FUNCTION {self.why_fn(t, p.name)}(p_id {t.pktype}, p_depth int, p_seen text[], p_asker text[])
+                out.append(
+                    (
+                        None,
+                        f"""CREATE FUNCTION {self.why_fn(t, p.name)}(p_id {t.pktype}, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE {DEFINER_FROM_CURRENT} AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
         v_holds boolean := p_id IN (SELECT id FROM authz_int.{q(t.name + "__" + p.name)});
@@ -359,8 +394,10 @@ BEGIN
 {where}  RETURN NEXT pad || {lit(t.name + "." + p.name + " = " + p.src.replace("  (or a custom role)", " or a custom role"))};
   BEGIN
 {body}  END;
-END $f$;""")
-        return out
+END $f$;""",
+                    )
+                )
+        return named(out)
 
     def rel_why_sql(self, t: Type, r: Relation, where: str) -> str:
         """Which source gives the current user relation r on an object."""
