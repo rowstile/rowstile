@@ -120,6 +120,13 @@
       "when": 1793907646861,
       "tag": "0016_authz_truncate_forgets_its_rows",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793908367189,
+      "tag": "0017_authz_lint_column_privileges",
+      "breakpoints": true
     }
   ]
 }
