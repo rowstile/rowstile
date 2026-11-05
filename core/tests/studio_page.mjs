@@ -2,7 +2,9 @@
 // grid's cells under their headings, "Why?" as anyone and as someone, the graph drawn (Mermaid from the CDN, checked
 // against its hash) and a node's detail, the shares and requests as the API sends them, and a policy applied while
 // the page is open. studio_test.py asks the API; this asks what the page makes of it.
-//   PGHOST=... PGUSER=authz_owner node tests/studio_page.mjs [path/to/chrome]      (skipped when there is no browser)
+//   PGHOST=... PGUSER=authz_owner node tests/studio_page.mjs [path/to/chrome]      (skipped when there is no browser, but on CI)
+// On CI (the variable CI set, as GitHub's runners set it) a run without a browser fails: GitHub's runners have
+// Chrome, and a job that found none would check nothing and pass.
 // It makes the database authz_studio_page (python3 runs its SQL with the command's own client: no psql needed) and
 // drops it after. tests/studio_page.sh runs it on a Postgres of its own (CI's studio-page job).
 import { spawn, spawnSync } from "node:child_process";
@@ -30,6 +32,10 @@ const check = (what, ok, got) => {
 
 const browser = BROWSERS.find((b) => existsSync(b));
 if (!browser) {
+  if (process.env.CI) {
+    console.log("FAIL  no Chrome or Edge, on CI: nothing would be checked (pass its path, or set CHROME)");
+    process.exit(1);
+  }
   console.log("skip  no Chrome or Edge (pass its path, or set CHROME)");
   process.exit(0);
 }

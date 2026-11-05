@@ -1,7 +1,9 @@
 // The page in a real browser (headless Chrome or Edge, over the DevTools protocol): it loads Python and
 // Postgres from the CDN, runs the example's tests, shows a mistake with its code and page, and asks as
 // someone. Also how long loading takes, from nothing cached and again (the design's limit is 5 s).
-//   node build.mjs && node browser_test.mjs [path/to/chrome]      (skipped when there is no browser)
+//   node build.mjs && node browser_test.mjs [path/to/chrome]      (skipped when there is no browser, but on CI)
+// On CI (the variable CI set, as GitHub's runners set it) a run without a browser fails: GitHub's runners have
+// Chrome, and a job that found none would check nothing and pass.
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
@@ -29,6 +31,10 @@ const check = (what, ok, got) => {
 
 const browser = BROWSERS.find((b) => existsSync(b));
 if (!browser) {
+  if (process.env.CI) {
+    console.log("FAIL  no Chrome or Edge, on CI: nothing would be checked (pass its path, or set CHROME)");
+    process.exit(1);
+  }
   console.log("skip  no Chrome or Edge (pass its path, or set CHROME)");
   process.exit(0);
 }
