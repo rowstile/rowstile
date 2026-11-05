@@ -319,11 +319,14 @@ defmodule Rowstile do
   end
 
   @doc """
-  A row's key as Postgres writes it: `7`, or `(1,2)` for a key of several columns, a field quoted only where
-  Postgres would (empty, or holding a comma, a quote, a backslash, a parenthesis or a space). What a message shows,
-  and what `authz.explain_rule` reads back.
+  A row's key as Postgres writes it: `7`, or `(1,2)` for a key of several columns, given as a list or a tuple of its
+  values, a field quoted only where Postgres would (empty, or holding a comma, a quote, a backslash, a parenthesis
+  or one of ASCII's six spaces, and for no other character); `nil` for no key. What a message shows, and what
+  `authz.explain_rule` reads back.
   """
-  @spec key_text(key()) :: String.t()
+  @spec key_text(key()) :: String.t() | nil
+  def key_text(nil), do: nil
+  def key_text(fields) when is_tuple(fields), do: key_text(Tuple.to_list(fields))
   def key_text([one]), do: key_text(one)
 
   def key_text(fields) when is_list(fields),
@@ -336,7 +339,7 @@ defmodule Rowstile do
   defp field_text(value) do
     text = to_string(value)
 
-    if text == "" or String.match?(text, ~r/[",\\()\s]/) do
+    if text == "" or String.match?(text, ~r/[",\\() \t\n\r\x0b\f]/) do
       ~s(") <> String.replace(String.replace(text, "\\", "\\\\"), ~s("), ~s("")) <> ~s(")
     else
       text
@@ -372,13 +375,14 @@ defmodule Rowstile do
 
   @doc """
   The ids of the objects of `perm`'s type on which whoever `db`'s transaction signed in as holds `perm`, in key
-  order. With `limit:` (and `after:`, the last id of the page before), that page alone: the database says when
-  its size or its cursor is wrong (`Rowstile.CallError`, 400). To filter a query to them instead, join
+  order. With `limit:` and `after:` (the last id of the page before), that page alone: no `after:` (or `nil`) starts
+  at the first, no `limit:` (or `nil`) gives every one after it. The database says when the size or the cursor is
+  wrong (`Rowstile.CallError`, 400). To filter a query to them instead, join
   `authz.list(type, perm)` in it.
   """
   @spec list(db(), Permission.t(), keyword()) :: [String.t()]
   def list(db, %Permission{type: type, name: name}, page \\ []) do
-    after_id = if Keyword.has_key?(page, :after), do: key_text(page[:after])
+    after_id = key_text(page[:after])
 
     rows =
       query!(db, "SELECT x FROM authz.list($1, $2, $3, $4) x", [
