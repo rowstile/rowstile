@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, urlparse
 import pgwire
 from authzlib import Compiler, database
 from authzlib.connection import Value as Json
-from authzlib.parse import Type
+from authzlib.parse import Relation, Type
 from authzlib.sqlutil import lit, qt
 from authzlib.sqlutil import q as quoted
 
@@ -53,6 +53,9 @@ Mode = Literal["read", "try", "change"]
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "studio")
 ROWS = 50  # a page of the grid: the answer says it (limit), for the page's Previous and Next
+# how many of a table's rows a page of the grid counts, as the owner and as the person: one more is "more than that".
+# Each page asks again, and a count through the rules of a big table costs about what listing it all does
+COUNTED = 10_000
 # the changes the page posts (only with --write)
 CHANGES = ("share", "unshare", "decide")
 # a change's body: the page sends a few hundred bytes (a share's names and ids). A longer one is refused before a
@@ -197,30 +200,53 @@ class Studio:
     # --- what the page asks ----------------------------------------------------------------------------
     def overview(self, q: Query) -> Message:
         def run(db: Db) -> Message:
+            from authzlib.devtools import _id as node
+
             c = self.compiler(db)
             name = db.rows("SELECT current_database() AS d, current_user AS u")[0]
             types: list[Json] = []
             for t in c.types.values():
                 perms: list[Json] = [
-                    {"name": n, "src": p.src, "line": str(p.loc)} for n, p in t.perms.items() if not p.hidden
+                    {"name": n, "src": t.perms[n].src, "line": str(t.perms[n].loc)} for n in c.public_perms(t)
                 ]
                 rels: list[Json] = [
                     {
                         "name": n,
                         "line": str(r.loc),
-                        "subjects": ["#".join(x for x in s if x) for s in r.subjects()],
+                        "subjects": list[Json](subjects(r)),
                         "shared": any(src.kind == "shared" for src in r.sources),
                     }
                     for n, r in t.relations.items()
                     if not r.synthetic
                 ]
+                # what the graph also draws, which the policy doesn't name: the inheritance of a permission with a
+                # deny (view__base), the relation of a permission's custom roles (roles:view). By the graph's id
+                drawn: list[Json] = [
+                    {
+                        "node": node(t.name, n),
+                        "name": n.replace("__base", ", before the deny"),
+                        "text": f"can {n} = {p.src}",
+                        "line": str(p.loc),
+                    }
+                    for n, p in t.perms.items()
+                    if p.hidden
+                ] + [
+                    {
+                        "node": node(t.name, n),
+                        "name": f"custom roles → {n.removeprefix('roles:')}",
+                        "text": f"{n} : {', '.join(subjects(r))}",
+                        "line": str(r.loc),
+                    }
+                    for n, r in t.relations.items()
+                    if r.synthetic
+                ]
                 types.append(
                     {
                         "name": t.name,
                         "table": t.table,
-                        "principal": t.principal,
                         "perms": perms,
                         "relations": rels,
+                        "drawn": drawn,
                         "line": str(t.loc),
                     }
                 )
@@ -251,16 +277,32 @@ class Studio:
                 raise Problem(f"no type {type_name!r} in the policy", 404)
             table = t.table
             view = c.pol.views.get(table)
-            masked = sorted({col for r in c.pol.rules if r.table == table and r.command == "mask" for col in r.columns})
+            # the table's columns in its own order (to_jsonb's keys are in an order of their own)
+            columns = [
+                str(r["a"])
+                for r in db.rows(
+                    "SELECT a.attname AS a FROM pg_catalog.pg_attribute a WHERE a.attrelid = $1::regclass "
+                    "AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
+                    [qt(table)],
+                )
+            ]
+            masked = [
+                col
+                for col in columns
+                if any(r.table == table and r.command == "mask" and col in r.columns for r in c.pol.rules)
+            ]
             key = f"({c.key(t, 'r')})::text"
             # in the key's own order (ids 1, 2, ... 10, not 1, 10, 2), column by column
             order = ", ".join(f"r.{quoted(col)}" for col, _ in t.key)
+            # a row is where it is stored: the table under the table (a partition, a table that inherits) and its
+            # place there, the ctid, which only that table holds once
             data = db.rows(
-                f"SELECT r.ctid::text AS authz_ctid, {key} AS authz_id, to_jsonb(r) AS authz_row "
-                f"FROM {qt(table)} r ORDER BY {order} LIMIT {ROWS + 1} OFFSET {offset}"
+                f"SELECT r.tableoid::text AS authz_in, r.ctid::text AS authz_ctid, {key} AS authz_id, "
+                f"to_jsonb(r) AS authz_row FROM {qt(table)} r ORDER BY {order} LIMIT {ROWS + 1} OFFSET {offset}"
             )
             more, data = len(data) > ROWS, data[:ROWS]
-            total = db.rows(f"SELECT count(*) AS n FROM {qt(table)}")[0]["n"]
+            counted = f"LIMIT {COUNTED + 1}"
+            total = db.rows(f"SELECT count(*) AS n FROM (SELECT FROM {qt(table)} {counted}) r")[0]["n"]
             # as the app role, signed in as them: which of these rows they see (the owner may take it: AZ618)
             role = self.app_role(db)
             database.may_take(db, role)
@@ -270,26 +312,29 @@ class Studio:
             theirs: dict[str, Message] = {}
             if view:
                 # a table read through its masked view (the app role can't read the table's masked columns, nor
-                # its ctid): the rows they see, with each masked column as they get it
-                seen = set[Json]()
+                # its ctid): the rows they see, with each masked column as they get it. Looked up by the key's own
+                # columns, so that its index is used
+                within = c.key_any(t, "r", f"$1::text[]::{t.pktype}[]")
+                seen = set[tuple[str, str]]()
                 theirs = {
                     str(r["id"]): as_object(r["authz_row"])
                     for r in db.rows(
-                        f"SELECT {key} AS id, to_jsonb(r) AS authz_row FROM {qt(view)} r WHERE {key} = ANY ($1::text[])",
+                        f"SELECT {key} AS id, to_jsonb(r) AS authz_row FROM {qt(view)} r WHERE {within}",
                         [database.text_array(ids)],
                     )
                 }
-                seen_total = db.rows(f"SELECT count(*) AS n FROM {qt(view)}")[0]["n"]
+                seen_total = db.rows(f"SELECT count(*) AS n FROM (SELECT FROM {qt(view)} {counted}) r")[0]["n"]
             else:
                 ctids = [str(r["authz_ctid"]) for r in data]
                 seen = {
-                    r["c"]
+                    (str(r["t"]), str(r["c"]))
                     for r in db.rows(
-                        f"SELECT r.ctid::text AS c FROM {qt(table)} r WHERE r.ctid = ANY ($1::tid[])",
+                        f"SELECT r.tableoid::text AS t, r.ctid::text AS c FROM {qt(table)} r "
+                        "WHERE r.ctid = ANY ($1::tid[])",
                         [database.text_array(ctids)],
                     )
                 }
-                seen_total = db.rows(f"SELECT count(*) AS n FROM {qt(table)}")[0]["n"]
+                seen_total = db.rows(f"SELECT count(*) AS n FROM (SELECT FROM {qt(table)} {counted}) r")[0]["n"]
             db.rows("RESET ROLE")
             perms: dict[str, Json] = {
                 str(r["id"]): r["perms"] or []
@@ -298,7 +343,6 @@ class Studio:
                 )
             }
             values = [as_object(r["authz_row"]) for r in data]
-            columns: list[Json] = list(values[0]) if values else []
             out: list[Json] = []
             for r, row in zip(data, values, strict=True):
                 # a row they see shows what they get: a masked column they may not read is empty, and named. A
@@ -310,7 +354,7 @@ class Studio:
                 out.append(
                     {
                         "id": r["authz_id"],
-                        "visible": r["authz_ctid"] in seen or mine is not None,
+                        "visible": (str(r["authz_in"]), str(r["authz_ctid"])) in seen or mine is not None,
                         "values": row if mine is None else mine,
                         "masked": hidden_cols,
                         "perms": perms.get(str(r["authz_id"]), []),
@@ -319,13 +363,16 @@ class Studio:
             return {
                 "table": table,
                 "type": t.name,
-                "columns": columns,
+                "columns": list[Json](columns),
+                "masked": list[Json](masked),
                 "rows": out,
                 "offset": offset,
                 "limit": ROWS,
                 "more": more,
+                # each counted up to COUNTED: one more is more than that
                 "total": total,
                 "visible_total": seen_total,
+                "counted": COUNTED,
             }
 
         return self.work(run)
@@ -362,7 +409,6 @@ class Studio:
                         "more_people": w.more_people,
                         "also": list[Json](w.also),
                         "elsewhere": [{"type": tn, "perm": pn, "n": n} for tn, pn, n in w.elsewhere],
-                        "fewer_people": w.fewer_people,
                         # what other people lose: n other objects of the type (0: this one), from how many people
                         "takes": [{"type": tn, "perm": pn, "n": n, "people": k} for tn, pn, n, k in w.takes],
                         "lines": list[Json](sorted({str(ch.loc) for ch in w.changes})),
@@ -423,7 +469,9 @@ class Studio:
                 for c, t, w in users
             ]
             shown: list[Json] = [dict(r) for r in rows[:500]]
-            return {"same_text": in_force == text, "summary": summary, "rows": shown, "truncated": len(rows) > 500}
+            # the file is not the one in force (that is answered above), if only an included file differs: an empty
+            # summary is then a change that changes no one's access
+            return {"same_text": False, "summary": summary, "rows": shown, "truncated": len(rows) > 500}
 
         return self.work(run, "try")  # the diff undoes itself (a savepoint), and the whole is rolled back
 
@@ -516,71 +564,71 @@ class Studio:
             t = grant.permission_of(c, type_name, perm)
             check = f"{subject} {expect} {perm} {type_name} {word(oid)}"
 
-            def value(v: Json) -> str:
-                if v is None:
+            def value(text: str | None, kind: str) -> str:
+                """A column's value as its text, which Postgres reads back as the column's type: a json scalar
+                stays json. A number or a boolean written bare, as one writes it by hand."""
+                if text is None:
                     return "NULL"
-                if isinstance(v, bool):
-                    return "true" if v else "false"
-                if isinstance(v, int):
-                    return str(v)
-                return lit(str(v))
+                if kind == "B" or (kind == "N" and re.fullmatch(r"-?[0-9]+(\.[0-9]+)?", text)):
+                    return text
+                return lit(text)
 
-            def insert(tt: Type, ident: str | None, var: str) -> str | None:
-                """A given that makes a copy of the row, as a new row: None when it isn't there, or its key has
+            def insert(tt: Type, ident: str | None, var: str) -> list[str]:
+                """A given that makes a copy of the row, as a new row: none when it isn't there, or its key has
                 several columns (the test then names the row that is there)."""
                 if tt.pk is None or tt.composite:
-                    return None
+                    return []
                 this = c.key_is(tt, "r", lit(ident))
-                row = db.rows(f"SELECT to_jsonb(r) AS j FROM {qt(tt.table)} r WHERE {this}")
-                if not row:
-                    return None
-                j = as_object(row[0]["j"])
                 # the columns the table fills itself (an identity, a sequence's next value, a generated column) are
                 # left to it, and any other is copied, a column with a default too: the row's value is what the
-                # policy reads. A key it doesn't fill gets a new value, or the copy would collide with the row
-                own = {
-                    r["a"]
+                # policy reads. Each with its type's kind (N a number, B a boolean, S text) and name
+                columns = {
+                    str(r["a"]): (str(r["k"]), str(r["ty"]))
                     for r in db.rows(
-                        "SELECT a.attname AS a FROM pg_catalog.pg_attribute a LEFT JOIN pg_catalog.pg_attrdef d "
+                        "SELECT a.attname AS a, t.typcategory AS k, t.typname AS ty FROM pg_catalog.pg_attribute a "
+                        "JOIN pg_catalog.pg_type t ON t.oid = a.atttypid LEFT JOIN pg_catalog.pg_attrdef d "
                         "ON d.adrelid = a.attrelid AND d.adnum = a.attnum WHERE a.attrelid = $1::regclass "
-                        "AND a.attnum > 0 AND (a.attidentity <> '' OR a.attgenerated <> '' "
-                        "OR pg_catalog.pg_get_expr(d.adbin, d.adrelid) LIKE 'nextval(%')",
+                        "AND a.attnum > 0 AND NOT a.attisdropped AND a.attidentity = '' AND a.attgenerated = '' "
+                        "AND coalesce(pg_catalog.pg_get_expr(d.adbin, d.adrelid) NOT LIKE 'nextval(%', true) "
+                        "ORDER BY a.attnum",
                         [qt(tt.table)],
                     )
                 }
-                j = {k: v for k, v in j.items() if k not in own}
-                # what JSON doesn't give back as the column holds it (an array, a row, a number with a fraction):
-                # the column's own text, which Postgres reads back as it was
-                texts = [k for k, v in j.items() if isinstance(v, (dict, list, float))]
-                if texts:
-                    cast = ", ".join(f"r.{quoted(k)}::text AS {quoted(k)}" for k in texts)
-                    j.update(db.rows(f"SELECT {cast} FROM {qt(tt.table)} r WHERE {this}")[0])
-                vals = {k: value(v) for k, v in j.items()}
+                cast = ", ".join(f"r.{quoted(k)}::text AS {quoted(k)}" for k in columns)
+                row = db.rows(f"SELECT {cast} FROM {qt(tt.table)} r WHERE {this}")
+                if not row:
+                    return []
+                texts = {k: None if row[0][k] is None else str(row[0][k]) for k in columns}
+                vals = {k: value(texts[k], columns[k][0]) for k in columns}
+                notes: list[str] = []
                 if tt.pk in vals:
-                    kind = tt.key[0][1]
-                    vals[tt.pk] = (
-                        "gen_random_uuid()"
-                        if kind == "uuid"
-                        else lit(f"{j[tt.pk]} (a copy)")
-                        if kind in ("text", "varchar")
-                        else f"(SELECT coalesce(max({quoted(tt.pk)}), 0) + 1 FROM {qt(tt.table)})"
-                    )
+                    # a key the table doesn't fill gets a new value, or the copy would collide with the row: the
+                    # next number, a new uuid, the text with (a copy); of any other type, the row's, said
+                    kind, name = columns[tt.pk]
+                    if name == "uuid":
+                        vals[tt.pk] = "gen_random_uuid()"
+                    elif kind == "N":
+                        vals[tt.pk] = f"(SELECT coalesce(max({quoted(tt.pk)}), 0) + 1 FROM {qt(tt.table)})"
+                    elif kind == "S":
+                        vals[tt.pk] = lit(f"{texts[tt.pk]} (a copy)")
+                    else:
+                        notes.append(f"  -- {quoted(tt.pk)} is the copied row's: give the copy a key of its own")
                 cols = ", ".join(quoted(k) for k in vals)
-                return (
+                return [
                     f"  given {var} = {{INSERT INTO {qt(tt.table)} ({cols}) VALUES ({', '.join(vals.values())}) "
-                    f"RETURNING {quoted(tt.pk)}}}"
-                )
+                    f"RETURNING {quoted(tt.pk)}}}",
+                    *notes,
+                ]
 
             lines = [f'test "{check}"']
             someone = subject
             if who[0] is not None and who[0] in c.types:
                 g = insert(c.types[who[0]], who[1], "who")
                 if g:
-                    lines.append(g)
+                    lines += g
                     someone = f"{who[0]} $who"
             g = insert(t, oid, "it")
-            if g:
-                lines.append(g)
+            lines += g
             lines.append(
                 "  -- add the rows that link them (the relations the explanation names), and change what must be unique"
             )
@@ -618,7 +666,8 @@ class Studio:
 
             def setup(self) -> None:
                 super().setup()
-                # a connection that sends nothing more for this long is closed, not held by a thread for ever
+                # a connection that sends nothing more for this long is closed, not held by a thread for ever (read
+                # for each connection, not once as the class's timeout would be: studio_test shortens it)
                 self.connection.settimeout(WAIT_SECONDS)
 
             def log_message(self, format: str, *args: object) -> None:
@@ -770,6 +819,11 @@ class Studio:
         assert self.server is not None, "stop() after start()"
         self.server.shutdown()
         self.server.server_close()
+
+
+def subjects(r: Relation) -> list[str]:
+    """Who a relation holds, as the policy writes them: user, team#member."""
+    return ["#".join(x for x in s if x) for s in r.subjects()]
 
 
 def as_object(value: Json) -> Message:

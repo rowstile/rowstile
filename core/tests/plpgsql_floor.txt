@@ -3,5 +3,5 @@
 # that leaves more never run (coverage_report.py --floor), and one that leaves fewer until this file says so. Not
 # counted: what only functions no suite called hold, of a kind a suite calls elsewhere (coverage_plpgsql.floored: a
 # test policy's own lines, in a database that never asks them); a kind no suite calls at all is counted.
-authz 186 271
+authz 192 281
 authz_gen 11 19
