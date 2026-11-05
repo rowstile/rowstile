@@ -43,13 +43,15 @@ from authzlib.parse import (  # noqa: E402
     Cond,
     Expr,
     Loc,
+    Mark,
     Not,
     Or,
     Policy,
+    Scanner,
     Type,
     collect_includes,
     disk_reader,
-    strip_comment,
+    strip_comments,
 )
 
 if TYPE_CHECKING:
@@ -185,6 +187,8 @@ class Server:
         self.failed, self.tried = 0, 0.0  # reads of the catalog that failed in a row, and when the last was tried
         self.said = ""  # what the log said last of the database
         self.running = True
+        self.shut = False  # shutdown asked: only exit is taken now
+        self.status = 0  # the server's exit status
 
     # --- rowstile.toml ---------------------------------------------------------------------------
     def load(self) -> None:
@@ -318,10 +322,12 @@ class Server:
                     named = self.cfg.setting(None, "policy") if self.cfg else policy
                     raise PolicyError(f'line 1: rowstile.toml: policy = "{named}": {e.strerror or e}', line=1) from None
                 against, files = policy, self.includes(policy, ptext)
-                c = Compiler(parse_policy(ptext, None, files=files))
+                pol = parse_policy(ptext, None, files=files)
+                # the model is the policy's: kept once it parses, a mistake in the tests aside
+                self.models[uri] = (pol, files, policy)
+                c = Compiler(pol)
                 c.add_test_files({THIS: text})
                 c.tests_function_sql()
-                self.models[uri] = (c.pol, files, policy)
             else:
                 files = self.includes(path, text)
                 pol = parse_policy(text, None, files=files)
@@ -600,8 +606,8 @@ class Server:
                 lines = self.text_of(uri_path(target)).split("\n")
             except OSError:  # a file it included, gone since: none there
                 continue
-            for n, s in enumerate(lines):
-                code = s.split("--")[0]
+            # each line without its comment, as the parser reads them (a -- in a string is no comment)
+            for n, code in enumerate(strip_comments("\n".join(lines)).split("\n")):
                 for m in WORD.finditer(code):
                     start = m.start()
                     for part in m.group(0).split("."):
@@ -631,8 +637,13 @@ class Server:
                         }
                     )
             return out
+        # what this file is called in the policy: None for the policy itself, else its name among the files it
+        # includes (what the parser calls the types and members written there)
+        _, files, main = self.models[uri]
+        here = same_file(uri_path(uri))
+        name = next((n for n in files if same_file(os.path.join(os.path.dirname(main), *n.split("/"))) == here), None)
         for t in pol.types.values():
-            if t.loc.file is not None:
+            if t.loc.file != name:
                 continue
             kids: list[Symbol_] = [
                 {
@@ -643,7 +654,7 @@ class Server:
                     "selectionRange": rng(r.loc.line - 1, 0, r.loc.line - 1, 200),
                 }
                 for r in t.relations.values()
-                if not r.synthetic and r.loc.file is None
+                if not r.synthetic and r.loc.file == name
             ]
             kids += [
                 {
@@ -654,7 +665,7 @@ class Server:
                     "selectionRange": rng(p.loc.line - 1, 0, p.loc.line - 1, 200),
                 }
                 for p in t.perms.values()
-                if not p.hidden and p.loc.file is None
+                if not p.hidden and p.loc.file == name
             ]
             last = max([t.loc.line] + [k["range"]["end"]["line"] + 1 for k in kids])
             out.append(
@@ -693,11 +704,11 @@ class Server:
         if not before:
             add(TOP_WORDS, C_KEYWORD)
             return items
-        if strip_comment(before) != before:
+        comment, ahead = braced(lines[:line], before)
+        if comment:
             return items  # in a comment (an editor asks again at every space typed)
         m = re.search(r"([A-Za-z_]\w*)\.(\w*)$", before)
-        in_braces = before.count("{") > before.count("}")
-        if m and not in_braces:
+        if m and ahead is None:
             first = m.group(1)
             t = self.home_type(pol, lines, line)
             if t and pol and first in t.relations:
@@ -710,10 +721,9 @@ class Server:
                 if schema == first:
                     add([name], C_MODULE, "table")
             return items
-        if in_braces:
+        if ahead is not None:
             # the columns of the row the condition is about: a link table's in its where, the share being made in
             # `shared if`, else the type's (in the type, or in the rules of its table)
-            ahead = before[: before.rfind("{")]
             link = re.search(rf"({QNAME})\s*\(.*\)\s*where\s*$", ahead)
             if link:
                 add(self.tables().get(link.group(1), []), C_FIELD, f"column of {link.group(1)}")
@@ -834,6 +844,11 @@ class Server:
     def handle(self, msg: Message) -> None:
         method, params, mid = msg.get("method"), obj(msg.get("params")), msg.get("id")
         result: Json = None
+        if self.shut and method != "exit":
+            # after shutdown only exit is taken: a request is refused (InvalidRequest), a notification dropped
+            if mid is not None:
+                send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32600, "message": "shut down: only exit now"}})
+            return
         if method not in ("initialize", "shutdown", "exit"):
             self.load()  # nothing may be sent before initialize is answered
         if method == "initialize":
@@ -850,9 +865,10 @@ class Server:
                 "serverInfo": {"name": "rowstile"},
             }
         elif method == "shutdown":
-            result = None
+            self.shut = True
         elif method == "exit":
             self.running = False
+            self.status = 0 if self.shut else 1  # the protocol's: 1 when no shutdown came first
             return
         elif method == "textDocument/didOpen":
             doc = obj(params.get("textDocument"))
@@ -932,6 +948,25 @@ def inherits(t: Type, perm: str) -> bool:
         t.relations.get(rel) is not None and any(st == t.name for st, _ in t.relations[rel].subjects())
         for rel, _ in arrows(p.expr)
     )
+
+
+def braced(earlier: Sequence[str], before: str) -> tuple[bool, str | None]:
+    """Where the cursor is, as the parser reads the lines (parse.Scanner: a { left open goes on to the next line):
+    whether in a -- comment, and, inside { }, what its line holds before the outermost { open (None outside)."""
+    scan, opened = Scanner(), ""
+
+    def scanned(s: str) -> list[Mark]:
+        nonlocal opened
+        marks = scan.marks(s)
+        for i, mark in enumerate(marks):
+            if s[i] == "{" and mark.depth == 0 and not mark.quoted and not mark.comment:
+                opened = s[:i]
+        return marks
+
+    for s in earlier:
+        scanned(s)
+    comment = any(mark.comment for mark in scanned(before))
+    return comment, opened if scan.depth else None
 
 
 def dedupe(items: list[Completion]) -> list[Completion]:
@@ -1047,3 +1082,5 @@ def serve(settings: Callable[[], Config]) -> None:
                         "error": {"code": -32603, "message": f"{type(e).__name__}: {e}"},
                     }
                 )
+    if server.status:
+        raise SystemExit(server.status)
