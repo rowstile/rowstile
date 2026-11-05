@@ -5,4 +5,8 @@
   <ItemGroup>
     <PackageReference Include="Npgsql" Version="10.0.3" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- whom the transactions BeginSignedInAsync began signed in as (SignedConnections), which the EF Core package reads -->
+    <InternalsVisibleTo Include="Rowstile.EntityFrameworkCore" />
+  </ItemGroup>
 </Project>
