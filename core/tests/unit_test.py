@@ -4325,6 +4325,24 @@ class Review(unittest.TestCase):
         self.assertIn("a permission widened", [f["why"] for f in r["risk"]])
         self.assertNotIn("unreadable", r["meaning"])
 
+    def test_a_condition_it_cannot_read_respaced_is_the_same_condition(self) -> None:
+        """Spaces outside quotes are layout inside a condition too: one the worlds hold as rows of its own is the
+        same rows whatever its spacing, so a permission turned round and respaced is still a refactor."""
+        sub = "{exists (select 1 from app.flags f where f.folder_id = this.id and f.note = 'x  y')}"
+        base = self.SMALL.replace("can edit = owner or org.admin", f"can edit = owner or org.admin or {sub}")
+        respaced = sub.replace("exists (", "exists  (\n    ").replace("= this.id", "=  this.id")
+        r = self.review.review(
+            (base, {}, {}),
+            (base.replace(f"owner or org.admin or {sub}", f"{respaced} or owner or org.admin"), {}, {}),
+            worlds=40,
+        )
+        self.assertNotIn("counterexample", r["meaning"])
+        self.assertRegex(r["meaning"]["equivalent"] or "", r"^40 small worlds and [\d,]+ listed")
+        self.assertEqual([f["why"] for f in r["risk"]], [])
+        # the text inside its quotes is what it says: two conditions
+        r = self.review.review((base, {}, {}), (base.replace("'x  y'", "'x y'"), {}, {}), worlds=40)
+        self.assertEqual(r["meaning"].get("unreadable"), ["folder.edit"])
+
     def test_no_lock_file_is_no_migration(self) -> None:
         """A project that applies its policy keeps no lock file: Deploy said every change was the whole policy, a
         migration that locks every table and rebuilds every tree."""
@@ -4621,6 +4639,13 @@ rules app.folders
             self.small("can edit = owner or org.admin", "can edit  =  owner   or org.admin")["meaning"]["equivalent"],
             "text",
         )
+        # in an E'' string a backslash escapes the quote after it: the string goes on, its spaces with it
+        r = self.review.review(
+            (self.SMALL.replace("{status = 'a  b'}", "{status = E'it\\'s  b'}"), {}, {}),
+            (self.SMALL.replace("{status = 'a  b'}", "{status = E'it\\'s b'}"), {}, {}),
+            worlds=10,
+        )
+        self.assertEqual([c["what"] for c in r["meaning"]["changed"]], ["folder.remove"])
 
     def test_a_widening_behind_many_conditions(self) -> None:
         r = self.small("can deep = owner and", "can deep = (owner or viewer) and")

@@ -47,6 +47,7 @@ from .parse import (
     Type,
     leaves,
 )
+from .sqlutil import squeeze_sql
 
 # a relation or permission of a type, and the ids that hold it
 Name: TypeAlias = "tuple[str, str]"
@@ -409,7 +410,8 @@ def source_key(t: Type, rname: str, src: Source, st: str, sr: str | None) -> tup
     if src.kind == "column":
         return (t.name, "column", src.column, src.type_col, st, sr)
     if src.kind == "table":
-        return (t.name, "table", src.table, src.obj_col, src.subj_col, src.where, src.type_col, st, sr)
+        where = squeeze_sql(src.where) if src.where else None
+        return (t.name, "table", src.table, src.obj_col, src.subj_col, where, src.type_col, st, sr)
     return (t.name, src.kind, rname, st, sr)
 
 
@@ -485,8 +487,8 @@ class World:
     ) -> None:
         self.rng_seed, self.size = seed, size
         self.made: dict[tuple[object, ...], object] = {}
-        # a corner: the conditions (by their text) that hold on every row, or on none, instead of being drawn
-        self.conds = conds or {}
+        # a corner: the conditions (by their text, squeeze_sql) that hold on every row, or on none, instead of being drawn
+        self.conds = {squeeze_sql(c): v for c, v in (conds or {}).items()}
         # the policies that share the world: their simple conditions say which values each column takes
         self.pols = list(pols)
         self.density, self.chained = density, chained
@@ -661,10 +663,10 @@ class World:
         wanted: dict[str, list[tuple[Node, bool]]] = {}
         for tname, cond in dict.fromkeys(conds):
             node = self.facts(pol, cond)
-            if cond not in self.conds or tname not in pol.types or node is None or uses_uid(node):
+            if squeeze_sql(cond) not in self.conds or tname not in pol.types or node is None or uses_uid(node):
                 continue
             if not any((tname, col) in linked for col in columns_of(node)):
-                wanted.setdefault(tname, []).append((node, self.conds[cond]))
+                wanted.setdefault(tname, []).append((node, self.conds[squeeze_sql(cond)]))
         for tname, nodes in sorted(wanted.items(), key=lambda kv: kv[0]):
             for group in groups(nodes):
                 cols = sorted({col for node, _ in group for col in columns_of(node)})
@@ -703,10 +705,12 @@ class World:
         return self.pick(key, lambda rng: [i for i in ids if rng.random() < p])
 
     def holds(self, tname: str, cond: str, ids: list[str], p: float = 0.5) -> list[str]:
-        """The rows a {condition} (or a type's where) holds for: drawn row by row, unless this world is a corner."""
-        if cond in self.conds:
-            return list(ids) if self.conds[cond] else []
-        return self.subset(("cond", tname, cond), ids, p)
+        """The rows a {condition} (or a type's where) holds for: drawn row by row, unless this world is a corner. A
+        condition is drawn by its text laid out one way (squeeze_sql): its spacing is no other condition."""
+        key = squeeze_sql(cond)
+        if key in self.conds:
+            return list(ids) if self.conds[key] else []
+        return self.subset(("cond", tname, key), ids, p)
 
     def data(self, pol: Policy) -> Data:
         """The evaluator's data for a policy, drawn from this world."""
@@ -797,8 +801,8 @@ class World:
             # that adds a where to a link table reads fewer of the same rows, never other ones
             bare = ("pairs", *source_key(t, r.name, dataclasses.replace(src, where=None), st, sr))
             rows = self.pick(bare, lambda rng: [(o, x) for o in ids for x in subject_ids if rng.random() < rate])
-            if src.where in self.conds:
-                return list(rows) if self.conds[src.where] else []
+            if squeeze_sql(src.where) in self.conds:
+                return list(rows) if self.conds[squeeze_sql(src.where)] else []
             node = self.facts(pol, src.where)
             if node is None or uses_uid(node):
                 return self.pick((*key, "holds"), lambda rng: [row for row in rows if rng.random() < 0.5])
@@ -992,7 +996,8 @@ def corners(pols: Iterable[Policy]) -> list[dict[str, bool]]:
     """Worlds a row-by-row draw rarely makes: which conditions hold everywhere and which nowhere. A change behind
     `{a} and {b} and ... and {h}` shows only where all eight hold, one row in 256 when each is a coin toss. The
     corners: every condition written plainly holds and every one under a `not` doesn't (the most anyone can
-    hold); the other way round; every condition holds. A type's where holds in all three (or nothing would)."""
+    hold); the other way round; every condition holds. A type's where holds in all three (or nothing would). Each
+    condition by its text laid out one way (squeeze_sql), as World.holds reads it."""
     plain: set[str] = set()
     denied: set[str] = set()
     wheres: set[str] = set()
@@ -1000,12 +1005,12 @@ def corners(pols: Iterable[Policy]) -> list[dict[str, bool]]:
     def walk(node: Expr) -> None:
         for leaf, nots in leaves(node):
             if isinstance(leaf, Cond):
-                (denied if nots % 2 else plain).add(leaf.sql)
+                (denied if nots % 2 else plain).add(squeeze_sql(leaf.sql))
 
     for pol in pols:
         for t in pol.types.values():
             if t.where:
-                wheres.add(t.where)
+                wheres.add(squeeze_sql(t.where))
             for p in t.perms.values():
                 walk(p.expr)
         for rule in pol.rules:
@@ -1139,7 +1144,7 @@ def shape(pol: Policy) -> dict[str, object]:
     return {
         t.name: (
             t.table,
-            t.where,
+            squeeze_sql(t.where) if t.where else None,
             t.principal,
             t.roles,
             t.roles_from,
@@ -1287,7 +1292,7 @@ class Listing:
             if c in KEYWORDS.values():
                 continue
             if node is None or (c == t.where and uses_uid(node)):
-                opaque.append(c)
+                opaque.append(squeeze_sql(c))  # (drawn by its text laid out one way, as World.holds draws it)
             elif not any((t.name, col) in self.linked for col in columns_of(node)):
                 plain.append((node, True))
         users = [str(i) for i in range(1, MOST_ROWS + 1)]
@@ -1308,6 +1313,7 @@ class Listing:
                 said = tuple(truth(node, row, uid) is True for node, _ in group for uid in uids)
                 answers.setdefault(said, tuple(row.items()))
             parts.append(list(answers.values()))
+        opaque = list(dict.fromkeys(opaque))
         out: list[RowClass] = []
         for columns in itertools.product(*parts):
             for holds in itertools.product((True, False), repeat=len(opaque)):
@@ -1524,7 +1530,9 @@ class Listed(World):
             if t.where and where is not None and not uses_uid(where):
                 out.valid[t.name] = [i for i in ids if truth(where, out.columns[t.name][i], None) is True]
             else:
-                out.valid[t.name] = [i for i in ids if not t.where or t.where in self.classes[(t.name, i)].holds]
+                out.valid[t.name] = [
+                    i for i in ids if not t.where or squeeze_sql(t.where) in self.classes[(t.name, i)].holds
+                ]
             for r in t.relations.values():
                 for k, src in enumerate(r.sources):
                     for st, sr in src.subjects:
@@ -1548,7 +1556,8 @@ class Listed(World):
             if cond in KEYWORDS.values():
                 out.cond[(tname, cond)] = []
             elif facts(cond, self.listing.alike) is None:
-                out.cond[(tname, cond)] = [i for i in out.ids[tname] if cond in self.classes[(tname, i)].holds]
+                key = squeeze_sql(cond)
+                out.cond[(tname, cond)] = [i for i in out.ids[tname] if key in self.classes[(tname, i)].holds]
         return out
 
 

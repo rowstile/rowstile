@@ -42,10 +42,12 @@ from .parse import (
     Perm,
     Policy,
     Rule,
+    Scanner,
     Type,
     leaves,
     read_lines,
 )
+from .sqlutil import squeeze_sql
 from .statements import split
 
 MARK = "<!-- rowstile review -->"
@@ -225,21 +227,13 @@ Given: TypeAlias = "tuple[str, dict[str, str] | None, dict[str, str] | None]"
 
 # --- the policy's entities -------------------------------------------------------------------------
 def squeeze(s: str) -> str:
-    """One space for each run of spaces, outside quotes ('...', "..." and $$...$$, the dollar quote a condition may
-    use): 'a  b' in a condition is another text than 'a b'."""
-    out: list[str] = []
-    quote = ""
+    """A policy line with one space for each run of spaces outside quotes, as the parser reads them (parse.Scanner:
+    '...' and "...", and inside {braces} E'...' with its backslashes and the dollar quotes): 'a  b' in a condition
+    is another text than 'a b'."""
     s = s.strip()
-    i = 0
-    while i < len(s):
-        ch = "$$" if s.startswith("$$", i) else s[i]
-        i += len(ch)
-        if quote:
-            if ch == quote:
-                quote = ""
-        elif ch in ("'", '"', "$$"):
-            quote = ch
-        elif ch.isspace():
+    out: list[str] = []
+    for ch, mark in zip(s, Scanner().marks(s), strict=True):
+        if ch.isspace() and not mark.quoted:
             if out[-1] != " ":  # (never the first: s is stripped)
                 out.append(" ")
             continue
@@ -503,7 +497,7 @@ def unreadable_pairs(b: Expr, h: Expr, alike: frozenset[str] = frozenset()) -> l
 
     match b, h:
         case (Cond(sb), Cond(sh)):
-            if squeeze(sb) == squeeze(sh):
+            if squeeze_sql(sb) == squeeze_sql(sh):
                 return []
             return [(sb, sh)] if unread(sb) and unread(sh) else None
         case (Not(ib), Not(ih)):
