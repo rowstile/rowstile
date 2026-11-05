@@ -847,6 +847,27 @@ def risk(b: Side, h: Side, worlds: int, changed: list[Changed], seen: Difference
             new_paths = arrows(p.expr) - arrows(bp.expr)
             for rel, perm in sorted(new_paths):
                 flag(f"`{key}` now follows `{rel}.{perm}`", key, "a new inheritance path")
+    # what the sync index gives the sync engine: each synced table's rows, and who may read each (a line taken away,
+    # or keyed by a type, gives it nothing more)
+    for table, sync in sorted(h.pol.syncs.items()):
+        key, was = f"sync {table}", b.pol.syncs.get(table)
+        by = f"`{sync.perm}`" if sync.perm else "its select rule"
+        if was is None:
+            flag(
+                f"`{h.entities[key][0]}` is new: the sync engine gets each row of {table}, and its readers (by {by})",
+                key,
+                "a sync line added or widened",
+            )
+            continue
+        if was.perm != sync.perm:
+            before = f"`{was.perm}`" if was.perm else "its select rule"
+            flag(f"`{key}` now finds each row's readers by {by} (was by {before})", key, "a sync line added or widened")
+        if sync.mirrored and not was.mirrored:
+            flag(
+                f"`{key}` is now mirrored: the sync engine gets a copy of each row, every column but the masked ones",
+                key,
+                "a sync line added or widened",
+            )
     # what allows more than before, with an example from a small world: permissions and rules whose own text
     # changed, rules that are new, what changes through a relation that changed, and everything when a type's
     # where changed (the rows that count are more)

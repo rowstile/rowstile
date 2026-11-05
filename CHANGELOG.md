@@ -229,6 +229,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   hold, so two different settings could sign alike.
 - `rowstile review` reads a policy with sync lines (`sync role`, `sync app.files : view`, `sync after commit`) and
   shows each one that changed under Meaning, instead of stopping with an error.
+- `rowstile review` flags under Risk a sync line added, one that finds its rows' readers by another permission
+  (`: view` to `: edit`), or one mirrored now: the sync engine is given rows, and who may read them, it wasn't.
 - `rowstile review` reads a backslash in an `E'...'` string as escaping the quote after it, so a change to the text
   after it is a change, not spacing. A condition it can't read (a subquery), respaced outside its quotes, is the
   same condition in its small worlds: a permission turned round and respaced is no longer said to widen.
