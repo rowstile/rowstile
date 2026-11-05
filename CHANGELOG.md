@@ -30,6 +30,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- `rowstile client powersync`, a preview: a table the policy mirrors and the database doesn't yet is said, with
+  what to do (apply or push first), instead of a traceback. Each stream's alias, the table's name on the client, is
+  quoted, so a table named with a keyword (`app.order`) gives a stream the service takes. Two mirrored tables of
+  one name in two schemas, which a client would name alike, are refused (AZ811).
 - `rowstile graph` draws the user type's own relations: an arrow through one (`owner.manager`) pointed at a box the
   diagram didn't have.
 - `rowstile client go`, `csharp`, `ruby`, `rbs` and `elixir` give no name to a type or a permission whose name there

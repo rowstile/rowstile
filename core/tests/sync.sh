@@ -1198,11 +1198,20 @@ in_proj() { (cd "$P" && python3 "$OLDPWD/cli/rowstile_cli.py" "$@"); }
 toml "database = \"dbname=$DB\"
 "
 out=$(in_proj client 2>&1)
-grep -q 'SELECT files."id", files."folder_id", files."owner_id", files."name", files."confidential", files."size"$' "$P/sync-config.yaml" &&
+grep -q 'SELECT "files"."id", "files"."folder_id", "files"."owner_id", "files"."name", "files"."confidential", "files"."size"$' "$P/sync-config.yaml" &&
   ! grep -q 'readers"\|body' "$P/sync-config.yaml" && ok "rowstile client writes PowerSync's streams, the columns the mirror's in the database" ||
   bad "client powersync from rowstile.toml" "$out $(cat "$P/sync-config.yaml" 2>&1 | head -12)"
+printf '%s\n' "$MIRRORED" | sed -e 's/^sync app.folders$/sync app.folders mirrored/' > "$P/db.authz"
+cp "$P/sync-config.yaml" "$T/streams.before"
+out=$(in_proj client 2>&1); rc=$?
+[ $rc -eq 1 ] && cmp -s "$P/sync-config.yaml" "$T/streams.before" &&
+  [ "$out" = "app.folders: mirrored by the policy, and no mirror in the database yet: PowerSync's streams list the mirror's columns [AZ811]
+HINT: apply or push the policy first, then write the streams again" ] &&
+  ok "... a table the policy mirrors and the database doesn't yet: said, exit 1, the file left as it was" ||
+  bad "client powersync, a mirror not applied" "$rc $out"
+printf '%s\n' "$MIRRORED" > "$P/db.authz"
 out=$(CLI client powersync 2>&1)
-case "$out" in *'FROM authz_sync."file__mirror" files, json_each(files.readers) r'*) ok "... and with --db";; *) bad "client powersync --db" "${out:0:300}";; esac
+case "$out" in *'FROM authz_sync."file__mirror" "files", json_each("files".readers) r'*) ok "... and with --db";; *) bad "client powersync --db" "${out:0:300}";; esac
 rm -f "$P/sync-config.yaml"
 CLI push --development "$P/db.authz" >/dev/null 2>&1   # (rowstile dev pushes to a development database alone)
 out=$(in_proj dev --once --no-studio 2>&1)
@@ -1237,7 +1246,7 @@ check "a mask added to a mirrored table since: the mirror is made again, without
 mirrored "... and holds every file, each with its readers"
 check "... which authz.sync_verify() finds so" "SELECT authz.sync_verify()"
 out=$(CLI client powersync 2>&1)
-case "$out" in *'files."confidential"'*) case "$out" in *body*) false;; *) true;; esac;; *) false;; esac &&
+case "$out" in *'"files"."confidential"'*) case "$out" in *body*) false;; *) true;; esac;; *) false;; esac &&
   ok "... and rowstile client powersync's streams read no body" || bad "client powersync after a mask added" "${out:0:400}"
 PSQL -c "ALTER TABLE authz_sync.file__mirror ADD COLUMN body text"
 check "a masked column put in a mirror since: authz.sync_verify() finds the mirror's columns are not its table's" \

@@ -522,8 +522,8 @@ streams:
   files:
     auto_subscribe: true
     query: |
-      SELECT files."id", files."folder_id", files."owner_id", files."name", files."confidential"
-      FROM authz_sync."file__mirror" files, json_each(files.readers) r
+      SELECT "files"."id", "files"."folder_id", "files"."owner_id", "files"."name", "files"."confidential"
+      FROM authz_sync."file__mirror" "files", json_each("files".readers) r
       WHERE r.value IN (SELECT key FROM authz_sync.keys
                         WHERE principal_type = ifnull(auth.parameter('principal_type'), 'user')
                           AND principal_id = auth.user_id())

@@ -1092,8 +1092,11 @@ CODES = {
         "`sync app.docs : view mirrored` keeps a copy of the table in `authz_sync` for PowerSync, whose streams key "
         "their buckets by a value on the row: each row with every column but the masked ones, and `readers`, a JSON "
         "array of the keys that may read it. Keyed by a type (`by folder`), those keys would be the folders', a "
-        "bucket for each folder a user may read, past PowerSync's limit: mirror a line that isn't keyed. Applying "
-        "also refuses a table with a column of its own named `readers`, which the mirror keeps the keys in: rename it.",
+        "bucket for each folder a user may read, past PowerSync's limit: mirror a line that isn't keyed. Two mirrored "
+        "tables of one name in two schemas (`app.docs`, `billing.docs`) are refused too: a PowerSync client names "
+        "each table by its own name. Applying also refuses a table with a column of its own named `readers`, which "
+        "the mirror keeps the keys in: rename it. And `rowstile client powersync` reads each mirror's columns from "
+        "the database: a line the policy mirrors and the database doesn't yet is said: apply or push the policy first.",
         "type folder = app.folders\n  parent : folder = parent_id\n  owner : user = owner_id\n"
         "  can view = owner or parent.view\n"
         "type doc = app.docs\n  folder : folder = folder_id\n  can view = folder.view\n"

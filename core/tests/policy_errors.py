@@ -1184,6 +1184,14 @@ COMPILE = [
         "AZ811",
     ),
     (
+        "two mirrored tables of one name, in two schemas",
+        "type memo = alt2.docs (doc_no)\n  owner : user = owner_id\n  can view = owner\n"
+        "sync role eng\nsync alt.docs : share mirrored\nsync alt2.docs : view mirrored\n",
+        "alt.docs is mirrored too, and a PowerSync client names each table by its own name, docs for both",
+        15,
+        "AZ811",
+    ),
+    (
         "a sync line with a word after mirrored",
         "sync role eng\nsync alt.docs : share mirrored twice\n",
         "sync schema.table [: permission] [by type] [mirrored]",
