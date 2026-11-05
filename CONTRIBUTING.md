@@ -91,6 +91,7 @@ The project's conventions (how the SQL is generated, locking, sessions, what mus
 
 ## Versions and releases
 
-One version covers everything a release ships: the command, the Python package, the TypeScript packages and
-the image. Between releases `main` says `X.Y.Z-dev`, the version it is heading for. How releases are numbered
+One version covers everything a release ships: the command, the Python and TypeScript packages, the image,
+the review for CI and the SDKs ([RELEASING.md](RELEASING.md#versions) lists them, and how each is released).
+Between releases `main` says `X.Y.Z-dev`, the version it is heading for. How releases are numbered
 and made, and what a 0.x release may change: [RELEASING.md](RELEASING.md).
