@@ -36,7 +36,8 @@ tables' owner. With compose, from this folder:
     docker compose exec app python -m app.maintenance    # or, on the host: cd backend && uv run python -m app.maintenance
 
 They remove uploads that never finished (their rows and objects, after a day: `--uploads-older-than` says
-otherwise), what is left in the uploads' place in storage after a day, and sessions that ended; and they trim
+otherwise), what is left in the uploads' place in storage after a day, objects no file has after a day (a
+deleted file's, when deleting them failed), and sessions that ended; and they trim
 rowstile's change feed to its last 7 days (`authz.trim_changes()`). The audit trail is kept: trim it with
 `authz.trim_audit(...)` once you have decided how long to keep it.
 

@@ -5,6 +5,7 @@ A browser uploads to a place of its own (uploads/<key>), never to the object a f
 moves the bytes there when the upload is confirmed (accept), and reads their size then. So the signed upload
 link, which goes on working for a few minutes, can't change a confirmed file or its size afterwards."""
 
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import BinaryIO
 from urllib.parse import quote
@@ -124,17 +125,24 @@ class Storage:
         self.delete(key)
         self.delete(self.UPLOADS + key)
 
+    def stored_before(self, older_than: timedelta) -> Iterator[list[str]]:
+        """The keys of the objects stored more than that long ago, a page at a time."""
+        before, token = datetime.now(UTC) - older_than, ""
+        while True:
+            more = {"ContinuationToken": token} if token else {}
+            page = self.s3.list_objects_v2(Bucket=self.bucket, **more)
+            yield [o["Key"] for o in page.get("Contents", []) if o["LastModified"] < before]
+            token = page.get("NextContinuationToken", "")
+            if not token:
+                return
+
     def sweep_uploads(self, older_than: timedelta) -> int:
         """Removes what is left in the uploads' place after that long (bytes sent again after an upload was
         confirmed, uploads whose rows are gone). How many objects."""
-        before, n, token = datetime.now(UTC) - older_than, 0, ""
-        while True:
-            more = {"ContinuationToken": token} if token else {}
-            page = self.s3.list_objects_v2(Bucket=self.bucket, Prefix=self.UPLOADS, **more)
-            for found in page.get("Contents", []):
-                if found["LastModified"] < before:
-                    self.s3.delete_object(Bucket=self.bucket, Key=found["Key"])
+        n = 0
+        for keys in self.stored_before(older_than):
+            for key in keys:
+                if key.startswith(self.UPLOADS):
+                    self.s3.delete_object(Bucket=self.bucket, Key=key)
                     n += 1
-            token = page.get("NextContinuationToken", "")
-            if not token:
-                return n
+        return n

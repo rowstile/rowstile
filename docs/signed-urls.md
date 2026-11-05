@@ -90,8 +90,8 @@ upload was abandoned), with their objects and what is in their uploads' place, a
 ## Deleting
 
 Delete the row through row-level security first (`DELETE ... RETURNING object_key`), commit, then
-delete the object. If deleting the object fails, an unreachable object is left behind (clean up later);
-the other order could leave a row pointing at nothing.
+delete the object. If deleting the object fails, an unreachable object is left behind (a periodic job
+deletes the objects no row names after a day); the other order could leave a row pointing at nothing.
 
 ## Sharing with a link
 

@@ -5,7 +5,8 @@
 
 - Uploads that never finished (a row made, the bytes never arrived or never confirmed): their objects
   and rows are removed. They span every user, so this runs as the owner, not as the app role.
-- What is left in the uploads' place in storage after a day, and sessions that ended.
+- What is left in the uploads' place in storage after a day, objects no file has after a day (a file's whose
+  delete failed), and sessions that ended.
 - rowstile's retention: the change feed, with authz.trim_changes(). The audit trail is kept; trim it with
   authz.trim_audit(...) once you have decided how long to keep it.
 """
@@ -41,6 +42,27 @@ def abandoned_uploads(conn: psycopg.Connection[TupleRow], storage: Storage, olde
     return len(rows)
 
 
+def orphaned_objects(conn: psycopg.Connection[TupleRow], storage: Storage, older_than: timedelta) -> int:
+    """Objects outside the uploads' place that no file's version names, stored more than that long ago: a file is
+    deleted, rows first, then its objects, and an object whose delete failed is left over. How many removed."""
+    n = 0
+    for page in storage.stored_before(older_than):
+        keys = [k for k in page if not k.startswith(storage.UPLOADS)]
+        named = {
+            str(r[0])
+            for r in conn.execute(
+                "SELECT object_key::text FROM fm.file_versions WHERE object_key::text = ANY (%(keys)s) "
+                "UNION SELECT object_key::text FROM fm.files WHERE object_key::text = ANY (%(keys)s)",
+                {"keys": keys},
+            )
+        }
+        for key in keys:
+            if key not in named:
+                storage.delete(key)
+                n += 1
+    return n
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--uploads-older-than", default="1 day")
@@ -50,6 +72,7 @@ def main() -> None:
         n = abandoned_uploads(conn, storage, args.uploads_older_than)
         print(f"removed {n} unfinished uploads")
         print(f"removed {storage.sweep_uploads(timedelta(days=1))} leftover uploaded objects")
+        print(f"removed {orphaned_objects(conn, storage, timedelta(days=1))} objects no file has")
         ended = conn.execute("DELETE FROM fm.sessions WHERE expires_at < now()").rowcount
         print(f"removed {ended} sessions that ended")
         row = conn.execute("SELECT authz.trim_changes()").fetchone()

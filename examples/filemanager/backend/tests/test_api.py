@@ -651,6 +651,27 @@ def test_the_cleanup_removes_a_file_that_never_became_ready_with_every_version()
     assert vi.delete(f"/api/folders/{folder['id']}").status_code == 204  # nothing is left in it
 
 
+def test_objects_no_file_has_are_removed(world: World) -> None:
+    """A file's objects are deleted after its rows, once those are gone: one whose delete failed is left over. The
+    job removes what no file's version names, after a day; what is still a file's stays."""
+    import io
+
+    from app.main import storage
+    from app.maintenance import orphaned_objects
+
+    alice, sub = world["alice"], world["sub"]
+    left = str(uuid.uuid4())
+    storage.put(left, io.BytesIO(b"left over"), "text/plain")
+    f = alice.post(f"/api/folders/{sub['id']}/files", files={"file": ("stays.txt", b"stays")}).json()
+    with psycopg.connect(ADMIN, autocommit=True) as conn:
+        assert orphaned_objects(conn, storage, timedelta(days=1)) == 0  # (too new)
+        assert storage.size(left) == 9
+        assert orphaned_objects(conn, storage, timedelta(days=-1)) >= 1  # (everything there, whatever the clocks say)
+    assert storage.size(left) is None
+    assert download(alice, f["id"]) == b"stays"
+    assert download(alice, world["file"]["id"]) == b"the plan"
+
+
 def test_the_maintenance_jobs(
     world: World, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -668,10 +689,11 @@ def test_the_maintenance_jobs(
     assert [line.split(" ", 2)[0::2] for line in said] == [
         ["removed", "unfinished uploads"],
         ["removed", "leftover uploaded objects"],
+        ["removed", "objects no file has"],
         ["removed", "sessions that ended"],
         ["trimmed", "change feed entries"],
     ], said
-    assert int(said[2].split()[1]) >= 1
+    assert int(said[3].split()[1]) >= 1
     assert admin("SELECT count(*) FROM fm.sessions WHERE expires_at < now()") == [(0,)]
     assert alice.get("/api/me").status_code == 200  # a session that goes on stays
 

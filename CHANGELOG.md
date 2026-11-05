@@ -619,6 +619,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   have spaces after its commas.
 - The file manager's web app searches for a link's words as written when they hold a `%` that is no escape
   (`#/search/50%`): the page went blank.
+- The file manager's maintenance jobs remove the objects in storage that no file's version names, after a day: a
+  deleted file's objects, when deleting them failed after its rows were gone, stayed in the bucket for good.
 
 ### Upgrading
 
