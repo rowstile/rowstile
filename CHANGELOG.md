@@ -30,6 +30,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- `rowstile graph` draws the user type's own relations: an arrow through one (`owner.manager`) pointed at a box the
+  diagram didn't have.
 - `rowstile client go`, `csharp`, `ruby`, `rbs` and `elixir` give no name to a type or a permission whose name there
   would be one the file or the SDK uses already, as for two names spelled the same: Go's `ObjectType` (object's
   `type`), C#'s classes `Permission` and `ObjectType` (which hid the SDK's), Ruby's modules `Rowstile`, `Hash`,

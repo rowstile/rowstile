@@ -241,8 +241,9 @@ def _client_rust(perms: Perms, source_name: str) -> str:
 
 
 def _id(*parts: str) -> str:
-    """A node's id in the diagram: a type's name and a relation's or permission's, joined by the one thing a name
-    can't hold (`__`), so two of them never share an id (`team` + `member_view`, `team_member` + `view`)."""
+    """A node's id in the diagram: a type's name and a relation's or permission's, joined by `__`. A name the policy
+    declares neither holds `__` nor starts or ends with `_` (AZ107), so two of them never share an id (`team` +
+    `member_view`, `team_member` + `view`), as the views' names don't."""
     return "__".join(re.sub(r"[^A-Za-z0-9_]", "_", p) for p in parts)
 
 
@@ -276,8 +277,11 @@ class DevMixin(SyncMixin):
         ]
         edges: list[str] = []
         specials: set[str] = set()
+        # the user type has a box when it has relations or permissions of its own; else it is a circle alone
+        user = self.types.get("user")
+        user_boxed = user is not None and bool(user.perms or user.relations)
         for t in self.types.values():
-            if t.name == "user" and not t.perms:
+            if t.name == "user" and not user_boxed:
                 out.append('  user(("user")):::user')
                 continue
             out.append(f'  subgraph {_box(t.name)}["{_label(t.name)} · {_label(t.table)}"]')
@@ -294,7 +298,7 @@ class DevMixin(SyncMixin):
                     else:
                         how = src.table if src.kind == "table" else src.kind
                     for st, sr in src.subjects:
-                        drawn = st in self.types and (st != "user" or bool(self.types[st].perms))  # its box is there
+                        drawn = st in self.types and (st != "user" or user_boxed)  # its box is there
                         if st in ("anyone", "link"):
                             target = _special(st)
                             specials.add(st)
