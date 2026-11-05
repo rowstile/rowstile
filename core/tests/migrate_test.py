@@ -377,6 +377,33 @@ CASES: list[tuple[str, str, str, str]] = [
         ),
     ),
 ]
+# a tree the migration keeps (its definition the same) whose table has other partitions under it since it was last
+# computed: rows no trigger saw. The migration computes it again, as applying whole does (PARTITIONS has the change,
+# made on both databases before; and verify() is true after the migration). The notes without their rules: a tree
+# whose table only other tables' rules read, as the topics' is
+NOTES_TREE = edit(
+    CHILDREN,
+    (
+        "rules ch.notes\n  select          : view\n  insert          : owner\n  update          : view\n  update owner_id : manage\n  delete          : manage\n\n",
+        "",
+    ),
+)
+PEEK = edit(
+    NOTES_TREE,
+    (
+        "  can view   = manage or viewer or parent.view\n",
+        "  can view   = manage or viewer or parent.view\n  can peek   = view\n",
+    ),
+)
+PARTITIONS = {
+    "a table with rows attached as a partition of a tree's table": """
+CREATE TABLE ch.notes_attached (LIKE ch.notes);
+INSERT INTO ch.notes_attached VALUES (2001, 3, 1, 'under top'), (2002, 3, 2001, 'below it');
+ALTER TABLE ch.notes ATTACH PARTITION ch.notes_attached FOR VALUES FROM (2000) TO (3000);
+""",
+    "a partition of a tree's table detached": "ALTER TABLE ch.notes DETACH PARTITION ch.notes_high;",
+}
+CASES += [(name, "children", NOTES_TREE, PEEK) for name in PARTITIONS]
 # the sync index (a preview): sync lines added (and back: removed, the index dropped), and the permission a synced
 # table's readers hold changed (its rows worked out again, by difference). The role the lines name needs only to be
 # there (main makes it)
@@ -715,7 +742,7 @@ def check(label: str, name: str, schema: str, ms: list[migrate.Migration], new: 
     """Run the migrations on authz_mig_m, as it is, and apply the new policy whole on a copy of it made first:
     whether both leave the same. `before`: SQL run on the migrated database alone, once the copy is made."""
     db_m, db_w = "authz_mig_m", "authz_mig_w"
-    changes = CHANGES.get(schema, "")
+    changes = CHANGES.get(schema, "") + PARTITIONS.get(name, "")
     app = APP_VIEW if "a view of the app's" in name else ""
     # the database applied whole starts as this one is now: a copy (the same as building it again, sooner)
     sh("dropdb", "--if-exists", db_w)
@@ -740,6 +767,8 @@ def check(label: str, name: str, schema: str, ms: list[migrate.Migration], new: 
         print(f"FAIL  {label}: applying whole fails\n{e}")
         return False
     diffs = compare(snapshot(db_m), snapshot(db_w))
+    if name in PARTITIONS and psql(db_m, "SELECT authz.verify()").strip() != "t":
+        diffs.append("  authz.verify() is false after the migration")
     lost = 'WARNING:  "app"."files" has no rules any more, and row-level security is still on, so the app role sees'
     if name == LOST_RULES and not label.endswith("(and back)") and lost not in said:
         diffs.append(f"  the migration doesn't warn that app.files keeps row-level security on: {said[-300:]!r}")

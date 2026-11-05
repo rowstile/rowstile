@@ -174,6 +174,8 @@ folder's or a user's name) announces nothing and looks nothing up: about 0.1 ms 
   partition attached, detached, made or dropped, a table that inherits made or dropped) is computed again by
   the next apply, not kept, and `rowstile apply` then applies: rows that reached it so, or rows written
   straight into a partition made since, are in it after that apply. <!-- checked: tests/children.sh "and computes the tree again: user 1 sees the notes under theirs"; tests/children.sh "apply is not 'unchanged' once a partition was detached"; tests/keep.sh "a new permission rebuilds the trees that read its table"; tests/keep.sh "applying the same policy again rebuilds the trees that read its table" -->
+  The next migration `rowstile migrate` writes computes it again too, even where the policy didn't change
+  it. <!-- checked: tests/migrate_test.py "a table with rows attached as a partition of a tree's table"; tests/migrate_test.py "a partition of a tree's table detached" -->
 - **A key handed over inside one update of a partitioned table**: a row's shares are forgotten when
   its key changes, so a row that has the key later starts with none. Where the update also puts the
   row in another partition, rowstile forgets the shares of every key the update left without a row;
