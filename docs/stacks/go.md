@@ -45,8 +45,10 @@ names (`app role conf_app`), which row-level security applies to.
 
 `rowstile.Middleware(user)` makes each request act for whoever `user(r)` says it is (`rowstile.User("42")`,
 `rowstile.As("service", "3")`, or `rowstile.Nobody`, who sees only what `anyone` may). `user` reads the session
-or the token from the request; an error from it is answered 401. Here it is `sessionUser`, the app's own: yours
-reads your session cookie or token. The conformance app has no sign-in, so its stands in for one, and this page
+or the token from the request. For a request it can't tell who sent (a bad token), it returns
+`rowstile.Unauthorized("bad token")`, answered 401 with those words. Any other error (a session store that is
+down) is logged and answered 500, not 401, which would sign the user out. Here it is `sessionUser`, the app's own:
+yours reads your session cookie or token. The conformance app has no sign-in, so its stands in for one, and this page
 doesn't show it.
 
 ```go

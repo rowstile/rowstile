@@ -31,7 +31,8 @@ err := rowstile.Tx(ctx, pool, func(ctx context.Context, tx pgx.Tx) error {
 - `Expect`: an UPDATE or DELETE that changed no row, asked about: `*NotFound` or `*Refused`, with the reason.
 - `Refused`, `NotFound`, `CallError` (the codes a call can meet, each with its status), `NotSignedIn`, read with
   `errors.As`; `ErrorCode(err)` is rowstile's code (`rowstile help AZ709`).
-- `Middleware`, `Handler`, `WriteProblem`, `ProblemOf`: `net/http`, with `application/problem+json` answers.
+- `Middleware`, `Handler`, `WriteProblem`, `ProblemOf`, `Unauthorized`: `net/http`, with `application/problem+json`
+  answers.
 - `Check`: at start-up, refuse a connection that skips row-level security.
 - `Can`, `PermsOf`, `List`: take only the policy's names, which `rowstile client go` writes.
 - `rowstiletest`: a copy of the migrated test database for each test package, and `Refused` and `NotFound`
