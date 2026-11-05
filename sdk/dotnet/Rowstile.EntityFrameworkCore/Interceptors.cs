@@ -98,7 +98,9 @@ internal sealed class TransactionSignIn(SignIn signIn, SaveChangesInTransaction 
 /// Whom each transaction a context began signed in as. A sign-in lasts the database transaction, so a transaction is
 /// one principal's: inside it, a command, a SaveChanges or a call of the runtime's while the code acts for someone
 /// else (or for no one) is refused before anything is sent for it, and the transaction is left as it was. A
-/// transaction the app brought (<c>UseTransaction</c>) is the app's to sign in: it isn't checked.
+/// transaction the app brought (<c>UseTransaction</c>) is the app's to sign in: it isn't checked. One the app began on
+/// the context's connection without bringing it is checked as one the context began when <c>BeginSignedInAsync</c>
+/// began it (<see cref="CommandSignIn"/>).
 /// </summary>
 internal static class SignedIn
 {
@@ -121,13 +123,17 @@ internal static class SignedIn
         var who = signed.By.Who();
         if (who != signed.Who)
         {
-            throw new InvalidOperationException(
-                $"this transaction is signed in as {Name(signed.Who)} already, and a sign-in lasts the database "
-                    + $"transaction: {Name(who)}'s work can't run inside it. Run it after, or in a transaction of its own "
-                    + "(another connection)"
-            );
+            throw Already(signed.Who, who);
         }
     }
+
+    /// <summary>The error for <paramref name="who"/>'s work in a transaction signed in as <paramref name="signed"/>.</summary>
+    public static InvalidOperationException Already(Principal signed, Principal who) =>
+        new(
+            $"this transaction is signed in as {Name(signed)} already, and a sign-in lasts the database "
+                + $"transaction: {Name(who)}'s work can't run inside it. Run it after, or in a transaction of its own "
+                + "(another connection)"
+        );
 
     /// <summary>"user 42", "service 3" or "nobody", as the database's own words name a principal.</summary>
     private static string Name(Principal p) => p.Id is null ? "nobody" : $"{p.Type} {p.Id}";
@@ -136,7 +142,11 @@ internal static class SignedIn
 /// <summary>
 /// A command outside a transaction runs in one of its own, which Postgres makes for the statements of one command:
 /// the sign-in goes first in it. Its result (one row) is skipped, so the app reads its own statement's; a SELECT's
-/// rows are no rows affected, so a count stays the app's statement's.
+/// rows are no rows affected, so a count stays the app's statement's. But Npgsql runs a command in the connection's
+/// open transaction, whatever the command's own: on a connection where <c>BeginSignedInAsync</c> began one, the command
+/// runs in it as it is for the principal it signed in as, and is refused for anyone else; in a
+/// <c>TransactionScope</c> the connection takes part in, it is refused, as its sign-in can't be known. (A transaction
+/// the app began on the connection by other means isn't seen: bring it to the context with <c>UseTransaction</c>.)
 /// </summary>
 internal sealed class CommandSignIn(SignIn signIn) : DbCommandInterceptor
 {
@@ -252,8 +262,22 @@ internal sealed class CommandSignIn(SignIn signIn) : DbCommandInterceptor
             SignedIn.Check(command.Transaction); // the transaction signed in when it began, as whoever it is for
             return false;
         }
+        var conn = (NpgsqlConnection)command.Connection!;
+        var who = signIn.Who();
+        if (SignedConnections.Of(conn) is { } signed)
+        {
+            return signed == who ? false : throw SignedIn.Already(signed, who);
+        }
+        if (System.Transactions.Transaction.Current is not null && new NpgsqlConnectionStringBuilder(conn.ConnectionString).Enlist)
+        {
+            throw new InvalidOperationException(
+                "this command runs in a TransactionScope's transaction, which the context didn't begin: who it is signed "
+                    + "in as can't be known, and a sign-in lasts the database transaction. Begin the transaction with the "
+                    + "context (Database.BeginTransaction), or run this outside the scope"
+            );
+        }
         command.CommandText = Prefix + command.CommandText;
-        command.Parameters.AddRange(RowstileNpgsql.ActAsParameters(signIn.Who()));
+        command.Parameters.AddRange(RowstileNpgsql.ActAsParameters(who));
         return true;
     }
 

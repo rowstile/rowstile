@@ -193,6 +193,14 @@ it, and the transaction goes on as it was. Run a job after the request's transac
 own (a context of its own, on another connection). A transaction the app brings to a context (`UseTransaction`) is
 the app's to sign in, and the SDK doesn't check it.
 
+Npgsql runs a command in its connection's open transaction, whatever transaction the command names. So a
+transaction begun with `BeginSignedInAsync` on the context's connection, and not brought to it, holds the context's
+work too: it runs as it is while the code acts for the principal it signed in as, and is refused (the same
+`InvalidOperationException`) for anyone else. In a `TransactionScope` the connection takes part in, the context's
+work is refused, since who that transaction is signed in as can't be known: begin the transaction with the context
+instead. Bring any other transaction begun on the context's connection with `UseTransaction`. The database holds a
+transaction to one principal too, whatever signs it in (AZ716).
+
 ## Migrations
 
 The policy ships as EF Core migrations. `rowstile migrate` writes the next one (only what changed since

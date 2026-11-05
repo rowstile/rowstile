@@ -65,6 +65,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   token inside `Tx`, and `Tx` follows whom the transaction is signed in as from then on: a nested `Tx` for the
   key's principal is a savepoint, and anyone else's is refused. A login made with SQL inside `Tx` left `Tx`
   answering for the principal it began with ([Go](docs/stacks/go.md)).
+- The .NET SDK: an EF Core context on a connection where `BeginSignedInAsync` began a transaction, not brought to
+  it with `UseTransaction`, no longer signs that transaction in again as whoever the code acts for (Npgsql runs the
+  context's commands in it). Its work runs there as it is while the code acts for the transaction's principal, and
+  is refused for anyone else with an `InvalidOperationException`, before anything is sent. In a `TransactionScope`
+  the connection takes part in, the context's work is refused, as that transaction's sign-in can't be known
+  ([ASP.NET Core and EF Core](docs/stacks/aspnetcore.md)).
 
 ### Upgrading
 

@@ -64,7 +64,10 @@ public static class RowstileNpgsql
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>A transaction signed in as <paramref name="who"/> (left out: whoever the code acts for, else nobody).</summary>
+    /// <summary>
+    /// A transaction signed in as <paramref name="who"/> (left out: whoever the code acts for, else nobody). An EF Core
+    /// context on the same connection runs in it as it is while the code acts for them, and refuses anyone else's work.
+    /// </summary>
     public static async Task<NpgsqlTransaction> BeginSignedInAsync(
         this NpgsqlConnection conn,
         Principal? who = null,
@@ -74,6 +77,7 @@ public static class RowstileNpgsql
         ArgumentNullException.ThrowIfNull(conn);
         var tx = await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         await conn.SignInAsync(who, cancellationToken).ConfigureAwait(false);
+        SignedConnections.Record(conn, tx, who ?? Acting.Current ?? Principal.Nobody);
         return tx;
     }
 

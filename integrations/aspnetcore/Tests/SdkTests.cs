@@ -186,6 +186,11 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
             await using var tx = await conn.BeginSignedInAsync();
             Assert.Equal([1L, 3L], await Ids(conn, "SELECT id FROM app.projects ORDER BY id"));
         }
+        // ... and as nobody when the code acts for no one
+        await using (var tx = await conn.BeginSignedInAsync())
+        {
+            Assert.Equal([1L], await Ids(conn, "SELECT 1::bigint WHERE NOT EXISTS (SELECT 1 FROM authz.principal())"));
+        }
     }
 
     [Fact]
@@ -457,6 +462,51 @@ public sealed class SdkTests(SdkDatabase db) : IAsyncLifetime
         {
             Assert.Equal([2L, 3L], Notes(brought));
             Assert.Equal([2L, 3L], Notes(again));
+        }
+    }
+
+    [Fact]
+    public async Task A_transaction_on_the_contexts_connection_that_the_context_doesnt_know_of()
+    {
+        // Npgsql runs a command in the connection's open transaction, whatever the command's own: where
+        // BeginSignedInAsync began one, a context's work runs in it as it is for its principal, anyone else's is refused
+        await using var conn = new NpgsqlConnection(db.App);
+        await conn.OpenAsync();
+        await using var ctx = new AppDb(new DbContextOptionsBuilder<AppDb>().UseNpgsql(conn).UseRowstile().Options);
+        await using (var bos = await conn.BeginSignedInAsync(Principal.User(2)))
+        {
+            using (Acting.As(Principal.User(2)))
+            {
+                Assert.Equal([2L, 3L], Notes(ctx));
+                Assert.Equal(2, await ctx.Notes.CountAsync());
+            }
+            using (Acting.As(Principal.User(1)))
+            {
+                Assert.Equal(
+                    "this transaction is signed in as user 2 already, and a sign-in lasts the database transaction: user 1's "
+                        + "work can't run inside it. Run it after, or in a transaction of its own (another connection)",
+                    Assert.Throws<InvalidOperationException>(() => Notes(ctx)).Message
+                );
+            }
+            // nothing was sent: still bo's
+            await using var asked = new NpgsqlCommand("SELECT current_setting('authz.user_id', true)", conn);
+            Assert.Equal("2", (string?)await asked.ExecuteScalarAsync());
+            await bos.CommitAsync();
+        }
+        // once it ended, a command signs in as usual
+        using (Acting.As(Principal.User(1)))
+        {
+            Assert.Equal([1L, 3L, 4L], Notes(ctx));
+        }
+        // in a TransactionScope the connection takes part in, who it is signed in as can't be known: refused
+        using (new System.Transactions.TransactionScope(System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+        {
+            await using var scoped = Context(() => Principal.User(1));
+            var e = await Assert.ThrowsAsync<InvalidOperationException>(() => scoped.Notes.CountAsync());
+            Assert.StartsWith("this command runs in a TransactionScope's transaction", e.Message, StringComparison.Ordinal);
+            // one that takes no part in it (Enlist=false) signs in as usual
+            await using var apart = Context(() => Principal.User(1), db.App + ";Enlist=false");
+            Assert.Equal([1L, 3L, 4L], Notes(apart));
         }
     }
 
