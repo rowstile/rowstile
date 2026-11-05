@@ -22,17 +22,22 @@ from .storage import Storage
 
 
 def abandoned_uploads(conn: psycopg.Connection[TupleRow], storage: Storage, older_than: str) -> int:
-    """New files and new versions whose bytes never arrived (or were never confirmed)."""
+    """New files and new versions whose bytes never arrived (or were never confirmed). A file never confirmed goes
+    with every version it has: one left would hold the file's row, hidden for good, with its name taken."""
     rows = conn.execute(
         "SELECT v.id, v.object_key, v.file_id, f.ready AS file_ready FROM fm.file_versions v "
-        "JOIN fm.files f ON f.id = v.file_id WHERE NOT v.ready AND v.created_at < now() - %s::interval",
-        (older_than,),
+        "JOIN fm.files f ON f.id = v.file_id WHERE NOT v.ready AND v.created_at < now() - %s::interval "
+        "OR NOT f.ready AND f.created_at < now() - %s::interval",
+        (older_than, older_than),
     ).fetchall()
+    files: set[int] = set()
     for version_id, key, file_id, file_ready in rows:
         storage.discard(str(key))  # the objects first: a row left behind is retried next time
         conn.execute("DELETE FROM fm.file_versions WHERE id = %s", (version_id,))
-        if not file_ready:  # a new file that never arrived goes too
-            conn.execute("DELETE FROM fm.files WHERE id = %s AND NOT ready", (file_id,))
+        if not file_ready:  # a new file that never arrived goes too, once its versions have
+            files.add(file_id)
+    for file_id in sorted(files):
+        conn.execute("DELETE FROM fm.files WHERE id = %s AND NOT ready", (file_id,))
     return len(rows)
 
 

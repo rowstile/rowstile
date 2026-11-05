@@ -352,7 +352,7 @@ def new_file(tx: db.Tx, folder_id: int, user: DictRow, name: str, size: int, con
 @app.get("/api/files/{file_id}")
 def file_info(file_id: int, user: DictRow = Depends(auth.current_user)) -> DictRow:
     with db.as_user(user["id"]) as tx:
-        row = found(tx.row(f"SELECT {FILE_COLS} FROM fm.files f WHERE f.id = %s", (file_id,)))
+        row = found(tx.row(f"SELECT {FILE_COLS} FROM fm.files f WHERE f.id = %s AND f.ready", (file_id,)))
         row["perms"] = tx.authz.perms("file", file_id)
     return row
 
@@ -458,7 +458,7 @@ VERSION_COLS = "v.id, v.file_id, v.size, v.content_type, v.created_at, v.created
 @app.get("/api/files/{file_id}/versions")
 def versions(file_id: int, user: DictRow = Depends(auth.current_user)) -> list[DictRow]:
     with db.as_user(user["id"]) as tx:
-        current = found(tx.row("SELECT object_key FROM fm.files WHERE id = %s", (file_id,)))["object_key"]
+        current = found(tx.row("SELECT object_key FROM fm.files WHERE id = %s AND ready", (file_id,)))["object_key"]
         rows = tx.rows(
             f"SELECT {VERSION_COLS}, v.object_key = %s AS current, u.name AS created_by_name "
             f"FROM fm.file_versions v JOIN fm.users u ON u.id = v.created_by "
@@ -475,7 +475,9 @@ def start_version(file_id: int, body: NewUpload, user: DictRow = Depends(auth.cu
     if body.size > settings.max_upload_bytes:
         raise HTTPException(413, "the file is too large")
     with db.as_user(user["id"]) as tx:
-        found(tx.row("SELECT 1 FROM fm.files WHERE id = %s", (file_id,)))
+        # a file whose own upload isn't confirmed yet isn't there yet: a version of it would become its current one
+        # while the file stays hidden
+        found(tx.row("SELECT 1 FROM fm.files WHERE id = %s AND ready", (file_id,)))
         row = tx.one(
             f"INSERT INTO fm.file_versions AS v (file_id, size, content_type, created_by) VALUES (%s, %s, %s, %s) "
             f"RETURNING {VERSION_COLS}, v.object_key",
