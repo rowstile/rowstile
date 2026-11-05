@@ -17407,6 +17407,22 @@ class Delivery(unittest.TestCase):
         with mock.patch.object(glob, "glob", return_value=[]), self.assertRaises(AssertionError):
             self.workflows()
 
+    def test_each_night_the_grammar_reads_every_small_policy(self) -> None:
+        # docs/how-it-is-checked.md: each night the grammar and the parser read all 130,431 small policies (small.py's
+        # set to size 6, and the denies of 7), in four slices whose numbers are each part modulo 4: all of them
+        import small
+
+        job = search(
+            r"(?m)^  grammar:\n((?:    .*\n|\n)*)", "\n".join(self.workflows()[".github/workflows/nightly.yml"])
+        )
+        parts = search(r"(?m)^        part: \[([\d, ]+)\]$", job.group(1)).group(1)
+        self.assertEqual([int(p) for p in parts.split(",")], [0, 1, 2, 3])
+        self.assertIn(
+            '      - run: bash editor/test.sh --agree "--small 6 --slice ${{ matrix.part }}/4"\n', job.group(1)
+        )
+        self.assertEqual(sum(small.COUNTS[n] for n in range(1, 7)) + small.DENIES[7], 130431)
+        self.assertIn("all 130,431 small policies", read("../docs/how-it-is-checked.md"))
+
     def test_actions_are_pinned_by_commit(self) -> None:
         # a tag can be moved to another commit, which then runs with the job's rights (release.yml's publish)
         loose = []
