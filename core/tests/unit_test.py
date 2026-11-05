@@ -9922,6 +9922,49 @@ class Indexes(unittest.TestCase):
             why[("app.team_members", ("team_id",))], "finding the members of a team (checks, explanations)"
         )
 
+    def test_the_line_to_add_in_each_tools_words(self) -> None:
+        # Prisma and Drizzle take their own field names, which a model may map to the columns (ownerId for owner_id);
+        # goose and dbmate run a migration in a transaction, where no index is built or dropped concurrently: the drop
+        # of one a failed build left goes in a migration of its own too
+        from authzlib import perf
+
+        self.assertEqual(
+            perf.advice("app.files", ("owner_id",), "prisma"),
+            "@@index([owner_id]) on the model for app.files (prisma/schema.prisma; the fields that map those "
+            "columns, where the model names them otherwise)",
+        )
+        self.assertEqual(
+            perf.advice("app.files", ("owner_id",), "drizzle"),
+            "index('files_owner_id_idx').on(t.owner_id) in the table for app.files (the fields that map those "
+            "columns, where the table names them otherwise)",
+        )
+        left: list[perf.Missing] = [("app.files", ("owner_id",), "why", "line 3", False, ("app.files_owner_id_idx",))]
+        self.assertEqual(
+            perf.describe_missing(left, "goose").split("\n")[1:],
+            [
+                "  first, drop what a CREATE INDEX CONCURRENTLY that failed left unfinished: DROP INDEX CONCURRENTLY "
+                "app.files_owner_id_idx; in a migration of its own that starts with -- +goose NO TRANSACTION",
+                '  add: CREATE INDEX CONCURRENTLY "files_owner_id_idx" ON "app"."files" ("owner_id"); in a migration '
+                "of its own that starts with -- +goose NO TRANSACTION",
+            ],
+        )
+        self.assertEqual(
+            perf.describe_missing(left, "dbmate").split("\n")[1],
+            "  first, drop what a CREATE INDEX CONCURRENTLY that failed left unfinished: DROP INDEX CONCURRENTLY "
+            "app.files_owner_id_idx; in a migration of its own that starts with -- migrate:up transaction:false",
+        )
+        # a partitioned table's: no CONCURRENTLY, so inside a transaction; and for SQL, the line alone
+        self.assertEqual(
+            perf.describe_missing([(*left[0][:4], True, left[0][5])], "goose").split("\n")[1],
+            "  first, drop what a CREATE INDEX CONCURRENTLY that failed left unfinished: DROP INDEX "
+            "app.files_owner_id_idx;",
+        )
+        self.assertEqual(
+            perf.describe_missing(left, "sql").split("\n")[1],
+            "  first, drop what a CREATE INDEX CONCURRENTLY that failed left unfinished: DROP INDEX CONCURRENTLY "
+            "app.files_owner_id_idx;",
+        )
+
 
 class Plans(unittest.TestCase):
     """rowstile plans: what it reads in EXPLAIN's JSON (tests/confidence_test.py reads a database's own plans)."""
@@ -9981,7 +10024,7 @@ class Plans(unittest.TestCase):
             ],
         }
         out: list[str] = []
-        perf.walk(plan, out, "app.files")
+        perf.walk(plan, out, frozenset({"app.files"}))
         self.assertEqual(out, ["SubPlan 11 runs once per row (15003 times)"])
 
     def test_rowstiles_own_tables_read_whole_are_no_warning(self) -> None:
@@ -10002,7 +10045,31 @@ class Plans(unittest.TestCase):
             "Plans": [scan("authz_int", "folder__parent__tree", 20014), scan("app", "org_members", 12001)],
         }
         out: list[str] = []
-        perf.walk(plan, out, "app.files")
+        perf.walk(plan, out, frozenset({"app.files"}))
+        self.assertEqual(out, ["reads all of app.org_members (12001 rows): an index missing?"])
+
+    def test_the_partitions_of_the_table_read_are_no_warning(self) -> None:
+        # a partitioned table is read through an Append, each partition under its own name: those scans are the read
+        # itself, as the table's own is (a table that inherits likewise). Another table read whole is still named
+        from authzlib import perf
+
+        scan = lambda table, rows: {
+            "Node Type": "Seq Scan",
+            "Relation Name": table,
+            "Schema": "app",
+            "Actual Rows": rows,
+            "Actual Loops": 1,
+        }
+        plan: dict[str, Value] = {
+            "Node Type": "Hash Join",
+            "Actual Loops": 1,
+            "Plans": [
+                {"Node Type": "Append", "Plans": [scan("events_2025", 15000), scan("events_2026", 15000)]},
+                scan("org_members", 12001),
+            ],
+        }
+        out: list[str] = []
+        perf.walk(plan, out, frozenset({"app.events", "app.events_2025", "app.events_2026"}))
         self.assertEqual(out, ["reads all of app.org_members (12001 rows): an index missing?"])
 
     def test_the_bounds_of_a_warning(self) -> None:
@@ -10011,7 +10078,7 @@ class Plans(unittest.TestCase):
 
         def said(plan: dict[str, Value]) -> list[str]:
             out: list[str] = []
-            perf.walk(plan, out, "app.files")
+            perf.walk(plan, out, frozenset({"app.files"}))
             return out
 
         scan = lambda rows: {

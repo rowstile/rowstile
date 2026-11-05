@@ -671,7 +671,11 @@ def main() -> None:
     psql(db, "-c", "DROP INDEX app.team_members_user_id_idx")
     with tempfile.TemporaryDirectory() as tmp:
         for tool, line in (
-            ("drizzle", "index('team_members_user_id_idx').on(t.user_id) in the table for app.team_members"),
+            (
+                "drizzle",
+                "index('team_members_user_id_idx').on(t.user_id) in the table for app.team_members (the fields that "
+                "map those columns, where the table names them otherwise)",
+            ),
             (
                 "alembic",
                 "Index('team_members_user_id_idx', 'user_id') in app.team_members's model (or index=True on the "
@@ -776,6 +780,34 @@ def main() -> None:
         any("reads all of app.org_members" in w for t in slow["tables"] for w in t["warnings"]),
         slow,
     )
+
+    def partitions(d: Db) -> perf.Plans:
+        # a governed table that is partitioned, one partition partitioned again: a read of it scans each partition
+        # under its own name, a read of the table, not a lookup an index would serve
+        d.script(
+            "CREATE TABLE app.events (id bigint, owner_id bigint, at date NOT NULL) PARTITION BY RANGE (at); "
+            "CREATE TABLE app.events_2025 PARTITION OF app.events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01'); "
+            "CREATE TABLE app.events_2026 PARTITION OF app.events FOR VALUES FROM ('2026-01-01') TO ('2027-01-01') "
+            "PARTITION BY LIST (owner_id); "
+            "CREATE TABLE app.events_2026_a PARTITION OF app.events_2026 FOR VALUES IN (1); "
+            "INSERT INTO app.events SELECT i, 1, date '2025-06-01' + (i % 2) * 365 "
+            f"FROM generate_series(1, {3 * perf.BIG}) i; "
+            "ANALYZE app.events; GRANT SELECT ON app.events TO app_user"
+        )
+        text, files = database.applied(d)
+        c = database.policy_compiler(
+            text + "\ntype event = app.events\n  owner : user = owner_id\n  can view = owner\n"
+            "rules app.events\n  select : view\n",
+            files,
+        )
+        return perf.plans(d, c, ("user", "1"))
+
+    events = {t["table"]: t for t in work(partitions)["tables"]}.get("app.events")
+    check(
+        "a partitioned table read: its partitions' scans are no index missing",
+        events is not None and events["ms"] is not None and events["warnings"] == [],
+        events,
+    )
     count = "SELECT count(*), sum(length(name)) FROM app.folders"
     before = psql(db, "-c", count)
     b = work(lambda d: perf.bench(d, database.policy_compiler(*database.applied(d)), people=3, rounds=3))
@@ -799,7 +831,19 @@ def main() -> None:
         with open(os.path.join(tmp, "p.authz"), "w", encoding="utf-8") as fh:
             fh.write(TAGS_POLICY)
         rc, out = cli(db + "_tags", "apply", os.path.join(tmp, "p.authz"))
-        rc, out = cli(db + "_tags", "bench", "--people", "1", "--rounds", "1") if rc == 0 else (rc, out)
+        # the one note is user 1's: an update user 2 makes of it matches no row, and times a lookup that writes
+        # nothing. Each timed update writes a row (a sequence counts those that don't: it isn't undone with them)
+        psql(
+            db + "_tags",
+            "-c",
+            "CREATE SEQUENCE app.noop; GRANT USAGE ON SEQUENCE app.noop TO app_user; "
+            "CREATE FUNCTION app.noop() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+            "IF NOT EXISTS (SELECT FROM changed) AND current_query() NOT LIKE '%RETURNING%' THEN "
+            "PERFORM nextval('app.noop'); END IF; RETURN NULL; END $$; "
+            'CREATE TRIGGER noop AFTER UPDATE ON app."Notes" REFERENCING NEW TABLE AS changed '
+            "FOR EACH STATEMENT EXECUTE FUNCTION app.noop()",
+        )
+        rc, out = cli(db + "_tags", "bench", "--people", "2", "--rounds", "12") if rc == 0 else (rc, out)
         check(
             "bench: no update timed on a table with no column to write back unchanged",
             rc == 0 and "  read app.tags " in out and "  authz.can tag edit " in out and "update app.tags" not in out,
@@ -814,6 +858,12 @@ def main() -> None:
             "bench: an update of a table keyed by text, its column named in capitals, timed: p50 and p95",
             rc == 0 and re.search(r"\n  update app\.Notes +\d+(\.\d+)? +\d+(\.\d+)?(\n|$)", out) is not None,
             out,
+        )
+        noops = psql(db + "_tags", "-c", "SELECT nextval('app.noop') - 1")
+        check(
+            "bench: each update it times writes a row the person may update, none that matches nothing",
+            rc == 0 and "\n  update app.Notes " in out and noops == "0",
+            (noops, out),
         )
     subprocess.run(["dropdb", "--if-exists", db + "_tags"], capture_output=True)
 
