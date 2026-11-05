@@ -12825,6 +12825,10 @@ class StackPages(unittest.TestCase):
     )  # sh blocks are commands to type
 
     def lines(self, rel: str) -> set[str]:
+        return set().union(*StackPages.file_lines(self, rel).values())
+
+    def file_lines(self, rel: str) -> dict[str, list[str]]:
+        """Each file's lines, spaces made one, by its path."""
         path = os.path.join(self.REPO, *rel.split("/"))
         files = (
             [path]
@@ -12836,7 +12840,7 @@ class StackPages(unittest.TestCase):
                 for f in fs
             ]
         )
-        out: set[str] = set()
+        out: dict[str, list[str]] = {}
         for f in files:
             if f.endswith(
                 (
@@ -12864,7 +12868,7 @@ class StackPages(unittest.TestCase):
                 )
             ):
                 with open(f, encoding="utf-8") as fh:
-                    out |= {" ".join(line.split()) for line in fh}
+                    out[f] = [" ".join(line.split()) for line in fh]
         return out
 
     def test_every_line_is_in_a_tested_app(self) -> None:
@@ -12892,6 +12896,55 @@ class StackPages(unittest.TestCase):
             self.assertEqual(
                 missing, [], f"docs/stacks/{page}: lines in no tested app ({', '.join(self.SOURCES[page])})"
             )
+
+    def test_a_block_is_one_file_in_order(self) -> None:
+        """A block's lines are lines of one file, in their order, though it may leave some out; a caption ("# app/worker.py")
+        starts the lines of the file it names. So a block can't join two files, or reorder one, unsaid."""
+        for page in sorted(self.SOURCES):
+            self.assertEqual(
+                self.out_of_order(page, self.blocks(page)), [], f"docs/stacks/{page}: not one file's lines in order"
+            )
+
+    def test_the_order_check_sees_two_files_joined(self) -> None:
+        jobs = "async def digest_async() -> int:\n    async with AsyncSession(async_engine()) as s:\n"
+        worker = "@celery.task\ndef digest_async() -> int:\n    return asyncio.run(jobs.digest_async())\n"
+        self.assertEqual(
+            self.out_of_order("python.md", [("python", jobs + worker)]), ["a block: async def digest_async() -> int:"]
+        )
+        self.assertEqual(self.out_of_order("python.md", [("python", worker + jobs)]), ["a block: @celery.task"])
+        named = [("python", "# app/jobs.py\n" + jobs + "\n# app/worker.py\n" + worker)]
+        self.assertEqual(self.out_of_order("python.md", named), [])
+        wrong = [("python", "# app/worker.py\n" + jobs)]
+        self.assertEqual(self.out_of_order("python.md", wrong), ["app/worker.py: async def digest_async() -> int:"])
+
+    def out_of_order(self, page: str, blocks: list[tuple[str, str]]) -> list[str]:
+        """The blocks (or their parts, after a caption) that are not lines of one file in order: the first line of each.
+        SQL the SDKs send, inside their strings, may be anywhere."""
+        files: dict[str, list[str]] = {}
+        for source in self.SOURCES[page]:
+            files |= StackPages.file_lines(self, source)
+        anywhere = "\n".join(line for lines in files.values() for line in lines)
+        wrong: list[str] = []
+        for lang, block in blocks:
+            if lang not in self.CHECKED:
+                continue
+            parts: list[tuple[str, list[str]]] = [("", [])]
+            for line in (" ".join(raw.split()) for raw in block.split("\n")):
+                if self.caption(page, line):
+                    parts.append((line.split(" ", 1)[1], []))
+                elif line:
+                    parts[-1][1].append(line)
+            for named, shown in parts:
+                if not shown or (lang == "sql" and all(line in anywhere for line in shown)):
+                    continue
+                paths = {
+                    os.path.join(self.REPO, *source.split("/"), *named.split("/")) for source in self.SOURCES[page]
+                }
+                candidates = [lines for path, lines in files.items() if not named or path in paths]
+                # `in` on an iterator goes on from where the line before was found
+                if not any(all(line in rest for line in shown) for rest in map(iter, candidates)):
+                    wrong.append(f"{named or 'a block'}: {shown[0]}")
+        return wrong
 
     def blocks(self, page: str) -> list[tuple[str, str]]:
         """A page's code blocks: (language, text)."""

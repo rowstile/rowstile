@@ -293,12 +293,17 @@ of the install: `@rowstile/pg@next` is there already, for the live updates. The 
 signs each transaction in as the request's user (`requestUser`: your session's user id, as above):
 
 ```ts
+// src/db.ts
 import pg from "pg";
-import { authz } from "@rowstile/pg";
-import "@rowstile/next";                              // signed-in reads never land in a cache
 
 const url = process.env.ROWSTILE_APP_URL;
 export const pool = new pg.Pool({ connectionString: url, max: Number(process.env.PG_POOL_MAX ?? 5) });
+
+// src/pg.ts
+import { authz } from "@rowstile/pg";
+import "@rowstile/next";                              // signed-in reads never land in a cache
+import { pool, requestUser } from "./db.ts";
+
 export const sql = authz(pool, { user: requestUser });
 ```
 
