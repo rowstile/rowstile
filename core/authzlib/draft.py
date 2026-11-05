@@ -245,7 +245,9 @@ def in_sql(column: str) -> str:
 
 
 def free_name(rel: str, taken: set[str]) -> str:
-    """A relation's name: not one of the language's words or the drafted permissions, and not taken."""
+    """A relation's name: not one of the language's words or the drafted permissions, and not taken. Nor starting or
+    ending with '_', which a name can't (AZ107): a table team_ links to the team."""
+    rel = rel.strip("_") or "linked"
     rel = RENAMED.get(rel, rel + "_rel" if rel in RESERVED else rel)
     base, i = rel, 2
     while rel in taken or rel in RESERVED:
@@ -348,6 +350,8 @@ def draft(
         base = singular(n.split(".")[1]).lower()
         if not re.fullmatch(r"[a-z_][a-z0-9_]*", base) or base in RESERVED:
             base = base + "_row" if re.fullmatch(r"[a-z_][a-z0-9_]*", base) else "t_" + re.sub(r"\W", "_", base)
+        if base != base.strip("_"):  # a name can't start or end with '_' (AZ107)
+            base = (base.strip("_") or "t") + "_row"
         name, i = base, 2
         while name in type_names.values():
             name, i = f"{base}{i}", i + 1

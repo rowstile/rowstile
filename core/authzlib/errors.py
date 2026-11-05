@@ -116,6 +116,8 @@ CODES = {
     "AZ107": Code(
         "A name the policy can't use",
         "Names can't contain `__`: generated names use it (`view__base`), and a policy can't refer to those. "
+        "Nor can a name start or end with `_`: generated names join names with `__` (`folder__parent__view`), and "
+        "`a` with `_p` would make the same name as `a_` with `p`. "
         "`signed_in`, `anyone`, `nobody`, `or`, `and`, `not`, `if` and `where` are words of the language, and a "
         "permission can't be called like a command "
         "(`select`, `insert`, `update`, `delete`). Choose another name.",

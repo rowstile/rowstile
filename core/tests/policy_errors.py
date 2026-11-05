@@ -469,6 +469,27 @@ COMPILE = [
         "AZ107",
     ),
     (
+        "a permission named with '_' first: its view's name would be another's (type a's _p, type a_'s p)",
+        "  can _see = owner\n",
+        "'_see': a name can't start or end with '_' (generated names join names with '__')",
+        10,
+        "AZ107",
+    ),
+    (
+        "a type named with '_' last",
+        "type doc_ = alt.docs (doc_no)\n",
+        "'doc_': a name can't start or end with '_'",
+        10,
+        "AZ107",
+    ),
+    (
+        "a relation named with '_' last",
+        "  parent_ : doc = up\n",
+        "'parent_': a name can't start or end with '_'",
+        10,
+        "AZ107",
+    ),
+    (
         "brackets for a key of one column",
         "  dp : grp = [owner_id, up]\n",
         "the subject is of type grp, whose key is one column, but this source gives 2 columns [AZ206]",  # (no brackets)

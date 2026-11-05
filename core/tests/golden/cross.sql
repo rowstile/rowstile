@@ -4152,7 +4152,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 $f$;
 
 -- region.chief (sources other than columns) (line 41)
-CREATE VIEW authz_int."region__chief__ext" AS
+CREATE VIEW authz_int."region__chief:ext" AS
   SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'region' AND g.relation = 'chief' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL;
 
 -- region.over.run
@@ -4494,7 +4494,7 @@ BEGIN
   RETURN NOT EXISTS (SELECT 1 FROM "cx"."regions" o WHERE o."id" = p_id)
       OR EXISTS (SELECT 1 FROM "cx"."regions" "regions" WHERE "regions"."id" = p_id
         AND (SELECT authz_int.scope_cmd('cx.regions', 'select')) AND ((coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = "regions"."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = "regions"."id")));
 END $f$;
 
@@ -4503,11 +4503,11 @@ LANGUAGE sql STABLE
 BEGIN ATOMIC
   SELECT CASE WHEN authz_int."cx.regions:seen"("regions"."id") THEN ARRAY[
     coalesce((coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id")), false),
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = "regions"."id")), false),
     coalesce((SELECT authz_int.scope_cmd('cx.regions', 'update')), false),
     coalesce(true, false),
     coalesce((coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id")), false)]
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = "regions"."id")), false)]
     ELSE pg_catalog.array_fill(false, ARRAY[4]) END
   FROM pg_catalog.unnest(ARRAY[p_row]) AS "regions";
 END;
@@ -4564,7 +4564,7 @@ END $f$;
 -- cx.regions select (line 70): run
 CREATE POLICY "authz_select" ON "cx"."regions" FOR SELECT TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.regions', 'select')) AND ((coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = "regions"."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = "regions"."id"))));
 
 COMMENT ON POLICY "authz_select" ON "cx"."regions" IS 'rowstile';
@@ -4572,9 +4572,9 @@ COMMENT ON POLICY "authz_select" ON "cx"."regions" IS 'rowstile';
 -- cx.regions update (line 71): rename
 CREATE POLICY "authz_update" ON "cx"."regions" FOR UPDATE TO "app_user"
   USING (((SELECT authz_int.scope_cmd('cx.regions', 'update')) AND (coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id"))))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = "regions"."id"))))
   WITH CHECK (((SELECT authz_int.scope_cmd('cx.regions', 'update')) AND (coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id")))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = "regions"."id")))
     OR authz_gen."cx.regions:update:refuse"(("regions".*)::"cx"."regions"));
 
 COMMENT ON POLICY "authz_update" ON "cx"."regions" IS 'rowstile';
@@ -5038,18 +5038,18 @@ BEGIN
       v_bigint := p_id::bigint;
       CASE p_perm
         WHEN 'run' THEN RETURN EXISTS (SELECT 1 FROM "cx"."regions" o WHERE o."id" = v_bigint AND (((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"))));
         WHEN 'rename' THEN RETURN EXISTS (SELECT 1 FROM "cx"."regions" o WHERE o."id" = v_bigint AND ((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))));
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))));
         WHEN 'fund' THEN RETURN EXISTS (SELECT 1 FROM "cx"."regions" o WHERE o."id" = v_bigint AND ((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))));
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))));
         WHEN 'share' THEN RETURN EXISTS (SELECT 1 FROM "cx"."regions" o WHERE o."id" = v_bigint AND (((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"))));
         WHEN 'visit' THEN RETURN EXISTS (SELECT 1 FROM "cx"."regions" o WHERE o."id" = v_bigint AND ((EXISTS (SELECT 1 FROM authz_int."region__guest" v WHERE v.id = o."id")
     OR (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"))));
         ELSE RAISE EXCEPTION 'no permission %.% in the policy', p_type, p_perm USING HINT = 'rowstile help AZ707';
       END CASE;
@@ -5323,18 +5323,18 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE ((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE ((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE o."id" > p_after::bigint AND ((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
@@ -5342,50 +5342,50 @@ BEGIN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"));
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'region.fund' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"));
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE o."id" > p_after::bigint AND (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
     WHEN 'region.share' THEN
       IF p_limit IS NULL AND p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE ((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE ((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE o."id" > p_after::bigint AND ((coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
@@ -5394,20 +5394,20 @@ BEGIN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE (EXISTS (SELECT 1 FROM authz_int."region__guest" v WHERE v.id = o."id")
     OR (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"));
       ELSIF p_after IS NULL THEN
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE (EXISTS (SELECT 1 FROM authz_int."region__guest" v WHERE v.id = o."id")
     OR (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       ELSE
         RETURN QUERY SELECT o."id"::text FROM "cx"."regions" o
         WHERE o."id" > p_after::bigint AND (EXISTS (SELECT 1 FROM authz_int."region__guest" v WHERE v.id = o."id")
     OR (coalesce(o."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = o."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = o."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = o."id"))
         ORDER BY o."id" LIMIT p_limit;
       END IF;
@@ -6861,7 +6861,7 @@ BEGIN
     WHEN 'region' THEN
       RETURN EXISTS (SELECT 1 FROM "cx"."regions" "regions" WHERE "regions"."id" = p_id::bigint
         AND (SELECT authz_int.scope_cmd('cx.regions', 'select')) AND ((coalesce("regions"."chief_id" = (SELECT authz.uid()), false)
-    OR EXISTS (SELECT 1 FROM authz_int."region__chief__ext" v WHERE v.id = "regions"."id"))
+    OR EXISTS (SELECT 1 FROM authz_int."region__chief:ext" v WHERE v.id = "regions"."id"))
     OR EXISTS (SELECT 1 FROM authz_int."region__over__run" v WHERE v.id = "regions"."id")));
     WHEN 'site' THEN
       RETURN EXISTS (SELECT 1 FROM "cx"."sites" "sites" WHERE "sites"."id" = p_id::bigint
@@ -7902,7 +7902,7 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
     AND NOT (a.grantee = '"app_user"'::regrole AND a.privilege_type = 'SELECT'
-             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."folder__edit"', 'authz_int."folder__view"', 'authz_int."folder__viewer"', 'authz_int."project__backer__fund"', 'authz_int."project__edit"', 'authz_int."project__file"', 'authz_int."project__host__edit"', 'authz_int."project__host__view"', 'authz_int."project__inside__edit"', 'authz_int."project__inside__view"', 'authz_int."project__view"', 'authz_int."region__chief"', 'authz_int."region__chief__ext"', 'authz_int."region__over__run"', 'authz_int."site__over__run"']::text[]))
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."folder__edit"', 'authz_int."folder__view"', 'authz_int."folder__viewer"', 'authz_int."project__backer__fund"', 'authz_int."project__edit"', 'authz_int."project__file"', 'authz_int."project__host__edit"', 'authz_int."project__host__view"', 'authz_int."project__inside__edit"', 'authz_int."project__inside__view"', 'authz_int."project__view"', 'authz_int."region__chief"', 'authz_int."region__chief:ext"', 'authz_int."region__over__run"', 'authz_int."site__over__run"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)
@@ -8342,7 +8342,7 @@ BEGIN
 END $ch$;
 
 REVOKE SELECT ON ALL TABLES IN SCHEMA authz_gen, authz_int FROM "app_user";
-GRANT SELECT ON authz_gen.policy_lines, authz_int."folder__edit", authz_int."folder__view", authz_int."folder__viewer", authz_int."project__backer__fund", authz_int."project__edit", authz_int."project__file", authz_int."project__host__edit", authz_int."project__host__view", authz_int."project__inside__edit", authz_int."project__inside__view", authz_int."project__view", authz_int."region__chief", authz_int."region__chief__ext", authz_int."region__over__run", authz_int."site__over__run" TO "app_user";
+GRANT SELECT ON authz_gen.policy_lines, authz_int."folder__edit", authz_int."folder__view", authz_int."folder__viewer", authz_int."project__backer__fund", authz_int."project__edit", authz_int."project__file", authz_int."project__host__edit", authz_int."project__host__view", authz_int."project__inside__edit", authz_int."project__inside__view", authz_int."project__view", authz_int."region__chief", authz_int."region__chief:ext", authz_int."region__over__run", authz_int."site__over__run" TO "app_user";
 
 -- Privileges the policy doesn't give on rowstile's schemas and what is in them are taken back
 DO $r$
@@ -8360,7 +8360,7 @@ SELECT c.oid::regclass::text, gw.who, a.privilege_type,
   FROM pg_class c, aclexplode(c.relacl) a, LATERAL (SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS who) gw
   WHERE c.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname IN ('authz', 'authz_gen', 'authz_int')) AND a.grantee <> c.relowner
     AND NOT (a.grantee = '"app_user"'::regrole AND a.privilege_type = 'SELECT'
-             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."folder__edit"', 'authz_int."folder__view"', 'authz_int."folder__viewer"', 'authz_int."project__backer__fund"', 'authz_int."project__edit"', 'authz_int."project__file"', 'authz_int."project__host__edit"', 'authz_int."project__host__view"', 'authz_int."project__inside__edit"', 'authz_int."project__inside__view"', 'authz_int."project__view"', 'authz_int."region__chief"', 'authz_int."region__chief__ext"', 'authz_int."region__over__run"', 'authz_int."site__over__run"']::text[]))
+             AND c.relnamespace::regnamespace::text || '."' || replace(c.relname, '"', '""') || '"' = ANY (ARRAY['authz_gen."policy_lines"', 'authz_int."folder__edit"', 'authz_int."folder__view"', 'authz_int."folder__viewer"', 'authz_int."project__backer__fund"', 'authz_int."project__edit"', 'authz_int."project__file"', 'authz_int."project__host__edit"', 'authz_int."project__host__view"', 'authz_int."project__inside__edit"', 'authz_int."project__inside__view"', 'authz_int."project__view"', 'authz_int."region__chief"', 'authz_int."region__chief:ext"', 'authz_int."region__over__run"', 'authz_int."site__over__run"']::text[]))
 UNION ALL
 SELECT format('%s (%I)', c.oid::regclass, att.attname), gw.who, a.privilege_type,
        format('REVOKE %s (%I) ON %s FROM %s CASCADE', a.privilege_type, att.attname, c.oid::regclass, gw.who)

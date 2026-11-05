@@ -800,7 +800,14 @@ def not_generated(name: str, loc: Loc, at: tuple[int, int] | None = None) -> Non
 
 
 def check_name(name: str, loc: Loc, at: tuple[int, int] | None = None) -> str:
+    """A name the policy declares (a type, a relation, a permission). Generated names join them with '__'
+    (`folder__parent__view`): one that started or ended with '_' could join into another's (`a` and `_p`, `a_`
+    and `p`)."""
     not_generated(name, loc, at)
+    if name.startswith("_") or name.endswith("_"):
+        fail(
+            loc, f"'{name}': a name can't start or end with '_' (generated names join names with '__')", "AZ107", at=at
+        )
     if name in RESERVED or name in KEYWORDS:
         fail(loc, f"'{name}' is a word of the language; choose another name", "AZ107", at=at)
     return name
