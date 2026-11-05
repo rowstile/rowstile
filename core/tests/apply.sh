@@ -77,6 +77,20 @@ PSQL -c "ALTER TABLE app.files DISABLE TRIGGER authz_file_forget_del" >/dev/null
 run apply "$T/docs.authz"
 [ "$out" = "$T/docs.authz: applied" ] && [ "$(PSQL -c "SELECT tgenabled FROM pg_trigger WHERE tgname = 'authz_file_forget_del'")" = O ] &&
   ok "... or disabled" || bad "apply after a disabled trigger" "$out"
+# a column named begin, in a condition a refused write's explaining function reads (BEGIN ATOMIC): the statements
+# after that function are still each read as one, so a trigger made after it is missed when it is gone
+B="${DB}_begin"
+fresh "$B"
+quiet -d "$B" -f example/app_schema.sql -c 'ALTER TABLE app.files ADD COLUMN "begin" int' >/dev/null || exit 1
+sed 's/^  update                            : edit$/  update                            : edit and {begin is not null}/' \
+  example/docs.authz > "$T/begin.authz"
+grep -q '{begin is not null}' "$T/begin.authz" || bad "the policy with a begin column" "the rule wasn't changed"
+python3 cli/rowstile_cli.py --db "dbname=$B" apply "$T/begin.authz" >/dev/null 2>&1 || bad "apply with a begin column"
+psql -X -q -d "$B" -c 'DROP TRIGGER "authz_update id, owner_id, confidential" ON app.files' >/dev/null
+out=$(python3 cli/rowstile_cli.py --db "dbname=$B" apply "$T/begin.authz" 2>&1)
+[ "$out" = "$T/begin.authz: applied" ] &&
+  [ "$(psql -X -At -d "$B" -c "SELECT count(*) FROM pg_trigger WHERE tgname = 'authz_update id, owner_id, confidential'")" = 1 ] &&
+  ok "... with a column named begin in a write rule's condition too" || bad "apply after a dropped trigger, begin column" "$out"
 # what lint says the next apply takes back, an apply of the same text has to take back
 PSQL -c "GRANT SELECT ON authz.shares TO app_user" -c "GRANT EXECUTE ON FUNCTION authz.trim_audit(interval) TO PUBLIC" >/dev/null
 run apply "$T/docs.authz"

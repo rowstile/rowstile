@@ -159,6 +159,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   file and its words in the editor, with its line in `rowstile dev`, with its file and line in the MCP server's
   `check`, in the review and in the playground. Before, the editor put it on the policy's first line, and the
   others lost its place.
+- `rowstile apply` remakes a trigger the policy made that is gone when a write rule's condition reads a column named
+  `begin`, instead of saying `unchanged`: reading the compiled SQL back, a `begin` in parentheses no longer opens a
+  block, as psql reads it. Migrations for Drizzle Kit keep one statement between breakpoints there too.
 
 ### Upgrading
 
