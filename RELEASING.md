@@ -94,6 +94,10 @@ layout, which `Delivery` in `core/tests/unit_test.py` checks (`layout()` in `pac
   come before the first part.
 - A part's lines are a list, one line a change, with no blank line inside it. A line says what users see, in
   plain words; what they won't notice belongs in the commit message.
+- A security fix's line, under **Fixed**, ends with its advisory's link once the advisory is published:
+  `([GHSA-xxxx-xxxx-xxxx](https://github.com/rowstile/rowstile/security/advisories/GHSA-xxxx-xxxx-xxxx))`. The
+  fix's own pull request never names it, as the advisory is a draft until the release; the release pull request
+  adds it (below).
 - A link to a file of the repository is written from its root, as GitHub reads this file:
   `[Installing](docs/installing.md)`. A release's notes get it as a link to that file at the release's tag
   (`changelog.py` writes it so), since a release's page reads a relative link from its own address.
@@ -121,9 +125,11 @@ request of its own, before the release's.
       - `CHANGELOG.md`: **Unreleased** becomes the release's own section, `## X.Y.Z-rc.N (YYYY-MM-DD)` (the
         day of the tag), with a new empty `## Unreleased` above it. Every release has one, an alpha, a beta or a
         candidate as much as a final release, and its notes are that section alone
-        (`python3 packaging/changelog.py X.Y.Z-rc.N` prints them). A final release's section opens with a
-        sentence saying which candidate it is and that its alphas', betas' and candidates' sections below hold
-        what changed since the release before; under it, what changed since that candidate, if anything
+        (`python3 packaging/changelog.py X.Y.Z-rc.N` prints them). Each security fix's line ends with the link
+        to its advisory, published with this release ([Security releases](#security-releases)). A final
+        release's section opens with a sentence saying which candidate it is and that its alphas', betas' and
+        candidates' sections below hold what changed since the release before; under it, what changed since
+        that candidate, if anything
       - the apps' migrations, where `rowstile migrate --check` asks for one: in every app whose
         `rowstile.toml` has `[migrations]` (the example apps and the conformance apps, each with a lock file),
         run `rowstile migrate --name rowstile_X_Y_Z` from the checkout. It writes nothing where the lock is up
@@ -240,5 +246,5 @@ went public: [SECURITY.md](SECURITY.md) sends reports there.
 A vulnerability, reported privately ([SECURITY.md](SECURITY.md)) or found here, gets a draft security advisory
 at once, and its fix lands as an ordinary pull request, with its check, as soon as it is ready. The advisory stays
 a draft until a release carries the fix; it is published with that release, as patched in it, crediting the
-reporter if they want it. The next release is the next pre-release while no final release exists, there being no
-release to patch.
+reporter if they want it. The release pull request ends the fix's changelog line with the advisory's link. The
+next release is the next pre-release while no final release exists, there being no release to patch.

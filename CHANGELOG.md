@@ -776,6 +776,7 @@ change in any release, and the SDKs not on a registry yet install from the repos
   database can hold.
 - `authz.break_glass` checks the relation's `shared if` for whoever breaks the glass, as `authz.share` does for
   any share, and refuses with the policy's line when it doesn't hold.
+  ([GHSA-x952-p96h-53wg](https://github.com/rowstile/rowstile/security/advisories/GHSA-x952-p96h-53wg))
 - The pages of the SDKs that aren't on a registry yet install them from the repository: the Rails, ASP.NET Core,
   Laravel and Phoenix pages, and the .NET, Rust and Elixir SDKs' own, named packages RubyGems, NuGet, Packagist,
   Hex and crates.io don't have. The README and `llms.txt` list every stack page, and the guide every migration tool.
@@ -788,6 +789,7 @@ change in any release, and the SDKs not on a registry yet install from the repos
   (`begin(fn)`) started and that ran after it ended (a promise `fn` didn't await, a timer) still ran on the
   transaction's connection, which by then could be serving another request's transaction, signed in as someone
   else. That work now runs in a transaction of its own, as whoever it acts for.
+  ([GHSA-rjcp-7gwg-4mqw](https://github.com/rowstile/rowstile/security/advisories/GHSA-rjcp-7gwg-4mqw))
 - `rowstile init` no longer tells a Prisma 7 app to sign in inside Prisma's generated client
   (`src/generated/prisma/client.ts`), which the next `prisma generate` replaces: it skips generated files.
 - The Next.js page: its `prisma.config.ts` loads `.env` (`import "dotenv/config"`; Prisma 7 doesn't), and its
@@ -806,6 +808,7 @@ change in any release, and the SDKs not on a registry yet install from the repos
   relations was, a file's renaming too.
   Writes that reach other objects take a little longer: on the docs app, a member leaving a team or a share on a
   folder about half a millisecond more; at most a thousand objects of a type are looked up ([Limits](docs/reference/limits.md)).
+  ([GHSA-7f4r-8j8w-g94j](https://github.com/rowstile/rowstile/security/advisories/GHSA-7f4r-8j8w-g94j))
 
 ### Upgrading
 
@@ -836,6 +839,7 @@ change in any release, and the SDKs not on a registry yet install from the repos
   show rows the policy refuses (`authz.can` and a type's own select rule were right); otherwise it hid rows the
   policy grants, and a function reading the permission's own table made every read fail ("stack depth limit
   exceeded"). Conditions written as subqueries were not affected.
+  ([GHSA-gfc6-697v-pv35](https://github.com/rowstile/rowstile/security/advisories/GHSA-gfc6-697v-pv35))
 - The npm packages that hold the command's Python name its licence `Python-2.0` in their `license`, where they
   said `PSF-2.0`: the licence file they carry is CPython's whole licence (the PSF, BeOpen, CNRI and CWI
   agreements), which SPDX names `Python-2.0`; `PSF-2.0` is only the first of them.
@@ -853,6 +857,7 @@ change in any release, and the SDKs not on a registry yet install from the repos
   the scope `read`, so a key whose scopes let it view as a user read everything that user may, beyond what the
   key itself was given. A session without scopes still views with `read`. The session's signature and a JWT's
   are now compared through their hashes, so the time a comparison takes says nothing of how much of one is right.
+  ([GHSA-xjmp-62rc-xfcq](https://github.com/rowstile/rowstile/security/advisories/GHSA-xjmp-62rc-xfcq))
 - `authz.explain` says to whom a custom role was given when it was given to `anyone`, to every signed-in user
   (`user:*`) or to a link: "a custom role given to anyone (by 1) (role reader)". It said "a custom role given to
   (by 1)", naming nobody.
@@ -982,35 +987,42 @@ change in any release, and the SDKs not on a registry yet install from the repos
   rules' explanations (`authz.explain_rule`, the message of a refused write) answer for a new row or one the user
   may select, and say no to all of it for any other. A rule on a column is checked in its trigger's `WHEN`. Code
   that read an `authz_gen` view now gets `permission denied`: `authz.list` answers what it asked.
+  ([GHSA-2f72-cq6g-h9m4](https://github.com/rowstile/rowstile/security/advisories/GHSA-2f72-cq6g-h9m4))
 - A rule condition with a quote that Postgres reads as part of a string or a name (`E'it\'s'`, `$$it's$$`,
   `"o'neil"`) before a subquery now runs with the policy's rights, as any condition that reads another table
   does. The quote was read as the string's end, the subquery was missed, and the condition ran as the app role:
   through the other table's row-level security, a `not exists` there could show rows `authz.can` refused. The
   check that inheritance doesn't depend on the time missed `now()` after such a quote too.
+  ([GHSA-2868-c9qv-j9wp](https://github.com/rowstile/rowstile/security/advisories/GHSA-2868-c9qv-j9wp))
 - A rule's condition that calls a function of the app's named with a letter past ASCII (`{not app.muté(this.id)}`)
   runs with the policy's rights, as one calling `app.muted` does. It was read as no call, so the app role ran
   it, and the function read other tables through their row-level security: the app role could see rows
   `authz.can` refused.
+  ([GHSA-ppqr-xfwr-697p](https://github.com/rowstile/rowstile/security/advisories/GHSA-ppqr-xfwr-697p))
 - Where the SDKs write the sign-in into the statement (Python: the asyncpg adapter, SQLAlchemy with a driver of
   another parameter style, `act_as_sql()`; TypeScript: `actAsSql()`), an id holding a backslash stays one
   string when `standard_conforming_strings` is off. An id such as `x\'); SELECT ...` ended the string early, and
   the rest ran as SQL. Such a value is now written `E'...'`, its backslashes doubled.
+  ([GHSA-fh85-46x2-p9g2](https://github.com/rowstile/rowstile/security/advisories/GHSA-fh85-46x2-p9g2))
 - A statement on a partition, or on a table that inherits, runs the triggers of the table above. Moving a
   folder through a partition of the folders' table (a tree's table without rules), adding a link row to a
   partition of a link table, or changing a row a condition reads there left the inheritance tables and shares as
   they were, so users kept seeing what the move took away. Each partition and table that inherits now gets the
   triggers; `authz.lint()` names one made since the policy was applied, and the app role's TRUNCATE on a
   partition of any table rowstile watches.
+  ([GHSA-4fm2-mjhf-rp88](https://github.com/rowstile/rowstile/security/advisories/GHSA-4fm2-mjhf-rp88))
 - `authz.revoke_link` judges a link given in several relations as things are before it goes, and turns it off in
   all of them or in none. It took the link out of one relation at a time and judged the next on what was left: a
   user whose access came by that link was refused in the second relation once the first was gone, and taking it
   from the first could let a user turn it off in a relation they could not unshare when they asked.
+  ([GHSA-v8x5-47x7-g86r](https://github.com/rowstile/rowstile/security/advisories/GHSA-v8x5-47x7-g86r))
 - `authz.explain` with the signed-in user's own id answers as without one. For a folder user 3 can't see,
   `authz.explain('folder', 6, 'edit', '3')` as user 3 showed its rule and the parts it reads (`parent is a
   folder you can't see`, `yes  {inherit}`), where a missing folder showed none of that; it now says
   `no   you have no access to folder 6`, as for a missing one. Explaining another user's access with a scoped
   key now needs a scope that names the permission, as `authz.who` does, and reads that user's access with
   their full rights, not the key's scopes.
+  ([GHSA-g6j3-fff4-c8hj](https://github.com/rowstile/rowstile/security/advisories/GHSA-g6j3-fff4-c8hj))
 - `authz.explain` says "you" to a service signed in as itself, as it does to a user: a relation from a column
   read `bot: bot_id is` and stopped there, and a share `viewer: shared with`. It now says `bot: bot_id is you`.
 - `authz.who` asked about an id that isn't one of the type's (`authz.who('doc', 'abc', 'view')` for a numeric
@@ -1025,6 +1037,7 @@ change in any release, and the SDKs not on a registry yet install from the repos
   invariants' `user_id` and `rowstile diff` (its rows and `--users`). The user whose id is `service:1` was written
   `service:1`, as service 1 is, and read back as service 1; the user whose id is `nobody` came back as nobody.
   Other users are still their id (`42`), and other principals `type:id`.
+  ([GHSA-g6h7-6vfr-xm67](https://github.com/rowstile/rowstile/security/advisories/GHSA-g6h7-6vfr-xm67))
 - The decision log (`authz_debug.log_decisions`) named a service by its bare id, as if it were the user with that
   id. It now names who asked as the audit trail does: `service:7`, `user:service:1`.
 - Every `authz.*` function that takes an object's id now takes it as the key's type too, as `authz.can` did:
@@ -1322,6 +1335,7 @@ change in any release, and the SDKs not on a registry yet install from the repos
   transaction, as `who`, and `fn` acts for `who`. They ran in a transaction of their own on another connection,
   signed in as whoever the code around acted for (or the `user` function, or nobody): `a.expect` gave the reason
   for someone else, nothing saw what the transaction had written, and on a pool of one they waited for ever.
+  ([GHSA-3vph-6725-7vhw](https://github.com/rowstile/rowstile/security/advisories/GHSA-3vph-6725-7vhw))
 - `@rowstile/prisma` reads a compound key's fields in the key's order, which its name gives
   (`project_id_user_id`), not in the order the `where` lists them: `{ user_id: 2, project_id: 1 }` was asked
   about row `(2,1)`, so an update could be a 404 where it is a 403, or name the wrong row. A key given a name of
