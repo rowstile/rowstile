@@ -14568,11 +14568,13 @@ class StudioPage(unittest.TestCase):
     playground's Mermaid, which Studio loads checked against its hash (a hash that isn't the file's fails there)."""
 
     def test_studio_and_the_playground_draw_with_one_mermaid(self) -> None:
-        version = r"cdn\.jsdelivr\.net/npm/mermaid@(\d+\.\d+\.\d+)/dist/"
-        self.assertEqual(
-            search(version, read("cli/studio/app.js")).group(1),
-            search(version, read("../playground/playground.mjs")).group(1),
-        )
+        # one file, checked against one hash; the playground's Content-Security-Policy lets that file run
+        file = r'const MERMAID = "(https://[^"]+)";\nconst MERMAID_HASH = "(sha384-[^"]+)";'
+        studio = search(file, read("cli/studio/app.js"))
+        playground = search(file, read("../playground/playground.mjs"))
+        self.assertEqual(studio.groups(), playground.groups())
+        policy = search(r'http-equiv="Content-Security-Policy" content="([^"]+)"', read("../playground/index.html"))
+        self.assertIn(f"script-src 'self' 'wasm-unsafe-eval' {studio.group(1)};", policy.group(1))
 
     def test_ci_opens_the_page_in_a_browser(self) -> None:
         self.assertIn("      - run: bash core/tests/studio_page.sh\n", read("../.github/workflows/ci.yml"))

@@ -39,12 +39,13 @@ jobs:
         env:
           WHY: ${{ steps.from.outputs.why }}
         run: echo "::notice::$GIVEN deploys nothing ($WHY)"
-      # its links to the repository's files go to the tags it is built from, not main (site/pages.mjs)
+      # its links to the repository's files go to the tags it is built from, not main (site/pages.mjs); the playground
+      # is built with it, and serves Pyodide and PGlite from its own node_modules
       - if: steps.from.outputs.deploy == 'true'
         env:
           SITE_CODE: ${{ steps.from.outputs.code }}
           SITE_CONTENT: ${{ steps.from.outputs.content }}
-        run: cd site && npm ci --no-audit --no-fund && node build.mjs
+        run: (cd playground && npm ci --no-audit --no-fund) && cd site && npm ci --no-audit --no-fund && node build.mjs
       # a site whose code is older than an article or a comparison page builds without it: say so, and deploy nothing
       - if: steps.from.outputs.deploy == 'true'
         run: node "$RUNNER_TEMP/source.mjs" --built

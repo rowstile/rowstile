@@ -1,12 +1,15 @@
 // The playground page: edit a policy, its tables and its tests; on each change the policy is compiled (in
 // Pyodide, in a worker), applied to a fresh database with the tables (PGlite) and its tests run. The engine is
-// core.mjs, which test.mjs runs headless. The versions below are package.json's (test.mjs checks they match).
+// core.mjs, which test.mjs runs headless. Pyodide and PGlite come with the page (build.mjs copies the versions
+// package.json pins); Mermaid, from a CDN, is checked against its hash before it runs.
 // Plain JavaScript, typed with JSDoc and checked strictly (playground/tsconfig.json).
 import { database, line } from "./core.mjs";
 
-const PYODIDE = "https://cdn.jsdelivr.net/npm/pyodide@314.0.7/";
-const PGLITE = "https://cdn.jsdelivr.net/npm/@electric-sql/pglite@0.5.8/dist/index.js";
-const MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@12.0.0/dist/mermaid.esm.min.mjs";
+const PYODIDE = new URL("./pyodide/", import.meta.url).href;     // a whole address: the worker loads it
+const PGLITE = "./pglite/index.js";
+// Studio's file and hash (unit_test.py holds the two pages to one); index.html's Content-Security-Policy names it
+const MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@12.0.0/dist/mermaid.min.js";
+const MERMAID_HASH = "sha384-xzghz1GQ5u9HCpVskeDPqMsdogD1yvuMQbEK53+wi+G70+6J1AG0L2cfi9PHjDWI";
 
 /** @typedef {import("./core.mjs").Compile} Compile */
 /** @typedef {import("./core.mjs").Compiled} Compiled */
@@ -281,14 +284,34 @@ async function ask() {
   await inLine(() => answer(database, who, sql));
 }
 
+/** @type {Promise<Mermaid> | null} */
+let mermaidLoaded = null;
+/** Mermaid, loaded once, if its file is the one its hash says. @returns {Promise<Mermaid>} */
+function loadMermaid() {
+  mermaidLoaded ??= new Promise((resolve, reject) => {
+    const page = /** @type {Window & {mermaid?: Mermaid}} */ (window);
+    const s = document.createElement("script");
+    s.src = MERMAID;
+    s.integrity = MERMAID_HASH;
+    s.crossOrigin = "anonymous";
+    s.onload = () => (page.mermaid ? resolve(page.mermaid) : reject(new Error("mermaid didn't load")));
+    s.onerror = () => {
+      mermaidLoaded = null;                       // offline, say: tried again the next time
+      s.remove();
+      reject(new Error("mermaid didn't load"));
+    };
+    document.head.append(s);
+  });
+  return mermaidLoaded;
+}
+
 async function graph() {
   const shown = compiled;
   if (!shown || graphShown === shown.graph) return;
   graphShown = shown.graph;
   el.graph.innerHTML = `<p class="muted">drawing…</p>`;
   try {
-    /** @type {{default: Mermaid}} */
-    const { default: mermaid } = await import(MERMAID);
+    const mermaid = await loadMermaid();
     const dark = matchMedia("(prefers-color-scheme: dark)").matches;
     mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral", securityLevel: "strict" });
     const { svg } = await mermaid.render(`g${Date.now()}`, shown.graph);

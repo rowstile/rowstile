@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- scripts from this site alone (Pyodide and PGlite come with the page), and Mermaid's one file (checked against its
+     hash too: playground.mjs) -->
+<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/mermaid@12.0.0/dist/mermaid.min.js; object-src 'none'; base-uri 'none'">
 <title>rowstile playground</title>
 <meta name="description" content="Write an access policy, and see Postgres enforce it: rowstile's compiler and a real Postgres, in your browser.">
 <style>

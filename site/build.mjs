@@ -3,7 +3,7 @@
 // there, llms-full.txt, IndexNow's key (indexnow.mjs), and the blog's feed (/blog/feed.xml) once there is a post.
 // Any static host serves dist/. A link to a file, a page or a heading that isn't there fails it (pages.mjs). Plain
 // JavaScript, typed with JSDoc and checked strictly (site/tsconfig.json). Its links to files on GitHub go to SITE_CODE's tag (site.yml), else to main.
-//   cd site && npm ci && node build.mjs          (PYTHON=... if python3 isn't the one)
+//   (cd playground && npm ci) && cd site && npm ci && node build.mjs          (PYTHON=... if python3 isn't the one)
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

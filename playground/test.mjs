@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { bundle } from "./build.mjs";
+import { bundle, vendored } from "./build.mjs";
 import { compiler, database, line } from "./core.mjs";
 
 let fails = 0;
@@ -22,11 +22,11 @@ const check = (what, ok, got) => {
   }
 };
 
-// the page loads the versions package.json pins, from the CDN
-const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
-const page = readFileSync(new URL("./playground.mjs", import.meta.url), "utf8");
-check("the page loads the Pyodide and PGlite package.json pins",
-  page.includes(`pyodide@${pkg.devDependencies.pyodide}/`) && page.includes(`pglite@${pkg.devDependencies["@electric-sql/pglite"]}/`));
+// the page loads its scripts from its own site, but Mermaid (checked against its hash: unit_test.py)
+const scripts = ["playground.mjs", "compiler.worker.mjs", "core.mjs"].map((f) => readFileSync(new URL(`./${f}`, import.meta.url), "utf8"));
+const elsewhere = scripts.flatMap((text) => text.match(/https?:\/\/[^\s"'`]+/g) ?? []);
+check("the page's scripts name no other site but Mermaid's file", JSON.stringify(elsewhere)
+  === '["https://cdn.jsdelivr.net/npm/mermaid@12.0.0/dist/mermaid.min.js"]', elsewhere);
 
 let t = Date.now();
 const [py, pg] = await Promise.all([loadPyodide(), PGlite.create()]);
@@ -187,6 +187,12 @@ console.log("-- the build");
 symlinkSync(fileURLToPath(new URL(".", import.meta.url)), join(dir, "link"), "dir");
 const built = execFileSync(process.execPath, [join(dir, "link", "build.mjs")], { encoding: "utf8" });
 check("build.mjs run through a symbolic link writes dist/", built.startsWith("wrote "), built);
+const dist = fileURLToPath(new URL("./dist/", import.meta.url));
+const copies = vendored();
+check(`... with Pyodide and PGlite, the versions package.json pins (${copies.length} files)`, copies.length > 0
+  && copies.every(([from, to]) => readFileSync(join(dist, to)).equals(readFileSync(from)))
+  && ["pyodide/pyodide.mjs", "pyodide/pyodide.asm.wasm", "pglite/index.js", "pglite/pglite.wasm"].every((f) => copies.some(([, to]) => to === f)),
+  copies.map(([, to]) => to));
 rmSync(dir, { recursive: true, force: true });
 
 console.log(`playground: ${fails ? `${fails} failed` : "all passed"}`);
