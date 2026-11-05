@@ -7,7 +7,9 @@ use crate::{Error, NotFound, Permission, Principal, Refused};
 /// The type and the id `authz.act_as` takes: both NULL for nobody.
 pub(crate) fn act_as(who: &Principal) -> (Option<&str>, Option<&str>) {
     match who {
+        // (a principal without an id, made by hand, is nobody too)
         Principal::Nobody => (None, None),
+        Principal::Signed { id, .. } if id.is_empty() => (None, None),
         Principal::Signed { principal_type, id } => (Some(principal_type), Some(id)),
     }
 }

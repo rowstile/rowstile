@@ -31,6 +31,7 @@ impl From<::sqlx::Error> for Error {
                 schema: db.schema().map(str::to_owned),
                 table: db.table().map(str::to_owned),
                 constraint: db.constraint().map(str::to_owned),
+                routine: db.routine().map(str::to_owned),
                 source: Some(Box::new(e)),
             }),
             None => Self::Other(Box::new(e)),

@@ -24,16 +24,20 @@ pub struct DbError {
     pub table: Option<String>,
     /// The constraint it names, if any: `authz_insert` for a rule's refusal.
     pub constraint: Option<String>,
+    /// The function in Postgres that raised it, if the driver gives it: `ExecWithCheckOptions` for Postgres's own
+    /// row-level security refusal, in any language.
+    pub routine: Option<String>,
     /// The driver's error.
     pub source: Option<Source>,
 }
 
 impl DbError {
     /// rowstile's code for this error (`AZ709`; `rowstile help AZ709` says what it means), from its HINT, where the
-    /// runtime puts it, or its message; none for an error rowstile didn't raise.
+    /// runtime puts it, and never its message, which may hold the request's own input (Postgres's own words quote a
+    /// value it couldn't read); none for an error rowstile didn't raise.
     #[must_use]
     pub fn code(&self) -> Option<&str> {
-        [self.hint.as_deref(), Some(&self.message)].into_iter().flatten().find_map(code_in)
+        self.hint.as_deref().and_then(code_in)
     }
 }
 
@@ -174,6 +178,18 @@ impl Error {
             if let Some(refused) = generic_refusal(&db.message) {
                 return Self::Refused(Box::new(Refused { source: Some(db), ..refused }));
             }
+            // Postgres's own refusal in another language (the server's lc_messages): which table and rule, its words
+            // alone say
+            if code.is_none() && db.routine.as_deref() == Some("ExecWithCheckOptions") {
+                return Self::Refused(Box::new(Refused {
+                    message: db.message.clone(),
+                    table: None,
+                    command: None,
+                    why: Vec::new(),
+                    code: "AZ709".to_owned(),
+                    source: Some(db),
+                }));
+            }
             // sign in first (AZ714) is a 42501 too, but no refusal; another 42501 with no code (a table the app role
             // was never granted) is the app's mistake
             if let Some(code) = code.clone().filter(|code| CallKind::of(code).is_none()) {
@@ -194,8 +210,9 @@ impl Error {
             Some((_, Some(kind))) => {
                 Self::Call(Box::new(CallError { code, kind, message: db.message.clone(), source: Some(db) }))
             }
-            // a login refused (AZ703) and settings changed by hand (AZ702) share the SQLSTATE, and are no such thing
-            None | Some(("AZ701", None)) if db.sqlstate == "28000" => Self::NotSignedIn(Box::new(db)),
+            // a login refused (AZ703), settings changed by hand (AZ702) and Postgres's own refusals to connect (no code:
+            // a role that isn't there, pg_hba.conf) share the SQLSTATE, and are no such thing
+            Some(("AZ701", None)) if db.sqlstate == "28000" => Self::NotSignedIn(Box::new(db)),
             _ => Self::Database(Box::new(db)),
         }
     }
