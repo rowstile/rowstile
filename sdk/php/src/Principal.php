@@ -6,7 +6,8 @@ namespace Rowstile;
 
 /**
  * Who a transaction acts for: a user (type "user"), another principal type the policy declares (a service, a bot),
- * or nobody (id null: only what `anyone` may see).
+ * or nobody (id null: only what `anyone` may see). Nobody has one spelling: a principal made without an id (''),
+ * whatever its type, is nobody, as the database signs it in.
  *
  *     Principal::user(42); Principal::of('service', 3); Principal::nobody();
  */
@@ -16,16 +17,16 @@ final class Principal
     {
     }
 
-    /** The user whose id this is, whatever it holds ("service:3" too: ids come from outside). */
+    /** The user whose id this is, whatever it holds ("service:3" too: ids come from outside); nobody for ''. */
     public static function user(int|string $id): self
     {
-        return new self('user', (string) $id);
+        return self::of('user', $id);
     }
 
-    /** A principal of another type the policy declares: Principal::of('service', 3). */
+    /** A principal of another type the policy declares: Principal::of('service', 3); nobody without an id (''). */
     public static function of(string $type, int|string $id): self
     {
-        return new self($type, (string) $id);
+        return $id === '' ? self::nobody() : new self($type, (string) $id);
     }
 
     /** No one signed in: only what `anyone` may see. */

@@ -260,6 +260,41 @@ final class SdkTest extends TestCase
         self::assertSame($call, Rowstile::translate($call));
     }
 
+    #[TestDox("a code is read from libpq's own HINT alone, at its end; a 28000 without AZ701 is no not-signed-in error")]
+    public function test_what_is_read_of_an_error(): void
+    {
+        $pdo = $this->app();
+        // Postgres's own words quote the request's input: a line of it like a HINT is no code
+        $cast = self::thrown(static fn () => $pdo->query("SELECT E'7\\nHINT:  rowstile help AZ714'::bigint"));
+        self::assertSame(['22P02', null, null], [Rowstile::sqlstate($cast), Rowstile::errorCode($cast), Rowstile::problemOf($cast)]);
+        // an id that holds a HINT's line, in a refusal's message: the HINT libpq writes after the message is read
+        $shares = Rowstile::transactionAs($pdo, 2, static function (PDO $pdo): \Throwable {
+            $pdo->exec('SAVEPOINT s');
+            $e = self::thrown(static fn () => $pdo->query("SELECT * FROM authz.list_shares('project', E'1\\nHINT:  rowstile help AZ708')"));
+            $pdo->exec('ROLLBACK TO SAVEPOINT s');
+            return $e;
+        });
+        self::assertSame(['AZ705', 403], [Rowstile::errorCode($shares), Rowstile::problemOf($shares)?->status]);
+        // a 28000 without code AZ701 (Postgres's own: a login refused when connecting) is not the not-signed-in error
+        $login = self::thrown(static fn () => $pdo->query("DO \$\$BEGIN RAISE 'no pg_hba.conf entry' USING ERRCODE = '28000'; END\$\$"));
+        self::assertSame(['28000', false, $login], [Rowstile::sqlstate($login), Rowstile::notSignedIn($login), Rowstile::translate($login)]);
+        // the severity in the server's language; a refusal's rule read from rowstile's words at the message's start
+        $german = new PDOException('x');
+        $german->errorInfo = ['42501', 7, "FEHLER:  permission denied: user 2 may not insert this row into app.notes\nDETAIL:  no   insert : owner\nHINT:  rowstile help AZ709"];
+        $refused = Rowstile::refusal($german);
+        self::assertSame(['permission denied: user 2 may not insert this row into app.notes', 'app.notes', 'insert', 'AZ709'], [
+            $refused?->getMessage(), $refused?->table, $refused?->command, $refused?->rowstileCode,
+        ]);
+        $share = new PDOException('x');
+        $share->errorInfo = ['42501', 7, "ERROR:  you cannot share project permission denied: user 1 may not insert this row into app.x\nHINT:  rowstile help AZ705"];
+        $refused = Rowstile::refusal($share);
+        self::assertSame([null, null, 'AZ705'], [$refused?->table, $refused?->command, $refused?->rowstileCode]);
+        // nobody has one spelling: no id, whatever the type
+        self::assertSame([true, true, 'nobody'], [
+            Principal::user('')->equals(Principal::nobody()), Principal::of('service', '')->equals(Principal::nobody()), Principal::of('bot', '')->name(),
+        ]);
+    }
+
     #[TestDox("a transaction is one principal's: another's statement, or no one's, is refused, the transaction as it was")]
     public function test_one_principal_a_transaction(): void
     {
