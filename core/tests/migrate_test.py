@@ -396,6 +396,17 @@ CASES += [
         SYNCED,
         edit(SYNCED, ("sync app.files : view\n", "sync app.files : view mirrored\n")),
     ),
+    # (the mirror made again, without the column)
+    (
+        "a mirrored table's column masked since",
+        "docs",
+        edit(SYNCED, ("sync app.files : view\n", "sync app.files : view mirrored\n")),
+        edit(
+            SYNCED,
+            ("sync app.files : view\n", "sync app.files : view mirrored\n"),
+            ("rules app.files\n", "rules app.files view app.files_visible\n  mask body : edit\n"),
+        ),
+    ),
     ("the sync index kept after commit", "docs", SYNCED, SYNCED + "sync after commit\n"),
 ]
 # functions made with another search path than the migration's (the schemas on it changed since: one made, one

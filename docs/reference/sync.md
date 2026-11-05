@@ -227,7 +227,7 @@ With sync lines, `authz.lint()` reports these as errors:
 - it is a member of the app role, or the app role of it: the app would read every row through it; <!-- checked: tests/sync.sh "lint finds a sync role made a member of the app role since" -->
 - it lacks BYPASSRLS: the rules apply to the app role, so it reads no row of a table with rules, and an engine's
   first snapshot is empty while the changes it decodes hold every row; <!-- checked: tests/sync.sh "lint finds a sync role without BYPASSRLS: its engine's first snapshot is empty" -->
-- it may read a masked column, or a publication publishes one; <!-- checked: tests/sync.sh "lint finds a masked column the sync role may read, granted since"; tests/sync.sh "lint finds a publication that publishes a masked column" -->
+- it may read a masked column, a publication publishes one, or a mirror holds one; <!-- checked: tests/sync.sh "lint finds a masked column the sync role may read, granted since"; tests/sync.sh "lint finds a publication that publishes a masked column"; tests/sync.sh "a masked column put in a mirror since: authz.sync_verify() finds the mirror's columns are not its table's" -->
 - it owns a governed table, or is a member of its owner: an owner may turn row-level security off; <!-- checked: tests/sync.sh "lint finds a governed table the sync role owns" -->
 - a privilege on `authz_sync` that the policy doesn't give. Applying takes it back. <!-- checked: tests/sync.sh "lint reports a privilege on the index the policy doesn't give"; tests/sync.sh "applying again takes back the privilege on the index the policy doesn't give" -->
 
@@ -478,6 +478,8 @@ writes their readers. <!-- checked: tests/sync.sh "a file made: its mirror row, 
 For every principal, the rows of the mirror whose readers hold one of its keys are those the index gives it. <!-- checked: tests/difftest.py "the sync index's mirror: " -->
 Applying keeps the mirror; it is made again when the table's columns change, which `authz.sync_verify()` reports
 until then, and `rowstile reapply --force` writes it again where it differs. <!-- checked: tests/sync.sh "rowstile reapply keeps the mirror (PowerSync keeps reading it)"; tests/sync.sh "authz.sync_verify() finds a mirror whose columns its table's are no longer"; tests/sync.sh "... and reapply makes it again, with the new column" -->
+A policy that masks a column of the table since, or no longer masks one, makes it again too: a masked column is
+never in the mirror, whatever was applied before. <!-- checked: tests/sync.sh "a mask added to a mirrored table since: the mirror is made again, without the masked body"; tests/sync.sh "a mask taken off a mirrored table: the mirror is made again, with the body" -->
 Until then the table's writes go on: a column added isn't in the mirror yet, and one dropped is NULL there. <!-- checked: tests/sync.sh "a column dropped from the table since: its writes go on, its mirror rows hold NULL there" -->
 `authz.sync_verify()` compares it with the table's rows too. <!-- checked: tests/sync.sh "authz.sync_verify() compares the mirror too: it matches"; tests/sync.sh "... and finds a mirror row that isn't its file's any more" -->
 The app role can't read it, as the rest of the index. <!-- checked: tests/sync.sh "the app role can't read the mirror" -->

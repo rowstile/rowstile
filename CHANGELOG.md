@@ -13,6 +13,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 - `rowstile lsp` sends, when it reads the table and column names, the password in `rowstile.toml`'s database
   string or `PGPASSWORD` in `.env` beside it, not the editor's own `PGPASSWORD`: the folder opened names the host.
+- The sync index, a preview: a PowerSync mirror (`mirrored`) is made again when the policy masks a column of its
+  table since, so the masked column leaves the mirror and the sync engine's role can't read it; `authz.sync_verify()`
+  says false, and `authz.lint()` reports an error, while a mirror holds a masked column.
 
 ## 0.1.0-beta.3 (2026-11-05)
 
