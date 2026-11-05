@@ -3,16 +3,16 @@
 -- + type file: can comment = folder.view
 
 -- a migration is one transaction: outside one, nothing below changes anything
-SELECT pg_catalog.set_config('authz_ctx.migration', '833988b186677a33', true);
+SELECT pg_catalog.set_config('authz_ctx.migration', '5760d24c91cb0667', true);
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '833988b186677a33' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '5760d24c91cb0667' THEN
     PERFORM pg_catalog.set_config('default_transaction_read_only', 'on', false);
   END IF;
 END $authz_tx$;
 DO $authz_tx$
 BEGIN
-  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '833988b186677a33' THEN
+  IF pg_catalog.current_setting('authz_ctx.migration', true) IS DISTINCT FROM '5760d24c91cb0667' THEN
     RAISE EXCEPTION 'rowstile: this migration must run in one transaction, and its statements are being committed one by one [AZ615]'
       USING HINT = 'nothing was changed, and this session is read-only from here on; run the file with your migration tool, or with psql -1 -f';
   END IF;
@@ -28,13 +28,13 @@ BEGIN
   IF to_regclass('authz.policy_versions') IS NOT NULL THEN
     EXECUTE 'SELECT lock FROM authz.policy_versions ORDER BY id DESC LIMIT 1' INTO v_lock;
   END IF;
-  IF v_lock = '833988b186677a33' THEN
+  IF v_lock = '5760d24c91cb0667' THEN
     RAISE EXCEPTION 'rowstile: this database already holds what this migration brings (it ran here before, or rowstile dev or push took the database there): don''t run it, tell your migration tool it is applied [AZ607]'
       USING HINT = 'Prisma: prisma migrate resolve --applied <the migration''s folder>. Alembic: alembic stamp head. '
                    'Others, and why: rowstile help AZ607';
-  ELSIF v_lock IS DISTINCT FROM 'a021b2cbbbfaa067' THEN
+  ELSIF v_lock IS DISTINCT FROM '99bf54a781aecea8' THEN
     RAISE EXCEPTION 'rowstile: this migration changes the policy the migration before it left (%), but the database has % [AZ607]',
-      'a021b2cbbbfaa067', coalesce(v_lock, 'none')
+      '99bf54a781aecea8', coalesce(v_lock, 'none')
       USING HINT = 'apply the migrations in order; a database changed with rowstile push or apply since needs the '
                    'migrations from the start (or rowstile apply of the policy the previous migration left) '
                    '(rowstile help AZ607)';
@@ -86,6 +86,26 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_') pw;
     EXECUTE pg_catalog.format('ALTER FUNCTION %s SET search_path FROM CURRENT', f.fn);
   END LOOP;
 END $sp$;
+
+-- Inheritance tables kept whose tables have other tables under them since they were computed (a partition
+-- attached or detached: no trigger saw those rows) are computed again
+DO $stale$
+DECLARE r record;
+BEGIN
+  IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;
+  FOR r IN SELECT n.name, n.oids, n.fn FROM (VALUES ('folder__parent__tree', ARRAY[to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folders"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid), 'authz_int."folder__parent__tree_rebuild"()'), ('folder__linked_into_parent__tree', ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"app"."folder_links"')::oid, to_regclass('"app"."folders"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid), 'authz_int."folder__linked_into_parent__tree_rebuild"()')) n(name, oids, fn)
+           JOIN authz_int.trees t ON t.name = n.name
+           WHERE t.oids IS DISTINCT FROM n.oids AND to_regprocedure(n.fn) IS NOT NULL LOOP
+    EXECUTE format('SELECT %s', r.fn);
+    UPDATE authz_int.trees SET oids = r.oids WHERE name = r.name;
+  END LOOP;
+END $stale$;
 
 -- authz_int.perms: its rows again
 DELETE FROM authz_int.perms;
@@ -913,4 +933,4 @@ test
   user 5 can view file 16      -- erin: Joint project is linked into Company
   user 5 cannot edit file 16   -- links pass on view rights only
 $authz_policy$,
-  $authz_files${}$authz_files$::jsonb, 'BUILD', '833988b186677a33');
+  $authz_files${}$authz_files$::jsonb, 'BUILD', '5760d24c91cb0667');

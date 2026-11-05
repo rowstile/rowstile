@@ -96,7 +96,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - `rowstile apply` computes an inheritance table again, instead of keeping it, when its table or link table has
   other tables under it than at the last apply: a partition attached, detached, made or dropped, or a table that
   inherits made or dropped. The rows such a change brings or takes away, which no trigger saw, are then in the
-  table, and an apply of the same policy no longer answers `unchanged` after a partition is detached.
+  table, and an apply of the same policy no longer answers `unchanged` after a partition is detached. The
+  migrations `rowstile migrate` writes do the same for each inheritance table they keep.
 
 ### Upgrading
 

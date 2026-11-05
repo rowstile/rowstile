@@ -3617,7 +3617,9 @@ class Migrations(unittest.TestCase):
         m = database.migration(self.text, {}, older)
         self.assertIn('CREATE OR REPLACE FUNCTION authz_int."folder__parent__tree_check_loops"(p_ids bigint[])', m.sql)
         self.assertEqual(m.rebuilt, [])
-        self.assertNotIn("_rebuild", m.sql)
+        # (the step every migration runs names each kept tree's rebuild, which runs only where its tables changed)
+        self.assertNotRegex(m.sql, r"_rebuild\"\(\)(?!')")
+        self.assertIn("""'authz_int."folder__parent__tree_rebuild"()'""", m.sql)
         self.assertEqual(m.lock, lock)
 
     def test_a_lock_without_those_steps_runs_them(self) -> None:

@@ -862,6 +862,29 @@ BEGIN
               ELSE CASE WHEN coalesce(pg_catalog.current_setting('authz.principal_type', true), '') IN ('', 'user') THEN CASE WHEN pg_catalog.strpos(nullif(current_setting('authz.user_id', true), ''), ':') > 0 OR nullif(current_setting('authz.user_id', true), '') = 'nobody' THEN 'user:' || nullif(current_setting('authz.user_id', true), '') ELSE nullif(current_setting('authz.user_id', true), '') END ELSE pg_catalog.current_setting('authz.principal_type', true) || ':' || nullif(current_setting('authz.user_id', true), '') END END;
 END $f$;
 
+-- Inheritance tables kept whose tables have other tables under them since they were computed (a partition
+-- attached or detached: no trigger saw those rows) are computed again
+DO $stale$
+DECLARE r record;
+BEGIN
+  IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;
+  FOR r IN SELECT n.name, n.oids, n.fn FROM (VALUES ('user__manager__tree', ARRAY[to_regclass('"cx"."users"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."users"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid), 'authz_int."user__manager__tree_rebuild"()'), ('folder_project__folder_parent__tree', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid), 'authz_int."folder_project__folder_parent__tree_rebuild"()'), ('folder__parent__tree', ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+    SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folder_links"')::oid, to_regclass('"cx"."folders"')::oid]::oid[])
+    UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
+  SELECT b.oid FROM below b ORDER BY b.oid), 'authz_int."folder__parent__tree_rebuild"()')) n(name, oids, fn)
+           JOIN authz_int.trees t ON t.name = n.name
+           WHERE t.oids IS DISTINCT FROM n.oids AND to_regprocedure(n.fn) IS NOT NULL LOOP
+    EXECUTE format('SELECT %s', r.fn);
+    UPDATE authz_int.trees SET oids = r.oids WHERE name = r.name;
+  END LOOP;
+END $stale$;
+
 -- per type: its table, key, how to find a row x by an id ($1, text), and a row's id (columns unqualified)
 CREATE TABLE authz_int.types (name text PRIMARY KEY, tbl text NOT NULL, pk text NOT NULL, pktype text NOT NULL,
   keytype text NOT NULL, find text NOT NULL, id_of text NOT NULL, principal boolean NOT NULL);

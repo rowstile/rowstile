@@ -1559,6 +1559,7 @@ END $w$;"""
             ("objects", "session", self.session_sql()),
             ("objects", "keys", self.keys_sql()),
             ("objects", "principals", self.principals_sql()),
+            ("always", "stale_trees", self.stale_trees_sql()),
             *[("objects", "catalog", c) for c in catalog if c],
             ("changed", "share_indexes", "\n".join(share_indexes)),
             ("objects", "scopes", self.scope_sql()),
@@ -1697,6 +1698,31 @@ END $an$;"""
             f"SELECT 1 FROM (VALUES {rows or '(NULL::text, NULL::oid[])'}) n(name, oids) "
             "LEFT JOIN authz_int.trees t ON t.name = n.name WHERE n.name IS NOT NULL AND t.oids IS DISTINCT FROM n.oids"
         )
+
+    def stale_trees_sql(self) -> str:
+        """For migrations, which keep a tree whose definition is the same: each kept tree whose tables have other
+        tables under them than when it was last computed (authz_int.trees) is computed again, and its row says so,
+        before the catalog's rows are written again. Applying whole drops authz_int first: there is nothing to do,
+        keep_sql decides. A tree the migration rebuilds has no _rebuild function here (its objects were dropped)."""
+        if not self.tree_keep:
+            return ""
+        rebuild = {n: "authz_int." + q(n + "_rebuild") + "()" for n in self.tree_keep}
+        rows = ", ".join(
+            f"({lit(n)}, {self.oids_sql(tables)}, {lit(rebuild[n])})" for n, (_, tables) in self.tree_keep.items()
+        )
+        return f"""-- Inheritance tables kept whose tables have other tables under them since they were computed (a partition
+-- attached or detached: no trigger saw those rows) are computed again
+DO $stale$
+DECLARE r record;
+BEGIN
+  IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;
+  FOR r IN SELECT n.name, n.oids, n.fn FROM (VALUES {rows}) n(name, oids, fn)
+           JOIN authz_int.trees t ON t.name = n.name
+           WHERE t.oids IS DISTINCT FROM n.oids AND to_regprocedure(n.fn) IS NOT NULL LOOP
+    EXECUTE format('SELECT %s', r.fn);
+    UPDATE authz_int.trees SET oids = r.oids WHERE name = r.name;
+  END LOOP;
+END $stale$;"""
 
     def keep_sql(self) -> str:
         """Inheritance tables of the last apply whose definition and tables are the same now: moved aside
