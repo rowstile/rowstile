@@ -65,6 +65,11 @@ check "only the key's hash is kept, and its first ten characters" "true|true|tru
 check "the key signs in as alice" "1" "BEGIN; SELECT authz.login_key('$READ'); SELECT authz.uid(); COMMIT;"
 check "read-only key: may view file 11, not edit it" "true|false" \
   "BEGIN; SELECT authz.login_key('$READ'); SELECT authz.can('file', 11, 'view') || '|' || authz.can('file', 11, 'edit'); COMMIT;"
+# what a scoped key may still find out about its own user (docs/threat-model.md): explain's first line is the key's
+# answer, and the parts below are walked with the user's full rights, without naming the scope as the reason
+check "a read-only key's explain of edit: no for the key, then the parts its user holds" \
+  "no   user 1 does not hold edit on file 11|true" \
+  "BEGIN; SELECT authz.login_key('$READ'); SELECT (array_agg(e ORDER BY n))[1] || '|' || bool_or(btrim(e) = 'yes  folder.edit') FROM authz.explain('file', 11, 'edit') WITH ORDINALITY AS x(e, n); COMMIT;"
 # (its scope names the command select, not a permission: asked as one, it is outside the scope too, and false)
 check "... and a permission named as the command it may run is not in its scope" "false|0" \
   "BEGIN; SELECT authz.login_key('$READ'); SELECT authz.can('file', 11, 'select') || '|' || (SELECT count(*) FROM authz.list('file', 'select')); COMMIT;"
