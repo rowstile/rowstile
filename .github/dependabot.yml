@@ -1,8 +1,10 @@
 # Updates to what the repository's own tools, apps and tests use: grouped, monthly, a week after each release.
-# The SDKs' dependency ranges (sdk/python/pyproject.toml, peerDependencies) are what users may run with, not
-# versions to bump, so only lock files and workflows are updated: npm keeps every package.json as written (the
-# root is the workspace of the SDK's packages too), and a new major (TypeScript, Vite, Vitest, the VS Code
-# extension's `@types/vscode`, which follows its `engines.vscode`) is a change made on purpose, by hand.
+# The SDKs' dependency ranges (sdk/python/pyproject.toml, peerDependencies, the Java SDK's POMs, the crate's and
+# the gem's) are what users may run with, not versions to bump, so only lock files and workflows are updated: npm
+# keeps every package.json as written (the root is the workspace of the SDK's packages too), and a new major
+# (TypeScript, Vite, Vitest, the VS Code extension's `@types/vscode`, which follows its `engines.vscode`) is a
+# change made on purpose, by hand. Every lock file in the repository is in an entry here but the Go SDK's (below;
+# a unit test checks).
 # Not here: the Python the npm packages bring (python-build-standalone, packaging/npm/build.mjs), which
 # RELEASING.md's release steps check.
 version: 2
@@ -69,7 +71,8 @@ updates:
       fuzz: {patterns: ["*"]}
 
   - package-ecosystem: uv
-    directories: ["/examples/filemanager/backend", "/examples/messenger/backend", "/integrations/fastapi"]
+    directories: ["/examples/filemanager/backend", "/examples/messenger/backend", "/integrations/fastapi",
+                  "/integrations/django"]
     schedule: {interval: monthly}
     cooldown: {default-days: 7}
     ignore:
@@ -78,8 +81,9 @@ updates:
     groups:
       python: {patterns: ["*"]}
 
+  # the Java conformance apps' dependencies and plugins (Maven has no lock file: their POMs name each version)
   - package-ecosystem: maven
-    directories: ["/sdk/java", "/integrations/spring", "/integrations/ktor"]
+    directories: ["/integrations/spring", "/integrations/ktor"]
     schedule: {interval: monthly}
     cooldown: {default-days: 7}
     ignore:
@@ -87,6 +91,23 @@ updates:
         update-types: ["version-update:semver-major"]
     groups:
       java: {patterns: ["*"]}
+
+  # the Java SDK's POMs name the versions its users get (Spring Boot's list, Ktor, Exposed, Kotlin): only the plugins
+  # that build it move here
+  - package-ecosystem: maven
+    directories: ["/sdk/java"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    allow:
+      - dependency-name: "org.apache.maven.plugins:*"
+      - dependency-name: "org.jacoco:*"
+      - dependency-name: "org.jetbrains.dokka:*"
+      - dependency-name: "org.sonatype.central:*"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      java-build: {patterns: ["*"]}
 
   # the Elixir package's and the Phoenix conformance app's packages (their mix.lock); the package's mix.exs names the
   # ranges it takes, which users may run with, not versions to bump
@@ -109,7 +130,7 @@ updates:
       php: {patterns: ["*"]}
 
   - package-ecosystem: cargo
-    directory: /editor/zed
+    directories: ["/editor/zed"]
     schedule: {interval: monthly}
     cooldown: {default-days: 7}
     ignore:
@@ -117,3 +138,37 @@ updates:
         update-types: ["version-update:semver-major"]
     groups:
       rust: {patterns: ["*"]}
+
+  # the Rust crate's lock file and its conformance app's (the crate's Cargo.toml names the oldest versions it takes,
+  # which users may run with, not versions to bump)
+  - package-ecosystem: cargo
+    directories: ["/sdk/rust", "/integrations/axum"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    versioning-strategy: lockfile-only
+    groups:
+      rust-sdk: {patterns: ["*"]}
+
+  # the Rails conformance app's gems (its Gemfile.lock); the gem itself, by path, is this checkout's
+  - package-ecosystem: bundler
+    directories: ["/integrations/rails"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    versioning-strategy: lockfile-only
+    ignore:
+      - dependency-name: "rowstile"
+    groups:
+      ruby: {patterns: ["*"]}
+
+  # the .NET conformance app's packages and its tool (dotnet-tools.json: dotnet-ef); the SDK's own packages come
+  # from the folder its test.sh packs them into (NuGet.config), never from nuget.org
+  - package-ecosystem: nuget
+    directories: ["/integrations/aspnetcore"]
+    schedule: {interval: monthly}
+    cooldown: {default-days: 7}
+    ignore:
+      - dependency-name: "Rowstile*"
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      dotnet: {patterns: ["*"]}
