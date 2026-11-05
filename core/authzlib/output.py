@@ -189,7 +189,7 @@ class OutputMixin(RefusalMixin, InsightMixin, GovernanceMixin, IdentityMixin, Li
         """(rows, condition, line) for each condition only a PL/pgSQL function holds: a signing-in type's where,
         a `shared ... if`. Nothing in the catalog depends on what they read, so the app may drop a column they
         read after applying: read_now reads them when applying, and apply and push read them again when the
-        policy in force is unchanged (database.unchanged)."""
+        policy in force is unchanged (database.intact)."""
         out: list[tuple[str, str, Loc]] = []
         for t in self.types.values():
             if t.principal and t.where:

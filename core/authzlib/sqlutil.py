@@ -16,7 +16,7 @@ CHILD_TRIGGER_MARK = "rowstile: the trigger of the table above, for the rows sto
 # ... and, of the triggers for TRUNCATE alone, those right for a TRUNCATE of a table under theirs too (below_too)
 TRUNCATE_BELOW_MARK = "rowstile: for a TRUNCATE of the tables under its table too"
 # In a comment before a DO block that makes a trigger (-- @object trigger ...): the trigger is there only where
-# the table is partitioned (database.unchanged looks for it there alone)
+# the table is partitioned (database.intact looks for it there alone)
 IF_PARTITIONED = "@if partitioned"
 
 # Postgres runs a table's row triggers for its own rows and for its partitions' (it copies them there), not for
