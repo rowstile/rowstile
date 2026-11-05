@@ -100,7 +100,7 @@ makes reads through the rules slow. Each finding has a severity. These are error
   OR, so it lets through what the rules don't. (A restrictive one is a note.) <!-- checked: tests/governance.sh "lint finds it: an error, with the policy's name, why it widens the rules and how to drop it"; tests/governance.sh "a restrictive one is a note" -->
 - TRUNCATE on a type's table or a membership table, which skips row-level security. <!-- checked: tests/governance.sh "error app.files"; tests/governance.sh "error app.team_members" -->
 - A partition of a table with rules (or a table inheriting from one) that the app role may use directly, or
-  TRUNCATE. <!-- checked: tests/children.sh "lint says the app role may use it directly"; tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips its triggers" -->
+  TRUNCATE. <!-- checked: tests/children.sh "lint says the app role may use it directly"; tests/children.sh "lint says the app role may empty a partition of the table a condition reads, which skips row-level security and the audit" -->
 - A partition or a table inheriting from a type's table made since the last apply: it lacks the table's row and
   statement triggers until the next one. <!-- checked: tests/adversarial.sh "lint reports a table made after apply that inherits from a governed one"; tests/children.sh "lint names each, and the triggers it lacks"; tests/children.sh "lint names a partition made since of a table without rules, and the statement triggers it lacks" -->
 - A view over a governed table that runs with its owner's rights (without `security_invoker`), which the app role

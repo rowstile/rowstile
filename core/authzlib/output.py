@@ -20,6 +20,7 @@ from .sqlutil import (
     LOST_RULES,
     STUB_COLUMNS,
     VIEW_MARKS,
+    below_too,
     from_row,
     ident,
     lit,
@@ -248,8 +249,8 @@ BEGIN
     DELETE FROM authz.shares WHERE subject_type = {name} AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = {name};
     PERFORM authz_int.requests_gone({name}, NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
-    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a
+    -- row that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
     v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = {name}
                                       UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = {name} AND s.subject_id <> '*'
                                       UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = {name}) g(id)
@@ -279,21 +280,26 @@ BEGIN
   PERFORM authz_int.requests_gone({name}, ARRAY[{self.key_text(t, "OLD")}]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
--- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
--- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
--- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
+-- before TRUNCATE empties the table, or one under it (each has this trigger: CHILD_TRIGGERS): with a snapshot older
+-- than a share on one of the rows stored there, fail to serialize. And where tables inherit from the type's, the
+-- pending requests naming a row stored in the one emptied, and in no other, are cancelled: TRUNCATE ONLY, or of a
+-- table under it, empties one alone, and after it a request for no row can't be told from one whose row went (a
+-- request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION {fn_trunc}() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_emptied text; v_ids text[];
 BEGIN
+  v_emptied := pg_catalog.quote_ident(TG_TABLE_SCHEMA) || '.' || pg_catalog.quote_ident(TG_TABLE_NAME);
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.forget_marks({name}, ARRAY(SELECT {self.key_text(t, "x")} FROM {tbl} x));
+    EXECUTE $q$SELECT ARRAY(SELECT {self.key_text(t, "x")} FROM ONLY $q$ || v_emptied || $q$ x)$q$ INTO v_ids;
+    PERFORM authz_int.forget_marks({name}, v_ids);
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = {regclass}) THEN
-    PERFORM authz_int.requests_gone({name}, ARRAY(
-      SELECT g.id FROM ({requested}) g(id)
-      WHERE EXISTS (SELECT 1 FROM ONLY {tbl} x WHERE {self.key_text(t, "x")} = g.id)
-        AND NOT EXISTS (SELECT 1 FROM {tbl} y WHERE y.tableoid <> {regclass} AND {self.key_text(t, "y")} = g.id)));
+    EXECUTE $q$SELECT ARRAY(SELECT g.id FROM ({requested}) g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY $q$ || v_emptied || $q$ x WHERE {self.key_text(t, "x")} = g.id)
+        AND NOT EXISTS (SELECT 1 FROM {tbl} y WHERE y.tableoid <> $1 AND {self.key_text(t, "y")} = g.id))$q$
+      INTO v_ids USING TG_RELID;
+    PERFORM authz_int.requests_gone({name}, v_ids);
   END IF;
   RETURN NULL;
 END $f$;
@@ -303,8 +309,10 @@ CREATE TRIGGER {q("authz_" + t.name + "_forget_id")} AFTER UPDATE ON {tbl} FOR E
   WHEN ({self.key(t, "OLD")} IS DISTINCT FROM {self.key(t, "NEW")}) EXECUTE FUNCTION {fn_row}();
 CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc")} AFTER TRUNCATE ON {tbl}
   FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+{below_too(q("authz_" + t.name + "_forget_trunc"), tbl)}
 CREATE TRIGGER {q("authz_" + t.name + "_forget_trunc_first")} BEFORE TRUNCATE ON {tbl}
   FOR EACH STATEMENT EXECUTE FUNCTION {fn_trunc}();
+{below_too(q("authz_" + t.name + "_forget_trunc_first"), tbl)}
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with are forgotten too.
 {moved}"""

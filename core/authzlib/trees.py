@@ -14,6 +14,7 @@ from collections.abc import Callable
 from .compiler import Core, Edge, Edges, NextTree, SccKey
 from .parse import Cols, Loc, Relation, Source, Type, cols, fail
 from .sqlutil import (
+    below_too,
     check_stable_condition,
     dep_trigger,
     lit,
@@ -641,7 +642,8 @@ CREATE TRIGGER {trig("_upd")} AFTER UPDATE ON {tbl}
 CREATE TRIGGER {trig("_del")} AFTER DELETE ON {tbl}
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_rows")}();
 CREATE TRIGGER {trig("_trunc")} AFTER TRUNCATE ON {tbl}
-  FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();""")
+  FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();
+{below_too(trig("_trunc"), tbl)}""")
 
         shift_lit = "true" if shifts else "false"
         for i, (ltable, obj_cols) in enumerate(sorted(link_tables.items())):
@@ -670,7 +672,8 @@ CREATE TRIGGER {trig(sfx + "_upd")} AFTER UPDATE ON {qt(ltable)}
 CREATE TRIGGER {trig(sfx + "_del")} AFTER DELETE ON {qt(ltable)}
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION {f(sfx)}();
 CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
-  FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();""")
+  FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();
+{below_too(trig(sfx + "_trunc"), qt(ltable))}""")
 
         if share_keys:
             refresh = lambda rows: (
@@ -1108,7 +1111,8 @@ CREATE TRIGGER {trig(sfx + "_upd")} AFTER UPDATE ON {qt(t.table)}
 CREATE TRIGGER {trig(sfx + "_del")} AFTER DELETE ON {qt(t.table)}
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION {f(sfx)}();
 CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(t.table)}
-  FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();""")
+  FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();
+{below_too(trig(sfx + "_trunc"), qt(t.table))}""")
 
         for i, (ltable, pairs) in enumerate(sorted(link_tables.items())):
             sel: Callable[[str], str] = lambda rows, pairs=pairs: " UNION ".join(
@@ -1139,7 +1143,8 @@ CREATE TRIGGER {trig(sfx + "_upd")} AFTER UPDATE ON {qt(ltable)}
 CREATE TRIGGER {trig(sfx + "_del")} AFTER DELETE ON {qt(ltable)}
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION {f(sfx)}();
 CREATE TRIGGER {trig(sfx + "_trunc")} AFTER TRUNCATE ON {qt(ltable)}
-  FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();""")
+  FOR EACH STATEMENT EXECUTE FUNCTION {f("_on_truncate")}();
+{below_too(trig(sfx + "_trunc"), qt(ltable))}""")
 
         if share_keys:
             refresh = lambda rows: (

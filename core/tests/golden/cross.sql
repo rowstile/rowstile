@@ -102,13 +102,13 @@ DECLARE r record;
 BEGIN
   IF to_regclass('authz_int.trees') IS NULL THEN RETURN; END IF;          -- the first apply
   FOR r IN SELECT n.rel FROM authz_int.trees t
-           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'a2a58ec18ac7e1860b08a62b6f7d4cb2', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+           JOIN (VALUES ('folder_project__host_inside_parent__tree2', 'a49c11255714243787105bf4a143dde8', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__host_inside_parent__tree2'), ('folder__parent__tree', 'd30c3c7abee3abae6171186fd4c19fe5', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
-  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder_project__backer_parent__tree', 'c2f9201bb38601723af1e15b8b7d2015', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  SELECT b.oid FROM below b ORDER BY b.oid), 'folder__parent__tree'), ('folder_project__backer_parent__tree', '41cc52e1946be9c535f2ca4fdff0368b', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid), 'folder_project__backer_parent__tree')) n(name, hash, oids, rel)
@@ -750,15 +750,15 @@ CREATE TABLE authz_int.row_marks (type text, id text, n bigint NOT NULL DEFAULT 
 CREATE TABLE authz_int.trees (name text PRIMARY KEY, hash text NOT NULL, oids oid[] NOT NULL);
 
 INSERT INTO authz_int.trees VALUES
-  ('folder_project__host_inside_parent__tree2', 'a2a58ec18ac7e1860b08a62b6f7d4cb2', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder_project__host_inside_parent__tree2', 'a49c11255714243787105bf4a143dde8', ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('authz.shares')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."placements"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder__parent__tree', '7c046f45579cd25138c3f660737bcdb7', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder__parent__tree', 'd30c3c7abee3abae6171186fd4c19fe5', ARRAY[to_regclass('"cx"."folders"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."folders"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid)),
-  ('folder_project__backer_parent__tree', 'c2f9201bb38601723af1e15b8b7d2015', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
+  ('folder_project__backer_parent__tree', '41cc52e1946be9c535f2ca4fdff0368b', ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[] || ARRAY(WITH RECURSIVE below(oid) AS (
     SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent = ANY (ARRAY[to_regclass('"cx"."backings"')::oid, to_regclass('"cx"."folders"')::oid, to_regclass('"cx"."projects"')::oid]::oid[])
     UNION SELECT i.inhrelid FROM pg_catalog.pg_inherits i JOIN below b ON i.inhparent = b.oid)
   SELECT b.oid FROM below b ORDER BY b.oid));
@@ -1580,6 +1580,7 @@ CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_rows_folder_del" 
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_rows_folder"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_rows_fo_605054e5" AFTER TRUNCATE ON "cx"."folders"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree_rows_fo_605054e5" ON "cx"."folders" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- project rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_rows_project"() RETURNS trigger
@@ -1617,6 +1618,7 @@ CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_rows_project_del"
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_rows_project"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_rows_pr_b124c0d7" AFTER TRUNCATE ON "cx"."projects"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree_rows_pr_b124c0d7" ON "cx"."projects" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- links stored in cx.placements
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_links1"() RETURNS trigger
@@ -1642,6 +1644,7 @@ CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_on_links1_del" AF
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_links1"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree_on_links1_trunc" AFTER TRUNCATE ON "cx"."placements"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree_on_links1_trunc" ON "cx"."placements" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- links people make with authz.share(); they can't expire, since the closure is stored
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree_on_shares"() RETURNS trigger
@@ -1876,6 +1879,7 @@ CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_rows_folder_del"
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_rows_folder"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_rows_f_48ef94cd" AFTER TRUNCATE ON "cx"."folders"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_truncate"();
+COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree2_rows_f_48ef94cd" ON "cx"."folders" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- project rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_rows_project"() RETURNS trigger
@@ -1908,6 +1912,7 @@ CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_rows_p_249f3828"
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_rows_project"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_rows_p_aa5eb14d" AFTER TRUNCATE ON "cx"."projects"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_truncate"();
+COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree2_rows_p_aa5eb14d" ON "cx"."projects" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- links stored in cx.placements
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_links1"() RETURNS trigger
@@ -1933,6 +1938,7 @@ CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_on_links1_del" A
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_links1"();
 CREATE TRIGGER "authz_folder_project__host_inside_parent__tree2_on_links1_trunc" AFTER TRUNCATE ON "cx"."placements"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_truncate"();
+COMMENT ON TRIGGER "authz_folder_project__host_inside_parent__tree2_on_links1_trunc" ON "cx"."placements" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- links people make with authz.share(); they can't expire, since the closure is stored
 CREATE FUNCTION authz_int."folder_project__host_inside_parent__tree2_on_shares"() RETURNS trigger
@@ -2171,6 +2177,7 @@ CREATE TRIGGER "authz_folder__parent__tree_del" AFTER DELETE ON "cx"."folders"
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__parent__tree_on_rows"();
 CREATE TRIGGER "authz_folder__parent__tree_trunc" AFTER TRUNCATE ON "cx"."folders"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__parent__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_folder__parent__tree_trunc" ON "cx"."folders" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- backfill from the rows already there (unless the tree was kept)
 DO $b$ BEGIN
@@ -2352,6 +2359,7 @@ CREATE TRIGGER "authz_folder_project__backer_parent__tree_rows_folder_del" AFTER
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__backer_parent__tree_rows_folder"();
 CREATE TRIGGER "authz_folder_project__backer_parent__tree_rows_folder_trunc" AFTER TRUNCATE ON "cx"."folders"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__backer_parent__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_folder_project__backer_parent__tree_rows_folder_trunc" ON "cx"."folders" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- project rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."folder_project__backer_parent__tree_rows_project"() RETURNS trigger
@@ -2384,6 +2392,7 @@ CREATE TRIGGER "authz_folder_project__backer_parent__tree_rows_project_del" AFTE
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__backer_parent__tree_rows_project"();
 CREATE TRIGGER "authz_folder_project__backer_parent__tree_rows_project_trunc" AFTER TRUNCATE ON "cx"."projects"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__backer_parent__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_folder_project__backer_parent__tree_rows_project_trunc" ON "cx"."projects" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- links stored in cx.backings
 CREATE FUNCTION authz_int."folder_project__backer_parent__tree_on_links1"() RETURNS trigger
@@ -2409,6 +2418,7 @@ CREATE TRIGGER "authz_folder_project__backer_parent__tree_on_links1_del" AFTER D
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__backer_parent__tree_on_links1"();
 CREATE TRIGGER "authz_folder_project__backer_parent__tree_on_links1_trunc" AFTER TRUNCATE ON "cx"."backings"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder_project__backer_parent__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_folder_project__backer_parent__tree_on_links1_trunc" ON "cx"."backings" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- backfill from the rows already there (unless the tree was kept)
 DO $b$ BEGIN
@@ -2637,6 +2647,7 @@ CREATE TRIGGER "authz_region_site__over__tree_rows_region_del" AFTER DELETE ON "
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_rows_region"();
 CREATE TRIGGER "authz_region_site__over__tree_rows_region_trunc" AFTER TRUNCATE ON "cx"."regions"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_region_site__over__tree_rows_region_trunc" ON "cx"."regions" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- site rows inserted, deleted, moved, or whose id or conditions change
 CREATE FUNCTION authz_int."region_site__over__tree_rows_site"() RETURNS trigger
@@ -2673,6 +2684,7 @@ CREATE TRIGGER "authz_region_site__over__tree_rows_site_del" AFTER DELETE ON "cx
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_rows_site"();
 CREATE TRIGGER "authz_region_site__over__tree_rows_site_trunc" AFTER TRUNCATE ON "cx"."sites"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_region_site__over__tree_rows_site_trunc" ON "cx"."sites" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- links stored in cx.region_links
 CREATE FUNCTION authz_int."region_site__over__tree_on_links1"() RETURNS trigger
@@ -2698,6 +2710,7 @@ CREATE TRIGGER "authz_region_site__over__tree_on_links1_del" AFTER DELETE ON "cx
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_links1"();
 CREATE TRIGGER "authz_region_site__over__tree_on_links1_trunc" AFTER TRUNCATE ON "cx"."region_links"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_region_site__over__tree_on_links1_trunc" ON "cx"."region_links" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- links stored in cx.site_links
 CREATE FUNCTION authz_int."region_site__over__tree_on_links2"() RETURNS trigger
@@ -2723,6 +2736,7 @@ CREATE TRIGGER "authz_region_site__over__tree_on_links2_del" AFTER DELETE ON "cx
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_links2"();
 CREATE TRIGGER "authz_region_site__over__tree_on_links2_trunc" AFTER TRUNCATE ON "cx"."site_links"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_region_site__over__tree_on_links2_trunc" ON "cx"."site_links" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- links stored in cx.site_regions
 CREATE FUNCTION authz_int."region_site__over__tree_on_links3"() RETURNS trigger
@@ -2748,6 +2762,7 @@ CREATE TRIGGER "authz_region_site__over__tree_on_links3_del" AFTER DELETE ON "cx
   REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_links3"();
 CREATE TRIGGER "authz_region_site__over__tree_on_links3_trunc" AFTER TRUNCATE ON "cx"."site_regions"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region_site__over__tree_on_truncate"();
+COMMENT ON TRIGGER "authz_region_site__over__tree_on_links3_trunc" ON "cx"."site_regions" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 
 -- backfill from the rows already there (unless the tree was kept)
 DO $b$ BEGIN
@@ -2770,8 +2785,8 @@ BEGIN
     DELETE FROM authz.shares WHERE subject_type = 'user' AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = 'user';
     PERFORM authz_int.requests_gone('user', NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
-    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a
+    -- row that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
     v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'user'
                                       UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'user' AND s.subject_id <> '*'
                                       UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'user') g(id)
@@ -2801,21 +2816,26 @@ BEGIN
   PERFORM authz_int.requests_gone('user', ARRAY[OLD."id"::text]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
--- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
--- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
--- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
+-- before TRUNCATE empties the table, or one under it (each has this trigger: CHILD_TRIGGERS): with a snapshot older
+-- than a share on one of the rows stored there, fail to serialize. And where tables inherit from the type's, the
+-- pending requests naming a row stored in the one emptied, and in no other, are cancelled: TRUNCATE ONLY, or of a
+-- table under it, empties one alone, and after it a request for no row can't be told from one whose row went (a
+-- request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION authz_int."user__forget_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_emptied text; v_ids text[];
 BEGIN
+  v_emptied := pg_catalog.quote_ident(TG_TABLE_SCHEMA) || '.' || pg_catalog.quote_ident(TG_TABLE_NAME);
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.forget_marks('user', ARRAY(SELECT x."id"::text FROM "cx"."users" x));
+    EXECUTE $q$SELECT ARRAY(SELECT x."id"::text FROM ONLY $q$ || v_emptied || $q$ x)$q$ INTO v_ids;
+    PERFORM authz_int.forget_marks('user', v_ids);
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"cx"."users"'::pg_catalog.regclass) THEN
-    PERFORM authz_int.requests_gone('user', ARRAY(
-      SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'user' UNION SELECT r.requester FROM authz.requests r WHERE r.status = 'pending') g(id)
-      WHERE EXISTS (SELECT 1 FROM ONLY "cx"."users" x WHERE x."id"::text = g.id)
-        AND NOT EXISTS (SELECT 1 FROM "cx"."users" y WHERE y.tableoid <> '"cx"."users"'::pg_catalog.regclass AND y."id"::text = g.id)));
+    EXECUTE $q$SELECT ARRAY(SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'user' UNION SELECT r.requester FROM authz.requests r WHERE r.status = 'pending') g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY $q$ || v_emptied || $q$ x WHERE x."id"::text = g.id)
+        AND NOT EXISTS (SELECT 1 FROM "cx"."users" y WHERE y.tableoid <> $1 AND y."id"::text = g.id))$q$
+      INTO v_ids USING TG_RELID;
+    PERFORM authz_int.requests_gone('user', v_ids);
   END IF;
   RETURN NULL;
 END $f$;
@@ -2825,8 +2845,10 @@ CREATE TRIGGER "authz_user_forget_id" AFTER UPDATE ON "cx"."users" FOR EACH ROW
   WHEN (OLD."id" IS DISTINCT FROM NEW."id") EXECUTE FUNCTION authz_int."user__forget_id"();
 CREATE TRIGGER "authz_user_forget_trunc" AFTER TRUNCATE ON "cx"."users"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__forget"();
+COMMENT ON TRIGGER "authz_user_forget_trunc" ON "cx"."users" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 CREATE TRIGGER "authz_user_forget_trunc_first" BEFORE TRUNCATE ON "cx"."users"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__forget_all"();
+COMMENT ON TRIGGER "authz_user_forget_trunc_first" ON "cx"."users" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with are forgotten too.
 -- @object trigger "authz_user_forget_moved" ON "cx"."users"
@@ -2848,8 +2870,8 @@ BEGIN
     DELETE FROM authz.shares WHERE subject_type = 'folder' AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = 'folder';
     PERFORM authz_int.requests_gone('folder', NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
-    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a
+    -- row that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
     v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'folder'
                                       UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'folder' AND s.subject_id <> '*'
                                       UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'folder') g(id)
@@ -2879,21 +2901,26 @@ BEGIN
   PERFORM authz_int.requests_gone('folder', ARRAY[OLD."id"::text]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
--- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
--- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
--- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
+-- before TRUNCATE empties the table, or one under it (each has this trigger: CHILD_TRIGGERS): with a snapshot older
+-- than a share on one of the rows stored there, fail to serialize. And where tables inherit from the type's, the
+-- pending requests naming a row stored in the one emptied, and in no other, are cancelled: TRUNCATE ONLY, or of a
+-- table under it, empties one alone, and after it a request for no row can't be told from one whose row went (a
+-- request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION authz_int."folder__forget_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_emptied text; v_ids text[];
 BEGIN
+  v_emptied := pg_catalog.quote_ident(TG_TABLE_SCHEMA) || '.' || pg_catalog.quote_ident(TG_TABLE_NAME);
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.forget_marks('folder', ARRAY(SELECT x."id"::text FROM "cx"."folders" x));
+    EXECUTE $q$SELECT ARRAY(SELECT x."id"::text FROM ONLY $q$ || v_emptied || $q$ x)$q$ INTO v_ids;
+    PERFORM authz_int.forget_marks('folder', v_ids);
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"cx"."folders"'::pg_catalog.regclass) THEN
-    PERFORM authz_int.requests_gone('folder', ARRAY(
-      SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'folder') g(id)
-      WHERE EXISTS (SELECT 1 FROM ONLY "cx"."folders" x WHERE x."id"::text = g.id)
-        AND NOT EXISTS (SELECT 1 FROM "cx"."folders" y WHERE y.tableoid <> '"cx"."folders"'::pg_catalog.regclass AND y."id"::text = g.id)));
+    EXECUTE $q$SELECT ARRAY(SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'folder') g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY $q$ || v_emptied || $q$ x WHERE x."id"::text = g.id)
+        AND NOT EXISTS (SELECT 1 FROM "cx"."folders" y WHERE y.tableoid <> $1 AND y."id"::text = g.id))$q$
+      INTO v_ids USING TG_RELID;
+    PERFORM authz_int.requests_gone('folder', v_ids);
   END IF;
   RETURN NULL;
 END $f$;
@@ -2903,8 +2930,10 @@ CREATE TRIGGER "authz_folder_forget_id" AFTER UPDATE ON "cx"."folders" FOR EACH 
   WHEN (OLD."id" IS DISTINCT FROM NEW."id") EXECUTE FUNCTION authz_int."folder__forget_id"();
 CREATE TRIGGER "authz_folder_forget_trunc" AFTER TRUNCATE ON "cx"."folders"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__forget"();
+COMMENT ON TRIGGER "authz_folder_forget_trunc" ON "cx"."folders" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 CREATE TRIGGER "authz_folder_forget_trunc_first" BEFORE TRUNCATE ON "cx"."folders"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."folder__forget_all"();
+COMMENT ON TRIGGER "authz_folder_forget_trunc_first" ON "cx"."folders" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with are forgotten too.
 -- @object trigger "authz_folder_forget_moved" ON "cx"."folders"
@@ -2926,8 +2955,8 @@ BEGIN
     DELETE FROM authz.shares WHERE subject_type = 'project' AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = 'project';
     PERFORM authz_int.requests_gone('project', NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
-    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a
+    -- row that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
     v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'project'
                                       UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'project' AND s.subject_id <> '*'
                                       UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'project') g(id)
@@ -2957,21 +2986,26 @@ BEGIN
   PERFORM authz_int.requests_gone('project', ARRAY[OLD."id"::text]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
--- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
--- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
--- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
+-- before TRUNCATE empties the table, or one under it (each has this trigger: CHILD_TRIGGERS): with a snapshot older
+-- than a share on one of the rows stored there, fail to serialize. And where tables inherit from the type's, the
+-- pending requests naming a row stored in the one emptied, and in no other, are cancelled: TRUNCATE ONLY, or of a
+-- table under it, empties one alone, and after it a request for no row can't be told from one whose row went (a
+-- request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION authz_int."project__forget_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_emptied text; v_ids text[];
 BEGIN
+  v_emptied := pg_catalog.quote_ident(TG_TABLE_SCHEMA) || '.' || pg_catalog.quote_ident(TG_TABLE_NAME);
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.forget_marks('project', ARRAY(SELECT x."id"::text FROM "cx"."projects" x));
+    EXECUTE $q$SELECT ARRAY(SELECT x."id"::text FROM ONLY $q$ || v_emptied || $q$ x)$q$ INTO v_ids;
+    PERFORM authz_int.forget_marks('project', v_ids);
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"cx"."projects"'::pg_catalog.regclass) THEN
-    PERFORM authz_int.requests_gone('project', ARRAY(
-      SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'project') g(id)
-      WHERE EXISTS (SELECT 1 FROM ONLY "cx"."projects" x WHERE x."id"::text = g.id)
-        AND NOT EXISTS (SELECT 1 FROM "cx"."projects" y WHERE y.tableoid <> '"cx"."projects"'::pg_catalog.regclass AND y."id"::text = g.id)));
+    EXECUTE $q$SELECT ARRAY(SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'project') g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY $q$ || v_emptied || $q$ x WHERE x."id"::text = g.id)
+        AND NOT EXISTS (SELECT 1 FROM "cx"."projects" y WHERE y.tableoid <> $1 AND y."id"::text = g.id))$q$
+      INTO v_ids USING TG_RELID;
+    PERFORM authz_int.requests_gone('project', v_ids);
   END IF;
   RETURN NULL;
 END $f$;
@@ -2981,8 +3015,10 @@ CREATE TRIGGER "authz_project_forget_id" AFTER UPDATE ON "cx"."projects" FOR EAC
   WHEN (OLD."id" IS DISTINCT FROM NEW."id") EXECUTE FUNCTION authz_int."project__forget_id"();
 CREATE TRIGGER "authz_project_forget_trunc" AFTER TRUNCATE ON "cx"."projects"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."project__forget"();
+COMMENT ON TRIGGER "authz_project_forget_trunc" ON "cx"."projects" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 CREATE TRIGGER "authz_project_forget_trunc_first" BEFORE TRUNCATE ON "cx"."projects"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."project__forget_all"();
+COMMENT ON TRIGGER "authz_project_forget_trunc_first" ON "cx"."projects" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with are forgotten too.
 -- @object trigger "authz_project_forget_moved" ON "cx"."projects"
@@ -3004,8 +3040,8 @@ BEGIN
     DELETE FROM authz.shares WHERE subject_type = 'region' AND subject_id <> '*';      -- '*' (every one signed in) names no row
     DELETE FROM authz_int.row_marks WHERE type = 'region';
     PERFORM authz_int.requests_gone('region', NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there. What named a row
-    -- that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: some rows are still there. What named a
+    -- row that is gone goes (the pending requests naming one were cancelled before, while it was there to tell)
     v_gone := ARRAY(SELECT g.id FROM (SELECT s.object_id FROM authz.shares s WHERE s.object_type = 'region'
                                       UNION SELECT s.subject_id FROM authz.shares s WHERE s.subject_type = 'region' AND s.subject_id <> '*'
                                       UNION SELECT m.id FROM authz_int.row_marks m WHERE m.type = 'region') g(id)
@@ -3035,21 +3071,26 @@ BEGIN
   PERFORM authz_int.requests_gone('region', ARRAY[OLD."id"::text]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a share on one of its rows, fail to serialize. And
--- where tables inherit from it, the pending requests naming a row stored in the table itself, and in none of those,
--- are cancelled: TRUNCATE ONLY empties it alone, and after it a request for no row can't be told from one whose
--- row went (a request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
+-- before TRUNCATE empties the table, or one under it (each has this trigger: CHILD_TRIGGERS): with a snapshot older
+-- than a share on one of the rows stored there, fail to serialize. And where tables inherit from the type's, the
+-- pending requests naming a row stored in the one emptied, and in no other, are cancelled: TRUNCATE ONLY, or of a
+-- table under it, empties one alone, and after it a request for no row can't be told from one whose row went (a
+-- request for a missing object is kept pending, so that asking doesn't tell which hidden ones exist)
 CREATE FUNCTION authz_int."region__forget_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_emptied text; v_ids text[];
 BEGIN
+  v_emptied := pg_catalog.quote_ident(TG_TABLE_SCHEMA) || '.' || pg_catalog.quote_ident(TG_TABLE_NAME);
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.forget_marks('region', ARRAY(SELECT x."id"::text FROM "cx"."regions" x));
+    EXECUTE $q$SELECT ARRAY(SELECT x."id"::text FROM ONLY $q$ || v_emptied || $q$ x)$q$ INTO v_ids;
+    PERFORM authz_int.forget_marks('region', v_ids);
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = '"cx"."regions"'::pg_catalog.regclass) THEN
-    PERFORM authz_int.requests_gone('region', ARRAY(
-      SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'region') g(id)
-      WHERE EXISTS (SELECT 1 FROM ONLY "cx"."regions" x WHERE x."id"::text = g.id)
-        AND NOT EXISTS (SELECT 1 FROM "cx"."regions" y WHERE y.tableoid <> '"cx"."regions"'::pg_catalog.regclass AND y."id"::text = g.id)));
+    EXECUTE $q$SELECT ARRAY(SELECT g.id FROM (SELECT r.object_id FROM authz.requests r WHERE r.status = 'pending' AND r.object_type = 'region') g(id)
+      WHERE EXISTS (SELECT 1 FROM ONLY $q$ || v_emptied || $q$ x WHERE x."id"::text = g.id)
+        AND NOT EXISTS (SELECT 1 FROM "cx"."regions" y WHERE y.tableoid <> $1 AND y."id"::text = g.id))$q$
+      INTO v_ids USING TG_RELID;
+    PERFORM authz_int.requests_gone('region', v_ids);
   END IF;
   RETURN NULL;
 END $f$;
@@ -3059,8 +3100,10 @@ CREATE TRIGGER "authz_region_forget_id" AFTER UPDATE ON "cx"."regions" FOR EACH 
   WHEN (OLD."id" IS DISTINCT FROM NEW."id") EXECUTE FUNCTION authz_int."region__forget_id"();
 CREATE TRIGGER "authz_region_forget_trunc" AFTER TRUNCATE ON "cx"."regions"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region__forget"();
+COMMENT ON TRIGGER "authz_region_forget_trunc" ON "cx"."regions" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 CREATE TRIGGER "authz_region_forget_trunc_first" BEFORE TRUNCATE ON "cx"."regions"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."region__forget_all"();
+COMMENT ON TRIGGER "authz_region_forget_trunc_first" ON "cx"."regions" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with are forgotten too.
 -- @object trigger "authz_region_forget_moved" ON "cx"."regions"
@@ -7722,7 +7765,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 BEGIN
   IF TG_OP = 'TRUNCATE' AND NOT EXISTS (SELECT 1 FROM "cx"."users") THEN   -- the table is empty, and so are those under it
     PERFORM authz_int.keys_gone('user', NULL);
-  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY: the rows of the tables under it are still there, and keep their keys
+  ELSIF TG_OP = 'TRUNCATE' THEN   -- TRUNCATE ONLY, or of a table under it: the rows still there keep their keys
     PERFORM authz_int.keys_gone('user', ARRAY(SELECT k.user_id FROM authz.api_keys k WHERE k.principal_type = 'user'
                                               AND NOT EXISTS (SELECT 1 FROM "cx"."users" x WHERE x."id"::text = k.user_id)));
   ELSIF TG_OP = 'UPDATE' THEN   -- on a partitioned table (the last trigger below): the ids the update left no row with
@@ -7738,13 +7781,17 @@ BEGIN
   PERFORM authz_int.keys_gone('user', ARRAY[OLD."id"::text]);
   RETURN NULL;
 END $f$;
--- before TRUNCATE empties the table: with a snapshot older than a key made for one of its rows, fail to serialize
--- (the keys go after it, of the rows that are gone: TRUNCATE ONLY keeps those of the tables under it)
+-- before TRUNCATE empties the table, or one under it (each has this trigger: CHILD_TRIGGERS): with a snapshot older
+-- than a key made for one of the rows stored there, fail to serialize (the keys go after it, of the rows that are
+-- gone: TRUNCATE ONLY, or of a table under it, keeps those of the others)
 CREATE FUNCTION authz_int."user__keys_gone_all"() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $f$
+DECLARE v_ids text[];
 BEGIN
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
-    PERFORM authz_int.forget_marks('user', ARRAY(SELECT x."id"::text FROM "cx"."users" x));
+    EXECUTE $q$SELECT ARRAY(SELECT x."id"::text FROM ONLY $q$
+            || pg_catalog.quote_ident(TG_TABLE_SCHEMA) || '.' || pg_catalog.quote_ident(TG_TABLE_NAME) || $q$ x)$q$ INTO v_ids;
+    PERFORM authz_int.forget_marks('user', v_ids);
   END IF;
   RETURN NULL;
 END $f$;
@@ -7754,8 +7801,10 @@ CREATE TRIGGER "authz_user_keys_gone_id" AFTER UPDATE ON "cx"."users" FOR EACH R
   WHEN (OLD."id" IS DISTINCT FROM NEW."id") EXECUTE FUNCTION authz_int."user__keys_gone_id"();
 CREATE TRIGGER "authz_user_keys_gone_trunc" AFTER TRUNCATE ON "cx"."users"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__keys_gone"();
+COMMENT ON TRIGGER "authz_user_keys_gone_trunc" ON "cx"."users" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 CREATE TRIGGER "authz_user_keys_gone_trunc_first" BEFORE TRUNCATE ON "cx"."users"
   FOR EACH STATEMENT EXECUTE FUNCTION authz_int."user__keys_gone_all"();
+COMMENT ON TRIGGER "authz_user_keys_gone_trunc_first" ON "cx"."users" IS 'rowstile: for a TRUNCATE of the tables under its table too';
 -- On a partitioned table, an update that puts a row in another partition is a delete there and an insert here:
 -- Postgres runs no AFTER UPDATE row trigger for it. The ids an update leaves no row with lose their keys too.
 -- @object trigger "authz_user_keys_gone_moved" ON "cx"."users"
@@ -8073,7 +8122,10 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
   JOIN pg_class u ON u.oid = b.oid
   JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal
    AND CASE WHEN g.tgtype & 1 = 1 THEN NOT u.relispartition         -- a row trigger: Postgres copies it to partitions
-            ELSE g.tgtype & 28 <> 0 AND u.relkind IN ('r', 'p') END -- a statement trigger: not for TRUNCATE alone
+            ELSE u.relkind IN ('r', 'p')                            -- a statement trigger: not for TRUNCATE alone,
+                 AND (g.tgtype & 28 <> 0                              -- unless it is right there too (below_too)
+                      OR EXISTS (SELECT 1 FROM pg_description x WHERE x.objoid = g.oid AND x.classoid = 'pg_trigger'::regclass
+                                 AND x.description = 'rowstile: for a TRUNCATE of the tables under its table too')) END
   JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
   CROSS JOIN LATERAL (SELECT pg_get_triggerdef(g.oid) AS def) d
   CROSS JOIN LATERAL (SELECT format('%I.%I', n.nspname, k.relname) AS name
@@ -8240,8 +8292,9 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
     RETURN NEXT;
   END LOOP;
   -- partitions and inheritance children: used directly, they skip the rules of the table above (apply turns
-  -- row-level security on for the ones there are then; later ones are found here), and TRUNCATE skips its
-  -- triggers. The tables above: those with rules, and those rowstile watches (a trigger of its own on them)
+  -- row-level security on for the ones there are then; later ones are found here), and TRUNCATE skips the
+  -- triggers for TRUNCATE alone that are not right there (the audit's, the sync mirror's). The tables above: those
+  -- with rules, and those rowstile watches (a trigger of its own on them)
   FOR r IN WITH RECURSIVE x(tbl, governed) AS (
              SELECT to_regclass(t), true FROM unnest(ARRAY['"cx"."folders"', '"cx"."notes"', '"cx"."projects"', '"cx"."regions"', '"cx"."sites"']::text[]) t
              UNION SELECT DISTINCT g.tgrelid::regclass, false FROM pg_trigger g
@@ -8257,7 +8310,7 @@ WHERE w.who IS NOT NULL AND n.nspname !~ '^pg_(toast_)?temp_' LOOP
            FROM d JOIN pg_class k ON k.oid = d.oid LOOP
     IF has_table_privilege(v_role, r.part, 'TRUNCATE') THEN
       severity := 'error'; object := r.part::text;
-      problem := format('is a partition of %s (or inherits from it), and %s may TRUNCATE it, which skips row-level security and %s''s triggers: REVOKE TRUNCATE ON %s FROM %s', r.tbl, 'app_user', r.tbl, r.part, 'app_user');
+      problem := format('is a partition of %s (or inherits from it), and %s may TRUNCATE it, which skips row-level security, and the audit and the sync index''s mirror of %s don''t hear of it: REVOKE TRUNCATE ON %s FROM %s', r.tbl, 'app_user', r.tbl, r.part, 'app_user');
       RETURN NEXT;
     END IF;
     -- (on a table without rules, statements on it run the triggers of the table above as their own: the next loop

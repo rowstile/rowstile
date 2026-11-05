@@ -12,6 +12,8 @@ POLICY_MARKS = "('rowstile')"
 VIEW_MARKS = "('rowstile masked view')"
 # ... and the triggers given to the tables under a table rowstile watches (CHILD_TRIGGERS below)
 CHILD_TRIGGER_MARK = "rowstile: the trigger of the table above, for the rows stored here"
+# ... and, of the triggers for TRUNCATE alone, those right for a TRUNCATE of a table under theirs too (below_too)
+TRUNCATE_BELOW_MARK = "rowstile: for a TRUNCATE of the tables under its table too"
 # In a comment before a DO block that makes a trigger (-- @object trigger ...): the trigger is there only where
 # the table is partitioned (database.unchanged looks for it there alone)
 IF_PARTITIONED = "@if partitioned"
@@ -22,9 +24,11 @@ IF_PARTITIONED = "@if partitioned"
 # table's statement triggers only for statements on that table, not for one on a partition or on a table that
 # inherits: written there directly, rows would leave inheritance, shares, API keys and the audit behind. So each
 # table that inherits is given the row triggers rowstile made on the tables above it, and each partition and
-# table that inherits their statement triggers (but those for TRUNCATE alone: emptying one partition is not
-# emptying the table, which is what they do). This lists the ones missing, each with the statement that makes
-# it; applying runs them (CHILD_TRIGGERS), lint reports them (a table made since).
+# table that inherits their statement triggers (but those for TRUNCATE alone that empty out the whole table's
+# share of something, as the audit's and the sync mirror's do: emptying one partition is not emptying the table.
+# Those marked right for a TRUNCATE below, below_too, are given too: they forget what names the rows that are gone,
+# or rebuild a tree). This lists the ones missing, each with the statement that makes it; applying runs them
+# (CHILD_TRIGGERS), lint reports them (a table made since).
 CHILD_TRIGGERS_FN = f"""-- The triggers above that a table under their table lacks, and the statement that makes each
 CREATE FUNCTION authz_int.child_triggers() RETURNS TABLE (child regclass, name name, stmt text)
 LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
@@ -39,7 +43,10 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $f$
   JOIN pg_class u ON u.oid = b.oid
   JOIN pg_trigger g ON g.tgrelid = b.top AND NOT g.tgisinternal
    AND CASE WHEN g.tgtype & 1 = 1 THEN NOT u.relispartition         -- a row trigger: Postgres copies it to partitions
-            ELSE g.tgtype & 28 <> 0 AND u.relkind IN ('r', 'p') END -- a statement trigger: not for TRUNCATE alone
+            ELSE u.relkind IN ('r', 'p')                            -- a statement trigger: not for TRUNCATE alone,
+                 AND (g.tgtype & 28 <> 0                              -- unless it is right there too (below_too)
+                      OR EXISTS (SELECT 1 FROM pg_description x WHERE x.objoid = g.oid AND x.classoid = 'pg_trigger'::regclass
+                                 AND x.description = '{TRUNCATE_BELOW_MARK}')) END
   JOIN pg_proc f ON f.oid = g.tgfoid AND f.pronamespace = 'authz_int'::regnamespace
   CROSS JOIN LATERAL (SELECT pg_get_triggerdef(g.oid) AS def) d
   CROSS JOIN LATERAL (SELECT format('%I.%I', n.nspname, k.relname) AS name
@@ -60,6 +67,14 @@ BEGIN
     EXECUTE pg_catalog.format('COMMENT ON TRIGGER %I ON %s IS %L', r.name, r.child, '{CHILD_TRIGGER_MARK}');
   END LOOP;
 END $ch$;"""
+
+
+def below_too(trigger: str, table: str) -> str:
+    """The comment that marks a trigger for TRUNCATE alone (trigger, on table: both quoted) as right for a TRUNCATE of
+    a table under table too, so that the tables under it are given it (CHILD_TRIGGERS)."""
+    return f"COMMENT ON TRIGGER {trigger} ON {table} IS {lit(TRUNCATE_BELOW_MARK)};"
+
+
 # ... and before a migration drops what they call (they are made again by CHILD_TRIGGERS, which every one runs)
 DROP_CHILD_TRIGGERS = f"""-- the triggers given to the tables under others: made again below, on what this migration makes
 -- @locks ACCESS EXCLUSIVE: the partitions and child tables of the tables rowstile watches

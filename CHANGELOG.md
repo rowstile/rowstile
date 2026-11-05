@@ -119,6 +119,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   and written through its table from then on, also when the migration doesn't change that table's rules.
 - `TRUNCATE ONLY` on a type's table that other tables inherit from keeps the shares, API keys and pending access
   requests of the rows stored in those tables. Before, it removed them all, as emptying the whole table does.
+- `TRUNCATE` run directly on a partition of a watched table, or on a table that inherits from one, removes the
+  shares, API keys and pending access requests of the rows it empties, and rebuilds the inheritance trees they
+  are in. Before, it ran none of those triggers: the shares stayed until the next apply, a row made later with one
+  of the ids got them, and a tree kept rows under a parent that was gone.
 
 ### Upgrading
 
