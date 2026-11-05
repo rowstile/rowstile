@@ -11,6 +11,9 @@ namespace Rowstile;
 /// </summary>
 public static class Errors
 {
+    // the function in Postgres that raises its own row-level security refusals (the error's routine)
+    private const string RowCheck = "ExecWithCheckOptions";
+
     private const string Unseen =
         "this user may not see the row as written (the select rule). An insert that reads it back (RETURNING), "
         + "an upsert, and an update with a WHERE need to see it.";
@@ -45,29 +48,22 @@ public static class Errors
 
     /// <summary>
     /// rowstile's code for a database error (AZ709; <c>rowstile help AZ709</c> says what it means): from its HINT,
-    /// where the runtime puts it, or its message. Null for an error rowstile didn't raise.
+    /// where the runtime puts it, and never its message, which may hold the request's own input (Postgres's own words
+    /// quote a value it couldn't read). Null for an error rowstile didn't raise.
     /// </summary>
     public static string? Code(Exception error)
     {
-        var pg = Database(error);
-        foreach (var text in new[] { pg?.Hint, pg?.MessageText })
-        {
-            var m = HelpCodeRegex.Match(text ?? "");
-            if (m.Success)
-            {
-                return m.Groups[1].Value;
-            }
-        }
-        return null;
+        var m = HelpCodeRegex.Match(Database(error)?.Hint ?? "");
+        return m.Success ? m.Groups[1].Value : null;
     }
 
     /// <summary>
     /// Whether <paramref name="error"/> is strict sign-in's error (<c>rowstile help AZ701</c>): a query that needs to
-    /// know who is asking ran in a transaction nobody signed in to. A login refused (AZ703) and settings changed by hand
-    /// (AZ702) share its SQLSTATE, 28000, but are no such thing.
+    /// know who is asking ran in a transaction nobody signed in to. Its SQLSTATE, 28000, is shared by a login refused
+    /// (AZ703), settings changed by hand (AZ702) and Postgres's own refusals to connect (a role that isn't there,
+    /// pg_hba.conf), which carry no code: none of them is.
     /// </summary>
-    public static bool IsNotSignedIn(Exception error) =>
-        SqlState(error) == "28000" && Code(error) is null or "AZ701";
+    public static bool IsNotSignedIn(Exception error) => SqlState(error) == "28000" && Code(error) == "AZ701";
 
     /// <summary>
     /// A <see cref="RefusedException"/> for an error that is the database refusing a write (SQLSTATE 42501, raised by
@@ -88,7 +84,9 @@ public static class Errors
         var generic = PostgresWordsRegex.Match(message);
         if (code is null && !generic.Success)
         {
-            return null;
+            // the same refusal in another language (the server's lc_messages): the function that raised it says so, not
+            // its words, and which table and rule it was is in those words alone
+            return pg.Routine == RowCheck ? new RefusedException(message) : null;
         }
         if (code is not null && CallProblems.ContainsKey(code))
         {
