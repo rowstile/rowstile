@@ -987,11 +987,13 @@ def diff(
     db: Db, policy: str, files: Mapping[str, object] | str | None = None, users: list[str] | None = None
 ) -> list[DiffRow]:
     """Who would gain and lose what if the policy were applied: rows of change, user_id, type, what, id.
-    Runs the new policy in a savepoint and undoes it (a condition Postgres refuses is named, as applying names it)."""
+    Runs the new policy in a savepoint and undoes it (a condition Postgres refuses is named, as applying names it):
+    the app's tables stay locked until then, so it waits for a command changing the policy (one_at_a_time)."""
     from .governance import DIFF_ROWS
 
     files = files_map(files)
     parts = compiled(policy, files, lambda c: c.diff_parts("the policy", users or None))
+    one_at_a_time(db)
     rows: list[DiffRow] = []
     try:
         with savepoint(db, "authz_diff"):

@@ -80,6 +80,8 @@
   action may still use it. <!-- checked: tests/principals.sh "and shows a gain on a row the user can't read" -->
   It asks as
   every user, as every service or other principal (named `service:7`, also in `--users`) and as nobody. <!-- checked: tests/principals.sh "the preview lists what a service gains"; tests/governance.sh "limits the preview" -->
+  The app's tables stay locked until it rolls back: run it on a copy or a staging database, not on production
+  at its busiest.
   A user whose id holds `:` or is `nobody` is named `user:<id>` there, as in the audit trail. <!-- checked: tests/principals.sh "the preview names them the same way"; tests/principals.sh "and the users asked for are named so: user:service:1 is that user alone" -->
 - **Decision log**: `SET authz_debug.log_decisions = on` writes every `authz.can`
   decision to the server log (for debugging: the app role can turn it on and off). <!-- checked: tests/governance.sh "each decision is logged when asked" -->

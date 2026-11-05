@@ -83,7 +83,9 @@ it with the app's other migrations, as the owner of the tables. There is no sepa
   migration, with the app's tables locked while it runs.
 - A migration checks that the database is where the one before it left it, so migrations applied out of
   order, or on a database changed by hand since (`rowstile push` or `apply`), stop with a message.
-- Preview first with `rowstile diff`: who gains and loses what.
+- Preview first with `rowstile diff`: who gains and loses what. It makes the new policy in a transaction it
+  undoes, so the app's tables stay locked while it runs: run it on a copy of production or a staging database,
+  not on production at its busiest.
 
 `rowstile apply db/policy.authz` still applies the whole policy in one transaction (keeping inheritance
 tables that didn't change); use it for databases that don't take migrations. `rowstile push`
