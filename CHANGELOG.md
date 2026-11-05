@@ -136,6 +136,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   table with rules, or is a member of its owner: `RESET ROLE` leaves the rules.
 - `rowstile fmt` lays out a file that starts with a byte order mark as any other, and leaves the mark out. Before,
   it didn't line up the relations and permissions of the file's first block.
+- `rowstile test` runs a test whose name, or an id in quotes on one of its lines, holds a dollar quote's tag such
+  as `$authz_tests$`. Before, the tag ended the function the tests are compiled into, and Postgres gave a syntax
+  error that named nothing of the policy.
 
 ### Upgrading
 
