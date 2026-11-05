@@ -20,6 +20,11 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `within`, `over` or `is`, is read as calling the app's code, as one written `app.f(id)` is: it runs with the
   policy's rights wherever it is checked, the change feed watches every column of its row, and the sync index
   refuses it (AZ806).
+- A condition that limits inheritance can't read who asks or the session through `pg_has_role()`,
+  `has_table_privilege()` and the other `has_*_privilege()`, `row_security_active()`, `inet_client_addr()` and
+  the other `inet_*` functions, `current_schemas()`, `pg_my_temp_schema()`, `pg_trigger_depth()`, `nextval()`,
+  `currval()` or `lastval()`: compiling refuses it (AZ305), in a condition that reads another table too, where
+  applying can't ask Postgres. A synced permission that reads them is refused (AZ805).
 
 ## 0.1.0-beta.3 (2026-11-05)
 

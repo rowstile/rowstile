@@ -655,19 +655,24 @@ def row_cond(sql: str, alias: str) -> str:
 # can't read, as the language's reference and AZ305's page name it (tests/unit_test.py holds the three the same).
 # The clock, chance, who asks and the session: functions (called: a column may be named now) and the SQL words
 # that read them without parentheses (not after a dot: t.user is a column). age(x) with one argument counts from
-# today (its own check, check_stable_condition). Applying asks Postgres about the rest (tree_checks): the app's
-# functions, and in a condition that reads no other table, anything that isn't IMMUTABLE.
+# today (its own check, check_stable_condition). A * in a name stands for any word (has_table_privilege). Applying
+# asks Postgres about the rest (tree_checks): the app's functions, and in a condition that reads no other table,
+# anything that isn't IMMUTABLE. In one that reads another table, Postgres can't say, so this list is all that
+# keeps a built-in out there.
 UNSTABLE_CALLS = (
     *("now", "clock_timestamp", "statement_timestamp", "transaction_timestamp", "timeofday"),
     *("random", "random_normal", "gen_random_uuid", "uuidv4", "uuidv7"),
     *("authz.uid", "authz.ctx", "authz.principal", "current_setting", "current_database", "pg_backend_pid"),
-    *("txid_current", "pg_current_xact_id"),
+    *("txid_current", "pg_current_xact_id", "current_schemas", "pg_my_temp_schema", "pg_trigger_depth"),
+    *("pg_has_role", "has_*_privilege", "row_security_active"),
+    *("inet_client_addr", "inet_client_port", "inet_server_addr", "inet_server_port"),
+    *("nextval", "currval", "lastval"),
 )
 UNSTABLE_WORDS = (
     *("current_timestamp", "current_date", "current_time", "localtime", "localtimestamp"),
     *("current_user", "current_role", "session_user", "user", "system_user", "current_schema", "current_catalog"),
 )
-UNSTABLE_CALL = "|".join(n.replace(".", r"\s*\.\s*") for n in UNSTABLE_CALLS)
+UNSTABLE_CALL = "|".join(n.replace("*", "[a-z_]+").replace(".", r"\s*\.\s*") for n in UNSTABLE_CALLS)
 UNSTABLE = re.compile(
     rf"{NOT_AFTER_NAME}(?:({UNSTABLE_CALL})\s*\(|(?<!\.)({'|'.join(UNSTABLE_WORDS)}){NOT_BEFORE_NAME})",
     re.IGNORECASE | re.ASCII,

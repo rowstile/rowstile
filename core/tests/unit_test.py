@@ -472,8 +472,12 @@ class ThisRow(unittest.TestCase):
             assert found, where
             written = re.findall(r"`([^`]+)`", found.group(1))
             names = {re.sub(r"\(.*", "", w).strip("'") for w in written}
-            self.assertEqual(names, code, where)
+            # a * stands for any word: has_*_privilege() and its example, has_table_privilege()
+            starred = [re.compile(c.replace("*", "[a-z_]+")) for c in code if "*" in c]
+            examples = {n for n in names if "*" not in n and any(s.fullmatch(n) for s in starred)}
+            self.assertEqual(names - examples, code, where)
             for w in written:
+                w = w.replace("*", "sequence")
                 cond = f"x = {w}" if w.startswith("'") else f"{w} = x"
                 with self.assertRaisesRegex(PolicyError, "AZ305", msg=f"{where}: {w}"):
                     check_stable_condition(cond, Loc(None, 1))

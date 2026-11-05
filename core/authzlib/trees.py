@@ -67,7 +67,9 @@ class TreeMixin(Core):
         """What decides inheritance must be IMMUTABLE. Postgres says whether an
         expression is IMMUTABLE when asked to index it (on an empty copy);
         conditions that read tables can't be indexed, so for those, check the
-        functions they call."""
+        app's functions they call: Postgres records which functions a view calls
+        only for those, not for its built-ins. A built-in there is kept out by
+        the list check_stable_condition reads (UNSTABLE_CALLS), when compiling."""
         probes = "\n".join(
             f"""  CREATE TEMP TABLE authz_probe (LIKE {qt(tb)});
   BEGIN

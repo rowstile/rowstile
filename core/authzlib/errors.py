@@ -355,7 +355,10 @@ CODES = {
         "`gen_random_uuid()`, `uuidv4()`, `uuidv7()`), who asks or the session (`authz.uid()`, `authz.ctx()`, "
         "`authz.principal()`, `current_user`, `current_role`, `session_user`, `user`, `system_user`, "
         "`current_setting()`, `current_schema`, `current_catalog`, `current_database()`, `pg_backend_pid()`, "
-        "`txid_current()`, `pg_current_xact_id()`), and a link table's `where` reads only that table's columns. "
+        "`txid_current()`, `pg_current_xact_id()`, `current_schemas()`, `pg_my_temp_schema()`, `pg_trigger_depth()`, "
+        "`pg_has_role()`, `has_*_privilege()` (`has_table_privilege()` and the others), `row_security_active()`, "
+        "`inet_client_addr()`, `inet_client_port()`, `inet_server_addr()`, `inet_server_port()`, `nextval()`, "
+        "`currval()`, `lastval()`), and a link table's `where` reads only that table's columns. "
         "Use a column the app sets (`archived`), or put "
         "the time or the user in a permission beside the inheritance.",
         "type folder = app.folders\n  owner  : user = owner_id\n  parent : folder = parent_id\n"
