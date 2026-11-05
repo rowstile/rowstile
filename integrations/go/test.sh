@@ -73,12 +73,14 @@ docker image inspect "$SQLC" >/dev/null 2>&1 || docker pull -q "$SQLC" >/dev/nul
 docker run --rm -u "$(id -u):$(id -g)" -v "$T/sqlc:/src" -w /src "$SQLC" generate >"$T/sqlc.log" 2>&1 &&
   diff -r "$T/sqlc/internal/db" internal/db >"$T/sqlc.diff" &&
   echo "ok    sqlc's code is what sqlc writes from the queries" || { cat "$T/sqlc.log" "$T/sqlc.diff"; echo "FAIL  internal/db is out of date: sqlc generate"; rc=1; }
-# what Go itself checks, in the SDK and the app (the generated code too)
+# what Go itself checks, in the SDK and the app (the generated code too): its line says its own result, whatever
+# the steps before it said
+vetted=0
 for module in ../../sdk/go .; do
   (cd "$module" && go vet ./... && test -z "$(gofmt -l .)" && go run "$STATICCHECK" ./...) >"$T/vet.log" 2>&1 ||
-    { cat "$T/vet.log"; gofmt -l "$module"; echo "FAIL  go vet, gofmt or staticcheck: $module"; rc=1; }
+    { cat "$T/vet.log"; gofmt -l "$module"; echo "FAIL  go vet, gofmt or staticcheck: $module"; vetted=1; rc=1; }
 done
-[ $rc = 0 ] && echo "ok    go vet, gofmt and staticcheck find nothing in the SDK and the app"
+[ $vetted = 0 ] && echo "ok    go vet, gofmt and staticcheck find nothing in the SDK and the app"
 # the SDK from its tag, as the repository would publish it: a commit of its folder, tagged sdk/go/v<its version> in a
 # repository go fetches as github.com/rowstile/rowstile (git's insteadOf), and the app built on that module. In a
 # module cache of its own (the tag's version is the same from one run to the next, the code isn't), which takes the
