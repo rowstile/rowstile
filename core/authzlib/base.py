@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS authz.changes (
   object_type text NOT NULL,
   object_ids  text[] NOT NULL,
   cause       text NOT NULL);
+-- the feed's order: by transaction, then position (authz.changes_since)
+CREATE INDEX IF NOT EXISTS changes_in_order ON authz.changes (txid, pos);
 -- Access requests, approvals, and emergency access
 CREATE TABLE IF NOT EXISTS authz.requests (
   id          bigserial PRIMARY KEY,
@@ -185,6 +187,7 @@ GENERATED_FUNCTIONS = (
     "view_as",
     "sync_members",
     "changes_since",
+    "changes_position",
     "trim_changes",
     "announce_timed_shares",
     "trim_audit",

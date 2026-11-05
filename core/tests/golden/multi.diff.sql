@@ -177,7 +177,7 @@ DO $g$
 DECLARE f record; kept text := '';
 BEGIN
   FOR f IN SELECT p.oid, p.ctid, p.oid::regprocedure AS name FROM pg_proc p WHERE p.pronamespace = to_regnamespace('authz')
-           AND p.proname = ANY (ARRAY['act_as', 'sign_out', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'trim_changes', 'announce_timed_shares', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'session_limited', 'list_links', 'revoke_link']) LOOP
+           AND p.proname = ANY (ARRAY['act_as', 'sign_out', 'can', 'list', 'perms', 'perms_of', 'share', 'unshare', 'verify', 'create_link', 'principal', 'create_role', 'set_role_permissions', 'delete_role', 'roles_of', 'who', 'explain', 'list_shares', 'create_api_key', 'list_api_keys', 'revoke_api_key', 'login_key', 'login_jwt', 'view_as', 'sync_members', 'changes_since', 'changes_position', 'trim_changes', 'announce_timed_shares', 'trim_audit', 'request_access', 'pending_requests', 'decide_request', 'cancel_request', 'break_glass', 'start_review', 'review_items', 'review_decide', 'close_review', 'check_invariants', 'lint', 'connection_check', 'explain_rule', 'who_among', 'session_limited', 'list_links', 'revoke_link']) LOOP
     BEGIN
       EXECUTE format('DROP FUNCTION %s', f.name);
     EXCEPTION WHEN dependent_objects_still_exist THEN
@@ -273,6 +273,8 @@ CREATE TABLE IF NOT EXISTS authz.changes (
   object_type text NOT NULL,
   object_ids  text[] NOT NULL,
   cause       text NOT NULL);
+-- the feed's order: by transaction, then position (authz.changes_since)
+CREATE INDEX IF NOT EXISTS changes_in_order ON authz.changes (txid, pos);
 -- Access requests, approvals, and emergency access
 CREATE TABLE IF NOT EXISTS authz.requests (
   id          bigserial PRIMARY KEY,
@@ -1067,34 +1069,67 @@ BEGIN
     PERFORM authz_int.announce('team', ARRAY(SELECT v::text FROM unnest(s5[cardinality(s5) - c5 + 1:]) v ORDER BY v), 'dependent', false);
   END IF;
 END $f$;
--- Read the feed from a position: SELECT * FROM authz.changes_since(0)  (administrators, sync jobs).
--- A reader behind what authz.trim_changes() removed gets an error: it must read everything again.
+-- The feed's order: by transaction (its id), then position. A position is given when its row is written, but
+-- other sessions see the row only when its transaction ends, so the feed gives only the entries of transactions
+-- older than every one still open (the snapshot's xmin, in the whole server): any entry still to come is after
+-- them. A long transaction holds the newest entries back until it ends.
+-- Read the feed after the last entry read: SELECT * FROM authz.changes_since(authz.changes_position())
+-- (administrators, sync jobs). A reader behind what authz.trim_changes() removed gets an error: it must read
+-- everything again.
 CREATE OR REPLACE FUNCTION authz.changes_since(p_pos bigint, p_limit int DEFAULT 1000) RETURNS SETOF authz.changes
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
-DECLARE v_to bigint := (SELECT s.value::bigint FROM authz.settings s WHERE s.key = 'changes_trimmed_to');
+DECLARE
+  v_to bigint := (SELECT s.value::bigint FROM authz.settings s WHERE s.key = 'changes_trimmed_to');
+  v_last bigint := (SELECT s.value::bigint FROM authz.settings s WHERE s.key = 'changes_trimmed_last');
+  v_xmin bigint := pg_catalog.pg_snapshot_xmin(pg_catalog.pg_current_snapshot())::text::bigint;
+  v_txid bigint := (SELECT c.txid FROM authz.changes c WHERE c.pos = p_pos);
 BEGIN
-  IF p_pos < v_to THEN
-    RAISE EXCEPTION 'the change feed up to position % was trimmed: read everything again, then follow from there', v_to
-      USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'rowstile help AZ712';
+  IF v_txid IS NULL THEN
+    -- no entry there: the feed's start, or where the trimmed part ends (every entry left comes after it)
+    IF p_pos IS DISTINCT FROM coalesce(v_last, 0) THEN
+      IF p_pos <= v_to THEN
+        RAISE EXCEPTION 'the change feed up to position % was trimmed: read everything again, then follow from there', v_to
+          USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'rowstile help AZ712';
+      END IF;
+      RAISE EXCEPTION 'the change feed has no entry at position %: read everything again, then follow from there', p_pos
+        USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'rowstile help AZ712';
+    END IF;
+    v_txid := -1;
   END IF;
-  RETURN QUERY SELECT * FROM authz.changes WHERE pos > p_pos ORDER BY pos LIMIT p_limit;
+  RETURN QUERY SELECT * FROM authz.changes c WHERE (c.txid, c.pos) > (v_txid, p_pos) AND c.txid < v_xmin
+    ORDER BY c.txid, c.pos LIMIT p_limit;
 END $f$;
+-- Where the feed is, for a reader that starts: the last entry it gives now (else where it was trimmed, else 0)
+CREATE OR REPLACE FUNCTION authz.changes_position() RETURNS bigint
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
+  SELECT coalesce(
+    (SELECT c.pos FROM authz.changes c
+      WHERE c.txid < pg_catalog.pg_snapshot_xmin(pg_catalog.pg_current_snapshot())::text::bigint
+      ORDER BY c.txid DESC, c.pos DESC LIMIT 1),
+    (SELECT s.value::bigint FROM authz.settings s WHERE s.key = 'changes_trimmed_last'), 0)
+$f$;
 
 -- Retention (both grow forever otherwise); schedule these, with pg_cron or the app's jobs.
--- The feed: entries older than p_keep, by default the setting changes_keep, else 7 days.
+-- The feed: entries older than p_keep, by default the setting changes_keep, else 7 days, and those before them in
+-- the feed's order: what it removes is where the feed starts (changes_trimmed_last, its last entry, where a reader
+-- may stand; changes_trimmed_to, the greatest position removed). One trim at a time (writers go on).
 CREATE OR REPLACE FUNCTION authz.trim_changes(p_keep interval DEFAULT NULL) RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$
 DECLARE
   v_keep interval := coalesce(p_keep, (SELECT s.value::interval FROM authz.settings s WHERE s.key = 'changes_keep'),
                               interval '7 days');
-  v_to bigint; n bigint;
+  v_txid bigint; v_last bigint; v_to bigint; n bigint;
 BEGIN
-  SELECT max(c.pos) INTO v_to FROM authz.changes c WHERE c.at < now() - v_keep;
-  IF v_to IS NULL THEN RETURN 0; END IF;
-  DELETE FROM authz.changes c WHERE c.pos <= v_to;
-  GET DIAGNOSTICS n = ROW_COUNT;
-  INSERT INTO authz.settings VALUES ('changes_trimmed_to', v_to::text)
-    ON CONFLICT (key) DO UPDATE SET value = greatest(authz.settings.value::bigint, v_to)::text;
+  LOCK TABLE authz.changes IN SHARE UPDATE EXCLUSIVE MODE;
+  SELECT c.txid, c.pos INTO v_txid, v_last FROM authz.changes c
+   WHERE c.at < now() - v_keep AND c.txid < pg_catalog.pg_snapshot_xmin(pg_catalog.pg_current_snapshot())::text::bigint
+   ORDER BY c.txid DESC, c.pos DESC LIMIT 1;
+  IF v_last IS NULL THEN RETURN 0; END IF;
+  WITH d AS (DELETE FROM authz.changes c WHERE (c.txid, c.pos) <= (v_txid, v_last) RETURNING c.pos)
+  SELECT count(*), max(d.pos) INTO n, v_to FROM d;
+  INSERT INTO authz.settings VALUES ('changes_trimmed_to', v_to::text), ('changes_trimmed_last', v_last::text)
+    ON CONFLICT (key) DO UPDATE SET value = CASE WHEN EXCLUDED.key = 'changes_trimmed_to'
+      THEN greatest(authz.settings.value::bigint, EXCLUDED.value::bigint)::text ELSE EXCLUDED.value END;
   RETURN n;
 END $f$;
 -- A share ends (expires_at) or begins (starts_at) with no write to announce it: this announces the objects of the

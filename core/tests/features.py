@@ -564,8 +564,8 @@ FEATURES: list[Feature] = [
     Feature(
         "api.feed",
         2,
-        "The change feed: `authz.changes_since`, `authz.trim_changes`, `authz.announce_timed_shares`",
-        ("api.changes_since", "api.trim_changes", "api.announce_timed_shares", "err.AZ712"),
+        "The change feed: `authz.changes_since`, `authz.changes_position`, `authz.trim_changes`, `authz.announce_timed_shares`",
+        ("api.changes_since", "api.changes_position", "api.trim_changes", "api.announce_timed_shares", "err.AZ712"),
         Doc(GOV, "Change feed"),
         (
             T("governance.sh", "moving a folder announces it (and what sits below it)"),

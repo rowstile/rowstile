@@ -42,6 +42,18 @@ fed() {
       SELECT DISTINCT c.object_type, x FROM authz.changes c, unnest(c.object_ids) x WHERE c.pos > $1 AND c.cause = '$2') d
     GROUP BY object_type) e"
 }
+# until the feed gives every entry it holds: no transaction older than one of them is still open, in the whole
+# server (other suites' too); a minute at most. $1 the database (else DB)
+settled() {
+  local _
+  for _ in $(seq 240); do
+    [ "$(psql -X -q -At -d "${1:-$DB}" -c "SELECT NOT EXISTS (SELECT 1 FROM authz.changes
+          WHERE txid >= pg_snapshot_xmin(pg_current_snapshot())::text::bigint)")" = t ] && return 0
+    sleep 0.25
+  done
+  echo "FAIL  the feed still holds back entries after a minute"
+  fails=$((fails + 1))
+}
 . tests/words.sh
 expect_code() {  # $1 label, $2 expected "SQLSTATE: the message's words" (or ok), rest: -c statements (as app_user unless the first is RESET ROLE)
   local label=$1 want=$2; shift 2
@@ -139,18 +151,65 @@ expect_code "the app role cannot read it" "42501: permission denied for table au
 echo "-- the change feed"
 POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 PSQL -c "UPDATE app.folders SET parent_id = 2 WHERE id = 4" >/dev/null
+settled
 admin "moving a folder announces it (and what sits below it)" "t" \
   "SELECT bool_or(object_type = 'folder' AND '4' = ANY (object_ids)) FROM authz.changes_since($POS)"
 admin "... with inheritance as the cause" "t" \
   "SELECT bool_or(cause = 'inheritance') FROM authz.changes_since($POS)"
 admin "... and the file in it, whose view reads the folder's: a dependent" "file 11" "$(fed $POS dependent)"
 admin "reading from a position gives what came after it, not the entry at it" "0|1" \
-  "SELECT (SELECT count(*) FROM authz.changes_since(m)) || '|' || (SELECT count(*) FROM authz.changes_since(m - 1))
-   FROM (SELECT max(pos) AS m FROM authz.changes) x"
+  "SELECT (SELECT count(*) FROM authz.changes_since(m)) || '|' || (SELECT count(*) FROM authz.changes_since(b))
+   FROM (SELECT max(pos) AS m, (SELECT max(pos) FROM authz.changes WHERE pos < (SELECT max(pos) FROM authz.changes)) AS b
+         FROM authz.changes) x"
+admin "where the feed is: its last entry" "t" "SELECT authz.changes_position() = (SELECT max(pos) FROM authz.changes)"
+expect_code "a position no entry has is refused: the reader reads everything again" \
+  "55000: the change feed has no entry at position " -c "RESET ROLE" \
+  -c "SELECT * FROM authz.changes_since((SELECT max(pos) + 1000 FROM authz.changes))"
 PSQL -c "UPDATE app.folders SET parent_id = 3 WHERE id = 4" >/dev/null
+# writers whose transactions overlap. C began first (its id is the older) and writes last; A writes and stays open;
+# B writes after both and ends. A reader that follows the feed while A is open, and goes on from the last entry it
+# read, must hear of all three: positions are given as rows are written, not as transactions end
+POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
+# the users of the race the feed gave from a position, in its order, and the position of its last entry
+feed_from() {
+  PSQL -c "SELECT coalesce(string_agg(x, ',' ORDER BY r.n) FILTER (WHERE r.object_type = 'user' AND x IN ('81', '82', '83')), '')
+      || '|' || coalesce((array_agg(r.pos ORDER BY r.n DESC))[1], $1)
+    FROM authz.changes_since($1) WITH ORDINALITY r(pos, at, txid, object_type, object_ids, cause, n), unnest(r.object_ids) x"
+}
+# reads from $1 until the users it gave include $2 (a minute at most: an entry shows once older transactions end)
+feed_until() {
+  local _ got
+  for _ in $(seq 240); do
+    got=$(feed_from "$1")
+    case ",${got%|*}," in *",$2,"*) break;; esac
+    sleep 0.25
+  done
+  echo "$got"
+}
+race
+HOLD2=${HOLD/IS NOT NULL/>= 2}   # the second go
+PGAPPNAME=authz_gov_feed_c psql -X -q -d "$DB" -c "BEGIN" -c "SELECT txid_current()" -c "$HOLD" \
+  -c "INSERT INTO app.users VALUES (81, 'c')" -c "COMMIT" >/dev/null 2>&1 &
+FEED_C=$!
+held authz_gov_feed_c
+PGAPPNAME=authz_gov_feed_a psql -X -q -d "$DB" -c "BEGIN" -c "INSERT INTO app.users VALUES (82, 'a')" -c "$HOLD2" \
+  -c "COMMIT" >/dev/null 2>&1 &
+FEED_A=$!
+held authz_gov_feed_a
+go; wait $FEED_C
+PSQL -c "INSERT INTO app.users VALUES (83, 'b')" >/dev/null
+got=$(feed_until "$POS" 81)
+[ "${got%|*}" = 81 ] && echo "ok    while a transaction is open, the feed gives the entries of older ones, not those of later ones" ||
+  { echo "FAIL  the feed while a transaction is open: expected 81, got ${got%|*}"; fails=$((fails + 1)); }
+go; wait $FEED_A
+got=$(feed_until "${got#*|}" 82)
+[ "${got%|*}" = 82,83 ] && echo "ok    ... and once it ends, a reader going on from the last entry it read hears of it, and of the later ones" ||
+  { echo "FAIL  the feed once the open transaction ended: expected 82,83, got ${got%|*}"; fails=$((fails + 1)); }
+PSQL -c "DELETE FROM app.users WHERE id IN (81, 82, 83)" >/dev/null
 # a file added and taken away: both announced, each with what happened to it
 POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 PSQL -c "INSERT INTO app.files (id, folder_id, owner_id, name) VALUES (98, 2, 5, 'for the feed')" -c "DELETE FROM app.files WHERE id = 98" >/dev/null
+settled
 admin "a file added, then deleted: the feed has both" "insert,delete" \
   "SELECT string_agg(cause, ',' ORDER BY pos) FROM authz.changes_since($POS) WHERE object_type = 'file' AND '98' = ANY (object_ids)"
 # an UPDATE is announced where access may change: a row's key, a relation's column, or a column a condition names
@@ -186,6 +245,7 @@ expect_code "the app role cannot read the feed" "42501: permission denied for fu
 PSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('file', '11', 'viewer', 'user', '4')" >/dev/null
 POS=$(PSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 PSQL -c "UPDATE authz.shares SET object_id = '12' WHERE object_type = 'file' AND object_id = '11' AND subject_id = '4'" >/dev/null
+settled
 admin "a share moved to another file: both files are announced" "11,12" \
   "SELECT string_agg(DISTINCT x, ',' ORDER BY x) FROM authz.changes_since($POS), unnest(object_ids) x WHERE object_type = 'file'"
 PSQL -c "DELETE FROM authz.shares WHERE object_type = 'file' AND object_id = '12' AND subject_id = '4'" >/dev/null
@@ -346,6 +406,7 @@ XSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_typ
   ('project', '10', 'parent', 'folder', '1'), ('project', '20', 'parent', 'folder', '2')" >/dev/null
 POS=$(XSQL -c "SELECT coalesce(max(pos), 0) FROM authz.changes")
 XSQL -c "INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id) VALUES ('folder', '3', 'parent', 'project', '10')" >/dev/null
+settled "$X"
 got=$(XSQL -c "SELECT string_agg(object_type || ' ' || array_to_string(object_ids, ','), '; ' ORDER BY pos)
                FROM authz.changes_since($POS) WHERE cause = 'inheritance'")
 [ "$got" = "folder 3" ] && [ "$(XSQL -c "SET authz.user_id = 1" -c "SELECT authz.can('folder', 3, 'view')")" = t ] &&
@@ -1095,22 +1156,27 @@ got=$(PSQL -c "BEGIN" -c "INSERT INTO app.folders (id, org_id, parent_id, owner_
 echo "-- retention"
 POS=$(PSQL -c "SELECT max(pos) FROM authz.changes")
 PSQL -c "UPDATE authz.changes SET at = now() - interval '10 days'" -c "INSERT INTO app.folders (org_id, parent_id, owner_id, name) VALUES (1, 1, 5, 'kept')" >/dev/null
+settled
 admin "the feed keeps 7 days by default: older entries are trimmed" "t" "SELECT authz.trim_changes() > 0"
 admin "... all of them" "f" "SELECT EXISTS (SELECT 1 FROM authz.changes WHERE pos <= $POS)"
 admin "... newer ones stay" "t" "SELECT EXISTS (SELECT 1 FROM authz.changes WHERE pos > $POS)"
 expect_code "a reader behind the trimmed part is told to read everything again" "55000: the change feed up to position " -c "RESET ROLE" \
   -c "SELECT * FROM authz.changes_since(0)"
-admin "... a reader past it goes on" "t" "SELECT count(*) > 0 FROM authz.changes_since($POS)"
+admin "... a reader at where the trim ended goes on" "t" "SELECT count(*) > 0 FROM authz.changes_since($POS)"
 # the oldest entry made two hours old: kept by the default, trimmed with changes_keep = '1 hour' (and only it)
 PSQL -c "UPDATE authz.changes SET at = now() - interval '2 hours' WHERE pos = (SELECT min(pos) FROM authz.changes)" >/dev/null
 admin "an entry two hours old stays by default" "0" "SELECT authz.trim_changes()"
 PSQL -c "INSERT INTO authz.settings VALUES ('changes_keep', '1 hour')" >/dev/null
 admin "how long the feed keeps entries is a setting: with changes_keep = '1 hour', it goes" "1" "SELECT authz.trim_changes()"
-# an entry exactly as old as the period (written an hour before this transaction began) is not older: it stays
 PSQL -c "SELECT authz.trim_changes(interval '0')" >/dev/null
+admin "everything trimmed: where the feed is, is where the trim ended, and a reader there goes on" "0|true" \
+  "SELECT (SELECT count(*) FROM authz.changes_since(authz.changes_position())) || '|' ||
+          (authz.changes_position() = (SELECT value::bigint FROM authz.settings WHERE key = 'changes_trimmed_last'))"
+# an entry exactly as old as the period (written an hour before this transaction began) is not older: it stays
+PSQL -c "INSERT INTO app.folders (org_id, parent_id, owner_id, name) VALUES (1, 1, 5, 'now')" >/dev/null
+settled
 admin "an entry exactly as old as the period stays" "0" \
-  "BEGIN; INSERT INTO app.folders (org_id, parent_id, owner_id, name) VALUES (1, 1, 5, 'now');
-   UPDATE authz.changes SET at = now() - interval '1 hour' WHERE pos = (SELECT max(pos) FROM authz.changes);
+  "BEGIN; UPDATE authz.changes SET at = now() - interval '1 hour' WHERE pos = (SELECT min(pos) FROM authz.changes);
    SELECT authz.trim_changes(interval '1 hour'); COMMIT"
 expect_code "trimming the audit trail needs a period" "22023: say how long to keep the audit trail, e.g. authz.trim_audit(interval '2 years')" -c "RESET ROLE" -c "SELECT authz.trim_audit(NULL)"
 admin "entries younger than the period stay" "0" "SELECT authz.trim_audit(interval '1 day')"

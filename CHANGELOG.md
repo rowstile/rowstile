@@ -87,6 +87,12 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   SDK's `Databases` pass the URL's settings (`?sslmode=require`) to libpq.
 - The Python SDK's `database_per_worker` keeps a URL whose host is in its settings (`postgresql:///app?host=...`)
   as it is written.
+- The change feed is in the order of transactions: `authz.changes_since(pos)` gives the entries after the one at
+  `pos`, and only those of transactions older than every one still open, so a reader that goes on from the last
+  entry it read hears of every entry, even one whose transaction ended after a later one's. The newest entries show
+  up once the transactions before them end. `authz.changes_position()` says where the feed is, for a reader that
+  starts; a position no entry has gets AZ712, as one trimmed does. `authz.trim_changes()` removes the oldest
+  entries in that order.
 
 ### Upgrading
 
@@ -95,6 +101,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - Code that signs one transaction in as two principals now gets AZ716: begin a transaction for each. A test that
   acts for several people in one transaction calls `authz.sign_out()` between them, as the SDKs' test modes do.
   The next apply (or migration) makes the change.
+- A reader of the change feed reads everything again once after the upgrade, then follows from
+  `authz.changes_position()` (no longer `max(pos)`, which may stand past an entry still to come).
 
 ## 0.1.0-beta.3 (2026-11-05)
 
