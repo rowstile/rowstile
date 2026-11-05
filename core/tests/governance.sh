@@ -202,7 +202,7 @@ got=$(feed_until "$POS" 81)
 [ "${got%|*}" = 81 ] && echo "ok    while a transaction is open, the feed gives the entries of older ones, not those of later ones" ||
   { echo "FAIL  the feed while a transaction is open: expected 81, got ${got%|*}"; fails=$((fails + 1)); }
 go; wait $FEED_A
-got=$(feed_until "${got#*|}" 82)
+got=$(feed_until "${got#*|}" 83)   # (the last one: an older transaction open elsewhere on the server holds it back a while)
 [ "${got%|*}" = 82,83 ] && echo "ok    ... and once it ends, a reader going on from the last entry it read hears of it, and of the later ones" ||
   { echo "FAIL  the feed once the open transaction ended: expected 82,83, got ${got%|*}"; fails=$((fails + 1)); }
 PSQL -c "DELETE FROM app.users WHERE id IN (81, 82, 83)" >/dev/null
