@@ -598,6 +598,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The Zed extension starts the language server with what Zed's `lsp.rowstile.binary.env` setting sets, and adds no
   closing quote to one typed inside a test's name, a quoted id or a comment. Before, it ignored that setting, and
   closed every quote.
+- The playground's app role may use the schema `public`, as on a server: tables there (Prisma's, Django's, Rails')
+  are read and written under the policy. Before, each run made `public` again without its usual owner and grants,
+  so asking as someone was refused there. Each run also starts from a new session: what the last run's tables and
+  data set (`SET search_path`, `SET session_replication_role`, a temporary table) is gone.
 
 ### Upgrading
 
