@@ -15,10 +15,19 @@ PYTHON=${PYTHON:-python3}
 ROWSTILE="$PYTHON $ROOT/core/cli/rowstile_cli.py"
 [ -d "$ROOT/node_modules" ] || (cd "$ROOT" && npm ci --no-audit --no-fund) || exit 1
 docker build -q -t "rowstile:$PG" --build-arg "PG_MAJOR=$PG" -f ../../core/Dockerfile ../.. >/dev/null || exit 1
-cleanup() { [ -n "${KEEP:-}" ] || docker rm -f -v "$NAME" >/dev/null 2>&1; }
+cleanup() {
+  docker rm -f -v "$NAME-electric" >/dev/null 2>&1
+  [ -n "${KEEP:-}" ] && return
+  docker rm -f -v "$NAME" >/dev/null 2>&1
+  docker network rm "$NAME-net" >/dev/null 2>&1
+}
 trap cleanup EXIT
-docker rm -f -v "$NAME" >/dev/null 2>&1
-docker run -d --name "$NAME" -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" "rowstile:$PG" -c wal_level=logical >/dev/null || exit 1
+docker rm -f -v "$NAME-electric" "$NAME" >/dev/null 2>&1
+ELECTRIC_IMAGE=$(sed -n 's/^FROM \([^ ]*\) AS electric$/\1/p' ../../integrations/images/Dockerfile)
+docker image inspect "$ELECTRIC_IMAGE" >/dev/null 2>&1 || docker pull -q "$ELECTRIC_IMAGE" >/dev/null || exit 1
+docker network create "$NAME-net" >/dev/null 2>&1
+docker run -d --name "$NAME" --network "$NAME-net" --network-alias=pg -e POSTGRES_PASSWORD=postgres -p "$PORT:5432" \
+  "rowstile:$PG" -c wal_level=logical >/dev/null || exit 1
 for _ in $(seq 60); do docker exec "$NAME" pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
 sleep 2
 # the tables' owner migrates: not a superuser, as on managed Postgres; Electric's role is the administrator's
@@ -58,6 +67,15 @@ export HD_APP_URL="postgresql://hd_app:hd_app@localhost:$PORT/helpdesk"
 export HD_SESSION_SECRET=${HD_SESSION_SECRET:-test-only-secret-of-thirty-two-characters}
 WEB=${HELPDESK_WEB_PORT:-8002}
 export HELPDESK_SERVER="http://localhost:$WEB"
+# Electric, in manual publication mode (the publication is a migration), as its own role
+export ELECTRIC_SECRET=${ELECTRIC_SECRET:-test-only-electric-secret}
+docker run -d --name "$NAME-electric" --network "$NAME-net" -p "$((PORT + 1)):3000" \
+  -e DATABASE_URL="postgresql://hd_electric:hd_electric@pg:5432/helpdesk?sslmode=disable" \
+  -e ELECTRIC_MANUAL_TABLE_PUBLISHING=true -e ELECTRIC_SECRET="$ELECTRIC_SECRET" "$ELECTRIC_IMAGE" >/dev/null || exit 1
+export ELECTRIC_URL="http://localhost:$((PORT + 1))/v1/shape"
+for _ in $(seq 90); do [ "$(curl -s "http://localhost:$((PORT + 1))/v1/health")" = '{"status":"active"}' ] && break; sleep 1; done
+[ "$(curl -s "http://localhost:$((PORT + 1))/v1/health")" = '{"status":"active"}' ] && ok "Electric is up, as hd_electric" ||
+  { docker logs "$NAME-electric" 2>&1 | tail -20; echo "FAIL  Electric doesn't start"; exit 1; }
 NEXT="node $ROOT/node_modules/next/dist/bin/next"
 $NEXT build >"$LOG/build.log" 2>&1 || { cat "$LOG/build.log"; echo "FAIL  next build"; exit 1; }
 ok "next build"

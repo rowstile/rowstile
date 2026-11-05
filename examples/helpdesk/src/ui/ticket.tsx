@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { call, type Problem } from "./api.ts";
 import { ProblemNote } from "./problem.tsx";
+import { LiveRefresh } from "./live-refresh.tsx";
 
 interface Ticket {
   id: string; subject: string; status: string; perms: string[];
@@ -32,6 +33,7 @@ export function TicketView({ id }: { id: string }) {
   return (
     <>
       <h1>{ticket.subject}</h1>
+      <LiveRefresh table="comments" onChange={load} />
       <p>From {ticket.requester.name} · <span className="tag">{ticket.status}</span> · you may: {ticket.perms.join(", ") || "nothing"}</p>
       <ProblemNote problem={problem} />
       {ticket.comments.map((c) => (

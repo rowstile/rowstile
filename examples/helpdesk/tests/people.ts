@@ -20,6 +20,8 @@ export const EMAIL_INTAKE = "a0000000-0000-4000-8000-0000000000f1";
 export interface Answer { status: number; json: any }
 
 export interface Person {
+  /** the session's cookie, for what calls the app without this helper (Electric's client) */
+  cookie(): string;
   get(path: string): Promise<Answer>;
   send(method: string, path: string, json?: unknown): Promise<Answer>;
 }
@@ -41,5 +43,5 @@ export async function as(email: string): Promise<Person> {
     const text = await r.text();
     return { status: r.status, json: text ? JSON.parse(text) : null };
   };
-  return { get: (path) => send("GET", path), send };
+  return { cookie: () => jar, get: (path) => send("GET", path), send };
 }

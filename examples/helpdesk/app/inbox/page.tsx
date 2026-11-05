@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { inTx } from "@/db.ts";
+import { LiveRefresh } from "@/ui/live-refresh.tsx";
 
 // The tickets the database shows the user: an agent sees the workspace's, and works those of their teams; a
 // customer sees their own (and their org's, where it shares them). The page asks which ones the user works.
@@ -35,6 +36,7 @@ export default function Page() {
   return (
     <>
       <h1>Inbox</h1>
+      <LiveRefresh table="tickets" />
       <Suspense fallback={<p>loading</p>}><Tickets /></Suspense>
     </>
   );
