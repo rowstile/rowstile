@@ -2,7 +2,7 @@
 # change does (meaning, access, risk, tests, deploy).
 #
 #   include:
-#     - remote: https://raw.githubusercontent.com/rowstile/rowstile/v0.1.0-dev/review-ci/gitlab/rowstile-review.gitlab-ci.yml
+#     - remote: https://raw.githubusercontent.com/rowstile/rowstile/v0.1.0-beta.3/review-ci/gitlab/rowstile-review.gitlab-ci.yml
 #   variables:
 #     REVIEW_DATABASE_URL: ...       # optional: a database at the target branch's state, with the review data
 #

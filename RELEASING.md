@@ -9,7 +9,8 @@ rowstile follows [semantic versioning](https://semver.org/). One version covers 
 the `rowstile` command, the Python package, the TypeScript packages (`@rowstile/*` and the command's
 platform packages), the image, and the review for CI. `packaging/version.py` sets it in every file but the
 install lines that name the image's tag (the release pull request edits those), and a unit test fails if two
-files disagree. The editor extensions (VS Code, Zed) have their own versions, raised
+files disagree. The lines that show how to use the review for CI name the newest release: a release sets them,
+and a `-dev` version leaves them, as no tag of it exists. The editor extensions (VS Code, Zed) have their own versions, raised
 when they change: the Marketplace takes no alphas, betas or release candidates. A release publishes the VS Code extension
 on the Marketplace and Open VSX when its version isn't there yet, each once its token is set (`VSCE_PAT`,
 `OVSX_PAT`, in the environment `vscode`). `VSCE_PAT` isn't set: a new version goes to the Marketplace by hand,

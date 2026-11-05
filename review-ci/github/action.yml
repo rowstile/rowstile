@@ -6,7 +6,7 @@
 #   ...
 #   - uses: actions/checkout@v7
 #     with: {fetch-depth: 0}                      # the base branch's policy is read with git
-#   - uses: rowstile/rowstile/review-ci/github@v0.1.0-dev
+#   - uses: rowstile/rowstile/review-ci/github@v0.1.0-beta.3
 #     with:
 #       database-url: ${{ env.REVIEW_DATABASE_URL }}   # optional: the base branch's migrations and review data
 #

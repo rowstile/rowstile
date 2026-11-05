@@ -12,7 +12,9 @@ command orders versions by: a version's alphas, then its betas, its candidates, 
 The compiler's version (core/authzlib/__init__.py) is the one the command and the Python package read. The others
 copy it: the TypeScript SDK's packages and their dependencies on each other, the .NET SDK's (sdk/dotnet/Version.props), the Ruby gem, the Java SDK's POMs (its Kotlin module's too), the Rust crate (sdk/rust/Cargo.toml) and the lock files that name it, the Elixir package (sdk/elixir/mix.exs), the PHP SDK's Version (sdk/php/src/Version.php; Composer's version is its tag), the workspace's lock file, the Go
 module's Version (sdk/go/version.go; its release is the tag sdk/go/vX.Y.Z), the MCP registry's entry (server.json), and the review for CI, which installs the release its tag names (its
-action, its GitLab template, and docs/reference/review.md's lines that name it). Not here: the install lines
+action and its GitLab template). The lines that show how to use the review for CI (its action's and its template's
+comments, docs/reference/review.md's workflow) name the newest release, to be copied: a release sets them, and
+X.Y.Z-dev leaves them, since no tag of it exists. Not here: the install lines
 that name the image's tag (README.md, docs/installing.md), which the release pull request edits by hand and a
 unit test checks (DocPages). The editor extension keeps its own version (the Marketplace takes no versions that
 aren't final). Standard library only.
@@ -43,9 +45,7 @@ PLACES = [
     (["server.json"], r'^ +"version": "([^"]+)"'),  # the MCP registry's entry: its own version, and the package's
     (["sdk/dotnet/Version.props"], r"<RowstileVersion>([^<]+)</RowstileVersion>"),  # the .NET SDK's packages
     (["review-ci/github/action.yml"], r'^    default: "(\d[^"]*)"'),
-    (["review-ci/github/action.yml", "docs/reference/review.md"], r"review-ci/github@v(\S+)"),
     (["review-ci/gitlab/rowstile-review.gitlab-ci.yml"], r'ROWSTILE_VERSION: "([^"]+)"'),
-    (["review-ci/gitlab/rowstile-review.gitlab-ci.yml"], r"/rowstile/rowstile/v([^/]+)/"),
     # the Java SDK's POMs (Maven's version is npm's form, as written), and the version its conformance apps build on
     (
         ["sdk/java/pom.xml", "sdk/java/*/pom.xml"],
@@ -61,10 +61,16 @@ PLACES = [
     (["sdk/php/src/Version.php"], r"^    public const VERSION = '([^']+)';"),  # the PHP SDK's; Composer reads tags
 ]
 
+# the lines that show how to use the review for CI, with the tag to copy: a release's, set by a release alone
+EXAMPLES = [
+    (["review-ci/github/action.yml", "docs/reference/review.md"], r"review-ci/github@v(\S+)"),
+    (["review-ci/gitlab/rowstile-review.gitlab-ci.yml"], r"/rowstile/rowstile/v([^/]+)/"),
+]
 
-def places() -> Iterator[tuple[str, re.Pattern[str]]]:
+
+def places(listed: list[tuple[list[str], str]] = PLACES) -> Iterator[tuple[str, re.Pattern[str]]]:
     """(path relative to the root, compiled pattern) for each place, in order."""
-    for patterns, rx in PLACES:
+    for patterns, rx in listed:
         for pattern in patterns:
             paths = sorted(glob.glob(os.path.join(ROOT, pattern)))
             if not paths:
@@ -78,10 +84,10 @@ def read(path: str) -> str:
         return fh.read()
 
 
-def found() -> dict[str, list[str]]:
+def found(listed: list[tuple[list[str], str]] = PLACES) -> dict[str, list[str]]:
     """{version: [where it is written, ...]}"""
     out: dict[str, list[str]] = {}
-    for path, rx in places():
+    for path, rx in places(listed):
         hits = rx.findall(read(path))
         if not hits and not rx.pattern.startswith('"@rowstile/'):
             raise SystemExit(f"version.py: {path} has no match for {rx.pattern}")
@@ -90,12 +96,28 @@ def found() -> dict[str, list[str]]:
     return out
 
 
+def examples_wrong(version: str, shown: list[str]) -> str:
+    """What is wrong with the versions the examples show ('' when nothing): one release, this one, or while this
+    is X.Y.Z-dev one before X.Y.Z (its alphas, betas and candidates, or an older X.Y.Z)."""
+    if len(shown) != 1:
+        return f"the examples show {len(shown)} versions: {', '.join(sorted(shown))}"
+    m, mine = VERSION.fullmatch(shown[0]), VERSION.fullmatch(version)
+    if not m or m.group(6) or not mine:
+        return f"the examples show {shown[0]}, which is not a release"
+    if not mine.group(6):
+        return "" if shown[0] == version else f"the examples show {shown[0]}, not {version}"
+    theirs, ours = [int(x) for x in m.group(1, 2, 3)], [int(x) for x in mine.group(1, 2, 3)]
+    if theirs > ours or (theirs == ours and not m.group(4)):
+        return f"the examples show {shown[0]}, which is not before {version}"
+    return ""
+
+
 def set_version(new: str) -> None:
     if not VERSION.fullmatch(new):
         forms = ", ".join(f"X.Y.Z-{stage}.N" for stage in STAGES)
         raise SystemExit(f"version.py: {new} is not X.Y.Z, {forms} or X.Y.Z-dev")
     texts: dict[str, str] = {}
-    for path, rx in places():
+    for path, rx in places(PLACES if new.endswith("-dev") else PLACES + EXAMPLES):
         text = texts.get(path, read(path))
         texts[path] = rx.sub(lambda m: m.string[m.start(0) : m.start(1)] + new + m.string[m.end(1) : m.end(0)], text)
     for path, text in texts.items():
@@ -132,6 +154,12 @@ def main(argv: list[str]) -> None:
         for v, paths in sorted(versions.items()):
             print(f"{v}: {', '.join(sorted(set(paths)))}", file=sys.stderr)
         raise SystemExit("version.py: the version differs between files")
+    shown = found(EXAMPLES)
+    wrong = examples_wrong(next(iter(versions)), list(shown))
+    if wrong:
+        for v, paths in sorted(shown.items()):
+            print(f"{v}: {', '.join(sorted(set(paths)))}", file=sys.stderr)
+        raise SystemExit(f"version.py: {wrong}")
     print(next(iter(versions)))
 
 
