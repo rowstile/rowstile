@@ -15905,6 +15905,23 @@ class ParseAgreement(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("/types/doc/perms/view[0]: the parser reads 'or', the grammar 'and'", problems[0])
 
+    def test_a_policy_the_grammar_cant_read_is_named(self) -> None:
+        # after the XML of a file it read with an error, `tree-sitter parse --xml` writes a line that says so: past
+        # </sources> when the file is the last; the comparison names the file
+        import parse_agreement
+
+        with tempfile.TemporaryDirectory() as d:
+            policy, xml = os.path.join(d, "p.authz"), os.path.join(d, "all.xml")
+            with open(policy, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(self.POLICY)
+            with open(xml, "w", encoding="utf-8") as fh:
+                fh.write('<?xml version="1.0"?>\n')
+                fh.write(self.XML.format(path=policy, op="or").replace("<source_file>", "<source_file><ERROR></ERROR>"))
+                fh.write(f"\n{policy}\tParse:    0.07 ms\t  1764 bytes/ms\t(ERROR [4, 0] - [4, 3])\n")
+            self.assertEqual(
+                parse_agreement.compare(xml), (0, 0, [f"{policy}: the parser reads it, the grammar can't"])
+            )
+
     # a test's line, and what `tree-sitter parse --xml` writes for it: the id it asks of is where object says
     TEST_POLICY = "app role app_user\ntype user = app.users\ntest\n  user 3 with scope read can view user 11\n"
     TEST_XML = (

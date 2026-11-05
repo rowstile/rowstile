@@ -452,7 +452,12 @@ def includes(path: str, text: str) -> dict[str, str]:
 def compare(xml_path: str) -> tuple[int, int, list[str]]:
     """(policies compared, policies parse.py refuses, the disagreements)."""
     compared, refused, problems = 0, 0, []
-    for src in ET.parse(xml_path).getroot().iter("source"):
+    with open(xml_path, encoding="utf-8") as fh:
+        written = fh.read()
+    # (after the XML of a file it read with an error, tree-sitter writes a line that says so: past </sources> for the
+    # last file, where it is no XML)
+    end = written.rfind("</sources>")
+    for src in ET.fromstring(written[: end + len("</sources>")] if end >= 0 else written).iter("source"):
         path = src.get("name") or ""
         with open(path, "rb") as fh:
             data = fh.read()

@@ -57,9 +57,10 @@ docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz
   npx tree-sitter parse -q $files 2>/dev/null && echo "ok    every policy in the repository parses ($(echo "$files" | wc -l) files)" ||
     { npx tree-sitter parse -q $files; echo "FAIL  a policy has a parse error"; exit 1; }
   # the grammar was written apart from core/authzlib/parse.py, which the compiler and the reference evaluator
-  # share: each policy, 200 random ones and the small ones up to size 4, read alike by both (core/tests/parse_agreement.py)
+  # share: each policy, 200 random ones and the small ones up to size 4, read alike by both (core/tests/parse_agreement.py;
+  # tree-sitter exits 1 if it reads a file with an error, and the comparison says which, or that the parser refuses it too)
   python3 /repo/core/tests/parse_agreement.py --write /tmp/gen 200 --small 4 &&
-    { echo "$files"; ls /tmp/gen/*.authz; } > /tmp/paths && npx tree-sitter parse --xml --paths /tmp/paths > /tmp/all.xml 2>/dev/null &&
+    { echo "$files"; ls /tmp/gen/*.authz; } > /tmp/paths && { npx tree-sitter parse --xml --paths /tmp/paths > /tmp/all.xml 2>/dev/null; [ -s /tmp/all.xml ]; } &&
     python3 /repo/core/tests/parse_agreement.py /tmp/all.xml > /tmp/agree.log 2>&1 &&
     echo "ok    $(tail -n 1 /tmp/agree.log)" || { cat /tmp/agree.log; echo "FAIL  the grammar and the parser read a policy differently"; exit 1; }
   for q in queries/*.scm; do
