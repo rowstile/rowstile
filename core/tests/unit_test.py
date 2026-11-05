@@ -4574,6 +4574,26 @@ rules app.folders
         r = self.review.review((self.SMALL, {}, {}), (bare, {}, {}), worlds=40)
         self.assertEqual([c["what"] for c in r["meaning"]["changed"]], ["cascade app.folders from app.orgs"])
 
+    def test_sync_lines_are_declarations_of_their_own(self) -> None:
+        """The sync index's lines (a preview): each is shown under Meaning, by what it syncs, as any declaration."""
+        synced = self.SMALL + "sync role sync_engine\nsync app.folders : view\n"
+        for h, changed in (
+            (synced.replace("folders : view\n", "folders : edit\n"), [("sync app.folders", "changed", "sync")]),
+            (synced + "sync after commit\n", [("sync after commit", "added", "sync")]),
+            (synced.replace("sync role sync_engine\n", "sync role engine\n"), [("sync role", "changed", "sync")]),
+            (
+                synced.replace("can view = edit or viewer", "can view = edit"),
+                [("folder.view", "changed", "permission")],
+            ),
+        ):
+            r = self.review.review((synced, {}, {}), (h, {}, {}), worlds=10)
+            self.assertEqual([(c["what"], c["kind"], c["entity"]) for c in r["meaning"]["changed"]], changed)
+        r = self.review.review((self.SMALL, {}, {}), (synced, {}, {}), worlds=10)
+        self.assertEqual(
+            [(c["what"], c["after"]) for c in r["meaning"]["changed"]],
+            [("sync role", "sync role sync_engine"), ("sync app.folders", "sync app.folders : view")],
+        )
+
     def test_what_changes_through_two_changes(self) -> None:
         h = self.SMALL.replace("can edit = owner or org.admin", "can edit = org.admin")
         h = h.replace("can remove = owner and", "can remove = org.admin and")

@@ -175,6 +175,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The signature `authz.act_as`, the logins and `authz.view_as` put in `authz.session` signs the settings as a list
   that can be read only one way. Before, they were joined with a separator a user id or a token's subject could
   hold, so two different settings could sign alike.
+- `rowstile review` reads a policy with sync lines (`sync role`, `sync app.files : view`, `sync after commit`) and
+  shows each one that changed under Meaning, instead of stopping with an error.
 
 ### Upgrading
 

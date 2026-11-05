@@ -251,10 +251,19 @@ def entities(policy: str, files: dict[str, str] | None, pol: Policy) -> dict[str
     """{key: (text, line)}: each declaration of the policy (pol: as parsed), its text normalized, and where it is
     written. Keys: 'type folder', 'folder.editor' (a relation: its sources joined), 'folder.edit' (a permission),
     'rule app.folders update', 'scope read', 'caveat x', 'app role', 'invariant <text>', 'cascade app.files from
-    app.folders' (a key's columns after it, sorted, where the line names them). Tests are left out."""
+    app.folders' (a key's columns after it, sorted, where the line names them), 'sync app.files', 'sync role',
+    'sync after commit'. Tests are left out."""
     # a rule by its head as read (rule_head): `update a,b before` is `update a, b`, as the rest of the review names it
     heads = {r.loc: rule_head(r) for r in pol.rules}
     cascades = {c.loc: cascade_key(c) for c in pol.cascades}
+    syncs = {s.loc: f"sync {s.table}" for s in pol.syncs.values()}
+    syncs.update(
+        {
+            loc: key
+            for loc, key in ((pol.sync_role_loc, "sync role"), (pol.sync_after_commit, "sync after commit"))
+            if loc
+        }
+    )
     out: dict[str, tuple[str, Loc]] = {}
     block: tuple[str, str | None] | None = None
     skip = False
@@ -282,6 +291,8 @@ def entities(policy: str, files: dict[str, str] | None, pol: Policy) -> dict[str
             m = re.match(r"(scope|caveat)\s+([\w:-]+)", s)
             if m:
                 out[f"{m.group(1)} {m.group(2)}"] = (s, loc)
+            elif loc in syncs:
+                out[syncs[loc]] = (s, loc)
             else:  # the parser takes no other line here
                 assert s.startswith("app role "), s
                 out["app role"] = ("app role " + s.split()[-1], loc)
@@ -625,7 +636,7 @@ def entity_kind(key: str, *pols: Policy) -> str:
             else "relation"
         )
     word = key.split()[0]
-    return word if word in ("type", "rule", "scope", "caveat", "invariant", "cascade") else "declaration"
+    return word if word in ("type", "rule", "scope", "caveat", "invariant", "cascade", "sync") else "declaration"
 
 
 def cascade_key(c: Cascade) -> str:
