@@ -621,6 +621,18 @@ func TestTheMiddlewareAnswersABadToken(t *testing.T) {
 	}
 }
 
+func TestTheMiddlewareAnswersAnyOtherError500(t *testing.T) {
+	check(t, "an error reading who the request is that the app didn't call a refusal (a session store that is down) "+
+		"is logged and answered 500, without its words: not a 401, which signs the user out")
+	down := errors.New("dial tcp 10.0.0.7:6379: connect: connection refused")
+	h := rowstile.Middleware(func(*http.Request) (rowstile.Principal, error) { return rowstile.Nobody, down })(nil)
+	var a answer
+	if errs := logged(func() { a = call(h, "GET", "/notes", "", nil) }); a.status != 500 ||
+		strings.Contains(string(a.body), "10.0.0.7") || len(errs) != 1 || !errors.Is(errs[0], down) {
+		t.Errorf("%d %s %v", a.status, a.body, errs)
+	}
+}
+
 func TestPerPackageSaysWhyItCantCopy(t *testing.T) {
 	check(t, "a database per package: a URL that names none, and a server that isn't there, say so")
 	ctx := context.Background()

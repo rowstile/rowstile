@@ -90,27 +90,42 @@ func WriteProblem(w http.ResponseWriter, err error) bool {
 // answers them, and any other is logged (slog, with the request's method and path) and answered 500.
 func Handler(fn func(w http.ResponseWriter, r *http.Request) error) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := fn(w, r); err != nil && !WriteProblem(w, err) {
-			slog.ErrorContext(r.Context(), "rowstile: the request failed", "method", r.Method, "path", r.URL.Path,
-				"error", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		if err := fn(w, r); err != nil {
+			fail(w, r, err)
 		}
 	})
 }
 
+// fail answers err as WriteProblem does when it is rowstile's to answer; any other is logged, and answered 500
+// without its words.
+func fail(w http.ResponseWriter, r *http.Request, err error) {
+	if !WriteProblem(w, err) {
+		slog.ErrorContext(r.Context(), "rowstile: the request failed", "method", r.Method, "path", r.URL.Path,
+			"error", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
+}
+
+// Unauthorized is the error for user (Middleware's) to give for a request it can't tell who sent (a bad token, a
+// session that ended): answered 401, with detail as the problem's detail, which the client sees.
+func Unauthorized(detail string) error {
+	return &CallError{Status: http.StatusUnauthorized, Message: detail}
+}
+
 // Middleware makes each request act for whoever user says it is (Nobody: only what `anyone` may see), so every
 // transaction Tx begins with the request's context signs in as them. user reads the session or the token from
-// the request itself; an error from it (a bad token) is answered as rowstile's error when it is one, else 401.
+// the request itself. An error from it is answered as Handler answers one: Unauthorized's 401, rowstile's own as
+// WriteProblem answers it, and any other (a session store that is down) logged and answered 500, not 401: a client
+// signs its user out on a 401.
 func Middleware(user func(r *http.Request) (Principal, error)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			who, err := user(r)
-			if err != nil && !WriteProblem(w, err) {
-				WriteProblem(w, &CallError{Code: "", Status: http.StatusUnauthorized, Message: err.Error(), Err: err})
+			if err != nil {
+				fail(w, r, err)
+				return
 			}
-			if err == nil {
-				next.ServeHTTP(w, r.WithContext(ActingAs(r.Context(), who)))
-			}
+			next.ServeHTTP(w, r.WithContext(ActingAs(r.Context(), who)))
 		})
 	}
 }

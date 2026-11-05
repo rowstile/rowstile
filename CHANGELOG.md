@@ -51,6 +51,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A page with a cursor and no size is every row after the cursor in every SDK: Go's `Page{After: x}` (a `Limit` of
   0) no longer asks for an empty page, and the Rust SDK's `Page.limit` is an `Option<i32>` (`None`: no size). The
   Rust SDK's `composite_key` of one field is that field's value, as a key of one column is.
+- The Go SDK's `Middleware` answers 401 for `rowstile.Unauthorized(detail)` (new), the error the app's `user`
+  function gives for a bad token, and answers any other error from it as `Handler` does: rowstile's own as its
+  page says, anything else logged and a 500, without its words. Before, every error was a 401 that showed the
+  error's text, so a session store that was down signed everyone out.
 
 ### Removed
 
@@ -450,6 +454,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - The next apply (or migration) makes `authz.shares_due` from the times the shares have after the last
   `authz.announce_timed_shares()`, and drops the indexes `authz.shares_by_end` and `authz.shares_by_start`, which
   nothing reads any more.
+- A Go app whose `user` function, given to `rowstile.Middleware`, refuses a bad token with an error of its own
+  returns `rowstile.Unauthorized("...")` instead: any other error is now a 500.
 
 ## 0.1.0-beta.3 (2026-11-05)
 

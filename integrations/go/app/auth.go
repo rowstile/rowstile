@@ -1,7 +1,6 @@
 package app
 
 import (
-	"errors"
 	"net/http"
 
 	rowstile "github.com/rowstile/rowstile/sdk/go"
@@ -12,7 +11,7 @@ import (
 // believe. So docs/stacks/go.md shows app.go passing sessionUser to the middleware, and never this file.
 func sessionUser(r *http.Request) (rowstile.Principal, error) {
 	if r.Header.Get("Authorization") == "Bearer bad" { // a token the app refuses: the middleware answers 401
-		return rowstile.Nobody, errors.New("bad token")
+		return rowstile.Nobody, rowstile.Unauthorized("bad token")
 	}
 	if service := r.Header.Get("x-service"); service != "" { // a service's own API calls
 		return rowstile.As("service", service), nil
