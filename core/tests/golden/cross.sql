@@ -6327,18 +6327,6 @@ LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50
   SELECT u."id" FROM "cx"."users" u
 $f$;
 
-CREATE FUNCTION authz_int."folder__parent__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM "cx"."folders" w WHERE w."id" = p_id AND coalesce((not archived), false)) THEN
-    RETURN NEXT pad || 'no   folder ' || p_id || ' fails the type''s where {' || 'not archived' || '}';
-    RETURN;
-  END IF;
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.parent';
-END $f$;
-
 CREATE FUNCTION authz_int."folder__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -6593,22 +6581,6 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."project__inside__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.inside';
-END $f$;
-
-CREATE FUNCTION authz_int."project__host__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.host';
-END $f$;
-
 CREATE FUNCTION authz_int."project__lead__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -6618,14 +6590,6 @@ BEGIN
     RETURN;
   END IF;
   RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.lead';
-END $f$;
-
-CREATE FUNCTION authz_int."project__backer__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.backer';
 END $f$;
 
 CREATE FUNCTION authz_int."project__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
@@ -6793,14 +6757,6 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."region__over__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'region.over';
-END $f$;
-
 CREATE FUNCTION authz_int."region__chief__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -6930,18 +6886,6 @@ BEGIN
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'run';
     IF v_ok AND NOT v_done THEN v_done := true; RETURN QUERY SELECT * FROM authz_int."region__run__why"(p_id, p_depth + 1, p_seen, p_asker); END IF;
   END;
-END $f$;
-
-CREATE FUNCTION authz_int."site__over__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM "cx"."sites" w WHERE w."id" = p_id AND coalesce((not exists (select 1 from cx.closed c where c.site_id = w.id)), false)) THEN
-    RETURN NEXT pad || 'no   site ' || p_id || ' fails the type''s where {' || 'not exists (select 1 from cx.closed c where c.site_id = this.id)' || '}';
-    RETURN;
-  END IF;
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'site.over';
 END $f$;
 
 CREATE FUNCTION authz_int."site__warden__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])

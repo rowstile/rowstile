@@ -4922,22 +4922,6 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."project__org__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.org';
-END $f$;
-
-CREATE FUNCTION authz_int."project__parent__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.parent';
-END $f$;
-
 CREATE FUNCTION authz_int."project__lead__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -5098,18 +5082,6 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."folder__parent__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = p_id AND coalesce((not archived), false)) THEN
-    RETURN NEXT pad || 'no   folder ' || p_id || ' fails the type''s where {' || 'not archived' || '}';
-    RETURN;
-  END IF;
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.parent';
-END $f$;
-
 CREATE FUNCTION authz_int."folder__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -5183,18 +5155,6 @@ BEGIN
     RETURN;
   END IF;
   RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.viewer';
-END $f$;
-
-CREATE FUNCTION authz_int."folder__org__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM "mt"."folders" w WHERE w."id" = p_id AND coalesce((not archived), false)) THEN
-    RETURN NEXT pad || 'no   folder ' || p_id || ' fails the type''s where {' || 'not archived' || '}';
-    RETURN;
-  END IF;
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.org';
 END $f$;
 
 CREATE FUNCTION authz_int."folder__roles:edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
@@ -5442,14 +5402,6 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."doc__container__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.container';
-END $f$;
-
 CREATE FUNCTION authz_int."doc__author__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -5459,14 +5411,6 @@ BEGIN
     RETURN;
   END IF;
   RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.author';
-END $f$;
-
-CREATE FUNCTION authz_int."doc__org__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.org';
 END $f$;
 
 CREATE FUNCTION authz_int."doc__roles:edit__why"(p_id uuid, p_depth int, p_seen text[], p_asker text[])

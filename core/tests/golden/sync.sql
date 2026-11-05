@@ -5093,30 +5093,6 @@ BEGIN
   RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'team.member';
 END $f$;
 
-CREATE FUNCTION authz_int."folder__org__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.org';
-END $f$;
-
-CREATE FUNCTION authz_int."folder__parent__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.parent';
-END $f$;
-
-CREATE FUNCTION authz_int."folder__linked_into__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.linked_into';
-END $f$;
-
 CREATE FUNCTION authz_int."folder__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -5370,14 +5346,6 @@ BEGIN
       END IF;
     END LOOP;
   END;
-END $f$;
-
-CREATE FUNCTION authz_int."file__folder__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'file.folder';
 END $f$;
 
 CREATE FUNCTION authz_int."file__owner__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])

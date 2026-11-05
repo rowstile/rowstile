@@ -2399,16 +2399,6 @@ COMMENT ON POLICY "authz_update" ON "lp"."settings" IS 'rowstile';
 
 ALTER TABLE "lp"."emails" ENABLE ROW LEVEL SECURITY;
 
--- lp.emails: no row has the id, or the user may select it (what the rules' explanations answer for)
-CREATE FUNCTION authz_int."lp.emails:seen"(p_id bigint) RETURNS boolean
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-BEGIN
-  RETURN NOT EXISTS (SELECT 1 FROM "lp"."emails" o WHERE o."id" = p_id)
-      OR EXISTS (SELECT 1 FROM "lp"."emails" "emails" WHERE "emails"."id" = p_id
-        AND (SELECT authz_int.scope_cmd('lp.emails', 'select')) AND (coalesce((verified), false)
-    AND EXISTS (SELECT 1 FROM authz_int."domain__edit" v WHERE v.id = "emails"."domain_id")));
-END $f$;
-
 CREATE FUNCTION authz_gen."lp.emails:rules:explain"(p_command text, p_id text, p_row jsonb) RETURNS text[]
 LANGUAGE plpgsql STABLE SET search_path FROM CURRENT AS $f$
 DECLARE r_old "lp"."emails"; r_new "lp"."emails";
@@ -3335,14 +3325,6 @@ BEGIN
   RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'org.owner';
 END $f$;
 
-CREATE FUNCTION authz_int."org__settings__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'org.settings';
-END $f$;
-
 CREATE FUNCTION authz_int."org__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
@@ -3386,14 +3368,6 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."setting__email__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'setting.email';
-END $f$;
-
 CREATE FUNCTION authz_int."setting__admin__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -3434,14 +3408,6 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."email__domain__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'email.domain';
-END $f$;
-
 CREATE FUNCTION authz_int."email__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_ok boolean; v_done boolean := false; v_t record;
@@ -3472,14 +3438,6 @@ BEGIN
     v_ok := (p_id) IN (SELECT r."id" AS id FROM "lp"."emails" r WHERE coalesce((verified), false));
     RETURN NEXT pad || '  ' || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || '{verified}';
   END;
-END $f$;
-
-CREATE FUNCTION authz_int."domain__org__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'domain.org';
 END $f$;
 
 CREATE FUNCTION authz_int."domain__edit__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])

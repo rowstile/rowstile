@@ -5713,14 +5713,6 @@ BEGIN
   END;
 END $f$;
 
-CREATE FUNCTION authz_int."project__org__why"(p_id text, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.org';
-END $f$;
-
 CREATE FUNCTION authz_int."project__lead__why"(p_id text, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -5730,14 +5722,6 @@ BEGIN
     RETURN;
   END IF;
   RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.lead';
-END $f$;
-
-CREATE FUNCTION authz_int."project__folder__why"(p_id text, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'project.folder';
 END $f$;
 
 CREATE FUNCTION authz_int."project__edit__why"(p_id text, p_depth int, p_seen text[], p_asker text[])
@@ -5812,22 +5796,6 @@ BEGIN
     v_ok := (p_id) IN (SELECT ROW(r."org_id"::bigint, r."id"::bigint)::text AS id FROM "cx"."projects" r WHERE coalesce(((SELECT authz.uid()) IS NOT NULL), false));
     RETURN NEXT pad || CASE WHEN v_ok THEN 'yes  ' ELSE 'no   ' END || 'signed_in';
   END;
-END $f$;
-
-CREATE FUNCTION authz_int."folder__org__why"(p_id text, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.org';
-END $f$;
-
-CREATE FUNCTION authz_int."folder__parent__why"(p_id text, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'folder.parent';
 END $f$;
 
 CREATE FUNCTION authz_int."folder__owner__why"(p_id text, p_depth int, p_seen text[], p_asker text[])
@@ -6032,14 +6000,6 @@ BEGIN
       END IF;
     END LOOP;
   END;
-END $f$;
-
-CREATE FUNCTION authz_int."file__folder__why"(p_id text, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'file.folder';
 END $f$;
 
 CREATE FUNCTION authz_int."file__owner__why"(p_id text, p_depth int, p_seen text[], p_asker text[])

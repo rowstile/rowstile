@@ -4808,11 +4808,6 @@ LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50
   SELECT r."owner_id" FROM "alt"."docs" r WHERE r."doc_no" = p_id AND r."owner_id" IS NOT NULL
 $f$;
 
-CREATE FUNCTION authz_int."doc__blocked__who"(p_id bigint) RETURNS SETOF bigint
-LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
-  SELECT r."blocked_id" FROM "alt"."docs" r WHERE r."doc_no" = p_id AND r."blocked_id" IS NOT NULL
-$f$;
-
 CREATE FUNCTION authz_int."doc__reader__who"(p_id bigint) RETURNS SETOF bigint
 LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path FROM CURRENT ROWS 50 AS $f$
   (SELECT g.subject_id::bigint FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = (p_id)::text AND g.relation = 'reader' AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id <> '*')
@@ -5056,17 +5051,6 @@ BEGIN
   RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.owner';
 END $f$;
 
-CREATE FUNCTION authz_int."doc__blocked__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-  IF p_id IN (SELECT r."doc_no" AS id FROM "alt"."docs" r WHERE r."blocked_id" = (SELECT authz.uid())) THEN
-    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'blocked: blocked_id is you' ELSE 'blocked: blocked_id is them' END || '';
-    RETURN;
-  END IF;
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.blocked';
-END $f$;
-
 CREATE FUNCTION authz_int."doc__reader__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -5122,30 +5106,6 @@ BEGIN
   RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.banned';
 END $f$;
 
-CREATE FUNCTION authz_int."doc__parent__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.parent';
-END $f$;
-
-CREATE FUNCTION authz_int."doc__shortcut__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.shortcut';
-END $f$;
-
-CREATE FUNCTION authz_int."doc__project__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.project';
-END $f$;
-
 CREATE FUNCTION authz_int."doc__roles:view__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
 RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
 DECLARE pad text := repeat('  ', p_depth); v_t record;
@@ -5156,28 +5116,6 @@ BEGIN
   END IF;
   IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
     FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'view'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."grp__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) x LIMIT 1 LOOP
-      IF p_asker IS NOT NULL AND NOT authz_int.asker_sees(p_asker, 'grp', v_t.gid, false) THEN
-        RETURN NEXT pad || 'yes  ' || 'a custom role given to' || ' a grp you can''t see';
-        RETURN;
-      END IF;
-      RETURN NEXT pad || 'yes  ' || 'a custom role given to' || ' grp ' || v_t.gid || CASE WHEN p_asker IS NULL THEN ', and you are member there' ELSE ', and they are member there' END;
-      RETURN QUERY SELECT * FROM authz_int."grp__member__why"(v_t.gid::bigint, p_depth + 1, p_seen, p_asker);
-    END LOOP;
-    RETURN;
-  END IF;
-  RETURN NEXT pad || CASE WHEN p_asker IS NULL THEN 'no   you do not hold ' ELSE 'no   they do not hold ' END || 'doc.role';
-END $f$;
-
-CREATE FUNCTION authz_int."doc__roles:publish__why"(p_id bigint, p_depth int, p_seen text[], p_asker text[])
-RETURNS SETOF text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $f$
-DECLARE pad text := repeat('  ', p_depth); v_t record;
-BEGIN
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
-    RETURN NEXT pad || 'yes  ' || CASE WHEN p_asker IS NULL THEN 'a custom role given to you' ELSE 'a custom role given to them' END || CASE WHEN p_asker IS NULL OR authz_int.asker_sees(p_asker, 'doc', p_id::text, true) THEN coalesce((SELECT concat(' (by ', coalesce(g.created_by, 'an admin'), coalesce(', until ' || g.expires_at, ''), coalesce(', from ' || g.starts_at, ''), coalesce(', caveat ' || g.caveat, ''), ')') || coalesce(' (role ' || (SELECT ro.name FROM authz.roles ro WHERE 'role:' || ro.id = g.relation) || ')', '') FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'user' AND g.subject_relation = '' AND g.subject_id = (SELECT authz.uid()::text) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL ORDER BY g.created_at LIMIT 1), '') ELSE '' END;
-    RETURN;
-  END IF;
-  IF p_id IN (SELECT g.object_id::bigint AS id FROM authz.shares g WHERE g.object_type = 'doc' AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id = ANY ((SELECT authz_int."grp__member__ids"())::text[]) AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) THEN
-    FOR v_t IN SELECT x.gid::text AS gid FROM (SELECT g.subject_id AS gid FROM authz.shares g WHERE g.object_type = 'doc' AND g.object_id = p_id::text AND g.relation = ANY ((SELECT authz_int.role_relations('doc', 'publish'))::text[]) AND g.subject_type = 'grp' AND g.subject_relation = 'member' AND g.subject_id IN (SELECT id::text FROM authz_int."grp__member") AND (g.expires_at IS NULL OR g.expires_at > now()) AND (g.starts_at IS NULL OR g.starts_at <= now()) AND g.caveat IS NULL) x LIMIT 1 LOOP
       IF p_asker IS NOT NULL AND NOT authz_int.asker_sees(p_asker, 'grp', v_t.gid, false) THEN
         RETURN NEXT pad || 'yes  ' || 'a custom role given to' || ' a grp you can''t see';
         RETURN;

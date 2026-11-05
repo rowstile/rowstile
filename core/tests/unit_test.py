@@ -694,6 +694,33 @@ class Compiling(unittest.TestCase):
         body = sql.split('CREATE FUNCTION authz_int."doc__see__who"(p_id bigint)', 1)[1].split("$f$")[1]
         self.assertEqual(body.strip(), 'SELECT x FROM authz_int."doc__owner__who"(p_id) x')
 
+    def test_only_what_is_called_is_made_for_who_and_explain(self) -> None:
+        """A relation gets its who and explain functions only when a permission's names it: one followed only by an
+        arrow gets none. A group's members are listed by `rowstile why` even where no permission's who names them (a
+        condition beside them lets anyone in), and a table with no write rule has no `:seen`, which only their
+        explanations call."""
+        text = errors_prelude() + (
+            "type team = app.teams\n  member : user = app.team_members(team_id -> user_id)\n"
+            "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\n"
+            "type doc = app.docs\n  folder : folder = folder_id\n  reader : team#member shared\n"
+            "  can view = folder.view or reader or {public}\n  can share = folder.view\n"
+            "rules app.docs\n  select : view\nrules app.folders\n  select : view\n  update : view\n"
+        )
+        sql = Compiler(parse_policy(text)).compile("the policy")
+        made = set(re.findall(r'CREATE FUNCTION (authz_int\."[^"]+")', sql))
+        for fn in (
+            "folder__owner__why",
+            "folder__view__why",
+            "doc__view__why",
+            "doc__reader__why",
+            "folder__owner__who",
+        ):
+            self.assertIn(f'authz_int."{fn}"', made, fn)
+        self.assertIn('authz_int."team__member__who"', made, "the group's members, for rowstile why")
+        for fn in ("doc__folder__why", "doc__folder__who", "doc__reader__who", "app.docs:seen"):
+            self.assertNotIn(f'authz_int."{fn}"', made, fn)
+        self.assertIn('authz_int."app.folders:seen"', made)
+
     def test_the_condition_an_error_points_just_after(self) -> None:
         """Postgres may point a little past a condition it refused (a syntax error at what follows it): up to two
         characters past its end, that condition is the one named, among several in the statement. An empty
