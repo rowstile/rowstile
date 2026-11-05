@@ -5,6 +5,9 @@
 # are at the blog tag. One pushed on a commit older than another of its kind deploys nothing, so the site never goes
 # back by itself (site/source.mjs holds the rule). Run by hand, it deploys the tag it is given, whatever comes after:
 #   gh workflow run site.yml -f tag=site-v3
+# Each deploy writes what it shows (/deployed.json): a tag that would deploy nothing still deploys the newest site
+# when the live one shows something else (a run cancelled, as a newer one waited in its place, or failed), unless it
+# was put back by hand.
 name: site
 on:
   push:
@@ -35,16 +38,17 @@ jobs:
         run: |
           cp site/source.mjs "$RUNNER_TEMP/source.mjs"
           node "$RUNNER_TEMP/source.mjs" --take "$GIVEN" $BY_HAND >> "$GITHUB_OUTPUT"
-      - if: steps.from.outputs.deploy != 'true'
+      - if: steps.from.outputs.why != ''
         env:
           WHY: ${{ steps.from.outputs.why }}
-        run: echo "::notice::$GIVEN deploys nothing ($WHY)"
+        run: echo "::notice::$GIVEN ($WHY)"
       # its links to the repository's files go to the tags it is built from, not main (site/pages.mjs); the playground
       # is built with it, and serves Pyodide and PGlite from its own node_modules
       - if: steps.from.outputs.deploy == 'true'
         env:
           SITE_CODE: ${{ steps.from.outputs.code }}
           SITE_CONTENT: ${{ steps.from.outputs.content }}
+          SITE_PINNED: ${{ steps.from.outputs.pinned }}
         run: (cd playground && npm ci --no-audit --no-fund) && cd site && npm ci --no-audit --no-fund && node build.mjs
       # a site whose code is older than an article or a comparison page builds without it: say so, and deploy nothing
       - if: steps.from.outputs.deploy == 'true'
