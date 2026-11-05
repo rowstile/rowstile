@@ -155,13 +155,22 @@ jobs:
           fi
           # a version the registry has already is skipped (it refuses it a second time): a release that stopped
           # half-way is finished by running this job again
+          # a package npm doesn't have yet, without the token, is left out: the others go out, and the run names it
+          # for its first publish by hand (its file is in this run's npm-files)
+          new=""
           while read -r file name <&3; do
             if [ "$(npm view "$name@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
               echo "$name@$VERSION is published already"
+            elif [ -z "$NODE_AUTH_TOKEN" ] && [[ "$(npm view "$name" name 2>&1)" == *E404* ]]; then
+              echo "::warning::$name isn't on npm yet and there is no NPM_TOKEN: left out. Publish $file from this run's npm-files by hand (npm publish --access public --tag $TAG), then set its trusted publisher"
+              new="$new $name"
             else
               npm publish --ignore-scripts --provenance --access public --tag "$TAG" "./npm-dist/$file"
             fi
           done 3< npm-dist/order.txt
+          if [ -n "$new" ]; then
+            echo "Not on npm yet, left out:$new. Publish each by hand from this run's npm-files." >> "$GITHUB_STEP_SUMMARY"
+          fi
       # while no final release exists, a plain install gets the newest pre-release: npm's latest goes where next is, once
       # the registry shows this version there (minutes after the publish: read sooner, nothing looks left to
       # move). Each package's trusted publisher must allow it (Allow npm dist-tag); where one doesn't, or the
