@@ -93,6 +93,12 @@ transaction. Let `Tx` begin it instead. For pgx's options (an isolation level, r
 through `rowstile.WithOptions`: `rowstile.Tx(ctx, rowstile.WithOptions(pool, pgx.TxOptions{IsoLevel:
 pgx.Serializable}), fn)` begins the transaction with them, and signs it in as any other.
 
+A request that brings an API key signs in with it inside `Tx`: `rowstile.LoginKey(ctx, tx, key)` (or
+`rowstile.LoginJWT` for a token) calls `authz.login_key` and gives back who the key signed in, and a `ctx` acting
+for them. `Tx` then knows the transaction is theirs: a `Tx` inside it for them is a savepoint, and anyone else's is
+refused. Begin that transaction as `rowstile.Nobody`: the database refuses a key for someone else in a transaction
+signed in as someone already (AZ716).
+
 ## Refusals
 
 A refused INSERT is the database's error, which `Tx` gives back as `*rowstile.Refused`, with the table, the

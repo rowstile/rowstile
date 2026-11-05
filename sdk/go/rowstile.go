@@ -149,6 +149,35 @@ func signIn(ctx context.Context, tx pgx.Tx, who Principal) error {
 	return err
 }
 
+// LoginKey signs tx in with an API key (authz.login_key), for a request that brings one, and gives back who the
+// key signed in and ctx acting for them. Use it in place of the SQL: in a transaction TxAs began, who it is signed
+// in as then follows, so a nested Tx on tx for the key's principal is a savepoint of it, and anyone else's is
+// refused. Begin the transaction as Nobody: the database refuses a key for someone else in a transaction signed
+// in as someone already (AZ716), and a key it doesn't know (AZ703: a *CallError).
+func LoginKey(ctx context.Context, tx pgx.Tx, key string) (context.Context, Principal, error) {
+	return login(ctx, tx, "SELECT authz.login_key($1)", key)
+}
+
+// LoginJWT is LoginKey with a token (authz.login_jwt).
+func LoginJWT(ctx context.Context, tx pgx.Tx, token string) (context.Context, Principal, error) {
+	return login(ctx, tx, "SELECT authz.login_jwt($1)", token)
+}
+
+func login(ctx context.Context, tx pgx.Tx, sql, secret string) (context.Context, Principal, error) {
+	var who Principal
+	_, err := tx.Exec(ctx, sql, secret)
+	if err == nil {
+		err = tx.QueryRow(ctx, "SELECT principal_type, principal_id FROM authz.principal()").Scan(&who.Type, &who.ID)
+	}
+	if err != nil {
+		return ctx, Principal{}, translate(err)
+	}
+	if _, known := signed.Load(tx.Conn()); known {
+		signed.Store(tx.Conn(), who)
+	}
+	return ActingAs(ctx, who), who, nil
+}
+
 // Tx runs fn in a transaction signed in as whoever ctx acts for (nobody if nothing set it), and commits it if fn
 // returns nil. fn's ctx acts for them too. The sign-in lasts the transaction alone, so pools and poolers in
 // transaction mode are safe. A database error (fn's, or the commit's) comes back as rowstile's when it is one:

@@ -142,7 +142,8 @@ A key of several columns is written as the database writes it, `(1,2)`. <!-- che
   type's permissions a type of their own (`NotePermission`, with `NoteEdit` and `NoteView`), which the SDK's
   `Can`, `PermsOf` and `List` take. The calls themselves are the SDK's: [Go](../stacks/go.md). A transaction is
   one principal's: inside one `rowstile.Tx` signed in already, `Tx` for someone else gives an error before any SQL
-  is sent; `rowstile.WithOptions(pool, opts)` has `Tx` begin one with pgx's options. It may change before it is
+  is sent, and `rowstile.LoginKey(ctx, tx, key)` (or `LoginJWT`) signs a request's key in inside it, which `Tx` then
+  follows; `rowstile.WithOptions(pool, opts)` has `Tx` begin one with pgx's options. It may change before it is
   supported.
 - **C#: preview.** `rowstile client csharp > Authz.g.cs` writes the policy's names for the .NET SDK
   ([ASP.NET Core and EF Core](../stacks/aspnetcore.md)): a class for each type, holding its `ObjectType` and its
