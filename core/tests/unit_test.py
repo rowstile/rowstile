@@ -2923,6 +2923,66 @@ class Command(unittest.TestCase):
         d = self.folder(dict.fromkeys(("a.ts", "b.ts", "c.ts"), "export {};\n"))
         self.assertEqual(stack._files(d, (".ts",), limit=2), ["a.ts", "b.ts"])
 
+    def test_stack_reads_what_its_files_mean(self) -> None:
+        """pyproject.toml read as TOML (its dependencies, not each line's first word), Alembic's script_location as
+        Alembic reads it, and rowstile.toml's lines written as TOML strings, whatever the paths found hold."""
+        import tomllib
+
+        import stack
+
+        def detect(files: dict[str, str]) -> stack.Stack:
+            return stack.detect(self.folder(files))
+
+        # a pyproject.toml for the tools alone (a Node app's linters): no Python stack, nothing to add
+        tools = '[project]\nname = "web"\nversion = "1.0"\n[tool.ruff]\nline-length = 120\n'
+        s = detect({"pyproject.toml": tools})
+        self.assertEqual((s.found, s.pip, s.clients, s.setup), ([], "", {}, []))
+        # ... and a line that starts with rowstile (a description's) isn't a dependency on it
+        s = detect(
+            {
+                "pyproject.toml": '[project]\ndescription = """\nrowstile does the rules\n"""\ndependencies = ["fastapi"]\n'
+            }
+        )
+        self.assertEqual((s.found, s.pip, s.pip_there), (["FastAPI"], "rowstile[fastapi]", False))
+        # each place a pyproject.toml lists them: optional ones, dependency groups, Poetry's tables (rowstile's
+        # extras too); one that isn't TOML is read as none
+        for files, found in (
+            ({"pyproject.toml": '[project.optional-dependencies]\nweb = ["FastAPI>=0.110"]\n'}, ["FastAPI"]),
+            ({"pyproject.toml": '[dependency-groups]\ndev = [{include-group = "x"}, "sqlalchemy"]\n'}, ["SQLAlchemy"]),
+            ({"pyproject.toml": '[tool.poetry.dependencies]\npython = "^3.11"\nfastapi = "^0.110"\n'}, ["FastAPI"]),
+            ({"pyproject.toml": '[tool.poetry.group.db.dependencies]\nSQLAlchemy = "^2"\n'}, ["SQLAlchemy"]),
+            (
+                {"pyproject.toml": '[tool.poetry.dependencies]\nrowstile = {version = "*", extras = ["fastapi"]}\n'},
+                ["FastAPI"],
+            ),
+            ({"pyproject.toml": "[project\ndependencies = ['fastapi']\n"}, []),
+        ):
+            self.assertEqual(detect(files).found, found, files)
+        self.assertTrue(
+            detect({"pyproject.toml": '[tool.poetry.dependencies]\nrowstile = {extras = ["fastapi"]}\n'}).pip_there
+        )
+        # Alembic's script_location: a folder after %(here)s, with or without its slash, written with \ on Windows;
+        # a package's (myapp:migrations) is no folder rowstile could write in: no [migrations], and init says why
+        for loc, folder in (("%(here)s/db", "db"), ("%(here)s", "."), (r"db\migrations", "db/migrations")):
+            s = detect({"alembic.ini": f"[alembic]\nscript_location = {loc}\n"})
+            self.assertEqual((s.tool, s.migrations_dir), ("alembic", f"{folder}/versions".removeprefix("./")), loc)
+        s = detect({"alembic.ini": "[alembic]\nscript_location = myapp:migrations\n"})
+        self.assertEqual((s.found, s.tool, s.migrations_dir), (["Alembic"], "alembic", ""))
+        self.assertEqual(
+            s.notes,
+            [
+                "alembic.ini's script_location, myapp:migrations, names a package, not a folder: rowstile.toml has no "
+                '[migrations] (add one: tool = "alembic", dir = its versions folder)'
+            ],
+        )
+        self.assertFalse([line for line in stack.config_lines(s) if line.startswith("[migrations]")])
+        # rowstile.toml's lines are TOML strings, a quote or a backslash in a path found kept as it is
+        s = stack.Stack(tool="drizzle", migrations_dir='db/"drizzle"\\x', clients={"ts": 'src/a"b.ts'})
+        data = tomllib.loads("\n".join(stack.config_lines(s)))
+        self.assertEqual(
+            data, {"clients": {"ts": 'src/a"b.ts'}, "migrations": {"tool": "drizzle", "dir": 'db/"drizzle"\\x'}}
+        )
+
     def test_no_database_named_is_said(self) -> None:
         # with no --db, no `database` in rowstile.toml and no variable, libpq's defaults are tried (a local socket):
         # when they fail the message says nothing named a database and how to name one, not only a socket nobody
