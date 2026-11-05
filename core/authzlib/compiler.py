@@ -81,6 +81,8 @@ TreeKey: TypeAlias = "tuple[str, Edges] | SccKey"
 Flatten: TypeAlias = "tuple[str, Edges] | None"
 # how a permission inherits through one item: (relation, condition or None, target type)
 Inherit: TypeAlias = "tuple[str, str | None, str]"
+# what a view holds, which its name says: what kind of view, then the type and the names it is of (begin_view)
+ViewOf: TypeAlias = "tuple[str, ...]"
 
 
 class NextTree(TypedDict):
@@ -271,9 +273,11 @@ class Core:
             )
         self.role: str = pol.role
         self.types, self.rules, self.tests = pol.types, pol.rules, pol.tests
-        # each view, and each function made when first asked for, by name -> what it is made from (first_time)
+        # each function made when first asked for, by name -> what it is made from (first_time)
         self.made_from: dict[str, str] = {}
+        self.view_of: dict[str, ViewOf] = {}  # each view begun or made, by name -> what it holds (begin_view)
         self.making: set[str] = set()  # views begun and not yet added: one asked for again depends on itself
+        self.made_views: set[str] = set()  # and those added
         self.view_sql: list[str] = []  # CREATE VIEW / FUNCTION statements, dependency order
         self.views: list[str] = []  # the views made, in authz_int (add_view)
         self.app_views: list[str] = []  # those the app role's rules read, through them alone (output.compile)
@@ -1177,18 +1181,28 @@ class Core:
     # into. The rules read them there: Postgres keeps a policy parsed and checks a schema only when a name is looked
     # up, so the app role, which may not use authz_int, can't name them. It may read those its rules look up
     # (app_views), through its rules alone.
-    def add_view(self, name: str, sql: str, header: str, t: Type) -> None:
+    def add_view(self, name: str, sql: str, header: str, t: Type, of: ViewOf | None = None) -> None:
+        """Makes the view `name`, of what begin_view said it is of, or of `of` (a view made without begin_view)."""
         sql = self.where_kept(t, sql)
-        assert name not in self.made_from, f"the view {name} is made twice"
+        self.view_is(name, self.view_of[name] if of is None else of)
+        assert name not in self.made_views, f"the view {name} is made twice"
         self.making.discard(name)
-        self.made_from[name] = sql
+        self.made_views.add(name)
         self.views.append(name)
         self.view_sql.append(f"{header}CREATE VIEW authz_int.{q(name)} AS\n  {sql};")
 
-    def begin_view(self, name: str, loc: Loc, what: str) -> bool:
-        """Whether the view `name` is still to be made: it is then being made until add_view adds it, and asked
-        for again before that, what it is of (`what`) depends on itself."""
-        if name in self.made_from:
+    def view_is(self, name: str, of: ViewOf) -> None:
+        """A view's name stands for one thing, what it holds (of): asked for by another, the view would silently be
+        the first one's, and whoever read it would get the other's ids. The names a policy declares neither hold
+        '__' nor start or end with '_' (AZ107), so the names joined from them are each one's own."""
+        made = self.view_of.setdefault(name, of)
+        assert made == of, f"the view {name} would stand for two things: {made} and {of}"
+
+    def begin_view(self, name: str, of: ViewOf, loc: Loc, what: str) -> bool:
+        """Whether the view `name` of `of` is still to be made: it is then being made until add_view adds it, and
+        asked for again before that, what it is of (`what`) depends on itself."""
+        self.view_is(name, of)
+        if name in self.made_views:
             return False
         if name in self.making:
             fail(loc, DEPENDS_ON_ITSELF.format(what), "AZ302")
@@ -1519,8 +1533,10 @@ class Core:
     def ensure_rel_view(self, t: Type, r: Relation, loc: Loc, ext: bool = False) -> str:
         """Ids of t the user holds relation r on. ext=True leaves out column
         sources (policies check those on the row itself)."""
-        name = f"{t.name}__{r.name}" + ("__ext" if ext else "")
-        if not self.begin_view(name, r.loc, f"{t.name}.{r.name}"):
+        # what holds a name's sources other than columns: no name a policy writes ends with ':ext'
+        of = ("relation", t.name, r.name) + (("ext",) if ext else ())
+        name = f"{t.name}__{r.name}" + (":ext" if ext else "")
+        if not self.begin_view(name, of, r.loc, f"{t.name}.{r.name}"):
             return name
         direct: list[str] = []
         loops: list[str] = []
@@ -1602,9 +1618,10 @@ class Core:
         """Ids of t whose r points at something the user holds perm_name on."""
         all_targets = [st for st, _ in r.subjects()]
         targets = list(targets) if targets else all_targets
-        suffix = "" if targets == all_targets else "__on_" + "_".join(targets)
-        view = f"{t.name}__{r.name}__{perm_name}{suffix}" + ("__ext" if ext else "")
-        if not self.begin_view(view, loc, f"{t.name}.{r.name}.{perm_name}"):
+        suffix = "" if targets == all_targets else "__on_" + "__".join(targets)
+        of = ("link", t.name, r.name, perm_name) + (("on", *targets) if suffix else ()) + (("ext",) if ext else ())
+        view = f"{t.name}__{r.name}__{perm_name}{suffix}" + (":ext" if ext else "")
+        if not self.begin_view(view, of, loc, f"{t.name}.{r.name}.{perm_name}"):
             return view
         parts = []
         for st in targets:
@@ -1684,7 +1701,7 @@ class Core:
         """Makes the view of t.perm, if it isn't yet: a union of its operands, or a walk of its closure table when it
         recurses."""
         name = f"{t.name}__{perm.name}"
-        if not self.begin_view(name, perm.loc, f"{t.name}.{perm.name}"):
+        if not self.begin_view(name, ("permission", t.name, perm.name), perm.loc, f"{t.name}.{perm.name}"):
             return
         header = f"-- {t.name}.{perm.name} ({perm.loc}): {perm.src}\n"
         key = self.recursive.get((t.name, perm.name))
@@ -1772,7 +1789,8 @@ class Core:
         sql = union([self.set_sql(t, i, perm.loc) for i in items])
         if sql not in self.direct_by_sql:
             name = f"{t.name}__{perm.name}__direct"
-            self.add_view(name, sql, f"-- {t.name}.{perm.name}: what the object's own columns give\n", t)
+            header = f"-- {t.name}.{perm.name}: what the object's own columns give\n"
+            self.add_view(name, sql, header, t, of=("direct", t.name, perm.name))
             self.direct_by_sql[sql] = name
         self.direct_checks[view] = self.direct_by_sql[sql]
 
@@ -2073,7 +2091,7 @@ class Core:
     ) -> str:
         """link_checks where the app role checks the row: a function that runs as the owner (the app role may read
         neither authz.shares nor, maybe, the link tables), on the row's id."""
-        suffix = "" if names == [st for st, _ in r.subjects()] else "__on_" + "_".join(names)
+        suffix = "" if names == [st for st, _ in r.subjects()] else "__on_" + "__".join(names)
         name = f"{t.name}__{r.name}__{perm_name}{suffix}__links"
         fn = f"authz_int.{q(name)}"
         body = or_join(self.link_checks(t, r, names, checks, "p_id"))

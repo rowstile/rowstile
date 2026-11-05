@@ -992,6 +992,7 @@ END $f$;"""
                 self.set_sql(t, inv.expr, inv.loc),
                 f"-- invariant ({inv.loc}): never {t.name}: {inv.src}\n",
                 t,
+                of=("invariant", str(i + 1)),
             )
             checks.append(f"""    v_ids := ARRAY(SELECT id::text FROM authz_int.{q(view)} ORDER BY 1 LIMIT 5);
     IF cardinality(v_ids) > 0 THEN

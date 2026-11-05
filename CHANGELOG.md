@@ -30,6 +30,15 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   without `--check`), `rowstile client`, `rowstile dev` and `rowstile migrate` refuse a path outside it, or a link
   out of it, and name it (exit 2). A monorepo's `../frontend/src/authz.ts` still works. `--out` and `--dir` are
   still the caller's.
+- Each view the compiler makes for a relation or a permission has a name of its own: a relation's view of its
+  sources other than columns is now `doc__r:ext`, apart from the view of an arrow to a permission named `ext`
+  (`r.ext`, `doc__r__ext`), and an arrow followed to some of its types joins them with `__` (`__on_a__b`). The
+  compiler fails rather than give one name to two views.
+
+### Upgrading
+
+- A type, a relation or a permission whose name starts or ends with `_` is refused (AZ107), with the line it is
+  on: rename it.
 
 ## 0.1.0-beta.3 (2026-11-05)
 

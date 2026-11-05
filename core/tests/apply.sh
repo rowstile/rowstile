@@ -961,5 +961,35 @@ got="$(refused "'user', '*'") / $(refused "'anyone', ''") / $(refused "'team', '
   ok "authz.share names the subject it refuses as the policy would: user:*, anyone, team#admin" || bad "a refused subject's name" "$got"
 dropdb "$SDB"
 
+echo "-- a permission named like what a view's name says of it"
+# the view of r's sources other than columns, and the arrow r.ext to a permission named ext: two views, two names.
+# User 2 owns doc 10 and has user 1 as their vip; user 1 reads doc 11 only
+fresh "$CDB"
+quiet -d "$CDB" -c "CREATE SCHEMA app" -c "CREATE TABLE app.users (id bigint PRIMARY KEY, vip_id bigint)" \
+  -c "CREATE TABLE app.docs (id bigint PRIMARY KEY, owner_id bigint)" \
+  -c "CREATE TABLE app.doc_readers (doc_id bigint, user_id bigint, PRIMARY KEY (doc_id, user_id))" \
+  -c "GRANT USAGE ON SCHEMA app TO app_user" -c "GRANT SELECT ON ALL TABLES IN SCHEMA app TO app_user" \
+  -c "INSERT INTO app.users VALUES (1, NULL), (2, 1), (3, NULL)" -c "INSERT INTO app.docs VALUES (10, 2), (11, 3)" \
+  -c "INSERT INTO app.doc_readers VALUES (11, 1)" >/dev/null || exit 1
+printf '%s\n' "app role app_user" "type user = app.users" "  vip : user = vip_id" "  can ext = vip" \
+  "type doc = app.docs" "  r : user = owner_id" "  r : user = app.doc_readers(doc_id -> user_id)" \
+  "  can view = r" "  can promo = r.ext" "rules app.docs" "  select : view" > "$T/ext.authz"
+out=$(python3 cli/rowstile_cli.py --db "dbname=$CDB" apply "$T/ext.authz" 2>&1)
+got=$(psql -X -q -At -d "$CDB" -c "SET ROLE app_user" -c "SET authz.user_id = 1" \
+  -c "SELECT string_agg(id::text, ',' ORDER BY id) FROM app.docs" \
+  -c "SELECT authz.can('doc', '10', 'view'), authz.can('doc', '10', 'promo'), authz.can('doc', '11', 'promo')" \
+  -c "SELECT authz.can('user', '2', 'ext'), authz.can('user', '3', 'ext'), authz.can('user', 'x', 'ext')" \
+  -c "SELECT (SELECT string_agg(x, ',' ORDER BY x) FROM authz.list('doc', 'promo') x), (SELECT string_agg(x, ',' ORDER BY x) FROM authz.list('user', 'ext') x)" \
+  -c "SELECT array_to_string(authz.perms('doc', '10'), ','), array_to_string(authz.perms('user', '2'), ',')" \
+  2>&1 | tr '\n' ' ')
+# and who and explain, as the tables' owner (who may ask of any object)
+got="$got$(psql -X -q -At -d "$CDB" -c "SELECT (SELECT string_agg(x, ',') FROM authz.who('doc', '10', 'promo') x),
+  (SELECT string_agg(x, ',') FROM authz.who('user', '2', 'ext') x), (SELECT count(*) FROM authz.explain('doc', '10', 'promo', '1')) > 0,
+  (SELECT count(*) FROM authz.explain('user', '2', 'ext', '1')) > 0" 2>&1)"
+[ "$out" = "$T/ext.authz: applied" ] && [ "$got" = "11 f|t|f t|f|f 10|2 promo|ext 1|1|t|t" ] &&
+  ok "a permission named ext is its own view: a reader sees what they read, not what the arrow r.ext reaches" ||
+  bad "a permission named ext" "$out: $got"
+dropdb "$CDB"
+
 rm -rf "$T"
 if [ $fails -eq 0 ]; then echo "apply: all passed"; else echo "apply: $fails failed"; exit 1; fi

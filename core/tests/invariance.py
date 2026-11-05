@@ -32,7 +32,7 @@ made by the same SQL, but for these, which a policy written another way may chan
     operand moved across one, a `<` turned round or a NOT moved is another object, though its words are the same
   - names the compiler gives in the order it meets what they are for (NUMBERED, ON_TYPES): invariants
     (__never__N), a second tree of the same types and relations (__tree2), the types an arrow is followed to
-    (__on_t2_t1), and a view of starting points two permissions share (named after the first the compiler meets:
+    (__on_t2__t1), and a view of starting points two permissions share (named after the first the compiler meets:
     __direct). Objects so named are matched by what they make. A rule on columns isn't among them: Postgres fires
     a table's triggers in the order of their names, so its trigger is named after the rule's head
 
@@ -294,13 +294,13 @@ def objects(text: str, files: Files) -> dict[str, str]:
 
 
 # a view of an arrow followed to some of its relation's types names them in the order the relation's sources do
-ON_TYPES = re.compile(r"__on_(\w+?)(?=__links\b|__ext\b|\")")
+ON_TYPES = re.compile(r"__on_(\w+?)(?=__links\b|:ext\b|\")")
 
 
 def unordered(text: str) -> str:
     """text with the names that follow the policy's order made the same whatever it is (NUMBERED, ON_TYPES)."""
     text = NUMBERED.sub(r"\1\2#", text)
-    return ON_TYPES.sub(lambda m: "__on_" + "_".join(sorted(m.group(1).split("_"))), text)
+    return ON_TYPES.sub(lambda m: "__on_" + "__".join(sorted(m.group(1).split("__"))), text)
 
 
 def numbered(objs: dict[str, str]) -> dict[str, list[str]]:
