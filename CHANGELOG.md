@@ -42,6 +42,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 - A caveat that calls a function or an operator of the app's runs with the policy's rights wherever its share
   is checked, as a condition does: a select on the table and its masked view say what `authz.can` and
   `authz.list` say.
+- The Elixir SDK: `Rowstile.transact` inside a transaction it didn't begin (a `Repo.transaction` of the app's, a
+  Postgrex transaction's connection) raises a `RuntimeError` before anything is sent, as the Python and PHP SDKs
+  do, instead of signing that transaction in. `Rowstile.acting_as` says, in its docs, that inside a `transact` the
+  statements still run as that transaction's principal.
 
 ### Upgrading
 

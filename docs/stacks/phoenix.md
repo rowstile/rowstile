@@ -74,6 +74,9 @@ A Postgrex connection works the same way, `Rowstile.transact(conn, fn tx -> ... 
 transaction's connection. A sign-in lasts the whole database transaction: inside a transaction `transact`
 signed in already (Ecto runs a transaction inside another in the outer one), `fun` runs as it is for the same
 principal, and is refused for anyone else, before it runs (a `RuntimeError`), the outer transaction left as it was.
+So is a `transact` inside a transaction it didn't begin (a `Repo.transaction` of the app's, a Postgrex transaction's
+connection), whose sign-in can't be known. `Rowstile.acting_as` inside a `transact` says whom the next `transact`
+signs in as: the statements of the one open still run as its principal.
 
 A background job acts for a principal of its own, whatever started it (`type service = app.services principal`
 in the policy): `as:` names who.
