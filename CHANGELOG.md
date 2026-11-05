@@ -36,6 +36,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   answers, the first line of `authz.explain`, `rowstile why` and a test's `user X can PERM TYPE ID`. The access
   previews (`rowstile diff`, the review's access, `rowstile dev`, `rowstile snapshot`) still list every permission
   gained or lost, on rows the user can't select too.
+- `rowstile review` and `rowstile prove` work out what their small worlds read of a policy once, not in each
+  world, and prove makes each world once for all the invariants: reviewing a refactor of the docs app's policy
+  takes about half the time it did.
 
 ### Removed
 

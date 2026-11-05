@@ -8138,6 +8138,39 @@ class Confidence(unittest.TestCase):
         self.assertEqual(r["world"], ["user: 1", "folder: 1", "folder.owner: folder 1 -> user 1"])
         self.assertIn("no   user 1 holds it on folder 1", prove.describe([r]))
 
+    def test_what_a_world_reads_of_a_policy_is_worked_out_once(self) -> None:
+        # a policy's conditions, the columns they read and how: the same in every world, worked out once for the
+        # policies (not a Reference built for each world); prove makes each world's data once, for every invariant
+        from authzlib import prove
+
+        pol = parse_policy(read(POLICIES["docs"]), "docs.authz")
+        other = parse_policy(
+            read(POLICIES["docs"]).replace("can view  = edit or viewer", "can view  = viewer or edit"), "b.authz"
+        )
+        built: list[int] = []
+        made: list[int] = []
+        init, data = evaluate.Reference.__init__, evaluate.World.data
+
+        def counted(ref: evaluate.Reference, p: parse.Policy) -> None:
+            built.append(1)
+            init(ref, p)
+
+        def made_once(w: evaluate.World, p: parse.Policy) -> evaluate.Data:
+            made.append(1)
+            return data(w, p)
+
+        with (
+            mock.patch.object(evaluate.Reference, "__init__", counted),
+            mock.patch.object(evaluate.World, "data", made_once),
+        ):
+            self.assertIsNone(evaluate.compare(pol, other, worlds=20))
+            self.assertLess(len(built), 10)
+            made.clear()
+            twice = dataclasses.replace(pol, invariants=[*pol.invariants, *pol.invariants])
+            results = prove.prove(twice, worlds=20)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(len(made), max(r["worlds"] for r in results))
+
     def test_prove_and_the_review_try_worlds_from_one_function_in_two_orders(self) -> None:
         # the review: every drawn world, smallest first, then the corners; prove (by_size): at each size, a drawn
         # world and a corner in turn, so its counterexample is the smallest it finds
