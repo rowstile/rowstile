@@ -15,6 +15,8 @@ td, th { padding: 6px 10px; border-bottom: 1px solid #e3e6eb; text-align: left; 
 .problem { background: #fdecec; border: 1px solid #f1b5b5; padding: 8px 12px; white-space: pre-wrap; }
 .tag { font-size: 12px; padding: 1px 6px; border-radius: 8px; background: #e3e6eb; }
 form, section { background: #fff; padding: 12px; margin: 12px 0; border: 1px solid #e3e6eb; }
+textarea { box-sizing: border-box; display: block; margin-bottom: 8px; font: inherit; }
+label { margin-right: 12px; }
 `;
 
 export default function Layout({ children }: { children: ReactNode }) {

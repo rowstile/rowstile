@@ -1,4 +1,4 @@
--- The demo's data, as the tables' owner (test.sh and docker-compose.yml load it after the migrations). Two
+-- The demo's data, as the tables' owner (test.sh loads it after the migrations). Two
 -- workspaces: Acme's desk (an admin, a lead, two agents, teams inside teams, a customer org, an email intake) and
 -- Globex's (an admin and a customer), and one of the vendor's staff. Sign in with any of these emails.
 INSERT INTO hd.workspaces (id, name) VALUES

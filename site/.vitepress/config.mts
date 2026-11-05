@@ -84,6 +84,7 @@ const examples = [
   { text: "Examples", link: "/examples/" },
   { text: "File manager", link: "/examples/filemanager" },
   { text: "Messenger", link: "/examples/messenger" },
+  { text: "Helpdesk", link: "/examples/helpdesk" },
 ];
 
 const nav = [
