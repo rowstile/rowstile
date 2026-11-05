@@ -64,6 +64,11 @@
   names with `can break_glass`. <!-- checked: tests/governance.sh "it lasts one day at most"; tests/governance.sh "the trail has it, with the reason"; tests/governance.sh "carol breaks the glass, and the alert goes out" -->
   They pick the relation, among those the policy lets be shared with a user:
   if `editor` is shared, break glass can give `editor`.
+  It gives it through a share of their own that ends with the emergency access. A share of theirs that lets them
+  in now and lasts longer is left as it is, and one that ends sooner lasts until then. <!-- checked: tests/governance.sh "for an hour"; tests/governance.sh "one of hers that lets her in now and ends later than the hour is left as it is"; tests/governance.sh "one ending sooner is made to last the hour" -->
+  If their share of that relation starts later, or holds only while a caveat does, break glass refuses and names
+  it (AZ717): the emergency access would replace it. <!-- checked: tests/governance.sh "a share of hers that starts later: breaking the glass would replace it, and is refused, naming the share"; tests/governance.sh "and breaking the glass over it is refused, naming the caveat" -->
+  Another relation, or whoever manages that share, gives the access then.
 - **Access reviews**: a snapshot of an object's shares; each is kept or revoked by
   someone who could unshare it; closing applies the decisions. <!-- checked: tests/governance.sh "closing the review revokes what was marked"; tests/governance.sh "dave (not decided) kept it"; tests/governance.sh "nor revoke it in a review" -->
   Reviews are for users: a service signed in is refused each call, saying so (AZ715). <!-- checked: tests/principals.sh "authz.start_review is for users: a service is told so"; tests/principals.sh "authz.review_items is for users: a service is told so"; tests/principals.sh "authz.review_decide is for users: a service is told so"; tests/principals.sh "authz.close_review is for users: a service is told so" -->

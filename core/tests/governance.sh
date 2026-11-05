@@ -562,20 +562,55 @@ got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', NULL, now() + interva
   "SELECT string_agg(relation || '|' || (expires_at - now()), ', ' ORDER BY relation) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
 [ "$got" = "editor|00:10:00, viewer|01:00:00" ] && echo "ok    one ending sooner is made to last the hour, and her shares of other relations are left as they are" ||
   { echo "FAIL  break glass over shares ending sooner: $got"; fails=$((fails + 1)); }
-got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', now() + interval '1 day', NULL), ('folder', '6', 'viewer', 'org', '3', now() + interval '1 day', NULL)" \
-  "SELECT string_agg(subject_type || '|' || coalesce((starts_at > now())::text, 'now') || '|' || (expires_at IS NOT NULL), ', ' ORDER BY subject_type) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
-[ "$got" = "org|true|false, user|now|true" ] && echo "ok    one of hers that starts tomorrow lets her in now, for the hour; another kind of subject's share, with her id, is left" ||
-  { echo "FAIL  break glass over a share starting later: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', NULL, now() + interval '3 days')" \
+  "SELECT coalesce(starts_at::text, 'now') || '|' || (expires_at - now()) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
+[ "$got" = "now|3 days" ] && echo "ok    one of hers that lets her in now and ends later than the hour is left as it is" ||
+  { echo "FAIL  break glass over a live share ending later: $got"; fails=$((fails + 1)); }
+got=$(glass "$SHARE ('folder', '6', 'viewer', 'org', '3', now() + interval '1 day', NULL)" \
+  "SELECT string_agg(subject_type || '|' || coalesce((starts_at > now())::text, 'now') || '|' || coalesce((expires_at - now())::text, 'no end'), ', ' ORDER BY subject_type) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
+[ "$got" = "org|true|no end, user|now|01:00:00" ] && echo "ok    another kind of subject's share, with her id, is left as it is, and she gets one of her own for the hour" ||
+  { echo "FAIL  break glass beside an org's share with her id: $got"; fails=$((fails + 1)); }
 got=$(glass "$SHARE ('file', '6', 'viewer', 'user', '3', now() + interval '1 day', NULL)" \
   "SELECT count(*) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3' AND starts_at IS NULL")
 [ "$got" = 1 ] && echo "ok    a share of hers on another type's object with the same id is not the folder's: she gets the folder's" ||
   { echo "FAIL  break glass beside a share of another type: $got"; fails=$((fails + 1)); }
-got=$(glass "$SHARE ('folder', '6', 'viewer', 'user', '3', now() + interval '1 day', now() + interval '3 days')" \
-  "SELECT coalesce(starts_at::text, 'now') || '|' || (expires_at - now()) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_type = 'user' AND subject_id = '3'")
-[ "$got" = "now|3 days" ] && echo "ok    one of hers that starts tomorrow and ends later than the hour: it lets her in now, and still ends when it did" ||
-  { echo "FAIL  break glass over a share starting later and ending later: $got"; fails=$((fails + 1)); }
+# a share of hers that doesn't let her in now (it starts later, or holds while a caveat does): breaking the glass
+# would replace it, and refuses instead; $2 the owner's rows, put in after carol's shares on Keys are taken away
+glass_refused() {
+  expect_code "$1" "$3" -c "RESET ROLE" -c "SET TimeZone = 'UTC'" -c "BEGIN" \
+    -c "DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'; $2" \
+    -c "SET LOCAL ROLE app_user" -c "SET LOCAL authz.user_id = 3" -c "SELECT authz.break_glass('folder', '6', 'viewer', 'INC-8', '1 hour')" -c "ROLLBACK"
+}
+glass_refused "a share of hers that starts later: breaking the glass would replace it, and is refused, naming the share" \
+  "$SHARE ('folder', '6', 'viewer', 'user', '3', '2099-01-02 03:04:05+00', NULL)" \
+  "42501: a share of yours gives you folder.viewer on folder 6 from 2099-01-02 03:04:05+00, and breaking the glass would replace it"
+glass_refused "... and so is one that starts tomorrow and ends in three days: the emergency access lasts the hour at most" \
+  "$SHARE ('folder', '6', 'viewer', 'user', '3', now() + interval '1 day', now() + interval '3 days')" \
+  "42501: a share of yours gives you folder.viewer on folder 6 from "
 expect_code "one day exactly is allowed" ok -c "SET authz.user_id = 3" -c "BEGIN" \
   -c "SELECT authz.break_glass('folder', '6', 'viewer', 'outage', '1 day')" -c "ROLLBACK"
+# with a caveat in the policy: a share of hers that holds only while it does
+{ echo "caveat business_hours = {authz.ctx('mode') = 'business'}"; cat example/docs.authz; } > $T/governance_caveat.authz
+python3 compile_policy.py $T/governance_caveat.authz > $T/governance_caveat.sql && reapply $T/governance_caveat.sql
+CAVEAT="INSERT INTO authz.shares (object_type, object_id, relation, subject_type, subject_id, expires_at, caveat) VALUES"
+got=$(PSQL -c "BEGIN" -c "DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'" \
+       -c "$CAVEAT ('folder', '6', 'viewer', 'user', '3', NULL, 'business_hours')" \
+       -c "SET LOCAL ROLE app_user" -c "SET LOCAL authz.user_id = 3" -c "SELECT authz.can('file', 12, 'view')" -c "ROLLBACK" 2>&1 | tail -n 1)
+[ "$got" = f ] && echo "ok    a share of hers with a caveat that doesn't hold lets her see nothing" ||
+  { echo "FAIL  a share with a caveat that doesn't hold: $got"; fails=$((fails + 1)); }
+glass_refused "... and breaking the glass over it is refused, naming the caveat: it would take the caveat off" \
+  "$CAVEAT ('folder', '6', 'viewer', 'user', '3', NULL, 'business_hours')" \
+  "42501: a share of yours gives you folder.viewer on folder 6 while caveat business_hours holds, and breaking the glass would replace it"
+said=$(psql -X -q -At -d "$DB" -c "BEGIN" -c "DELETE FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'" \
+       -c "$CAVEAT ('folder', '6', 'viewer', 'user', '3', NULL, 'business_hours')" -c "SET LOCAL ROLE app_user" -c "SET LOCAL authz.user_id = 3" \
+       -c "SELECT authz.break_glass('folder', '6', 'viewer', 'INC-8')" -c "ROLLBACK" 2>&1 | grep '^HINT:  ')
+[ "$said" = "HINT:  rowstile help AZ717" ] && echo "ok    ... with its own code (AZ717)" ||
+  { echo "FAIL  the code of a share in the way: $said"; fails=$((fails + 1)); }
+got=$(glass "$CAVEAT ('folder', '6', 'viewer', 'user', '3', now() - interval '1 day', 'business_hours')" \
+  "SELECT coalesce(caveat, 'no caveat') || '|' || coalesce(starts_at::text, 'now') || '|' || (expires_at - now()) FROM authz.shares WHERE object_type = 'folder' AND object_id = '6' AND subject_id = '3'")
+[ "$got" = "no caveat|now|01:00:00" ] && echo "ok    one of hers that has ended, caveat and all, gives way to the emergency access: without the caveat, for the hour" ||
+  { echo "FAIL  break glass over an ended share with a caveat: $got"; fails=$((fails + 1)); }
+reapply $T/governance.sql
 
 echo "-- access requests"
 REQ=$(as 3 -c "SELECT authz.request_access('folder', 5, 'viewer', 'need the offer letter template', '7 days')")

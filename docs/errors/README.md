@@ -102,6 +102,7 @@ What the command, the editor or a migration reports ends with its code: `line 4:
 - [AZ714](AZ714.md): Sign in first
 - [AZ715](AZ715.md): For users only
 - [AZ716](AZ716.md): Signed in as someone else already
+- [AZ717](AZ717.md): A share of yours is in the way
 
 ## The sync index (a preview)
 
