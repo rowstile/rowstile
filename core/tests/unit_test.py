@@ -5425,6 +5425,18 @@ class Graph(unittest.TestCase):
         self.assertLessEqual(used, set(declared), sorted(used - set(declared)))
         self.assertEqual(len(declared), len(set(declared)))
 
+    def test_the_users_own_relations_are_drawn(self) -> None:
+        # a user type with relations and no permission: its box holds them, so an arrow through one (owner.manager)
+        # and a subject named with one (user#manager) point at a node the diagram declares
+        declared, used = self.nodes(
+            "app role app_user\ntype user = app.users\n  manager : user = manager_id\ntype doc = app.docs\n"
+            "  owner : user = owner_id\n  viewer : user#manager shared by view\n"
+            "  can view = owner or owner.manager or viewer\nrules app.docs\n  select : view\n"
+        )
+        self.assertIn("user__manager", declared)
+        self.assertLessEqual(used, set(declared), sorted(used - set(declared)))
+        self.assertEqual(len(declared), len(set(declared)))
+
     def test_the_whole_diagram(self) -> None:
         # what rowstile graph prints, line by line: the styles, a box per type, shares dotted and columns solid, a
         # share with a team's members to the member relation (the team has no permission), with every service to
