@@ -46,6 +46,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
 
 ### Fixed
 
+- `rowstile init` without `--schema` leaves out the sync index's schema, `authz_sync`: its tables were drafted as
+  the app's, and the roles granted them counted when it chose the app role.
 - `rowstile init` reads `pyproject.toml` as TOML: its dependencies, optional ones, dependency groups and Poetry's
   tables. Before, each line's first word counted as a package, so any `pyproject.toml` made the app a Python one.
   It reads Alembic's `script_location` as Alembic does (`%(here)s` without a slash, a folder written with `\`), and

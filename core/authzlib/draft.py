@@ -15,6 +15,7 @@ from typing import NotRequired, TypedDict
 
 from . import parse
 from .parse import COMMANDS, KEY_TYPES
+from .sqlutil import OWN_SCHEMAS, lit
 
 # names a relation doesn't get: the language's words, the commands, and the two permissions every drafted type has
 RESERVED = (
@@ -608,11 +609,16 @@ def draft(
     return text
 
 
-# The tables a draft reads: those in the schemas named ($1), or in every schema of the app's (NULL)
-TABLES = r"""FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+# The tables a draft reads: those in the schemas named ($1), or in every schema of the app's (NULL): none of
+# Postgres's or rowstile's
+TABLES = (
+    r"""FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition
   AND (n.nspname = ANY ($1) OR ($1 IS NULL AND n.nspname NOT LIKE 'pg\_%'
-       AND n.nspname NOT IN ('information_schema', 'authz', 'authz_gen', 'authz_int', 'authz_keep')))"""
+       AND n.nspname NOT IN ("""
+    + ", ".join(lit(s) for s in ("information_schema", *OWN_SCHEMAS))
+    + ")))"
+)
 
 CATALOG_SQL = (
     r"""

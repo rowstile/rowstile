@@ -527,8 +527,10 @@ case "$out" in *"(app_user) "*$'\n'"     No role is granted the tables yet: if y
 out=$(cd "$T/n" && python3 "$OLDPWD/cli/rowstile_cli.py" check 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "... which compiles" || bad "draft names compile" "$out"
 # no --schema: every schema of the app's (here pr alone), the same draft
+psql -X -q -v ON_ERROR_STOP=1 -d "${DB}_names" -c "CREATE SCHEMA authz_sync; CREATE TABLE authz_sync.keys (k text PRIMARY KEY); GRANT SELECT ON authz_sync.keys TO authz_devx_other" >/dev/null
 out=$(mkdir -p "$T/n2" && cd "$T/n2" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_names" init 2>&1)
-cmp -s "$T/n/db/policy.authz" "$T/n2/db/policy.authz" && ok "init without --schema drafts from every schema of the app's" ||
+psql -X -q -d "${DB}_names" -c "DROP SCHEMA authz_sync CASCADE" >/dev/null
+cmp -s "$T/n/db/policy.authz" "$T/n2/db/policy.authz" && ok "init without --schema drafts from every schema of the app's, none of rowstile's (its sync index's)" ||
   bad "init without --schema" "$out $(diff "$T/n/db/policy.authz" "$T/n2/db/policy.authz" 2>&1 | head -n 5)"
 out=$(cd "$T/n" && python3 "$OLDPWD/cli/rowstile_cli.py" --db "dbname=${DB}_names" apply 2>&1); rc=$?
 case "$out" in *": applied") ok "... and applies";; *) bad "draft names apply" "$out";; esac
