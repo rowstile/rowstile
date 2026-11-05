@@ -6,6 +6,7 @@ namespace Tests\Feature;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use PDO;
 use PDOException;
 use PHPUnit\Framework\Attributes\TestDox;
 use Rowstile\ConnectionProblem;
@@ -174,6 +175,30 @@ final class ChecksTest extends TestCase
         } finally {
             unset($holder);
             $owner->exec("DROP DATABASE IF EXISTS {$held} WITH (FORCE)");
+        }
+    }
+
+    // the same original as each SDK's check: its name 63 bytes, with "é" across byte 54
+    #[TestDox("12: a name past Postgres's 63 bytes is shortened by a hash, never the original's")]
+    public function test_12_a_long_name_is_shortened_by_a_hash(): void
+    {
+        $long = 'conf_é_long_'.str_repeat('x', 40).'é'.str_repeat('y', 8);
+        $short = 'conf_é_long_'.str_repeat('x', 40); // its first 54 bytes, but half a character
+        $named = ["{$short}_e9dc8356", "{$short}_4d7e20f5", $long];
+        $server = Databases::connect(self::env('ROWSTILE_TESTS_URL'), 'postgres');
+        $server->exec("DROP DATABASE IF EXISTS \"{$long}\"");
+        $server->exec("CREATE DATABASE \"{$long}\"");
+        try {
+            $url = Databases::withDatabase(self::env('ROWSTILE_TESTS_URL'), $long);
+            // (Postgres would cut both to the original's name)
+            self::assertSame([$named[0], $named[1]], [Databases::copy($url, '1'), Databases::copy($url, '10')]);
+            $there = $server->query("SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%' ORDER BY datname COLLATE \"C\"");
+            self::assertNotFalse($there);
+            self::assertSame([$named[1], $named[0], $named[2]], $there->fetchAll(PDO::FETCH_COLUMN)); // as the bytes order them
+        } finally {
+            foreach ($named as $name) {
+                $server->exec("DROP DATABASE IF EXISTS \"{$name}\" WITH (FORCE)");
+            }
         }
     }
 

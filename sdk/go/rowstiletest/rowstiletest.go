@@ -12,7 +12,9 @@
 //
 // go test runs the tests of each package in a process of its own, packages side by side (-p): each package is a
 // worker, and gets its own database, named after the one it copies and the package. Tests of one package share
-// it, t.Parallel() ones too.
+// it, t.Parallel() ones too. The copy is named `<database>_<package>_<hash>`; a name longer than Postgres's 63 bytes
+// is shortened: its first 54 bytes (fewer, not to cut a character in two), `_`, and the first 8 hex digits of the
+// SHA-256 of the whole name.
 package rowstiletest
 
 import (
@@ -27,6 +29,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -51,6 +54,20 @@ func Worker() string {
 	return last + "_" + hex.EncodeToString(sum[:])[:8]
 }
 
+// fitted is a database's name within Postgres's 63 bytes (see the package's doc): Postgres would cut a longer one at
+// 63 bytes, where two packages' names, or a copy's and its original's, can come out the same.
+func fitted(name string) string {
+	if len(name) <= 63 {
+		return name
+	}
+	cut := name[:54]
+	for !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	sum := sha256.Sum256([]byte(name))
+	return cut + "_" + hex.EncodeToString(sum[:])[:8]
+}
+
 func withDatabase(u *url.URL, name string) string {
 	c := *u
 	c.Path, c.RawPath = "/"+name, ""
@@ -67,7 +84,7 @@ func PerPackage(ctx context.Context, testsURL, appURL string, fresh bool) (Datab
 	if err != nil || template == "" {
 		return Database{}, fmt.Errorf("rowstiletest: %q is not a URL that names a database to copy", testsURL)
 	}
-	name := template + "_" + Worker()
+	name := fitted(template + "_" + Worker())
 	ident := pgx.Identifier{name}.Sanitize()
 	// CREATE DATABASE ... TEMPLATE needs no one connected to the original, this connection included
 	conn, err := pgx.Connect(ctx, withDatabase(u, "postgres"))

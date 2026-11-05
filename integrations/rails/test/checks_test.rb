@@ -5,6 +5,7 @@ require "puma"
 require "puma/server"
 require "tmpdir"
 require "fileutils"
+require "erb"
 
 # The checks that serve the app with Puma (4, 5), type-check the generated names (9), look at the test databases
 # (12), start the app (13) and change the policy (14).
@@ -140,6 +141,35 @@ class ChecksTest < ActiveSupport::TestCase
   ensure
     holder&.close
     Rows.owner { |c| c.exec("DROP DATABASE IF EXISTS #{held} WITH (FORCE)") }
+  end
+
+  # 12: ... a copy's name past Postgres's 63 bytes is shortened (its first 54 bytes, _, a hash of the whole name), so
+  # it is never the original's, nor another worker's. The same original as each SDK's check: its name 63 bytes, with
+  # "é" across byte 54
+  test "12: a long name is shortened by a hash" do
+    long = "conf_é_long_#{'x' * 40}é#{'y' * 8}"
+    short = "conf_é_long_#{'x' * 40}" # its first 54 bytes, but half a character
+    named = ["#{short}_e9dc8356", "#{short}_4d7e20f5", long]
+    config = ActiveRecord::Base.connection_db_config.configuration_hash
+    on_server { |c| c.exec(%(DROP DATABASE IF EXISTS "#{long}")) && c.exec(%(CREATE DATABASE "#{long}")) }
+    url = TESTS_OWNER.sub(%r{/conf_tests\z}, "/#{ERB::Util.url_encode(long)}")
+    # (Postgres would cut both to the original's name)
+    assert_equal named.first(2), [1, 10].map { |worker| Rowstile::Testing.database_per_worker(url, worker) }
+    there = on_server do |c|
+      c.exec(%(SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%' ORDER BY datname COLLATE "C")).column_values(0)
+    end
+    assert_equal named.values_at(1, 0, 2), there # (as the bytes order them)
+  ensure
+    ActiveRecord::Base.establish_connection(config) if config
+    on_server { |c| named&.each { |n| c.exec(%(DROP DATABASE IF EXISTS "#{n}" WITH (FORCE))) } }
+  end
+
+  # Runs the block on a connection of the owner's to the server's postgres database; gives what it gives
+  def on_server
+    conn = PG.connect(TESTS_OWNER, dbname: "postgres")
+    yield conn
+  ensure
+    conn&.close
   end
 
   class OwnerRecord < ActiveRecord::Base

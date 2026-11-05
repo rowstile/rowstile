@@ -7,5 +7,6 @@ target :lib do
   signature "sig", "steep"
   check "lib"
   library "json"
+  library "digest"
   configure_code_diagnostics(D::Ruby.strict)
 end

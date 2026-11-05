@@ -13,11 +13,14 @@ With an async function, await the helper in an async test: `await assert_refused
 A test that never awaits it fails: the check runs only when it is awaited.
 
 A database per worker: database_per_worker(owner_url) copies the migrated test database (with the policy) once
-for each pytest-xdist worker, so tests that write don't meet each other.
+for each pytest-xdist worker, so tests that write don't meet each other. The copy is named `<database>_w<worker>`;
+a name longer than Postgres's 63 bytes is shortened: its first 54 bytes (fewer, not to cut a character in two),
+`_`, and the first 8 hex digits of the SHA-256 of the whole name.
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import inspect
 import os
@@ -75,8 +78,20 @@ def worker_id() -> str:
 
 
 def _with_database(url: str, name: str) -> str:
+    """The URL naming another database (`postgresql:///app?host=/run/sock` keeps its `//`)."""
     u = urllib.parse.urlsplit(url)
-    return urllib.parse.urlunsplit(u._replace(path="/" + urllib.parse.quote(name, safe="")))
+    query = f"?{u.query}" if u.query else ""
+    return f"{u.scheme}://{u.netloc}/{urllib.parse.quote(name, safe='')}{query}"
+
+
+def _fitted(name: str) -> str:
+    """A database's name within Postgres's 63 bytes: a longer one is shortened to its first 54 bytes (fewer, not
+    to cut a character in two), `_`, and the first 8 hex digits of the SHA-256 of the whole name. Postgres would
+    cut it at 63 bytes, where two workers' names, or a copy's and its original's, can come out the same."""
+    whole = name.encode()
+    if len(whole) <= 63:
+        return name
+    return f"{whole[:54].decode(errors='ignore')}_{hashlib.sha256(whole).hexdigest()[:8]}"
 
 
 def database_per_worker(url: str, app_url: str | None = None, fresh: bool = True) -> WorkerDatabase:
@@ -92,7 +107,7 @@ def database_per_worker(url: str, app_url: str | None = None, fresh: bool = True
     template = urllib.parse.unquote(urllib.parse.urlsplit(url).path.lstrip("/"))
     if not template:
         raise ValueError("database_per_worker needs a database to copy, and this URL names none")
-    name = f"{template}_w{worker_id()}"
+    name = _fitted(f"{template}_w{worker_id()}")
 
     def q(ident: str) -> str:
         return '"' + ident.replace('"', '""') + '"'

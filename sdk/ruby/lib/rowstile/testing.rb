@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "digest"
 require "pg"
 require "rowstile"
 
@@ -47,15 +48,18 @@ module Rowstile
 
     # A database for this worker, copied from the one owner_url names (migrated, with the policy), made again if an
     # earlier run left one; then the app's connection (its role, its settings) goes to the copy. Its name: the
-    # original's and the worker's number, as Rails names a worker's database (conf_tests_0). The copy is made by a
-    # role that may create databases (the owner), while nothing is connected to the original.
+    # original's and the worker's number, as Rails names a worker's database (conf_tests_0); a name longer than
+    # Postgres's 63 bytes is shortened: its first 54 bytes (fewer, not to cut a character in two), `_`, and the first
+    # 8 hex digits of the SHA-256 of the whole name. The copy is made by a role that may create databases (the owner),
+    # while nothing is connected to the original.
     #
     #   parallelize_setup { |worker| Rowstile::Testing.database_per_worker(ENV["ROWSTILE_TESTS_URL"], worker) }
     def self.database_per_worker(owner_url, worker = 0)
       template = PG::Connection.conninfo_parse(owner_url).to_h { |o| [o[:keyword], o[:val]] }["dbname"]
       raise ArgumentError, "database_per_worker needs a database to copy, and this URL names none" if template.nil?
 
-      name = "#{template}_#{worker}"
+      template = template.dup.force_encoding(Encoding::UTF_8) # (pg gives the URL's parts as bytes)
+      name = fitted("#{template}_#{worker}")
       conn = PG.connect(owner_url, dbname: "postgres")
       begin
         conn.exec("SET client_min_messages = warning")
@@ -71,5 +75,14 @@ module Rowstile
                                                 .merge(database: name))
       name
     end
+
+    # A database's name within Postgres's 63 bytes (see database_per_worker): Postgres would cut a longer one at 63
+    # bytes, where two workers' names, or a copy's and its original's, can come out the same.
+    def self.fitted(name)
+      return name if name.bytesize <= 63
+
+      "#{name.byteslice(0, 54).to_s.scrub("")}_#{Digest::SHA256.hexdigest(name)[0, 8]}"
+    end
+    private_class_method :fitted
   end
 end

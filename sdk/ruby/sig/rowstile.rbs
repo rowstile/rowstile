@@ -156,6 +156,7 @@ module Rowstile
     def assert_refused: (?command: String?, ?table: String?) { () -> untyped } -> Refused
     def assert_not_found: () { () -> untyped } -> (NotFound | ActiveRecord::RecordNotFound)
     def self.database_per_worker: (String owner_url, ?Integer worker) -> String
+    private def self.fitted: (String name) -> String
 
     interface _Assertions
       def assert: (untyped test, ?String message) -> true

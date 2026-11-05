@@ -157,6 +157,51 @@ public sealed class Check12And14(MigrationDatabase db)
         }
     }
 
+    // 12: ... a copy's name past Postgres's 63 bytes is shortened (its first 54 bytes, _, a hash of the whole name),
+    // so it is never the original's, nor another worker's. The same original as each SDK's check: its name 63 bytes,
+    // with "é" across byte 54
+    [Fact]
+    public async Task Check_12_a_long_name_is_shortened_by_a_hash()
+    {
+        string longName = "conf_é_long_" + new string('x', 40) + "é" + new string('y', 8);
+        string shortName = "conf_é_long_" + new string('x', 40); // its first 54 bytes, but half a character
+        string[] named = [$"{shortName}_404b91d0", $"{shortName}_5c325d62", longName];
+        string server = new NpgsqlConnectionStringBuilder(Env.Tests) { Database = "postgres", Pooling = false }.ConnectionString;
+        await Data.Sql(server, $"DROP DATABASE IF EXISTS \"{longName}\"");
+        await Data.Sql(server, $"CREATE DATABASE \"{longName}\"");
+        try
+        {
+            string original = new NpgsqlConnectionStringBuilder(Env.Tests) { Database = longName }.ConnectionString;
+            var copies = new List<string>();
+            foreach (string worker in new[] { "1", "10" })
+            {
+                var copy = await TestDatabase.PerWorkerAsync(original, worker);
+                copies.Add(new NpgsqlConnectionStringBuilder(copy.ConnectionString).Database!);
+            }
+            // (Postgres would cut both to the original's name)
+            Assert.Equal(named[..2], copies);
+            var there = new List<string>();
+            await using (var conn = new NpgsqlConnection(server))
+            {
+                await conn.OpenAsync();
+                await using var reader = await new NpgsqlCommand("SELECT datname FROM pg_database WHERE datname LIKE 'conf_é_long_%' ORDER BY datname COLLATE \"C\"", conn).ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    there.Add(reader.GetString(0));
+                }
+            }
+            Assert.Equal(named, there);
+        }
+        finally
+        {
+            NpgsqlConnection.ClearAllPools();
+            foreach (string name in named)
+            {
+                await Data.Sql(server, $"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)");
+            }
+        }
+    }
+
     private static async Task<List<long>> Projects(string app, long user)
     {
         await using var conn = new NpgsqlConnection(app);

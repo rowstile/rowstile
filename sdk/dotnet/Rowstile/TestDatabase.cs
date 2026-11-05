@@ -1,4 +1,6 @@
 using System;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Npgsql;
@@ -12,7 +14,9 @@ public sealed record WorkerDatabase(string ConnectionString, string? AppConnecti
 
 /// <summary>
 /// A copy of the migrated test database (with the policy) for each test worker, so tests that write don't meet each
-/// other: in xUnit, one for each test collection (a collection fixture), named after the worker.
+/// other: in xUnit, one for each test collection (a collection fixture), named after the worker. The copy is named
+/// <c>&lt;database&gt;_w&lt;worker&gt;</c>; a name longer than Postgres's 63 bytes is shortened: its first 54 bytes
+/// (fewer, not to cut a character in two), <c>_</c>, and the first 8 hex digits of the SHA-256 of the whole name.
 /// <code>
 /// public sealed class Database : IAsyncLifetime
 /// {
@@ -45,7 +49,7 @@ public static class TestDatabase
         {
             throw new ArgumentException("TestDatabase.PerWorkerAsync needs a database to copy, and this connection string names none", nameof(connectionString));
         }
-        string name = $"{template}_w{worker}";
+        string name = Fitted($"{template}_w{worker}");
         // CREATE DATABASE ... TEMPLATE needs no one connected to the original, this connection included; and no pool
         // keeps one open after
         var elsewhere = new NpgsqlConnectionStringBuilder(connectionString) { Database = "postgres", Pooling = false };
@@ -87,6 +91,28 @@ public static class TestDatabase
             new NpgsqlConnectionStringBuilder(connectionString) { Database = name }.ConnectionString,
             appConnectionString is null ? null : new NpgsqlConnectionStringBuilder(appConnectionString) { Database = name }.ConnectionString
         );
+
+    /// <summary>
+    /// A database's name within Postgres's 63 bytes (see the class's summary): Postgres would cut a longer one at 63
+    /// bytes, where two workers' names, or a copy's and its original's, can come out the same.
+    /// </summary>
+    private static string Fitted(string name)
+    {
+        byte[] whole = Encoding.UTF8.GetBytes(name);
+        if (whole.Length <= 63)
+        {
+            return name;
+        }
+        int end = 0;
+        while (Encoding.UTF8.GetByteCount(name.AsSpan(0, Next(end))) <= 54)
+        {
+            end = Next(end);
+        }
+        return $"{name[..end]}_{Convert.ToHexStringLower(SHA256.HashData(whole))[..8]}";
+
+        // where the character at `at` ends
+        int Next(int at) => at + Rune.GetRuneAt(name, at).Utf16SequenceLength;
+    }
 
     private static string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 

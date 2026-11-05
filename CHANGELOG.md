@@ -23,6 +23,8 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   `act_as(NULL, NULL)` is still fine, and so is the same principal again. `view_as`, and `who`, `explain`,
   `who_among` and the invariants, which ask as others and put back the caller, aren't held to it, nor are the
   sessions of the policy's owner and superusers.
+- The Rust SDK's `rowstile::testing::per_binary` refuses an app role's URL that isn't a Postgres URL, instead of
+  giving it back as it was.
 
 ### Fixed
 
@@ -71,6 +73,14 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   is refused for anyone else with an `InvalidOperationException`, before anything is sent. In a `TransactionScope`
   the connection takes part in, the context's work is refused, as that transaction's sign-in can't be known
   ([ASP.NET Core and EF Core](docs/stacks/aspnetcore.md)).
+- Every SDK's test helper keeps the copy's name within Postgres's 63 bytes: a longer one is shortened to its first
+  54 bytes (fewer, not to cut a character in two), `_`, and the first 8 hex digits of the SHA-256 of the whole name.
+  Postgres cut it before, so a long name could stand for the original, which the helper then dropped, or for
+  another worker's copy.
+- The Rust SDK's `per_binary` names the copy in an app role's URL that names no database, and reads a name the URL
+  percent-encodes; the Java SDK's `WorkerDatabase.copy` reads it too, and writes the copy's so.
+- The Python SDK's `database_per_worker` keeps a URL whose host is in its settings (`postgresql:///app?host=...`)
+  as it is written.
 
 ### Upgrading
 

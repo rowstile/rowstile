@@ -17,9 +17,11 @@ defmodule Rowstile.Testing do
 
   @doc """
   Copies the migrated test database `owner_url` names (with the policy) for this test partition, and gives the
-  copy's name: `<database>_<partition>`. The copy is made by a role that may create databases (the owner), while
-  nothing else is connected to the original. A copy an earlier run left is made again, unless `fresh: false`.
-  `partition:` defaults to `MIX_TEST_PARTITION` (1 without it).
+  copy's name: `<database>_<partition>`; a name longer than Postgres's 63 bytes is shortened: its first 54 bytes
+  (fewer, not to cut a character in two), `_`, and the first 8 hex digits of the SHA-256 of the whole name. The copy
+  is made by a role that may create databases (the owner), while nothing else is connected to the original. A copy
+  an earlier run left is made again, unless `fresh: false`. `partition:` defaults to `MIX_TEST_PARTITION` (1 without
+  it).
   """
   @spec database_per_partition(String.t(), keyword()) :: String.t()
   def database_per_partition(owner_url, opts \\ []) do
@@ -37,7 +39,7 @@ defmodule Rowstile.Testing do
     partition =
       Keyword.get_lazy(opts, :partition, fn -> System.get_env("MIX_TEST_PARTITION", "1") end)
 
-    name = "#{template}_#{partition}"
+    name = fitted("#{template}_#{partition}")
     # (before the app is started: mix test --no-start)
     {:ok, _} = Application.ensure_all_started(:postgrex)
     {:ok, conn} = Postgrex.start_link(connection(uri))
@@ -81,6 +83,23 @@ defmodule Rowstile.Testing do
   end
 
   defp held(error, _template), do: error
+
+  # A database's name within Postgres's 63 bytes (see database_per_partition): Postgres would cut a longer one at
+  # 63 bytes, where two partitions' names, or a copy's and its original's, can come out the same.
+  defp fitted(name) when byte_size(name) <= 63, do: name
+
+  defp fitted(name) do
+    hash = :crypto.hash(:sha256, name) |> Base.encode16(case: :lower) |> binary_part(0, 8)
+
+    cut =
+      name
+      |> String.codepoints()
+      |> Enum.reduce_while("", fn c, cut ->
+        if byte_size(cut <> c) > 54, do: {:halt, cut}, else: {:cont, cut <> c}
+      end)
+
+    cut <> "_" <> hash
+  end
 
   # Postgrex's settings from the URL, on the database every server has (the copy is made from outside it)
   defp connection(uri) do
