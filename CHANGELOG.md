@@ -145,6 +145,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   tests failed with a Python error.
 - A `$name` in a string or a comment of a test's SQL is text: `given {INSERT ... VALUES (9001, 'Ann $smith')}`
   was refused ("$smith is not named yet", AZ501), or had the name's value put inside the string.
+- A test file holding a `sync` line, a masked view (`rules app.files view ...`) or a `cascade from` line is
+  refused (AZ106), as one holding a type is: a test file holds only named tests. Before, those lines did
+  nothing, and nothing said so.
 
 ### Upgrading
 

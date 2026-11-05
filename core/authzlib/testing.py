@@ -8,9 +8,10 @@
 from __future__ import annotations
 
 import re
+from dataclasses import fields
 
 from .compiler import Core
-from .parse import AsStep, CheckStep, Loc, PolicyError, Scenario, Step, fail, parse_policy
+from .parse import AsStep, CheckStep, Loc, Policy, PolicyError, Scenario, Step, fail, parse_policy
 from .sqlutil import DOLLAR_OPEN, lit, sql_code
 from .statements import WORD, split
 
@@ -18,6 +19,7 @@ FN = "pg_temp.authz_policy_tests"
 VAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\b(?!\$)")  # $name, not a $tag$ dollar quote
 NAME = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*")  # a test's id that is a name: $ann
 WRITES = ("insert", "update", "delete", "merge")
+EMPTY = Policy()  # a policy that says nothing: what a test file holds but its tests
 COVERAGE = "authz:coverage"  # the test name of coverage rows (tests_function_sql(coverage=True))
 SQL_NL = "E'\\n'"  # a newline in SQL (Python 3.11 allows no backslash inside an f-string's braces)
 
@@ -55,15 +57,8 @@ class TestMixin(Core):
                 assert sc.loc is not None  # (only the unnamed test section has no line of its own)
                 for loc in [sc.loc] + [st.loc for st in sc.steps]:
                     loc.file = name
-            if (
-                pol.types
-                or pol.rules
-                or pol.tests
-                or pol.invariants
-                or pol.scopes
-                or pol.caveats
-                or pol.role is not None
-            ):
+            # anything but named tests: a field of the Policy that isn't as an empty policy has it
+            if any(getattr(pol, f.name) != getattr(EMPTY, f.name) for f in fields(Policy) if f.name != "scenarios"):
                 raise PolicyError(
                     f'{name}: a test file holds only named tests: test "name" followed by its lines', "AZ106"
                 )
