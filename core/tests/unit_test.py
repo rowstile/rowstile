@@ -7566,6 +7566,11 @@ class Wire(unittest.TestCase):
         self.assertEqual(convert(1009, b"[0:1]={a,b}"), "[0:1]={a,b}")
         self.assertEqual(self.pgwire._saslprep("pa\u00adss\u2168"), "passIX")  # as psql prepares a password for SCRAM
         self.assertEqual(self.pgwire._saslprep("caf\u00e9"), "caf\u00e9")
+        # right-to-left letters (RFC 3454's bidi rule): first and last, with no left-to-right letter, or the password
+        # is used as it is, as Postgres stores it; so is one that maps to nothing
+        self.assertEqual(self.pgwire._saslprep("\u05e9\u00ad\u2460\u05e9"), "\u05e91\u05e9")
+        for raw in ("\u05e9\u2168\u05e9", "\u05e9\u2460", "\u2460\u05e9", "\u00ad"):
+            self.assertEqual(self.pgwire._saslprep(raw), raw, ascii(raw))
 
     def test_require_auth_as_libpq_reads_it(self) -> None:
         # the ways the server may ask for the password: any other is refused before anything is sent to it
