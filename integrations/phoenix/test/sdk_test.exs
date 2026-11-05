@@ -34,6 +34,12 @@ defmodule Conformance.SdkTest do
 
     assert as(1, fn -> Rowstile.list(Repo, Authz.Project.view(), limit: 1, after: 1) end) ==
              {:ok, ["3"]}
+
+    # no cursor (nil, as a request's missing parameter): the first page; a cursor without a size: every id after it
+    assert as(1, fn -> Rowstile.list(Repo, Authz.Project.view(), after: nil, limit: 1) end) ==
+             {:ok, ["1"]}
+
+    assert as(1, fn -> Rowstile.list(Repo, Authz.Project.view(), after: 1) end) == {:ok, ["3"]}
   end
 
   test "inside a transaction signed in already: the same principal's work runs, anyone else's is refused" do
@@ -425,7 +431,18 @@ defmodule Conformance.SdkTest do
 
   test "keys as Postgres writes them" do
     shown =
-      [7, [7], [1, 2], ["a b", "x,y"], ["", ~s(q"t)], ["b\\s", "(1)"], [1, nil]]
+      [
+        7,
+        [7],
+        [1, 2],
+        ["a b", "x,y"],
+        ["", ~s(q"t)],
+        ["b\\s", "(1)"],
+        [1, nil],
+        {1, "a b"},
+        {7},
+        nil
+      ]
       |> Enum.map(&Rowstile.key_text/1)
 
     assert shown == [
@@ -435,8 +452,15 @@ defmodule Conformance.SdkTest do
              ~s{("a b","x,y")},
              ~s{("","q""t")},
              ~s{("b\\\\s","(1)")},
-             "(1,)"
+             "(1,)",
+             ~s{(1,"a b")},
+             "7",
+             nil
            ]
+
+    # a field quoted for ASCII's six spaces alone, as Postgres does: not for a no-break space, an em space
+    assert Enum.map([["\vv", "a\u00a0b"], ["\u2003\x1c", "\r\n\f"]], &Rowstile.key_text/1) ==
+             [~s{("\vv",a\u00a0b)}, ~s{(\u2003\x1c,"\r\n\f")}]
   end
 
   test "the plug: who the request acts for, or the answer when the app refuses it" do
