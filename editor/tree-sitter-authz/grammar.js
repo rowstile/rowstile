@@ -13,6 +13,9 @@ module.exports = grammar({
 
   extras: ($) => [/\s/, $.comment],
 
+  // read in src/scanner.c: a dollar quote ($$x$$, $tag$x$tag$) and a /* comment */, which nests
+  externals: ($) => [$._dollar_quote, $._block_comment, $._error_sentinel],
+
   word: ($) => $.identifier,
 
   inline: ($) => [$._relation_name],
@@ -37,20 +40,21 @@ module.exports = grammar({
     string: (_) => /"[^"\n]*"/,
 
     // {any SQL}: braces nest, and what parse.py's Scanner reads as quoted may hold braces and quotes: 'text',
-    // E'text' (with backslash escapes), "names", $$text$$ and /* comments */ (a -- comment is one of the extras).
-    // A name's letters and digits are read whole, a $ in it too (a$b), so an E or a $ after them opens nothing
+    // E'text' (with backslash escapes), "names", $$text$$ or $tag$text$tag$ and /* comments */, which nest (those
+    // two read in src/scanner.c; a -- comment is one of the extras). A name's letters and digits are read whole, any
+    // letter past ASCII and a $ in it too (a$b), so an E or a $ after them opens nothing
     sql: ($) => seq("{", optional($.sql_text), "}"),
     sql_text: ($) =>
       repeat1(
         choice(
-          /[A-Za-z0-9_\u0080-￿][A-Za-z0-9_$\u0080-￿]*/,
+          /([A-Za-z0-9_]|[^\x00-\x7f])([A-Za-z0-9_$]|[^\x00-\x7f])*/,
           /[!#%&()*+,.:;<=>?@\[\\\]^`|~]+/,
           /[-\/$]/,
           /'([^']|'')*'/,
           /[Ee]'([^'\\]|\\(.|\n)|'')*'/,
           /"([^"]|"")*"/,
-          /\$\$([^$]|\$[^$])*\$\$/,
-          /\/\*([^*]|\*+[^*\/])*\*+\//,
+          $._dollar_quote,
+          $._block_comment,
           $._sql_nested,
         ),
       ),

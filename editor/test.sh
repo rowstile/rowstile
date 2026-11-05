@@ -46,8 +46,9 @@ fi
 echo "-- the grammar"
 docker run --rm "${as_me[@]}" -v "$REPO:/repo" -w /repo/editor/tree-sitter-authz "$NODE" bash -c '
   npm ci --no-audit --no-fund >/dev/null 2>&1 || { echo "FAIL  npm ci"; exit 1; }
-  # (generated in a copy: the check leaves the checkout as it was)
-  rm -rf /tmp/gen-src && mkdir /tmp/gen-src && cp grammar.js package.json tree-sitter.json /tmp/gen-src &&
+  # (generated in a copy: the check leaves the checkout as it was; src/scanner.c is written by hand)
+  rm -rf /tmp/gen-src && mkdir -p /tmp/gen-src/src && cp grammar.js package.json tree-sitter.json /tmp/gen-src &&
+    cp src/scanner.c /tmp/gen-src/src &&
     (cd /tmp/gen-src && /repo/editor/tree-sitter-authz/node_modules/.bin/tree-sitter generate >/dev/null 2>&1) &&
     diff -r /tmp/gen-src/src src >/dev/null && echo "ok    src/ is what grammar.js generates" ||
     { echo "FAIL  src/ is not what grammar.js generates: run npx tree-sitter generate in editor/tree-sitter-authz, and commit src/"; exit 1; }

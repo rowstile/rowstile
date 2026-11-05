@@ -95,8 +95,9 @@ User-facing docs: `README.md`, then `docs/reference/` (read them first). Terms i
   and `extension_test.js` against stand-ins for VS Code, Neovim set up as the README says); the VS Code extension:
   TextMate grammar (the site highlights ```authz with it too), and `extension.js` starting `rowstile lsp`;
   `tree-sitter-authz/` (the Tree-sitter grammar and its queries, for Zed, Helix and Neovim; `src/` is generated and
-  committed, editors build from it); `zed/` (the Zed extension: its queries are copies of the grammar's, `Editors`
-  in `unit_test.py`); `images/Dockerfile` (the toolchains `test.sh` runs in, pinned by digest, never built)
+  committed, editors build from it, but for `src/scanner.c`, written by hand: dollar quotes and nested comments);
+  `zed/` (the Zed extension: its queries are copies of the grammar's, `Editors` in `unit_test.py`);
+  `images/Dockerfile` (the toolchains `test.sh` runs in, pinned by digest, never built)
 - `review-ci/` — the review for CI: `github/action.yml` (a composite action; it installs the release its tag names
   from PyPI, or with `version: source` this checkout's command, as `.github/workflows/ci.yml` does) and
   `gitlab/rowstile-review.gitlab-ci.yml`

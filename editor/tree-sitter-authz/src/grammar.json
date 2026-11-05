@@ -140,7 +140,7 @@
         "members": [
           {
             "type": "PATTERN",
-            "value": "[A-Za-z0-9_\\u0080-￿][A-Za-z0-9_$\\u0080-￿]*"
+            "value": "([A-Za-z0-9_]|[^\\x00-\\x7f])([A-Za-z0-9_$]|[^\\x00-\\x7f])*"
           },
           {
             "type": "PATTERN",
@@ -163,12 +163,12 @@
             "value": "\"([^\"]|\"\")*\""
           },
           {
-            "type": "PATTERN",
-            "value": "\\$\\$([^$]|\\$[^$])*\\$\\$"
+            "type": "SYMBOL",
+            "name": "_dollar_quote"
           },
           {
-            "type": "PATTERN",
-            "value": "\\/\\*([^*]|\\*+[^*\\/])*\\*+\\/"
+            "type": "SYMBOL",
+            "name": "_block_comment"
           },
           {
             "type": "SYMBOL",
@@ -2055,7 +2055,20 @@
     ]
   ],
   "precedences": [],
-  "externals": [],
+  "externals": [
+    {
+      "type": "SYMBOL",
+      "name": "_dollar_quote"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_block_comment"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_error_sentinel"
+    }
+  ],
   "inline": [
     "_relation_name"
   ],

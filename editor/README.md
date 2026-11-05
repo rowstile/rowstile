@@ -64,9 +64,10 @@ PATH: name it, with its full path:
 
 ## Other editors
 
-`tree-sitter-authz/` is a Tree-sitter grammar for `.authz` files (`src/parser.c`, generated from `grammar.js`),
-with its queries in `queries/`: highlights (SQL injected inside `{ }`), outline and brackets. Helix and Neovim
-highlight with it. Any editor with a language client can start `rowstile lsp` for `.authz` files.
+`tree-sitter-authz/` is a Tree-sitter grammar for `.authz` files (`src/parser.c`, generated from `grammar.js`, and
+`src/scanner.c`, written by hand for dollar quotes and nested comments), with its queries in `queries/`:
+highlights (SQL injected inside `{ }`), outline and brackets. Helix and Neovim highlight with it. Any editor with a
+language client can start `rowstile lsp` for `.authz` files.
 
 Neovim 0.11 or newer (0.10 loads only grammars an older Tree-sitter made): build the grammar with a C compiler,
 from `editor/tree-sitter-authz` in this repository, and put it and its queries in Neovim's config folder

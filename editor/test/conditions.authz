@@ -13,6 +13,9 @@ type file = app.files
   can h = owner or {not archived -- the } here is SQL's comment
     }
   can i = owner or {a$b = 1 and E = 'x'}
+  can j = owner or {not archived /* a /* } */ } */}
+  can k = owner or {name <> $é$}$é$}
+  can l = owner or {😀x = 1}
 --^^^ keyword.declaration.permission.authz
 --    ^ entity.name.function.permission.authz
 

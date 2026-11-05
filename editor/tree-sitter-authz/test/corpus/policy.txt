@@ -869,3 +869,38 @@ test "a -- b" -- say "x"
       permission: (identifier)
       type: (identifier)
       object: (value))))
+
+================================================================================
+Conditions as Postgres reads them: comments nest, a dollar quote's tag may be any name, a name may hold any letter
+================================================================================
+
+type file = app.files
+  can a = {not archived /* a /* } */ } */}
+  can b = {name <> $é$}$é$ and name <> $q$ $é$ } $q$}
+  can c = {😀x = 1 and x <> $1 and a$q$}
+  can d = {name <> $$a $é$ }$$}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type
+    name: (identifier)
+    table: (table_name
+      schema: (identifier)
+      name: (identifier))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))
+    (permission
+      name: (identifier)
+      expression: (sql
+        (sql_text)))))

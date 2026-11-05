@@ -1088,6 +1088,8 @@ FEATURES: list[Feature] = [
         grammar=(
             "Words for conditions, custom roles where they give, this in conditions",
             "Conditions whose SQL hides braces and quotes: 'x', E'x', \"names\", $$x$$, comments",
+            "Conditions as Postgres reads them: comments nest, a dollar quote's tag may be any name, a name may hold any "
+            "letter",
         ),
     ),
     Feature(
