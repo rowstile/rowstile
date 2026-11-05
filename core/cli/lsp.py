@@ -253,7 +253,10 @@ class Server:
             uri = self.uri_of(os.path.join(folder, *key.split("/")))
             return self.docs[uri] if uri in self.docs else disk(key)
 
-        return collect_includes(text, read)
+        try:
+            return collect_includes(text, read)
+        except OSError as e:  # one that is there and isn't read: not UTF-8, say
+            raise PolicyError(f"line 1: {e.strerror}") from None
 
     def named_policy(self) -> str | None:
         """The policy rowstile.toml names. One the command refuses (outside rowstile.toml's folder) is a mistake to

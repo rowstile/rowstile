@@ -164,20 +164,7 @@ def read_text(path: str) -> str:
 def read_policy(path: str) -> tuple[str, dict[str, str]]:
     """The policy's text, and every file it includes (by name relative to the policy's folder, never outside it)."""
     text = read_text(path)
-    folder = os.path.dirname(os.path.abspath(path))
-    disk = disk_reader(folder)
-
-    def read(name: str) -> str | None:
-        got = disk(name)
-        full = os.path.join(folder, *name.split("/"))
-        if got is None and os.path.isfile(full):
-            try:
-                read_text(full)  # there, and not read: not UTF-8 (or a link out of the folder: the compiler says)
-            except OSError as e:
-                raise OSError(0, f"the file it includes, {name}, is {e.strerror}") from None
-        return got
-
-    return text, collect_includes(text, read)
+    return text, collect_includes(text, disk_reader(os.path.dirname(os.path.abspath(path))))
 
 
 ENV_FILES = (".env.local", ".env")  # read after the environment, in this order: the first that has a name wins

@@ -872,18 +872,24 @@ def within(top: str, path: str) -> bool:
 
 def disk_reader(folder: str) -> Callable[[str], str | None]:
     """read(name) for collect_includes: the file in folder (UTF-8), None when it is missing or, through a
-    symbolic link, outside the folder."""
+    symbolic link, outside the folder (the compiler says it can't find it in the policy's folder). One that is
+    there and can't be read (not UTF-8, say) is an OSError that says why (its strerror)."""
     top = os.path.realpath(folder)
 
     def read(name: str) -> str | None:
         path = os.path.join(top, *name.split("/"))
-        if not within(top, os.path.realpath(path)):
+        if not within(top, os.path.realpath(path)) or not os.path.isfile(path):
             return None
         try:
             with open(path, encoding="utf-8") as fh:
                 return fh.read()
-        except (OSError, UnicodeDecodeError):
-            return None
+        except (OSError, UnicodeDecodeError) as e:
+            why = (
+                f"is not UTF-8 (the byte at {e.start}): save it as UTF-8"
+                if isinstance(e, UnicodeDecodeError)
+                else f"can't be read: {e.strerror}"
+            )
+            raise OSError(0, f"the file it includes, {name}, {why}") from None
 
     return read
 
@@ -1384,9 +1390,10 @@ def parse_source(w: Words, subjects: list[Subject], spans: tuple[Span | None, ..
 
 def parse_policy(text: str, path: str | None = None, files: dict[str, str] | None = None) -> Policy:
     """A policy's text read into a Policy; path: where it is, for its includes when files (name -> text) isn't
-    given. A mistake raises a PolicyError: the first one, with every mistake found in .errors."""
-    if files is None:  # included files read from disk, next to the policy file (or here)
-        files = collect_includes(text, disk_reader(os.path.dirname(path) if path else "."))
+    given (an included file that can't be read is an OSError); with neither, it includes nothing. A mistake raises
+    a PolicyError: the first one, with every mistake found in .errors."""
+    if files is None:  # included files read from disk, next to the policy file
+        files = collect_includes(text, disk_reader(os.path.dirname(path))) if path else {}
     return Reader().read(read_parts(None, text, files))
 
 

@@ -152,6 +152,9 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   over several lines holds them as written: its line breaks, its spaces and a `--` in it. Before, its lines were
   joined by a space. `rowstile fmt` leaves those lines as written. In a condition elsewhere, such a quote is
   refused with its line (AZ114), where its text was changed the same way.
+- An included file that is there and can't be read says why, in the editor and in the suites' compiler as in
+  `rowstile check`: it isn't UTF-8, say. Before, the editor and `compile_policy.py` said they couldn't find it.
+  `parse_policy` called with neither a path nor the files reads no included file from the current folder.
 
 ### Upgrading
 
