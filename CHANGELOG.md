@@ -196,6 +196,10 @@ still change where using it shows a need. Before 1.0, a minor release (0.2.0) ma
   relation's column with (`{owner_id <> 7}`: a user 7; `{parent_id = 0}`: a folder 0), and the ids either side of
   one compared in order. Such a condition held on every row or on none there, so the review called a change that
   lets everyone edit user 7's folders unchanged, and prove missed the row that breaks an invariant.
+- `rowstile help` says what each code refuses today: AZ607's page tells each migration tool how to record a
+  migration the database holds already, AZ203's no longer names `shared by` and scopes (AZ207, AZ404),
+  AZ107's names `roles`, and AZ208's message and page name the same uses: a permission, a rule, an invariant,
+  a group or a roles line's `from`.
 
 ### Upgrading
 

@@ -46,8 +46,10 @@ CODES = {
         "A policy is made of blocks that start at the left margin (`app role`, `type`, `rules`, `scope`, `caveat`, "
         "`invariants`, `test`, `include`) and indented lines that belong to the block above them. This line is "
         "neither: a word no block starts with (often a typo), or an indented line with no block above it in its "
-        "file (a block ends at an include line, and an included file starts blocks of its own). A line that starts "
-        "with the right word but goes on wrongly is told how that line is written: `write types as: ...`.",
+        "file (a block ends at an include line, and an included file starts blocks of its own). An include line "
+        "starts at the left margin too: it includes a whole file, not lines of the block above. A line that starts "
+        "with the right word but goes on wrongly is told how that line is written: `write types as: ...`, or "
+        '`test "name"` with the name in double quotes.',
         "typ folder = app.folders\n  owner : user = owner_id\n  can view = owner\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\n",
     ),
@@ -90,7 +92,8 @@ CODES = {
         "row after the change). A plain `update` rule is checked on the row before and "
         "after the change, so `update before :` is refused. A column named `before` or `after` says when it is "
         "checked: `update after after : edit`. Masks are `mask col1, col2 : expression`. A foreign key whose "
-        "action is meant is `cascade from schema.table`, or `cascade from schema.table (column, ...)`.",
+        "action is meant is `cascade from schema.table`, or `cascade from schema.table (column, ...)`, each column "
+        "named once.",
         "type folder = app.folders\n  owner : user = owner_id\n  can edit = owner\nrules app.folders\n"
         "  select owner_id : edit\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can edit = owner\nrules app.folders\n"
@@ -101,8 +104,11 @@ CODES = {
         "The `test` section holds checks on the data there: `user 3 can view file 11`, `user 3 cannot edit "
         'file 11`. A named test, `test "name"`, brings its own data first, `given ann = {INSERT ... RETURNING '
         "id}`, then checks: `user $ann can view folder $top`, `as user $ann refused {UPDATE ...}`, `as user $ann "
-        "sees 2 {SELECT ...}`. A test needs at least one line, a named test a name, and a test file holds only "
-        "named tests.\n\n"
+        "sees 2 {SELECT ...}`. A test needs at least one line, a named test a name (in double quotes, nothing "
+        "after it on the line), a `given` or an `as` line a statement, and a test file holds only named tests. "
+        "`sees N` counts the rows of a SELECT, so its statement doesn't write: for a write that must change no "
+        "row, write `as ... refused {...}`. `anyone` is nobody signed in, so it takes no `with scope`. An id that starts with `$` is a "
+        "name a `given` line binds: write any other such id in quotes, `'$x'`.\n\n"
         "Invariants are `never type: expression`, under `invariants`.",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\n"
         'test "owners see their folders"\n  user 1 may view folder 1\n',
@@ -120,7 +126,9 @@ CODES = {
         "`a` with `_p` would make the same name as `a_` with `p`. "
         "`signed_in`, `anyone`, `nobody`, `or`, `and`, `not`, `if` and `where` are words of the language, and a "
         "permission can't be called like a command "
-        "(`select`, `insert`, `update`, `delete`). Choose another name.",
+        "(`select`, `insert`, `update`, `delete`). Nor is `roles` a relation's or a permission's name: a `roles :` "
+        "line says who may hold custom roles, and `roles` in a permission is where a role gives it. Choose another "
+        "name.",
         "type folder = app.folders\n  owner : user = owner_id\n  can select = owner\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can read = owner\n",
     ),
@@ -144,10 +152,11 @@ CODES = {
     ),
     "AZ109": Code(
         "Declared twice",
-        "Each type, relation, permission, caveat, named test, view and custom roles line is declared once, and a "
-        "table has one rule of each kind (one `select`, one `update`, ...), masks each column once and says a "
-        "cascade is meant once. A "
-        "relation and a permission can't share a name. Join the two into one: `can view = owner or editor`.",
+        "Each type, relation, permission, caveat, scope, named test and custom roles line is declared once, and so "
+        "are the app role, the sync role and `sync after commit`. A table has one view, and a view is one table's; "
+        "a table has one sync line, one rule of each kind (one `select`, one `update`, ...), masks each column "
+        "once and says a cascade is meant once. A relation and a permission can't share a name. Join the two into "
+        "one: `can view = owner or editor`.",
         "type folder = app.folders\n  owner  : user = owner_id\n  editor : user = editor_id\n"
         "  can view = owner\n  can view = editor\n",
         "type folder = app.folders\n  owner  : user = owner_id\n  editor : user = editor_id\n"
@@ -224,9 +233,10 @@ CODES = {
     ),
     "AZ203": Code(
         "A relation or permission that isn't there",
-        "An expression, a `type#relation` subject, `shared by`, custom roles, a scope or a test names a relation "
-        "or permission the type doesn't have. The message lists what it has; declare the missing one, or fix "
-        "the name.",
+        "An expression (in a permission, a rule or an invariant), a `type#relation` subject or a test names a "
+        "relation or permission the type doesn't have (a test names a permission). The message lists what it has; "
+        "declare the missing one, or fix the name. A `shared by` permission that isn't there is AZ207, a scope's "
+        "AZ404, and custom roles' `from` relation AZ211.",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner or viewer\n",
         "type folder = app.folders\n  owner  : user = owner_id\n"
         "  viewer : user = app.folder_viewers(folder_id -> user_id)\n  can view = owner or viewer\n",
@@ -275,8 +285,9 @@ CODES = {
     ),
     "AZ208": Code(
         "A relation nothing uses",
-        "No permission, rule, test or invariant uses this relation. It is often a typo in a second source of the "
-        "same relation, or a permission not written yet. Use it, or remove it.",
+        "No permission, rule or invariant uses this relation, and no group subject (`team#member`) or roles line's "
+        "`from` names it. It is often a typo in a second source of the same relation, or a permission not written "
+        "yet. Use it, or remove it. A shared relation isn't refused: it is given at run time.",
         "type folder = app.folders\n  owner  : user = owner_id\n  editor : user = editor_id\n  can view = owner\n",
         "type folder = app.folders\n  owner  : user = owner_id\n  editor : user = editor_id\n"
         "  can view = owner or editor\n",
@@ -322,7 +333,7 @@ CODES = {
         "Following a relation that can't be followed",
         "`relation.name` follows a relation to the objects it links to and asks for their relation or "
         "permission: `parent.view`, `org.member`. Only relations to objects can be followed: not a permission, "
-        "and not a relation to groups (`team#member`), `anyone` or `link`. And a relation to objects is not a "
+        "and not a relation to groups (`team#member`), `user:*`, `anyone` or `link`. And a relation to objects is not a "
         "set of users: follow it (`parent.view`), don't use it alone.",
         "type folder = app.folders\n  owner  : user = owner_id\n  parent : folder = parent_id\n"
         "  can view = owner or parent\n",
@@ -387,8 +398,8 @@ CODES = {
         "{inherit}`), `blocked` inherits on the same conditions, in any order, or on fewer of them; one `view` "
         "doesn't have is refused. Only the deny and conditions (`{not archived}`) join "
         "the inheritance with `and`. `blocked` has no deny of its own: that could cut it below a blocked object. "
-        "And `view` inherits within its own type: not through another type's permission (`project.view`, where "
-        "projects and folders are inside each other).",
+        "And `view` inherits within its own type: through a relation to that type alone, not through another "
+        "type's permission (`project.view`, where projects and folders are inside each other).",
         "type folder = app.folders\n  owner   : user = owner_id\n  parent  : folder = parent_id\n"
         "  blocker : user = app.folder_blocks(folder_id -> user_id)\n  can blocked = blocker\n"
         "  can view = (owner or parent.view) and not blocked\n",
@@ -446,7 +457,8 @@ CODES = {
         "A scope written wrongly",
         "A scope limits what a token may do: `scope files = app.files.select, app.files.update, file.view`. "
         "Items are a command (`select`), a command on a table (`app.files.update`), or a permission of a type "
-        "(`file.edit`); a bare word must be a command, or a permission some type has.",
+        "(`file.edit`); a bare word must be a command, or a permission some type has. A table is one a type maps "
+        "to, and a type has the permission named (a type that isn't there is AZ201).",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\nscope read = folder.see\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\nscope read = folder.view\n",
     ),
@@ -485,7 +497,8 @@ CODES = {
     "AZ601": Code(
         "A table or column that isn't there",
         "Applying checks the policy against the database first: each table a type or relation names, and each "
-        "column a relation reads. Nothing is applied until they are all there. Run the app's schema migrations "
+        "column a key, a relation, a column rule, a mask or a cascade line names. Nothing is applied until they are "
+        "all there. Run the app's schema migrations "
         "first, or fix the name.",
         "type folder = app.folders\n  owner : user = owner_uid\n  can view = owner\n",
         "type folder = app.folders\n  owner : user = owner_id\n  can view = owner\n",
@@ -547,9 +560,25 @@ CODES = {
         "`push` takes the migrations from the start, or `rowstile apply` of the policy the previous migration "
         "left. A development database that `rowstile dev` or `push` brought to the newest policy already holds "
         'what this migration brings, and the migration says so ("this database already holds what this '
-        'migration brings"): tell the migration tool it is applied (Prisma: `prisma migrate resolve '
-        "--applied <name>`, which also clears the failed migration Prisma kept; Alembic: `alembic stamp head`), "
-        "or make the database again from the migrations.",
+        "migration brings\"): don't run it there. Tell the migration tool it is applied, or make the database "
+        "again from the migrations. Each tool keeps what ran in a table of its own. Alembic, Prisma and Django have "
+        "a command that records a migration as applied; for the others, a row in that table does:\n\n"
+        "- Alembic: `alembic stamp head`.\n"
+        "- Prisma: `prisma migrate resolve --applied <the migration's folder>`, which also clears the failed "
+        "migration Prisma kept.\n"
+        "- Django: `python manage.py migrate <app> <the migration> --fake`.\n"
+        "- Rails: `INSERT INTO schema_migrations (version) VALUES ('<the number its file name starts with>')`.\n"
+        "- Ecto: `INSERT INTO schema_migrations (version, inserted_at) VALUES (<the number its file name starts "
+        "with>, now())`.\n"
+        "- Laravel: `INSERT INTO migrations (migration, batch) VALUES ('<its file name without .php>', <the last "
+        "batch + 1>)`.\n"
+        '- EF Core: `INSERT INTO "__EFMigrationsHistory" ("MigrationId", '
+        "\"ProductVersion\") VALUES ('<the id in its [Migration] attribute>', '<EF Core's version>')`.\n"
+        "- goose: `INSERT INTO goose_db_version (version_id, is_applied) VALUES (<its number>, true)`.\n"
+        "- dbmate: `INSERT INTO schema_migrations (version) VALUES ('<its number>')`.\n"
+        "- Drizzle Kit, Flyway and sqlx keep a hash of each migration's file with it: make the database again from "
+        "the migrations.\n"
+        "- sql (files you run yourself): don't run this one there.",
         "",
         "",
         when="deploy",
@@ -814,9 +843,11 @@ CODES = {
     "AZ705": Code(
         "Not allowed",
         "The signed-in person asked an `authz.*` function for something the policy doesn't let them do: share or "
-        "unshare this object, share it with this subject (the relation's `shared if`), give a role, manage roles or "
-        "keys, see who has access, the shares or the links, turn a link off, decide a request or a review, break "
-        "the glass. A role that may not call `authz.act_as` gets it from `authz.who_among`, which signs people in. "
+        "unshare this object, share it with this subject (the relation's `shared if`), give a role, give (by a "
+        "share or a role) a permission they don't hold, manage roles or keys, see the roles, who has access, the "
+        "shares or the links, explain someone else's access, view as a user, turn a link off, decide a request "
+        "(not their own) or a review, break the glass. A role that may not call `authz.act_as` gets it from "
+        "`authz.who_among`, which signs people in. "
         "The message says what; `authz.explain(type, id, perm)` says why, and a refused share or unshare "
         "says it in its DETAIL (the SDKs' `why`). SQLSTATE 42501; answer 403, as the SDKs do (`Refused`, with this "
         "code).",
@@ -825,16 +856,18 @@ CODES = {
     "AZ706": Code(
         "The policy doesn't allow this share",
         "The share asked for isn't one the policy declares: the relation isn't `shared` with that kind of subject "
-        "(say, a team where only users may be given it), the role isn't one of the object's, or a role would grant "
-        "a permission roles can't grant. Change the call, or the policy's relation. SQLSTATE P0001. It is the "
+        "(say, a team where only users may be given it), the role isn't one of the object's, a role would grant "
+        "a permission roles can't grant, or a role is made for an owner of another type than the policy's roles "
+        "line says. Change the call, or the policy's relation. SQLSTATE P0001. It is the "
         "app's mistake, not the user's: the SDKs leave it an error, a 500.",
         when="runtime",
     ),
     "AZ707": Code(
         "Not in the policy",
         "An `authz.*` function was called with a name the policy in force doesn't have: a type, a permission, a "
-        "scope, a caveat, a table with rules, a type that signs in, custom roles on a type, or the `manage_roles` "
-        "/ `manage_keys` permission it needs. Often the app and the database disagree on the policy: apply the "
+        "scope, a caveat, a table with rules, a type that signs in, custom roles on a type, the `manage_roles` "
+        "/ `manage_keys` permission it needs, or a relation with one table of members (`authz.sync_members`). "
+        "Often the app and the database disagree on the policy: apply the "
         "migrations. SQLSTATE P0001. It is the app's mistake, not the user's: the SDKs leave it an error, a 500.",
         when="runtime",
     ),
@@ -856,7 +889,7 @@ CODES = {
     "AZ710": Code(
         "A missing or wrong argument",
         "A call is missing something it needs (a reason, kept in the audit trail; approve or deny; a key's name; the "
-        "id of the principal whose keys it names) or has a value "
+        "id of the principal whose keys it names; how long `authz.trim_audit` keeps) or has a value "
         "out of range (a duration that isn't positive, emergency access longer than a day, a command "
         "`authz.explain_rule` doesn't explain, a row it can't find without an id, a page cursor for `authz.list` "
         "that isn't an id of the type, a negative page size, a member list for `authz.sync_members` that is NULL or "
@@ -937,7 +970,7 @@ CODES = {
     "AZ801": Code(
         "A sync line that names nothing to sync",
         "`sync schema.table : permission` keeps, for each row of a type's table, the keys that hold the permission "
-        "on it, for sync engines. The table must be a type's, and the permission one of that type's. With no "
+        "on it, for sync engines. The table must be one type's, and the permission one of that type's. With no "
         "permission (`sync app.files`), the readers hold the table's select rule, so the table needs one. The "
         "readers table has a column `key`, so the type's key column can't be called `key` too.",
         "type file = app.files\n  owner : user = owner_id\n  can view = owner\nsync role sync_engine\n"

@@ -972,8 +972,8 @@ class Core:
                     continue
                 fail(
                     r.loc,
-                    f"{t.name}.{r.name} is declared but nothing uses it (no permission, rule, test or "
-                    f"group refers to it): remove it, or if it is another source of an existing relation, "
+                    f"{t.name}.{r.name} is declared but nothing uses it (no permission, rule, invariant, "
+                    f"group or roles line refers to it): remove it, or if it is another source of an existing relation, "
                     f"give it that relation's name",
                     "AZ208",
                 )
